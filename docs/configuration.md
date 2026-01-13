@@ -130,12 +130,12 @@ This maps `release/2026/q1` to `release_2026_q1`.
 
 ### postCreate.copyFiles
 
-An array of file paths to automatically copy from the current worktree to newly created worktrees.
+An array of file paths or glob patterns to automatically copy from the current worktree to newly created worktrees.
 
 **Use Cases:**
 
 - Environment configuration files (`.env`, `.env.local`)
-- Local development settings
+- Local development settings across subdirectories
 - Secret files that are gitignored
 - Database configuration files
 - API keys and certificates
@@ -145,17 +145,34 @@ An array of file paths to automatically copy from the current worktree to newly 
 ```json
 {
   "postCreate": {
-    "copyFiles": [".env", ".env.local", "config/database.local.yml"]
+    "copyFiles": [".env", ".env*", "config/database.local.yml", "config/**/*.local.yml", "secrets/[ab]*.json"]
   }
 }
 ```
 
+**Glob Pattern Support:**
+
+Glob patterns allow you to match multiple files with a single pattern. Supported patterns:
+
+- `*` - Matches any characters except `/` (e.g., `*.env` matches `.env` but not `config/.env`)
+- `**` - Matches any characters including `/` (recursive, e.g., `**/*.yml` matches all `.yml` files in any subdirectory)
+- `?` - Matches any single character (e.g., `file?.txt` matches `file1.txt` but not `file10.txt`)
+- `[abc]` - Matches any character in the brackets (e.g., `file-[ab].txt` matches `file-a.txt` and `file-b.txt`)
+
+**Common Patterns:**
+
+- `.env*` - All files starting with `.env` (`.env`, `.env.local`, `.env.production`, etc.)
+- `*.local` - All files ending with `.local` in the root directory
+- `config/**/*.local.yml` - All `.local.yml` files anywhere under `config/` directory
+- `secrets/[ab]*.json` - All `.json` files in `secrets/` starting with `a` or `b`
+
 **Notes:**
 
-- Paths are relative to the repository root
-- Currently, glob patterns are not supported
-- Files must exist in the source worktree
-- Non-existent files are silently skipped
+- Paths and patterns are relative to the repository root
+- Exact file paths and glob patterns can be mixed in the same array
+- Patterns matching no files are silently skipped (no error)
+- Directories are excluded from copying (only files are copied)
+- Overlapping patterns are automatically deduplicated
 - Can be overridden with `--copy-file` command line options
 
 ### postCreate.commands

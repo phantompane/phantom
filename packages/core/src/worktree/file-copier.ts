@@ -1,6 +1,11 @@
 import { copyFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { err, ok, type Result } from "@phantompane/shared";
+import {err, isErr, ok, type Result} from "@phantompane/shared";
+
+import {
+  type GlobResolutionError,
+  resolveGlobPatterns,
+} from "./glob-resolver.ts";
 
 export interface CopyFileResult {
   copiedFiles: string[];
@@ -21,11 +26,18 @@ export async function copyFiles(
   sourceDir: string,
   targetDir: string,
   files: string[],
-): Promise<Result<CopyFileResult, FileCopyError>> {
+): Promise<Result<CopyFileResult, FileCopyError | GlobResolutionError>> {
+  // Resolve glob patterns first
+  const resolveResult = await resolveGlobPatterns(sourceDir, files);
+  if (isErr(resolveResult)) {
+    return resolveResult;
+  }
+
+  const resolvedFiles = resolveResult.value.resolvedFiles;
   const copiedFiles: string[] = [];
   const skippedFiles: string[] = [];
 
-  for (const file of files) {
+  for (const file of resolvedFiles) {
     const sourcePath = path.join(sourceDir, file);
     const targetPath = path.join(targetDir, file);
 
