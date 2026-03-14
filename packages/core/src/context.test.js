@@ -1,4 +1,4 @@
-import { ok as assertOk, deepStrictEqual, equal } from "node:assert/strict";
+import { deepStrictEqual, equal } from "node:assert/strict";
 import { describe, it, mock } from "node:test";
 
 const loadConfigMock = mock.fn();
@@ -33,7 +33,7 @@ describe("createContext", () => {
     getWorktreesDirectoryMock.mock.resetCalls();
   };
 
-  it("uses preferences worktreesDirectory over config and warns about deprecated config usage", async () => {
+  it("uses config worktreesDirectory over preferences", async () => {
     resetMocks();
     loadConfigMock.mock.mockImplementation(async () =>
       ok({ worktreesDirectory: "config-dir" }),
@@ -41,8 +41,28 @@ describe("createContext", () => {
     loadPreferencesMock.mock.mockImplementation(async () => ({
       worktreesDirectory: "../user-worktrees",
     }));
-    getWorktreesDirectoryMock.mock.mockImplementation(() => "/resolved/user");
-    const warnMock = mock.method(console, "warn");
+    getWorktreesDirectoryMock.mock.mockImplementation(() => "/resolved/config");
+
+    const context = await createContext("/repo");
+
+    deepStrictEqual(getWorktreesDirectoryMock.mock.calls[0].arguments, [
+      "/repo",
+      "config-dir",
+    ]);
+    equal(context.worktreesDirectory, "/resolved/config");
+    equal(context.config?.worktreesDirectory, "config-dir");
+    equal(context.preferences.worktreesDirectory, "../user-worktrees");
+  });
+
+  it("uses preferences worktreesDirectory when config is absent", async () => {
+    resetMocks();
+    loadConfigMock.mock.mockImplementation(async () => ok({}));
+    loadPreferencesMock.mock.mockImplementation(async () => ({
+      worktreesDirectory: "../user-worktrees",
+    }));
+    getWorktreesDirectoryMock.mock.mockImplementation(
+      (_gitRoot, worktreesDirectory) => `/resolved/${worktreesDirectory}`,
+    );
 
     const context = await createContext("/repo");
 
@@ -50,33 +70,7 @@ describe("createContext", () => {
       "/repo",
       "../user-worktrees",
     ]);
-    equal(context.worktreesDirectory, "/resolved/user");
-    equal(context.config?.worktreesDirectory, "config-dir");
-    equal(context.preferences.worktreesDirectory, "../user-worktrees");
-    assertOk(warnMock.mock.calls.length >= 1);
-    warnMock.mock.restore();
-  });
-
-  it("uses config worktreesDirectory when preference is absent and warns once", async () => {
-    resetMocks();
-    loadConfigMock.mock.mockImplementation(async () =>
-      ok({ worktreesDirectory: "../config-worktrees" }),
-    );
-    loadPreferencesMock.mock.mockImplementation(async () => ({}));
-    getWorktreesDirectoryMock.mock.mockImplementation(
-      (_gitRoot, worktreesDirectory) => `/resolved/${worktreesDirectory}`,
-    );
-    const warnMock = mock.method(console, "warn");
-
-    const context = await createContext("/repo");
-
-    deepStrictEqual(getWorktreesDirectoryMock.mock.calls[0].arguments, [
-      "/repo",
-      "../config-worktrees",
-    ]);
-    equal(context.worktreesDirectory, "/resolved/../config-worktrees");
-    equal(warnMock.mock.calls.length, 1);
-    warnMock.mock.restore();
+    equal(context.worktreesDirectory, "/resolved/../user-worktrees");
   });
 
   it("falls back to default worktreesDirectory when neither preference nor config is set", async () => {
@@ -87,7 +81,6 @@ describe("createContext", () => {
       (_gitRoot, worktreesDirectory) =>
         worktreesDirectory ?? "/repo/.git/phantom/worktrees",
     );
-    const warnMock = mock.method(console, "warn");
 
     const context = await createContext("/repo");
 
@@ -96,7 +89,5 @@ describe("createContext", () => {
       undefined,
     ]);
     equal(context.worktreesDirectory, "/repo/.git/phantom/worktrees");
-    equal(warnMock.mock.calls.length, 0);
-    warnMock.mock.restore();
   });
 });

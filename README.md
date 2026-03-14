@@ -160,7 +160,7 @@ phantom ai feature-auth
 
 #### Preferences
 
-Store your defaults in global git config and manage them with `phantom preferences` (including a per-user `worktreesDirectory` relative to the Git repo root; default: `.git/phantom/worktrees`).
+Store your personal defaults in global git config and manage them with `phantom preferences` (including a per-user `worktreesDirectory` relative to the Git repo root; default: `.git/phantom/worktrees`). For project-wide settings, use `phantom.config.json`.
 
 ```bash
 # Inspect current defaults

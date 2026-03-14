@@ -15,7 +15,7 @@ _phantom() {
         'edit:Open a worktree in your configured editor'
         'ai:Launch your configured AI coding assistant in a worktree'
         'shell:Open an interactive shell in a worktree directory'
-        'preferences:Manage editor/ai preferences (git config --global)'
+        'preferences:Manage editor/ai/worktreesDirectory preferences (git config --global)'
         'github:GitHub integration commands'
         'gh:GitHub integration commands (alias)'
         'version:Display phantom version information'

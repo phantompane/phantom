@@ -155,7 +155,7 @@ phantom ai feature-auth
 
 #### Preferences
 
-`phantom preferences`で個人向けデフォルトをglobal git configに保存します（`worktreesDirectory`はGitリポジトリのルートからの相対パス、デフォルトは`.git/phantom/worktrees`）。
+`phantom preferences`で個人向けデフォルトをglobal git configに保存します（`worktreesDirectory`はGitリポジトリのルートからの相対パス、デフォルトは`.git/phantom/worktrees`）。プロジェクト共通の設定は`phantom.config.json`を使います。
 
 ```bash
 # 現在の設定を確認

@@ -160,9 +160,9 @@ complete -c phantom -n "__phantom_using_command ai" -a "(__phantom_list_worktree
 
 # preferences command
 complete -c phantom -n "__phantom_using_command preferences" -a "get set remove" -d "Manage preferences"
-complete -c phantom -n "__phantom_using_command preferences get" -a "editor ai" -d "Preference key"
-complete -c phantom -n "__phantom_using_command preferences set" -a "editor ai" -d "Preference key"
-complete -c phantom -n "__phantom_using_command preferences remove" -a "editor ai" -d "Preference key"
+complete -c phantom -n "__phantom_using_command preferences get" -a "editor ai worktreesDirectory" -d "Preference key"
+complete -c phantom -n "__phantom_using_command preferences set" -a "editor ai worktreesDirectory" -d "Preference key"
+complete -c phantom -n "__phantom_using_command preferences remove" -a "editor ai worktreesDirectory" -d "Preference key"
 
 # shell command options
 complete -c phantom -n "__phantom_using_command shell" -l fzf -d "Use fzf for interactive selection"
