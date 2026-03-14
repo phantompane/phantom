@@ -33,7 +33,7 @@ describe("createContext", () => {
     getWorktreesDirectoryMock.mock.resetCalls();
   };
 
-  it("uses config worktreesDirectory over preferences", async () => {
+  it("uses preferences worktreesDirectory over config", async () => {
     resetMocks();
     loadConfigMock.mock.mockImplementation(async () =>
       ok({ worktreesDirectory: "config-dir" }),
@@ -41,25 +41,25 @@ describe("createContext", () => {
     loadPreferencesMock.mock.mockImplementation(async () => ({
       worktreesDirectory: "../user-worktrees",
     }));
-    getWorktreesDirectoryMock.mock.mockImplementation(() => "/resolved/config");
+    getWorktreesDirectoryMock.mock.mockImplementation(() => "/resolved/user");
 
     const context = await createContext("/repo");
 
     deepStrictEqual(getWorktreesDirectoryMock.mock.calls[0].arguments, [
       "/repo",
-      "config-dir",
+      "../user-worktrees",
     ]);
-    equal(context.worktreesDirectory, "/resolved/config");
+    equal(context.worktreesDirectory, "/resolved/user");
     equal(context.config?.worktreesDirectory, "config-dir");
     equal(context.preferences.worktreesDirectory, "../user-worktrees");
   });
 
-  it("uses preferences worktreesDirectory when config is absent", async () => {
+  it("uses config worktreesDirectory when preference is absent", async () => {
     resetMocks();
-    loadConfigMock.mock.mockImplementation(async () => ok({}));
-    loadPreferencesMock.mock.mockImplementation(async () => ({
-      worktreesDirectory: "../user-worktrees",
-    }));
+    loadConfigMock.mock.mockImplementation(async () =>
+      ok({ worktreesDirectory: "../config-worktrees" }),
+    );
+    loadPreferencesMock.mock.mockImplementation(async () => ({}));
     getWorktreesDirectoryMock.mock.mockImplementation(
       (_gitRoot, worktreesDirectory) => `/resolved/${worktreesDirectory}`,
     );
@@ -68,9 +68,9 @@ describe("createContext", () => {
 
     deepStrictEqual(getWorktreesDirectoryMock.mock.calls[0].arguments, [
       "/repo",
-      "../user-worktrees",
+      "../config-worktrees",
     ]);
-    equal(context.worktreesDirectory, "/resolved/../user-worktrees");
+    equal(context.worktreesDirectory, "/resolved/../config-worktrees");
   });
 
   it("falls back to default worktreesDirectory when neither preference nor config is set", async () => {

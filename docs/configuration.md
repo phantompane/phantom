@@ -88,7 +88,7 @@ parent-directory/
 - The directory will be created automatically if it doesn't exist
 - When worktreesDirectory is specified, worktrees are created directly in that directory
 - `phantom.config.json` is project-level configuration, while `phantom preferences` stores per-user defaults
-- If both are set, `phantom.config.json` takes precedence over `phantom preferences`
+- If both are set, `phantom preferences` takes precedence over `phantom.config.json`
 
 ### postCreate.copyFiles
 

@@ -17,7 +17,7 @@ export async function createContext(gitRoot: string): Promise<Context> {
   const worktreesDirectoryConfig = config?.worktreesDirectory;
   const worktreesDirectoryPreference = preferences.worktreesDirectory;
   const worktreesDirectory =
-    worktreesDirectoryConfig ?? worktreesDirectoryPreference;
+    worktreesDirectoryPreference ?? worktreesDirectoryConfig;
 
   return {
     gitRoot,
