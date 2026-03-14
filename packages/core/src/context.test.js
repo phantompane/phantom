@@ -1,4 +1,4 @@
-import { ok as assertOk, deepStrictEqual, equal } from "node:assert/strict";
+import { deepStrictEqual, equal } from "node:assert/strict";
 import { describe, it, mock } from "node:test";
 
 const loadConfigMock = mock.fn();
@@ -33,7 +33,7 @@ describe("createContext", () => {
     getWorktreesDirectoryMock.mock.resetCalls();
   };
 
-  it("uses preferences worktreesDirectory over config and warns about deprecated config usage", async () => {
+  it("uses preferences worktreesDirectory over config", async () => {
     resetMocks();
     loadConfigMock.mock.mockImplementation(async () =>
       ok({ worktreesDirectory: "config-dir" }),
@@ -42,7 +42,6 @@ describe("createContext", () => {
       worktreesDirectory: "../user-worktrees",
     }));
     getWorktreesDirectoryMock.mock.mockImplementation(() => "/resolved/user");
-    const warnMock = mock.method(console, "warn");
 
     const context = await createContext("/repo");
 
@@ -53,11 +52,9 @@ describe("createContext", () => {
     equal(context.worktreesDirectory, "/resolved/user");
     equal(context.config?.worktreesDirectory, "config-dir");
     equal(context.preferences.worktreesDirectory, "../user-worktrees");
-    assertOk(warnMock.mock.calls.length >= 1);
-    warnMock.mock.restore();
   });
 
-  it("uses config worktreesDirectory when preference is absent and warns once", async () => {
+  it("uses config worktreesDirectory when preference is absent", async () => {
     resetMocks();
     loadConfigMock.mock.mockImplementation(async () =>
       ok({ worktreesDirectory: "../config-worktrees" }),
@@ -66,7 +63,6 @@ describe("createContext", () => {
     getWorktreesDirectoryMock.mock.mockImplementation(
       (_gitRoot, worktreesDirectory) => `/resolved/${worktreesDirectory}`,
     );
-    const warnMock = mock.method(console, "warn");
 
     const context = await createContext("/repo");
 
@@ -75,8 +71,6 @@ describe("createContext", () => {
       "../config-worktrees",
     ]);
     equal(context.worktreesDirectory, "/resolved/../config-worktrees");
-    equal(warnMock.mock.calls.length, 1);
-    warnMock.mock.restore();
   });
 
   it("falls back to default worktreesDirectory when neither preference nor config is set", async () => {
@@ -87,7 +81,6 @@ describe("createContext", () => {
       (_gitRoot, worktreesDirectory) =>
         worktreesDirectory ?? "/repo/.git/phantom/worktrees",
     );
-    const warnMock = mock.method(console, "warn");
 
     const context = await createContext("/repo");
 
@@ -96,7 +89,5 @@ describe("createContext", () => {
       undefined,
     ]);
     equal(context.worktreesDirectory, "/repo/.git/phantom/worktrees");
-    equal(warnMock.mock.calls.length, 0);
-    warnMock.mock.restore();
   });
 });

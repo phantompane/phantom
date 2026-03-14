@@ -9,7 +9,7 @@
   - [postCreate.commands](#postcreatecommands)
   - [preDelete.commands](#predeletecommands)
 
-Phantom supports configuration through a `phantom.config.json` file in your repository root. This allows you to define files to be automatically copied and commands to be executed when creating new worktrees. For personal defaults such as `worktreesDirectory`, prefer `phantom preferences` (stored in your global git config); the `worktreesDirectory` key in `phantom.config.json` is deprecated and will be removed in the next version.
+Phantom supports configuration through a `phantom.config.json` file in your repository root. This allows you to define project-level defaults such as where worktrees are stored, which files are copied, and which commands are executed when creating new worktrees. For personal defaults, use `phantom preferences` (stored in your global git config).
 
 ## Configuration File
 
@@ -41,7 +41,7 @@ Create a `phantom.config.json` file in your repository root:
 
 ### worktreesDirectory
 
-A custom base directory where Phantom worktrees will be created. By default, Phantom creates all worktrees in `.git/phantom/worktrees/`. Set a per-user location with `phantom preferences set worktreesDirectory <path-from-git-root>` (recommended). The `worktreesDirectory` option in `phantom.config.json` remains temporarily supported for compatibility but is deprecated and will be removed in the next version.
+A custom base directory where Phantom worktrees will be created. By default, Phantom creates all worktrees in `.git/phantom/worktrees/`. Set this in `phantom.config.json` for a project-wide location, or in `phantom preferences` for a personal default.
 
 **Use Cases:**
 - Store worktrees outside the main repository directory
@@ -87,7 +87,8 @@ parent-directory/
 - Use a path relative to the Git repository root (relative paths are resolved from the repo root; absolute paths are used as-is)
 - The directory will be created automatically if it doesn't exist
 - When worktreesDirectory is specified, worktrees are created directly in that directory
-- Prefer configuring this via `phantom preferences set worktreesDirectory <path-from-git-root>`; the `phantom.config.json` key is deprecated and will be removed in the next version
+- `phantom.config.json` is project-level configuration, while `phantom preferences` stores per-user defaults
+- If both are set, `phantom preferences` takes precedence over `phantom.config.json`
 
 ### postCreate.copyFiles
 
