@@ -1,0 +1,17 @@
+{
+  "name": "phantom-worktrees",
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "mounts": [
+    "source=nix-store-${devcontainerId},target=/nix,type=volume",
+    "source=devenv-${devcontainerId},target=${containerWorkspaceFolder}/.devenv,type=volume"
+  ],
+  "features": {
+    "ghcr.io/devcontainers/features/nix:1": {
+      "packages": "devenv",
+      "extraNixConfig": "experimental-features = nix-command flakes"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/postCreateCommand.sh",
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": true
+}

@@ -5,3 +5,6 @@ Thumbs.db
 # Dependencies
 node_modules
 .worktrees
+.devenv*
+devenv.local.nix
+devenv.local.yaml
