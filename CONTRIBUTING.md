@@ -102,9 +102,11 @@ pnpm ready
 
 This command runs:
 
-- Formatting and linting (`pnpm lint`)
+- Formatting auto-fixes (`pnpm fix`)
 - Type checking (`pnpm typecheck`)
 - All tests (`pnpm test`)
+
+To run the non-mutating variant, use `pnpm ready:check`, which runs `turbo run lint typecheck test`.
 
 ### Security Best Practices
 

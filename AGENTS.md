@@ -14,8 +14,8 @@
 - Build: `pnpm build`; type check: `pnpm typecheck`.
 - Lint/format: `pnpm lint` (check with `oxfmt` + `oxlint`) or `pnpm fix` (apply formatter and auto-fixes).
 - Tests: `pnpm test` (native `node --test` across packages).
-- Pre-flight: `pnpm ready` (fix + typecheck + test) or `pnpm ready:check` (lint + typecheck + test).
-- After finishing an implementation, run `pnpm ready` to execute lint, typecheck, and tests before shipping changes.
+- Pre-flight: `pnpm ready` (`turbo run fix typecheck test`) or `pnpm ready:check` (`turbo run lint typecheck test`).
+- After finishing an implementation, run `pnpm ready` to execute fix, typecheck, and tests before shipping changes.
 - Scope work: `pnpm --filter <pkg> <cmd>` (e.g., `pnpm --filter @phantompane/github test`).
 
 ## Coding Style & Naming Conventions
