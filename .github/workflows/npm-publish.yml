@@ -60,13 +60,3 @@ jobs:
           NPM_CONFIG_REGISTRY: https://registry.npmjs.org
           NPM_CONFIG_ALWAYS_AUTH: true
         run: pnpm -r publish --access public --provenance --no-git-checks --tag ${{ steps.dist_tag.outputs.npm_tag }}
-
-      - name: Publish @aku11i/phantom (backward compatibility)
-        env:
-          NPM_CONFIG_PROVENANCE: true
-          NPM_CONFIG_REGISTRY: https://registry.npmjs.org
-          NPM_CONFIG_ALWAYS_AUTH: true
-        run: |
-          cd packages/cli/dist
-          sed -i 's/"name": "@phantompane\/cli"/"name": "@aku11i\/phantom"/' package.json
-          npm publish --access public --provenance --tag ${{ steps.dist_tag.outputs.npm_tag }}
