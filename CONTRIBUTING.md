@@ -80,7 +80,7 @@ pnpm ready
 pnpm test
 
 # Run specific test file
-pnpm test:file src/core/worktree/create.test.js
+pnpm test:file src/core/worktree/create.test.ts
 ```
 
 ### Writing Tests

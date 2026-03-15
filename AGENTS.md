@@ -20,7 +20,7 @@
 
 ## Coding Style & Naming Conventions
 
-- ESM with TypeScript sources; tests are `.test.js` files using stripped types.
+- ESM with TypeScript sources; tests are `.test.ts` files.
 - `oxfmt` enforces 2-space indentation and double quotes; `oxlint` enforces correctness rules including no unused variables.
 - Use PascalCase for types/interfaces, camelCase for functions/variables, and kebab-case for package or file names where applicable.
 - Keep CLI flags and config keys consistent with `phantom.config.json` and README examples.
@@ -29,7 +29,7 @@
 ## Testing Guidelines
 
 - Tests run with `vitest`.
-- Place tests beside source under `src/**/*/*.test.js`, mirroring module names.
+- Place tests beside source under `src/**/*/*.test.ts`, mirroring module names.
 - Cover success/error paths for worktree creation, git/github flows, and MCP tools; use temporary directories and the centralized git executor. Prefer tests over ad-hoc manual commands.
 
 ## Commit & Pull Request Guidelines
