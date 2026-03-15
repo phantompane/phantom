@@ -12,6 +12,9 @@ export default defineConfig({
   sourcemap: true,
   dts: false,
   clean: ["dist/*.js", "dist/*.js.map"],
+  deps: {
+    alwaysBundle: [/.*/],
+  },
   fixedExtension: false,
   hooks: {
     async "build:done"(ctx) {
