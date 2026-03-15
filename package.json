@@ -7,17 +7,17 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "test:shell": "pnpm --filter @phantompane/cli-src run test:shell",
-    "test:shell:bash": "pnpm --filter @phantompane/cli-src run test:shell:bash",
-    "test:shell:fish": "pnpm --filter @phantompane/cli-src run test:shell:fish",
-    "test:shell:zsh": "pnpm --filter @phantompane/cli-src run test:shell:zsh",
+    "test:shell": "pnpm --filter @phantompane/cli-private run test:shell",
+    "test:shell:bash": "pnpm --filter @phantompane/cli-private run test:shell:bash",
+    "test:shell:fish": "pnpm --filter @phantompane/cli-private run test:shell:fish",
+    "test:shell:zsh": "pnpm --filter @phantompane/cli-private run test:shell:zsh",
     "lint": "biome check .",
     "fix": "biome check --write .",
     "typecheck": "pnpm -r typecheck",
     "ready": "pnpm fix && pnpm typecheck && pnpm test",
     "ready:check": "pnpm lint && pnpm typecheck && pnpm test",
-    "phantom": "pnpm --filter @phantompane/cli-src run phantom",
-    "compile": "pnpm --filter @phantompane/cli-src run compile"
+    "phantom": "pnpm --filter @phantompane/cli-private run phantom",
+    "compile": "pnpm --filter @phantompane/cli-private run compile"
   },
   "engines": {
     "node": ">=22.0.0"
