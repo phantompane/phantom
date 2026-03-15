@@ -8,8 +8,9 @@ Phantom provides seamless integration with GitHub, allowing you to quickly creat
 
 > [!IMPORTANT]  
 > To use Phantom's GitHub integration, you need:
+>
 > - GitHub CLI (gh) installed and authenticated
-> 
+>
 > For installation and authentication instructions, visit the [GitHub CLI documentation](https://cli.github.com/manual/)
 
 ## Commands
@@ -19,16 +20,19 @@ Phantom provides seamless integration with GitHub, allowing you to quickly creat
 Creates a worktree for a GitHub pull request or issue.
 
 **Syntax:**
+
 ```bash
 phantom github checkout <number> [options]
 ```
 
 **Alias:**
+
 ```bash
 phantom gh checkout <number> [options]
 ```
 
 **Options:**
+
 - `--base <branch>`: Base branch for new issue branches (issues only, default: repository default branch)
 - `--tmux` / `-t`: Open the worktree in a new tmux window (requires tmux)
 - `--tmux-vertical` / `--tmux-v`: Open the worktree in a vertical tmux split
@@ -52,6 +56,7 @@ npm test
 ```
 
 **What happens:**
+
 - Creates a worktree named after the PR branch (fork PRs use `{owner}/{branch}`)
 - Checks out the PR's branch
 - You can test the changes without affecting your main working directory
@@ -71,6 +76,7 @@ phantom shell issues/456
 ```
 
 **What happens:**
+
 - Creates a worktree named `issues/456`
 - Creates a new branch `issues/456` based on the default branch
 - You can start implementing the fix immediately
@@ -120,6 +126,7 @@ This section explains how `phantom github checkout` works internally, including 
 When checking out a pull request, Phantom performs the following steps:
 
 #### 1. Fetch Remote Branch
+
 ```bash
 # For PRs from forks:
 git fetch origin pull/{number}/head:{owner}/{head-ref}
@@ -129,10 +136,12 @@ git fetch origin {head-ref}:{head-ref}
 ```
 
 The command intelligently detects whether the PR comes from a fork or the same repository:
+
 - **Fork PRs**: Uses GitHub's special `pull/{number}/head` reference and prefixes the branch with `{owner}/`
 - **Same-repo PRs**: Uses the actual branch name from the PR
 
 #### 2. Set Upstream Tracking
+
 ```bash
 # For fork PRs:
 git branch --set-upstream-to origin/pull/{number}/head {owner}/{head-ref}
@@ -144,6 +153,7 @@ git branch --set-upstream-to origin/{head-ref} {head-ref}
 This enables easy updates with `git pull` in the worktree.
 
 #### 3. Create Worktree
+
 ```bash
 git worktree add {worktree-path} {branch-name}
 ```
@@ -158,20 +168,24 @@ git worktree add {worktree-path} -b issues/{number} {base}
 ```
 
 Where `{base}` is:
+
 - The value provided with `--base` option, or
 - `HEAD` if no base is specified
 
 ### Key Implementation Details
 
 #### Remote Branch Detection
+
 The command determines if a PR is from a fork by checking if the PR's head repository differs from the base repository. This information comes from the GitHub API response.
 
 #### Error Handling
+
 - If the GitHub API call fails, the command exits with an appropriate error message
 - If Git operations fail, the error is propagated to the user
 - The command validates that the GitHub CLI (`gh`) is available before proceeding
 
 #### Naming Conventions
+
 - Pull request worktrees:
   - Same-repo PRs: `{head-ref}` (PR head ref)
   - Fork PRs: `{owner}/{head-ref}`

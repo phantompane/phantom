@@ -1,4 +1,4 @@
-import { ok, strictEqual } from "node:assert";
+import { strictEqual } from "node:assert";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { describe, it } from "node:test";

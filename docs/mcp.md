@@ -68,13 +68,16 @@ phantom mcp serve
 The Phantom MCP server exposes four main tools:
 
 ### 1. `phantom_create_worktree`
+
 Creates a new Git worktree.
 
 **Parameters:**
+
 - `name` (required): Name for the worktree (also used as the branch name)
 - `baseBranch` (optional): Base branch to create from (defaults to current branch)
 
 **Example:**
+
 ```typescript
 {
   "tool": "phantom_create_worktree",
@@ -86,11 +89,13 @@ Creates a new Git worktree.
 ```
 
 ### 2. `phantom_list_worktrees`
+
 Lists all Git worktrees (phantoms).
 
 **Parameters:** None
 
 **Example:**
+
 ```typescript
 {
   "tool": "phantom_list_worktrees",
@@ -99,13 +104,16 @@ Lists all Git worktrees (phantoms).
 ```
 
 ### 3. `phantom_delete_worktree`
+
 Deletes a Git worktree (phantom).
 
 **Parameters:**
+
 - `name` (required): Name of the worktree to delete
 - `force` (optional): Force deletion even if there are uncommitted changes
 
 **Example:**
+
 ```typescript
 {
   "tool": "phantom_delete_worktree",
@@ -117,13 +125,16 @@ Deletes a Git worktree (phantom).
 ```
 
 ### 4. `phantom_github_checkout`
+
 Checkout a GitHub issue or pull request by number into a new worktree.
 
 **Parameters:**
+
 - `number` (required): Issue or pull request number to checkout
 - `base` (optional): Base branch for issues (not applicable for pull requests)
 
 **Example:**
+
 ```typescript
 {
   "tool": "phantom_github_checkout",
@@ -156,8 +167,8 @@ AI Agent:
 Perfect for exploring multiple solutions:
 
 ```
-User: "Create 2 variations of a simple hello world app using Express and Hono, 
-       each in their own worktree. Make sure each can be started with npm start 
+User: "Create 2 variations of a simple hello world app using Express and Hono,
+       each in their own worktree. Make sure each can be started with npm start
        and served on a different URL."
 
 AI Agent:

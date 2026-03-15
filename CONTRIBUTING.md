@@ -101,7 +101,8 @@ pnpm ready
 ```
 
 This command runs:
-- Linting (`pnpm lint`)
+
+- Formatting and linting (`pnpm lint`)
 - Type checking (`pnpm typecheck`)
 - All tests (`pnpm test`)
 
@@ -132,6 +133,7 @@ When contributing documentation:
 To release a new version of Phantom:
 
 1. **Bump version**
+
    ```bash
    # Trigger the automated version bump workflow via GitHub CLI
    # release_type: patch | minor | major | prepatch | preminor | premajor | prerelease
@@ -149,19 +151,20 @@ To release a new version of Phantom:
    - Merge the PR once checks pass
 
 3. **Create GitHub release (publishes to npm)**
-    ```bash
-    # Create a release with automatically generated notes
-    gh release create v<version> \
-      --title "Phantom v<version>" \
-      --generate-notes \
-      --target main
 
-    # Example for v1.3.0:
-    gh release create v1.3.0 \
-      --title "Phantom v1.3.0" \
-      --generate-notes \
-      --target main
-    ```
+   ```bash
+   # Create a release with automatically generated notes
+   gh release create v<version> \
+     --title "Phantom v<version>" \
+     --generate-notes \
+     --target main
+
+   # Example for v1.3.0:
+   gh release create v1.3.0 \
+     --title "Phantom v1.3.0" \
+     --generate-notes \
+     --target main
+   ```
 
    Publishing to npm is handled by `.github/workflows/npm-publish.yml` when the release is published. Releases from `pre*` bumps are published with the `next` dist-tag; all other releases use `latest`. Monitor the workflow run in GitHub Actions to ensure it completes successfully.
 
@@ -175,53 +178,59 @@ To release a new version of Phantom:
      - Include PR numbers for all changes
      - Add installation/upgrade instructions
      - Include "New Contributors" section with PR numbers
-   
-   ```bash
+
+   ````bash
    # Edit the release notes
    gh release edit v<version> --notes "$(cat <<'EOF'
    ## 🚀 What's New in v<version>
-   
+
    <Brief overview of major changes>
-   
+
    ### ✨ New Features
-   
+
    #### Feature Name (#PR) - Thanks @contributor!
    Description and usage example:
    ```bash
    # Example command
-   ```
-   
+   ````
+
    ### 🛠️ Improvements
    - **Improvement** (#PR) - Description
    - **Another improvement** (#PR) - Description
-   
+
    ### 🐛 Bug Fixes
    - Fixed issue description (#PR) - Thanks @contributor!
-   
+
    ### 📚 Documentation
    - Documentation updates (#PR)
-   
+
    ### 🙏 New Contributors
+
    Welcome to our new contributors!
    - @username - Contribution description (#PR)
-   
-   ---
-   
+
+   ***
+
    **Installation/Upgrade:**
+
    ```bash
    npm install -g @phantompane/cli@latest
    # or
    brew upgrade phantom
    ```
-   
+
    **Full Changelog**: https://github.com/phantompane/phantom/compare/v<previous>...v<version>
    EOF
    )"
+
+   ```
+
    ```
 
 ## 🙏 Thank You!
 
 Your contributions make Phantom better for everyone. If you have questions, feel free to:
+
 - Open an issue for bugs or feature requests
 - Start a discussion for general questions
 - Ask in pull request comments

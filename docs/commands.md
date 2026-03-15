@@ -39,6 +39,7 @@ phantom create [name] [options]
 If `name` is omitted, a random human-readable name is generated automatically.
 
 **Options:**
+
 - `--shell` - Create and enter interactive shell
 - `--exec <command>` - Create and execute command
 - `--tmux` / `-t` - Create and open in new tmux window
@@ -48,6 +49,7 @@ If `name` is omitted, a random human-readable name is generated automatically.
 - `--base <branch/commit>` - Branch or commit to create the new worktree from (defaults to HEAD)
 
 **Examples:**
+
 ```bash
 # Auto-generate a random name
 phantom create
@@ -80,6 +82,7 @@ phantom attach <branch-name> [options]
 ```
 
 **Options:**
+
 - `--shell` - Attach and enter interactive shell
 - `--exec <command>` - Attach and execute command
 - `--tmux` / `-t` - Attach and open in new tmux window
@@ -87,6 +90,7 @@ phantom attach <branch-name> [options]
 - `--tmux-horizontal` / `--tmux-h` - Attach and split tmux pane horizontally
 
 **Examples:**
+
 ```bash
 # Basic usage
 phantom attach feature/existing-branch
@@ -110,10 +114,12 @@ phantom list [options]
 ```
 
 **Options:**
+
 - `--fzf` - Interactive selection with fzf (outputs selected name)
 - `--names` - Machine-readable output (for scripting)
 
 **Examples:**
+
 ```bash
 # Basic list
 phantom list
@@ -136,9 +142,11 @@ phantom where <name> [options]
 ```
 
 **Options:**
+
 - `--fzf` - Select worktree with fzf and get its path
 
 **Examples:**
+
 ```bash
 # Get path
 phantom where feature-auth
@@ -159,11 +167,13 @@ phantom delete <name...> [options]
 ```
 
 **Options:**
+
 - `--force` / `-f` - Force delete with uncommitted changes
 - `--current` - Delete the current worktree (when inside one)
 - `--fzf` - Select worktree to delete with fzf
 
 **Examples:**
+
 ```bash
 # Basic delete
 phantom delete feature-auth
@@ -192,6 +202,7 @@ phantom shell <name> [options]
 ```
 
 **Options:**
+
 - `--fzf` - Select worktree with fzf and open shell
 - `--tmux`, `-t` - Open shell in new tmux window
 - `--tmux-vertical`, `--tmux-v` - Open shell in vertical split pane
@@ -199,11 +210,13 @@ phantom shell <name> [options]
 
 **Environment Variables:**
 When in a phantom shell, these environment variables are set:
+
 - `PHANTOM` - Set to "1"
 - `PHANTOM_NAME` - Name of the current worktree
 - `PHANTOM_PATH` - Absolute path to the worktree directory
 
 **Examples:**
+
 ```bash
 # Open shell
 phantom shell feature-auth
@@ -225,6 +238,7 @@ phantom shell --fzf --tmux
 ```
 
 **Notes:**
+
 - tmux options require being inside a tmux session
 
 ### exec
@@ -236,12 +250,14 @@ phantom exec [options] <name> <command> [args...]
 ```
 
 **Options:**
+
 - `--fzf` - Select worktree with fzf and execute command
 - `--tmux`, `-t` - Execute command in new tmux window
 - `--tmux-vertical`, `--tmux-v` - Execute command in vertical split pane
 - `--tmux-horizontal`, `--tmux-h` - Execute command in horizontal split pane
 
 **Examples:**
+
 ```bash
 # Install dependencies
 phantom exec feature-auth npm install
@@ -272,6 +288,7 @@ phantom exec --fzf --tmux npm run dev
 ```
 
 **Notes:**
+
 - tmux options require being inside a tmux session
 
 ### edit
@@ -283,6 +300,7 @@ phantom edit <name> [path]
 ```
 
 **Examples:**
+
 ```bash
 # Open the worktree root with your configured editor
 phantom edit feature-auth
@@ -292,6 +310,7 @@ phantom edit feature-auth README.md
 ```
 
 **Notes:**
+
 - Set a default editor with `phantom preferences set editor <command>`; phantom.editor takes priority over `$EDITOR`
 - The editor starts in the worktree directory so relative paths resolve there
 
@@ -304,17 +323,20 @@ phantom ai <name>
 ```
 
 **Examples:**
+
 ```bash
 # Launch the configured AI assistant in a worktree
 phantom ai feature-auth
 ```
 
 **Notes:**
+
 - Configure the assistant with `phantom preferences set ai <command>` (e.g., `claude` or `codex --full-auto`) stored as `phantom.ai` in global git config
 
 ## Preferences
 
 Configure defaults for Phantom commands using global git config. Preferences are stored under the `phantom.<key>` namespace and currently support:
+
 - `editor` - preferred editor command for `phantom edit`
 - `ai` - assistant command for `phantom ai`
 - `worktreesDirectory` - where to store worktrees (relative to the Git repository root; defaults to `.git/phantom/worktrees`)
@@ -363,6 +385,7 @@ phantom preferences remove directoryNameSeparator
 ```
 
 **Notes:**
+
 - `phantom edit` prefers `phantom.editor` and falls back to `$EDITOR` if unset
 - `phantom ai` requires `phantom.ai` to be configured
 - `worktreesDirectory` should be set relative to the Git repository root (default: `.git/phantom/worktrees`)
@@ -380,12 +403,14 @@ phantom gh checkout <number> [options]  # alias
 ```
 
 **Options:**
+
 - `--base <branch>` - Base branch for new issue branches (issues only, default: repository default branch)
 - `--tmux` / `-t` - Open the worktree in a new tmux window after checkout
 - `--tmux-vertical` / `--tmux-v` - Open the worktree in a vertical tmux split
 - `--tmux-horizontal` / `--tmux-h` - Open the worktree in a horizontal tmux split
 
 **Examples:**
+
 ```bash
 # Create worktree for PR #123
 phantom github checkout 123
@@ -407,11 +432,13 @@ phantom gh checkout 123
 ```
 
 **Requirements:**
+
 - GitHub CLI (gh) must be installed
 - Must be authenticated with `gh auth login`
 - tmux options require being inside a tmux session
 
 **Behavior:**
+
 - For same-repo PRs: Worktree name matches the PR branch (e.g., `feature/add-logging`)
 - For fork PRs: Worktree name is `{owner}/{branch}` (e.g., `aku11i/feature/add-logging`)
 - For Issues: Creates worktree named `issues/{number}` with a new branch
@@ -429,9 +456,11 @@ phantom mcp <subcommand> [options]
 ```
 
 **Subcommands:**
+
 - `serve` - Start the MCP server (stdio transport)
 
 **Examples:**
+
 ```bash
 # Start the MCP server with stdio transport
 phantom mcp serve
@@ -457,6 +486,7 @@ phantom completion <shell>
 ```
 
 **Supported Shells:**
+
 - `fish` - Fish shell
 - `zsh` - Z shell
 - `bash` - Bash shell
@@ -480,6 +510,7 @@ eval "$(phantom completion bash)"
 ## Exit Codes
 
 Phantom uses the following exit codes:
+
 - `0` - Success
 - `1` - General error
 - `2` - Invalid arguments

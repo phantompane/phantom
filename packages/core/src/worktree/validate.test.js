@@ -10,9 +10,8 @@ mock.module("./list.ts", {
   },
 });
 
-const { validateWorktreeExists, validateWorktreeDoesNotExist } = await import(
-  "./validate.ts"
-);
+const { validateWorktreeExists, validateWorktreeDoesNotExist } =
+  await import("./validate.ts");
 const { isOk, isErr } = await import("@phantompane/shared");
 
 describe("validateWorktreeExists", () => {

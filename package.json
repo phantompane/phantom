@@ -11,8 +11,8 @@
     "test:shell:bash": "pnpm --filter @phantompane/cli-private run test:shell:bash",
     "test:shell:fish": "pnpm --filter @phantompane/cli-private run test:shell:fish",
     "test:shell:zsh": "pnpm --filter @phantompane/cli-private run test:shell:zsh",
-    "lint": "biome check .",
-    "fix": "biome check --write .",
+    "lint": "oxfmt --check . && oxlint .",
+    "fix": "oxfmt --write . && oxlint --fix .",
     "typecheck": "pnpm -r typecheck",
     "ready": "pnpm fix && pnpm typecheck && pnpm test",
     "ready:check": "pnpm lint && pnpm typecheck && pnpm test",
@@ -23,10 +23,11 @@
     "node": ">=22.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.4",
     "@types/node": "^25.3.5",
     "@typescript/native-preview": "7.0.0-dev.20260309.1",
     "esbuild": "^0.27.3",
+    "oxfmt": "^0.40.0",
+    "oxlint": "^1.55.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {

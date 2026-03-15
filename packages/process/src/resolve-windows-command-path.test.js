@@ -10,9 +10,8 @@ mock.module("node:child_process", {
   },
 });
 
-const { resolveWindowsCommandPath } = await import(
-  "./resolve-windows-command-path.ts"
-);
+const { resolveWindowsCommandPath } =
+  await import("./resolve-windows-command-path.ts");
 
 describe("resolveWindowsCommandPath", () => {
   it("should throw when called on non-Windows platforms", () => {

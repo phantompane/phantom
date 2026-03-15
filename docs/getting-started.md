@@ -23,6 +23,7 @@ npm install -g @phantompane/cli
 ```
 
 > **Note:** When installed via Homebrew, shell completions for Fish and Zsh are set up automatically. For Bash users, you need bash-completion v2 installed first, then add this to your `.bashrc` or `.bash_profile`:
+>
 > ```bash
 > # Prerequisites: bash-completion v2 must be installed
 > eval "$(phantom completion bash)"
@@ -48,6 +49,7 @@ phantom create feature-awesome --shell
 ```
 
 Benefits:
+
 - **True multitasking** - Work on multiple features in parallel without context switching
 - **Clean workspace** - No need to stash or commit WIP when switching tasks
 - **Centralized management** - All worktrees in one predictable location
@@ -76,6 +78,7 @@ exit
 These five commands will cover 90% of your Phantom usage:
 
 ### 1. Create a Worktree
+
 ```bash
 phantom create feature-name
 # Or omit the name to auto-generate one
@@ -83,21 +86,25 @@ phantom create
 ```
 
 ### 2. Enter a Worktree
+
 ```bash
 phantom shell feature-name
 ```
 
 ### 3. List Your Worktrees
+
 ```bash
 phantom list
 ```
 
 ### 4. Run Commands in a Worktree
+
 ```bash
 phantom exec feature-name npm test
 ```
 
 ### 5. Delete Worktrees
+
 ```bash
 phantom delete feature-name
 phantom delete feature-a feature-b  # delete multiple at once

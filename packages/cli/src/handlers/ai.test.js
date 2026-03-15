@@ -17,7 +17,7 @@ const exitWithErrorMock = mock.fn((message, code) => {
   consoleErrorMock(`Error: ${message}`);
   try {
     exitMock(code);
-  } catch (_error) {
+  } catch {
     // Ignore to surface the formatted exit message below.
   }
   throw new Error(`Exit with code ${code}: ${message}`);

@@ -21,20 +21,11 @@ Create a `phantom.config.json` file in your repository root:
   "worktreesDirectory": "../phantom-worktrees",
   "directoryNameSeparator": "-",
   "postCreate": {
-    "copyFiles": [
-      ".env",
-      ".env.local",
-      "config/local.json"
-    ],
-    "commands": [
-      "pnpm install",
-      "pnpm build"
-    ]
+    "copyFiles": [".env", ".env.local", "config/local.json"],
+    "commands": ["pnpm install", "pnpm build"]
   },
   "preDelete": {
-    "commands": [
-      "docker compose down"
-    ]
+    "commands": ["docker compose down"]
   }
 }
 ```
@@ -46,6 +37,7 @@ Create a `phantom.config.json` file in your repository root:
 A custom base directory where Phantom worktrees will be created. By default, Phantom creates all worktrees in `.git/phantom/worktrees/`. Set this in `phantom.config.json` for a project-wide location, or in `phantom preferences` for a personal default.
 
 **Use Cases:**
+
 - Store worktrees outside the main repository directory
 - Use a shared location for multiple repositories
 - Keep worktrees on a different filesystem or drive
@@ -54,19 +46,23 @@ A custom base directory where Phantom worktrees will be created. By default, Pha
 **Examples:**
 
 **Relative path (relative to repository root):**
+
 ```json
 {
   "worktreesDirectory": "../phantom-worktrees"
 }
 ```
+
 This creates worktrees directly in `../phantom-worktrees/` (e.g., `../phantom-worktrees/feature-1`)
 
 **Absolute path:**
+
 ```json
 {
   "worktreesDirectory": "/tmp/my-phantom-worktrees"
 }
 ```
+
 This creates worktrees directly in `/tmp/my-phantom-worktrees/` (e.g., `/tmp/my-phantom-worktrees/feature-1`)
 
 **Directory Structure:**
@@ -85,6 +81,7 @@ parent-directory/
 ```
 
 **Notes:**
+
 - If `worktreesDirectory` is not specified, defaults to `.git/phantom/worktrees`
 - Use a path relative to the Git repository root (relative paths are resolved from the repo root; absolute paths are used as-is)
 - The directory will be created automatically if it doesn't exist
@@ -97,6 +94,7 @@ parent-directory/
 Controls how `/` in worktree names is mapped to the filesystem directory name. By default, Phantom keeps `/`, which creates nested directories. Set this in `phantom.config.json` for a project-wide default, or in `phantom preferences` for a personal default.
 
 **Use Cases:**
+
 - Keep all worktrees at one directory level for easier browsing
 - Preserve branch naming conventions like `feature/test` while storing directories as `feature-test`
 - Use a separator that matches team conventions such as `-` or `_`
@@ -104,22 +102,27 @@ Controls how `/` in worktree names is mapped to the filesystem directory name. B
 **Examples:**
 
 **Flat directories with hyphens:**
+
 ```json
 {
   "directoryNameSeparator": "-"
 }
 ```
+
 This maps `feature/test` to `feature-test` on disk while the Git branch remains `feature/test`.
 
 **Flat directories with underscores:**
+
 ```json
 {
   "directoryNameSeparator": "_"
 }
 ```
+
 This maps `release/2026/q1` to `release_2026_q1`.
 
 **Notes:**
+
 - If `directoryNameSeparator` is not specified, Phantom keeps the current behavior and uses `/`
 - Only the directory name is transformed; the Git branch name is unchanged
 - `phantom preferences` takes precedence over `phantom.config.json` when both are set
@@ -130,6 +133,7 @@ This maps `release/2026/q1` to `release_2026_q1`.
 An array of file paths to automatically copy from the current worktree to newly created worktrees.
 
 **Use Cases:**
+
 - Environment configuration files (`.env`, `.env.local`)
 - Local development settings
 - Secret files that are gitignored
@@ -137,19 +141,17 @@ An array of file paths to automatically copy from the current worktree to newly 
 - API keys and certificates
 
 **Example:**
+
 ```json
 {
   "postCreate": {
-    "copyFiles": [
-      ".env",
-      ".env.local",
-      "config/database.local.yml"
-    ]
+    "copyFiles": [".env", ".env.local", "config/database.local.yml"]
   }
 }
 ```
 
 **Notes:**
+
 - Paths are relative to the repository root
 - Currently, glob patterns are not supported
 - Files must exist in the source worktree
@@ -161,6 +163,7 @@ An array of file paths to automatically copy from the current worktree to newly 
 An array of commands to execute after creating a new worktree.
 
 **Use Cases:**
+
 - Installing dependencies
 - Building the project
 - Setting up the development environment
@@ -168,19 +171,17 @@ An array of commands to execute after creating a new worktree.
 - Generating configuration files
 
 **Example:**
+
 ```json
 {
   "postCreate": {
-    "commands": [
-      "pnpm install",
-      "pnpm db:migrate",
-      "pnpm db:seed"
-    ]
+    "commands": ["pnpm install", "pnpm db:migrate", "pnpm db:seed"]
   }
 }
 ```
 
 **Notes:**
+
 - Commands are executed in order
 - Execution stops on the first failed command
 - Commands run in the new worktree's directory
@@ -191,22 +192,23 @@ An array of commands to execute after creating a new worktree.
 An array of commands to execute in a worktree **before** it is deleted. Use this to gracefully shut down resources or clean up artifacts that were created in the worktree.
 
 **Use Cases:**
+
 - Stop background services started from the worktree (e.g., `docker compose down`)
 - Remove generated assets or caches before deletion
 - Run custom teardown scripts
 
 **Example:**
+
 ```json
 {
   "preDelete": {
-    "commands": [
-      "docker compose down"
-    ]
+    "commands": ["docker compose down"]
   }
 }
 ```
 
 **Notes:**
+
 - Commands run in the worktree being deleted
 - Commands are executed in order and halt on the first failure
 - If a command fails, the worktree is **not** removed

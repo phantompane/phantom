@@ -201,7 +201,6 @@ AIエージェントは2つのワークツリーを作成し、それぞれにEx
 
 詳細な設定と使用方法については[MCP統合ガイド](./docs/mcp.md)を参照してください。
 
-
 ## 🔍 基本的な使い方
 
 ### 新しいワークツリーの作成
@@ -239,7 +238,6 @@ phantom delete feature-awesome
 phantom delete feature-a feature-b  # 複数のワークツリーをまとめて削除
 ```
 
-
 ## 📚 ドキュメント
 
 - **[はじめに](./docs/getting-started.md)** - 一般的なワークフローとヒント
@@ -257,6 +255,7 @@ phantom delete feature-a feature-b  # 複数のワークツリーをまとめて
 ## 🤝 コントリビュート
 
 コントリビュートは歓迎します！[コントリビューションガイド](./CONTRIBUTING.md)をご覧ください：
+
 - 開発環境のセットアップ
 - コードスタイルガイドライン
 - テスト要件

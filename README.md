@@ -242,6 +242,7 @@ phantom exec feature-awesome {command to run}
 phantom edit feature-awesome
 phantom edit feature-awesome README.md
 ```
+
 Uses the `phantom.editor` preference when set (falls back to `$EDITOR`).
 
 ### Launch your AI assistant in the worktree
@@ -249,6 +250,7 @@ Uses the `phantom.editor` preference when set (falls back to `$EDITOR`).
 ```bash
 phantom ai feature-awesome
 ```
+
 Configure it first with `phantom preferences set ai <command>`.
 
 ### Clean up when done
@@ -257,7 +259,6 @@ Configure it first with `phantom preferences set ai <command>`.
 phantom delete feature-awesome
 phantom delete feature-a feature-b  # delete multiple at once
 ```
-
 
 ## 📚 Documentation
 
@@ -276,8 +277,9 @@ phantom delete feature-a feature-b  # delete multiple at once
 ## 🤝 Contributing
 
 Contributions are welcome! See our [Contributing Guide](./CONTRIBUTING.md) for:
+
 - Development setup
-- Code style guidelines  
+- Code style guidelines
 - Testing requirements
 - Pull request process
 
