@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "phantom": "node --no-warnings --experimental-strip-types src/bin/phantom.ts",
-    "prebuild": "git clean -fdx dist",
-    "build": "node build.ts",
+    "build": "tsdown",
     "precompile": "rm -f output/*",
     "compile": "node --no-warnings --experimental-strip-types build-executable.ts",
     "lint": "oxfmt --check . && oxlint .",
