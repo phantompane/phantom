@@ -5,19 +5,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm -r build",
-    "test": "pnpm -r test",
-    "test:shell": "pnpm --filter @phantompane/cli-private run test:shell",
-    "test:shell:bash": "pnpm --filter @phantompane/cli-private run test:shell:bash",
-    "test:shell:fish": "pnpm --filter @phantompane/cli-private run test:shell:fish",
-    "test:shell:zsh": "pnpm --filter @phantompane/cli-private run test:shell:zsh",
-    "lint": "oxfmt --check . && oxlint .",
-    "fix": "oxfmt --write . && oxlint --fix .",
-    "typecheck": "pnpm -r typecheck",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "test:shell": "turbo run test:shell --filter=@phantompane/cli-private",
+    "test:shell:bash": "turbo run test:shell:bash --filter=@phantompane/cli-private",
+    "test:shell:fish": "turbo run test:shell:fish --filter=@phantompane/cli-private",
+    "test:shell:zsh": "turbo run test:shell:zsh --filter=@phantompane/cli-private",
+    "lint": "turbo run lint //#lint:root",
+    "fix": "turbo run fix //#fix:root",
+    "lint:root": "oxfmt --check AGENTS.md CONTRIBUTING.md README.ja.md README.md .gitignore .node-version .oxlintrc.json package.json pnpm-workspace.yaml tsconfig.base.json tsconfig.json turbo.json docs .github",
+    "fix:root": "oxfmt --write AGENTS.md CONTRIBUTING.md README.ja.md README.md .gitignore .node-version .oxlintrc.json package.json pnpm-workspace.yaml tsconfig.base.json tsconfig.json turbo.json docs .github",
+    "typecheck": "turbo run typecheck",
     "ready": "pnpm fix && pnpm typecheck && pnpm test",
     "ready:check": "pnpm lint && pnpm typecheck && pnpm test",
     "phantom": "pnpm --filter @phantompane/cli-private run phantom",
-    "compile": "pnpm --filter @phantompane/cli-private run compile"
+    "compile": "turbo run compile --filter=@phantompane/cli-private"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -28,6 +30,7 @@
     "esbuild": "^0.27.3",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.55.0",
+    "turbo": "^2.8.17",
     "typescript": "^5.9.3"
   },
   "dependencies": {

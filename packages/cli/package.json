@@ -9,6 +9,8 @@
     "build": "node build.ts",
     "precompile": "rm -f output/*",
     "compile": "node --no-warnings --experimental-strip-types build-executable.ts",
+    "lint": "oxfmt --check . && oxlint .",
+    "fix": "oxfmt --write . && oxlint --fix .",
     "typecheck": "tsc --noEmit",
     "test:shell": "pnpm run test:shell:bash && pnpm run test:shell:zsh && pnpm run test:shell:fish",
     "test:shell:bash": "node --test --experimental-strip-types --experimental-test-module-mocks src/completions/phantom.bash.test.shell.js",

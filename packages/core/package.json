@@ -6,6 +6,8 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
+    "lint": "oxfmt --check . && oxlint .",
+    "fix": "oxfmt --write . && oxlint --fix .",
     "typecheck": "tsc --noEmit",
     "test": "node --test --experimental-strip-types --experimental-test-module-mocks \"src/**/*.test.js\""
   },

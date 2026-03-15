@@ -1,0 +1,64 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "globalDependencies": [
+    ".oxlintrc.json",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "turbo.json",
+    "tsconfig.base.json",
+    "tsconfig.json"
+  ],
+  "tasks": {
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
+    "build": {
+      "dependsOn": ["^build", "transit"],
+      "outputs": ["dist/**"]
+    },
+    "compile": {
+      "dependsOn": ["^build", "transit"],
+      "outputs": ["dist/**", "output/**"]
+    },
+    "lint": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
+    "fix": {
+      "cache": false,
+      "outputs": []
+    },
+    "typecheck": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
+    "test:shell": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
+    "test:shell:bash": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
+    "test:shell:fish": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
+    "test:shell:zsh": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
+    "//#lint:root": {
+      "outputs": []
+    },
+    "//#fix:root": {
+      "cache": false,
+      "outputs": []
+    }
+  }
+}
