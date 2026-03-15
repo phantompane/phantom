@@ -4,9 +4,9 @@
 
 **Git worktreeを使ったシームレスな並行開発のためのパワフルなCLIツール**
 
-[![npm version](https://img.shields.io/npm/v/@aku11i/phantom.svg)](https://www.npmjs.com/package/@aku11i/phantom)
+[![npm version](https://img.shields.io/npm/v/@phantompane/cli.svg)](https://www.npmjs.com/package/@phantompane/cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/node/v/@aku11i/phantom.svg)](https://nodejs.org)
+[![Node.js Version](https://img.shields.io/node/v/@phantompane/cli.svg)](https://nodejs.org)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/aku11i/phantom)
 
 [English](./README.md) • [インストール](#-インストール) • [なぜPhantom？](#-なぜphantom) • [基本的な使い方](#-基本的な使い方) • [ドキュメント](#-ドキュメント)
@@ -45,7 +45,7 @@ brew install phantom
 #### npmを使用
 
 ```bash
-npm install -g @aku11i/phantom
+npm install -g @phantompane/cli
 ```
 
 ## 🤔 なぜPhantom？

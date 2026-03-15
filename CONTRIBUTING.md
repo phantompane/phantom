@@ -209,7 +209,7 @@ To release a new version of Phantom:
    
    **Installation/Upgrade:**
    ```bash
-   npm install -g @aku11i/phantom@latest
+   npm install -g @phantompane/cli@latest
    # or
    brew upgrade phantom
    ```

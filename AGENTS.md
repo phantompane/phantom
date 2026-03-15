@@ -14,7 +14,7 @@
 - Tests: `pnpm test` (native `node --test` across packages).
 - Pre-flight: `pnpm ready` (fix + typecheck + test) or `pnpm ready:check` (lint + typecheck + test).
 - After finishing an implementation, run `pnpm ready` to execute lint, typecheck, and tests before shipping changes.
-- Scope work: `pnpm --filter <pkg> <cmd>` (e.g., `pnpm --filter @aku11i/phantom-github test`).
+- Scope work: `pnpm --filter <pkg> <cmd>` (e.g., `pnpm --filter @phantompane/github test`).
 
 ## Coding Style & Naming Conventions
 - ESM with TypeScript sources; tests are `.test.js` files using stripped types.

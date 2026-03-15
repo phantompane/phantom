@@ -7,7 +7,7 @@ Phantom makes Git worktrees simple and intuitive, enabling you to run multiple t
 ## Installation
 
 ```bash
-npm install -g @aku11i/phantom
+npm install -g @phantompane/cli
 ```
 
 ## Documentation
