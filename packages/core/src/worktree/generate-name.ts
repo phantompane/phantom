@@ -16,7 +16,7 @@ function generate(): string {
 export async function generateUniqueName(
   gitRoot: string,
   worktreesDirectory: string,
-  directoryNameSeparator = "/",
+  directoryNameSeparator: string,
 ): Promise<Result<string, Error>> {
   for (let i = 0; i < MAX_RETRIES; i++) {
     const name = generate();

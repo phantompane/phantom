@@ -83,6 +83,7 @@ describe("paths", () => {
       const result = getWorktreePathFromDirectory(
         "/test/repo/.git/phantom/worktrees",
         "feature/test",
+        "/",
       );
 
       strictEqual(

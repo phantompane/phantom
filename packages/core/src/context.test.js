@@ -52,7 +52,7 @@ describe("createContext", () => {
     equal(context.worktreesDirectory, "/resolved/user");
     equal(context.config?.worktreesDirectory, "config-dir");
     equal(context.preferences.worktreesDirectory, "../user-worktrees");
-    equal(context.directoryNameSeparator, undefined);
+    equal(context.directoryNameSeparator, "/");
   });
 
   it("uses config worktreesDirectory when preference is absent", async () => {
@@ -72,7 +72,7 @@ describe("createContext", () => {
       "../config-worktrees",
     ]);
     equal(context.worktreesDirectory, "/resolved/../config-worktrees");
-    equal(context.directoryNameSeparator, undefined);
+    equal(context.directoryNameSeparator, "/");
   });
 
   it("falls back to default worktreesDirectory when neither preference nor config is set", async () => {
@@ -91,7 +91,7 @@ describe("createContext", () => {
       undefined,
     ]);
     equal(context.worktreesDirectory, "/repo/.git/phantom/worktrees");
-    equal(context.directoryNameSeparator, undefined);
+    equal(context.directoryNameSeparator, "/");
   });
 
   it("uses preferences directoryNameSeparator over config", async () => {

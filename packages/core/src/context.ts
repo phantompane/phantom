@@ -6,7 +6,7 @@ import { loadPreferences, type Preferences } from "./preferences/loader.ts";
 export interface Context {
   gitRoot: string;
   worktreesDirectory: string;
-  directoryNameSeparator?: string;
+  directoryNameSeparator: string;
   config: PhantomConfig | null;
   preferences: Preferences;
 }
@@ -20,7 +20,7 @@ export async function createContext(gitRoot: string): Promise<Context> {
   const worktreesDirectory =
     worktreesDirectoryPreference ?? worktreesDirectoryConfig;
   const directoryNameSeparator =
-    preferences.directoryNameSeparator ?? config?.directoryNameSeparator;
+    preferences.directoryNameSeparator ?? config?.directoryNameSeparator ?? "/";
 
   return {
     gitRoot,

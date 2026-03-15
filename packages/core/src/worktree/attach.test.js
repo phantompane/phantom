@@ -65,6 +65,7 @@ describe("attachWorktreeCore", () => {
       "feature-branch",
       undefined,
       undefined,
+      "/",
     );
 
     deepStrictEqual(result.ok, true);
@@ -104,6 +105,7 @@ describe("attachWorktreeCore", () => {
       "feature/branch",
       undefined,
       undefined,
+      "/",
     );
 
     deepStrictEqual(result.ok, false);
@@ -129,6 +131,7 @@ describe("attachWorktreeCore", () => {
       "existing-feature",
       undefined,
       undefined,
+      "/",
     );
 
     deepStrictEqual(result.ok, false);
@@ -155,6 +158,7 @@ describe("attachWorktreeCore", () => {
       "non-existent",
       undefined,
       undefined,
+      "/",
     );
 
     deepStrictEqual(result.ok, false);
@@ -181,6 +185,7 @@ describe("attachWorktreeCore", () => {
       "feature",
       undefined,
       undefined,
+      "/",
     );
 
     deepStrictEqual(result.ok, false);
@@ -203,6 +208,7 @@ describe("attachWorktreeCore", () => {
       "feature",
       undefined,
       undefined,
+      "/",
     );
 
     deepStrictEqual(result.ok, false);

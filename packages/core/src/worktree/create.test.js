@@ -113,6 +113,7 @@ describe("createWorktree", () => {
       {},
       undefined,
       undefined,
+      "/",
     );
 
     strictEqual(isOk(result), true);
@@ -156,6 +157,7 @@ describe("createWorktree", () => {
       {},
       undefined,
       undefined,
+      "/",
     );
 
     strictEqual(mkdirMock.mock.calls.length, 1);
@@ -179,6 +181,7 @@ describe("createWorktree", () => {
       {},
       undefined,
       undefined,
+      "/",
     );
 
     strictEqual(isErr(result), true);
@@ -208,6 +211,7 @@ describe("createWorktree", () => {
       },
       undefined,
       undefined,
+      "/",
     );
 
     const worktreeOptions2 = addWorktreeMock.mock.calls[0].arguments[0];
@@ -234,6 +238,7 @@ describe("createWorktree", () => {
       {},
       undefined,
       undefined,
+      "/",
     );
 
     strictEqual(isErr(result), true);
@@ -304,6 +309,7 @@ describe("createWorktree", () => {
         {},
         undefined,
         undefined,
+        "/",
       );
 
       strictEqual(isOk(result), true);
@@ -346,6 +352,7 @@ describe("createWorktree", () => {
         {},
         undefined,
         undefined,
+        "/",
       );
 
       strictEqual(isOk(result), true);
@@ -382,6 +389,7 @@ describe("createWorktree", () => {
         {},
         undefined,
         undefined,
+        "/",
       );
 
       strictEqual(validateWorktreeDoesNotExistMock.mock.callCount(), 1);
