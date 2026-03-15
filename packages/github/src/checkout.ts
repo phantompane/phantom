@@ -1,4 +1,4 @@
-import { err, type Result } from "@aku11i/phantom-shared";
+import { err, type Result } from "@phantompane/shared";
 import { fetchIssue, getGitHubRepoInfo, isPullRequest } from "./api/index.ts";
 import { checkoutIssue } from "./checkout/issue.ts";
 import { type CheckoutResult, checkoutPullRequest } from "./checkout/pr.ts";

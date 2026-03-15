@@ -6,14 +6,14 @@ import {
   generateUniqueName,
   shellInWorktree,
   WorktreeAlreadyExistsError,
-} from "@aku11i/phantom-core";
-import { getGitRoot } from "@aku11i/phantom-git";
+} from "@phantompane/core";
+import { getGitRoot } from "@phantompane/git";
 import {
   executeTmuxCommand,
   getPhantomEnv,
   isInsideTmux,
-} from "@aku11i/phantom-process";
-import { isErr, isOk } from "@aku11i/phantom-shared";
+} from "@phantompane/process";
+import { isErr, isOk } from "@phantompane/shared";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 

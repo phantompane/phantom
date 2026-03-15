@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { serve } from "@aku11i/phantom-mcp";
+import { serve } from "@phantompane/mcp";
 import { exitWithError } from "../errors.ts";
 import { mcpHelp } from "../help/mcp.ts";
 import { helpFormatter } from "../help.ts";

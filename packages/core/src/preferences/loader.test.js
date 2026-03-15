@@ -3,7 +3,7 @@ import { describe, it, mock } from "node:test";
 
 const executeGitCommandMock = mock.fn();
 
-mock.module("@aku11i/phantom-git", {
+mock.module("@phantompane/git", {
   namedExports: {
     executeGitCommand: executeGitCommandMock,
   },

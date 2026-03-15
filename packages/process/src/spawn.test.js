@@ -3,7 +3,7 @@ import { deepStrictEqual, strictEqual } from "node:assert";
 import { EventEmitter } from "node:events";
 import path from "node:path";
 import { describe, it, mock } from "node:test";
-import { isErr, isOk } from "@aku11i/phantom-shared";
+import { isErr, isOk } from "@phantompane/shared";
 import {
   ProcessExecutionError,
   ProcessSignalError,

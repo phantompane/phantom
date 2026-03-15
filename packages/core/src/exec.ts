@@ -3,8 +3,8 @@ import {
   type ProcessError,
   type SpawnSuccess,
   spawnProcess,
-} from "@aku11i/phantom-process";
-import { err, isErr, type Result } from "@aku11i/phantom-shared";
+} from "@phantompane/process";
+import { err, isErr, type Result } from "@phantompane/shared";
 import type { WorktreeNotFoundError } from "./worktree/errors.ts";
 import { validateWorktreeExists } from "./worktree/validate.ts";
 

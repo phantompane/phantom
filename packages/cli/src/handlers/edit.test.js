@@ -1,7 +1,7 @@
 import { rejects, strictEqual } from "node:assert";
 import { after, describe, it, mock } from "node:test";
-import { WorktreeNotFoundError } from "@aku11i/phantom-core";
-import { err, ok } from "@aku11i/phantom-shared";
+import { WorktreeNotFoundError } from "@phantompane/core";
+import { err, ok } from "@phantompane/shared";
 
 const exitMock = mock.fn((code) => {
   throw new Error(`Process exit with code ${code}`);
@@ -38,19 +38,19 @@ mock.module("node:child_process", {
   },
 });
 
-mock.module("@aku11i/phantom-git", {
+mock.module("@phantompane/git", {
   namedExports: {
     getGitRoot: getGitRootMock,
   },
 });
 
-mock.module("@aku11i/phantom-process", {
+mock.module("@phantompane/process", {
   namedExports: {
     getPhantomEnv: getPhantomEnvMock,
   },
 });
 
-mock.module("@aku11i/phantom-core", {
+mock.module("@phantompane/core", {
   namedExports: {
     validateWorktreeExists: validateWorktreeExistsMock,
     createContext: createContextMock,

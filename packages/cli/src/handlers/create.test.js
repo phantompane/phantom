@@ -5,8 +5,8 @@ import {
   ConfigParseError,
   ConfigValidationError,
   WorktreeAlreadyExistsError,
-} from "@aku11i/phantom-core";
-import { err, ok } from "@aku11i/phantom-shared";
+} from "@phantompane/core";
+import { err, ok } from "@phantompane/shared";
 
 const exitMock = mock.fn();
 const consoleLogMock = mock.fn();
@@ -41,7 +41,7 @@ mock.module("node:process", {
   },
 });
 
-mock.module("@aku11i/phantom-git", {
+mock.module("@phantompane/git", {
   namedExports: {
     getGitRoot: getGitRootMock,
   },
@@ -51,7 +51,7 @@ const generateUniqueNameMock = mock.fn(() =>
   Promise.resolve({ ok: true, value: "fuzzy-cats-dance" }),
 );
 
-mock.module("@aku11i/phantom-core", {
+mock.module("@phantompane/core", {
   namedExports: {
     createWorktree: createWorktreeMock,
     execInWorktree: execInWorktreeMock,
@@ -70,7 +70,7 @@ mock.module("@aku11i/phantom-core", {
   },
 });
 
-mock.module("@aku11i/phantom-process", {
+mock.module("@phantompane/process", {
   namedExports: {
     isInsideTmux: isInsideTmuxMock,
     executeTmuxCommand: executeTmuxCommandMock,

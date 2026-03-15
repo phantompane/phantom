@@ -1,5 +1,5 @@
-import { githubCheckout } from "@aku11i/phantom-github";
-import { isOk } from "@aku11i/phantom-shared";
+import { githubCheckout } from "@phantompane/github";
+import { isOk } from "@phantompane/shared";
 import { z } from "zod";
 import type { Tool } from "./types.ts";
 

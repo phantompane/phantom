@@ -1,5 +1,5 @@
 {
-  "name": "@aku11i/phantom-mcp",
+  "name": "@phantompane/mcp",
   "version": "5.1.0",
   "private": true,
   "type": "module",
@@ -11,11 +11,11 @@
     "inspect": "npx @modelcontextprotocol/inspector node --no-warnings --experimental-strip-types src/dev.ts"
   },
   "dependencies": {
-    "@aku11i/phantom-core": "workspace:*",
-    "@aku11i/phantom-git": "workspace:*",
-    "@aku11i/phantom-github": "workspace:*",
-    "@aku11i/phantom-process": "workspace:*",
-    "@aku11i/phantom-shared": "workspace:*",
+    "@phantompane/core": "workspace:*",
+    "@phantompane/git": "workspace:*",
+    "@phantompane/github": "workspace:*",
+    "@phantompane/process": "workspace:*",
+    "@phantompane/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "zod": "^4.3.6"
   },

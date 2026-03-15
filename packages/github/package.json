@@ -1,5 +1,5 @@
 {
-  "name": "@aku11i/phantom-github",
+  "name": "@phantompane/github",
   "version": "5.1.0",
   "private": true,
   "type": "module",
@@ -10,10 +10,10 @@
     "test": "node --test --experimental-strip-types --experimental-test-module-mocks \"src/**/*.test.js\""
   },
   "dependencies": {
-    "@aku11i/phantom-core": "workspace:*",
-    "@aku11i/phantom-git": "workspace:*",
-    "@aku11i/phantom-process": "workspace:*",
-    "@aku11i/phantom-shared": "workspace:*",
+    "@phantompane/core": "workspace:*",
+    "@phantompane/git": "workspace:*",
+    "@phantompane/process": "workspace:*",
+    "@phantompane/shared": "workspace:*",
     "@octokit/rest": "^22.0.1",
     "zod": "^4.3.6"
   }

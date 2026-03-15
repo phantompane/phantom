@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
-import { isOk } from "@aku11i/phantom-shared";
+import { isOk } from "@phantompane/shared";
 import { copyFiles } from "./file-copier.ts";
 
 describe("copyFiles integration", () => {

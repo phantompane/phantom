@@ -1,6 +1,6 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { describe, it, mock } from "node:test";
-import { err, isErr, isOk, ok } from "@aku11i/phantom-shared";
+import { err, isErr, isOk, ok } from "@phantompane/shared";
 import { WorktreeAlreadyExistsError, WorktreeError } from "./errors.ts";
 
 const accessMock = mock.fn();
@@ -56,7 +56,7 @@ mock.module("./validate.ts", {
   },
 });
 
-mock.module("@aku11i/phantom-git", {
+mock.module("@phantompane/git", {
   namedExports: {
     addWorktree: addWorktreeMock,
   },

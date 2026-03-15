@@ -1,4 +1,4 @@
-import { executeGitCommand } from "@aku11i/phantom-git";
+import { executeGitCommand } from "@phantompane/git";
 import { z } from "zod";
 
 export interface Preferences {

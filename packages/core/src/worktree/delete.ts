@@ -1,8 +1,8 @@
 import {
   executeGitCommand,
   executeGitCommandInDirectory,
-} from "@aku11i/phantom-git";
-import { err, isErr, isOk, ok, type Result } from "@aku11i/phantom-shared";
+} from "@phantompane/git";
+import { err, isErr, isOk, ok, type Result } from "@phantompane/shared";
 import { WorktreeError, type WorktreeNotFoundError } from "./errors.ts";
 import { executePreDeleteCommands } from "./pre-delete.ts";
 import { validateWorktreeExists } from "./validate.ts";

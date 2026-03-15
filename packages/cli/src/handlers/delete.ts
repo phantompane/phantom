@@ -5,9 +5,9 @@ import {
   selectWorktreeWithFzf,
   WorktreeError,
   WorktreeNotFoundError,
-} from "@aku11i/phantom-core";
-import { getCurrentWorktree, getGitRoot } from "@aku11i/phantom-git";
-import { isErr } from "@aku11i/phantom-shared";
+} from "@phantompane/core";
+import { getCurrentWorktree, getGitRoot } from "@phantompane/git";
+import { isErr } from "@phantompane/shared";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 

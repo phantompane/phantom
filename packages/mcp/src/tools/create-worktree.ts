@@ -1,6 +1,6 @@
-import { createContext, createWorktree } from "@aku11i/phantom-core";
-import { getGitRoot } from "@aku11i/phantom-git";
-import { isOk } from "@aku11i/phantom-shared";
+import { createContext, createWorktree } from "@phantompane/core";
+import { getGitRoot } from "@phantompane/git";
+import { isOk } from "@phantompane/shared";
 import { z } from "zod";
 import type { Tool } from "./types.ts";
 

@@ -1,6 +1,6 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { describe, it, mock } from "node:test";
-import { isErr, isOk } from "@aku11i/phantom-shared";
+import { isErr, isOk } from "@phantompane/shared";
 
 const execInWorktreeMock = mock.fn();
 
@@ -11,7 +11,7 @@ mock.module("../exec.ts", {
 });
 
 const { executePreDeleteCommands } = await import("./pre-delete.ts");
-const { ok, err } = await import("@aku11i/phantom-shared");
+const { ok, err } = await import("@phantompane/shared");
 
 describe("executePreDeleteCommands", () => {
   const resetPreDeleteMocks = () => {

@@ -1,6 +1,6 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { describe, it, mock } from "node:test";
-import { isErr, isOk } from "@aku11i/phantom-shared";
+import { isErr, isOk } from "@phantompane/shared";
 import { WorktreeError, WorktreeNotFoundError } from "./errors.ts";
 
 const validateWorktreeExistsMock = mock.fn();
@@ -13,7 +13,7 @@ mock.module("./validate.ts", {
   },
 });
 
-mock.module("@aku11i/phantom-git", {
+mock.module("@phantompane/git", {
   namedExports: {
     executeGitCommand: executeGitCommandMock,
     executeGitCommandInDirectory: executeGitCommandInDirectoryMock,
@@ -26,7 +26,7 @@ const {
   removeWorktree,
   deleteBranch,
 } = await import("./delete.ts");
-const { ok, err } = await import("@aku11i/phantom-shared");
+const { ok, err } = await import("@phantompane/shared");
 
 describe("deleteWorktree", () => {
   const resetMocks = () => {

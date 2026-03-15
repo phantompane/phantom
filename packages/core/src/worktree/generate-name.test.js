@@ -1,14 +1,14 @@
 import { strictEqual } from "node:assert";
 import { join } from "node:path";
 import { describe, it, mock } from "node:test";
-import { err, isErr, isOk, ok } from "@aku11i/phantom-shared";
+import { err, isErr, isOk, ok } from "@phantompane/shared";
 
 const branchExistsMock = mock.fn();
 const validateWorktreeDirectoryExistsMock = mock.fn();
 const validateWorktreeNameMock = mock.fn(() => ok(undefined));
 let humanIdCallCount = 0;
 
-mock.module("@aku11i/phantom-git", {
+mock.module("@phantompane/git", {
   namedExports: {
     branchExists: branchExistsMock,
   },

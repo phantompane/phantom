@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { parseArgs } from "node:util";
-import { createContext, validateWorktreeExists } from "@aku11i/phantom-core";
-import { getGitRoot } from "@aku11i/phantom-git";
-import { getPhantomEnv } from "@aku11i/phantom-process";
-import { isErr } from "@aku11i/phantom-shared";
+import { createContext, validateWorktreeExists } from "@phantompane/core";
+import { getGitRoot } from "@phantompane/git";
+import { getPhantomEnv } from "@phantompane/process";
+import { isErr } from "@phantompane/shared";
 import { exitCodes, exitWithError } from "../errors.ts";
 import { output } from "../output.ts";
 

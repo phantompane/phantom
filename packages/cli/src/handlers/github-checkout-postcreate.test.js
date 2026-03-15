@@ -1,6 +1,6 @@
 import { deepStrictEqual, rejects } from "node:assert";
 import { describe, it, mock } from "node:test";
-import { err, ok } from "@aku11i/phantom-shared";
+import { err, ok } from "@phantompane/shared";
 
 const exitWithErrorMock = mock.fn((message, code) => {
   throw new Error(`Exit with code ${code}: ${message}`);
@@ -25,7 +25,7 @@ mock.module("../output.ts", {
   },
 });
 
-mock.module("@aku11i/phantom-github", {
+mock.module("@phantompane/github", {
   namedExports: {
     githubCheckout: githubCheckoutMock,
   },

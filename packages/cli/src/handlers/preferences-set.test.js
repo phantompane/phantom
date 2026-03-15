@@ -12,7 +12,7 @@ mock.module("node:process", {
   },
 });
 
-mock.module("@aku11i/phantom-git", {
+mock.module("@phantompane/git", {
   namedExports: {
     executeGitCommand: executeGitCommandMock,
   },

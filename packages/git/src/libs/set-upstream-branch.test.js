@@ -10,7 +10,7 @@ mock.module("../executor.ts", {
 });
 
 const { setUpstreamBranch } = await import("./set-upstream-branch.ts");
-const { isOk, isErr } = await import("@aku11i/phantom-shared");
+const { isOk, isErr } = await import("@phantompane/shared");
 
 describe("setUpstreamBranch", () => {
   const resetMocks = () => {

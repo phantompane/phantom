@@ -1,11 +1,11 @@
 import { parseArgs } from "node:util";
-import { githubCheckout } from "@aku11i/phantom-github";
+import { githubCheckout } from "@phantompane/github";
 import {
   executeTmuxCommand,
   getPhantomEnv,
   isInsideTmux,
-} from "@aku11i/phantom-process";
-import { isErr } from "@aku11i/phantom-shared";
+} from "@phantompane/process";
+import { isErr } from "@phantompane/shared";
 import { exitCodes, exitWithError } from "../errors.ts";
 import { output } from "../output.ts";
 

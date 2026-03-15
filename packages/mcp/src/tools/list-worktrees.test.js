@@ -10,19 +10,19 @@ const isOkMock = mock.fn((result) => {
 const okMock = mock.fn((value) => ({ ok: true, value }));
 const errMock = mock.fn((error) => ({ ok: false, error }));
 
-mock.module("@aku11i/phantom-core", {
+mock.module("@phantompane/core", {
   namedExports: {
     listWorktrees: listWorktreesMock,
   },
 });
 
-mock.module("@aku11i/phantom-git", {
+mock.module("@phantompane/git", {
   namedExports: {
     getGitRoot: getGitRootMock,
   },
 });
 
-mock.module("@aku11i/phantom-shared", {
+mock.module("@phantompane/shared", {
   namedExports: {
     isOk: isOkMock,
     ok: okMock,

@@ -17,7 +17,7 @@ This guide will help you get up and running with Phantom quickly.
 brew install phantom
 
 # Using npm
-npm install -g @aku11i/phantom
+npm install -g @phantompane/cli
 
 # Optional tools for better experience: fzf and tmux
 ```

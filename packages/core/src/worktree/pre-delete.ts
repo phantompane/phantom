@@ -1,4 +1,4 @@
-import { err, isErr, ok, type Result } from "@aku11i/phantom-shared";
+import { err, isErr, ok, type Result } from "@phantompane/shared";
 import { execInWorktree } from "../exec.ts";
 
 export interface PreDeleteExecutionOptions {
