@@ -37,22 +37,6 @@
       "dependsOn": ["transit"],
       "outputs": []
     },
-    "test:shell": {
-      "dependsOn": ["transit"],
-      "outputs": []
-    },
-    "test:shell:bash": {
-      "dependsOn": ["transit"],
-      "outputs": []
-    },
-    "test:shell:fish": {
-      "dependsOn": ["transit"],
-      "outputs": []
-    },
-    "test:shell:zsh": {
-      "dependsOn": ["transit"],
-      "outputs": []
-    },
     "//#lint:root": {
       "outputs": []
     },
