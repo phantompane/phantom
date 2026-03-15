@@ -100,6 +100,7 @@ describe("attachHandler", () => {
       "feature",
       undefined, // postCreateCopyFiles
       undefined, // postCreateCommands
+      undefined, // directoryNameSeparator
     ]);
   });
 
