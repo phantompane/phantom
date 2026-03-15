@@ -22,9 +22,6 @@ export async function checkoutIssue(
 
   const gitRoot = await getGitRoot();
   const context = await createContext(gitRoot);
-  const directoryNameSeparator =
-    context.preferences?.directoryNameSeparator ??
-    context.config?.directoryNameSeparator;
   const worktreeName = `issues/${issue.number}`;
   const branchName = `issues/${issue.number}`;
 
@@ -55,7 +52,7 @@ export async function checkoutIssue(
     },
     context.config?.postCreate?.copyFiles,
     context.config?.postCreate?.commands,
-    directoryNameSeparator,
+    context.directoryNameSeparator,
   );
 
   if (isErr(result)) {

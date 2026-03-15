@@ -55,7 +55,11 @@ export async function getWorktreeInfo(
   worktreeDirectory: string,
   name: string,
 ): Promise<WorktreeInfo> {
-  const worktreePath = getWorktreePathFromDirectory(worktreeDirectory, name);
+  const worktreePath = getWorktreePathFromDirectory(
+    worktreeDirectory,
+    name,
+    "/",
+  );
 
   const [branch, isClean] = await Promise.all([
     getWorktreeBranch(worktreePath),

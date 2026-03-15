@@ -63,7 +63,7 @@ export async function copyFilesToWorktree(
   worktreesDirectory: string,
   worktreeName: string,
   filesToCopy: string[],
-  directoryNameSeparator = "/",
+  directoryNameSeparator: string,
 ): Promise<Result<void>> {
   const worktreePath = getWorktreePathFromDirectory(
     worktreesDirectory,

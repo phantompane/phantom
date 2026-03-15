@@ -51,6 +51,7 @@ describe("generateUniqueName", () => {
     const result = await generateUniqueName(
       "/test/repo",
       "/test/repo/.git/phantom/worktrees",
+      "/",
     );
 
     strictEqual(isOk(result), true);
@@ -77,6 +78,7 @@ describe("generateUniqueName", () => {
     const result = await generateUniqueName(
       "/test/repo",
       "/test/repo/.git/phantom/worktrees",
+      "/",
     );
 
     strictEqual(isOk(result), true);
@@ -104,6 +106,7 @@ describe("generateUniqueName", () => {
     const result = await generateUniqueName(
       "/test/repo",
       "/test/repo/.git/phantom/worktrees",
+      "/",
     );
 
     strictEqual(isOk(result), true);
@@ -122,6 +125,7 @@ describe("generateUniqueName", () => {
     const result = await generateUniqueName(
       "/test/repo",
       "/test/repo/.git/phantom/worktrees",
+      "/",
     );
 
     strictEqual(isErr(result), true);
@@ -147,6 +151,7 @@ describe("generateUniqueName", () => {
     const result = await generateUniqueName(
       "/test/repo",
       "/test/repo/.git/phantom/worktrees",
+      "/",
     );
 
     strictEqual(isErr(result), true);

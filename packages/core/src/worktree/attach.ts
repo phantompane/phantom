@@ -19,7 +19,7 @@ export async function attachWorktreeCore(
   name: string,
   postCreateCopyFiles: string[] | undefined,
   postCreateCommands: string[] | undefined,
-  directoryNameSeparator = "/",
+  directoryNameSeparator: string,
 ): Promise<Result<string, Error>> {
   const validation = validateWorktreeName(name);
   if (isErr(validation)) {

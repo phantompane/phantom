@@ -21,9 +21,6 @@ export const createWorktreeTool: Tool<typeof schema> = {
   handler: async ({ name, baseBranch }) => {
     const gitRoot = await getGitRoot();
     const context = await createContext(gitRoot);
-    const directoryNameSeparator =
-      context.preferences?.directoryNameSeparator ??
-      context.config?.directoryNameSeparator;
     const result = await createWorktree(
       context.gitRoot,
       context.worktreesDirectory,
@@ -34,7 +31,7 @@ export const createWorktreeTool: Tool<typeof schema> = {
       },
       context.config?.postCreate?.copyFiles,
       context.config?.postCreate?.commands,
-      directoryNameSeparator,
+      context.directoryNameSeparator,
     );
 
     if (!isOk(result)) {

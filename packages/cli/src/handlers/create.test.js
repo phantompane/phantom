@@ -240,9 +240,7 @@ describe("createHandler", () => {
       Promise.resolve({
         gitRoot,
         worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
-        preferences: {
-          directoryNameSeparator: "_",
-        },
+        directoryNameSeparator: "_",
         config: {
           directoryNameSeparator: "-",
         },
