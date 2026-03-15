@@ -16,7 +16,7 @@
     "test:shell:bash": "vitest run --root ../.. packages/cli/src/completions/phantom.bash.test.shell.js",
     "test:shell:fish": "vitest run --root ../.. packages/cli/src/completions/phantom.fish.test.shell.js",
     "test:shell:zsh": "vitest run --root ../.. packages/cli/src/completions/phantom.zsh.test.shell.js",
-    "test": "vitest run --root ../.. packages/cli/src",
+    "test": "vitest run --root ../.. packages/cli/src --exclude packages/cli/src/**/*.test.shell.js",
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
