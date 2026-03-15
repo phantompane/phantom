@@ -34,6 +34,7 @@ export async function createWorktree(
   options: CreateWorktreeOptions,
   postCreateCopyFiles: string[] | undefined,
   postCreateCommands: string[] | undefined,
+  directoryNameSeparator = "/",
 ): Promise<
   Result<CreateWorktreeSuccess, WorktreeAlreadyExistsError | WorktreeError>
 > {
@@ -44,7 +45,11 @@ export async function createWorktree(
 
   const { branch = name, base = "HEAD" } = options;
 
-  const worktreePath = getWorktreePathFromDirectory(worktreeDirectory, name);
+  const worktreePath = getWorktreePathFromDirectory(
+    worktreeDirectory,
+    name,
+    directoryNameSeparator,
+  );
 
   try {
     await fs.access(worktreeDirectory);
@@ -94,6 +99,7 @@ export async function createWorktree(
         worktreeDirectory,
         name,
         postCreateCopyFiles,
+        directoryNameSeparator,
       );
       if (isErr(copyResult)) {
         // Don't fail worktree creation, just warn

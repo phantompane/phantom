@@ -100,12 +100,19 @@ export async function createHandler(args: string[]): Promise<void> {
   try {
     const gitRoot = await getGitRoot();
     const context = await createContext(gitRoot);
+    const directoryNameSeparator =
+      context.preferences?.directoryNameSeparator ??
+      context.config?.directoryNameSeparator;
 
     if (!worktreeName) {
-      const nameResult = await generateUniqueName(
-        gitRoot,
-        context.worktreesDirectory,
-      );
+      const nameResult =
+        directoryNameSeparator === undefined
+          ? await generateUniqueName(gitRoot, context.worktreesDirectory)
+          : await generateUniqueName(
+              gitRoot,
+              context.worktreesDirectory,
+              directoryNameSeparator,
+            );
       if (isErr(nameResult)) {
         exitWithError(nameResult.error.message, exitCodes.generalError);
       }
@@ -128,17 +135,31 @@ export async function createHandler(args: string[]): Promise<void> {
       filesToCopy = [...new Set([...filesToCopy, ...cliFiles])];
     }
 
-    const result = await createWorktreeCore(
-      context.gitRoot,
-      context.worktreesDirectory,
-      worktreeName,
-      {
-        copyFiles: filesToCopy.length > 0 ? filesToCopy : undefined,
-        base: baseOption,
-      },
-      filesToCopy.length > 0 ? filesToCopy : undefined,
-      context.config?.postCreate?.commands,
-    );
+    const result =
+      directoryNameSeparator === undefined
+        ? await createWorktreeCore(
+            context.gitRoot,
+            context.worktreesDirectory,
+            worktreeName,
+            {
+              copyFiles: filesToCopy.length > 0 ? filesToCopy : undefined,
+              base: baseOption,
+            },
+            filesToCopy.length > 0 ? filesToCopy : undefined,
+            context.config?.postCreate?.commands,
+          )
+        : await createWorktreeCore(
+            context.gitRoot,
+            context.worktreesDirectory,
+            worktreeName,
+            {
+              copyFiles: filesToCopy.length > 0 ? filesToCopy : undefined,
+              base: baseOption,
+            },
+            filesToCopy.length > 0 ? filesToCopy : undefined,
+            context.config?.postCreate?.commands,
+            directoryNameSeparator,
+          );
 
     if (isErr(result)) {
       const exitCode =

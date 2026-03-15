@@ -77,7 +77,7 @@ describe("preferencesGetHandler", () => {
 
     await rejects(
       async () => await preferencesGetHandler(["unknown"]),
-      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory/,
+      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator/,
     );
 
     strictEqual(exitMock.mock.calls[0].arguments[0], 3);
@@ -131,6 +131,21 @@ describe("preferencesGetHandler", () => {
     strictEqual(exitMock.mock.calls[0].arguments[0], 0);
   });
 
+  it("prints directoryNameSeparator preference when set", async () => {
+    resetMocks();
+    loadPreferencesMock.mock.mockImplementation(async () => ({
+      directoryNameSeparator: "-",
+    }));
+
+    await rejects(
+      async () => await preferencesGetHandler(["directoryNameSeparator"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(consoleLogMock.mock.calls[0].arguments[0], "-");
+    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+  });
+
   it("warns when preference is unset", async () => {
     resetMocks();
     loadPreferencesMock.mock.mockImplementation(async () => ({}));
@@ -173,6 +188,21 @@ describe("preferencesGetHandler", () => {
     strictEqual(
       consoleLogMock.mock.calls[0].arguments[0],
       "Preference 'worktreesDirectory' is not set (git config --global phantom.worktreesDirectory)",
+    );
+  });
+
+  it("warns when directoryNameSeparator preference is unset", async () => {
+    resetMocks();
+    loadPreferencesMock.mock.mockImplementation(async () => ({}));
+
+    await rejects(
+      async () => await preferencesGetHandler(["directoryNameSeparator"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(
+      consoleLogMock.mock.calls[0].arguments[0],
+      "Preference 'directoryNameSeparator' is not set (git config --global phantom.directoryNameSeparator)",
     );
   });
 });

@@ -93,7 +93,7 @@ complete -c phantom -n "__phantom_using_command" -a "exec" -d "Execute a command
 complete -c phantom -n "__phantom_using_command" -a "edit" -d "Open a worktree in your configured editor"
 complete -c phantom -n "__phantom_using_command" -a "ai" -d "Launch your configured AI coding assistant in a worktree"
 complete -c phantom -n "__phantom_using_command" -a "shell" -d "Open an interactive shell in a worktree directory"
-complete -c phantom -n "__phantom_using_command" -a "preferences" -d "Manage editor/ai preferences (stored in git config --global)"
+complete -c phantom -n "__phantom_using_command" -a "preferences" -d "Manage editor/ai/worktreesDirectory/directoryNameSeparator preferences (stored in git config --global)"
 complete -c phantom -n "__phantom_using_command" -a "github" -d "GitHub integration commands"
 complete -c phantom -n "__phantom_using_command" -a "gh" -d "GitHub integration commands (alias)"
 complete -c phantom -n "__phantom_using_command" -a "version" -d "Display phantom version information"
@@ -160,9 +160,9 @@ complete -c phantom -n "__phantom_using_command ai" -a "(__phantom_list_worktree
 
 # preferences command
 complete -c phantom -n "__phantom_using_command preferences" -a "get set remove" -d "Manage preferences"
-complete -c phantom -n "__phantom_using_command preferences get" -a "editor ai worktreesDirectory" -d "Preference key"
-complete -c phantom -n "__phantom_using_command preferences set" -a "editor ai worktreesDirectory" -d "Preference key"
-complete -c phantom -n "__phantom_using_command preferences remove" -a "editor ai worktreesDirectory" -d "Preference key"
+complete -c phantom -n "__phantom_using_command preferences get" -a "editor ai worktreesDirectory directoryNameSeparator" -d "Preference key"
+complete -c phantom -n "__phantom_using_command preferences set" -a "editor ai worktreesDirectory directoryNameSeparator" -d "Preference key"
+complete -c phantom -n "__phantom_using_command preferences remove" -a "editor ai worktreesDirectory directoryNameSeparator" -d "Preference key"
 
 # shell command options
 complete -c phantom -n "__phantom_using_command shell" -l fzf -d "Use fzf for interactive selection"

@@ -5,6 +5,7 @@
 - [Configuration File](#configuration-file)
 - [Configuration Options](#configuration-options)
   - [worktreesDirectory](#worktreebasedirectory)
+  - [directoryNameSeparator](#directorynameseparator)
   - [postCreate.copyFiles](#postcreatecopyfiles)
   - [postCreate.commands](#postcreatecommands)
   - [preDelete.commands](#predeletecommands)
@@ -18,6 +19,7 @@ Create a `phantom.config.json` file in your repository root:
 ```json
 {
   "worktreesDirectory": "../phantom-worktrees",
+  "directoryNameSeparator": "-",
   "postCreate": {
     "copyFiles": [
       ".env",
@@ -89,6 +91,39 @@ parent-directory/
 - When worktreesDirectory is specified, worktrees are created directly in that directory
 - `phantom.config.json` is project-level configuration, while `phantom preferences` stores per-user defaults
 - If both are set, `phantom preferences` takes precedence over `phantom.config.json`
+
+### directoryNameSeparator
+
+Controls how `/` in worktree names is mapped to the filesystem directory name. By default, Phantom keeps `/`, which creates nested directories. Set this in `phantom.config.json` for a project-wide default, or in `phantom preferences` for a personal default.
+
+**Use Cases:**
+- Keep all worktrees at one directory level for easier browsing
+- Preserve branch naming conventions like `feature/test` while storing directories as `feature-test`
+- Use a separator that matches team conventions such as `-` or `_`
+
+**Examples:**
+
+**Flat directories with hyphens:**
+```json
+{
+  "directoryNameSeparator": "-"
+}
+```
+This maps `feature/test` to `feature-test` on disk while the Git branch remains `feature/test`.
+
+**Flat directories with underscores:**
+```json
+{
+  "directoryNameSeparator": "_"
+}
+```
+This maps `release/2026/q1` to `release_2026_q1`.
+
+**Notes:**
+- If `directoryNameSeparator` is not specified, Phantom keeps the current behavior and uses `/`
+- Only the directory name is transformed; the Git branch name is unchanged
+- `phantom preferences` takes precedence over `phantom.config.json` when both are set
+- This affects worktree creation paths only
 
 ### postCreate.copyFiles
 

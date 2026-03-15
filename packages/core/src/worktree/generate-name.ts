@@ -16,6 +16,7 @@ function generate(): string {
 export async function generateUniqueName(
   gitRoot: string,
   worktreesDirectory: string,
+  directoryNameSeparator = "/",
 ): Promise<Result<string, Error>> {
   for (let i = 0; i < MAX_RETRIES; i++) {
     const name = generate();
@@ -24,7 +25,11 @@ export async function generateUniqueName(
       continue;
     }
 
-    const worktreePath = getWorktreePathFromDirectory(worktreesDirectory, name);
+    const worktreePath = getWorktreePathFromDirectory(
+      worktreesDirectory,
+      name,
+      directoryNameSeparator,
+    );
     if (await validateWorktreeDirectoryExists(worktreePath)) {
       continue;
     }

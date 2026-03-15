@@ -154,4 +154,24 @@ describe("generateUniqueName", () => {
       strictEqual(result.error.message, "git command failed");
     }
   });
+
+  it("uses directoryNameSeparator when checking generated paths", async () => {
+    resetMocks();
+    validateWorktreeDirectoryExistsMock.mock.mockImplementation(() =>
+      Promise.resolve(false),
+    );
+    branchExistsMock.mock.mockImplementation(() => Promise.resolve(ok(false)));
+
+    const result = await generateUniqueName(
+      "/test/repo",
+      "/test/repo/.git/phantom/worktrees",
+      "-",
+    );
+
+    strictEqual(isOk(result), true);
+    strictEqual(
+      validateWorktreeDirectoryExistsMock.mock.calls[0].arguments[0],
+      join("/test/repo/.git/phantom/worktrees", "generated-name-1"),
+    );
+  });
 });

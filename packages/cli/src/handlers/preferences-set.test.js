@@ -73,7 +73,7 @@ describe("preferencesSetHandler", () => {
 
     await rejects(
       async () => await preferencesSetHandler(["unknown", "value"]),
-      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory/,
+      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator/,
     );
 
     strictEqual(exitMock.mock.calls[0].arguments[0], 3);
@@ -185,6 +185,30 @@ describe("preferencesSetHandler", () => {
     strictEqual(
       consoleLogMock.mock.calls[0].arguments[0],
       "Set phantom.worktreesDirectory (global) to '../phantom/worktrees'",
+    );
+    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+  });
+
+  it("sets directoryNameSeparator preference via git config --global", async () => {
+    resetMocks();
+    executeGitCommandMock.mock.mockImplementation(async () => ({
+      stdout: "",
+      stderr: "",
+    }));
+
+    await rejects(
+      async () => await preferencesSetHandler(["directoryNameSeparator", "-"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(
+      executeGitCommandMock.mock.calls[0].arguments[0][2],
+      "phantom.directoryNameSeparator",
+    );
+    strictEqual(executeGitCommandMock.mock.calls[0].arguments[0][3], "-");
+    strictEqual(
+      consoleLogMock.mock.calls[0].arguments[0],
+      "Set phantom.directoryNameSeparator (global) to '-'",
     );
     strictEqual(exitMock.mock.calls[0].arguments[0], 0);
   });

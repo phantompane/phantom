@@ -78,6 +78,7 @@ your-project/    # Git repository
 ```
 
 You can also customize the worktree location with `phantom preferences set worktreesDirectory <path-from-git-root>` (default: `.git/phantom/worktrees`).
+If you want flat directory names for branch names like `feature/test`, set `phantom preferences set directoryNameSeparator "-"` or add `"directoryNameSeparator": "-"` to `phantom.config.json`.
 
 This convention means you never need to remember worktree paths - just use the branch name for easy worktree operations.
 
@@ -167,16 +168,19 @@ Store your personal defaults in global git config and manage them with `phantom 
 phantom preferences get editor
 phantom preferences get ai
 phantom preferences get worktreesDirectory
+phantom preferences get directoryNameSeparator
 
 # Update them
 phantom preferences set editor "code --reuse-window"
 phantom preferences set ai claude
 phantom preferences set worktreesDirectory ../phantom-worktrees
+phantom preferences set directoryNameSeparator "-"
 
 # Remove to fall back to $EDITOR or reconfigure AI
 phantom preferences remove editor
 phantom preferences remove ai
 phantom preferences remove worktreesDirectory
+phantom preferences remove directoryNameSeparator
 ```
 
 #### fzf Integration

@@ -63,10 +63,12 @@ export async function copyFilesToWorktree(
   worktreesDirectory: string,
   worktreeName: string,
   filesToCopy: string[],
+  directoryNameSeparator = "/",
 ): Promise<Result<void>> {
   const worktreePath = getWorktreePathFromDirectory(
     worktreesDirectory,
     worktreeName,
+    directoryNameSeparator,
   );
   const copyResult = await copyFiles(gitRoot, worktreePath, filesToCopy);
 

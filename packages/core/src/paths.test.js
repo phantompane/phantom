@@ -1,7 +1,10 @@
 import { strictEqual } from "node:assert";
 import { normalize } from "node:path";
 import { describe, it } from "node:test";
-import { getWorktreesDirectory } from "./paths.ts";
+import {
+  getWorktreePathFromDirectory,
+  getWorktreesDirectory,
+} from "./paths.ts";
 
 describe("paths", () => {
   describe("getWorktreesDirectory", () => {
@@ -72,6 +75,33 @@ describe("paths", () => {
         // path.join normalizes paths and may add trailing slash
         strictEqual(normalize(result), normalize("/test/phantom-external/"));
       });
+    });
+  });
+
+  describe("getWorktreePathFromDirectory", () => {
+    it("keeps nested directories by default", () => {
+      const result = getWorktreePathFromDirectory(
+        "/test/repo/.git/phantom/worktrees",
+        "feature/test",
+      );
+
+      strictEqual(
+        normalize(result),
+        normalize("/test/repo/.git/phantom/worktrees/feature/test"),
+      );
+    });
+
+    it("replaces slashes when directoryNameSeparator is provided", () => {
+      const result = getWorktreePathFromDirectory(
+        "/test/repo/.git/phantom/worktrees",
+        "feature/test",
+        "-",
+      );
+
+      strictEqual(
+        normalize(result),
+        normalize("/test/repo/.git/phantom/worktrees/feature-test"),
+      );
     });
   });
 });

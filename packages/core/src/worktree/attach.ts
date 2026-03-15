@@ -19,13 +19,18 @@ export async function attachWorktreeCore(
   name: string,
   postCreateCopyFiles: string[] | undefined,
   postCreateCommands: string[] | undefined,
+  directoryNameSeparator = "/",
 ): Promise<Result<string, Error>> {
   const validation = validateWorktreeName(name);
   if (isErr(validation)) {
     return validation;
   }
 
-  const worktreePath = getWorktreePathFromDirectory(worktreeDirectory, name);
+  const worktreePath = getWorktreePathFromDirectory(
+    worktreeDirectory,
+    name,
+    directoryNameSeparator,
+  );
   if (existsSync(worktreePath)) {
     return err(new WorktreeAlreadyExistsError(name));
   }
@@ -51,6 +56,7 @@ export async function attachWorktreeCore(
       worktreeDirectory,
       name,
       postCreateCopyFiles,
+      directoryNameSeparator,
     );
     if (isErr(copyResult)) {
       // Don't fail attach, just warn

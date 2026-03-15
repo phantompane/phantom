@@ -177,6 +177,19 @@ describe("validateConfig", () => {
     }
   });
 
+  test("should accept config with directoryNameSeparator", () => {
+    const config = {
+      directoryNameSeparator: "-",
+    };
+
+    const result = validateConfig(config);
+
+    assert.strictEqual(isOk(result), true);
+    if (isOk(result)) {
+      assert.deepStrictEqual(result.value, config);
+    }
+  });
+
   test("should accept config with worktreesDirectory and postCreate", () => {
     const config = {
       worktreesDirectory: "../custom-phantom",
@@ -683,6 +696,19 @@ describe("validateConfig", () => {
         assert.strictEqual(
           result.error.message,
           "Invalid phantom.config.json: worktreesDirectory: Invalid input: expected string, received number",
+        );
+      }
+    });
+
+    test("should reject when directoryNameSeparator is number", () => {
+      const result = validateConfig({ directoryNameSeparator: 123 });
+
+      assert.strictEqual(isErr(result), true);
+      if (isErr(result)) {
+        assert.ok(result.error instanceof ConfigValidationError);
+        assert.strictEqual(
+          result.error.message,
+          "Invalid phantom.config.json: directoryNameSeparator: Invalid input: expected string, received number",
         );
       }
     });

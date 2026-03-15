@@ -78,6 +78,7 @@ your-project/    # Gitリポジトリ
 ```
 
 `phantom preferences set worktreesDirectory <Gitリポジトリのルートからの相対パス>`でワークツリーの保存先をカスタマイズできます（デフォルト: `.git/phantom/worktrees`）。
+`feature/test` のようなブランチ名でもディレクトリをフラットにしたい場合は、`phantom preferences set directoryNameSeparator "-"` を設定するか、`phantom.config.json` に `"directoryNameSeparator": "-"` を追加してください。
 
 このルールにより、worktreeの場所を覚える必要がなくなり、ブランチ名だけで簡単にワークツリーの操作ができます。
 
@@ -162,16 +163,19 @@ phantom ai feature-auth
 phantom preferences get editor
 phantom preferences get ai
 phantom preferences get worktreesDirectory
+phantom preferences get directoryNameSeparator
 
 # 設定する
 phantom preferences set editor "code --reuse-window"
 phantom preferences set ai claude
 phantom preferences set worktreesDirectory ../phantom-worktrees
+phantom preferences set directoryNameSeparator "-"
 
 # 解除する（エディタは$EDITORへ、AIは未設定へ戻る）
 phantom preferences remove editor
 phantom preferences remove ai
 phantom preferences remove worktreesDirectory
+phantom preferences remove directoryNameSeparator
 ```
 
 #### fzf統合

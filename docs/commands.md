@@ -318,6 +318,7 @@ Configure defaults for Phantom commands using global git config. Preferences are
 - `editor` - preferred editor command for `phantom edit`
 - `ai` - assistant command for `phantom ai`
 - `worktreesDirectory` - where to store worktrees (relative to the Git repository root; defaults to `.git/phantom/worktrees`)
+- `directoryNameSeparator` - replaces `/` in worktree directory names only (defaults to `/`, which keeps nested directories)
 
 Set them once to avoid exporting environment variables each time.
 
@@ -329,6 +330,7 @@ Show a preference value.
 phantom preferences get editor
 phantom preferences get ai
 phantom preferences get worktreesDirectory
+phantom preferences get directoryNameSeparator
 ```
 
 ### preferences set
@@ -344,6 +346,9 @@ phantom preferences set ai "codex --full-auto"
 
 # Store worktrees outside the repo (path relative to the Git root)
 phantom preferences set worktreesDirectory ../phantom-worktrees
+
+# Flatten feature/test to feature-test on disk while keeping the branch name
+phantom preferences set directoryNameSeparator "-"
 ```
 
 ### preferences remove
@@ -354,12 +359,14 @@ Remove a preference value.
 phantom preferences remove editor
 phantom preferences remove ai
 phantom preferences remove worktreesDirectory
+phantom preferences remove directoryNameSeparator
 ```
 
 **Notes:**
 - `phantom edit` prefers `phantom.editor` and falls back to `$EDITOR` if unset
 - `phantom ai` requires `phantom.ai` to be configured
 - `worktreesDirectory` should be set relative to the Git repository root (default: `.git/phantom/worktrees`)
+- `directoryNameSeparator` only changes the directory path; the worktree/branch name remains unchanged
 
 ## GitHub Integration
 

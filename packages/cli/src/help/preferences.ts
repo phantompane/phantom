@@ -26,6 +26,11 @@ export const preferencesHelp: CommandHelp = {
         "Store a custom worktreesDirectory (relative to the Git repository root) for all commands",
     },
     {
+      command: 'phantom preferences set directoryNameSeparator "-"',
+      description:
+        "Store a separator for flattening worktree directory names while keeping branch names unchanged",
+    },
+    {
       command: "phantom preferences remove editor",
       description: "Remove the editor preference (fallback to env/default)",
     },
@@ -41,6 +46,7 @@ export const preferencesHelp: CommandHelp = {
     "  editor - used by 'phantom edit', preferred over $EDITOR",
     "  ai - used by 'phantom ai'",
     "  worktreesDirectory - path relative to the Git repo root for storing worktrees (defaults to .git/phantom/worktrees)",
+    "  directoryNameSeparator - replaces '/' in worktree directory names only (defaults to / for nested directories)",
   ],
 };
 
@@ -63,8 +69,14 @@ export const preferencesGetHelp: CommandHelp = {
       description:
         "Show the preferred worktrees directory (relative to repo root)",
     },
+    {
+      command: "phantom preferences get directoryNameSeparator",
+      description: "Show the preferred worktree directory name separator",
+    },
   ],
-  notes: ["Supported keys: editor, ai, worktreesDirectory"],
+  notes: [
+    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator",
+  ],
 };
 
 export const preferencesSetHelp: CommandHelp = {
@@ -87,10 +99,16 @@ export const preferencesSetHelp: CommandHelp = {
       description:
         "Store worktrees in ../phantom-worktrees relative to the Git repository root",
     },
+    {
+      command: 'phantom preferences set directoryNameSeparator "-"',
+      description:
+        "Flatten worktree directory names such as feature/test to feature-test",
+    },
   ],
   notes: [
-    "Supported keys: editor, ai, worktreesDirectory",
+    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator",
     "For worktreesDirectory, provide a path relative to the Git repository root; defaults to .git/phantom/worktrees when unset",
+    "For directoryNameSeparator, '/' keeps nested directories; any other string replaces '/' only in the directory path",
   ],
 };
 
@@ -112,6 +130,13 @@ export const preferencesRemoveHelp: CommandHelp = {
       command: "phantom preferences remove worktreesDirectory",
       description: "Unset the custom worktrees directory preference",
     },
+    {
+      command: "phantom preferences remove directoryNameSeparator",
+      description:
+        "Restore nested worktree directories that follow branch slashes",
+    },
   ],
-  notes: ["Supported keys: editor, ai, worktreesDirectory"],
+  notes: [
+    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator",
+  ],
 };

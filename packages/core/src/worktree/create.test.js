@@ -34,9 +34,13 @@ const getWorktreePathMock = mock.fn((gitRoot, name, worktreesDirectory) => {
   }
   return `${gitRoot}/.git/phantom/worktrees/${name}`;
 });
-const getWorktreePathFromDirectoryMock = mock.fn((worktreeDirectory, name) => {
-  return `${worktreeDirectory}/${name}`;
-});
+const getWorktreePathFromDirectoryMock = mock.fn(
+  (worktreeDirectory, name, separator = "/") => {
+    const directoryName =
+      separator === "/" ? name : name.replaceAll("/", separator);
+    return `${worktreeDirectory}/${directoryName}`;
+  },
+);
 const copyFilesMock = mock.fn();
 
 mock.module("node:fs/promises", {
@@ -238,6 +242,42 @@ describe("createWorktree", () => {
       strictEqual(
         result.error.message,
         "worktree add failed: fatal: branch already exists",
+      );
+    }
+  });
+
+  it("should replace slashes in directory names when separator is configured", async () => {
+    resetMocks();
+    accessMock.mock.mockImplementation(() => Promise.resolve());
+    validateWorktreeNameMock.mock.mockImplementation(() => ok(undefined));
+    validateWorktreeDoesNotExistMock.mock.mockImplementation(() =>
+      Promise.resolve(ok(undefined)),
+    );
+    addWorktreeMock.mock.mockImplementation(() => Promise.resolve());
+
+    const result = await createWorktree(
+      "/test/repo",
+      "/test/repo/.git/phantom/worktrees",
+      "feature/test",
+      {},
+      undefined,
+      undefined,
+      "-",
+    );
+
+    strictEqual(isOk(result), true);
+    strictEqual(
+      addWorktreeMock.mock.calls[0].arguments[0].path,
+      "/test/repo/.git/phantom/worktrees/feature-test",
+    );
+    strictEqual(
+      getWorktreePathFromDirectoryMock.mock.calls[0].arguments[2],
+      "-",
+    );
+    if (isOk(result)) {
+      strictEqual(
+        result.value.path,
+        "/test/repo/.git/phantom/worktrees/feature-test",
       );
     }
   });

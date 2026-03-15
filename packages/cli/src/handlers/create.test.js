@@ -233,6 +233,39 @@ describe("createHandler", () => {
     strictEqual(exitMock.mock.calls[0].arguments[0], 1);
   });
 
+  it("should prefer preferences directoryNameSeparator over config", async () => {
+    resetMocks();
+    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/test/repo"));
+    createContextMock.mock.mockImplementation((gitRoot) =>
+      Promise.resolve({
+        gitRoot,
+        worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
+        preferences: {
+          directoryNameSeparator: "_",
+        },
+        config: {
+          directoryNameSeparator: "-",
+        },
+      }),
+    );
+    createWorktreeMock.mock.mockImplementation(() =>
+      Promise.resolve(
+        ok({
+          message:
+            "Created worktree 'feature/test' at /test/repo/.git/phantom/worktrees/feature_test",
+          path: "/test/repo/.git/phantom/worktrees/feature_test",
+        }),
+      ),
+    );
+
+    await rejects(
+      async () => await createHandler(["feature/test"]),
+      /Exit with code 0/,
+    );
+
+    strictEqual(createWorktreeMock.mock.calls[0].arguments[6], "_");
+  });
+
   it("should error when --shell and --exec are used together", async () => {
     resetMocks();
     await rejects(

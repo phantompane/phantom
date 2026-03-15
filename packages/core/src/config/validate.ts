@@ -24,6 +24,7 @@ export const phantomConfigSchema = z
       })
       .passthrough()
       .optional(),
+    directoryNameSeparator: z.string().optional(),
     worktreesDirectory: z.string().optional(),
   })
   .passthrough();

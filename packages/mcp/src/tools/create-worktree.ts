@@ -21,17 +21,34 @@ export const createWorktreeTool: Tool<typeof schema> = {
   handler: async ({ name, baseBranch }) => {
     const gitRoot = await getGitRoot();
     const context = await createContext(gitRoot);
-    const result = await createWorktree(
-      context.gitRoot,
-      context.worktreesDirectory,
-      name,
-      {
-        branch: name,
-        base: baseBranch,
-      },
-      context.config?.postCreate?.copyFiles,
-      context.config?.postCreate?.commands,
-    );
+    const directoryNameSeparator =
+      context.preferences?.directoryNameSeparator ??
+      context.config?.directoryNameSeparator;
+    const result =
+      directoryNameSeparator === undefined
+        ? await createWorktree(
+            context.gitRoot,
+            context.worktreesDirectory,
+            name,
+            {
+              branch: name,
+              base: baseBranch,
+            },
+            context.config?.postCreate?.copyFiles,
+            context.config?.postCreate?.commands,
+          )
+        : await createWorktree(
+            context.gitRoot,
+            context.worktreesDirectory,
+            name,
+            {
+              branch: name,
+              base: baseBranch,
+            },
+            context.config?.postCreate?.copyFiles,
+            context.config?.postCreate?.commands,
+            directoryNameSeparator,
+          );
 
     if (!isOk(result)) {
       throw new Error(result.error.message);

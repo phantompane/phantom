@@ -212,4 +212,39 @@ describe("attachWorktreeCore", () => {
 
     deepStrictEqual(attachWorktreeMock.mock.calls.length, 0);
   });
+
+  it("replaces slashes in directory names when separator is configured", async () => {
+    resetMocks();
+    validateWorktreeNameMock.mock.mockImplementation(() => ok(undefined));
+    existsSyncMock.mock.mockImplementation(() => false);
+    branchExistsMock.mock.mockImplementation(() => Promise.resolve(ok(true)));
+    attachWorktreeMock.mock.mockImplementation(() =>
+      Promise.resolve(ok(undefined)),
+    );
+    getWorktreePathFromDirectoryMock.mock.mockImplementation(
+      (_worktreeDirectory, name, separator) =>
+        `/repo/.git/phantom/worktrees/${name.replaceAll("/", separator)}`,
+    );
+
+    const result = await attachWorktreeCore(
+      "/repo",
+      "/repo/.git/phantom/worktrees",
+      "feature/test",
+      undefined,
+      undefined,
+      "-",
+    );
+
+    deepStrictEqual(result.ok, true);
+    deepStrictEqual(getWorktreePathFromDirectoryMock.mock.calls[0].arguments, [
+      "/repo/.git/phantom/worktrees",
+      "feature/test",
+      "-",
+    ]);
+    deepStrictEqual(attachWorktreeMock.mock.calls[0].arguments, [
+      "/repo",
+      "/repo/.git/phantom/worktrees/feature-test",
+      "feature/test",
+    ]);
+  });
 });

@@ -3,7 +3,12 @@ import { executeGitCommand } from "@phantompane/git";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 
-const supportedKeys = ["editor", "ai", "worktreesDirectory"] as const;
+const supportedKeys = [
+  "editor",
+  "ai",
+  "worktreesDirectory",
+  "directoryNameSeparator",
+] as const;
 
 export async function preferencesRemoveHandler(args: string[]): Promise<void> {
   const { positionals } = parseArgs({

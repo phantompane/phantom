@@ -22,6 +22,9 @@ export async function checkoutIssue(
 
   const gitRoot = await getGitRoot();
   const context = await createContext(gitRoot);
+  const directoryNameSeparator =
+    context.preferences?.directoryNameSeparator ??
+    context.config?.directoryNameSeparator;
   const worktreeName = `issues/${issue.number}`;
   const branchName = `issues/${issue.number}`;
 
@@ -42,17 +45,31 @@ export async function checkoutIssue(
     });
   }
 
-  const result = await createWorktreeCore(
-    context.gitRoot,
-    context.worktreesDirectory,
-    worktreeName,
-    {
-      branch: branchName,
-      base,
-    },
-    context.config?.postCreate?.copyFiles,
-    context.config?.postCreate?.commands,
-  );
+  const result =
+    directoryNameSeparator === undefined
+      ? await createWorktreeCore(
+          context.gitRoot,
+          context.worktreesDirectory,
+          worktreeName,
+          {
+            branch: branchName,
+            base,
+          },
+          context.config?.postCreate?.copyFiles,
+          context.config?.postCreate?.commands,
+        )
+      : await createWorktreeCore(
+          context.gitRoot,
+          context.worktreesDirectory,
+          worktreeName,
+          {
+            branch: branchName,
+            base,
+          },
+          context.config?.postCreate?.copyFiles,
+          context.config?.postCreate?.commands,
+          directoryNameSeparator,
+        );
 
   if (isErr(result)) {
     return err(result.error);

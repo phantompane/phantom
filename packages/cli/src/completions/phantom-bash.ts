@@ -272,19 +272,19 @@ _phantom_completion() {
                 return 0
             elif [[ \${words[2]} == "get" ]]; then
                 if [[ \${cword} -eq 3 ]]; then
-                    local keys="editor ai worktreesDirectory"
+                    local keys="editor ai worktreesDirectory directoryNameSeparator"
                     COMPREPLY=( $(compgen -W "\${keys}" -- "\${cur}") )
                     return 0
                 fi
             elif [[ \${words[2]} == "set" ]]; then
                 if [[ \${cword} -eq 3 ]]; then
-                    local keys="editor ai worktreesDirectory"
+                    local keys="editor ai worktreesDirectory directoryNameSeparator"
                     COMPREPLY=( $(compgen -W "\${keys}" -- "\${cur}") )
                     return 0
                 fi
             elif [[ \${words[2]} == "remove" ]]; then
                 if [[ \${cword} -eq 3 ]]; then
-                    local keys="editor ai worktreesDirectory"
+                    local keys="editor ai worktreesDirectory directoryNameSeparator"
                     COMPREPLY=( $(compgen -W "\${keys}" -- "\${cur}") )
                     return 0
                 fi

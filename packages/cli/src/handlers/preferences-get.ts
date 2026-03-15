@@ -3,7 +3,12 @@ import { loadPreferences } from "@phantompane/core";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 
-const supportedKeys = ["editor", "ai", "worktreesDirectory"] as const;
+const supportedKeys = [
+  "editor",
+  "ai",
+  "worktreesDirectory",
+  "directoryNameSeparator",
+] as const;
 
 export async function preferencesGetHandler(args: string[]): Promise<void> {
   const { positionals } = parseArgs({
@@ -38,7 +43,9 @@ export async function preferencesGetHandler(args: string[]): Promise<void> {
           ? preferences.ai
           : inputKey === "worktreesDirectory"
             ? preferences.worktreesDirectory
-            : undefined;
+            : inputKey === "directoryNameSeparator"
+              ? preferences.directoryNameSeparator
+              : undefined;
 
     if (value === undefined) {
       output.log(

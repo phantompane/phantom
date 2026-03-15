@@ -30,6 +30,9 @@ export async function checkoutPullRequest(
 ): Promise<Result<CheckoutResult>> {
   const gitRoot = await getGitRoot();
   const context = await createContext(gitRoot);
+  const directoryNameSeparator =
+    context.preferences?.directoryNameSeparator ??
+    context.config?.directoryNameSeparator;
   const localBranch = worktreeName;
 
   // Check if worktree already exists before attempting to fetch
@@ -84,13 +87,23 @@ export async function checkoutPullRequest(
   }
 
   // Attach the worktree to the fetched branch
-  const attachResult = await attachWorktreeCore(
-    context.gitRoot,
-    context.worktreesDirectory,
-    worktreeName,
-    context.config?.postCreate?.copyFiles,
-    context.config?.postCreate?.commands,
-  );
+  const attachResult =
+    directoryNameSeparator === undefined
+      ? await attachWorktreeCore(
+          context.gitRoot,
+          context.worktreesDirectory,
+          worktreeName,
+          context.config?.postCreate?.copyFiles,
+          context.config?.postCreate?.commands,
+        )
+      : await attachWorktreeCore(
+          context.gitRoot,
+          context.worktreesDirectory,
+          worktreeName,
+          context.config?.postCreate?.copyFiles,
+          context.config?.postCreate?.commands,
+          directoryNameSeparator,
+        );
 
   if (isErr(attachResult)) {
     return err(attachResult.error);
