@@ -12,13 +12,13 @@
     "parallel",
     "mcp"
   ],
-  "homepage": "https://github.com/aku11i/phantom#readme",
+  "homepage": "https://github.com/phantompane/phantom#readme",
   "bugs": {
-    "url": "https://github.com/aku11i/phantom/issues"
+    "url": "https://github.com/phantompane/phantom/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aku11i/phantom.git"
+    "url": "git+https://github.com/phantompane/phantom.git"
   },
   "license": "MIT",
   "author": "aku11i",
