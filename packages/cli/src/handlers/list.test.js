@@ -2,9 +2,7 @@ import { rejects, strictEqual } from "node:assert";
 import { afterAll, describe, it, vi } from "vitest";
 import { err, ok } from "@phantompane/shared";
 
-const exitMock = vi.fn((code) => {
-  throw new Error(`Exit with code ${code}`);
-});
+const exitMock = vi.fn();
 const consoleLogMock = vi.fn();
 const consoleErrorMock = vi.fn();
 const getGitRootMock = vi.fn();
@@ -27,7 +25,6 @@ const originalProcessEnv = process.env;
 
 process.exit = (code) => {
   exitMock(code);
-  throw new Error(`Exit with code ${code ?? 0}`);
 };
 
 afterAll(() => {
@@ -123,7 +120,7 @@ describe("listHandler", () => {
       ),
     );
 
-    await rejects(async () => await listHandler([]), /Exit with code 0/);
+    await listHandler([]);
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(listWorktreesCoreMock.mock.calls.length, 1);
@@ -161,10 +158,7 @@ describe("listHandler", () => {
       ),
     );
 
-    await rejects(
-      async () => await listHandler(["--no-default"]),
-      /Exit with code 0/,
-    );
+    await listHandler(["--no-default"]);
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(listWorktreesCoreMock.mock.calls.length, 1);
@@ -189,10 +183,7 @@ describe("listHandler", () => {
       ),
     );
 
-    await rejects(
-      async () => await listHandler(["--no-default"]),
-      /Exit with code 0/,
-    );
+    await listHandler(["--no-default"]);
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(listWorktreesCoreMock.mock.calls.length, 1);
@@ -242,10 +233,7 @@ describe("listHandler", () => {
       ),
     );
 
-    await rejects(
-      async () => await listHandler(["--names"]),
-      /Exit with code 0/,
-    );
+    await listHandler(["--names"]);
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(listWorktreesCoreMock.mock.calls.length, 1);
@@ -270,7 +258,7 @@ describe("listHandler", () => {
       ),
     );
 
-    await rejects(async () => await listHandler([]), /Exit with code 0/);
+    await listHandler([]);
 
     strictEqual(listWorktreesCoreMock.mock.calls.length, 1);
     strictEqual(listWorktreesCoreMock.mock.calls[0][0], "/test/repo");
@@ -291,10 +279,7 @@ describe("listHandler", () => {
       ),
     );
 
-    await rejects(
-      async () => await listHandler(["--names"]),
-      /Exit with code 0/,
-    );
+    await listHandler(["--names"]);
 
     strictEqual(listWorktreesCoreMock.mock.calls.length, 1);
     strictEqual(listWorktreesCoreMock.mock.calls[0][0], "/test/repo");
@@ -316,7 +301,7 @@ describe("listHandler", () => {
       ),
     );
 
-    await rejects(async () => await listHandler(["--fzf"]), /Exit with code 0/);
+    await listHandler(["--fzf"]);
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(selectWorktreeWithFzfMock.mock.calls.length, 1);
@@ -340,10 +325,7 @@ describe("listHandler", () => {
       ),
     );
 
-    await rejects(
-      async () => await listHandler(["--fzf", "--no-default"]),
-      /Exit with code 0/,
-    );
+    await listHandler(["--fzf", "--no-default"]);
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(selectWorktreeWithFzfMock.mock.calls.length, 1);
@@ -372,7 +354,7 @@ describe("listHandler", () => {
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(selectWorktreeWithFzfMock.mock.calls.length, 1);
-    strictEqual(consoleErrorMock.mock.calls.length, 1);
+    strictEqual(consoleErrorMock.mock.calls.length, 2);
     strictEqual(consoleErrorMock.mock.calls[0][0], "Error: fzf not found");
     strictEqual(exitMock.mock.calls[0][0], 1);
   });
@@ -392,7 +374,7 @@ describe("listHandler", () => {
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(listWorktreesCoreMock.mock.calls.length, 1);
     strictEqual(listWorktreesCoreMock.mock.calls[0][0], "/test/repo");
-    strictEqual(consoleErrorMock.mock.calls.length, 1);
+    strictEqual(consoleErrorMock.mock.calls.length, 2);
     strictEqual(
       consoleErrorMock.mock.calls[0][0],
       "Error: Failed to list worktrees",
@@ -407,7 +389,7 @@ describe("listHandler", () => {
       Promise.resolve(ok(null)),
     );
 
-    await rejects(async () => await listHandler(["--fzf"]), /Exit with code 0/);
+    await listHandler(["--fzf"]);
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(selectWorktreeWithFzfMock.mock.calls.length, 1);

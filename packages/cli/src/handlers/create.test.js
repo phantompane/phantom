@@ -39,7 +39,6 @@ const originalProcessEnv = process.env;
 
 process.exit = (code) => {
   exitMock(code);
-  throw new Error(`Exit with code ${code ?? 0}`);
 };
 process.env = processEnvMock;
 
@@ -150,10 +149,7 @@ describe("createHandler", () => {
       Promise.resolve(ok({ exitCode: 0 })),
     );
 
-    await rejects(
-      async () => await createHandler(["feature", "--exec", "echo hello"]),
-      /Exit with code 0/,
-    );
+    await createHandler(["feature", "--exec", "echo hello"]);
 
     strictEqual(createWorktreeMock.mock.calls.length, 1);
     strictEqual(createWorktreeMock.mock.calls[0][0], "/test/repo");
@@ -299,10 +295,7 @@ describe("createHandler", () => {
       Promise.resolve(ok({ exitCode: 0 })),
     );
 
-    await rejects(
-      async () => await createHandler(["feature", "--exec", "echo hello"]),
-      /Exit with code 0/,
-    );
+    await createHandler(["feature", "--exec", "echo hello"]);
 
     const execArgs = execInWorktreeMock.mock.calls[0][3];
     strictEqual(execArgs[0], "/bin/sh");

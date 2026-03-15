@@ -3,9 +3,7 @@ import { afterAll, describe, it, vi } from "vitest";
 import { WorktreeNotFoundError } from "@phantompane/core";
 import { err, ok } from "@phantompane/shared";
 
-const exitMock = vi.fn((code) => {
-  throw new Error(`Process exit with code ${code}`);
-});
+const exitMock = vi.fn();
 const consoleLogMock = vi.fn();
 const consoleErrorMock = vi.fn();
 const getGitRootMock = vi.fn();
@@ -28,7 +26,6 @@ const originalProcessEnv = process.env;
 
 process.exit = (code) => {
   exitMock(code);
-  throw new Error(`Exit with code ${code ?? 0}`);
 };
 
 afterAll(() => {
@@ -155,10 +152,7 @@ describe.sequential("aiHandler", () => {
       },
     }));
 
-    await rejects(
-      async () => await aiHandler(["feature"]),
-      /Process exit with code 0/,
-    );
+    await aiHandler(["feature"]);
 
     strictEqual(spawnMock.mock.calls.length, 1);
     const [command, args, options] = spawnMock.mock.calls[0];
@@ -166,6 +160,7 @@ describe.sequential("aiHandler", () => {
     strictEqual(args.length, 0);
     strictEqual(options.cwd, "/repo/.git/phantom/worktrees/feature");
     strictEqual(options.env.PHANTOM, "1");
+    strictEqual(exitMock.mock.calls[0][0], 0);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Launching AI assistant in worktree 'feature'...",

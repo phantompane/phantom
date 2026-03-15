@@ -5,7 +5,6 @@ import { getGitRoot } from "@phantompane/git";
 import { getPhantomEnv } from "@phantompane/process";
 import { isErr } from "@phantompane/shared";
 import { exitCodes, exitWithError } from "../errors.ts";
-import { isExitSignal } from "../exit-signal.ts";
 import { output } from "../output.ts";
 
 async function openEditor(
@@ -85,11 +84,8 @@ export async function editHandler(args: string[]): Promise<void> {
       ...getPhantomEnv(worktreeName, validation.value.path),
     });
 
-    process.exit(exitCode);
+    return process.exit(exitCode);
   } catch (error) {
-    if (isExitSignal(error)) {
-      throw error;
-    }
     exitWithError(
       error instanceof Error ? error.message : String(error),
       exitCodes.generalError,

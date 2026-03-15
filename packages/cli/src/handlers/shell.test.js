@@ -35,7 +35,6 @@ const originalProcessEnv = process.env;
 
 process.exit = (code) => {
   exitMock(code);
-  throw new Error(`Exit with code ${code ?? 0}`);
 };
 
 afterAll(() => {
@@ -143,14 +142,8 @@ describe("shellHandler", () => {
       ok({ path: "/repo/.git/phantom/worktrees/feature" }),
     );
     shellInWorktreeMock.mockImplementation(() => ok({ exitCode: 0 }));
-    exitMock.mockImplementation((code) => {
-      throw new Error(`Process exit with code ${code}`);
-    });
 
-    await rejects(
-      async () => await shellHandler(["feature"]),
-      /Process exit with code 0/,
-    );
+    await shellHandler(["feature"]);
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(validateWorktreeExistsMock.mock.calls.length, 1);
@@ -168,6 +161,7 @@ describe("shellHandler", () => {
     );
     strictEqual(shellInWorktreeMock.mock.calls[0][2], "feature");
     strictEqual(consoleLogMock.mock.calls.length, 2);
+    strictEqual(exitMock.mock.calls[0][0], 0);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Entering worktree 'feature' at /repo/.git/phantom/worktrees/feature",
@@ -196,14 +190,8 @@ describe("shellHandler", () => {
       ok({ path: "/repo/.git/phantom/worktrees/feature-fzf" }),
     );
     shellInWorktreeMock.mockImplementation(() => ok({ exitCode: 0 }));
-    exitMock.mockImplementation((code) => {
-      throw new Error(`Process exit with code ${code}`);
-    });
 
-    await rejects(
-      async () => await shellHandler(["--fzf"]),
-      /Process exit with code 0/,
-    );
+    await shellHandler(["--fzf"]);
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(selectWorktreeWithFzfMock.mock.calls.length, 1);
@@ -221,6 +209,7 @@ describe("shellHandler", () => {
       "/repo/.git/phantom/worktrees",
     );
     strictEqual(shellInWorktreeMock.mock.calls[0][2], "feature-fzf");
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
   it("should exit gracefully when fzf selection is cancelled", async () => {
@@ -257,7 +246,7 @@ describe("shellHandler", () => {
       /Exit with code 1: fzf not found/,
     );
 
-    strictEqual(consoleErrorMock.mock.calls.length, 1);
+    strictEqual(consoleErrorMock.mock.calls.length, 2);
     strictEqual(consoleErrorMock.mock.calls[0][0], "Error: fzf not found");
     strictEqual(exitMock.mock.calls[0][0], 1); // generalError
   });
@@ -278,7 +267,7 @@ describe("shellHandler", () => {
       /Exit with code 1: Worktree 'nonexistent' not found/,
     );
 
-    strictEqual(consoleErrorMock.mock.calls.length, 1);
+    strictEqual(consoleErrorMock.mock.calls.length, 2);
     strictEqual(
       consoleErrorMock.mock.calls[0][0],
       "Error: Worktree 'nonexistent' not found",
@@ -300,7 +289,7 @@ describe("shellHandler", () => {
     );
 
     strictEqual(isInsideTmuxMock.mock.calls.length, 1);
-    strictEqual(consoleErrorMock.mock.calls.length, 1);
+    strictEqual(consoleErrorMock.mock.calls.length, 2);
     strictEqual(
       consoleErrorMock.mock.calls[0][0],
       "Error: The --tmux option can only be used inside a tmux session",
@@ -424,7 +413,7 @@ describe("shellHandler", () => {
       /Exit with code 1:/,
     );
 
-    strictEqual(consoleErrorMock.mock.calls.length, 2);
+    strictEqual(consoleErrorMock.mock.calls.length, 3);
     strictEqual(consoleErrorMock.mock.calls[0][0], "tmux command failed");
   });
 

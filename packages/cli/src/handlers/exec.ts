@@ -14,7 +14,6 @@ import {
 } from "@phantompane/process";
 import { isErr } from "@phantompane/shared";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
-import { isExitSignal } from "../exit-signal.ts";
 import { output } from "../output.ts";
 
 export async function execHandler(args: string[]): Promise<void> {
@@ -167,11 +166,8 @@ export async function execHandler(args: string[]): Promise<void> {
       exitWithError(result.error.message, exitCode);
     }
 
-    process.exit(result.value.exitCode);
+    return process.exit(result.value.exitCode);
   } catch (error) {
-    if (isExitSignal(error)) {
-      throw error;
-    }
     exitWithError(
       error instanceof Error ? error.message : String(error),
       exitCodes.generalError,

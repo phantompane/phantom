@@ -15,7 +15,6 @@ import {
 } from "@phantompane/process";
 import { isErr, isOk } from "@phantompane/shared";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
-import { isExitSignal } from "../exit-signal.ts";
 import { output } from "../output.ts";
 
 export async function createHandler(args: string[]): Promise<void> {
@@ -182,7 +181,7 @@ export async function createHandler(args: string[]): Promise<void> {
         exitWithError("", exitCode);
       }
 
-      process.exit(execResult.value.exitCode ?? 0);
+      return process.exit(execResult.value.exitCode ?? 0);
     }
 
     if (openShell && isOk(result)) {
@@ -206,7 +205,7 @@ export async function createHandler(args: string[]): Promise<void> {
         exitWithError("", exitCode);
       }
 
-      process.exit(shellResult.value.exitCode ?? 0);
+      return process.exit(shellResult.value.exitCode ?? 0);
     }
 
     if (tmuxDirection && isOk(result)) {
@@ -238,9 +237,6 @@ export async function createHandler(args: string[]): Promise<void> {
 
     exitWithSuccess();
   } catch (error) {
-    if (isExitSignal(error)) {
-      throw error;
-    }
     exitWithError(
       error instanceof Error ? error.message : String(error),
       exitCodes.generalError,

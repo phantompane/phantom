@@ -3,9 +3,7 @@ import { afterAll, describe, it, vi } from "vitest";
 import { WorktreeNotFoundError } from "@phantompane/core";
 import { err, ok } from "@phantompane/shared";
 
-const exitMock = vi.fn((code) => {
-  throw new Error(`Process exit with code ${code}`);
-});
+const exitMock = vi.fn();
 const consoleLogMock = vi.fn();
 const consoleErrorMock = vi.fn();
 const getGitRootMock = vi.fn();
@@ -30,7 +28,6 @@ const originalProcessEnv = process.env;
 
 process.exit = (code) => {
   exitMock(code);
-  throw new Error(`Exit with code ${code ?? 0}`);
 };
 
 afterAll(() => {
@@ -174,10 +171,7 @@ describe.sequential("editHandler", () => {
       },
     }));
 
-    await rejects(
-      async () => await editHandler(["feature"]),
-      /Process exit with code 0/,
-    );
+    await editHandler(["feature"]);
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(validateWorktreeExistsMock.mock.calls.length, 1);
@@ -188,6 +182,7 @@ describe.sequential("editHandler", () => {
     strictEqual(spawnCall[2].shell, true);
     strictEqual(spawnCall[2].stdio, "inherit");
     strictEqual(spawnCall[2].env.PHANTOM, "1");
+    strictEqual(exitMock.mock.calls[0][0], 0);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Opening editor in worktree 'feature'...",
@@ -217,15 +212,13 @@ describe.sequential("editHandler", () => {
       },
     }));
 
-    await rejects(
-      async () => await editHandler(["docs", "README.md"]),
-      /Process exit with code 0/,
-    );
+    await editHandler(["docs", "README.md"]);
 
     const spawnCall = spawnMock.mock.calls[0];
     strictEqual(spawnCall[0], "vim");
     strictEqual(spawnCall[1][0], "README.md");
     strictEqual(spawnCall[2].cwd, "/repo/.git/phantom/worktrees/docs");
+    strictEqual(exitMock.mock.calls[0][0], 0);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Opening editor in worktree 'docs'...",
@@ -255,13 +248,11 @@ describe.sequential("editHandler", () => {
       },
     }));
 
-    await rejects(
-      async () => await editHandler(["feature"]),
-      /Process exit with code 0/,
-    );
+    await editHandler(["feature"]);
 
     const spawnCall = spawnMock.mock.calls[0];
     strictEqual(spawnCall[0], "pref-editor");
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 });
 

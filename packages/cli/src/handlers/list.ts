@@ -6,7 +6,6 @@ import {
 import { getGitRoot } from "@phantompane/git";
 import { isErr } from "@phantompane/shared";
 import { exitCodes, exitWithError } from "../errors.ts";
-import { isExitSignal } from "../exit-signal.ts";
 import { output } from "../output.ts";
 
 export async function listHandler(args: string[] = []): Promise<void> {
@@ -62,7 +61,7 @@ export async function listHandler(args: string[] = []): Promise<void> {
             : "No worktrees found.";
           output.log(message || fallbackMessage);
         }
-        process.exit(exitCodes.success);
+        return process.exit(exitCodes.success);
       }
 
       if (values.names) {
@@ -78,11 +77,8 @@ export async function listHandler(args: string[] = []): Promise<void> {
       }
     }
 
-    process.exit(exitCodes.success);
+    return process.exit(exitCodes.success);
   } catch (error) {
-    if (isExitSignal(error)) {
-      throw error;
-    }
     exitWithError(
       error instanceof Error ? error.message : String(error),
       exitCodes.generalError,

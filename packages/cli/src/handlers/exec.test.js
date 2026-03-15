@@ -3,11 +3,7 @@ import { afterAll, describe, it, vi } from "vitest";
 import { WorktreeNotFoundError } from "@phantompane/core";
 import { err, ok } from "@phantompane/shared";
 
-const exitMock = vi.fn((code) => {
-  throw new Error(
-    `Exit with code ${code}: ${code === 0 ? "success" : "error"}`,
-  );
-});
+const exitMock = vi.fn();
 const consoleLogMock = vi.fn();
 const consoleErrorMock = vi.fn();
 const getGitRootMock = vi.fn();
@@ -40,7 +36,6 @@ const originalProcessEnv = process.env;
 
 process.exit = (code) => {
   exitMock(code);
-  throw new Error(`Exit with code ${code ?? 0}`);
 };
 
 afterAll(() => {
@@ -113,7 +108,7 @@ describe("execHandler", () => {
     );
 
     strictEqual(isInsideTmuxMock.mock.calls.length, 1);
-    strictEqual(consoleErrorMock.mock.calls.length, 1);
+    strictEqual(consoleErrorMock.mock.calls.length, 2);
     strictEqual(
       consoleErrorMock.mock.calls[0][0],
       "Error: The --tmux option can only be used inside a tmux session",
@@ -278,7 +273,7 @@ describe("execHandler", () => {
       /Exit with code 1:/,
     );
 
-    strictEqual(consoleErrorMock.mock.calls.length, 2);
+    strictEqual(consoleErrorMock.mock.calls.length, 3);
     strictEqual(consoleErrorMock.mock.calls[0][0], "tmux command failed");
   });
 
@@ -338,10 +333,7 @@ describe("execHandler", () => {
     );
     execInWorktreeMock.mockImplementation(() => ok({ exitCode: 0 }));
 
-    await rejects(
-      async () => await execHandler(["feature", "npm", "test"]),
-      /Exit with code 0: success/,
-    );
+    await execHandler(["feature", "npm", "test"]);
 
     strictEqual(execInWorktreeMock.mock.calls.length, 1);
     const execCall = execInWorktreeMock.mock.calls[0];
@@ -349,5 +341,6 @@ describe("execHandler", () => {
     strictEqual(execCall[1], "/repo/.git/phantom/worktrees");
     strictEqual(execCall[2], "feature");
     strictEqual(execCall[3].join(" "), "npm test");
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 });
