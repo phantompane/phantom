@@ -121,4 +121,19 @@ describe("createContext", () => {
 
     equal(context.directoryNameSeparator, "-");
   });
+
+  it("falls back to default directoryNameSeparator when configured value is empty", async () => {
+    resetMocks();
+    loadConfigMock.mock.mockImplementation(async () =>
+      ok({ directoryNameSeparator: "" }),
+    );
+    loadPreferencesMock.mock.mockImplementation(async () => ({
+      directoryNameSeparator: "",
+    }));
+    getWorktreesDirectoryMock.mock.mockImplementation(() => "/resolved/user");
+
+    const context = await createContext("/repo");
+
+    equal(context.directoryNameSeparator, "/");
+  });
 });

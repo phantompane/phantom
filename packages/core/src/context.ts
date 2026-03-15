@@ -20,7 +20,7 @@ export async function createContext(gitRoot: string): Promise<Context> {
   const worktreesDirectory =
     worktreesDirectoryPreference ?? worktreesDirectoryConfig;
   const directoryNameSeparator =
-    preferences.directoryNameSeparator ?? config?.directoryNameSeparator ?? "/";
+    preferences.directoryNameSeparator || config?.directoryNameSeparator || "/";
 
   return {
     gitRoot,
