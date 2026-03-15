@@ -30,9 +30,6 @@ export async function checkoutPullRequest(
 ): Promise<Result<CheckoutResult>> {
   const gitRoot = await getGitRoot();
   const context = await createContext(gitRoot);
-  const directoryNameSeparator =
-    context.preferences?.directoryNameSeparator ??
-    context.config?.directoryNameSeparator;
   const localBranch = worktreeName;
 
   // Check if worktree already exists before attempting to fetch
@@ -93,7 +90,7 @@ export async function checkoutPullRequest(
     worktreeName,
     context.config?.postCreate?.copyFiles,
     context.config?.postCreate?.commands,
-    directoryNameSeparator,
+    context.directoryNameSeparator,
   );
 
   if (isErr(attachResult)) {

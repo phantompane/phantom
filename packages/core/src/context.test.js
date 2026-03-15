@@ -52,6 +52,7 @@ describe("createContext", () => {
     equal(context.worktreesDirectory, "/resolved/user");
     equal(context.config?.worktreesDirectory, "config-dir");
     equal(context.preferences.worktreesDirectory, "../user-worktrees");
+    equal(context.directoryNameSeparator, undefined);
   });
 
   it("uses config worktreesDirectory when preference is absent", async () => {
@@ -71,6 +72,7 @@ describe("createContext", () => {
       "../config-worktrees",
     ]);
     equal(context.worktreesDirectory, "/resolved/../config-worktrees");
+    equal(context.directoryNameSeparator, undefined);
   });
 
   it("falls back to default worktreesDirectory when neither preference nor config is set", async () => {
@@ -89,5 +91,34 @@ describe("createContext", () => {
       undefined,
     ]);
     equal(context.worktreesDirectory, "/repo/.git/phantom/worktrees");
+    equal(context.directoryNameSeparator, undefined);
+  });
+
+  it("uses preferences directoryNameSeparator over config", async () => {
+    resetMocks();
+    loadConfigMock.mock.mockImplementation(async () =>
+      ok({ directoryNameSeparator: "-" }),
+    );
+    loadPreferencesMock.mock.mockImplementation(async () => ({
+      directoryNameSeparator: "_",
+    }));
+    getWorktreesDirectoryMock.mock.mockImplementation(() => "/resolved/user");
+
+    const context = await createContext("/repo");
+
+    equal(context.directoryNameSeparator, "_");
+  });
+
+  it("uses config directoryNameSeparator when preference is absent", async () => {
+    resetMocks();
+    loadConfigMock.mock.mockImplementation(async () =>
+      ok({ directoryNameSeparator: "-" }),
+    );
+    loadPreferencesMock.mock.mockImplementation(async () => ({}));
+    getWorktreesDirectoryMock.mock.mockImplementation(() => "/resolved/user");
+
+    const context = await createContext("/repo");
+
+    equal(context.directoryNameSeparator, "-");
   });
 });
