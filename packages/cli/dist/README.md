@@ -14,7 +14,7 @@ npm install -g @phantompane/cli
 
 For detailed documentation, examples, and advanced usage, please visit:
 
-https://github.com/aku11i/phantom
+https://github.com/phantompane/phantom
 
 ## License
 

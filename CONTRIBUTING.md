@@ -23,7 +23,7 @@ Thank you for your interest in contributing to Phantom! This guide will help you
 
 ```bash
 # Clone and setup
-git clone https://github.com/aku11i/phantom.git
+git clone https://github.com/phantompane/phantom.git
 cd phantom
 pnpm install
 
@@ -214,7 +214,7 @@ To release a new version of Phantom:
    brew upgrade phantom
    ```
    
-   **Full Changelog**: https://github.com/aku11i/phantom/compare/v<previous>...v<version>
+   **Full Changelog**: https://github.com/phantompane/phantom/compare/v<previous>...v<version>
    EOF
    )"
    ```
