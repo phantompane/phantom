@@ -1,6 +1,6 @@
 import { ok, strictEqual } from "node:assert";
 import { dirname, join } from "node:path";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { runFishCompletion } from "../test-utils/run-fish-completion.ts";
 

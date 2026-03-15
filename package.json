@@ -31,7 +31,8 @@
     "oxfmt": "^0.40.0",
     "oxlint": "^1.55.0",
     "turbo": "^2.8.17",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
   },
   "dependencies": {
     "zod": "^4.3.6"

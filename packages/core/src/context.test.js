@@ -1,51 +1,45 @@
 import { deepStrictEqual, equal } from "node:assert/strict";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 
-const loadConfigMock = mock.fn();
-const loadPreferencesMock = mock.fn();
-const getWorktreesDirectoryMock = mock.fn();
+const loadConfigMock = vi.fn();
+const loadPreferencesMock = vi.fn();
+const getWorktreesDirectoryMock = vi.fn();
 
-mock.module("./config/loader.ts", {
-  namedExports: {
-    loadConfig: loadConfigMock,
-  },
-});
+vi.doMock("./config/loader.ts", () => ({
+  loadConfig: loadConfigMock,
+}));
 
-mock.module("./preferences/loader.ts", {
-  namedExports: {
-    loadPreferences: loadPreferencesMock,
-  },
-});
+vi.doMock("./preferences/loader.ts", () => ({
+  loadPreferences: loadPreferencesMock,
+}));
 
-mock.module("./paths.ts", {
-  namedExports: {
-    getWorktreesDirectory: getWorktreesDirectoryMock,
-  },
-});
+vi.doMock("./paths.ts", () => ({
+  getWorktreesDirectory: getWorktreesDirectoryMock,
+}));
 
 const { ok, err } = await import("@phantompane/shared");
 const { createContext } = await import("./context.ts");
 
 describe("createContext", () => {
   const resetMocks = () => {
-    loadConfigMock.mock.resetCalls();
-    loadPreferencesMock.mock.resetCalls();
-    getWorktreesDirectoryMock.mock.resetCalls();
+    loadConfigMock.mockClear();
+    loadPreferencesMock.mockClear();
+    getWorktreesDirectoryMock.mockClear();
   };
 
   it("uses preferences worktreesDirectory over config", async () => {
     resetMocks();
-    loadConfigMock.mock.mockImplementation(async () =>
+    loadConfigMock.mockImplementation(async () =>
       ok({ worktreesDirectory: "config-dir" }),
     );
-    loadPreferencesMock.mock.mockImplementation(async () => ({
+    loadPreferencesMock.mockImplementation(async () => ({
       worktreesDirectory: "../user-worktrees",
     }));
-    getWorktreesDirectoryMock.mock.mockImplementation(() => "/resolved/user");
+    getWorktreesDirectoryMock.mockImplementation(() => "/resolved/user");
 
     const context = await createContext("/repo");
 
-    deepStrictEqual(getWorktreesDirectoryMock.mock.calls[0].arguments, [
+    deepStrictEqual(getWorktreesDirectoryMock.mock.calls[0], [
       "/repo",
       "../user-worktrees",
     ]);
@@ -57,17 +51,17 @@ describe("createContext", () => {
 
   it("uses config worktreesDirectory when preference is absent", async () => {
     resetMocks();
-    loadConfigMock.mock.mockImplementation(async () =>
+    loadConfigMock.mockImplementation(async () =>
       ok({ worktreesDirectory: "../config-worktrees" }),
     );
-    loadPreferencesMock.mock.mockImplementation(async () => ({}));
-    getWorktreesDirectoryMock.mock.mockImplementation(
+    loadPreferencesMock.mockImplementation(async () => ({}));
+    getWorktreesDirectoryMock.mockImplementation(
       (_gitRoot, worktreesDirectory) => `/resolved/${worktreesDirectory}`,
     );
 
     const context = await createContext("/repo");
 
-    deepStrictEqual(getWorktreesDirectoryMock.mock.calls[0].arguments, [
+    deepStrictEqual(getWorktreesDirectoryMock.mock.calls[0], [
       "/repo",
       "../config-worktrees",
     ]);
@@ -77,16 +71,16 @@ describe("createContext", () => {
 
   it("falls back to default worktreesDirectory when neither preference nor config is set", async () => {
     resetMocks();
-    loadConfigMock.mock.mockImplementation(async () => err(new Error("none")));
-    loadPreferencesMock.mock.mockImplementation(async () => ({}));
-    getWorktreesDirectoryMock.mock.mockImplementation(
+    loadConfigMock.mockImplementation(async () => err(new Error("none")));
+    loadPreferencesMock.mockImplementation(async () => ({}));
+    getWorktreesDirectoryMock.mockImplementation(
       (_gitRoot, worktreesDirectory) =>
         worktreesDirectory ?? "/repo/.git/phantom/worktrees",
     );
 
     const context = await createContext("/repo");
 
-    deepStrictEqual(getWorktreesDirectoryMock.mock.calls[0].arguments, [
+    deepStrictEqual(getWorktreesDirectoryMock.mock.calls[0], [
       "/repo",
       undefined,
     ]);
@@ -96,13 +90,13 @@ describe("createContext", () => {
 
   it("uses preferences directoryNameSeparator over config", async () => {
     resetMocks();
-    loadConfigMock.mock.mockImplementation(async () =>
+    loadConfigMock.mockImplementation(async () =>
       ok({ directoryNameSeparator: "-" }),
     );
-    loadPreferencesMock.mock.mockImplementation(async () => ({
+    loadPreferencesMock.mockImplementation(async () => ({
       directoryNameSeparator: "_",
     }));
-    getWorktreesDirectoryMock.mock.mockImplementation(() => "/resolved/user");
+    getWorktreesDirectoryMock.mockImplementation(() => "/resolved/user");
 
     const context = await createContext("/repo");
 
@@ -111,11 +105,11 @@ describe("createContext", () => {
 
   it("uses config directoryNameSeparator when preference is absent", async () => {
     resetMocks();
-    loadConfigMock.mock.mockImplementation(async () =>
+    loadConfigMock.mockImplementation(async () =>
       ok({ directoryNameSeparator: "-" }),
     );
-    loadPreferencesMock.mock.mockImplementation(async () => ({}));
-    getWorktreesDirectoryMock.mock.mockImplementation(() => "/resolved/user");
+    loadPreferencesMock.mockImplementation(async () => ({}));
+    getWorktreesDirectoryMock.mockImplementation(() => "/resolved/user");
 
     const context = await createContext("/repo");
 
@@ -124,13 +118,13 @@ describe("createContext", () => {
 
   it("falls back to default directoryNameSeparator when configured value is empty", async () => {
     resetMocks();
-    loadConfigMock.mock.mockImplementation(async () =>
+    loadConfigMock.mockImplementation(async () =>
       ok({ directoryNameSeparator: "" }),
     );
-    loadPreferencesMock.mock.mockImplementation(async () => ({
+    loadPreferencesMock.mockImplementation(async () => ({
       directoryNameSeparator: "",
     }));
-    getWorktreesDirectoryMock.mock.mockImplementation(() => "/resolved/user");
+    getWorktreesDirectoryMock.mockImplementation(() => "/resolved/user");
 
     const context = await createContext("/repo");
 

@@ -1,5 +1,5 @@
 import { equal, rejects } from "node:assert/strict";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import { githubHandler } from "./github.ts";
 
 describe("githubHandler", () => {
@@ -8,12 +8,12 @@ describe("githubHandler", () => {
   });
 
   it("should print help when no arguments provided", async () => {
-    const consoleLogSpy = mock.method(console, "log", () => {});
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await githubHandler([]);
 
     equal(consoleLogSpy.mock.calls.length, 1);
-    consoleLogSpy.mock.restore();
+    consoleLogSpy.mockRestore();
   });
 
   it("should throw error for unknown subcommand", async () => {

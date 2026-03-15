@@ -1,5 +1,5 @@
 import { rejects, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { afterAll, describe, it, vi } from "vitest";
 import {
   ConfigNotFoundError,
   ConfigParseError,
@@ -8,119 +8,117 @@ import {
 } from "@phantompane/core";
 import { err, ok } from "@phantompane/shared";
 
-const exitMock = mock.fn();
-const consoleLogMock = mock.fn();
-const consoleErrorMock = mock.fn();
-const consoleWarnMock = mock.fn();
-const getGitRootMock = mock.fn();
-const createWorktreeMock = mock.fn();
-const execInWorktreeMock = mock.fn();
-const shellInWorktreeMock = mock.fn();
-const loadConfigMock = mock.fn();
-const createContextMock = mock.fn();
-const executePostCreateCommandsMock = mock.fn();
-const isInsideTmuxMock = mock.fn();
-const executeTmuxCommandMock = mock.fn();
-const getPhantomEnvMock = mock.fn();
-const exitWithErrorMock = mock.fn((message, code) => {
+const exitMock = vi.fn();
+const consoleLogMock = vi.fn();
+const consoleErrorMock = vi.fn();
+const consoleWarnMock = vi.fn();
+const getGitRootMock = vi.fn();
+const createWorktreeMock = vi.fn();
+const execInWorktreeMock = vi.fn();
+const shellInWorktreeMock = vi.fn();
+const loadConfigMock = vi.fn();
+const createContextMock = vi.fn();
+const executePostCreateCommandsMock = vi.fn();
+const isInsideTmuxMock = vi.fn();
+const executeTmuxCommandMock = vi.fn();
+const getPhantomEnvMock = vi.fn();
+const exitWithErrorMock = vi.fn((message, code) => {
   if (message) consoleErrorMock(`Error: ${message}`);
   exitMock(code);
   throw new Error(`Exit with code ${code}: ${message}`);
 });
-const exitWithSuccessMock = mock.fn(() => {
+const exitWithSuccessMock = vi.fn(() => {
   exitMock(0);
   throw new Error("Exit with code 0");
 });
 
 // Mock process module
 const processEnvMock = {};
-mock.module("node:process", {
-  namedExports: {
-    exit: exitMock,
-    env: processEnvMock,
-  },
+const originalProcessExit = process.exit;
+const originalProcessEnv = process.env;
+
+process.exit = (code) => {
+  exitMock(code);
+  throw new Error(`Exit with code ${code ?? 0}`);
+};
+process.env = processEnvMock;
+
+afterAll(() => {
+  process.exit = originalProcessExit;
+  process.env = originalProcessEnv;
 });
 
-mock.module("@phantompane/git", {
-  namedExports: {
-    getGitRoot: getGitRootMock,
-  },
-});
+vi.doMock("@phantompane/git", () => ({
+  getGitRoot: getGitRootMock,
+}));
 
-const generateUniqueNameMock = mock.fn(() =>
+const generateUniqueNameMock = vi.fn(() =>
   Promise.resolve({ ok: true, value: "fuzzy-cats-dance" }),
 );
 
-mock.module("@phantompane/core", {
-  namedExports: {
-    createWorktree: createWorktreeMock,
-    execInWorktree: execInWorktreeMock,
-    shellInWorktree: shellInWorktreeMock,
-    loadConfig: loadConfigMock,
-    ConfigNotFoundError,
-    ConfigParseError,
-    ConfigValidationError,
-    WorktreeAlreadyExistsError,
-    createContext: createContextMock,
-    executePostCreateCommands: executePostCreateCommandsMock,
-    generateUniqueName: generateUniqueNameMock,
-    getWorktreesDirectory: mock.fn((gitRoot, worktreesDirectory) => {
-      return worktreesDirectory || `${gitRoot}/.git/phantom/worktrees`;
-    }),
-  },
-});
+vi.doMock("@phantompane/core", () => ({
+  createWorktree: createWorktreeMock,
+  execInWorktree: execInWorktreeMock,
+  shellInWorktree: shellInWorktreeMock,
+  loadConfig: loadConfigMock,
+  ConfigNotFoundError,
+  ConfigParseError,
+  ConfigValidationError,
+  WorktreeAlreadyExistsError,
+  createContext: createContextMock,
+  executePostCreateCommands: executePostCreateCommandsMock,
+  generateUniqueName: generateUniqueNameMock,
+  getWorktreesDirectory: vi.fn((gitRoot, worktreesDirectory) => {
+    return worktreesDirectory || `${gitRoot}/.git/phantom/worktrees`;
+  }),
+}));
 
-mock.module("@phantompane/process", {
-  namedExports: {
-    isInsideTmux: isInsideTmuxMock,
-    executeTmuxCommand: executeTmuxCommandMock,
-    getPhantomEnv: getPhantomEnvMock,
-  },
-});
+vi.doMock("@phantompane/process", () => ({
+  isInsideTmux: isInsideTmuxMock,
+  executeTmuxCommand: executeTmuxCommandMock,
+  getPhantomEnv: getPhantomEnvMock,
+}));
 
-mock.module("../output.ts", {
-  namedExports: {
-    output: {
-      log: consoleLogMock,
-      error: consoleErrorMock,
-      warn: consoleWarnMock,
-    },
+vi.doMock("../output.ts", () => ({
+  output: {
+    log: consoleLogMock,
+    error: consoleErrorMock,
+    warn: consoleWarnMock,
   },
-});
+}));
 
-mock.module("../errors.ts", {
-  namedExports: {
-    exitCodes: {
-      generalError: 1,
-      validationError: 2,
-      success: 0,
-    },
-    exitWithError: exitWithErrorMock,
-    exitWithSuccess: exitWithSuccessMock,
+vi.doMock("../errors.ts", () => ({
+  exitCodes: {
+    generalError: 1,
+    validationError: 2,
+    success: 0,
   },
-});
+  exitWithError: exitWithErrorMock,
+  exitWithSuccess: exitWithSuccessMock,
+}));
 
 const { createHandler } = await import("./create.ts");
 
 describe("createHandler", () => {
   const resetMocks = () => {
     // Reset all mocks
-    exitMock.mock.resetCalls();
-    consoleLogMock.mock.resetCalls();
-    consoleErrorMock.mock.resetCalls();
-    consoleWarnMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    createWorktreeMock.mock.resetCalls();
-    execInWorktreeMock.mock.resetCalls();
-    shellInWorktreeMock.mock.resetCalls();
-    loadConfigMock.mock.resetCalls();
-    createContextMock.mock.resetCalls();
-    executePostCreateCommandsMock.mock.resetCalls();
-    isInsideTmuxMock.mock.resetCalls();
-    executeTmuxCommandMock.mock.resetCalls();
-    getPhantomEnvMock.mock.resetCalls();
-    exitWithErrorMock.mock.resetCalls();
-    exitWithSuccessMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleLogMock.mockClear();
+    consoleErrorMock.mockClear();
+    consoleWarnMock.mockClear();
+    getGitRootMock.mockClear();
+    createWorktreeMock.mockClear();
+    execInWorktreeMock.mockClear();
+    shellInWorktreeMock.mockClear();
+    loadConfigMock.mockClear();
+    createContextMock.mockClear();
+    executePostCreateCommandsMock.mockClear();
+    isInsideTmuxMock.mockClear();
+    executeTmuxCommandMock.mockClear();
+    getPhantomEnvMock.mockClear();
+    generateUniqueNameMock.mockClear();
+    exitWithErrorMock.mockClear();
+    exitWithSuccessMock.mockClear();
 
     // Clear process env
     for (const key in processEnvMock) {
@@ -131,15 +129,15 @@ describe("createHandler", () => {
   it("should create worktree and execute command with --exec option", async () => {
     resetMocks();
     processEnvMock.SHELL = "/bin/bash";
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/test/repo"));
-    createContextMock.mock.mockImplementation((gitRoot) =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
+    createContextMock.mockImplementation((gitRoot) =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
         config: null,
       }),
     );
-    createWorktreeMock.mock.mockImplementation(() =>
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message:
@@ -148,7 +146,7 @@ describe("createHandler", () => {
         }),
       ),
     );
-    execInWorktreeMock.mock.mockImplementation(() =>
+    execInWorktreeMock.mockImplementation(() =>
       Promise.resolve(ok({ exitCode: 0 })),
     );
 
@@ -158,50 +156,50 @@ describe("createHandler", () => {
     );
 
     strictEqual(createWorktreeMock.mock.calls.length, 1);
-    strictEqual(createWorktreeMock.mock.calls[0].arguments[0], "/test/repo");
+    strictEqual(createWorktreeMock.mock.calls[0][0], "/test/repo");
     strictEqual(
-      createWorktreeMock.mock.calls[0].arguments[1],
+      createWorktreeMock.mock.calls[0][1],
       "/test/repo/.git/phantom/worktrees",
     );
-    strictEqual(createWorktreeMock.mock.calls[0].arguments[2], "feature");
+    strictEqual(createWorktreeMock.mock.calls[0][2], "feature");
 
     strictEqual(execInWorktreeMock.mock.calls.length, 1);
-    strictEqual(execInWorktreeMock.mock.calls[0].arguments[0], "/test/repo");
+    strictEqual(execInWorktreeMock.mock.calls[0][0], "/test/repo");
     strictEqual(
-      execInWorktreeMock.mock.calls[0].arguments[1],
+      execInWorktreeMock.mock.calls[0][1],
       "/test/repo/.git/phantom/worktrees",
     );
-    strictEqual(execInWorktreeMock.mock.calls[0].arguments[2], "feature");
-    const execArgs = execInWorktreeMock.mock.calls[0].arguments[3];
+    strictEqual(execInWorktreeMock.mock.calls[0][2], "feature");
+    const execArgs = execInWorktreeMock.mock.calls[0][3];
     strictEqual(execArgs[0], "/bin/bash");
     strictEqual(execArgs[1], "-c");
     strictEqual(execArgs[2], "echo hello");
 
     strictEqual(consoleLogMock.mock.calls.length, 2);
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Created worktree 'feature' at /test/repo/.git/phantom/worktrees/feature",
     );
     strictEqual(
-      consoleLogMock.mock.calls[1].arguments[0],
+      consoleLogMock.mock.calls[1][0],
       "\nExecuting command in worktree 'feature': echo hello",
     );
 
-    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
   it("should handle exec command failure", async () => {
     resetMocks();
     processEnvMock.SHELL = "/bin/bash";
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/test/repo"));
-    createContextMock.mock.mockImplementation((gitRoot) =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
+    createContextMock.mockImplementation((gitRoot) =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
         config: null,
       }),
     );
-    createWorktreeMock.mock.mockImplementation(() =>
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message:
@@ -210,7 +208,7 @@ describe("createHandler", () => {
         }),
       ),
     );
-    execInWorktreeMock.mock.mockImplementation(() =>
+    execInWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         err({
           message: "Command failed",
@@ -226,17 +224,14 @@ describe("createHandler", () => {
 
     strictEqual(createWorktreeMock.mock.calls.length, 1);
     strictEqual(execInWorktreeMock.mock.calls.length, 1);
-    strictEqual(
-      consoleErrorMock.mock.calls[0].arguments[0],
-      "Error: Command failed",
-    );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 1);
+    strictEqual(consoleErrorMock.mock.calls[0][0], "Command failed");
+    strictEqual(exitMock.mock.calls[0][0], 1);
   });
 
   it("should prefer preferences directoryNameSeparator over config", async () => {
     resetMocks();
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/test/repo"));
-    createContextMock.mock.mockImplementation((gitRoot) =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
+    createContextMock.mockImplementation((gitRoot) =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
@@ -246,7 +241,7 @@ describe("createHandler", () => {
         },
       }),
     );
-    createWorktreeMock.mock.mockImplementation(() =>
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message:
@@ -261,7 +256,7 @@ describe("createHandler", () => {
       /Exit with code 0/,
     );
 
-    strictEqual(createWorktreeMock.mock.calls[0].arguments[6], "_");
+    strictEqual(createWorktreeMock.mock.calls[0][6], "_");
   });
 
   it("should error when --shell and --exec are used together", async () => {
@@ -274,24 +269,24 @@ describe("createHandler", () => {
 
     strictEqual(consoleErrorMock.mock.calls.length, 1);
     strictEqual(
-      consoleErrorMock.mock.calls[0].arguments[0],
-      "Error: Cannot use --shell and --exec together",
+      consoleErrorMock.mock.calls[0][0],
+      "Error: Cannot use --shell, --exec, and --tmux options together",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 2);
+    strictEqual(exitMock.mock.calls[0][0], 2);
   });
 
   it("should use /bin/sh when SHELL env var is not set", async () => {
     resetMocks();
     // No SHELL env var set
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/test/repo"));
-    createContextMock.mock.mockImplementation((gitRoot) =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
+    createContextMock.mockImplementation((gitRoot) =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
         config: null,
       }),
     );
-    createWorktreeMock.mock.mockImplementation(() =>
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message:
@@ -300,7 +295,7 @@ describe("createHandler", () => {
         }),
       ),
     );
-    execInWorktreeMock.mock.mockImplementation(() =>
+    execInWorktreeMock.mockImplementation(() =>
       Promise.resolve(ok({ exitCode: 0 })),
     );
 
@@ -309,13 +304,13 @@ describe("createHandler", () => {
       /Exit with code 0/,
     );
 
-    const execArgs = execInWorktreeMock.mock.calls[0].arguments[2];
+    const execArgs = execInWorktreeMock.mock.calls[0][3];
     strictEqual(execArgs[0], "/bin/sh");
   });
 
   it("should error when --tmux is used outside tmux session", async () => {
     resetMocks();
-    isInsideTmuxMock.mock.mockImplementation(() => Promise.resolve(false));
+    isInsideTmuxMock.mockImplementation(() => Promise.resolve(false));
 
     await rejects(
       async () => await createHandler(["feature", "--tmux"]),
@@ -324,25 +319,25 @@ describe("createHandler", () => {
 
     strictEqual(consoleErrorMock.mock.calls.length, 1);
     strictEqual(
-      consoleErrorMock.mock.calls[0].arguments[0],
+      consoleErrorMock.mock.calls[0][0],
       "Error: The --tmux option can only be used inside a tmux session",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 2);
+    strictEqual(exitMock.mock.calls[0][0], 2);
   });
 
   it("should create worktree and open in tmux window", async () => {
     resetMocks();
     processEnvMock.SHELL = "/bin/bash";
     processEnvMock.TMUX = "/tmp/tmux-1000/default,12345,0";
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/test/repo"));
-    createContextMock.mock.mockImplementation((gitRoot) =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
+    createContextMock.mockImplementation((gitRoot) =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
         config: null,
       }),
     );
-    createWorktreeMock.mock.mockImplementation(() =>
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message:
@@ -351,11 +346,11 @@ describe("createHandler", () => {
         }),
       ),
     );
-    isInsideTmuxMock.mock.mockImplementation(() => Promise.resolve(true));
-    executeTmuxCommandMock.mock.mockImplementation(() =>
+    isInsideTmuxMock.mockImplementation(() => Promise.resolve(true));
+    executeTmuxCommandMock.mockImplementation(() =>
       Promise.resolve(ok({ exitCode: 0 })),
     );
-    getPhantomEnvMock.mock.mockImplementation((name, path) => ({
+    getPhantomEnvMock.mockImplementation((name, path) => ({
       PHANTOM_NAME: name,
       PHANTOM_PATH: path,
     }));
@@ -369,36 +364,36 @@ describe("createHandler", () => {
     strictEqual(executeTmuxCommandMock.mock.calls.length, 1);
 
     // Verify tmux command was called with correct arguments
-    const tmuxArgs = executeTmuxCommandMock.mock.calls[0].arguments[0];
+    const tmuxArgs = executeTmuxCommandMock.mock.calls[0][0];
     strictEqual(tmuxArgs.direction, "new");
     strictEqual(tmuxArgs.cwd, "/test/repo/.git/phantom/worktrees/feature");
     strictEqual(tmuxArgs.windowName, "feature");
 
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Created worktree 'feature' at /test/repo/.git/phantom/worktrees/feature",
     );
     strictEqual(
-      consoleLogMock.mock.calls[1].arguments[0],
+      consoleLogMock.mock.calls[1][0],
       "\nOpening worktree 'feature' in tmux window...",
     );
 
-    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
   it("should create worktree and open in tmux pane with vertical split", async () => {
     resetMocks();
     processEnvMock.SHELL = "/bin/bash";
     processEnvMock.TMUX = "/tmp/tmux-1000/default,12345,0";
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/test/repo"));
-    createContextMock.mock.mockImplementation((gitRoot) =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
+    createContextMock.mockImplementation((gitRoot) =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
         config: null,
       }),
     );
-    createWorktreeMock.mock.mockImplementation(() =>
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message:
@@ -407,11 +402,11 @@ describe("createHandler", () => {
         }),
       ),
     );
-    isInsideTmuxMock.mock.mockImplementation(() => Promise.resolve(true));
-    executeTmuxCommandMock.mock.mockImplementation(() =>
+    isInsideTmuxMock.mockImplementation(() => Promise.resolve(true));
+    executeTmuxCommandMock.mockImplementation(() =>
       Promise.resolve(ok({ exitCode: 0 })),
     );
-    getPhantomEnvMock.mock.mockImplementation((name, path) => ({
+    getPhantomEnvMock.mockImplementation((name, path) => ({
       PHANTOM_NAME: name,
       PHANTOM_PATH: path,
     }));
@@ -425,21 +420,21 @@ describe("createHandler", () => {
     strictEqual(executeTmuxCommandMock.mock.calls.length, 1);
 
     // Verify tmux command was called with correct arguments
-    const tmuxArgs = executeTmuxCommandMock.mock.calls[0].arguments[0];
+    const tmuxArgs = executeTmuxCommandMock.mock.calls[0][0];
     strictEqual(tmuxArgs.direction, "vertical");
     strictEqual(tmuxArgs.cwd, "/test/repo/.git/phantom/worktrees/feature");
     strictEqual(tmuxArgs.windowName, undefined);
 
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Created worktree 'feature' at /test/repo/.git/phantom/worktrees/feature",
     );
     strictEqual(
-      consoleLogMock.mock.calls[1].arguments[0],
+      consoleLogMock.mock.calls[1][0],
       "\nOpening worktree 'feature' in tmux pane...",
     );
 
-    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
   it("should error when multiple action options are used together", async () => {
@@ -451,16 +446,16 @@ describe("createHandler", () => {
 
     strictEqual(consoleErrorMock.mock.calls.length, 1);
     strictEqual(
-      consoleErrorMock.mock.calls[0].arguments[0],
+      consoleErrorMock.mock.calls[0][0],
       "Error: Cannot use --shell, --exec, and --tmux options together",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 2);
+    strictEqual(exitMock.mock.calls[0][0], 2);
   });
 
   it("should create worktree from specified base branch", async () => {
     resetMocks();
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/test/repo"));
-    createWorktreeMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message:
@@ -476,25 +471,25 @@ describe("createHandler", () => {
     );
 
     strictEqual(createWorktreeMock.mock.calls.length, 1);
-    strictEqual(createWorktreeMock.mock.calls[0].arguments[0], "/test/repo");
+    strictEqual(createWorktreeMock.mock.calls[0][0], "/test/repo");
     strictEqual(
-      createWorktreeMock.mock.calls[0].arguments[1],
+      createWorktreeMock.mock.calls[0][1],
       "/test/repo/.git/phantom/worktrees",
     );
-    strictEqual(createWorktreeMock.mock.calls[0].arguments[2], "feature");
-    strictEqual(createWorktreeMock.mock.calls[0].arguments[3].base, "main");
+    strictEqual(createWorktreeMock.mock.calls[0][2], "feature");
+    strictEqual(createWorktreeMock.mock.calls[0][3].base, "main");
 
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Created worktree 'feature' at /test/repo/.git/phantom/worktrees/feature",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
   it("should create worktree from remote branch", async () => {
     resetMocks();
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/test/repo"));
-    createWorktreeMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message:
@@ -511,28 +506,25 @@ describe("createHandler", () => {
     );
 
     strictEqual(createWorktreeMock.mock.calls.length, 1);
-    strictEqual(createWorktreeMock.mock.calls[0].arguments[0], "/test/repo");
+    strictEqual(createWorktreeMock.mock.calls[0][0], "/test/repo");
     strictEqual(
-      createWorktreeMock.mock.calls[0].arguments[1],
+      createWorktreeMock.mock.calls[0][1],
       "/test/repo/.git/phantom/worktrees",
     );
-    strictEqual(createWorktreeMock.mock.calls[0].arguments[2], "hotfix");
-    strictEqual(
-      createWorktreeMock.mock.calls[0].arguments[3].base,
-      "origin/production",
-    );
+    strictEqual(createWorktreeMock.mock.calls[0][2], "hotfix");
+    strictEqual(createWorktreeMock.mock.calls[0][3].base, "origin/production");
 
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Created worktree 'hotfix' at /test/repo/.git/phantom/worktrees/hotfix",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
   it("should create worktree from commit hash", async () => {
     resetMocks();
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/test/repo"));
-    createWorktreeMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message:
@@ -548,35 +540,35 @@ describe("createHandler", () => {
     );
 
     strictEqual(createWorktreeMock.mock.calls.length, 1);
-    strictEqual(createWorktreeMock.mock.calls[0].arguments[0], "/test/repo");
+    strictEqual(createWorktreeMock.mock.calls[0][0], "/test/repo");
     strictEqual(
-      createWorktreeMock.mock.calls[0].arguments[1],
+      createWorktreeMock.mock.calls[0][1],
       "/test/repo/.git/phantom/worktrees",
     );
-    strictEqual(createWorktreeMock.mock.calls[0].arguments[2], "experiment");
-    strictEqual(createWorktreeMock.mock.calls[0].arguments[3].base, "abc123");
+    strictEqual(createWorktreeMock.mock.calls[0][2], "experiment");
+    strictEqual(createWorktreeMock.mock.calls[0][3].base, "abc123");
 
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Created worktree 'experiment' at /test/repo/.git/phantom/worktrees/experiment",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
   it("should auto-generate name when no name is provided", async () => {
     resetMocks();
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/test/repo"));
-    createContextMock.mock.mockImplementation((gitRoot) =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
+    createContextMock.mockImplementation((gitRoot) =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
         config: null,
       }),
     );
-    generateUniqueNameMock.mock.mockImplementation(() =>
+    generateUniqueNameMock.mockImplementation(() =>
       Promise.resolve({ ok: true, value: "fuzzy-cats-dance" }),
     );
-    createWorktreeMock.mock.mockImplementation(() =>
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message:
@@ -589,33 +581,27 @@ describe("createHandler", () => {
     await rejects(async () => await createHandler([]), /Exit with code 0/);
 
     strictEqual(generateUniqueNameMock.mock.calls.length, 1);
+    strictEqual(generateUniqueNameMock.mock.calls[0][0], "/test/repo");
     strictEqual(
-      generateUniqueNameMock.mock.calls[0].arguments[0],
-      "/test/repo",
-    );
-    strictEqual(
-      generateUniqueNameMock.mock.calls[0].arguments[1],
+      generateUniqueNameMock.mock.calls[0][1],
       "/test/repo/.git/phantom/worktrees",
     );
     strictEqual(createWorktreeMock.mock.calls.length, 1);
-    strictEqual(
-      createWorktreeMock.mock.calls[0].arguments[2],
-      "fuzzy-cats-dance",
-    );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+    strictEqual(createWorktreeMock.mock.calls[0][2], "fuzzy-cats-dance");
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
   it("should exit with error when name generation fails", async () => {
     resetMocks();
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/test/repo"));
-    createContextMock.mock.mockImplementation((gitRoot) =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
+    createContextMock.mockImplementation((gitRoot) =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
         config: null,
       }),
     );
-    generateUniqueNameMock.mock.mockImplementation(() =>
+    generateUniqueNameMock.mockImplementation(() =>
       Promise.resolve({
         ok: false,
         error: new Error(
@@ -629,9 +615,9 @@ describe("createHandler", () => {
     strictEqual(generateUniqueNameMock.mock.calls.length, 1);
     strictEqual(createWorktreeMock.mock.calls.length, 0);
     strictEqual(
-      consoleErrorMock.mock.calls[0].arguments[0],
+      consoleErrorMock.mock.calls[0][0],
       "Error: Failed to generate a unique worktree name after maximum retries",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 1);
+    strictEqual(exitMock.mock.calls[0][0], 1);
   });
 });

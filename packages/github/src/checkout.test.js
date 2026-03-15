@@ -1,41 +1,35 @@
 import { deepEqual, equal, ok } from "node:assert/strict";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 
-const getGitHubRepoInfoMock = mock.fn();
-const fetchIssueMock = mock.fn();
-const isPullRequestMock = mock.fn();
-const checkoutPullRequestMock = mock.fn();
-const checkoutIssueMock = mock.fn();
+const getGitHubRepoInfoMock = vi.fn();
+const fetchIssueMock = vi.fn();
+const isPullRequestMock = vi.fn();
+const checkoutPullRequestMock = vi.fn();
+const checkoutIssueMock = vi.fn();
 
-mock.module("./api/index.ts", {
-  namedExports: {
-    getGitHubRepoInfo: getGitHubRepoInfoMock,
-    fetchIssue: fetchIssueMock,
-    isPullRequest: isPullRequestMock,
-  },
-});
+vi.doMock("./api/index.ts", () => ({
+  getGitHubRepoInfo: getGitHubRepoInfoMock,
+  fetchIssue: fetchIssueMock,
+  isPullRequest: isPullRequestMock,
+}));
 
-mock.module("./checkout/pr.ts", {
-  namedExports: {
-    checkoutPullRequest: checkoutPullRequestMock,
-  },
-});
+vi.doMock("./checkout/pr.ts", () => ({
+  checkoutPullRequest: checkoutPullRequestMock,
+}));
 
-mock.module("./checkout/issue.ts", {
-  namedExports: {
-    checkoutIssue: checkoutIssueMock,
-  },
-});
+vi.doMock("./checkout/issue.ts", () => ({
+  checkoutIssue: checkoutIssueMock,
+}));
 
 const { githubCheckout } = await import("./checkout.ts");
 
 describe("githubCheckout", () => {
   const resetMocks = () => {
-    getGitHubRepoInfoMock.mock.resetCalls();
-    fetchIssueMock.mock.resetCalls();
-    isPullRequestMock.mock.resetCalls();
-    checkoutPullRequestMock.mock.resetCalls();
-    checkoutIssueMock.mock.resetCalls();
+    getGitHubRepoInfoMock.mockClear();
+    fetchIssueMock.mockClear();
+    isPullRequestMock.mockClear();
+    checkoutPullRequestMock.mockClear();
+    checkoutIssueMock.mockClear();
   };
 
   it("should export githubCheckout function", () => {
@@ -49,11 +43,11 @@ describe("githubCheckout", () => {
 
   it("should return error when issue/PR not found", async () => {
     resetMocks();
-    getGitHubRepoInfoMock.mock.mockImplementation(async () => ({
+    getGitHubRepoInfoMock.mockImplementation(async () => ({
       owner: "test-owner",
       repo: "test-repo",
     }));
-    fetchIssueMock.mock.mockImplementation(async () => null);
+    fetchIssueMock.mockImplementation(async () => null);
 
     const result = await githubCheckout({ number: "123" });
 
@@ -65,11 +59,7 @@ describe("githubCheckout", () => {
 
     // Verify API calls
     equal(fetchIssueMock.mock.calls.length, 1);
-    deepEqual(fetchIssueMock.mock.calls[0].arguments, [
-      "test-owner",
-      "test-repo",
-      "123",
-    ]);
+    deepEqual(fetchIssueMock.mock.calls[0], ["test-owner", "test-repo", "123"]);
   });
 
   it("should checkout pull request successfully", async () => {
@@ -94,13 +84,13 @@ describe("githubCheckout", () => {
       pullRequest: mockPR,
     };
 
-    getGitHubRepoInfoMock.mock.mockImplementation(async () => ({
+    getGitHubRepoInfoMock.mockImplementation(async () => ({
       owner: "test-owner",
       repo: "test-repo",
     }));
-    fetchIssueMock.mock.mockImplementation(async () => mockIssue);
-    isPullRequestMock.mock.mockImplementation(() => true);
-    checkoutPullRequestMock.mock.mockImplementation(async () => ({
+    fetchIssueMock.mockImplementation(async () => mockIssue);
+    isPullRequestMock.mockImplementation(() => true);
+    checkoutPullRequestMock.mockImplementation(async () => ({
       ok: true,
       value: { message: "Checked out PR #123" },
     }));
@@ -112,7 +102,7 @@ describe("githubCheckout", () => {
 
     // Verify calls
     equal(checkoutPullRequestMock.mock.calls.length, 1);
-    equal(checkoutPullRequestMock.mock.calls[0].arguments[0], mockPR);
+    equal(checkoutPullRequestMock.mock.calls[0][0], mockPR);
     equal(checkoutIssueMock.mock.calls.length, 0);
   });
 
@@ -138,12 +128,12 @@ describe("githubCheckout", () => {
       pullRequest: mockPR,
     };
 
-    getGitHubRepoInfoMock.mock.mockImplementation(async () => ({
+    getGitHubRepoInfoMock.mockImplementation(async () => ({
       owner: "test-owner",
       repo: "test-repo",
     }));
-    fetchIssueMock.mock.mockImplementation(async () => mockIssue);
-    isPullRequestMock.mock.mockImplementation(() => true);
+    fetchIssueMock.mockImplementation(async () => mockIssue);
+    isPullRequestMock.mockImplementation(() => true);
 
     const result = await githubCheckout({ number: "456", base: "develop" });
 
@@ -164,13 +154,13 @@ describe("githubCheckout", () => {
       number: 789,
     };
 
-    getGitHubRepoInfoMock.mock.mockImplementation(async () => ({
+    getGitHubRepoInfoMock.mockImplementation(async () => ({
       owner: "test-owner",
       repo: "test-repo",
     }));
-    fetchIssueMock.mock.mockImplementation(async () => mockIssue);
-    isPullRequestMock.mock.mockImplementation(() => false);
-    checkoutIssueMock.mock.mockImplementation(async () => ({
+    fetchIssueMock.mockImplementation(async () => mockIssue);
+    isPullRequestMock.mockImplementation(() => false);
+    checkoutIssueMock.mockImplementation(async () => ({
       ok: true,
       value: { message: "Checked out issue #789" },
     }));
@@ -182,10 +172,7 @@ describe("githubCheckout", () => {
 
     // Verify calls
     equal(checkoutIssueMock.mock.calls.length, 1);
-    deepEqual(checkoutIssueMock.mock.calls[0].arguments, [
-      mockIssue,
-      undefined,
-    ]);
+    deepEqual(checkoutIssueMock.mock.calls[0], [mockIssue, undefined]);
     equal(checkoutPullRequestMock.mock.calls.length, 0);
   });
 
@@ -195,13 +182,13 @@ describe("githubCheckout", () => {
       number: 999,
     };
 
-    getGitHubRepoInfoMock.mock.mockImplementation(async () => ({
+    getGitHubRepoInfoMock.mockImplementation(async () => ({
       owner: "test-owner",
       repo: "test-repo",
     }));
-    fetchIssueMock.mock.mockImplementation(async () => mockIssue);
-    isPullRequestMock.mock.mockImplementation(() => false);
-    checkoutIssueMock.mock.mockImplementation(async () => ({
+    fetchIssueMock.mockImplementation(async () => mockIssue);
+    isPullRequestMock.mockImplementation(() => false);
+    checkoutIssueMock.mockImplementation(async () => ({
       ok: true,
       value: { message: "Checked out issue #999 from develop" },
     }));
@@ -213,10 +200,7 @@ describe("githubCheckout", () => {
 
     // Verify calls
     equal(checkoutIssueMock.mock.calls.length, 1);
-    deepEqual(checkoutIssueMock.mock.calls[0].arguments, [
-      mockIssue,
-      "develop",
-    ]);
+    deepEqual(checkoutIssueMock.mock.calls[0], [mockIssue, "develop"]);
   });
 
   it("should pass through errors from checkoutPullRequest", async () => {
@@ -242,13 +226,13 @@ describe("githubCheckout", () => {
     };
     const expectedError = new Error("Git error");
 
-    getGitHubRepoInfoMock.mock.mockImplementation(async () => ({
+    getGitHubRepoInfoMock.mockImplementation(async () => ({
       owner: "test-owner",
       repo: "test-repo",
     }));
-    fetchIssueMock.mock.mockImplementation(async () => mockIssue);
-    isPullRequestMock.mock.mockImplementation(() => true);
-    checkoutPullRequestMock.mock.mockImplementation(async () => ({
+    fetchIssueMock.mockImplementation(async () => mockIssue);
+    isPullRequestMock.mockImplementation(() => true);
+    checkoutPullRequestMock.mockImplementation(async () => ({
       ok: false,
       error: expectedError,
     }));
@@ -266,13 +250,13 @@ describe("githubCheckout", () => {
     };
     const expectedError = new Error("Permission denied");
 
-    getGitHubRepoInfoMock.mock.mockImplementation(async () => ({
+    getGitHubRepoInfoMock.mockImplementation(async () => ({
       owner: "test-owner",
       repo: "test-repo",
     }));
-    fetchIssueMock.mock.mockImplementation(async () => mockIssue);
-    isPullRequestMock.mock.mockImplementation(() => false);
-    checkoutIssueMock.mock.mockImplementation(async () => ({
+    fetchIssueMock.mockImplementation(async () => mockIssue);
+    isPullRequestMock.mockImplementation(() => false);
+    checkoutIssueMock.mockImplementation(async () => ({
       ok: false,
       error: expectedError,
     }));

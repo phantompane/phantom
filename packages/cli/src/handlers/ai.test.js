@@ -1,19 +1,19 @@
 import { rejects, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { afterAll, describe, it, vi } from "vitest";
 import { WorktreeNotFoundError } from "@phantompane/core";
 import { err, ok } from "@phantompane/shared";
 
-const exitMock = mock.fn((code) => {
+const exitMock = vi.fn((code) => {
   throw new Error(`Process exit with code ${code}`);
 });
-const consoleLogMock = mock.fn();
-const consoleErrorMock = mock.fn();
-const getGitRootMock = mock.fn();
-const validateWorktreeExistsMock = mock.fn();
-const createContextMock = mock.fn();
-const getPhantomEnvMock = mock.fn();
-const spawnMock = mock.fn();
-const exitWithErrorMock = mock.fn((message, code) => {
+const consoleLogMock = vi.fn();
+const consoleErrorMock = vi.fn();
+const getGitRootMock = vi.fn();
+const validateWorktreeExistsMock = vi.fn();
+const createContextMock = vi.fn();
+const getPhantomEnvMock = vi.fn();
+const spawnMock = vi.fn();
+const exitWithErrorMock = vi.fn((message, code) => {
   consoleErrorMock(`Error: ${message}`);
   try {
     exitMock(code);
@@ -23,164 +23,152 @@ const exitWithErrorMock = mock.fn((message, code) => {
   throw new Error(`Exit with code ${code}: ${message}`);
 });
 
-mock.module("node:process", {
-  namedExports: {
-    exit: exitMock,
-    env: process.env,
-  },
+const originalProcessExit = process.exit;
+const originalProcessEnv = process.env;
+
+process.exit = (code) => {
+  exitMock(code);
+  throw new Error(`Exit with code ${code ?? 0}`);
+};
+
+afterAll(() => {
+  process.exit = originalProcessExit;
+  process.env = originalProcessEnv;
 });
 
-mock.module("@phantompane/git", {
-  namedExports: {
-    getGitRoot: getGitRootMock,
-  },
-});
+vi.doMock("@phantompane/git", () => ({
+  getGitRoot: getGitRootMock,
+}));
 
-mock.module("@phantompane/process", {
-  namedExports: {
-    getPhantomEnv: getPhantomEnvMock,
-  },
-});
+vi.doMock("@phantompane/process", () => ({
+  getPhantomEnv: getPhantomEnvMock,
+}));
 
-mock.module("node:child_process", {
-  namedExports: {
-    spawn: spawnMock,
-  },
-});
+vi.doMock("node:child_process", () => ({
+  spawn: spawnMock,
+}));
 
-mock.module("@phantompane/core", {
-  namedExports: {
-    validateWorktreeExists: validateWorktreeExistsMock,
-    createContext: createContextMock,
-    WorktreeNotFoundError,
-  },
-});
+vi.doMock("@phantompane/core", () => ({
+  validateWorktreeExists: validateWorktreeExistsMock,
+  createContext: createContextMock,
+  WorktreeNotFoundError,
+}));
 
-mock.module("../output.ts", {
-  namedExports: {
-    output: {
-      log: consoleLogMock,
-      error: consoleErrorMock,
-    },
+vi.doMock("../output.ts", () => ({
+  output: {
+    log: consoleLogMock,
+    error: consoleErrorMock,
   },
-});
+}));
 
-mock.module("../errors.ts", {
-  namedExports: {
-    exitWithError: exitWithErrorMock,
-    exitCodes: {
-      success: 0,
-      generalError: 1,
-      notFound: 2,
-      validationError: 3,
-    },
+vi.doMock("../errors.ts", () => ({
+  exitWithError: exitWithErrorMock,
+  exitCodes: {
+    success: 0,
+    generalError: 1,
+    notFound: 2,
+    validationError: 3,
   },
-});
+}));
 
 const { aiHandler } = await import("./ai.ts");
 
 function resetMocks() {
-  exitMock.mock.resetCalls();
-  consoleLogMock.mock.resetCalls();
-  consoleErrorMock.mock.resetCalls();
-  getGitRootMock.mock.resetCalls();
-  validateWorktreeExistsMock.mock.resetCalls();
-  createContextMock.mock.resetCalls();
-  getPhantomEnvMock.mock.resetCalls();
-  spawnMock.mock.resetCalls();
+  exitMock.mockClear();
+  consoleLogMock.mockClear();
+  consoleErrorMock.mockClear();
+  getGitRootMock.mockClear();
+  validateWorktreeExistsMock.mockClear();
+  createContextMock.mockClear();
+  getPhantomEnvMock.mockClear();
+  spawnMock.mockClear();
 }
 
-describe(
-  "aiHandler",
-  {
-    concurrency: false,
-  },
-  () => {
-    it("errors when worktree name is missing", async () => {
-      resetMocks();
+describe.sequential("aiHandler", () => {
+  it("errors when worktree name is missing", async () => {
+    resetMocks();
 
-      await rejects(
-        async () => await aiHandler([]),
-        /Exit with code 3: Usage: phantom ai <worktree-name>/,
-      );
+    await rejects(
+      async () => await aiHandler([]),
+      /Exit with code 3: Usage: phantom ai <worktree-name>/,
+    );
 
-      strictEqual(exitMock.mock.calls[0].arguments[0], 3);
-    });
+    strictEqual(exitMock.mock.calls[0][0], 3);
+  });
 
-    it("errors when ai preference is not set", async () => {
-      resetMocks();
-      getGitRootMock.mock.mockImplementation(async () => "/repo");
-      createContextMock.mock.mockImplementation(async () => ({
-        gitRoot: "/repo",
-        worktreesDirectory: "/repo/.git/phantom/worktrees",
-        preferences: {},
-      }));
+  it("errors when ai preference is not set", async () => {
+    resetMocks();
+    getGitRootMock.mockImplementation(async () => "/repo");
+    createContextMock.mockImplementation(async () => ({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+    }));
 
-      await rejects(
-        async () => await aiHandler(["feature"]),
-        /Exit with code 3: AI assistant is not configured/,
-      );
+    await rejects(
+      async () => await aiHandler(["feature"]),
+      /Exit with code 3: AI assistant is not configured/,
+    );
 
-      strictEqual(exitMock.mock.calls[0].arguments[0], 3);
-    });
+    strictEqual(exitMock.mock.calls[0][0], 3);
+  });
 
-    it("returns not found when worktree validation fails", async () => {
-      resetMocks();
-      getGitRootMock.mock.mockImplementation(async () => "/repo");
-      createContextMock.mock.mockImplementation(async () => ({
-        gitRoot: "/repo",
-        worktreesDirectory: "/repo/.git/phantom/worktrees",
-        preferences: { ai: "claude" },
-      }));
-      validateWorktreeExistsMock.mock.mockImplementation(() =>
-        err(new WorktreeNotFoundError("missing")),
-      );
+  it("returns not found when worktree validation fails", async () => {
+    resetMocks();
+    getGitRootMock.mockImplementation(async () => "/repo");
+    createContextMock.mockImplementation(async () => ({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: { ai: "claude" },
+    }));
+    validateWorktreeExistsMock.mockImplementation(() =>
+      err(new WorktreeNotFoundError("missing")),
+    );
 
-      await rejects(
-        async () => await aiHandler(["missing"]),
-        /Exit with code 2: Worktree 'missing' not found/,
-      );
+    await rejects(
+      async () => await aiHandler(["missing"]),
+      /Exit with code 2: Worktree 'missing' not found/,
+    );
 
-      strictEqual(exitMock.mock.calls[0].arguments[0], 2);
-    });
+    strictEqual(exitMock.mock.calls[0][0], 2);
+  });
 
-    it("launches the configured ai command inside the worktree", async () => {
-      resetMocks();
-      getGitRootMock.mock.mockImplementation(async () => "/repo");
-      createContextMock.mock.mockImplementation(async () => ({
-        gitRoot: "/repo",
-        worktreesDirectory: "/repo/.git/phantom/worktrees",
-        preferences: { ai: "codex --full-auto" },
-      }));
-      validateWorktreeExistsMock.mock.mockImplementation(() =>
-        ok({ path: "/repo/.git/phantom/worktrees/feature" }),
-      );
-      getPhantomEnvMock.mock.mockImplementation(() => ({
-        PHANTOM: "1",
-      }));
-      spawnMock.mock.mockImplementation(() => ({
-        on: (event, handler) => {
-          if (event === "exit") {
-            queueMicrotask(() => handler(0, null));
-          }
-        },
-      }));
+  it("launches the configured ai command inside the worktree", async () => {
+    resetMocks();
+    getGitRootMock.mockImplementation(async () => "/repo");
+    createContextMock.mockImplementation(async () => ({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: { ai: "codex --full-auto" },
+    }));
+    validateWorktreeExistsMock.mockImplementation(() =>
+      ok({ path: "/repo/.git/phantom/worktrees/feature" }),
+    );
+    getPhantomEnvMock.mockImplementation(() => ({
+      PHANTOM: "1",
+    }));
+    spawnMock.mockImplementation(() => ({
+      on: (event, handler) => {
+        if (event === "exit") {
+          queueMicrotask(() => handler(0, null));
+        }
+      },
+    }));
 
-      await rejects(
-        async () => await aiHandler(["feature"]),
-        /Process exit with code 0/,
-      );
+    await rejects(
+      async () => await aiHandler(["feature"]),
+      /Process exit with code 0/,
+    );
 
-      strictEqual(spawnMock.mock.calls.length, 1);
-      const [command, args, options] = spawnMock.mock.calls[0].arguments;
-      strictEqual(command, "codex --full-auto");
-      strictEqual(args.length, 0);
-      strictEqual(options.cwd, "/repo/.git/phantom/worktrees/feature");
-      strictEqual(options.env.PHANTOM, "1");
-      strictEqual(
-        consoleLogMock.mock.calls[0].arguments[0],
-        "Launching AI assistant in worktree 'feature'...",
-      );
-    });
-  },
-);
+    strictEqual(spawnMock.mock.calls.length, 1);
+    const [command, args, options] = spawnMock.mock.calls[0];
+    strictEqual(command, "codex --full-auto");
+    strictEqual(args.length, 0);
+    strictEqual(options.cwd, "/repo/.git/phantom/worktrees/feature");
+    strictEqual(options.env.PHANTOM, "1");
+    strictEqual(
+      consoleLogMock.mock.calls[0][0],
+      "Launching AI assistant in worktree 'feature'...",
+    );
+  });
+});

@@ -13,10 +13,10 @@
     "fix": "oxfmt --write . && oxlint --fix .",
     "typecheck": "tsc --noEmit",
     "test:shell": "pnpm run test:shell:bash && pnpm run test:shell:zsh && pnpm run test:shell:fish",
-    "test:shell:bash": "node --test --experimental-strip-types --experimental-test-module-mocks src/completions/phantom.bash.test.shell.js",
-    "test:shell:fish": "node --test --experimental-strip-types --experimental-test-module-mocks src/completions/phantom.fish.test.shell.js",
-    "test:shell:zsh": "node --test --experimental-strip-types --experimental-test-module-mocks src/completions/phantom.zsh.test.shell.js",
-    "test": "node --test --experimental-strip-types --experimental-test-module-mocks \"src/**/*.test.js\"",
+    "test:shell:bash": "vitest run --root ../.. packages/cli/src/completions/phantom.bash.test.shell.js",
+    "test:shell:fish": "vitest run --root ../.. packages/cli/src/completions/phantom.fish.test.shell.js",
+    "test:shell:zsh": "vitest run --root ../.. packages/cli/src/completions/phantom.zsh.test.shell.js",
+    "test": "vitest run --root ../.. packages/cli/src",
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {

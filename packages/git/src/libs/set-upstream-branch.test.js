@@ -1,25 +1,23 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 
-const executeGitCommandMock = mock.fn();
+const executeGitCommandMock = vi.fn();
 
-mock.module("../executor.ts", {
-  namedExports: {
-    executeGitCommand: executeGitCommandMock,
-  },
-});
+vi.doMock("../executor.ts", () => ({
+  executeGitCommand: executeGitCommandMock,
+}));
 
 const { setUpstreamBranch } = await import("./set-upstream-branch.ts");
 const { isOk, isErr } = await import("@phantompane/shared");
 
 describe("setUpstreamBranch", () => {
   const resetMocks = () => {
-    executeGitCommandMock.mock.resetCalls();
+    executeGitCommandMock.mockClear();
   };
 
   it("should successfully set upstream branch", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.resolve({ stdout: "", stderr: "" }),
     );
 
@@ -31,20 +29,20 @@ describe("setUpstreamBranch", () => {
 
     strictEqual(isOk(result), true);
     strictEqual(executeGitCommandMock.mock.calls.length, 1);
-    deepStrictEqual(executeGitCommandMock.mock.calls[0].arguments[0], [
+    deepStrictEqual(executeGitCommandMock.mock.calls[0][0], [
       "branch",
       "--set-upstream-to",
       "origin/main",
       "feature-branch",
     ]);
-    deepStrictEqual(executeGitCommandMock.mock.calls[0].arguments[1], {
+    deepStrictEqual(executeGitCommandMock.mock.calls[0][1], {
       cwd: "/test/repo",
     });
   });
 
   it("should handle git command failure", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.reject(
         new Error("fatal: branch 'feature-branch' does not exist"),
       ),
@@ -67,7 +65,7 @@ describe("setUpstreamBranch", () => {
 
   it("should handle non-Error exceptions", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.reject("string error"),
     );
 

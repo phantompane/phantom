@@ -1,24 +1,20 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import { isErr, isOk } from "@phantompane/shared";
 import { WorktreeError, WorktreeNotFoundError } from "./errors.ts";
 
-const validateWorktreeExistsMock = mock.fn();
-const executeGitCommandMock = mock.fn();
-const executeGitCommandInDirectoryMock = mock.fn();
+const validateWorktreeExistsMock = vi.fn();
+const executeGitCommandMock = vi.fn();
+const executeGitCommandInDirectoryMock = vi.fn();
 
-mock.module("./validate.ts", {
-  namedExports: {
-    validateWorktreeExists: validateWorktreeExistsMock,
-  },
-});
+vi.doMock("./validate.ts", () => ({
+  validateWorktreeExists: validateWorktreeExistsMock,
+}));
 
-mock.module("@phantompane/git", {
-  namedExports: {
-    executeGitCommand: executeGitCommandMock,
-    executeGitCommandInDirectory: executeGitCommandInDirectoryMock,
-  },
-});
+vi.doMock("@phantompane/git", () => ({
+  executeGitCommand: executeGitCommandMock,
+  executeGitCommandInDirectory: executeGitCommandInDirectoryMock,
+}));
 
 const {
   deleteWorktree,
@@ -30,20 +26,20 @@ const { ok, err } = await import("@phantompane/shared");
 
 describe("deleteWorktree", () => {
   const resetMocks = () => {
-    validateWorktreeExistsMock.mock.resetCalls();
-    executeGitCommandMock.mock.resetCalls();
-    executeGitCommandInDirectoryMock.mock.resetCalls();
+    validateWorktreeExistsMock.mockClear();
+    executeGitCommandMock.mockClear();
+    executeGitCommandInDirectoryMock.mockClear();
   };
 
   it("should delete worktree and report when branch deletion fails", async () => {
     resetMocks();
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    validateWorktreeExistsMock.mockImplementation(() =>
       Promise.resolve(
         ok({ path: "/test/repo/.git/phantom/worktrees/feature" }),
       ),
     );
 
-    executeGitCommandMock.mock.mockImplementation((command) => {
+    executeGitCommandMock.mockImplementation((command) => {
       if (command[0] === "worktree" && command[1] === "remove") {
         return Promise.resolve({ stdout: "", stderr: "" });
       }
@@ -52,7 +48,7 @@ describe("deleteWorktree", () => {
       }
       return Promise.reject(new Error("Unexpected command"));
     });
-    executeGitCommandInDirectoryMock.mock.mockImplementation(() =>
+    executeGitCommandInDirectoryMock.mockImplementation(() =>
       Promise.resolve({ stdout: "", stderr: "" }),
     );
 
@@ -77,13 +73,13 @@ describe("deleteWorktree", () => {
 
   it("should delete a worktree successfully when no uncommitted changes", async () => {
     resetMocks();
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    validateWorktreeExistsMock.mockImplementation(() =>
       Promise.resolve(
         ok({ path: "/test/repo/.git/phantom/worktrees/feature" }),
       ),
     );
 
-    executeGitCommandMock.mock.mockImplementation((command) => {
+    executeGitCommandMock.mockImplementation((command) => {
       if (command[0] === "worktree" && command[1] === "remove") {
         return Promise.resolve({ stdout: "", stderr: "" });
       }
@@ -92,7 +88,7 @@ describe("deleteWorktree", () => {
       }
       return Promise.reject(new Error("Unexpected command"));
     });
-    executeGitCommandInDirectoryMock.mock.mockImplementation(() =>
+    executeGitCommandInDirectoryMock.mockImplementation(() =>
       Promise.resolve({ stdout: "", stderr: "" }),
     );
 
@@ -115,7 +111,7 @@ describe("deleteWorktree", () => {
     }
 
     strictEqual(validateWorktreeExistsMock.mock.calls.length, 1);
-    deepStrictEqual(validateWorktreeExistsMock.mock.calls[0].arguments, [
+    deepStrictEqual(validateWorktreeExistsMock.mock.calls[0], [
       "/test/repo",
       "/test/repo/.git/phantom/worktrees",
       "feature",
@@ -123,17 +119,17 @@ describe("deleteWorktree", () => {
     ]);
 
     strictEqual(executeGitCommandInDirectoryMock.mock.calls.length, 1);
-    deepStrictEqual(executeGitCommandInDirectoryMock.mock.calls[0].arguments, [
+    deepStrictEqual(executeGitCommandInDirectoryMock.mock.calls[0], [
       "/test/repo/.git/phantom/worktrees/feature",
       ["status", "--porcelain"],
     ]);
 
     strictEqual(executeGitCommandMock.mock.calls.length, 2);
-    deepStrictEqual(executeGitCommandMock.mock.calls[0].arguments, [
+    deepStrictEqual(executeGitCommandMock.mock.calls[0], [
       ["worktree", "remove", "/test/repo/.git/phantom/worktrees/feature"],
       { cwd: "/test/repo" },
     ]);
-    deepStrictEqual(executeGitCommandMock.mock.calls[1].arguments, [
+    deepStrictEqual(executeGitCommandMock.mock.calls[1], [
       ["branch", "-D", "feature"],
       { cwd: "/test/repo" },
     ]);
@@ -141,7 +137,7 @@ describe("deleteWorktree", () => {
 
   it("should fail when worktree does not exist", async () => {
     resetMocks();
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    validateWorktreeExistsMock.mockImplementation(() =>
       Promise.resolve(err(new WorktreeNotFoundError("nonexistent"))),
     );
 
@@ -162,13 +158,13 @@ describe("deleteWorktree", () => {
 
   it("should fail when uncommitted changes exist without force", async () => {
     resetMocks();
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    validateWorktreeExistsMock.mockImplementation(() =>
       Promise.resolve(
         ok({ path: "/test/repo/.git/phantom/worktrees/feature" }),
       ),
     );
 
-    executeGitCommandInDirectoryMock.mock.mockImplementation(() =>
+    executeGitCommandInDirectoryMock.mockImplementation(() =>
       Promise.resolve({
         stdout: "M file1.txt\nA file2.txt\n?? file3.txt",
         stderr: "",
@@ -195,13 +191,13 @@ describe("deleteWorktree", () => {
 
   it("should delete worktree with uncommitted changes when force is true", async () => {
     resetMocks();
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    validateWorktreeExistsMock.mockImplementation(() =>
       Promise.resolve(
         ok({ path: "/test/repo/.git/phantom/worktrees/feature" }),
       ),
     );
 
-    executeGitCommandMock.mock.mockImplementation((command) => {
+    executeGitCommandMock.mockImplementation((command) => {
       if (command[0] === "worktree" && command[1] === "remove") {
         return Promise.resolve({ stdout: "", stderr: "" });
       }
@@ -210,7 +206,7 @@ describe("deleteWorktree", () => {
       }
       return Promise.reject(new Error("Unexpected command"));
     });
-    executeGitCommandInDirectoryMock.mock.mockImplementation(() =>
+    executeGitCommandInDirectoryMock.mockImplementation(() =>
       Promise.resolve({
         stdout: "M file1.txt\nA file2.txt",
         stderr: "",
@@ -241,12 +237,12 @@ describe("deleteWorktree", () => {
 
 describe("getWorktreeStatus", () => {
   const resetMocks = () => {
-    executeGitCommandInDirectoryMock.mock.resetCalls();
+    executeGitCommandInDirectoryMock.mockClear();
   };
 
   it("should return no uncommitted changes when git status is clean", async () => {
     resetMocks();
-    executeGitCommandInDirectoryMock.mock.mockImplementation(() =>
+    executeGitCommandInDirectoryMock.mockImplementation(() =>
       Promise.resolve({ stdout: "", stderr: "" }),
     );
 
@@ -256,7 +252,7 @@ describe("getWorktreeStatus", () => {
     strictEqual(status.changedFiles, 0);
 
     strictEqual(executeGitCommandInDirectoryMock.mock.calls.length, 1);
-    deepStrictEqual(executeGitCommandInDirectoryMock.mock.calls[0].arguments, [
+    deepStrictEqual(executeGitCommandInDirectoryMock.mock.calls[0], [
       "/test/worktree",
       ["status", "--porcelain"],
     ]);
@@ -264,7 +260,7 @@ describe("getWorktreeStatus", () => {
 
   it("should return uncommitted changes when git status shows changes", async () => {
     resetMocks();
-    executeGitCommandInDirectoryMock.mock.mockImplementation(() =>
+    executeGitCommandInDirectoryMock.mockImplementation(() =>
       Promise.resolve({
         stdout: "M file1.txt\nA file2.txt\n?? file3.txt",
         stderr: "",
@@ -279,7 +275,7 @@ describe("getWorktreeStatus", () => {
 
   it("should return no changes when git status fails", async () => {
     resetMocks();
-    executeGitCommandInDirectoryMock.mock.mockImplementation(() =>
+    executeGitCommandInDirectoryMock.mockImplementation(() =>
       Promise.reject(new Error("Not a git repository")),
     );
 
@@ -292,12 +288,12 @@ describe("getWorktreeStatus", () => {
 
 describe("removeWorktree", () => {
   const resetMocks = () => {
-    executeGitCommandMock.mock.resetCalls();
+    executeGitCommandMock.mockClear();
   };
 
   it("should remove worktree successfully", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.resolve({ stdout: "", stderr: "" }),
     );
 
@@ -307,7 +303,7 @@ describe("removeWorktree", () => {
     );
 
     strictEqual(executeGitCommandMock.mock.calls.length, 1);
-    deepStrictEqual(executeGitCommandMock.mock.calls[0].arguments, [
+    deepStrictEqual(executeGitCommandMock.mock.calls[0], [
       ["worktree", "remove", "/test/repo/.git/phantom/worktrees/feature"],
       { cwd: "/test/repo" },
     ]);
@@ -315,7 +311,7 @@ describe("removeWorktree", () => {
 
   it("should use force flag when force parameter is true", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.resolve({ stdout: "", stderr: "" }),
     );
 
@@ -326,7 +322,7 @@ describe("removeWorktree", () => {
     );
 
     strictEqual(executeGitCommandMock.mock.calls.length, 1);
-    deepStrictEqual(executeGitCommandMock.mock.calls[0].arguments, [
+    deepStrictEqual(executeGitCommandMock.mock.calls[0], [
       [
         "worktree",
         "remove",
@@ -339,7 +335,7 @@ describe("removeWorktree", () => {
 
   it("should throw error when removal fails", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.reject(new Error("Permission denied")),
     );
 
@@ -359,12 +355,12 @@ describe("removeWorktree", () => {
 
 describe("deleteBranch", () => {
   const resetMocks = () => {
-    executeGitCommandMock.mock.resetCalls();
+    executeGitCommandMock.mockClear();
   };
 
   it("should delete branch successfully", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.resolve({ stdout: "", stderr: "" }),
     );
 
@@ -375,7 +371,7 @@ describe("deleteBranch", () => {
       strictEqual(result.value, true);
     }
     strictEqual(executeGitCommandMock.mock.calls.length, 1);
-    deepStrictEqual(executeGitCommandMock.mock.calls[0].arguments, [
+    deepStrictEqual(executeGitCommandMock.mock.calls[0], [
       ["branch", "-D", "feature"],
       { cwd: "/test/repo" },
     ]);
@@ -383,7 +379,7 @@ describe("deleteBranch", () => {
 
   it("should return error when branch deletion fails", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.reject(new Error("Branch not found")),
     );
 

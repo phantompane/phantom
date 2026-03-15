@@ -1,22 +1,18 @@
 import { deepEqual, equal, ok } from "node:assert/strict";
-import { afterEach, describe, it, mock } from "node:test";
+import { afterEach, describe, it, vi } from "vitest";
 
-const execFileAsyncMock = mock.fn();
+const execFileAsyncMock = vi.fn();
 let OctokitMockImplementation;
 
-mock.module("node:child_process", {
-  namedExports: {
-    execFile: (command, args, callback) => {
-      execFileAsyncMock(command, args, callback);
-    },
+vi.doMock("node:child_process", () => ({
+  execFile: (command, args, callback) => {
+    execFileAsyncMock(command, args, callback);
   },
-});
+}));
 
-mock.module("node:util", {
-  namedExports: {
-    promisify: () => execFileAsyncMock,
-  },
-});
+vi.doMock("node:util", () => ({
+  promisify: () => execFileAsyncMock,
+}));
 
 class OctokitMock {
   constructor(options) {
@@ -29,17 +25,15 @@ class OctokitMock {
   }
 }
 
-mock.module("@octokit/rest", {
-  namedExports: {
-    Octokit: OctokitMock,
-  },
-});
+vi.doMock("@octokit/rest", () => ({
+  Octokit: OctokitMock,
+}));
 
 const { createGitHubClient, getGitHubToken } = await import("./client.ts");
 
 describe("getGitHubToken", () => {
   const resetMocks = () => {
-    execFileAsyncMock.mock.resetCalls();
+    execFileAsyncMock.mockClear();
     OctokitMockImplementation = undefined;
   };
 
@@ -54,7 +48,7 @@ describe("getGitHubToken", () => {
   it("should get token from gh CLI successfully", async () => {
     resetMocks();
     const mockToken = "ghp_test123token";
-    execFileAsyncMock.mock.mockImplementation(async (command, args) => {
+    execFileAsyncMock.mockImplementation(async (command, args) => {
       equal(command, "gh");
       deepEqual(args, ["auth", "token"]);
       return { stdout: `${mockToken}\n`, stderr: "" };
@@ -69,7 +63,7 @@ describe("getGitHubToken", () => {
   it("should throw error when gh CLI fails", async () => {
     resetMocks();
     const errorMessage = "gh: command not found";
-    execFileAsyncMock.mock.mockImplementation(async () => {
+    execFileAsyncMock.mockImplementation(async () => {
       throw new Error(errorMessage);
     });
 
@@ -89,7 +83,7 @@ describe("getGitHubToken", () => {
   it("should handle non-Error exceptions", async () => {
     resetMocks();
     const errorString = "Something went wrong";
-    execFileAsyncMock.mock.mockImplementation(async () => {
+    execFileAsyncMock.mockImplementation(async () => {
       throw errorString;
     });
 
@@ -107,7 +101,7 @@ describe("getGitHubToken", () => {
 describe("createGitHubClient", () => {
   const originalGhHost = process.env.GH_HOST;
   const resetMocks = () => {
-    execFileAsyncMock.mock.resetCalls();
+    execFileAsyncMock.mockClear();
     OctokitMockImplementation = undefined;
     process.env.GH_HOST = originalGhHost ?? "";
   };
@@ -127,7 +121,7 @@ describe("createGitHubClient", () => {
     const mockToken = "ghp_test456token";
     const mockOctokitInstance = { auth: mockToken };
 
-    execFileAsyncMock.mock.mockImplementation(async () => ({
+    execFileAsyncMock.mockImplementation(async () => ({
       stdout: mockToken,
       stderr: "",
     }));
@@ -149,7 +143,7 @@ describe("createGitHubClient", () => {
     process.env.GH_HOST = "";
     const mockToken = "ghp_test789token";
 
-    execFileAsyncMock.mock.mockImplementation(async () => ({
+    execFileAsyncMock.mockImplementation(async () => ({
       stdout: mockToken,
       stderr: "",
     }));
@@ -170,7 +164,7 @@ describe("createGitHubClient", () => {
     process.env.GH_HOST = gheHost;
     const mockToken = "ghp_enterprise123";
 
-    execFileAsyncMock.mock.mockImplementation(async () => ({
+    execFileAsyncMock.mockImplementation(async () => ({
       stdout: mockToken,
       stderr: "",
     }));
@@ -189,7 +183,7 @@ describe("createGitHubClient", () => {
   it("should propagate errors from getGitHubToken", async () => {
     resetMocks();
     const errorMessage = "Authentication failed";
-    execFileAsyncMock.mock.mockImplementation(async () => {
+    execFileAsyncMock.mockImplementation(async () => {
       throw new Error(errorMessage);
     });
 

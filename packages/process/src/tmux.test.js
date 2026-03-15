@@ -1,5 +1,5 @@
 import { strictEqual } from "node:assert";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { isInsideTmux } from "./tmux.ts";
 
 describe("tmux", () => {

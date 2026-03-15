@@ -1,13 +1,13 @@
 import { equal, ok } from "node:assert/strict";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 
-const getGitRootMock = mock.fn();
-const fetchMock = mock.fn();
-const attachWorktreeCoreMock = mock.fn();
-const setUpstreamBranchMock = mock.fn();
-const createContextMock = mock.fn();
-const getWorktreePathFromDirectoryMock = mock.fn();
-const validateWorktreeExistsMock = mock.fn();
+const getGitRootMock = vi.fn();
+const fetchMock = vi.fn();
+const attachWorktreeCoreMock = vi.fn();
+const setUpstreamBranchMock = vi.fn();
+const createContextMock = vi.fn();
+const getWorktreePathFromDirectoryMock = vi.fn();
+const validateWorktreeExistsMock = vi.fn();
 
 // Mock the WorktreeAlreadyExistsError class
 class MockWorktreeAlreadyExistsError extends Error {
@@ -17,33 +17,29 @@ class MockWorktreeAlreadyExistsError extends Error {
   }
 }
 
-mock.module("@phantompane/git", {
-  namedExports: {
-    getGitRoot: getGitRootMock,
-    fetch: fetchMock,
-    setUpstreamBranch: setUpstreamBranchMock,
-  },
-});
+vi.doMock("@phantompane/git", () => ({
+  getGitRoot: getGitRootMock,
+  fetch: fetchMock,
+  setUpstreamBranch: setUpstreamBranchMock,
+}));
 
-mock.module("@phantompane/core", {
-  namedExports: {
-    attachWorktreeCore: attachWorktreeCoreMock,
-    WorktreeAlreadyExistsError: MockWorktreeAlreadyExistsError,
-    createContext: createContextMock,
-    getWorktreePathFromDirectory: getWorktreePathFromDirectoryMock,
-    validateWorktreeExists: validateWorktreeExistsMock,
-  },
-});
+vi.doMock("@phantompane/core", () => ({
+  attachWorktreeCore: attachWorktreeCoreMock,
+  WorktreeAlreadyExistsError: MockWorktreeAlreadyExistsError,
+  createContext: createContextMock,
+  getWorktreePathFromDirectory: getWorktreePathFromDirectoryMock,
+  validateWorktreeExists: validateWorktreeExistsMock,
+}));
 
 const { checkoutPullRequest } = await import("./pr.ts");
 
 describe("checkoutPullRequest", () => {
   const resetMocks = () => {
-    getGitRootMock.mock.resetCalls();
-    fetchMock.mock.resetCalls();
-    attachWorktreeCoreMock.mock.resetCalls();
-    setUpstreamBranchMock.mock.resetCalls();
-    validateWorktreeExistsMock.mock.resetCalls();
+    getGitRootMock.mockClear();
+    fetchMock.mockClear();
+    attachWorktreeCoreMock.mockClear();
+    setUpstreamBranchMock.mockClear();
+    validateWorktreeExistsMock.mockClear();
   };
 
   it("should export checkoutPullRequest function", () => {
@@ -74,25 +70,25 @@ describe("checkoutPullRequest", () => {
       },
     };
 
-    getGitRootMock.mock.mockImplementation(async () => mockGitRoot);
-    createContextMock.mock.mockImplementation(async () => ({
+    getGitRootMock.mockImplementation(async () => mockGitRoot);
+    createContextMock.mockImplementation(async () => ({
       gitRoot: mockGitRoot,
       worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
     }));
     // Mock that worktree doesn't exist
-    validateWorktreeExistsMock.mock.mockImplementation(async () => ({
+    validateWorktreeExistsMock.mockImplementation(async () => ({
       ok: false,
       error: new Error("Worktree not found"),
     }));
-    fetchMock.mock.mockImplementation(async () => ({
+    fetchMock.mockImplementation(async () => ({
       ok: true,
       value: undefined,
     }));
-    attachWorktreeCoreMock.mock.mockImplementation(async () => ({
+    attachWorktreeCoreMock.mockImplementation(async () => ({
       ok: true,
       value: "/path/to/repo/.git/phantom/worktrees/feature-branch",
     }));
-    setUpstreamBranchMock.mock.mockImplementation(async () => ({
+    setUpstreamBranchMock.mockImplementation(async () => ({
       ok: true,
       value: undefined,
     }));
@@ -113,18 +109,18 @@ describe("checkoutPullRequest", () => {
     equal(setUpstreamBranchMock.mock.calls.length, 1);
 
     // Verify fetch was called with correct refspec (same-repo PR)
-    const fetchOptions = fetchMock.mock.calls[0].arguments[0];
+    const fetchOptions = fetchMock.mock.calls[0][0];
     equal(fetchOptions.refspec, "feature-branch:feature-branch");
 
     // Verify upstream was set correctly for same-repo PR
-    const upstreamArgs = setUpstreamBranchMock.mock.calls[0].arguments;
+    const upstreamArgs = setUpstreamBranchMock.mock.calls[0];
     equal(upstreamArgs[0], mockGitRoot);
     equal(upstreamArgs[1], "feature-branch");
     equal(upstreamArgs[2], "origin/feature-branch");
 
     // Verify attach was called with correct parameters
     const [gitRoot, worktreeDirectory, worktreeName] =
-      attachWorktreeCoreMock.mock.calls[0].arguments;
+      attachWorktreeCoreMock.mock.calls[0];
     equal(gitRoot, mockGitRoot);
     equal(worktreeDirectory, "/path/to/repo/.git/phantom/worktrees");
     equal(worktreeName, "feature-branch");
@@ -149,13 +145,13 @@ describe("checkoutPullRequest", () => {
       },
     };
 
-    getGitRootMock.mock.mockImplementation(async () => mockGitRoot);
-    createContextMock.mock.mockImplementation(async () => ({
+    getGitRootMock.mockImplementation(async () => mockGitRoot);
+    createContextMock.mockImplementation(async () => ({
       gitRoot: mockGitRoot,
       worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
     }));
     // Mock that worktree already exists
-    validateWorktreeExistsMock.mock.mockImplementation(async () => ({
+    validateWorktreeExistsMock.mockImplementation(async () => ({
       ok: true,
       value: { path: `${mockGitRoot}/.git/phantom/worktrees/existing-branch` },
     }));
@@ -197,26 +193,26 @@ describe("checkoutPullRequest", () => {
       },
     };
 
-    getGitRootMock.mock.mockImplementation(async () => mockGitRoot);
-    createContextMock.mock.mockImplementation(async () => ({
+    getGitRootMock.mockImplementation(async () => mockGitRoot);
+    createContextMock.mockImplementation(async () => ({
       gitRoot: mockGitRoot,
       worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
     }));
     // Mock that worktree doesn't exist
-    validateWorktreeExistsMock.mock.mockImplementation(async () => ({
+    validateWorktreeExistsMock.mockImplementation(async () => ({
       ok: false,
       error: new Error("Worktree not found"),
     }));
-    fetchMock.mock.mockImplementation(async () => ({
+    fetchMock.mockImplementation(async () => ({
       ok: true,
       value: undefined,
     }));
     const expectedError = new Error("Some git error");
-    attachWorktreeCoreMock.mock.mockImplementation(async () => ({
+    attachWorktreeCoreMock.mockImplementation(async () => ({
       ok: false,
       error: expectedError,
     }));
-    setUpstreamBranchMock.mock.mockImplementation(async () => ({
+    setUpstreamBranchMock.mockImplementation(async () => ({
       ok: true,
       value: undefined,
     }));
@@ -250,25 +246,25 @@ describe("checkoutPullRequest", () => {
       },
     };
 
-    getGitRootMock.mock.mockImplementation(async () => mockGitRoot);
-    createContextMock.mock.mockImplementation(async () => ({
+    getGitRootMock.mockImplementation(async () => mockGitRoot);
+    createContextMock.mockImplementation(async () => ({
       gitRoot: mockGitRoot,
       worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
     }));
     // Mock that worktree doesn't exist
-    validateWorktreeExistsMock.mock.mockImplementation(async () => ({
+    validateWorktreeExistsMock.mockImplementation(async () => ({
       ok: false,
       error: new Error("Worktree not found"),
     }));
-    fetchMock.mock.mockImplementation(async () => ({
+    fetchMock.mockImplementation(async () => ({
       ok: true,
       value: undefined,
     }));
-    attachWorktreeCoreMock.mock.mockImplementation(async () => ({
+    attachWorktreeCoreMock.mockImplementation(async () => ({
       ok: true,
       value: "/path/to/repo/.git/phantom/worktrees/test-branch",
     }));
-    setUpstreamBranchMock.mock.mockImplementation(async () => ({
+    setUpstreamBranchMock.mockImplementation(async () => ({
       ok: true,
       value: undefined,
     }));
@@ -276,7 +272,7 @@ describe("checkoutPullRequest", () => {
     await checkoutPullRequest(mockPullRequest);
 
     const [, worktreeDirectory, worktreeName] =
-      attachWorktreeCoreMock.mock.calls[0].arguments;
+      attachWorktreeCoreMock.mock.calls[0];
     equal(worktreeDirectory, "/path/to/repo/.git/phantom/worktrees");
     equal(worktreeName, "test-branch");
   });
@@ -300,25 +296,25 @@ describe("checkoutPullRequest", () => {
       },
     };
 
-    getGitRootMock.mock.mockImplementation(async () => mockGitRoot);
-    createContextMock.mock.mockImplementation(async () => ({
+    getGitRootMock.mockImplementation(async () => mockGitRoot);
+    createContextMock.mockImplementation(async () => ({
       gitRoot: mockGitRoot,
       worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
     }));
     // Mock that worktree doesn't exist
-    validateWorktreeExistsMock.mock.mockImplementation(async () => ({
+    validateWorktreeExistsMock.mockImplementation(async () => ({
       ok: false,
       error: new Error("Worktree not found"),
     }));
-    fetchMock.mock.mockImplementation(async () => ({
+    fetchMock.mockImplementation(async () => ({
       ok: true,
       value: undefined,
     }));
-    attachWorktreeCoreMock.mock.mockImplementation(async () => ({
+    attachWorktreeCoreMock.mockImplementation(async () => ({
       ok: true,
       value: "/path/to/repo/.git/phantom/worktrees/contributor/fork-feature",
     }));
-    setUpstreamBranchMock.mock.mockImplementation(async () => ({
+    setUpstreamBranchMock.mockImplementation(async () => ({
       ok: true,
       value: undefined,
     }));
@@ -332,16 +328,16 @@ describe("checkoutPullRequest", () => {
     );
 
     // Verify it uses the same refspec for forked PRs
-    const fetchOptions = fetchMock.mock.calls[0].arguments[0];
+    const fetchOptions = fetchMock.mock.calls[0][0];
     equal(fetchOptions.refspec, "pull/1234/head:contributor/fork-feature");
 
     const [, worktreeDirectory, worktreeName] =
-      attachWorktreeCoreMock.mock.calls[0].arguments;
+      attachWorktreeCoreMock.mock.calls[0];
     equal(worktreeDirectory, "/path/to/repo/.git/phantom/worktrees");
     equal(worktreeName, "contributor/fork-feature");
 
     // Verify upstream was set correctly for forked PR
-    const upstreamArgs = setUpstreamBranchMock.mock.calls[0].arguments;
+    const upstreamArgs = setUpstreamBranchMock.mock.calls[0];
     equal(upstreamArgs[0], mockGitRoot);
     equal(upstreamArgs[1], "contributor/fork-feature");
     equal(upstreamArgs[2], "origin/pull/1234/head");
@@ -366,21 +362,21 @@ describe("checkoutPullRequest", () => {
       },
     };
 
-    getGitRootMock.mock.mockImplementation(async () => mockGitRoot);
-    createContextMock.mock.mockImplementation(async () => ({
+    getGitRootMock.mockImplementation(async () => mockGitRoot);
+    createContextMock.mockImplementation(async () => ({
       gitRoot: mockGitRoot,
       worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
     }));
     // Mock that worktree doesn't exist
-    validateWorktreeExistsMock.mock.mockImplementation(async () => ({
+    validateWorktreeExistsMock.mockImplementation(async () => ({
       ok: false,
       error: new Error("Worktree not found"),
     }));
-    fetchMock.mock.mockImplementation(async () => ({
+    fetchMock.mockImplementation(async () => ({
       ok: false,
       error: new Error("Could not find remote ref"),
     }));
-    setUpstreamBranchMock.mock.mockImplementation(async () => ({
+    setUpstreamBranchMock.mockImplementation(async () => ({
       ok: true,
       value: undefined,
     }));

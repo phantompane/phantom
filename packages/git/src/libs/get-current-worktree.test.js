@@ -1,41 +1,37 @@
 import { strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 
-const executeGitCommandMock = mock.fn();
-const listWorktreesMock = mock.fn();
+const executeGitCommandMock = vi.fn();
+const listWorktreesMock = vi.fn();
 
-mock.module("../executor.ts", {
-  namedExports: {
-    executeGitCommand: executeGitCommandMock,
-  },
-});
+vi.doMock("../executor.ts", () => ({
+  executeGitCommand: executeGitCommandMock,
+}));
 
-mock.module("./list-worktrees.ts", {
-  namedExports: {
-    listWorktrees: listWorktreesMock,
-  },
-});
+vi.doMock("./list-worktrees.ts", () => ({
+  listWorktrees: listWorktreesMock,
+}));
 
 const { getCurrentWorktree } = await import("./get-current-worktree.ts");
 
 describe("getCurrentWorktree", () => {
   const resetMocks = () => {
-    executeGitCommandMock.mock.resetCalls();
-    listWorktreesMock.mock.resetCalls();
+    executeGitCommandMock.mockClear();
+    listWorktreesMock.mockClear();
   };
 
   it("should return null when in the main repository", async () => {
     resetMocks();
     const gitRoot = "/path/to/repo";
 
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.resolve({
         stdout: gitRoot,
         stderr: "",
       }),
     );
 
-    listWorktreesMock.mock.mockImplementation(() =>
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve([
         {
           path: gitRoot,
@@ -56,14 +52,14 @@ describe("getCurrentWorktree", () => {
     const gitRoot = "/path/to/repo";
     const worktreePath = "/path/to/repo/.git/phantom/worktrees/feature-branch";
 
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.resolve({
         stdout: `${worktreePath}\n`,
         stderr: "",
       }),
     );
 
-    listWorktreesMock.mock.mockImplementation(() =>
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve([
         {
           path: gitRoot,
@@ -91,14 +87,14 @@ describe("getCurrentWorktree", () => {
     const gitRoot = "/path/to/repo";
     const worktreePath = "/path/to/repo/.git/phantom/worktrees/my-feature";
 
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.resolve({
         stdout: worktreePath,
         stderr: "",
       }),
     );
 
-    listWorktreesMock.mock.mockImplementation(() =>
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve([
         {
           path: gitRoot,
@@ -126,14 +122,14 @@ describe("getCurrentWorktree", () => {
     const gitRoot = "/path/to/repo";
     const worktreePath = "/path/to/repo/.git/phantom/worktrees/unknown";
 
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.resolve({
         stdout: worktreePath,
         stderr: "",
       }),
     );
 
-    listWorktreesMock.mock.mockImplementation(() =>
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve([
         {
           path: gitRoot,
@@ -154,14 +150,14 @@ describe("getCurrentWorktree", () => {
     const gitRoot = "/path/to/repo";
     const worktreePath = "/path/to/other-worktree";
 
-    executeGitCommandMock.mock.mockImplementation(() =>
+    executeGitCommandMock.mockImplementation(() =>
       Promise.resolve({
         stdout: worktreePath,
         stderr: "",
       }),
     );
 
-    listWorktreesMock.mock.mockImplementation(() =>
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve([
         {
           path: gitRoot,

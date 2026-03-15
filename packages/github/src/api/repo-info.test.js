@@ -1,34 +1,30 @@
 import { deepStrictEqual, rejects, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 
-const execFileMock = mock.fn();
+const execFileMock = vi.fn();
 
-mock.module("node:child_process", {
-  namedExports: {
-    execFile: (cmd, args, callback) => {
-      const result = execFileMock(cmd, args);
-      if (callback) {
-        result.then(
-          (res) => callback(null, res),
-          (err) => callback(err),
-        );
-      }
-      return {};
-    },
+vi.doMock("node:child_process", () => ({
+  execFile: (cmd, args, callback) => {
+    const result = execFileMock(cmd, args);
+    if (callback) {
+      result.then(
+        (res) => callback(null, res),
+        (err) => callback(err),
+      );
+    }
+    return {};
   },
-});
+}));
 
-mock.module("node:util", {
-  namedExports: {
-    promisify: () => execFileMock,
-  },
-});
+vi.doMock("node:util", () => ({
+  promisify: () => execFileMock,
+}));
 
 const { getGitHubRepoInfo } = await import("./repo-info.ts");
 
 describe("getGitHubRepoInfo", () => {
   const resetMocks = () => {
-    execFileMock.mock.resetCalls();
+    execFileMock.mockClear();
   };
 
   it("should export getGitHubRepoInfo function", () => {
@@ -37,7 +33,7 @@ describe("getGitHubRepoInfo", () => {
 
   it("should return repository info successfully", async () => {
     resetMocks();
-    execFileMock.mock.mockImplementation(() =>
+    execFileMock.mockImplementation(() =>
       Promise.resolve({
         stdout: JSON.stringify({
           owner: { login: "test-owner" },
@@ -54,14 +50,14 @@ describe("getGitHubRepoInfo", () => {
     });
 
     strictEqual(execFileMock.mock.calls.length, 1);
-    const [cmd, args] = execFileMock.mock.calls[0].arguments;
+    const [cmd, args] = execFileMock.mock.calls[0];
     strictEqual(cmd, "gh");
     deepStrictEqual(args, ["repo", "view", "--json", "owner,name"]);
   });
 
   it("should throw error when gh command fails", async () => {
     resetMocks();
-    execFileMock.mock.mockImplementation(() =>
+    execFileMock.mockImplementation(() =>
       Promise.reject(new Error("Command failed")),
     );
 
@@ -73,7 +69,7 @@ describe("getGitHubRepoInfo", () => {
 
   it("should throw error when response is invalid", async () => {
     resetMocks();
-    execFileMock.mock.mockImplementation(() =>
+    execFileMock.mockImplementation(() =>
       Promise.resolve({
         stdout: JSON.stringify({
           owner: { login: 123 }, // Invalid: should be string

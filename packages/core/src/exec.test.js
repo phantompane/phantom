@@ -1,38 +1,32 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import { ProcessExecutionError } from "@phantompane/process";
 import { err, isErr, isOk, ok } from "@phantompane/shared";
 import { WorktreeNotFoundError } from "./worktree/errors.ts";
 
-const validateMock = mock.fn();
-const spawnMock = mock.fn();
+const validateMock = vi.fn();
+const spawnMock = vi.fn();
 
-mock.module("./worktree/validate.ts", {
-  namedExports: {
-    validateWorktreeExists: validateMock,
-  },
-});
+vi.doMock("./worktree/validate.ts", () => ({
+  validateWorktreeExists: validateMock,
+}));
 
-mock.module("@phantompane/process", {
-  namedExports: {
-    spawnProcess: spawnMock,
-  },
-});
+vi.doMock("@phantompane/process", () => ({
+  spawnProcess: spawnMock,
+}));
 
 const { execInWorktree } = await import("./exec.ts");
 
 describe("execInWorktree", () => {
   it("should execute command successfully when worktree exists", async () => {
-    validateMock.mock.resetCalls();
-    spawnMock.mock.resetCalls();
-    validateMock.mock.mockImplementation(() =>
+    validateMock.mockClear();
+    spawnMock.mockClear();
+    validateMock.mockImplementation(() =>
       Promise.resolve(
         ok({ path: "/test/repo/.git/phantom/worktrees/my-feature" }),
       ),
     );
-    spawnMock.mock.mockImplementation(() =>
-      Promise.resolve(ok({ exitCode: 0 })),
-    );
+    spawnMock.mockImplementation(() => Promise.resolve(ok({ exitCode: 0 })));
 
     const result = await execInWorktree(
       "/test/repo",
@@ -47,7 +41,7 @@ describe("execInWorktree", () => {
       deepStrictEqual(result.value, { exitCode: 0 });
     }
 
-    deepStrictEqual(spawnMock.mock.calls[0].arguments[0], {
+    deepStrictEqual(spawnMock.mock.calls[0][0], {
       command: "npm",
       args: ["test"],
       options: {
@@ -58,9 +52,9 @@ describe("execInWorktree", () => {
   });
 
   it("should return error when worktree does not exist", async () => {
-    validateMock.mock.resetCalls();
-    spawnMock.mock.resetCalls();
-    validateMock.mock.mockImplementation(() =>
+    validateMock.mockClear();
+    spawnMock.mockClear();
+    validateMock.mockImplementation(() =>
       Promise.resolve(err(new WorktreeNotFoundError("non-existent"))),
     );
 
@@ -82,16 +76,14 @@ describe("execInWorktree", () => {
   });
 
   it("should handle command with single argument", async () => {
-    validateMock.mock.resetCalls();
-    spawnMock.mock.resetCalls();
-    validateMock.mock.mockImplementation(() =>
+    validateMock.mockClear();
+    spawnMock.mockClear();
+    validateMock.mockImplementation(() =>
       Promise.resolve(
         ok({ path: "/test/repo/.git/phantom/worktrees/feature" }),
       ),
     );
-    spawnMock.mock.mockImplementation(() =>
-      Promise.resolve(ok({ exitCode: 0 })),
-    );
+    spawnMock.mockImplementation(() => Promise.resolve(ok({ exitCode: 0 })));
 
     await execInWorktree(
       "/test/repo",
@@ -101,7 +93,7 @@ describe("execInWorktree", () => {
       {},
     );
 
-    deepStrictEqual(spawnMock.mock.calls[0].arguments[0], {
+    deepStrictEqual(spawnMock.mock.calls[0][0], {
       command: "ls",
       args: [],
       options: {
@@ -112,18 +104,16 @@ describe("execInWorktree", () => {
   });
 
   it("should use inherit stdio for stdout/stderr when interactive", async () => {
-    validateMock.mock.resetCalls();
-    spawnMock.mock.resetCalls();
+    validateMock.mockClear();
+    spawnMock.mockClear();
 
-    validateMock.mock.mockImplementation(() =>
+    validateMock.mockImplementation(() =>
       Promise.resolve(
         ok({ path: "/test/repo/.git/phantom/worktrees/feature" }),
       ),
     );
 
-    spawnMock.mock.mockImplementation(() =>
-      Promise.resolve(ok({ exitCode: 0 })),
-    );
+    spawnMock.mockImplementation(() => Promise.resolve(ok({ exitCode: 0 })));
 
     await execInWorktree(
       "/test/repo",
@@ -135,7 +125,7 @@ describe("execInWorktree", () => {
       },
     );
 
-    deepStrictEqual(spawnMock.mock.calls[0].arguments[0], {
+    deepStrictEqual(spawnMock.mock.calls[0][0], {
       command: "echo",
       args: ["test"],
       options: {
@@ -146,14 +136,14 @@ describe("execInWorktree", () => {
   });
 
   it("should pass through spawn process errors", async () => {
-    validateMock.mock.resetCalls();
-    spawnMock.mock.resetCalls();
-    validateMock.mock.mockImplementation(() =>
+    validateMock.mockClear();
+    spawnMock.mockClear();
+    validateMock.mockImplementation(() =>
       Promise.resolve(
         ok({ path: "/test/repo/.git/phantom/worktrees/feature" }),
       ),
     );
-    spawnMock.mock.mockImplementation(() =>
+    spawnMock.mockImplementation(() =>
       Promise.resolve(err(new ProcessExecutionError("false", 1))),
     );
 

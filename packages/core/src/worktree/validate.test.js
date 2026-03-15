@@ -1,14 +1,12 @@
 import { deepStrictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import { err, ok } from "@phantompane/shared";
 
-const listWorktreesMock = mock.fn();
+const listWorktreesMock = vi.fn();
 
-mock.module("./list.ts", {
-  namedExports: {
-    listWorktrees: listWorktreesMock,
-  },
-});
+vi.doMock("./list.ts", () => ({
+  listWorktrees: listWorktreesMock,
+}));
 
 const { validateWorktreeExists, validateWorktreeDoesNotExist } =
   await import("./validate.ts");
@@ -16,12 +14,12 @@ const { isOk, isErr } = await import("@phantompane/shared");
 
 describe("validateWorktreeExists", () => {
   const resetMocks = () => {
-    listWorktreesMock.mock.resetCalls();
+    listWorktreesMock.mockClear();
   };
 
   it("should return ok when worktree is registered", async () => {
     resetMocks();
-    listWorktreesMock.mock.mockImplementation(() =>
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           worktrees: [
@@ -50,7 +48,7 @@ describe("validateWorktreeExists", () => {
 
   it("should return err when worktree is not registered", async () => {
     resetMocks();
-    listWorktreesMock.mock.mockImplementation(() =>
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve(ok({ worktrees: [] })),
     );
 
@@ -66,7 +64,7 @@ describe("validateWorktreeExists", () => {
 
   it("should return err when worktree listing fails", async () => {
     resetMocks();
-    listWorktreesMock.mock.mockImplementation(() =>
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve(err(new Error("list failed"))),
     );
 
@@ -82,7 +80,7 @@ describe("validateWorktreeExists", () => {
 
   it("should pass excludeDefault to listWorktrees", async () => {
     resetMocks();
-    listWorktreesMock.mock.mockImplementation(() =>
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve(ok({ worktrees: [] })),
     );
 
@@ -95,7 +93,7 @@ describe("validateWorktreeExists", () => {
 
     deepStrictEqual(isErr(result), true);
     deepStrictEqual(listWorktreesMock.mock.calls.length, 1);
-    deepStrictEqual(listWorktreesMock.mock.calls[0].arguments, [
+    deepStrictEqual(listWorktreesMock.mock.calls[0], [
       "/test/repo",
       { excludeDefault: true },
     ]);
@@ -104,12 +102,12 @@ describe("validateWorktreeExists", () => {
 
 describe("validateWorktreeDoesNotExist", () => {
   const resetMocks = () => {
-    listWorktreesMock.mock.resetCalls();
+    listWorktreesMock.mockClear();
   };
 
   it("should return ok when worktree is not registered", async () => {
     resetMocks();
-    listWorktreesMock.mock.mockImplementation(() =>
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve(ok({ worktrees: [] })),
     );
 
@@ -125,7 +123,7 @@ describe("validateWorktreeDoesNotExist", () => {
 
   it("should return err when worktree is already registered", async () => {
     resetMocks();
-    listWorktreesMock.mock.mockImplementation(() =>
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           worktrees: [
@@ -155,7 +153,7 @@ describe("validateWorktreeDoesNotExist", () => {
 
   it("should return err when listing fails", async () => {
     resetMocks();
-    listWorktreesMock.mock.mockImplementation(() =>
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve(err(new Error("list failed"))),
     );
 

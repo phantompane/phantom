@@ -1,100 +1,105 @@
 import { rejects, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { afterAll, describe, it, vi } from "vitest";
 import { WorktreeNotFoundError } from "@phantompane/core";
 import { err, ok } from "@phantompane/shared";
 
-const exitMock = mock.fn();
-const consoleLogMock = mock.fn();
-const consoleErrorMock = mock.fn();
-const getGitRootMock = mock.fn();
-const shellInWorktreeMock = mock.fn();
-const validateWorktreeExistsMock = mock.fn();
-const selectWorktreeWithFzfMock = mock.fn();
-const isInsideTmuxMock = mock.fn();
-const executeTmuxCommandMock = mock.fn();
-const exitWithErrorMock = mock.fn((message, code) => {
+const exitMock = vi.fn();
+const consoleLogMock = vi.fn();
+const consoleErrorMock = vi.fn();
+const getGitRootMock = vi.fn();
+const shellInWorktreeMock = vi.fn();
+const validateWorktreeExistsMock = vi.fn();
+const selectWorktreeWithFzfMock = vi.fn();
+const isInsideTmuxMock = vi.fn();
+const executeTmuxCommandMock = vi.fn();
+const exitWithErrorMock = vi.fn((message, code) => {
   consoleErrorMock(`Error: ${message}`);
-  exitMock(code);
+  try {
+    exitMock(code);
+  } catch {
+    // Re-throw a deterministic error below.
+  }
   throw new Error(`Exit with code ${code}: ${message}`);
 });
-const exitWithSuccessMock = mock.fn(() => {
-  exitMock(0);
+const exitWithSuccessMock = vi.fn(() => {
+  try {
+    exitMock(0);
+  } catch {
+    // Re-throw a deterministic error below.
+  }
   throw new Error("Exit with code 0: success");
 });
 
-mock.module("node:process", {
-  namedExports: {
-    exit: exitMock,
-  },
+const originalProcessExit = process.exit;
+const originalProcessEnv = process.env;
+
+process.exit = (code) => {
+  exitMock(code);
+  throw new Error(`Exit with code ${code ?? 0}`);
+};
+
+afterAll(() => {
+  process.exit = originalProcessExit;
+  process.env = originalProcessEnv;
 });
 
-mock.module("@phantompane/git", {
-  namedExports: {
-    getGitRoot: getGitRootMock,
-  },
-});
+vi.doMock("@phantompane/git", () => ({
+  getGitRoot: getGitRootMock,
+}));
 
-mock.module("@phantompane/process", {
-  namedExports: {
-    isInsideTmux: isInsideTmuxMock,
-    executeTmuxCommand: executeTmuxCommandMock,
-    getPhantomEnv: mock.fn((name, path) => ({
-      PHANTOM: "1",
-      PHANTOM_NAME: name,
-      PHANTOM_PATH: path,
-    })),
-  },
-});
+vi.doMock("@phantompane/process", () => ({
+  isInsideTmux: isInsideTmuxMock,
+  executeTmuxCommand: executeTmuxCommandMock,
+  getPhantomEnv: vi.fn((name, path) => ({
+    PHANTOM: "1",
+    PHANTOM_NAME: name,
+    PHANTOM_PATH: path,
+  })),
+}));
 
-mock.module("@phantompane/core", {
-  namedExports: {
-    validateWorktreeExists: validateWorktreeExistsMock,
-    selectWorktreeWithFzf: selectWorktreeWithFzfMock,
-    shellInWorktree: shellInWorktreeMock,
-    WorktreeNotFoundError,
-    createContext: mock.fn((gitRoot) =>
-      Promise.resolve({
-        gitRoot,
-        worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
-      }),
-    ),
-    loadConfig: mock.fn(() =>
-      Promise.resolve({ ok: false, error: new Error("Config not found") }),
-    ),
-    getWorktreesDirectory: mock.fn((gitRoot, worktreesDirectory) => {
-      return worktreesDirectory || `${gitRoot}/.git/phantom/worktrees`;
+vi.doMock("@phantompane/core", () => ({
+  validateWorktreeExists: validateWorktreeExistsMock,
+  selectWorktreeWithFzf: selectWorktreeWithFzfMock,
+  shellInWorktree: shellInWorktreeMock,
+  WorktreeNotFoundError,
+  createContext: vi.fn((gitRoot) =>
+    Promise.resolve({
+      gitRoot,
+      worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
     }),
-  },
-});
+  ),
+  loadConfig: vi.fn(() =>
+    Promise.resolve({ ok: false, error: new Error("Config not found") }),
+  ),
+  getWorktreesDirectory: vi.fn((gitRoot, worktreesDirectory) => {
+    return worktreesDirectory || `${gitRoot}/.git/phantom/worktrees`;
+  }),
+}));
 
-mock.module("../output.ts", {
-  namedExports: {
-    output: {
-      log: consoleLogMock,
-      error: consoleErrorMock,
-    },
+vi.doMock("../output.ts", () => ({
+  output: {
+    log: consoleLogMock,
+    error: consoleErrorMock,
   },
-});
+}));
 
-mock.module("../errors.ts", {
-  namedExports: {
-    exitWithError: exitWithErrorMock,
-    exitWithSuccess: exitWithSuccessMock,
-    exitCodes: {
-      success: 0,
-      generalError: 1,
-      notFound: 2,
-      validationError: 3,
-    },
+vi.doMock("../errors.ts", () => ({
+  exitWithError: exitWithErrorMock,
+  exitWithSuccess: exitWithSuccessMock,
+  exitCodes: {
+    success: 0,
+    generalError: 1,
+    notFound: 2,
+    validationError: 3,
   },
-});
+}));
 
 const { shellHandler } = await import("./shell.ts");
 
 describe("shellHandler", () => {
   it("should error when no worktree name and no --fzf flag provided", async () => {
-    exitMock.mock.resetCalls();
-    consoleErrorMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleErrorMock.mockClear();
 
     await rejects(
       async () => await shellHandler([]),
@@ -103,15 +108,15 @@ describe("shellHandler", () => {
 
     strictEqual(consoleErrorMock.mock.calls.length, 1);
     strictEqual(
-      consoleErrorMock.mock.calls[0].arguments[0],
+      consoleErrorMock.mock.calls[0][0],
       "Error: Usage: phantom shell <worktree-name> or phantom shell --fzf",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 3); // validationError
+    strictEqual(exitMock.mock.calls[0][0], 3); // validationError
   });
 
   it("should error when both worktree name and --fzf flag are provided", async () => {
-    exitMock.mock.resetCalls();
-    consoleErrorMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleErrorMock.mockClear();
 
     await rejects(
       async () => await shellHandler(["feature", "--fzf"]),
@@ -120,25 +125,25 @@ describe("shellHandler", () => {
 
     strictEqual(consoleErrorMock.mock.calls.length, 1);
     strictEqual(
-      consoleErrorMock.mock.calls[0].arguments[0],
+      consoleErrorMock.mock.calls[0][0],
       "Error: Cannot specify both a worktree name and --fzf option",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 3); // validationError
+    strictEqual(exitMock.mock.calls[0][0], 3); // validationError
   });
 
   it("should open shell for specified worktree", async () => {
-    exitMock.mock.resetCalls();
-    consoleLogMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    validateWorktreeExistsMock.mock.resetCalls();
-    shellInWorktreeMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleLogMock.mockClear();
+    getGitRootMock.mockClear();
+    validateWorktreeExistsMock.mockClear();
+    shellInWorktreeMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => "/repo");
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => "/repo");
+    validateWorktreeExistsMock.mockImplementation(() =>
       ok({ path: "/repo/.git/phantom/worktrees/feature" }),
     );
-    shellInWorktreeMock.mock.mockImplementation(() => ok({ exitCode: 0 }));
-    exitMock.mock.mockImplementation((code) => {
+    shellInWorktreeMock.mockImplementation(() => ok({ exitCode: 0 }));
+    exitMock.mockImplementation((code) => {
       throw new Error(`Process exit with code ${code}`);
     });
 
@@ -149,35 +154,36 @@ describe("shellHandler", () => {
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(validateWorktreeExistsMock.mock.calls.length, 1);
-    strictEqual(validateWorktreeExistsMock.mock.calls[0].arguments[0], "/repo");
+    strictEqual(validateWorktreeExistsMock.mock.calls[0][0], "/repo");
     strictEqual(
-      validateWorktreeExistsMock.mock.calls[0].arguments[1],
-      "feature",
-    );
-    strictEqual(shellInWorktreeMock.mock.calls.length, 1);
-    strictEqual(shellInWorktreeMock.mock.calls[0].arguments[0], "/repo");
-    strictEqual(
-      shellInWorktreeMock.mock.calls[0].arguments[1],
+      validateWorktreeExistsMock.mock.calls[0][1],
       "/repo/.git/phantom/worktrees",
     );
-    strictEqual(shellInWorktreeMock.mock.calls[0].arguments[2], "feature");
+    strictEqual(validateWorktreeExistsMock.mock.calls[0][2], "feature");
+    strictEqual(shellInWorktreeMock.mock.calls.length, 1);
+    strictEqual(shellInWorktreeMock.mock.calls[0][0], "/repo");
+    strictEqual(
+      shellInWorktreeMock.mock.calls[0][1],
+      "/repo/.git/phantom/worktrees",
+    );
+    strictEqual(shellInWorktreeMock.mock.calls[0][2], "feature");
     strictEqual(consoleLogMock.mock.calls.length, 2);
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Entering worktree 'feature' at /repo/.git/phantom/worktrees/feature",
     );
   });
 
   it("should open shell with fzf selection", async () => {
-    exitMock.mock.resetCalls();
-    consoleLogMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    selectWorktreeWithFzfMock.mock.resetCalls();
-    validateWorktreeExistsMock.mock.resetCalls();
-    shellInWorktreeMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleLogMock.mockClear();
+    getGitRootMock.mockClear();
+    selectWorktreeWithFzfMock.mockClear();
+    validateWorktreeExistsMock.mockClear();
+    shellInWorktreeMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => "/repo");
-    selectWorktreeWithFzfMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => "/repo");
+    selectWorktreeWithFzfMock.mockImplementation(() =>
       ok({
         name: "feature-fzf",
         path: "/repo/.git/phantom/worktrees/feature-fzf",
@@ -186,11 +192,11 @@ describe("shellHandler", () => {
         isDirty: false,
       }),
     );
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    validateWorktreeExistsMock.mockImplementation(() =>
       ok({ path: "/repo/.git/phantom/worktrees/feature-fzf" }),
     );
-    shellInWorktreeMock.mock.mockImplementation(() => ok({ exitCode: 0 }));
-    exitMock.mock.mockImplementation((code) => {
+    shellInWorktreeMock.mockImplementation(() => ok({ exitCode: 0 }));
+    exitMock.mockImplementation((code) => {
       throw new Error(`Process exit with code ${code}`);
     });
 
@@ -201,29 +207,30 @@ describe("shellHandler", () => {
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(selectWorktreeWithFzfMock.mock.calls.length, 1);
-    strictEqual(selectWorktreeWithFzfMock.mock.calls[0].arguments[0], "/repo");
+    strictEqual(selectWorktreeWithFzfMock.mock.calls[0][0], "/repo");
     strictEqual(validateWorktreeExistsMock.mock.calls.length, 1);
     strictEqual(
-      validateWorktreeExistsMock.mock.calls[0].arguments[1],
-      "feature-fzf",
-    );
-    strictEqual(shellInWorktreeMock.mock.calls.length, 1);
-    strictEqual(shellInWorktreeMock.mock.calls[0].arguments[0], "/repo");
-    strictEqual(
-      shellInWorktreeMock.mock.calls[0].arguments[1],
+      validateWorktreeExistsMock.mock.calls[0][1],
       "/repo/.git/phantom/worktrees",
     );
-    strictEqual(shellInWorktreeMock.mock.calls[0].arguments[2], "feature-fzf");
+    strictEqual(validateWorktreeExistsMock.mock.calls[0][2], "feature-fzf");
+    strictEqual(shellInWorktreeMock.mock.calls.length, 1);
+    strictEqual(shellInWorktreeMock.mock.calls[0][0], "/repo");
+    strictEqual(
+      shellInWorktreeMock.mock.calls[0][1],
+      "/repo/.git/phantom/worktrees",
+    );
+    strictEqual(shellInWorktreeMock.mock.calls[0][2], "feature-fzf");
   });
 
   it("should exit gracefully when fzf selection is cancelled", async () => {
-    exitMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    selectWorktreeWithFzfMock.mock.resetCalls();
-    exitWithSuccessMock.mock.resetCalls();
+    exitMock.mockClear();
+    getGitRootMock.mockClear();
+    selectWorktreeWithFzfMock.mockClear();
+    exitWithSuccessMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => "/repo");
-    selectWorktreeWithFzfMock.mock.mockImplementation(() => ok(null));
+    getGitRootMock.mockImplementation(() => "/repo");
+    selectWorktreeWithFzfMock.mockImplementation(() => ok(null));
 
     await rejects(
       async () => await shellHandler(["--fzf"]),
@@ -235,13 +242,13 @@ describe("shellHandler", () => {
   });
 
   it("should handle fzf selection error", async () => {
-    exitMock.mock.resetCalls();
-    consoleErrorMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    selectWorktreeWithFzfMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleErrorMock.mockClear();
+    getGitRootMock.mockClear();
+    selectWorktreeWithFzfMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => "/repo");
-    selectWorktreeWithFzfMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => "/repo");
+    selectWorktreeWithFzfMock.mockImplementation(() =>
       err(new Error("fzf not found")),
     );
 
@@ -251,21 +258,18 @@ describe("shellHandler", () => {
     );
 
     strictEqual(consoleErrorMock.mock.calls.length, 1);
-    strictEqual(
-      consoleErrorMock.mock.calls[0].arguments[0],
-      "Error: fzf not found",
-    );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 1); // generalError
+    strictEqual(consoleErrorMock.mock.calls[0][0], "Error: fzf not found");
+    strictEqual(exitMock.mock.calls[0][0], 1); // generalError
   });
 
   it("should error when worktree not found", async () => {
-    exitMock.mock.resetCalls();
-    consoleErrorMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    validateWorktreeExistsMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleErrorMock.mockClear();
+    getGitRootMock.mockClear();
+    validateWorktreeExistsMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => "/repo");
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => "/repo");
+    validateWorktreeExistsMock.mockImplementation(() =>
       err(new WorktreeNotFoundError("nonexistent")),
     );
 
@@ -276,19 +280,19 @@ describe("shellHandler", () => {
 
     strictEqual(consoleErrorMock.mock.calls.length, 1);
     strictEqual(
-      consoleErrorMock.mock.calls[0].arguments[0],
+      consoleErrorMock.mock.calls[0][0],
       "Error: Worktree 'nonexistent' not found",
     );
   });
 
   it("should error when tmux option used outside tmux", async () => {
-    exitMock.mock.resetCalls();
-    consoleErrorMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    isInsideTmuxMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleErrorMock.mockClear();
+    getGitRootMock.mockClear();
+    isInsideTmuxMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => "/repo");
-    isInsideTmuxMock.mock.mockImplementation(() => false);
+    getGitRootMock.mockImplementation(() => "/repo");
+    isInsideTmuxMock.mockImplementation(() => false);
 
     await rejects(
       async () => await shellHandler(["feature", "--tmux"]),
@@ -298,26 +302,26 @@ describe("shellHandler", () => {
     strictEqual(isInsideTmuxMock.mock.calls.length, 1);
     strictEqual(consoleErrorMock.mock.calls.length, 1);
     strictEqual(
-      consoleErrorMock.mock.calls[0].arguments[0],
+      consoleErrorMock.mock.calls[0][0],
       "Error: The --tmux option can only be used inside a tmux session",
     );
   });
 
   it("should open shell in new tmux window", async () => {
-    exitMock.mock.resetCalls();
-    consoleLogMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    validateWorktreeExistsMock.mock.resetCalls();
-    isInsideTmuxMock.mock.resetCalls();
-    executeTmuxCommandMock.mock.resetCalls();
-    exitWithSuccessMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleLogMock.mockClear();
+    getGitRootMock.mockClear();
+    validateWorktreeExistsMock.mockClear();
+    isInsideTmuxMock.mockClear();
+    executeTmuxCommandMock.mockClear();
+    exitWithSuccessMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => "/repo");
-    isInsideTmuxMock.mock.mockImplementation(() => true);
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => "/repo");
+    isInsideTmuxMock.mockImplementation(() => true);
+    validateWorktreeExistsMock.mockImplementation(() =>
       ok({ path: "/repo/.git/phantom/worktrees/feature" }),
     );
-    executeTmuxCommandMock.mock.mockImplementation(() => ok({ exitCode: 0 }));
+    executeTmuxCommandMock.mockImplementation(() => ok({ exitCode: 0 }));
 
     await rejects(
       async () => await shellHandler(["feature", "--tmux"]),
@@ -326,92 +330,92 @@ describe("shellHandler", () => {
 
     strictEqual(isInsideTmuxMock.mock.calls.length, 1);
     strictEqual(executeTmuxCommandMock.mock.calls.length, 1);
-    const tmuxCall = executeTmuxCommandMock.mock.calls[0].arguments[0];
+    const tmuxCall = executeTmuxCommandMock.mock.calls[0][0];
     strictEqual(tmuxCall.direction, "new");
     strictEqual(tmuxCall.cwd, "/repo/.git/phantom/worktrees/feature");
     strictEqual(tmuxCall.windowName, "feature");
     strictEqual(tmuxCall.env.PHANTOM, "1");
     strictEqual(tmuxCall.env.PHANTOM_NAME, "feature");
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Opening worktree 'feature' in tmux window...",
     );
   });
 
   it("should open shell in vertical tmux pane", async () => {
-    exitMock.mock.resetCalls();
-    consoleLogMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    validateWorktreeExistsMock.mock.resetCalls();
-    isInsideTmuxMock.mock.resetCalls();
-    executeTmuxCommandMock.mock.resetCalls();
-    exitWithSuccessMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleLogMock.mockClear();
+    getGitRootMock.mockClear();
+    validateWorktreeExistsMock.mockClear();
+    isInsideTmuxMock.mockClear();
+    executeTmuxCommandMock.mockClear();
+    exitWithSuccessMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => "/repo");
-    isInsideTmuxMock.mock.mockImplementation(() => true);
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => "/repo");
+    isInsideTmuxMock.mockImplementation(() => true);
+    validateWorktreeExistsMock.mockImplementation(() =>
       ok({ path: "/repo/.git/phantom/worktrees/feature" }),
     );
-    executeTmuxCommandMock.mock.mockImplementation(() => ok({ exitCode: 0 }));
+    executeTmuxCommandMock.mockImplementation(() => ok({ exitCode: 0 }));
 
     await rejects(
       async () => await shellHandler(["feature", "--tmux-v"]),
       /Exit with code 0: success/,
     );
 
-    const tmuxCall = executeTmuxCommandMock.mock.calls[0].arguments[0];
+    const tmuxCall = executeTmuxCommandMock.mock.calls[0][0];
     strictEqual(tmuxCall.direction, "vertical");
     strictEqual(tmuxCall.windowName, undefined);
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Opening worktree 'feature' in tmux pane...",
     );
   });
 
   it("should open shell in horizontal tmux pane", async () => {
-    exitMock.mock.resetCalls();
-    consoleLogMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    validateWorktreeExistsMock.mock.resetCalls();
-    isInsideTmuxMock.mock.resetCalls();
-    executeTmuxCommandMock.mock.resetCalls();
-    exitWithSuccessMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleLogMock.mockClear();
+    getGitRootMock.mockClear();
+    validateWorktreeExistsMock.mockClear();
+    isInsideTmuxMock.mockClear();
+    executeTmuxCommandMock.mockClear();
+    exitWithSuccessMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => "/repo");
-    isInsideTmuxMock.mock.mockImplementation(() => true);
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => "/repo");
+    isInsideTmuxMock.mockImplementation(() => true);
+    validateWorktreeExistsMock.mockImplementation(() =>
       ok({ path: "/repo/.git/phantom/worktrees/feature" }),
     );
-    executeTmuxCommandMock.mock.mockImplementation(() => ok({ exitCode: 0 }));
+    executeTmuxCommandMock.mockImplementation(() => ok({ exitCode: 0 }));
 
     await rejects(
       async () => await shellHandler(["feature", "--tmux-horizontal"]),
       /Exit with code 0: success/,
     );
 
-    const tmuxCall = executeTmuxCommandMock.mock.calls[0].arguments[0];
+    const tmuxCall = executeTmuxCommandMock.mock.calls[0][0];
     strictEqual(tmuxCall.direction, "horizontal");
     strictEqual(tmuxCall.windowName, undefined);
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Opening worktree 'feature' in tmux pane...",
     );
   });
 
   it("should handle tmux command error", async () => {
-    exitMock.mock.resetCalls();
-    consoleErrorMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    validateWorktreeExistsMock.mock.resetCalls();
-    isInsideTmuxMock.mock.resetCalls();
-    executeTmuxCommandMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleErrorMock.mockClear();
+    getGitRootMock.mockClear();
+    validateWorktreeExistsMock.mockClear();
+    isInsideTmuxMock.mockClear();
+    executeTmuxCommandMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => "/repo");
-    isInsideTmuxMock.mock.mockImplementation(() => true);
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => "/repo");
+    isInsideTmuxMock.mockImplementation(() => true);
+    validateWorktreeExistsMock.mockImplementation(() =>
       ok({ path: "/repo/.git/phantom/worktrees/feature" }),
     );
-    executeTmuxCommandMock.mock.mockImplementation(() =>
+    executeTmuxCommandMock.mockImplementation(() =>
       err(new Error("tmux command failed")),
     );
 
@@ -421,25 +425,22 @@ describe("shellHandler", () => {
     );
 
     strictEqual(consoleErrorMock.mock.calls.length, 2);
-    strictEqual(
-      consoleErrorMock.mock.calls[0].arguments[0],
-      "tmux command failed",
-    );
+    strictEqual(consoleErrorMock.mock.calls[0][0], "tmux command failed");
   });
 
   it("should open shell with --fzf and tmux options combined", async () => {
-    exitMock.mock.resetCalls();
-    consoleLogMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    selectWorktreeWithFzfMock.mock.resetCalls();
-    validateWorktreeExistsMock.mock.resetCalls();
-    isInsideTmuxMock.mock.resetCalls();
-    executeTmuxCommandMock.mock.resetCalls();
-    exitWithSuccessMock.mock.resetCalls();
+    exitMock.mockClear();
+    consoleLogMock.mockClear();
+    getGitRootMock.mockClear();
+    selectWorktreeWithFzfMock.mockClear();
+    validateWorktreeExistsMock.mockClear();
+    isInsideTmuxMock.mockClear();
+    executeTmuxCommandMock.mockClear();
+    exitWithSuccessMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => "/repo");
-    isInsideTmuxMock.mock.mockImplementation(() => true);
-    selectWorktreeWithFzfMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => "/repo");
+    isInsideTmuxMock.mockImplementation(() => true);
+    selectWorktreeWithFzfMock.mockImplementation(() =>
       ok({
         name: "selected-feature",
         path: "/repo/.git/phantom/worktrees/selected-feature",
@@ -448,10 +449,10 @@ describe("shellHandler", () => {
         isDirty: false,
       }),
     );
-    validateWorktreeExistsMock.mock.mockImplementation(() =>
+    validateWorktreeExistsMock.mockImplementation(() =>
       ok({ path: "/repo/.git/phantom/worktrees/selected-feature" }),
     );
-    executeTmuxCommandMock.mock.mockImplementation(() => ok({ exitCode: 0 }));
+    executeTmuxCommandMock.mockImplementation(() => ok({ exitCode: 0 }));
 
     await rejects(
       async () => await shellHandler(["--fzf", "--tmux"]),
@@ -460,12 +461,12 @@ describe("shellHandler", () => {
 
     strictEqual(selectWorktreeWithFzfMock.mock.calls.length, 1);
     strictEqual(executeTmuxCommandMock.mock.calls.length, 1);
-    const tmuxCall = executeTmuxCommandMock.mock.calls[0].arguments[0];
+    const tmuxCall = executeTmuxCommandMock.mock.calls[0][0];
     strictEqual(tmuxCall.direction, "new");
     strictEqual(tmuxCall.cwd, "/repo/.git/phantom/worktrees/selected-feature");
     strictEqual(tmuxCall.windowName, "selected-feature");
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Opening worktree 'selected-feature' in tmux window...",
     );
   });

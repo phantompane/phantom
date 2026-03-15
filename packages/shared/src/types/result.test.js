@@ -1,5 +1,5 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { err, isErr, isOk, ok } from "./result.ts";
 
 describe("Result type", () => {

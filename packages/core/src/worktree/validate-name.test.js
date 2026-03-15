@@ -1,5 +1,5 @@
 import { deepStrictEqual } from "node:assert";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { validateWorktreeName } from "./validate.ts";
 
 describe("validateWorktreeName", () => {

@@ -1,6 +1,6 @@
 import { strictEqual } from "node:assert";
 import { normalize } from "node:path";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import {
   getWorktreePathFromDirectory,
   getWorktreesDirectory,

@@ -1,46 +1,40 @@
 import { deepStrictEqual, rejects } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import { err, ok } from "@phantompane/shared";
 
-const exitWithErrorMock = mock.fn((message, code) => {
+const exitWithErrorMock = vi.fn((message, code) => {
   throw new Error(`Exit with code ${code}: ${message}`);
 });
-const outputLogMock = mock.fn();
-const outputErrorMock = mock.fn();
-const githubCheckoutMock = mock.fn();
+const outputLogMock = vi.fn();
+const outputErrorMock = vi.fn();
+const githubCheckoutMock = vi.fn();
 
-mock.module("../errors.ts", {
-  namedExports: {
-    exitWithError: exitWithErrorMock,
-    exitCodes: {
-      validationError: 3,
-      generalError: 1,
-    },
+vi.doMock("../errors.ts", () => ({
+  exitWithError: exitWithErrorMock,
+  exitCodes: {
+    validationError: 3,
+    generalError: 1,
   },
-});
+}));
 
-mock.module("../output.ts", {
-  namedExports: {
-    output: { log: outputLogMock, error: outputErrorMock },
-  },
-});
+vi.doMock("../output.ts", () => ({
+  output: { log: outputLogMock, error: outputErrorMock },
+}));
 
-mock.module("@phantompane/github", {
-  namedExports: {
-    githubCheckout: githubCheckoutMock,
-  },
-});
+vi.doMock("@phantompane/github", () => ({
+  githubCheckout: githubCheckoutMock,
+}));
 
 const { githubCheckoutHandler } = await import("./github-checkout.ts");
 
 describe("githubCheckoutHandler", () => {
   it("should call githubCheckout with correct options", async () => {
-    exitWithErrorMock.mock.resetCalls();
-    outputLogMock.mock.resetCalls();
-    outputErrorMock.mock.resetCalls();
-    githubCheckoutMock.mock.resetCalls();
+    exitWithErrorMock.mockClear();
+    outputLogMock.mockClear();
+    outputErrorMock.mockClear();
+    githubCheckoutMock.mockClear();
 
-    githubCheckoutMock.mock.mockImplementation(() =>
+    githubCheckoutMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message: "Checked out issue #123",
@@ -55,23 +49,20 @@ describe("githubCheckoutHandler", () => {
     // Verify that githubCheckout was called with options only
     // The github library internally creates context and handles postCreate
     deepStrictEqual(githubCheckoutMock.mock.calls.length, 1);
-    const [options] = githubCheckoutMock.mock.calls[0].arguments;
+    const [options] = githubCheckoutMock.mock.calls[0];
     deepStrictEqual(options, {
       number: "123",
       base: undefined,
     });
-    deepStrictEqual(
-      outputLogMock.mock.calls[0].arguments[0],
-      "Checked out issue #123",
-    );
+    deepStrictEqual(outputLogMock.mock.calls[0][0], "Checked out issue #123");
   });
 
   it("should handle existing worktree response", async () => {
-    exitWithErrorMock.mock.resetCalls();
-    outputLogMock.mock.resetCalls();
-    githubCheckoutMock.mock.resetCalls();
+    exitWithErrorMock.mockClear();
+    outputLogMock.mockClear();
+    githubCheckoutMock.mockClear();
 
-    githubCheckoutMock.mock.mockImplementation(() =>
+    githubCheckoutMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message: "Worktree for PR #456 is already checked out",
@@ -86,16 +77,16 @@ describe("githubCheckoutHandler", () => {
 
     deepStrictEqual(githubCheckoutMock.mock.calls.length, 1);
     deepStrictEqual(
-      outputLogMock.mock.calls[0].arguments[0],
+      outputLogMock.mock.calls[0][0],
       "Worktree for PR #456 is already checked out",
     );
   });
 
   it("should handle githubCheckout error", async () => {
-    exitWithErrorMock.mock.resetCalls();
-    githubCheckoutMock.mock.resetCalls();
+    exitWithErrorMock.mockClear();
+    githubCheckoutMock.mockClear();
 
-    githubCheckoutMock.mock.mockImplementation(() =>
+    githubCheckoutMock.mockImplementation(() =>
       Promise.resolve(err(new Error("GitHub API error"))),
     );
 
@@ -104,17 +95,14 @@ describe("githubCheckoutHandler", () => {
       /Exit with code 1/,
     );
 
-    deepStrictEqual(exitWithErrorMock.mock.calls[0].arguments, [
-      "GitHub API error",
-      1,
-    ]);
+    deepStrictEqual(exitWithErrorMock.mock.calls[0], ["GitHub API error", 1]);
   });
 
   it("should pass base option to githubCheckout", async () => {
-    exitWithErrorMock.mock.resetCalls();
-    githubCheckoutMock.mock.resetCalls();
+    exitWithErrorMock.mockClear();
+    githubCheckoutMock.mockClear();
 
-    githubCheckoutMock.mock.mockImplementation(() =>
+    githubCheckoutMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message: "Checked out issue #123",
@@ -126,19 +114,19 @@ describe("githubCheckoutHandler", () => {
 
     await githubCheckoutHandler(["123", "--base", "develop"]);
 
-    deepStrictEqual(githubCheckoutMock.mock.calls[0].arguments[0], {
+    deepStrictEqual(githubCheckoutMock.mock.calls[0][0], {
       number: "123",
       base: "develop",
     });
   });
 
   it("should work correctly", async () => {
-    exitWithErrorMock.mock.resetCalls();
-    outputLogMock.mock.resetCalls();
-    outputErrorMock.mock.resetCalls();
-    githubCheckoutMock.mock.resetCalls();
+    exitWithErrorMock.mockClear();
+    outputLogMock.mockClear();
+    outputErrorMock.mockClear();
+    githubCheckoutMock.mockClear();
 
-    githubCheckoutMock.mock.mockImplementation(() =>
+    githubCheckoutMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message: "Checked out issue #123",
@@ -152,7 +140,7 @@ describe("githubCheckoutHandler", () => {
 
     // Verify that githubCheckout was called with options only
     deepStrictEqual(githubCheckoutMock.mock.calls.length, 1);
-    const [options] = githubCheckoutMock.mock.calls[0].arguments;
+    const [options] = githubCheckoutMock.mock.calls[0];
     deepStrictEqual(options, {
       number: "123",
       base: undefined,

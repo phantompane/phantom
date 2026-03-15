@@ -9,6 +9,6 @@
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types --experimental-test-module-mocks \"src/**/*.test.js\""
+    "test": "vitest run --root ../.. packages/shared/src"
   }
 }

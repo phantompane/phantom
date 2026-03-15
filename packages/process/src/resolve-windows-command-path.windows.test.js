@@ -1,7 +1,7 @@
 import { strictEqual } from "node:assert";
 import { execFile } from "node:child_process";
 import path from "node:path";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { promisify } from "node:util";
 import { resolveWindowsCommandPath } from "./resolve-windows-command-path.ts";
 

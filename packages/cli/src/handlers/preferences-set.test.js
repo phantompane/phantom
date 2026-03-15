@@ -1,59 +1,60 @@
 import { rejects, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { afterAll, describe, it, vi } from "vitest";
 
-const exitMock = mock.fn();
-const consoleLogMock = mock.fn();
-const consoleErrorMock = mock.fn();
-const executeGitCommandMock = mock.fn();
+const exitMock = vi.fn();
+const consoleLogMock = vi.fn();
+const consoleErrorMock = vi.fn();
+const executeGitCommandMock = vi.fn();
 
-mock.module("node:process", {
-  namedExports: {
-    exit: exitMock,
-  },
+const originalProcessExit = process.exit;
+const originalProcessEnv = process.env;
+
+process.exit = (code) => {
+  exitMock(code);
+  throw new Error(`Exit with code ${code ?? 0}`);
+};
+
+afterAll(() => {
+  process.exit = originalProcessExit;
+  process.env = originalProcessEnv;
 });
 
-mock.module("@phantompane/git", {
-  namedExports: {
-    executeGitCommand: executeGitCommandMock,
-  },
-});
+vi.doMock("@phantompane/git", () => ({
+  executeGitCommand: executeGitCommandMock,
+}));
 
-mock.module("../output.ts", {
-  namedExports: {
-    output: {
-      log: consoleLogMock,
-      error: consoleErrorMock,
-    },
+vi.doMock("../output.ts", () => ({
+  output: {
+    log: consoleLogMock,
+    error: consoleErrorMock,
   },
-});
+}));
 
-mock.module("../errors.ts", {
-  namedExports: {
-    exitWithError: (message, code) => {
-      consoleErrorMock(`Error: ${message}`);
-      exitMock(code);
-      throw new Error(`Exit with code ${code}: ${message}`);
-    },
-    exitWithSuccess: () => {
-      exitMock(0);
-      throw new Error("Process exit with code 0");
-    },
-    exitCodes: {
-      success: 0,
-      generalError: 1,
-      notFound: 2,
-      validationError: 3,
-    },
+vi.doMock("../errors.ts", () => ({
+  exitWithError: (message, code) => {
+    consoleErrorMock(`Error: ${message}`);
+    exitMock(code);
+    throw new Error(`Exit with code ${code}: ${message}`);
   },
-});
+  exitWithSuccess: () => {
+    exitMock(0);
+    throw new Error("Process exit with code 0");
+  },
+  exitCodes: {
+    success: 0,
+    generalError: 1,
+    notFound: 2,
+    validationError: 3,
+  },
+}));
 
 const { preferencesSetHandler } = await import("./preferences-set.ts");
 
 function resetMocks() {
-  exitMock.mock.resetCalls();
-  consoleLogMock.mock.resetCalls();
-  consoleErrorMock.mock.resetCalls();
-  executeGitCommandMock.mock.resetCalls();
+  exitMock.mockClear();
+  consoleLogMock.mockClear();
+  consoleErrorMock.mockClear();
+  executeGitCommandMock.mockClear();
 }
 
 describe("preferencesSetHandler", () => {
@@ -65,7 +66,7 @@ describe("preferencesSetHandler", () => {
       /Exit with code 3: Usage: phantom preferences set <key> <value>/,
     );
 
-    strictEqual(exitMock.mock.calls[0].arguments[0], 3);
+    strictEqual(exitMock.mock.calls[0][0], 3);
   });
 
   it("errors on unknown key", async () => {
@@ -76,7 +77,7 @@ describe("preferencesSetHandler", () => {
       /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator/,
     );
 
-    strictEqual(exitMock.mock.calls[0].arguments[0], 3);
+    strictEqual(exitMock.mock.calls[0][0], 3);
   });
 
   it("errors when value is empty after join", async () => {
@@ -87,12 +88,12 @@ describe("preferencesSetHandler", () => {
       /Exit with code 3: Preference 'editor' requires a value/,
     );
 
-    strictEqual(exitMock.mock.calls[0].arguments[0], 3);
+    strictEqual(exitMock.mock.calls[0][0], 3);
   });
 
   it("sets editor preference via git config --global", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(async () => ({
+    executeGitCommandMock.mockImplementation(async () => ({
       stdout: "",
       stderr: "",
     }));
@@ -103,22 +104,19 @@ describe("preferencesSetHandler", () => {
     );
 
     strictEqual(executeGitCommandMock.mock.calls.length, 1);
-    strictEqual(executeGitCommandMock.mock.calls[0].arguments[0][0], "config");
+    strictEqual(executeGitCommandMock.mock.calls[0][0][0], "config");
+    strictEqual(executeGitCommandMock.mock.calls[0][0][2], "phantom.editor");
+    strictEqual(executeGitCommandMock.mock.calls[0][0][3], "code");
     strictEqual(
-      executeGitCommandMock.mock.calls[0].arguments[0][2],
-      "phantom.editor",
-    );
-    strictEqual(executeGitCommandMock.mock.calls[0].arguments[0][3], "code");
-    strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Set phantom.editor (global) to 'code'",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
   it("joins multi-word value", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(async () => ({
+    executeGitCommandMock.mockImplementation(async () => ({
       stdout: "",
       stderr: "",
     }));
@@ -128,15 +126,12 @@ describe("preferencesSetHandler", () => {
       /Process exit with code 0/,
     );
 
-    strictEqual(
-      executeGitCommandMock.mock.calls[0].arguments[0][3],
-      "code --wait",
-    );
+    strictEqual(executeGitCommandMock.mock.calls[0][0][3], "code --wait");
   });
 
   it("sets ai preference via git config --global", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(async () => ({
+    executeGitCommandMock.mockImplementation(async () => ({
       stdout: "",
       stderr: "",
     }));
@@ -146,21 +141,18 @@ describe("preferencesSetHandler", () => {
       /Process exit with code 0/,
     );
 
+    strictEqual(executeGitCommandMock.mock.calls[0][0][2], "phantom.ai");
+    strictEqual(executeGitCommandMock.mock.calls[0][0][3], "claude");
     strictEqual(
-      executeGitCommandMock.mock.calls[0].arguments[0][2],
-      "phantom.ai",
-    );
-    strictEqual(executeGitCommandMock.mock.calls[0].arguments[0][3], "claude");
-    strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Set phantom.ai (global) to 'claude'",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
   it("sets worktreesDirectory preference via git config --global", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(async () => ({
+    executeGitCommandMock.mockImplementation(async () => ({
       stdout: "",
       stderr: "",
     }));
@@ -175,23 +167,23 @@ describe("preferencesSetHandler", () => {
     );
 
     strictEqual(
-      executeGitCommandMock.mock.calls[0].arguments[0][2],
+      executeGitCommandMock.mock.calls[0][0][2],
       "phantom.worktreesDirectory",
     );
     strictEqual(
-      executeGitCommandMock.mock.calls[0].arguments[0][3],
+      executeGitCommandMock.mock.calls[0][0][3],
       "../phantom/worktrees",
     );
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Set phantom.worktreesDirectory (global) to '../phantom/worktrees'",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
   it("sets directoryNameSeparator preference via git config --global", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(async () => ({
+    executeGitCommandMock.mockImplementation(async () => ({
       stdout: "",
       stderr: "",
     }));
@@ -202,14 +194,14 @@ describe("preferencesSetHandler", () => {
     );
 
     strictEqual(
-      executeGitCommandMock.mock.calls[0].arguments[0][2],
+      executeGitCommandMock.mock.calls[0][0][2],
       "phantom.directoryNameSeparator",
     );
-    strictEqual(executeGitCommandMock.mock.calls[0].arguments[0][3], "-");
+    strictEqual(executeGitCommandMock.mock.calls[0][0][3], "-");
     strictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
+      consoleLogMock.mock.calls[0][0],
       "Set phantom.directoryNameSeparator (global) to '-'",
     );
-    strictEqual(exitMock.mock.calls[0].arguments[0], 0);
+    strictEqual(exitMock.mock.calls[0][0], 0);
   });
 });

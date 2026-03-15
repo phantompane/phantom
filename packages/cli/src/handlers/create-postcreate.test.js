@@ -1,80 +1,70 @@
 import { deepStrictEqual, rejects } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import { ConfigNotFoundError } from "@phantompane/core";
 import { err, ok } from "@phantompane/shared";
 
-const exitWithErrorMock = mock.fn((message, code) => {
+const exitWithErrorMock = vi.fn((message, code) => {
   throw new Error(`Exit with code ${code}: ${message}`);
 });
-const outputLogMock = mock.fn();
-const outputErrorMock = mock.fn();
-const getGitRootMock = mock.fn();
-const createWorktreeMock = mock.fn();
-const createContextMock = mock.fn();
+const outputLogMock = vi.fn();
+const outputErrorMock = vi.fn();
+const getGitRootMock = vi.fn();
+const createWorktreeMock = vi.fn();
+const createContextMock = vi.fn();
 
-mock.module("../errors.ts", {
-  namedExports: {
-    exitWithError: exitWithErrorMock,
-    exitWithSuccess: mock.fn(() => {
-      throw new Error("Exit with success");
-    }),
-    exitCodes: {
-      validationError: 3,
-      generalError: 1,
-      success: 0,
-    },
+vi.doMock("../errors.ts", () => ({
+  exitWithError: exitWithErrorMock,
+  exitWithSuccess: vi.fn(() => {
+    throw new Error("Exit with success");
+  }),
+  exitCodes: {
+    validationError: 3,
+    generalError: 1,
+    success: 0,
   },
-});
+}));
 
-mock.module("../output.ts", {
-  namedExports: {
-    output: { log: outputLogMock, error: outputErrorMock },
-  },
-});
+vi.doMock("../output.ts", () => ({
+  output: { log: outputLogMock, error: outputErrorMock },
+}));
 
-mock.module("@phantompane/git", {
-  namedExports: {
-    getGitRoot: getGitRootMock,
-  },
-});
+vi.doMock("@phantompane/git", () => ({
+  getGitRoot: getGitRootMock,
+}));
 
-mock.module("@phantompane/core", {
-  namedExports: {
-    ConfigNotFoundError,
-    ConfigParseError: class ConfigParseError extends Error {},
-    ConfigValidationError: class ConfigValidationError extends Error {},
-    WorktreeAlreadyExistsError: class WorktreeAlreadyExistsError extends Error {},
-    createWorktree: createWorktreeMock,
-    createContext: createContextMock,
-    execInWorktree: mock.fn(),
-    shellInWorktree: mock.fn(),
-    generateUniqueName: mock.fn(() =>
-      Promise.resolve({ ok: true, value: "fuzzy-cats-dance" }),
-    ),
-  },
-});
+vi.doMock("@phantompane/core", () => ({
+  ConfigNotFoundError,
+  ConfigParseError: class ConfigParseError extends Error {},
+  ConfigValidationError: class ConfigValidationError extends Error {},
+  WorktreeAlreadyExistsError: class WorktreeAlreadyExistsError extends Error {},
+  createWorktree: createWorktreeMock,
+  createContext: createContextMock,
+  execInWorktree: vi.fn(),
+  shellInWorktree: vi.fn(),
+  generateUniqueName: vi.fn(() =>
+    Promise.resolve({ ok: true, value: "fuzzy-cats-dance" }),
+  ),
+}));
 
-mock.module("@phantompane/process", {
-  namedExports: {
-    isInsideTmux: mock.fn(() => false),
-    executeTmuxCommand: mock.fn(),
-    getPhantomEnv: mock.fn(() => ({})),
-  },
-});
+vi.doMock("@phantompane/process", () => ({
+  isInsideTmux: vi.fn(() => false),
+  executeTmuxCommand: vi.fn(),
+  getPhantomEnv: vi.fn(() => ({})),
+}));
 
 const { createHandler } = await import("./create.ts");
 
 describe("createHandler postCreate", () => {
   it("should pass config to createWorktree for postCreate execution", async () => {
-    exitWithErrorMock.mock.resetCalls();
-    outputLogMock.mock.resetCalls();
-    outputErrorMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    createWorktreeMock.mock.resetCalls();
-    createContextMock.mock.resetCalls();
+    exitWithErrorMock.mockClear();
+    outputLogMock.mockClear();
+    outputErrorMock.mockClear();
+    getGitRootMock.mockClear();
+    createWorktreeMock.mockClear();
+    createContextMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/repo"));
-    createContextMock.mock.mockImplementation((gitRoot) =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/repo"));
+    createContextMock.mockImplementation((gitRoot) =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
@@ -85,7 +75,7 @@ describe("createHandler postCreate", () => {
         },
       }),
     );
-    createWorktreeMock.mock.mockImplementation(() =>
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message:
@@ -109,7 +99,7 @@ describe("createHandler postCreate", () => {
       ,
       postCreateCopyFiles,
       postCreateCommands,
-    ] = createWorktreeMock.mock.calls[0].arguments;
+    ] = createWorktreeMock.mock.calls[0];
     deepStrictEqual(gitRoot, "/repo");
     deepStrictEqual(worktreeDirectory, "/repo/.git/phantom/worktrees");
     deepStrictEqual(name, "feature");
@@ -118,13 +108,13 @@ describe("createHandler postCreate", () => {
   });
 
   it("should exit with error if createWorktree fails due to postCreate", async () => {
-    exitWithErrorMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    createWorktreeMock.mock.resetCalls();
-    createContextMock.mock.resetCalls();
+    exitWithErrorMock.mockClear();
+    getGitRootMock.mockClear();
+    createWorktreeMock.mockClear();
+    createContextMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/repo"));
-    createContextMock.mock.mockImplementation((gitRoot) =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/repo"));
+    createContextMock.mockImplementation((gitRoot) =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
@@ -136,7 +126,7 @@ describe("createHandler postCreate", () => {
       }),
     );
     // createWorktree now handles postCreate internally and returns error
-    createWorktreeMock.mock.mockImplementation(() =>
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         err(
           new Error(
@@ -151,21 +141,21 @@ describe("createHandler postCreate", () => {
       /Exit with code 1/,
     );
 
-    deepStrictEqual(exitWithErrorMock.mock.calls[0].arguments, [
+    deepStrictEqual(exitWithErrorMock.mock.calls[0], [
       "Post-create command failed with exit code 127: invalid-command",
       1,
     ]);
   });
 
   it("should pass config with only copyFiles to createWorktree", async () => {
-    exitWithErrorMock.mock.resetCalls();
-    outputLogMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    createWorktreeMock.mock.resetCalls();
-    createContextMock.mock.resetCalls();
+    exitWithErrorMock.mockClear();
+    outputLogMock.mockClear();
+    getGitRootMock.mockClear();
+    createWorktreeMock.mockClear();
+    createContextMock.mockClear();
 
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve("/repo"));
-    createContextMock.mock.mockImplementation((gitRoot) =>
+    getGitRootMock.mockImplementation(() => Promise.resolve("/repo"));
+    createContextMock.mockImplementation((gitRoot) =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
@@ -176,7 +166,7 @@ describe("createHandler postCreate", () => {
         },
       }),
     );
-    createWorktreeMock.mock.mockImplementation(() =>
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({
           message: "Created worktree 'feature'",
@@ -193,7 +183,7 @@ describe("createHandler postCreate", () => {
     // Verify that createWorktree was called with correct config
     deepStrictEqual(createWorktreeMock.mock.calls.length, 1);
     const [, , , , postCreateCopyFiles, postCreateCommands] =
-      createWorktreeMock.mock.calls[0].arguments;
+      createWorktreeMock.mock.calls[0];
     deepStrictEqual(postCreateCopyFiles, [".env"]);
     deepStrictEqual(postCreateCommands, undefined);
   });

@@ -1,41 +1,36 @@
 import { deepStrictEqual, ok } from "node:assert";
 import { normalize } from "node:path";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 
-const execFileMock = mock.fn();
+const execFileMock = vi.fn();
 
-const getWorktreePathFromDirectoryMock = mock.fn((worktreeDirectory, name) => {
+const getWorktreePathFromDirectoryMock = vi.fn((worktreeDirectory, name) => {
   return `${worktreeDirectory}/${name}`;
 });
 
-const mockCwd = () => mock.method(process, "cwd", () => "/test/repo");
+const mockCwd = () =>
+  vi.spyOn(process, "cwd").mockImplementation(() => "/test/repo");
 
-mock.module("node:child_process", {
-  namedExports: {
-    execFile: (cmd, args, options, callback) => {
-      const result = execFileMock(cmd, args, options);
-      if (callback) {
-        result.then(
-          (res) => callback(null, res),
-          (err) => callback(err),
-        );
-      }
-      return {};
-    },
+vi.doMock("node:child_process", () => ({
+  execFile: (cmd, args, options, callback) => {
+    const result = execFileMock(cmd, args, options);
+    if (callback) {
+      result.then(
+        (res) => callback(null, res),
+        (err) => callback(err),
+      );
+    }
+    return {};
   },
-});
+}));
 
-mock.module("node:util", {
-  namedExports: {
-    promisify: () => execFileMock,
-  },
-});
+vi.doMock("node:util", () => ({
+  promisify: () => execFileMock,
+}));
 
-mock.module("../paths.ts", {
-  namedExports: {
-    getWorktreePathFromDirectory: getWorktreePathFromDirectoryMock,
-  },
-});
+vi.doMock("../paths.ts", () => ({
+  getWorktreePathFromDirectory: getWorktreePathFromDirectoryMock,
+}));
 
 const { listWorktrees } = await import("./list.ts");
 
@@ -49,7 +44,7 @@ const normalizeWorktrees = (worktrees) =>
 describe("listWorktrees", () => {
   it("should include root-level worktree when only root exists", async () => {
     const cwdMock = mockCwd();
-    execFileMock.mock.mockImplementation((_cmd, _args, _options) => {
+    execFileMock.mockImplementation((_cmd, _args, _options) => {
       if (_args.includes("worktree") && _args.includes("list")) {
         return Promise.resolve({
           stdout:
@@ -82,13 +77,13 @@ describe("listWorktrees", () => {
       deepStrictEqual(result.value.message, undefined);
     }
 
-    execFileMock.mock.resetCalls();
-    cwdMock.mock.restore();
+    execFileMock.mockClear();
+    cwdMock.mockRestore();
   });
 
   it("should return empty array when excluding default worktree", async () => {
     const cwdMock = mockCwd();
-    execFileMock.mock.mockImplementation((_cmd, _args, _options) => {
+    execFileMock.mockImplementation((_cmd, _args, _options) => {
       if (_args.includes("worktree") && _args.includes("list")) {
         return Promise.resolve({
           stdout:
@@ -112,13 +107,13 @@ describe("listWorktrees", () => {
       deepStrictEqual(result.value.message, "No sub worktrees found");
     }
 
-    execFileMock.mock.resetCalls();
-    cwdMock.mock.restore();
+    execFileMock.mockClear();
+    cwdMock.mockRestore();
   });
 
   it("should list worktrees with clean status", async () => {
     const cwdMock = mockCwd();
-    execFileMock.mock.mockImplementation((_cmd, _args, _options) => {
+    execFileMock.mockImplementation((_cmd, _args, _options) => {
       if (_args.includes("worktree") && _args.includes("list")) {
         return Promise.resolve({
           stdout: `worktree /test/repo
@@ -174,13 +169,13 @@ branch refs/heads/feature-2
       );
     }
 
-    execFileMock.mock.resetCalls();
-    cwdMock.mock.restore();
+    execFileMock.mockClear();
+    cwdMock.mockRestore();
   });
 
   it("should handle worktrees with dirty status", async () => {
     const cwdMock = mockCwd();
-    execFileMock.mock.mockImplementation((_cmd, _args, _options) => {
+    execFileMock.mockImplementation((_cmd, _args, _options) => {
       if (_args.includes("worktree") && _args.includes("list")) {
         return Promise.resolve({
           stdout: `worktree /test/repo
@@ -231,13 +226,13 @@ branch refs/heads/dirty-feature
       );
     }
 
-    execFileMock.mock.resetCalls();
-    cwdMock.mock.restore();
+    execFileMock.mockClear();
+    cwdMock.mockRestore();
   });
 
   it("should handle detached HEAD state", async () => {
     const cwdMock = mockCwd();
-    execFileMock.mock.mockImplementation((_cmd, _args, _options) => {
+    execFileMock.mockImplementation((_cmd, _args, _options) => {
       if (_args.includes("worktree") && _args.includes("list")) {
         return Promise.resolve({
           stdout: `worktree /test/repo
@@ -282,13 +277,13 @@ detached
       );
     }
 
-    execFileMock.mock.resetCalls();
-    cwdMock.mock.restore();
+    execFileMock.mockClear();
+    cwdMock.mockRestore();
   });
 
   it("should include non-phantom worktrees including root siblings", async () => {
     const cwdMock = mockCwd();
-    execFileMock.mock.mockImplementation((_cmd, _args, _options) => {
+    execFileMock.mockImplementation((_cmd, _args, _options) => {
       if (_args.includes("worktree") && _args.includes("list")) {
         return Promise.resolve({
           stdout: `worktree /test/repo
@@ -355,13 +350,13 @@ branch refs/heads/sibling-feature
       );
     }
 
-    execFileMock.mock.resetCalls();
-    cwdMock.mock.restore();
+    execFileMock.mockClear();
+    cwdMock.mockRestore();
   });
 
   it("should return message when no worktrees are returned", async () => {
     const cwdMock = mockCwd();
-    execFileMock.mock.mockImplementation((_cmd, _args, _options) => {
+    execFileMock.mockImplementation((_cmd, _args, _options) => {
       if (_args.includes("worktree") && _args.includes("list")) {
         return Promise.resolve({
           stdout: "",
@@ -379,7 +374,7 @@ branch refs/heads/sibling-feature
       deepStrictEqual(result.value.message, "No worktrees found");
     }
 
-    execFileMock.mock.resetCalls();
-    cwdMock.mock.restore();
+    execFileMock.mockClear();
+    cwdMock.mockRestore();
   });
 });

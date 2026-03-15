@@ -13,7 +13,7 @@
 - Run CLI locally: `pnpm phantom`.
 - Build: `pnpm build`; type check: `pnpm typecheck`.
 - Lint/format: `pnpm lint` (check with `oxfmt` + `oxlint`) or `pnpm fix` (apply formatter and auto-fixes).
-- Tests: `pnpm test` (native `node --test` across packages).
+- Tests: `pnpm test` (Vitest across packages).
 - Pre-flight: `pnpm ready` (`turbo run fix typecheck test`) or `pnpm ready:check` (`turbo run lint typecheck test`).
 - After finishing an implementation, run `pnpm ready` to execute fix, typecheck, and tests before shipping changes.
 - Scope work: `pnpm --filter <pkg> <cmd>` (e.g., `pnpm --filter @phantompane/github test`).
@@ -28,7 +28,7 @@
 
 ## Testing Guidelines
 
-- Tests run with `node --test --experimental-strip-types --experimental-test-module-mocks`.
+- Tests run with `vitest`.
 - Place tests beside source under `src/**/*/*.test.js`, mirroring module names.
 - Cover success/error paths for worktree creation, git/github flows, and MCP tools; use temporary directories and the centralized git executor. Prefer tests over ad-hoc manual commands.
 

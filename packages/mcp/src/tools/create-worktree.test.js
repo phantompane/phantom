@@ -1,44 +1,38 @@
 import { deepStrictEqual, rejects, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import { z } from "zod";
 
-const createWorktreeMock = mock.fn();
-const createContextMock = mock.fn();
-const getGitRootMock = mock.fn();
-const isOkMock = mock.fn((result) => {
+const createWorktreeMock = vi.fn();
+const createContextMock = vi.fn();
+const getGitRootMock = vi.fn();
+const isOkMock = vi.fn((result) => {
   return result && result.ok === true;
 });
-const okMock = mock.fn((value) => ({ ok: true, value }));
-const errMock = mock.fn((error) => ({ ok: false, error }));
+const okMock = vi.fn((value) => ({ ok: true, value }));
+const errMock = vi.fn((error) => ({ ok: false, error }));
 
-mock.module("@phantompane/core", {
-  namedExports: {
-    createWorktree: createWorktreeMock,
-    createContext: createContextMock,
-  },
-});
+vi.doMock("@phantompane/core", () => ({
+  createWorktree: createWorktreeMock,
+  createContext: createContextMock,
+}));
 
-mock.module("@phantompane/git", {
-  namedExports: {
-    getGitRoot: getGitRootMock,
-  },
-});
+vi.doMock("@phantompane/git", () => ({
+  getGitRoot: getGitRootMock,
+}));
 
-mock.module("@phantompane/shared", {
-  namedExports: {
-    isOk: isOkMock,
-    ok: okMock,
-    err: errMock,
-  },
-});
+vi.doMock("@phantompane/shared", () => ({
+  isOk: isOkMock,
+  ok: okMock,
+  err: errMock,
+}));
 
 const { createWorktreeTool } = await import("./create-worktree.ts");
 
 describe("createWorktreeTool", () => {
   const resetMocks = () => {
-    createWorktreeMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    isOkMock.mock.resetCalls();
+    createWorktreeMock.mockClear();
+    getGitRootMock.mockClear();
+    isOkMock.mockClear();
   };
 
   it("should have correct name and description", () => {
@@ -63,14 +57,14 @@ describe("createWorktreeTool", () => {
     const gitRoot = "/path/to/repo";
     const worktreePath = "/path/to/repo/.git/phantom/worktrees/feature-1";
 
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve(gitRoot));
-    createContextMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => Promise.resolve(gitRoot));
+    createContextMock.mockImplementation(() =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: "/path/to/repo/.git/phantom/worktrees",
       }),
     );
-    createWorktreeMock.mock.mockImplementation(() =>
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(okMock({ path: worktreePath })),
     );
 
@@ -78,7 +72,7 @@ describe("createWorktreeTool", () => {
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(createWorktreeMock.mock.calls.length, 1);
-    deepStrictEqual(createWorktreeMock.mock.calls[0].arguments, [
+    deepStrictEqual(createWorktreeMock.mock.calls[0], [
       gitRoot,
       "/path/to/repo/.git/phantom/worktrees",
       "feature-1",
@@ -108,14 +102,14 @@ describe("createWorktreeTool", () => {
     const gitRoot = "/path/to/repo";
     const worktreePath = "/path/to/repo/.git/phantom/worktrees/feature-2";
 
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve(gitRoot));
-    createContextMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => Promise.resolve(gitRoot));
+    createContextMock.mockImplementation(() =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: "/path/to/repo/.git/phantom/worktrees",
       }),
     );
-    createWorktreeMock.mock.mockImplementation(() =>
+    createWorktreeMock.mockImplementation(() =>
       Promise.resolve(okMock({ path: worktreePath })),
     );
 
@@ -125,7 +119,7 @@ describe("createWorktreeTool", () => {
     });
 
     strictEqual(createWorktreeMock.mock.calls.length, 1);
-    deepStrictEqual(createWorktreeMock.mock.calls[0].arguments, [
+    deepStrictEqual(createWorktreeMock.mock.calls[0], [
       gitRoot,
       "/path/to/repo/.git/phantom/worktrees",
       "feature-2",
@@ -152,16 +146,14 @@ describe("createWorktreeTool", () => {
     const errorMessage = "Worktree already exists";
     const errorResult = { ok: false, error: { message: errorMessage } };
 
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve(gitRoot));
-    createContextMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => Promise.resolve(gitRoot));
+    createContextMock.mockImplementation(() =>
       Promise.resolve({
         gitRoot,
         worktreesDirectory: "/path/to/repo/.git/phantom/worktrees",
       }),
     );
-    createWorktreeMock.mock.mockImplementation(() =>
-      Promise.resolve(errorResult),
-    );
+    createWorktreeMock.mockImplementation(() => Promise.resolve(errorResult));
 
     await rejects(
       () => createWorktreeTool.handler({ name: "existing-worktree" }),

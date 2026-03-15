@@ -1,39 +1,35 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 
-const execFileMock = mock.fn();
+const execFileMock = vi.fn();
 
-mock.module("node:child_process", {
-  namedExports: {
-    execFile: (cmd, args, options, callback) => {
-      const result = execFileMock(cmd, args, options);
-      if (callback) {
-        result.then(
-          (res) => callback(null, res),
-          (err) => callback(err),
-        );
-      }
-      return {};
-    },
+vi.doMock("node:child_process", () => ({
+  execFile: (cmd, args, options, callback) => {
+    const result = execFileMock(cmd, args, options);
+    if (callback) {
+      result.then(
+        (res) => callback(null, res),
+        (err) => callback(err),
+      );
+    }
+    return {};
   },
-});
+}));
 
-mock.module("node:util", {
-  namedExports: {
-    promisify: () => execFileMock,
-  },
-});
+vi.doMock("node:util", () => ({
+  promisify: () => execFileMock,
+}));
 
 const { executeGitCommand } = await import("./executor.ts");
 
 describe("executeGitCommand", () => {
   const resetMocks = () => {
-    execFileMock.mock.resetCalls();
+    execFileMock.mockClear();
   };
 
   it("should execute git command successfully", async () => {
     resetMocks();
-    execFileMock.mock.mockImplementation((_cmd, _args, _options) =>
+    execFileMock.mockImplementation((_cmd, _args, _options) =>
       Promise.resolve({
         stdout: "feature-branch\n",
         stderr: "",
@@ -46,7 +42,7 @@ describe("executeGitCommand", () => {
     strictEqual(result.stderr, "");
 
     strictEqual(execFileMock.mock.calls.length, 1);
-    const [cmd, args, options] = execFileMock.mock.calls[0].arguments;
+    const [cmd, args, options] = execFileMock.mock.calls[0];
     strictEqual(cmd, "git");
     deepStrictEqual(args, ["branch", "--show-current"]);
     strictEqual(options.encoding, "utf8");
@@ -56,7 +52,7 @@ describe("executeGitCommand", () => {
 
   it("should execute git command with cwd option", async () => {
     resetMocks();
-    execFileMock.mock.mockImplementation((_cmd, _args, _options) =>
+    execFileMock.mockImplementation((_cmd, _args, _options) =>
       Promise.resolve({
         stdout: "commit message\n",
         stderr: "",
@@ -69,7 +65,7 @@ describe("executeGitCommand", () => {
 
     strictEqual(result.stdout, "commit message");
 
-    const options = execFileMock.mock.calls[0].arguments[2];
+    const options = execFileMock.mock.calls[0][2];
     strictEqual(options.cwd, "/custom/path");
     strictEqual(options.encoding, "utf8");
   });
@@ -80,7 +76,7 @@ describe("executeGitCommand", () => {
     gitError.code = "ENOENT";
     gitError.stderr = "fatal: not a git repository";
 
-    execFileMock.mock.mockImplementation(() => Promise.reject(gitError));
+    execFileMock.mockImplementation(() => Promise.reject(gitError));
 
     try {
       await executeGitCommand(["status"]);
@@ -92,7 +88,7 @@ describe("executeGitCommand", () => {
 
   it("should pass through all options to execFile", async () => {
     resetMocks();
-    execFileMock.mock.mockImplementation((_cmd, _args, _options) =>
+    execFileMock.mockImplementation((_cmd, _args, _options) =>
       Promise.resolve({
         stdout: "output",
         stderr: "",
@@ -107,7 +103,7 @@ describe("executeGitCommand", () => {
 
     await executeGitCommand(["commit", "--amend"], options);
 
-    const actualOptions = execFileMock.mock.calls[0].arguments[2];
+    const actualOptions = execFileMock.mock.calls[0][2];
     strictEqual(actualOptions.cwd, "/test/path");
     strictEqual(actualOptions.env.GIT_EDITOR, "vim");
     strictEqual(actualOptions.encoding, "utf8");
@@ -116,7 +112,7 @@ describe("executeGitCommand", () => {
 
   it("should trim stdout output", async () => {
     resetMocks();
-    execFileMock.mock.mockImplementation((_cmd, _args, _options) =>
+    execFileMock.mockImplementation((_cmd, _args, _options) =>
       Promise.resolve({
         stdout: "  output with spaces  \n\n",
         stderr: "",
@@ -130,7 +126,7 @@ describe("executeGitCommand", () => {
 
   it("should trim stderr output", async () => {
     resetMocks();
-    execFileMock.mock.mockImplementation((_cmd, _args, _options) =>
+    execFileMock.mockImplementation((_cmd, _args, _options) =>
       Promise.resolve({
         stdout: "success",
         stderr: "warning: something\n",

@@ -1,26 +1,24 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import { isErr, isOk } from "@phantompane/shared";
 
-const execInWorktreeMock = mock.fn();
+const execInWorktreeMock = vi.fn();
 
-mock.module("../exec.ts", {
-  namedExports: {
-    execInWorktree: execInWorktreeMock,
-  },
-});
+vi.doMock("../exec.ts", () => ({
+  execInWorktree: execInWorktreeMock,
+}));
 
 const { executePreDeleteCommands } = await import("./pre-delete.ts");
 const { ok, err } = await import("@phantompane/shared");
 
 describe("executePreDeleteCommands", () => {
   const resetPreDeleteMocks = () => {
-    execInWorktreeMock.mock.resetCalls();
+    execInWorktreeMock.mockClear();
   };
 
   it("should execute pre-delete commands successfully", async () => {
     resetPreDeleteMocks();
-    execInWorktreeMock.mock.mockImplementation(() =>
+    execInWorktreeMock.mockImplementation(() =>
       Promise.resolve(ok({ exitCode: 0, stdout: "", stderr: "" })),
     );
 
@@ -43,7 +41,7 @@ describe("executePreDeleteCommands", () => {
 
   it("should handle command execution failure", async () => {
     resetPreDeleteMocks();
-    execInWorktreeMock.mock.mockImplementation(() =>
+    execInWorktreeMock.mockImplementation(() =>
       Promise.resolve(err(new Error("Command failed"))),
     );
 
@@ -66,7 +64,7 @@ describe("executePreDeleteCommands", () => {
 
   it("should handle command exit code failure", async () => {
     resetPreDeleteMocks();
-    execInWorktreeMock.mock.mockImplementation(() =>
+    execInWorktreeMock.mockImplementation(() =>
       Promise.resolve(ok({ exitCode: 1, stdout: "", stderr: "Error" })),
     );
 
@@ -89,7 +87,7 @@ describe("executePreDeleteCommands", () => {
 
   it("should stop execution on first command failure", async () => {
     resetPreDeleteMocks();
-    execInWorktreeMock.mock.mockImplementationOnce(() =>
+    execInWorktreeMock.mockImplementationOnce(() =>
       Promise.resolve(ok({ exitCode: 1, stdout: "", stderr: "Error" })),
     );
 

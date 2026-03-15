@@ -1,15 +1,13 @@
 import { deepStrictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import { err, ok } from "@phantompane/shared";
 
-const execInWorktreeMock = mock.fn();
-const consoleLogMock = mock.fn();
+const execInWorktreeMock = vi.fn();
+const consoleLogMock = vi.fn();
 
-mock.module("../exec.ts", {
-  namedExports: {
-    execInWorktree: execInWorktreeMock,
-  },
-});
+vi.doMock("../exec.ts", () => ({
+  execInWorktree: execInWorktreeMock,
+}));
 
 // Mock console.log
 console.log = consoleLogMock;
@@ -18,9 +16,9 @@ const { executePostCreateCommands } = await import("./post-create.ts");
 
 describe("executePostCreateCommands", () => {
   it("should execute commands successfully", async () => {
-    execInWorktreeMock.mock.resetCalls();
-    consoleLogMock.mock.resetCalls();
-    execInWorktreeMock.mock.mockImplementation(() =>
+    execInWorktreeMock.mockClear();
+    consoleLogMock.mockClear();
+    execInWorktreeMock.mockImplementation(() =>
       Promise.resolve(ok({ exitCode: 0, stdout: "", stderr: "" })),
     );
 
@@ -34,17 +32,14 @@ describe("executePostCreateCommands", () => {
     deepStrictEqual(result.value.executedCommands, ["echo 'test'", "ls"]);
     deepStrictEqual(execInWorktreeMock.mock.calls.length, 2);
     deepStrictEqual(consoleLogMock.mock.calls.length, 2);
-    deepStrictEqual(
-      consoleLogMock.mock.calls[0].arguments[0],
-      "Executing: echo 'test'",
-    );
-    deepStrictEqual(consoleLogMock.mock.calls[1].arguments[0], "Executing: ls");
-    deepStrictEqual(execInWorktreeMock.mock.calls[0].arguments[3], [
+    deepStrictEqual(consoleLogMock.mock.calls[0][0], "Executing: echo 'test'");
+    deepStrictEqual(consoleLogMock.mock.calls[1][0], "Executing: ls");
+    deepStrictEqual(execInWorktreeMock.mock.calls[0][3], [
       process.env.SHELL || "/bin/sh",
       "-c",
       "echo 'test'",
     ]);
-    deepStrictEqual(execInWorktreeMock.mock.calls[1].arguments[3], [
+    deepStrictEqual(execInWorktreeMock.mock.calls[1][3], [
       process.env.SHELL || "/bin/sh",
       "-c",
       "ls",
@@ -52,9 +47,9 @@ describe("executePostCreateCommands", () => {
   });
 
   it("should return error if command execution fails", async () => {
-    execInWorktreeMock.mock.resetCalls();
-    consoleLogMock.mock.resetCalls();
-    execInWorktreeMock.mock.mockImplementation(() =>
+    execInWorktreeMock.mockClear();
+    consoleLogMock.mockClear();
+    execInWorktreeMock.mockImplementation(() =>
       Promise.resolve(err(new Error("Command execution failed"))),
     );
 
@@ -73,9 +68,9 @@ describe("executePostCreateCommands", () => {
   });
 
   it("should return error if command exits with non-zero code", async () => {
-    execInWorktreeMock.mock.resetCalls();
-    consoleLogMock.mock.resetCalls();
-    execInWorktreeMock.mock.mockImplementation(() =>
+    execInWorktreeMock.mockClear();
+    consoleLogMock.mockClear();
+    execInWorktreeMock.mockImplementation(() =>
       Promise.resolve(ok({ exitCode: 1, stdout: "", stderr: "Error" })),
     );
 
@@ -95,9 +90,9 @@ describe("executePostCreateCommands", () => {
 
   it("should execute multiple commands in sequence", async () => {
     let callCount = 0;
-    execInWorktreeMock.mock.resetCalls();
-    consoleLogMock.mock.resetCalls();
-    execInWorktreeMock.mock.mockImplementation(() => {
+    execInWorktreeMock.mockClear();
+    consoleLogMock.mockClear();
+    execInWorktreeMock.mockImplementation(() => {
       callCount++;
       return Promise.resolve(ok({ exitCode: 0, stdout: "", stderr: "" }));
     });
@@ -115,9 +110,9 @@ describe("executePostCreateCommands", () => {
 
   it("should stop execution on first failed command", async () => {
     let callCount = 0;
-    execInWorktreeMock.mock.resetCalls();
-    consoleLogMock.mock.resetCalls();
-    execInWorktreeMock.mock.mockImplementation(() => {
+    execInWorktreeMock.mockClear();
+    consoleLogMock.mockClear();
+    execInWorktreeMock.mockImplementation(() => {
       callCount++;
       if (callCount === 2) {
         return Promise.resolve(ok({ exitCode: 1, stdout: "", stderr: "" }));

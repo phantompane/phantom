@@ -1,28 +1,24 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import { ProcessSpawnError } from "@phantompane/process";
 import { err, isErr, isOk, ok } from "@phantompane/shared";
 import { WorktreeNotFoundError } from "./worktree/errors.ts";
 
-const validateMock = mock.fn();
-const spawnMock = mock.fn();
+const validateMock = vi.fn();
+const spawnMock = vi.fn();
 
-mock.module("./worktree/validate.ts", {
-  namedExports: {
-    validateWorktreeExists: validateMock,
-  },
-});
+vi.doMock("./worktree/validate.ts", () => ({
+  validateWorktreeExists: validateMock,
+}));
 
-mock.module("@phantompane/process", {
-  namedExports: {
-    spawnProcess: spawnMock,
-    getPhantomEnv: mock.fn((name, path) => ({
-      PHANTOM: "1",
-      PHANTOM_NAME: name,
-      PHANTOM_PATH: path,
-    })),
-  },
-});
+vi.doMock("@phantompane/process", () => ({
+  spawnProcess: spawnMock,
+  getPhantomEnv: vi.fn((name, path) => ({
+    PHANTOM: "1",
+    PHANTOM_NAME: name,
+    PHANTOM_PATH: path,
+  })),
+}));
 
 const { shellInWorktree } = await import("./shell.ts");
 
@@ -30,22 +26,20 @@ describe("shellInWorktree", () => {
   let originalShell;
 
   const resetMocks = () => {
-    validateMock.mock.resetCalls();
-    spawnMock.mock.resetCalls();
+    validateMock.mockClear();
+    spawnMock.mockClear();
     originalShell = process.env.SHELL;
   };
 
   it("should spawn shell successfully when worktree exists", async () => {
     resetMocks();
     process.env.SHELL = "/bin/bash";
-    validateMock.mock.mockImplementation(() =>
+    validateMock.mockImplementation(() =>
       Promise.resolve(
         ok({ path: "/test/repo/.git/phantom/worktrees/my-feature" }),
       ),
     );
-    spawnMock.mock.mockImplementation(() =>
-      Promise.resolve(ok({ exitCode: 0 })),
-    );
+    spawnMock.mockImplementation(() => Promise.resolve(ok({ exitCode: 0 })));
 
     const result = await shellInWorktree(
       "/test/repo",
@@ -58,7 +52,7 @@ describe("shellInWorktree", () => {
       deepStrictEqual(result.value, { exitCode: 0 });
     }
 
-    const spawnCall = spawnMock.mock.calls[0].arguments[0];
+    const spawnCall = spawnMock.mock.calls[0][0];
     deepStrictEqual(spawnCall.command, "/bin/bash");
     deepStrictEqual(spawnCall.args, []);
     deepStrictEqual(
@@ -84,14 +78,12 @@ describe("shellInWorktree", () => {
   it("should use /bin/sh when SHELL env var is not set", async () => {
     resetMocks();
     Reflect.deleteProperty(process.env, "SHELL");
-    validateMock.mock.mockImplementation(() =>
+    validateMock.mockImplementation(() =>
       Promise.resolve(
         ok({ path: "/test/repo/.git/phantom/worktrees/feature" }),
       ),
     );
-    spawnMock.mock.mockImplementation(() =>
-      Promise.resolve(ok({ exitCode: 0 })),
-    );
+    spawnMock.mockImplementation(() => Promise.resolve(ok({ exitCode: 0 })));
 
     await shellInWorktree(
       "/test/repo",
@@ -99,7 +91,7 @@ describe("shellInWorktree", () => {
       "feature",
     );
 
-    deepStrictEqual(spawnMock.mock.calls[0].arguments[0].command, "/bin/sh");
+    deepStrictEqual(spawnMock.mock.calls[0][0].command, "/bin/sh");
 
     // Restore original shell
     if (originalShell !== undefined) {
@@ -111,7 +103,7 @@ describe("shellInWorktree", () => {
 
   it("should return error when worktree does not exist", async () => {
     resetMocks();
-    validateMock.mock.mockImplementation(() =>
+    validateMock.mockImplementation(() =>
       Promise.resolve(err(new WorktreeNotFoundError("non-existent"))),
     );
 
@@ -132,12 +124,12 @@ describe("shellInWorktree", () => {
 
   it("should pass through spawn process errors", async () => {
     resetMocks();
-    validateMock.mock.mockImplementation(() =>
+    validateMock.mockImplementation(() =>
       Promise.resolve(
         ok({ path: "/test/repo/.git/phantom/worktrees/feature" }),
       ),
     );
-    spawnMock.mock.mockImplementation(() =>
+    spawnMock.mockImplementation(() =>
       Promise.resolve(err(new ProcessSpawnError("/bin/sh", "Shell not found"))),
     );
 

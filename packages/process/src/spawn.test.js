@@ -2,7 +2,7 @@ import { deepStrictEqual, strictEqual } from "node:assert";
 // import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import path from "node:path";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import { isErr, isOk } from "@phantompane/shared";
 import {
   ProcessExecutionError,
@@ -10,29 +10,25 @@ import {
   ProcessSpawnError,
 } from "./errors.ts";
 
-const spawnMock = mock.fn();
-const resolveWindowsCommandPathMock = mock.fn((command) => command);
+const spawnMock = vi.fn();
+const resolveWindowsCommandPathMock = vi.fn((command) => command);
 
-mock.module("node:child_process", {
-  namedExports: {
-    spawn: spawnMock,
-  },
-});
+vi.doMock("node:child_process", () => ({
+  spawn: spawnMock,
+}));
 
-mock.module("./resolve-windows-command-path.ts", {
-  namedExports: {
-    resolveWindowsCommandPath: resolveWindowsCommandPathMock,
-  },
-});
+vi.doMock("./resolve-windows-command-path.ts", () => ({
+  resolveWindowsCommandPath: resolveWindowsCommandPathMock,
+}));
 
 const { spawnProcess } = await import("./spawn.ts");
 
 describe("spawnProcess", () => {
   it("should spawn a process successfully with exit code 0", async () => {
     const mockChildProcess = new EventEmitter();
-    spawnMock.mock.resetCalls();
-    resolveWindowsCommandPathMock.mock.resetCalls();
-    spawnMock.mock.mockImplementation(() => {
+    spawnMock.mockClear();
+    resolveWindowsCommandPathMock.mockClear();
+    spawnMock.mockImplementation(() => {
       setTimeout(() => {
         mockChildProcess.emit("exit", 0, null);
       }, 0);
@@ -51,7 +47,7 @@ describe("spawnProcess", () => {
     }
 
     strictEqual(spawnMock.mock.calls.length, 1);
-    deepStrictEqual(spawnMock.mock.calls[0].arguments, [
+    deepStrictEqual(spawnMock.mock.calls[0], [
       "echo",
       ["hello"],
       { stdio: "inherit", cwd: "/test/dir" },
@@ -60,9 +56,9 @@ describe("spawnProcess", () => {
 
   it("should handle process with non-zero exit code", async () => {
     const mockChildProcess = new EventEmitter();
-    spawnMock.mock.resetCalls();
-    resolveWindowsCommandPathMock.mock.resetCalls();
-    spawnMock.mock.mockImplementation(() => {
+    spawnMock.mockClear();
+    resolveWindowsCommandPathMock.mockClear();
+    spawnMock.mockImplementation(() => {
       setTimeout(() => {
         mockChildProcess.emit("exit", 1, null);
       }, 0);
@@ -86,7 +82,7 @@ describe("spawnProcess", () => {
     }
 
     strictEqual(spawnMock.mock.calls.length, 1);
-    deepStrictEqual(spawnMock.mock.calls[0].arguments, [
+    deepStrictEqual(spawnMock.mock.calls[0], [
       "false",
       [],
       { stdio: "inherit" },
@@ -95,9 +91,9 @@ describe("spawnProcess", () => {
 
   it("should handle process termination by SIGTERM signal", async () => {
     const mockChildProcess = new EventEmitter();
-    spawnMock.mock.resetCalls();
-    resolveWindowsCommandPathMock.mock.resetCalls();
-    spawnMock.mock.mockImplementation(() => {
+    spawnMock.mockClear();
+    resolveWindowsCommandPathMock.mockClear();
+    spawnMock.mockImplementation(() => {
       setTimeout(() => {
         mockChildProcess.emit("exit", null, "SIGTERM");
       }, 0);
@@ -124,9 +120,9 @@ describe("spawnProcess", () => {
 
   it("should handle process termination by other signals", async () => {
     const mockChildProcess = new EventEmitter();
-    spawnMock.mock.resetCalls();
-    resolveWindowsCommandPathMock.mock.resetCalls();
-    spawnMock.mock.mockImplementation(() => {
+    spawnMock.mockClear();
+    resolveWindowsCommandPathMock.mockClear();
+    spawnMock.mockImplementation(() => {
       setTimeout(() => {
         mockChildProcess.emit("exit", null, "SIGKILL");
       }, 0);
@@ -153,9 +149,9 @@ describe("spawnProcess", () => {
 
   it("should handle spawn errors", async () => {
     const mockChildProcess = new EventEmitter();
-    spawnMock.mock.resetCalls();
-    resolveWindowsCommandPathMock.mock.resetCalls();
-    spawnMock.mock.mockImplementation(() => {
+    spawnMock.mockClear();
+    resolveWindowsCommandPathMock.mockClear();
+    spawnMock.mockImplementation(() => {
       setTimeout(() => {
         mockChildProcess.emit("error", new Error("Command not found"));
       }, 0);
@@ -179,9 +175,9 @@ describe("spawnProcess", () => {
 
   it("should use default values when args and options are not provided", async () => {
     const mockChildProcess = new EventEmitter();
-    spawnMock.mock.resetCalls();
-    resolveWindowsCommandPathMock.mock.resetCalls();
-    spawnMock.mock.mockImplementation(() => {
+    spawnMock.mockClear();
+    resolveWindowsCommandPathMock.mockClear();
+    spawnMock.mockImplementation(() => {
       setTimeout(() => {
         mockChildProcess.emit("exit", 0, null);
       }, 0);
@@ -198,18 +194,14 @@ describe("spawnProcess", () => {
     }
 
     strictEqual(spawnMock.mock.calls.length, 1);
-    deepStrictEqual(spawnMock.mock.calls[0].arguments, [
-      "ls",
-      [],
-      { stdio: "inherit" },
-    ]);
+    deepStrictEqual(spawnMock.mock.calls[0], ["ls", [], { stdio: "inherit" }]);
   });
 
   it("should handle null exit code0", async () => {
     const mockChildProcess = new EventEmitter();
-    spawnMock.mock.resetCalls();
-    resolveWindowsCommandPathMock.mock.resetCalls();
-    spawnMock.mock.mockImplementation(() => {
+    spawnMock.mockClear();
+    resolveWindowsCommandPathMock.mockClear();
+    spawnMock.mockImplementation(() => {
       setTimeout(() => {
         mockChildProcess.emit("exit", null, null);
       }, 0);
@@ -228,9 +220,9 @@ describe("spawnProcess", () => {
 
   it("should merge provided options with default stdio option", async () => {
     const mockChildProcess = new EventEmitter();
-    spawnMock.mock.resetCalls();
-    resolveWindowsCommandPathMock.mock.resetCalls();
-    spawnMock.mock.mockImplementation(() => {
+    spawnMock.mockClear();
+    resolveWindowsCommandPathMock.mockClear();
+    spawnMock.mockImplementation(() => {
       setTimeout(() => {
         mockChildProcess.emit("exit", 0, null);
       }, 0);
@@ -251,7 +243,7 @@ describe("spawnProcess", () => {
     strictEqual(isOk(result), true);
 
     strictEqual(spawnMock.mock.calls.length, 1);
-    deepStrictEqual(spawnMock.mock.calls[0].arguments, [
+    deepStrictEqual(spawnMock.mock.calls[0], [
       "node",
       ["--version"],
       {
@@ -268,13 +260,13 @@ describe("spawnProcess", () => {
       process,
       "platform",
     );
-    spawnMock.mock.resetCalls();
-    resolveWindowsCommandPathMock.mock.resetCalls();
-    resolveWindowsCommandPathMock.mock.mockImplementation(() =>
+    spawnMock.mockClear();
+    resolveWindowsCommandPathMock.mockClear();
+    resolveWindowsCommandPathMock.mockImplementation(() =>
       path.normalize("C:/Program Files/nodejs/npm.cmd"),
     );
 
-    spawnMock.mock.mockImplementation(() => {
+    spawnMock.mockImplementation(() => {
       setTimeout(() => {
         mockChildProcess.emit("exit", 0, null);
       }, 0);
@@ -295,12 +287,12 @@ describe("spawnProcess", () => {
       strictEqual(isOk(result), true);
       strictEqual(resolveWindowsCommandPathMock.mock.calls.length > 0, true);
 
-      const resolvedPath = spawnMock.mock.calls[0].arguments[0];
+      const resolvedPath = spawnMock.mock.calls[0][0];
       strictEqual(
         path.normalize(resolvedPath),
         path.normalize("C:/Program Files/nodejs/npm.cmd"),
       );
-      deepStrictEqual(spawnMock.mock.calls[0].arguments[1], ["test"]);
+      deepStrictEqual(spawnMock.mock.calls[0][1], ["test"]);
     } finally {
       if (originalPlatformDescriptor) {
         Object.defineProperty(process, "platform", originalPlatformDescriptor);
@@ -314,11 +306,11 @@ describe("spawnProcess", () => {
       process,
       "platform",
     );
-    spawnMock.mock.resetCalls();
-    resolveWindowsCommandPathMock.mock.resetCalls();
-    resolveWindowsCommandPathMock.mock.mockImplementation((command) => command);
+    spawnMock.mockClear();
+    resolveWindowsCommandPathMock.mockClear();
+    resolveWindowsCommandPathMock.mockImplementation((command) => command);
 
-    spawnMock.mock.mockImplementation(() => {
+    spawnMock.mockImplementation(() => {
       setTimeout(() => {
         mockChildProcess.emit("exit", 0, null);
       }, 0);
@@ -338,7 +330,7 @@ describe("spawnProcess", () => {
 
       strictEqual(resolveWindowsCommandPathMock.mock.calls.length, 1);
       strictEqual(spawnMock.mock.calls.length, 1);
-      deepStrictEqual(spawnMock.mock.calls[0].arguments, [
+      deepStrictEqual(spawnMock.mock.calls[0], [
         "npm.cmd",
         ["run", "build"],
         { stdio: "inherit" },

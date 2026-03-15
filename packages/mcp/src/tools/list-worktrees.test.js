@@ -1,42 +1,36 @@
 import { deepStrictEqual, rejects, strictEqual } from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import { z } from "zod";
 
-const listWorktreesMock = mock.fn();
-const getGitRootMock = mock.fn();
-const isOkMock = mock.fn((result) => {
+const listWorktreesMock = vi.fn();
+const getGitRootMock = vi.fn();
+const isOkMock = vi.fn((result) => {
   return result && result.ok === true;
 });
-const okMock = mock.fn((value) => ({ ok: true, value }));
-const errMock = mock.fn((error) => ({ ok: false, error }));
+const okMock = vi.fn((value) => ({ ok: true, value }));
+const errMock = vi.fn((error) => ({ ok: false, error }));
 
-mock.module("@phantompane/core", {
-  namedExports: {
-    listWorktrees: listWorktreesMock,
-  },
-});
+vi.doMock("@phantompane/core", () => ({
+  listWorktrees: listWorktreesMock,
+}));
 
-mock.module("@phantompane/git", {
-  namedExports: {
-    getGitRoot: getGitRootMock,
-  },
-});
+vi.doMock("@phantompane/git", () => ({
+  getGitRoot: getGitRootMock,
+}));
 
-mock.module("@phantompane/shared", {
-  namedExports: {
-    isOk: isOkMock,
-    ok: okMock,
-    err: errMock,
-  },
-});
+vi.doMock("@phantompane/shared", () => ({
+  isOk: isOkMock,
+  ok: okMock,
+  err: errMock,
+}));
 
 const { listWorktreesTool } = await import("./list-worktrees.ts");
 
 describe("listWorktreesTool", () => {
   const resetMocks = () => {
-    listWorktreesMock.mock.resetCalls();
-    getGitRootMock.mock.resetCalls();
-    isOkMock.mock.resetCalls();
+    listWorktreesMock.mockClear();
+    getGitRootMock.mockClear();
+    isOkMock.mockClear();
   };
 
   it("should have correct name and description", () => {
@@ -80,8 +74,8 @@ describe("listWorktreesTool", () => {
       },
     ];
 
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve(gitRoot));
-    listWorktreesMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => Promise.resolve(gitRoot));
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve(okMock({ worktrees: mockWorktrees })),
     );
 
@@ -89,7 +83,7 @@ describe("listWorktreesTool", () => {
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(listWorktreesMock.mock.calls.length, 1);
-    deepStrictEqual(listWorktreesMock.mock.calls[0].arguments, [gitRoot]);
+    deepStrictEqual(listWorktreesMock.mock.calls[0], [gitRoot]);
 
     strictEqual(result.content.length, 1);
     strictEqual(result.content[0].type, "text");
@@ -124,11 +118,11 @@ describe("listWorktreesTool", () => {
     resetMocks();
     const gitRoot = "/path/to/repo";
 
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve(gitRoot));
-    listWorktreesMock.mock.mockImplementation(() =>
+    getGitRootMock.mockImplementation(() => Promise.resolve(gitRoot));
+    listWorktreesMock.mockImplementation(() =>
       Promise.resolve(okMock({ worktrees: [] })),
     );
-    isOkMock.mock.mockImplementation((result) => result.ok === true);
+    isOkMock.mockImplementation((result) => result.ok === true);
 
     const result = await listWorktreesTool.handler({});
 
@@ -145,10 +139,8 @@ describe("listWorktreesTool", () => {
     const gitRoot = "/path/to/repo";
     const errorResult = { ok: false, error: { message: "Git command failed" } };
 
-    getGitRootMock.mock.mockImplementation(() => Promise.resolve(gitRoot));
-    listWorktreesMock.mock.mockImplementation(() =>
-      Promise.resolve(errorResult),
-    );
+    getGitRootMock.mockImplementation(() => Promise.resolve(gitRoot));
+    listWorktreesMock.mockImplementation(() => Promise.resolve(errorResult));
 
     await rejects(() => listWorktreesTool.handler({}), {
       message: "Failed to list worktrees",

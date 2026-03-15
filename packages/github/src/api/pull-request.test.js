@@ -1,20 +1,18 @@
 import { deepEqual, equal } from "node:assert/strict";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 
-const createGitHubClientMock = mock.fn();
+const createGitHubClientMock = vi.fn();
 let mockOctokit;
 
-mock.module("../client.ts", {
-  namedExports: {
-    createGitHubClient: createGitHubClientMock,
-  },
-});
+vi.doMock("../client.ts", () => ({
+  createGitHubClient: createGitHubClientMock,
+}));
 
 const { fetchPullRequest } = await import("./pull-request.ts");
 
 describe("fetchPullRequest", () => {
   const resetMocks = () => {
-    createGitHubClientMock.mock.resetCalls();
+    createGitHubClientMock.mockClear();
     mockOctokit = undefined;
   };
 
@@ -31,7 +29,7 @@ describe("fetchPullRequest", () => {
     resetMocks();
     mockOctokit = {
       pulls: {
-        get: mock.fn(async () => ({
+        get: vi.fn(async () => ({
           data: {
             number: 123,
             head: {
@@ -49,7 +47,7 @@ describe("fetchPullRequest", () => {
         })),
       },
     };
-    createGitHubClientMock.mock.mockImplementation(async () => mockOctokit);
+    createGitHubClientMock.mockImplementation(async () => mockOctokit);
 
     const result = await fetchPullRequest("owner", "repo", "123");
     deepEqual(result, {
@@ -69,7 +67,7 @@ describe("fetchPullRequest", () => {
     });
 
     equal(mockOctokit.pulls.get.mock.calls.length, 1);
-    deepEqual(mockOctokit.pulls.get.mock.calls[0].arguments[0], {
+    deepEqual(mockOctokit.pulls.get.mock.calls[0][0], {
       owner: "owner",
       repo: "repo",
       pull_number: 123,
@@ -80,14 +78,14 @@ describe("fetchPullRequest", () => {
     resetMocks();
     mockOctokit = {
       pulls: {
-        get: mock.fn(async () => {
+        get: vi.fn(async () => {
           const error = new Error("Not found");
           error.status = 404;
           throw error;
         }),
       },
     };
-    createGitHubClientMock.mock.mockImplementation(async () => mockOctokit);
+    createGitHubClientMock.mockImplementation(async () => mockOctokit);
 
     const result = await fetchPullRequest("owner", "repo", "123");
     equal(result, null);
@@ -97,12 +95,12 @@ describe("fetchPullRequest", () => {
     resetMocks();
     mockOctokit = {
       pulls: {
-        get: mock.fn(async () => {
+        get: vi.fn(async () => {
           throw new Error("API Error");
         }),
       },
     };
-    createGitHubClientMock.mock.mockImplementation(async () => mockOctokit);
+    createGitHubClientMock.mockImplementation(async () => mockOctokit);
 
     try {
       await fetchPullRequest("owner", "repo", "123");
@@ -116,7 +114,7 @@ describe("fetchPullRequest", () => {
     resetMocks();
     mockOctokit = {
       pulls: {
-        get: mock.fn(async () => ({
+        get: vi.fn(async () => ({
           data: {
             number: 123,
             head: {
@@ -134,11 +132,11 @@ describe("fetchPullRequest", () => {
         })),
       },
     };
-    createGitHubClientMock.mock.mockImplementation(async () => mockOctokit);
+    createGitHubClientMock.mockImplementation(async () => mockOctokit);
 
     await fetchPullRequest("owner", "repo", "123");
 
-    deepEqual(mockOctokit.pulls.get.mock.calls[0].arguments[0], {
+    deepEqual(mockOctokit.pulls.get.mock.calls[0][0], {
       owner: "owner",
       repo: "repo",
       pull_number: 123, // Should be parsed to integer
@@ -149,7 +147,7 @@ describe("fetchPullRequest", () => {
     resetMocks();
     mockOctokit = {
       pulls: {
-        get: mock.fn(async () => ({
+        get: vi.fn(async () => ({
           data: {
             number: 456,
             head: {
@@ -167,7 +165,7 @@ describe("fetchPullRequest", () => {
         })),
       },
     };
-    createGitHubClientMock.mock.mockImplementation(async () => mockOctokit);
+    createGitHubClientMock.mockImplementation(async () => mockOctokit);
 
     const result = await fetchPullRequest("owner", "original-repo", "456");
     deepEqual(result, {

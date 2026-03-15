@@ -1,14 +1,12 @@
 import { strictEqual, throws } from "node:assert";
 import path from "node:path";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 
-const execFileSyncMock = mock.fn();
+const execFileSyncMock = vi.fn();
 
-mock.module("node:child_process", {
-  namedExports: {
-    execFileSync: execFileSyncMock,
-  },
-});
+vi.doMock("node:child_process", () => ({
+  execFileSync: execFileSyncMock,
+}));
 
 const { resolveWindowsCommandPath } =
   await import("./resolve-windows-command-path.ts");
@@ -40,9 +38,9 @@ describe("resolveWindowsCommandPath", () => {
       process,
       "platform",
     );
-    execFileSyncMock.mock.resetCalls();
+    execFileSyncMock.mockClear();
 
-    execFileSyncMock.mock.mockImplementation(() =>
+    execFileSyncMock.mockImplementation(() =>
       Buffer.from("C:/Program Files/nodejs/npm.cmd\r\n"),
     );
 
@@ -70,9 +68,9 @@ describe("resolveWindowsCommandPath", () => {
       process,
       "platform",
     );
-    execFileSyncMock.mock.resetCalls();
+    execFileSyncMock.mockClear();
 
-    execFileSyncMock.mock.mockImplementation(() =>
+    execFileSyncMock.mockImplementation(() =>
       Buffer.from(
         ["C:/Program Files/nodejs/npm", "C:/Program Files/nodejs/npm.cmd"].join(
           "\r\n",
@@ -104,7 +102,7 @@ describe("resolveWindowsCommandPath", () => {
       process,
       "platform",
     );
-    execFileSyncMock.mock.resetCalls();
+    execFileSyncMock.mockClear();
 
     Object.defineProperty(process, "platform", {
       value: "win32",

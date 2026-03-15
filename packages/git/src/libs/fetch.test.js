@@ -1,19 +1,17 @@
 import { deepEqual, equal, ok } from "node:assert/strict";
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 
-const executeGitCommandMock = mock.fn();
+const executeGitCommandMock = vi.fn();
 
-mock.module("../executor.ts", {
-  namedExports: {
-    executeGitCommand: executeGitCommandMock,
-  },
-});
+vi.doMock("../executor.ts", () => ({
+  executeGitCommand: executeGitCommandMock,
+}));
 
 const { fetch } = await import("./fetch.ts");
 
 describe("fetch", () => {
   const resetMocks = () => {
-    executeGitCommandMock.mock.resetCalls();
+    executeGitCommandMock.mockClear();
   };
 
   it("should export fetch function", () => {
@@ -22,7 +20,7 @@ describe("fetch", () => {
 
   it("should fetch with default remote", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(async () => ({
+    executeGitCommandMock.mockImplementation(async () => ({
       stdout: "",
       stderr: "",
     }));
@@ -31,15 +29,12 @@ describe("fetch", () => {
 
     ok(result.ok);
     equal(executeGitCommandMock.mock.calls.length, 1);
-    deepEqual(executeGitCommandMock.mock.calls[0].arguments[0], [
-      "fetch",
-      "origin",
-    ]);
+    deepEqual(executeGitCommandMock.mock.calls[0][0], ["fetch", "origin"]);
   });
 
   it("should fetch with custom remote", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(async () => ({
+    executeGitCommandMock.mockImplementation(async () => ({
       stdout: "",
       stderr: "",
     }));
@@ -47,15 +42,12 @@ describe("fetch", () => {
     const result = await fetch({ remote: "upstream" });
 
     ok(result.ok);
-    deepEqual(executeGitCommandMock.mock.calls[0].arguments[0], [
-      "fetch",
-      "upstream",
-    ]);
+    deepEqual(executeGitCommandMock.mock.calls[0][0], ["fetch", "upstream"]);
   });
 
   it("should fetch with refspec", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(async () => ({
+    executeGitCommandMock.mockImplementation(async () => ({
       stdout: "",
       stderr: "",
     }));
@@ -63,7 +55,7 @@ describe("fetch", () => {
     const result = await fetch({ refspec: "pull/123/head:pr-123" });
 
     ok(result.ok);
-    deepEqual(executeGitCommandMock.mock.calls[0].arguments[0], [
+    deepEqual(executeGitCommandMock.mock.calls[0][0], [
       "fetch",
       "origin",
       "pull/123/head:pr-123",
@@ -72,7 +64,7 @@ describe("fetch", () => {
 
   it("should fetch with custom remote and refspec", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(async () => ({
+    executeGitCommandMock.mockImplementation(async () => ({
       stdout: "",
       stderr: "",
     }));
@@ -83,7 +75,7 @@ describe("fetch", () => {
     });
 
     ok(result.ok);
-    deepEqual(executeGitCommandMock.mock.calls[0].arguments[0], [
+    deepEqual(executeGitCommandMock.mock.calls[0][0], [
       "fetch",
       "upstream",
       "main:upstream-main",
@@ -92,22 +84,19 @@ describe("fetch", () => {
 
   it("should pass cwd option", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(async () => ({
+    executeGitCommandMock.mockImplementation(async () => ({
       stdout: "",
       stderr: "",
     }));
 
     await fetch({ cwd: "/path/to/repo" });
 
-    equal(
-      executeGitCommandMock.mock.calls[0].arguments[1].cwd,
-      "/path/to/repo",
-    );
+    equal(executeGitCommandMock.mock.calls[0][1].cwd, "/path/to/repo");
   });
 
   it("should handle fetch errors", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(async () => {
+    executeGitCommandMock.mockImplementation(async () => {
       throw new Error("fatal: couldn't find remote ref");
     });
 
@@ -120,7 +109,7 @@ describe("fetch", () => {
 
   it("should handle non-Error exceptions", async () => {
     resetMocks();
-    executeGitCommandMock.mock.mockImplementation(async () => {
+    executeGitCommandMock.mockImplementation(async () => {
       throw "Network error";
     });
 
