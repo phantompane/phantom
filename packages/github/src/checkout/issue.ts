@@ -45,31 +45,18 @@ export async function checkoutIssue(
     });
   }
 
-  const result =
-    directoryNameSeparator === undefined
-      ? await createWorktreeCore(
-          context.gitRoot,
-          context.worktreesDirectory,
-          worktreeName,
-          {
-            branch: branchName,
-            base,
-          },
-          context.config?.postCreate?.copyFiles,
-          context.config?.postCreate?.commands,
-        )
-      : await createWorktreeCore(
-          context.gitRoot,
-          context.worktreesDirectory,
-          worktreeName,
-          {
-            branch: branchName,
-            base,
-          },
-          context.config?.postCreate?.copyFiles,
-          context.config?.postCreate?.commands,
-          directoryNameSeparator,
-        );
+  const result = await createWorktreeCore(
+    context.gitRoot,
+    context.worktreesDirectory,
+    worktreeName,
+    {
+      branch: branchName,
+      base,
+    },
+    context.config?.postCreate?.copyFiles,
+    context.config?.postCreate?.commands,
+    directoryNameSeparator,
+  );
 
   if (isErr(result)) {
     return err(result.error);

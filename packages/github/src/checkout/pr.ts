@@ -87,23 +87,14 @@ export async function checkoutPullRequest(
   }
 
   // Attach the worktree to the fetched branch
-  const attachResult =
-    directoryNameSeparator === undefined
-      ? await attachWorktreeCore(
-          context.gitRoot,
-          context.worktreesDirectory,
-          worktreeName,
-          context.config?.postCreate?.copyFiles,
-          context.config?.postCreate?.commands,
-        )
-      : await attachWorktreeCore(
-          context.gitRoot,
-          context.worktreesDirectory,
-          worktreeName,
-          context.config?.postCreate?.copyFiles,
-          context.config?.postCreate?.commands,
-          directoryNameSeparator,
-        );
+  const attachResult = await attachWorktreeCore(
+    context.gitRoot,
+    context.worktreesDirectory,
+    worktreeName,
+    context.config?.postCreate?.copyFiles,
+    context.config?.postCreate?.commands,
+    directoryNameSeparator,
+  );
 
   if (isErr(attachResult)) {
     return err(attachResult.error);

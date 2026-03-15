@@ -105,14 +105,11 @@ export async function createHandler(args: string[]): Promise<void> {
       context.config?.directoryNameSeparator;
 
     if (!worktreeName) {
-      const nameResult =
-        directoryNameSeparator === undefined
-          ? await generateUniqueName(gitRoot, context.worktreesDirectory)
-          : await generateUniqueName(
-              gitRoot,
-              context.worktreesDirectory,
-              directoryNameSeparator,
-            );
+      const nameResult = await generateUniqueName(
+        gitRoot,
+        context.worktreesDirectory,
+        directoryNameSeparator,
+      );
       if (isErr(nameResult)) {
         exitWithError(nameResult.error.message, exitCodes.generalError);
       }
@@ -135,31 +132,18 @@ export async function createHandler(args: string[]): Promise<void> {
       filesToCopy = [...new Set([...filesToCopy, ...cliFiles])];
     }
 
-    const result =
-      directoryNameSeparator === undefined
-        ? await createWorktreeCore(
-            context.gitRoot,
-            context.worktreesDirectory,
-            worktreeName,
-            {
-              copyFiles: filesToCopy.length > 0 ? filesToCopy : undefined,
-              base: baseOption,
-            },
-            filesToCopy.length > 0 ? filesToCopy : undefined,
-            context.config?.postCreate?.commands,
-          )
-        : await createWorktreeCore(
-            context.gitRoot,
-            context.worktreesDirectory,
-            worktreeName,
-            {
-              copyFiles: filesToCopy.length > 0 ? filesToCopy : undefined,
-              base: baseOption,
-            },
-            filesToCopy.length > 0 ? filesToCopy : undefined,
-            context.config?.postCreate?.commands,
-            directoryNameSeparator,
-          );
+    const result = await createWorktreeCore(
+      context.gitRoot,
+      context.worktreesDirectory,
+      worktreeName,
+      {
+        copyFiles: filesToCopy.length > 0 ? filesToCopy : undefined,
+        base: baseOption,
+      },
+      filesToCopy.length > 0 ? filesToCopy : undefined,
+      context.config?.postCreate?.commands,
+      directoryNameSeparator,
+    );
 
     if (isErr(result)) {
       const exitCode =

@@ -112,23 +112,14 @@ export async function attachHandler(args: string[]): Promise<void> {
     );
   }
 
-  const result =
-    directoryNameSeparator === undefined
-      ? await attachWorktreeCore(
-          context.gitRoot,
-          context.worktreesDirectory,
-          branchName,
-          postCreateCopyFiles,
-          context.config?.postCreate?.commands,
-        )
-      : await attachWorktreeCore(
-          context.gitRoot,
-          context.worktreesDirectory,
-          branchName,
-          postCreateCopyFiles,
-          context.config?.postCreate?.commands,
-          directoryNameSeparator,
-        );
+  const result = await attachWorktreeCore(
+    context.gitRoot,
+    context.worktreesDirectory,
+    branchName,
+    postCreateCopyFiles,
+    context.config?.postCreate?.commands,
+    directoryNameSeparator,
+  );
 
   if (isErr(result)) {
     const error = result.error;
