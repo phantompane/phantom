@@ -1,4 +1,4 @@
-import { isOk } from "@aku11i/phantom-shared";
+import { isOk } from "@phantompane/shared";
 import { loadConfig, type PhantomConfig } from "./config/loader.ts";
 import { getWorktreesDirectory } from "./paths.ts";
 import { loadPreferences, type Preferences } from "./preferences/loader.ts";

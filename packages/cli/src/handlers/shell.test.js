@@ -1,7 +1,7 @@
 import { rejects, strictEqual } from "node:assert";
 import { describe, it, mock } from "node:test";
-import { WorktreeNotFoundError } from "@aku11i/phantom-core";
-import { err, ok } from "@aku11i/phantom-shared";
+import { WorktreeNotFoundError } from "@phantompane/core";
+import { err, ok } from "@phantompane/shared";
 
 const exitMock = mock.fn();
 const consoleLogMock = mock.fn();
@@ -28,13 +28,13 @@ mock.module("node:process", {
   },
 });
 
-mock.module("@aku11i/phantom-git", {
+mock.module("@phantompane/git", {
   namedExports: {
     getGitRoot: getGitRootMock,
   },
 });
 
-mock.module("@aku11i/phantom-process", {
+mock.module("@phantompane/process", {
   namedExports: {
     isInsideTmux: isInsideTmuxMock,
     executeTmuxCommand: executeTmuxCommandMock,
@@ -46,7 +46,7 @@ mock.module("@aku11i/phantom-process", {
   },
 });
 
-mock.module("@aku11i/phantom-core", {
+mock.module("@phantompane/core", {
   namedExports: {
     validateWorktreeExists: validateWorktreeExistsMock,
     selectWorktreeWithFzf: selectWorktreeWithFzfMock,

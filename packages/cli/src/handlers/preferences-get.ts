@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { loadPreferences } from "@aku11i/phantom-core";
+import { loadPreferences } from "@phantompane/core";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 

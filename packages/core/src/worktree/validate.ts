@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { err, isErr, ok, type Result } from "@aku11i/phantom-shared";
+import { err, isErr, ok, type Result } from "@phantompane/shared";
 import { WorktreeAlreadyExistsError, WorktreeNotFoundError } from "./errors.ts";
 import { type ListWorktreesOptions, listWorktrees } from "./list.ts";
 

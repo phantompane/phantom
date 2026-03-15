@@ -1,5 +1,5 @@
 {
-  "name": "@aku11i/phantom-process",
+  "name": "@phantompane/process",
   "version": "5.1.0",
   "private": true,
   "type": "module",
@@ -10,6 +10,6 @@
     "test": "node --test --experimental-strip-types --experimental-test-module-mocks \"src/**/*.test.js\""
   },
   "dependencies": {
-    "@aku11i/phantom-shared": "workspace:*"
+    "@phantompane/shared": "workspace:*"
   }
 }

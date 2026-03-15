@@ -3,9 +3,9 @@ import {
   createContext,
   selectWorktreeWithFzf,
   whereWorktree as whereWorktreeCore,
-} from "@aku11i/phantom-core";
-import { getGitRoot } from "@aku11i/phantom-git";
-import { isErr } from "@aku11i/phantom-shared";
+} from "@phantompane/core";
+import { getGitRoot } from "@phantompane/git";
+import { isErr } from "@phantompane/shared";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 

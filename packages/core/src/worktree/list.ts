@@ -2,8 +2,8 @@ import { relative } from "node:path";
 import {
   executeGitCommandInDirectory,
   listWorktrees as gitListWorktrees,
-} from "@aku11i/phantom-git";
-import { ok, type Result } from "@aku11i/phantom-shared";
+} from "@phantompane/git";
+import { ok, type Result } from "@phantompane/shared";
 import { getWorktreePathFromDirectory } from "../paths.ts";
 
 export interface WorktreeInfo {

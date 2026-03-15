@@ -30,22 +30,22 @@ importers:
 
   packages/cli:
     dependencies:
-      '@aku11i/phantom-core':
+      '@phantompane/core':
         specifier: workspace:*
         version: link:../core
-      '@aku11i/phantom-git':
+      '@phantompane/git':
         specifier: workspace:*
         version: link:../git
-      '@aku11i/phantom-github':
+      '@phantompane/github':
         specifier: workspace:*
         version: link:../github
-      '@aku11i/phantom-mcp':
+      '@phantompane/mcp':
         specifier: workspace:*
         version: link:../mcp
-      '@aku11i/phantom-process':
+      '@phantompane/process':
         specifier: workspace:*
         version: link:../process
-      '@aku11i/phantom-shared':
+      '@phantompane/shared':
         specifier: workspace:*
         version: link:../shared
 
@@ -53,13 +53,13 @@ importers:
 
   packages/core:
     dependencies:
-      '@aku11i/phantom-git':
+      '@phantompane/git':
         specifier: workspace:*
         version: link:../git
-      '@aku11i/phantom-process':
+      '@phantompane/process':
         specifier: workspace:*
         version: link:../process
-      '@aku11i/phantom-shared':
+      '@phantompane/shared':
         specifier: workspace:*
         version: link:../shared
       human-id:
@@ -71,54 +71,54 @@ importers:
 
   packages/git:
     dependencies:
-      '@aku11i/phantom-process':
+      '@phantompane/process':
         specifier: workspace:*
         version: link:../process
-      '@aku11i/phantom-shared':
+      '@phantompane/shared':
         specifier: workspace:*
         version: link:../shared
 
   packages/github:
     dependencies:
-      '@aku11i/phantom-core':
-        specifier: workspace:*
-        version: link:../core
-      '@aku11i/phantom-git':
-        specifier: workspace:*
-        version: link:../git
-      '@aku11i/phantom-process':
-        specifier: workspace:*
-        version: link:../process
-      '@aku11i/phantom-shared':
-        specifier: workspace:*
-        version: link:../shared
       '@octokit/rest':
         specifier: ^22.0.1
         version: 22.0.1
+      '@phantompane/core':
+        specifier: workspace:*
+        version: link:../core
+      '@phantompane/git':
+        specifier: workspace:*
+        version: link:../git
+      '@phantompane/process':
+        specifier: workspace:*
+        version: link:../process
+      '@phantompane/shared':
+        specifier: workspace:*
+        version: link:../shared
       zod:
         specifier: ^4.3.6
         version: 4.3.6
 
   packages/mcp:
     dependencies:
-      '@aku11i/phantom-core':
-        specifier: workspace:*
-        version: link:../core
-      '@aku11i/phantom-git':
-        specifier: workspace:*
-        version: link:../git
-      '@aku11i/phantom-github':
-        specifier: workspace:*
-        version: link:../github
-      '@aku11i/phantom-process':
-        specifier: workspace:*
-        version: link:../process
-      '@aku11i/phantom-shared':
-        specifier: workspace:*
-        version: link:../shared
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(zod@4.3.6)
+      '@phantompane/core':
+        specifier: workspace:*
+        version: link:../core
+      '@phantompane/git':
+        specifier: workspace:*
+        version: link:../git
+      '@phantompane/github':
+        specifier: workspace:*
+        version: link:../github
+      '@phantompane/process':
+        specifier: workspace:*
+        version: link:../process
+      '@phantompane/shared':
+        specifier: workspace:*
+        version: link:../shared
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -129,7 +129,7 @@ importers:
 
   packages/process:
     dependencies:
-      '@aku11i/phantom-shared':
+      '@phantompane/shared':
         specifier: workspace:*
         version: link:../shared
 

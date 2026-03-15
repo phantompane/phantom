@@ -2,9 +2,9 @@ import {
   attachWorktreeCore,
   createContext,
   validateWorktreeExists,
-} from "@aku11i/phantom-core";
-import { fetch, getGitRoot, setUpstreamBranch } from "@aku11i/phantom-git";
-import { err, isErr, ok, type Result } from "@aku11i/phantom-shared";
+} from "@phantompane/core";
+import { fetch, getGitRoot, setUpstreamBranch } from "@phantompane/git";
+import { err, isErr, ok, type Result } from "@phantompane/shared";
 import type { GitHubPullRequest } from "../api/index.ts";
 
 export interface CheckoutResult {

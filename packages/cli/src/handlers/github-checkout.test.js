@@ -30,13 +30,13 @@ mock.module("../output.ts", {
   },
 });
 
-mock.module("@aku11i/phantom-github", {
+mock.module("@phantompane/github", {
   namedExports: {
     githubCheckout: githubCheckoutMock,
   },
 });
 
-mock.module("@aku11i/phantom-process", {
+mock.module("@phantompane/process", {
   namedExports: {
     isInsideTmux: isInsideTmuxMock,
     executeTmuxCommand: executeTmuxCommandMock,

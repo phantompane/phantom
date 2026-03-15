@@ -1,4 +1,4 @@
-import { executeGitCommand } from "@aku11i/phantom-git";
+import { executeGitCommand } from "@phantompane/git";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 

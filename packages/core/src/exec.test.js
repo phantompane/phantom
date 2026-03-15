@@ -1,7 +1,7 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { describe, it, mock } from "node:test";
-import { ProcessExecutionError } from "@aku11i/phantom-process";
-import { err, isErr, isOk, ok } from "@aku11i/phantom-shared";
+import { ProcessExecutionError } from "@phantompane/process";
+import { err, isErr, isOk, ok } from "@phantompane/shared";
 import { WorktreeNotFoundError } from "./worktree/errors.ts";
 
 const validateMock = mock.fn();
@@ -13,7 +13,7 @@ mock.module("./worktree/validate.ts", {
   },
 });
 
-mock.module("@aku11i/phantom-process", {
+mock.module("@phantompane/process", {
   namedExports: {
     spawnProcess: spawnMock,
   },

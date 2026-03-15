@@ -1,4 +1,4 @@
-import type { Result } from "@aku11i/phantom-shared";
+import type { Result } from "@phantompane/shared";
 import type { ProcessError } from "./errors.ts";
 import { type SpawnSuccess, spawnProcess } from "./spawn.ts";
 

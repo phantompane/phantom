@@ -1,6 +1,6 @@
 import { deepStrictEqual } from "node:assert";
 import { describe, it, mock } from "node:test";
-import { err, ok } from "@aku11i/phantom-shared";
+import { err, ok } from "@phantompane/shared";
 
 const execInWorktreeMock = mock.fn();
 const consoleLogMock = mock.fn();

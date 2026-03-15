@@ -17,7 +17,7 @@ class MockWorktreeAlreadyExistsError extends Error {
   }
 }
 
-mock.module("@aku11i/phantom-git", {
+mock.module("@phantompane/git", {
   namedExports: {
     getGitRoot: getGitRootMock,
     fetch: fetchMock,
@@ -25,7 +25,7 @@ mock.module("@aku11i/phantom-git", {
   },
 });
 
-mock.module("@aku11i/phantom-core", {
+mock.module("@phantompane/core", {
   namedExports: {
     attachWorktreeCore: attachWorktreeCoreMock,
     WorktreeAlreadyExistsError: MockWorktreeAlreadyExistsError,

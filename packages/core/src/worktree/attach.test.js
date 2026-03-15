@@ -1,6 +1,6 @@
 import { deepStrictEqual } from "node:assert";
 import { describe, it, mock } from "node:test";
-import { err, ok } from "@aku11i/phantom-shared";
+import { err, ok } from "@phantompane/shared";
 import { BranchNotFoundError, WorktreeAlreadyExistsError } from "./errors.ts";
 
 const validateWorktreeNameMock = mock.fn();
@@ -26,7 +26,7 @@ mock.module("node:fs", {
   },
 });
 
-mock.module("@aku11i/phantom-git", {
+mock.module("@phantompane/git", {
   namedExports: {
     branchExists: branchExistsMock,
     attachWorktree: attachWorktreeMock,

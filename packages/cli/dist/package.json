@@ -1,5 +1,5 @@
 {
-  "name": "@aku11i/phantom",
+  "name": "@phantompane/cli",
   "version": "5.1.0",
   "description": "A powerful CLI tool for managing Git worktrees for parallel development",
   "keywords": [

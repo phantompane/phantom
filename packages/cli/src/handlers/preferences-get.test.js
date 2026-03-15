@@ -12,7 +12,7 @@ mock.module("node:process", {
   },
 });
 
-mock.module("@aku11i/phantom-core", {
+mock.module("@phantompane/core", {
   namedExports: {
     loadPreferences: loadPreferencesMock,
   },

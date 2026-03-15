@@ -2,9 +2,9 @@ import {
   createContext,
   createWorktree as createWorktreeCore,
   validateWorktreeExists,
-} from "@aku11i/phantom-core";
-import { getGitRoot } from "@aku11i/phantom-git";
-import { err, isErr, ok, type Result } from "@aku11i/phantom-shared";
+} from "@phantompane/core";
+import { getGitRoot } from "@phantompane/git";
+import { err, isErr, ok, type Result } from "@phantompane/shared";
 import { type GitHubIssue, isPullRequest } from "../api/index.ts";
 import type { CheckoutResult } from "./pr.ts";
 

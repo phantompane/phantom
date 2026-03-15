@@ -1,6 +1,6 @@
 import { deepStrictEqual } from "node:assert";
 import { describe, it, mock } from "node:test";
-import { err, ok } from "@aku11i/phantom-shared";
+import { err, ok } from "@phantompane/shared";
 
 const listWorktreesMock = mock.fn();
 
@@ -13,7 +13,7 @@ mock.module("./list.ts", {
 const { validateWorktreeExists, validateWorktreeDoesNotExist } = await import(
   "./validate.ts"
 );
-const { isOk, isErr } = await import("@aku11i/phantom-shared");
+const { isOk, isErr } = await import("@phantompane/shared");
 
 describe("validateWorktreeExists", () => {
   const resetMocks = () => {

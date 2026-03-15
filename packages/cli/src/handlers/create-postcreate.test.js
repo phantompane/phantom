@@ -1,7 +1,7 @@
 import { deepStrictEqual, rejects } from "node:assert";
 import { describe, it, mock } from "node:test";
-import { ConfigNotFoundError } from "@aku11i/phantom-core";
-import { err, ok } from "@aku11i/phantom-shared";
+import { ConfigNotFoundError } from "@phantompane/core";
+import { err, ok } from "@phantompane/shared";
 
 const exitWithErrorMock = mock.fn((message, code) => {
   throw new Error(`Exit with code ${code}: ${message}`);
@@ -32,13 +32,13 @@ mock.module("../output.ts", {
   },
 });
 
-mock.module("@aku11i/phantom-git", {
+mock.module("@phantompane/git", {
   namedExports: {
     getGitRoot: getGitRootMock,
   },
 });
 
-mock.module("@aku11i/phantom-core", {
+mock.module("@phantompane/core", {
   namedExports: {
     ConfigNotFoundError,
     ConfigParseError: class ConfigParseError extends Error {},
@@ -54,7 +54,7 @@ mock.module("@aku11i/phantom-core", {
   },
 });
 
-mock.module("@aku11i/phantom-process", {
+mock.module("@phantompane/process", {
   namedExports: {
     isInsideTmux: mock.fn(() => false),
     executeTmuxCommand: mock.fn(),

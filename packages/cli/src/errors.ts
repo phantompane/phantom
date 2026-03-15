@@ -1,4 +1,4 @@
-import { exitCodes } from "@aku11i/phantom-shared";
+import { exitCodes } from "@phantompane/shared";
 import { output } from "./output.ts";
 
 export { exitCodes };

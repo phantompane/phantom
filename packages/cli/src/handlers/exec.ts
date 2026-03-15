@@ -5,14 +5,14 @@ import {
   selectWorktreeWithFzf,
   validateWorktreeExists,
   WorktreeNotFoundError,
-} from "@aku11i/phantom-core";
-import { getGitRoot } from "@aku11i/phantom-git";
+} from "@phantompane/core";
+import { getGitRoot } from "@phantompane/git";
 import {
   executeTmuxCommand,
   getPhantomEnv,
   isInsideTmux,
-} from "@aku11i/phantom-process";
-import { isErr } from "@aku11i/phantom-shared";
+} from "@phantompane/process";
+import { isErr } from "@phantompane/shared";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 

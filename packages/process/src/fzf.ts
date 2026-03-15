@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { err, ok, type Result } from "@aku11i/phantom-shared";
+import { err, ok, type Result } from "@phantompane/shared";
 
 export interface FzfOptions {
   prompt?: string;

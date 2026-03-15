@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@aku11i/phantom-shared";
+import { err, ok, type Result } from "@phantompane/shared";
 import { executeGitCommand } from "../executor.ts";
 
 export async function attachWorktree(

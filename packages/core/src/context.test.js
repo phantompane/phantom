@@ -23,7 +23,7 @@ mock.module("./paths.ts", {
   },
 });
 
-const { ok, err } = await import("@aku11i/phantom-shared");
+const { ok, err } = await import("@phantompane/shared");
 const { createContext } = await import("./context.ts");
 
 describe("createContext", () => {
