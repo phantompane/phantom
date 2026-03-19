@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { executeGitCommand } from "@phantompane/git";
+import { configUnset } from "@phantompane/git";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 
@@ -35,12 +35,10 @@ export async function preferencesRemoveHandler(args: string[]): Promise<void> {
   }
 
   try {
-    await executeGitCommand([
-      "config",
-      "--global",
-      "--unset",
-      `phantom.${inputKey}`,
-    ]);
+    await configUnset({
+      key: `phantom.${inputKey}`,
+      global: true,
+    });
 
     output.log(`Removed phantom.${inputKey} from global git config`);
     exitWithSuccess();

@@ -6,7 +6,7 @@ import { BranchNotFoundError, WorktreeAlreadyExistsError } from "./errors.ts";
 const validateWorktreeNameMock = vi.fn();
 const existsSyncMock = vi.fn();
 const branchExistsMock = vi.fn();
-const attachWorktreeMock = vi.fn();
+const addWorktreeMock = vi.fn();
 const getWorktreePathFromDirectoryMock = vi.fn(
   (worktreeDirectory: string, name: string, directoryNameSeparator = "/") => {
     return `${worktreeDirectory}/${name.replaceAll("/", directoryNameSeparator)}`;
@@ -26,7 +26,8 @@ vi.doMock("node:fs", () => ({
 
 vi.doMock("@phantompane/git", () => ({
   branchExists: branchExistsMock,
-  attachWorktree: attachWorktreeMock,
+  addWorktree: addWorktreeMock,
+  getGitRoot: vi.fn(),
 }));
 
 vi.doMock("../paths.ts", () => ({
@@ -40,7 +41,7 @@ describe("attachWorktreeCore", () => {
     validateWorktreeNameMock.mockClear();
     existsSyncMock.mockClear();
     branchExistsMock.mockClear();
-    attachWorktreeMock.mockClear();
+    addWorktreeMock.mockClear();
     getWorktreePathFromDirectoryMock.mockClear();
   };
 
@@ -49,7 +50,7 @@ describe("attachWorktreeCore", () => {
     validateWorktreeNameMock.mockImplementation(() => ok(undefined));
     existsSyncMock.mockImplementation(() => false);
     branchExistsMock.mockImplementation(() => Promise.resolve(ok(true)));
-    attachWorktreeMock.mockImplementation(() => Promise.resolve(ok(undefined)));
+    addWorktreeMock.mockImplementation(() => Promise.resolve(undefined));
 
     const result = await attachWorktreeCore(
       "/repo",
@@ -76,10 +77,13 @@ describe("attachWorktreeCore", () => {
       "/repo",
       "feature-branch",
     ]);
-    deepStrictEqual(attachWorktreeMock.mock.calls[0], [
-      "/repo",
-      "/repo/.git/phantom/worktrees/feature-branch",
-      "feature-branch",
+    deepStrictEqual(addWorktreeMock.mock.calls[0], [
+      {
+        path: "/repo/.git/phantom/worktrees/feature-branch",
+        branch: "feature-branch",
+        createBranch: false,
+        cwd: "/repo",
+      },
     ]);
   });
 
@@ -157,7 +161,7 @@ describe("attachWorktreeCore", () => {
       deepStrictEqual(result.error.message, "Branch 'non-existent' not found");
     }
 
-    deepStrictEqual(attachWorktreeMock.mock.calls.length, 0);
+    deepStrictEqual(addWorktreeMock.mock.calls.length, 0);
   });
 
   it("should pass through git attach errors", async () => {
@@ -165,8 +169,8 @@ describe("attachWorktreeCore", () => {
     validateWorktreeNameMock.mockImplementation(() => ok(undefined));
     existsSyncMock.mockImplementation(() => false);
     branchExistsMock.mockImplementation(() => Promise.resolve(ok(true)));
-    attachWorktreeMock.mockImplementation(() =>
-      Promise.resolve(err(new Error("Git operation failed"))),
+    addWorktreeMock.mockImplementation(() =>
+      Promise.reject(new Error("Git operation failed")),
     );
 
     const result = await attachWorktreeCore(
@@ -206,7 +210,7 @@ describe("attachWorktreeCore", () => {
       deepStrictEqual(result.error.message, "Failed to check branch");
     }
 
-    deepStrictEqual(attachWorktreeMock.mock.calls.length, 0);
+    deepStrictEqual(addWorktreeMock.mock.calls.length, 0);
   });
 
   it("replaces slashes in directory names when separator is configured", async () => {
@@ -214,7 +218,7 @@ describe("attachWorktreeCore", () => {
     validateWorktreeNameMock.mockImplementation(() => ok(undefined));
     existsSyncMock.mockImplementation(() => false);
     branchExistsMock.mockImplementation(() => Promise.resolve(ok(true)));
-    attachWorktreeMock.mockImplementation(() => Promise.resolve(ok(undefined)));
+    addWorktreeMock.mockImplementation(() => Promise.resolve(undefined));
     getWorktreePathFromDirectoryMock.mockImplementation(
       (_worktreeDirectory: string, name: string, separator = "/") =>
         `/repo/.git/phantom/worktrees/${name.replaceAll("/", separator)}`,
@@ -235,10 +239,13 @@ describe("attachWorktreeCore", () => {
       "feature/test",
       "-",
     ]);
-    deepStrictEqual(attachWorktreeMock.mock.calls[0], [
-      "/repo",
-      "/repo/.git/phantom/worktrees/feature-test",
-      "feature/test",
+    deepStrictEqual(addWorktreeMock.mock.calls[0], [
+      {
+        path: "/repo/.git/phantom/worktrees/feature-test",
+        branch: "feature/test",
+        createBranch: false,
+        cwd: "/repo",
+      },
     ]);
   });
 });

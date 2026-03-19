@@ -2,11 +2,12 @@ import { parseArgs } from "node:util";
 import {
   createContext,
   deleteWorktree as deleteWorktreeCore,
+  getCurrentWorktreeName,
   selectWorktreeWithFzf,
   WorktreeError,
   WorktreeNotFoundError,
 } from "@phantompane/core";
-import { getCurrentWorktree, getGitRoot } from "@phantompane/git";
+import { getGitRoot } from "@phantompane/git";
 import { isErr } from "@phantompane/shared";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
@@ -63,7 +64,7 @@ export async function deleteHandler(args: string[]): Promise<void> {
 
     const worktreeNames: string[] = [];
     if (deleteCurrent) {
-      const currentWorktree = await getCurrentWorktree(gitRoot);
+      const currentWorktree = await getCurrentWorktreeName(gitRoot);
       if (!currentWorktree) {
         exitWithError(
           "Not in a worktree directory. The --current option can only be used from within a worktree.",

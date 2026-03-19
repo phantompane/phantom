@@ -1,6 +1,7 @@
 import { relative } from "node:path";
 import {
-  executeGitCommandInDirectory,
+  getCurrentBranch,
+  getStatus,
   listWorktrees as gitListWorktrees,
 } from "@phantompane/git";
 import { ok, type Result } from "@phantompane/shared";
@@ -25,11 +26,7 @@ export interface ListWorktreesOptions {
 
 export async function getWorktreeBranch(worktreePath: string): Promise<string> {
   try {
-    const { stdout } = await executeGitCommandInDirectory(worktreePath, [
-      "branch",
-      "--show-current",
-    ]);
-    return stdout || "(detached HEAD)";
+    return (await getCurrentBranch({ cwd: worktreePath })) || "(detached HEAD)";
   } catch {
     return "unknown";
   }
@@ -39,11 +36,8 @@ export async function getWorktreeStatus(
   worktreePath: string,
 ): Promise<boolean> {
   try {
-    const { stdout } = await executeGitCommandInDirectory(worktreePath, [
-      "status",
-      "--porcelain",
-    ]);
-    return !stdout; // Clean if no output
+    const status = await getStatus({ cwd: worktreePath });
+    return status.isClean;
   } catch {
     // If git status fails, assume clean
     return true;

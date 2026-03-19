@@ -1,4 +1,4 @@
-import { executeGitCommand } from "@phantompane/git";
+import { configGetRegexp } from "@phantompane/git";
 import { z } from "zod";
 
 export interface Preferences {
@@ -75,13 +75,11 @@ function parsePreferences(output: string): Preferences {
 }
 
 export async function loadPreferences(): Promise<Preferences> {
-  const { stdout } = await executeGitCommand([
-    "config",
-    "--global",
-    "--null",
-    "--get-regexp",
-    "^phantom\\.",
-  ]);
+  const stdout = await configGetRegexp({
+    pattern: "^phantom\\.",
+    global: true,
+    nullSeparated: true,
+  });
 
   return parsePreferences(stdout);
 }

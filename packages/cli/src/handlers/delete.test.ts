@@ -9,7 +9,7 @@ const consoleErrorMock = vi.fn();
 const getGitRootMock = vi.fn();
 const deleteWorktreeMock = vi.fn();
 const selectWorktreeWithFzfMock = vi.fn();
-const getCurrentWorktreeMock = vi.fn();
+const getCurrentWorktreeNameMock = vi.fn();
 const exitWithErrorMock = vi.fn((message, code) => {
   consoleErrorMock(`Error: ${message}`);
   exitMock(code);
@@ -35,11 +35,11 @@ afterAll(() => {
 
 vi.doMock("@phantompane/git", () => ({
   getGitRoot: getGitRootMock,
-  getCurrentWorktree: getCurrentWorktreeMock,
 }));
 
 vi.doMock("@phantompane/core", () => ({
   deleteWorktree: deleteWorktreeMock,
+  getCurrentWorktreeName: getCurrentWorktreeNameMock,
   selectWorktreeWithFzf: selectWorktreeWithFzfMock,
   WorktreeError,
   WorktreeNotFoundError,
@@ -85,7 +85,7 @@ describe("deleteHandler", () => {
     getGitRootMock.mockClear();
     deleteWorktreeMock.mockClear();
     selectWorktreeWithFzfMock.mockClear();
-    getCurrentWorktreeMock.mockClear();
+    getCurrentWorktreeNameMock.mockClear();
     exitWithErrorMock.mockClear();
     exitWithSuccessMock.mockClear();
   };
@@ -173,7 +173,7 @@ describe("deleteHandler", () => {
   it("should delete current worktree with --current option", async () => {
     resetMocks();
     getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
-    getCurrentWorktreeMock.mockImplementation(() =>
+    getCurrentWorktreeNameMock.mockImplementation(() =>
       Promise.resolve("issues/93"),
     );
     deleteWorktreeMock.mockImplementation(() =>
@@ -189,8 +189,8 @@ describe("deleteHandler", () => {
       /Exit with code 0: success/,
     );
 
-    strictEqual(getCurrentWorktreeMock.mock.calls.length, 1);
-    strictEqual(getCurrentWorktreeMock.mock.calls[0][0], "/test/repo");
+    strictEqual(getCurrentWorktreeNameMock.mock.calls.length, 1);
+    strictEqual(getCurrentWorktreeNameMock.mock.calls[0][0], "/test/repo");
 
     strictEqual(deleteWorktreeMock.mock.calls.length, 1);
     strictEqual(deleteWorktreeMock.mock.calls[0][0], "/test/repo");
@@ -214,14 +214,14 @@ describe("deleteHandler", () => {
   it("should error when --current is used outside a worktree", async () => {
     resetMocks();
     getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
-    getCurrentWorktreeMock.mockImplementation(() => Promise.resolve(null));
+    getCurrentWorktreeNameMock.mockImplementation(() => Promise.resolve(null));
 
     await rejects(
       async () => await deleteHandler(["--current"]),
       /Exit with code 3: Not in a worktree directory/,
     );
 
-    strictEqual(getCurrentWorktreeMock.mock.calls.length, 1);
+    strictEqual(getCurrentWorktreeNameMock.mock.calls.length, 1);
     strictEqual(consoleErrorMock.mock.calls.length, 2); // exitWithError is called twice - once in the handler, once in the catch block
     strictEqual(
       consoleErrorMock.mock.calls[0][0],
@@ -271,7 +271,9 @@ describe("deleteHandler", () => {
   it("should handle force deletion with --current", async () => {
     resetMocks();
     getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
-    getCurrentWorktreeMock.mockImplementation(() => Promise.resolve("feature"));
+    getCurrentWorktreeNameMock.mockImplementation(() =>
+      Promise.resolve("feature"),
+    );
     deleteWorktreeMock.mockImplementation(() =>
       Promise.resolve(
         ok({

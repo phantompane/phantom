@@ -7,6 +7,7 @@ export * from "./preferences/loader.ts";
 export * from "./shell.ts";
 export * from "./worktree/attach.ts";
 export * from "./worktree/create.ts";
+export * from "./worktree/current.ts";
 export * from "./worktree/delete.ts";
 export * from "./worktree/errors.ts";
 export * from "./worktree/file-copier.ts";

@@ -1,7 +1,16 @@
 import { existsSync } from "node:fs";
-import { attachWorktree, branchExists } from "@phantompane/git";
+import { getGitRoot, addWorktree, branchExists } from "@phantompane/git";
 import { err, isErr, ok, type Result } from "@phantompane/shared";
+import { createContext } from "../context.ts";
 import { getWorktreePathFromDirectory } from "../paths.ts";
+import {
+  mergeWorktreeCopyFiles,
+  resolveWorktreeAction,
+  runWorktreeAction,
+  validateWorktreeAction,
+  type WorktreeActionOptions,
+  type WorktreeLogger,
+} from "./action.ts";
 import {
   BranchNotFoundError,
   WorktreeAlreadyExistsError,
@@ -12,6 +21,18 @@ import {
   executePostCreateCommands,
 } from "./post-create.ts";
 import { validateWorktreeName } from "./validate.ts";
+
+export interface RunAttachWorktreeOptions {
+  name: string;
+  copyFiles?: string[];
+  action?: WorktreeActionOptions;
+  logger?: WorktreeLogger;
+}
+
+export interface RunAttachWorktreeSuccess {
+  name: string;
+  path: string;
+}
 
 export async function attachWorktreeCore(
   gitRoot: string,
@@ -44,12 +65,21 @@ export async function attachWorktreeCore(
     return err(new BranchNotFoundError(name));
   }
 
-  const attachResult = await attachWorktree(gitRoot, worktreePath, name);
-  if (isErr(attachResult)) {
-    return err(attachResult.error);
+  try {
+    await addWorktree({
+      path: worktreePath,
+      branch: name,
+      createBranch: false,
+      cwd: gitRoot,
+    });
+  } catch (error) {
+    return err(
+      error instanceof Error
+        ? error
+        : new Error(`Failed to attach worktree: ${String(error)}`),
+    );
   }
 
-  // Execute postCreate hooks
   if (postCreateCopyFiles && postCreateCopyFiles.length > 0) {
     const copyResult = await copyFilesToWorktree(
       gitRoot,
@@ -59,7 +89,6 @@ export async function attachWorktreeCore(
       directoryNameSeparator,
     );
     if (isErr(copyResult)) {
-      // Don't fail attach, just warn
       console.warn(
         `Warning: Failed to copy some files: ${copyResult.error.message}`,
       );
@@ -80,4 +109,61 @@ export async function attachWorktreeCore(
   }
 
   return ok(worktreePath);
+}
+
+export async function runAttachWorktree(
+  options: RunAttachWorktreeOptions,
+): Promise<Result<RunAttachWorktreeSuccess>> {
+  const actionResult = resolveWorktreeAction(options.action);
+  if (isErr(actionResult)) {
+    return actionResult;
+  }
+
+  const actionValidation = await validateWorktreeAction(actionResult.value);
+  if (isErr(actionValidation)) {
+    return actionValidation;
+  }
+
+  try {
+    const gitRoot = await getGitRoot();
+    const context = await createContext(gitRoot);
+
+    const filesToCopy = mergeWorktreeCopyFiles(
+      context.config?.postCreate?.copyFiles,
+      options.copyFiles,
+    );
+
+    const attachResult = await attachWorktreeCore(
+      context.gitRoot,
+      context.worktreesDirectory,
+      options.name,
+      filesToCopy,
+      context.config?.postCreate?.commands,
+      context.directoryNameSeparator,
+    );
+    if (isErr(attachResult)) {
+      return err(attachResult.error);
+    }
+
+    options.logger?.log(`Attached phantom: ${options.name}`);
+
+    const worktreeActionResult = await runWorktreeAction({
+      gitRoot: context.gitRoot,
+      worktreeDirectory: context.worktreesDirectory,
+      worktreeName: options.name,
+      worktreePath: attachResult.value,
+      action: actionResult.value,
+      logger: options.logger,
+    });
+    if (isErr(worktreeActionResult)) {
+      return err(worktreeActionResult.error);
+    }
+
+    return ok({
+      name: options.name,
+      path: attachResult.value,
+    });
+  } catch (error) {
+    return err(error instanceof Error ? error : new Error(String(error)));
+  }
 }

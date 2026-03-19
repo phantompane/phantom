@@ -1,6 +1,7 @@
 import {
-  executeGitCommand,
-  executeGitCommandInDirectory,
+  deleteBranch as gitDeleteBranch,
+  getStatus,
+  removeWorktree as gitRemoveWorktree,
 } from "@phantompane/git";
 import { err, isErr, isOk, ok, type Result } from "@phantompane/shared";
 import { WorktreeError, type WorktreeNotFoundError } from "./errors.ts";
@@ -26,14 +27,11 @@ export async function getWorktreeChangesStatus(
   worktreePath: string,
 ): Promise<WorktreeStatus> {
   try {
-    const { stdout } = await executeGitCommandInDirectory(worktreePath, [
-      "status",
-      "--porcelain",
-    ]);
-    if (stdout) {
+    const status = await getStatus({ cwd: worktreePath });
+    if (!status.isClean) {
       return {
         hasUncommittedChanges: true,
-        changedFiles: stdout.split("\n").length,
+        changedFiles: status.entries.length,
       };
     }
   } catch {
@@ -50,14 +48,10 @@ export async function removeWorktree(
   worktreePath: string,
   force = false,
 ): Promise<void> {
-  const args = ["worktree", "remove"];
-  if (force) {
-    args.push("--force");
-  }
-  args.push(worktreePath);
-
-  await executeGitCommand(args, {
-    cwd: gitRoot,
+  await gitRemoveWorktree({
+    gitRoot,
+    path: worktreePath,
+    force,
   });
 }
 
@@ -66,7 +60,10 @@ export async function deleteBranch(
   branchName: string,
 ): Promise<Result<boolean, WorktreeError>> {
   try {
-    await executeGitCommand(["branch", "-D", branchName], { cwd: gitRoot });
+    await gitDeleteBranch({
+      gitRoot,
+      branch: branchName,
+    });
     return ok(true);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

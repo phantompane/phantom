@@ -1,37 +1,19 @@
 import { deepStrictEqual, ok } from "node:assert";
-import type { ExecFileException } from "node:child_process";
 import { normalize } from "node:path";
 import { describe, it, vi } from "vitest";
 
-const execFileMock = vi.fn();
+const gitListWorktreesMock = vi.fn();
+const getStatusMock = vi.fn();
 
 const mockCwd = () =>
   vi.spyOn(process, "cwd").mockImplementation(() => "/test/repo");
 
-vi.doMock("node:child_process", () => ({
-  execFile: (
-    cmd: string,
-    args: string[],
-    options: { cwd?: string; env?: NodeJS.ProcessEnv; encoding: string },
-    callback?: (
-      error: ExecFileException | null,
-      result?: { stdout: string; stderr: string },
-    ) => void,
-  ) => {
-    const result = execFileMock(cmd, args, options);
-    if (callback) {
-      result.then(
-        (res: { stdout: string; stderr: string }) => callback(null, res),
-        (err: ExecFileException) => callback(err),
-      );
-    }
-    return {};
-  },
+vi.doMock("@phantompane/git", () => ({
+  listWorktrees: gitListWorktreesMock,
+  getStatus: getStatusMock,
+  getCurrentBranch: vi.fn(),
 }));
 
-vi.doMock("node:util", () => ({
-  promisify: () => execFileMock,
-}));
 const { listWorktrees } = await import("./list.ts");
 
 const normalizeWorktrees = (
@@ -49,22 +31,42 @@ const normalizeWorktrees = (
     pathToDisplay: normalize(worktree.pathToDisplay),
   }));
 
+const cleanStatus = () => ({
+  entries: [],
+  isClean: true,
+});
+
+const dirtyStatus = (path: string) => ({
+  entries: [
+    {
+      indexStatus: "M",
+      workingTreeStatus: " ",
+      path,
+      originalPath: undefined,
+    },
+  ],
+  isClean: false,
+});
+
 describe("listWorktrees", () => {
-  it("should include root-level worktree when only root exists", async () => {
+  const resetMocks = () => {
+    gitListWorktreesMock.mockReset();
+    getStatusMock.mockReset();
+  };
+
+  it("includes the root worktree when only the main worktree exists", async () => {
+    resetMocks();
     const cwdMock = mockCwd();
-    execFileMock.mockImplementation((_cmd, _args, _options) => {
-      if (_args.includes("worktree") && _args.includes("list")) {
-        return Promise.resolve({
-          stdout:
-            "worktree /test/repo\nHEAD abc123\nbranch refs/heads/main\n\n",
-          stderr: "",
-        });
-      }
-      if (_args.includes("status") && _args.includes("--porcelain")) {
-        return Promise.resolve({ stdout: "", stderr: "" });
-      }
-      return Promise.resolve({ stdout: "", stderr: "" });
-    });
+    gitListWorktreesMock.mockResolvedValue([
+      {
+        path: "/test/repo",
+        branch: "main",
+        head: "abc123",
+        isLocked: false,
+        isPrunable: false,
+      },
+    ]);
+    getStatusMock.mockResolvedValue(cleanStatus());
 
     const result = await listWorktrees("/test/repo");
 
@@ -82,28 +84,22 @@ describe("listWorktrees", () => {
           },
         ]),
       );
-      deepStrictEqual(result.value.message, undefined);
     }
 
-    execFileMock.mockClear();
     cwdMock.mockRestore();
   });
 
-  it("should return empty array when excluding default worktree", async () => {
-    const cwdMock = mockCwd();
-    execFileMock.mockImplementation((_cmd, _args, _options) => {
-      if (_args.includes("worktree") && _args.includes("list")) {
-        return Promise.resolve({
-          stdout:
-            "worktree /test/repo\nHEAD abc123\nbranch refs/heads/main\n\n",
-          stderr: "",
-        });
-      }
-      if (_args.includes("status") && _args.includes("--porcelain")) {
-        return Promise.resolve({ stdout: "", stderr: "" });
-      }
-      return Promise.resolve({ stdout: "", stderr: "" });
-    });
+  it("returns an empty list when excluding the default worktree", async () => {
+    resetMocks();
+    gitListWorktreesMock.mockResolvedValue([
+      {
+        path: "/test/repo",
+        branch: "main",
+        head: "abc123",
+        isLocked: false,
+        isPrunable: false,
+      },
+    ]);
 
     const result = await listWorktrees("/test/repo", {
       excludeDefault: true,
@@ -114,36 +110,41 @@ describe("listWorktrees", () => {
       deepStrictEqual(result.value.worktrees, []);
       deepStrictEqual(result.value.message, "No sub worktrees found");
     }
-
-    execFileMock.mockClear();
-    cwdMock.mockRestore();
   });
 
-  it("should list worktrees with clean status", async () => {
+  it("maps clean and dirty worktrees", async () => {
+    resetMocks();
     const cwdMock = mockCwd();
-    execFileMock.mockImplementation((_cmd, _args, _options) => {
-      if (_args.includes("worktree") && _args.includes("list")) {
-        return Promise.resolve({
-          stdout: `worktree /test/repo
-HEAD abc123
-branch refs/heads/main
-
-worktree /test/repo/.git/phantom/worktrees/feature-1
-HEAD def456
-branch refs/heads/feature-1
-
-worktree /test/repo/.git/phantom/worktrees/feature-2
-HEAD ghi789
-branch refs/heads/feature-2
-`,
-          stderr: "",
-        });
-      }
-      if (_args.includes("status") && _args.includes("--porcelain")) {
-        return Promise.resolve({ stdout: "", stderr: "" });
-      }
-      return Promise.resolve({ stdout: "", stderr: "" });
-    });
+    gitListWorktreesMock.mockResolvedValue([
+      {
+        path: "/test/repo",
+        branch: "main",
+        head: "abc123",
+        isLocked: false,
+        isPrunable: false,
+      },
+      {
+        path: "/test/repo/.git/phantom/worktrees/feature-1",
+        branch: "feature-1",
+        head: "def456",
+        isLocked: false,
+        isPrunable: false,
+      },
+      {
+        path: "/test/repo/.git/phantom/worktrees/dirty-feature",
+        branch: "dirty-feature",
+        head: "ghi789",
+        isLocked: false,
+        isPrunable: false,
+      },
+    ]);
+    getStatusMock.mockImplementation(({ cwd }: { cwd: string }) =>
+      Promise.resolve(
+        cwd.endsWith("/dirty-feature")
+          ? dirtyStatus("file.txt")
+          : cleanStatus(),
+      ),
+    );
 
     const result = await listWorktrees("/test/repo");
 
@@ -167,63 +168,6 @@ branch refs/heads/feature-2
             isClean: true,
           },
           {
-            name: "feature-2",
-            path: "/test/repo/.git/phantom/worktrees/feature-2",
-            pathToDisplay: ".git/phantom/worktrees/feature-2",
-            branch: "feature-2",
-            isClean: true,
-          },
-        ]),
-      );
-    }
-
-    execFileMock.mockClear();
-    cwdMock.mockRestore();
-  });
-
-  it("should handle worktrees with dirty status", async () => {
-    const cwdMock = mockCwd();
-    execFileMock.mockImplementation((_cmd, _args, _options) => {
-      if (_args.includes("worktree") && _args.includes("list")) {
-        return Promise.resolve({
-          stdout: `worktree /test/repo
-HEAD abc123
-branch refs/heads/main
-
-worktree /test/repo/.git/phantom/worktrees/dirty-feature
-HEAD def456
-branch refs/heads/dirty-feature
-`,
-          stderr: "",
-        });
-      }
-      if (_args.includes("status") && _args.includes("--porcelain")) {
-        const isDirtyFeature = _args.includes(
-          "/test/repo/.git/phantom/worktrees/dirty-feature",
-        );
-        return Promise.resolve({
-          stdout: isDirtyFeature ? "M file.txt\n" : "",
-          stderr: "",
-        });
-      }
-      return Promise.resolve({ stdout: "", stderr: "" });
-    });
-
-    const result = await listWorktrees("/test/repo");
-
-    ok(result.ok);
-    if (result.ok) {
-      deepStrictEqual(
-        normalizeWorktrees(result.value.worktrees),
-        normalizeWorktrees([
-          {
-            name: "main",
-            path: "/test/repo",
-            pathToDisplay: ".",
-            branch: "main",
-            isClean: true,
-          },
-          {
             name: "dirty-feature",
             path: "/test/repo/.git/phantom/worktrees/dirty-feature",
             pathToDisplay: ".git/phantom/worktrees/dirty-feature",
@@ -234,31 +178,29 @@ branch refs/heads/dirty-feature
       );
     }
 
-    execFileMock.mockClear();
     cwdMock.mockRestore();
   });
 
-  it("should handle detached HEAD state", async () => {
+  it("uses the short HEAD for detached worktrees", async () => {
+    resetMocks();
     const cwdMock = mockCwd();
-    execFileMock.mockImplementation((_cmd, _args, _options) => {
-      if (_args.includes("worktree") && _args.includes("list")) {
-        return Promise.resolve({
-          stdout: `worktree /test/repo
-HEAD abc123
-branch refs/heads/main
-
-worktree /test/repo/.git/phantom/worktrees/detached
-HEAD def456
-detached
-`,
-          stderr: "",
-        });
-      }
-      if (_args.includes("status") && _args.includes("--porcelain")) {
-        return Promise.resolve({ stdout: "", stderr: "" });
-      }
-      return Promise.resolve({ stdout: "", stderr: "" });
-    });
+    gitListWorktreesMock.mockResolvedValue([
+      {
+        path: "/test/repo",
+        branch: "main",
+        head: "abc123",
+        isLocked: false,
+        isPrunable: false,
+      },
+      {
+        path: "/test/repo/.git/phantom/worktrees/detached",
+        branch: "(detached HEAD)",
+        head: "def4567890",
+        isLocked: false,
+        isPrunable: false,
+      },
+    ]);
+    getStatusMock.mockResolvedValue(cleanStatus());
 
     const result = await listWorktrees("/test/repo");
 
@@ -275,49 +217,53 @@ detached
             isClean: true,
           },
           {
-            name: "def456",
+            name: "def4567",
             path: "/test/repo/.git/phantom/worktrees/detached",
             pathToDisplay: ".git/phantom/worktrees/detached",
-            branch: "def456",
+            branch: "def4567",
             isClean: true,
           },
         ]),
       );
     }
 
-    execFileMock.mockClear();
     cwdMock.mockRestore();
   });
 
-  it("should include non-phantom worktrees including root siblings", async () => {
+  it("includes non-phantom worktrees and sibling paths", async () => {
+    resetMocks();
     const cwdMock = mockCwd();
-    execFileMock.mockImplementation((_cmd, _args, _options) => {
-      if (_args.includes("worktree") && _args.includes("list")) {
-        return Promise.resolve({
-          stdout: `worktree /test/repo
-HEAD abc123
-branch refs/heads/main
-
-worktree /test/repo/.git/phantom/worktrees/phantom-feature
-HEAD def456
-branch refs/heads/phantom-feature
-
-worktree /test/repo/other-worktree
-HEAD ghi789
-branch refs/heads/other-feature
-
-worktree /test/other-worktree-sibling
-HEAD jkl012
-branch refs/heads/sibling-feature
-`,
-          stderr: "",
-        });
-      }
-      if (_args.includes("status") && _args.includes("--porcelain")) {
-        return Promise.resolve({ stdout: "", stderr: "" });
-      }
-      return Promise.resolve({ stdout: "", stderr: "" });
-    });
+    gitListWorktreesMock.mockResolvedValue([
+      {
+        path: "/test/repo",
+        branch: "main",
+        head: "abc123",
+        isLocked: false,
+        isPrunable: false,
+      },
+      {
+        path: "/test/repo/.git/phantom/worktrees/phantom-feature",
+        branch: "phantom-feature",
+        head: "def456",
+        isLocked: false,
+        isPrunable: false,
+      },
+      {
+        path: "/test/repo/other-worktree",
+        branch: "other-feature",
+        head: "ghi789",
+        isLocked: false,
+        isPrunable: false,
+      },
+      {
+        path: "/test/other-worktree-sibling",
+        branch: "sibling-feature",
+        head: "jkl012",
+        isLocked: false,
+        isPrunable: false,
+      },
+    ]);
+    getStatusMock.mockResolvedValue(cleanStatus());
 
     const result = await listWorktrees("/test/repo");
 
@@ -358,21 +304,12 @@ branch refs/heads/sibling-feature
       );
     }
 
-    execFileMock.mockClear();
     cwdMock.mockRestore();
   });
 
-  it("should return message when no worktrees are returned", async () => {
-    const cwdMock = mockCwd();
-    execFileMock.mockImplementation((_cmd, _args, _options) => {
-      if (_args.includes("worktree") && _args.includes("list")) {
-        return Promise.resolve({
-          stdout: "",
-          stderr: "",
-        });
-      }
-      return Promise.resolve({ stdout: "", stderr: "" });
-    });
+  it("returns a message when no worktrees are returned", async () => {
+    resetMocks();
+    gitListWorktreesMock.mockResolvedValue([]);
 
     const result = await listWorktrees("/test/repo");
 
@@ -381,8 +318,5 @@ branch refs/heads/sibling-feature
       deepStrictEqual(result.value.worktrees, []);
       deepStrictEqual(result.value.message, "No worktrees found");
     }
-
-    execFileMock.mockClear();
-    cwdMock.mockRestore();
   });
 });

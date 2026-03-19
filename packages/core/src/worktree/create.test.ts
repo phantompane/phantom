@@ -65,6 +65,7 @@ vi.doMock("./validate.ts", () => ({
 
 vi.doMock("@phantompane/git", () => ({
   addWorktree: addWorktreeMock,
+  getGitRoot: vi.fn(),
 }));
 
 vi.doMock("../paths.ts", () => ({
@@ -277,6 +278,43 @@ describe("createWorktree", () => {
         "/test/repo/.git/phantom/worktrees/feature-test",
       );
     }
+  });
+
+  it("merges explicit and post-create copy files without duplicates", async () => {
+    resetMocks();
+    accessMock.mockImplementation(() => Promise.resolve());
+    validateWorktreeNameMock.mockImplementation(() => ok(undefined));
+    validateWorktreeDoesNotExistMock.mockImplementation(() =>
+      Promise.resolve(ok(undefined)),
+    );
+    addWorktreeMock.mockImplementation(() => Promise.resolve());
+    copyFilesMock.mockImplementation(() =>
+      Promise.resolve(
+        ok({
+          copiedFiles: [".env", "config.json", ".npmrc"],
+          skippedFiles: [],
+        }),
+      ),
+    );
+
+    const result = await createWorktree(
+      "/test/repo",
+      "/test/repo/.git/phantom/worktrees",
+      "feature",
+      {
+        copyFiles: [".env", "config.json"],
+      },
+      [".env", ".npmrc"],
+      undefined,
+      "/",
+    );
+
+    strictEqual(isOk(result), true);
+    deepStrictEqual(copyFilesMock.mock.calls[0], [
+      "/test/repo",
+      "/test/repo/.git/phantom/worktrees/feature",
+      [".env", "config.json", ".npmrc"],
+    ]);
   });
 
   describe("with different worktree directories", () => {

@@ -1,4 +1,4 @@
-import { executeGitCommand } from "@phantompane/git";
+import { configSet } from "@phantompane/git";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 
@@ -36,12 +36,11 @@ export async function preferencesSetHandler(args: string[]): Promise<void> {
   }
 
   try {
-    await executeGitCommand([
-      "config",
-      "--global",
-      `phantom.${inputKey}`,
+    await configSet({
+      key: `phantom.${inputKey}`,
       value,
-    ]);
+      global: true,
+    });
 
     output.log(`Set phantom.${inputKey} (global) to '${value}'`);
     exitWithSuccess();
