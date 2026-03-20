@@ -1,5 +1,6 @@
 import assert from "node:assert";
-import { access } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, beforeEach, it } from "vitest";
 import {
   describeE2E,
@@ -62,5 +63,77 @@ describeE2E("phantom create e2e", () => {
 
     assert.strictEqual(result.exitCode, 3);
     assert.match(result.stderr, /Worktree 'feature\/add-tests' already exists/);
+  });
+
+  it("copies files configured in phantom.config.json", async () => {
+    await writeFile(join(repo.repoDir, ".env.local"), "API_KEY=test-value\n");
+    await writeFile(
+      join(repo.repoDir, "phantom.config.json"),
+      JSON.stringify(
+        {
+          postCreate: {
+            copyFiles: [".env.local"],
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = await runCommand(
+      "phantom",
+      ["create", "feature/config-copy-files"],
+      {
+        cwd: repo.repoDir,
+        env: repo.env,
+      },
+    );
+
+    assert.strictEqual(result.exitCode, 0, result.stderr);
+
+    const worktreePath = getWorktreePath(
+      repo.repoDir,
+      "feature/config-copy-files",
+    );
+    const copiedFileContent = await readFile(
+      join(worktreePath, ".env.local"),
+      "utf-8",
+    );
+
+    assert.strictEqual(copiedFileContent, "API_KEY=test-value\n");
+  });
+
+  it("runs postCreate commands configured in phantom.config.json", async () => {
+    await writeFile(
+      join(repo.repoDir, "phantom.config.json"),
+      JSON.stringify(
+        {
+          postCreate: {
+            commands: ["touch post-create.txt"],
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = await runCommand(
+      "phantom",
+      ["create", "feature/config-post-create"],
+      {
+        cwd: repo.repoDir,
+        env: repo.env,
+      },
+    );
+
+    assert.strictEqual(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /Running post-create commands/);
+    assert.match(result.stdout, /Executing: touch post-create\.txt/);
+
+    const worktreePath = getWorktreePath(
+      repo.repoDir,
+      "feature/config-post-create",
+    );
+    await assert.doesNotReject(access(join(worktreePath, "post-create.txt")));
   });
 });
