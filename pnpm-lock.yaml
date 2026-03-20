@@ -37,6 +37,8 @@ importers:
         specifier: ^4.1.0
         version: 4.1.0(@types/node@25.3.5)(vite@8.0.0(@types/node@25.3.5))
 
+  e2e: {}
+
   packages/cli:
     dependencies:
       '@phantompane/core':

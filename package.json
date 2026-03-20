@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "turbo run build",
-    "test": "turbo run test",
+    "test": "turbo run test --filter=!@phantompane/e2e",
+    "test:e2e": "pnpm --filter @phantompane/e2e test",
     "test:shell": "pnpm --filter @phantompane/cli-private run test:shell",
     "test:shell:bash": "pnpm --filter @phantompane/cli-private run test:shell:bash",
     "test:shell:fish": "pnpm --filter @phantompane/cli-private run test:shell:fish",
