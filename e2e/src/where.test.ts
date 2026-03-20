@@ -1,119 +1,52 @@
 import assert from "node:assert";
-import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, it } from "vitest";
-
-const execFile = promisify(execFileCallback);
-const describeE2E = process.platform === "win32" ? describe.skip : describe;
-
-interface CommandResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
+import { afterEach, beforeEach, it } from "vitest";
+import {
+  assertCommand,
+  describeE2E,
+  getWorktreePath,
+  runCommand,
+  setupRepo,
+  type RepoContext,
+} from "./helpers.ts";
 
 describeE2E("phantom where e2e", () => {
-  let env: NodeJS.ProcessEnv;
-  let repoDir: string;
-  let rootDir: string;
+  let repo: RepoContext;
   let worktreePath: string;
 
   beforeEach(async () => {
-    rootDir = await mkdtemp("/tmp/phantom-e2e-");
-    repoDir = join(rootDir, "repo");
-    const homeDir = join(rootDir, "home");
-
-    await mkdir(repoDir, { recursive: true });
-    await mkdir(join(homeDir, ".config", "git"), { recursive: true });
-    await writeFile(join(homeDir, ".gitconfig"), "");
-
-    env = {
-      ...process.env,
-      GIT_CONFIG_NOSYSTEM: "1",
-      HOME: homeDir,
-      XDG_CONFIG_HOME: join(homeDir, ".config"),
-    };
-
-    await assertCommand(["git", ["init", "-b", "main"]]);
-    await assertCommand(["git", ["config", "user.name", "Phantom E2E"]]);
-    await assertCommand([
-      "git",
-      ["config", "user.email", "phantom-e2e@example.com"],
-    ]);
-    await writeFile(join(repoDir, "README.md"), "# phantom e2e\n");
-    await assertCommand(["git", ["add", "README.md"]]);
-    await assertCommand(["git", ["commit", "-m", "initial commit"]]);
-
-    worktreePath = join(repoDir, ".git", "phantom", "worktrees", "located");
-    await assertCommand([
+    repo = await setupRepo();
+    worktreePath = getWorktreePath(repo.repoDir, "located");
+    await assertCommand(
       "git",
       ["worktree", "add", "-b", "located", worktreePath, "HEAD"],
-    ]);
+      {
+        cwd: repo.repoDir,
+        env: repo.env,
+      },
+    );
   });
 
   afterEach(async () => {
-    await rm(rootDir, { recursive: true, force: true });
+    await repo.cleanup();
   });
 
   it("outputs the path of an existing worktree", async () => {
-    const result = await runCommand("phantom", ["where", "located"]);
+    const result = await runCommand("phantom", ["where", "located"], {
+      cwd: repo.repoDir,
+      env: repo.env,
+    });
 
     assert.strictEqual(result.exitCode, 0, result.stderr);
     assert.strictEqual(result.stdout, worktreePath);
   });
 
-  async function runCommand(
-    command: string,
-    args: string[],
-    cwd = repoDir,
-  ): Promise<CommandResult> {
-    try {
-      const result = await execFile(command, args, {
-        cwd,
-        env,
-        encoding: "utf8",
-      });
+  it("returns not found when the worktree does not exist", async () => {
+    const result = await runCommand("phantom", ["where", "missing-worktree"], {
+      cwd: repo.repoDir,
+      env: repo.env,
+    });
 
-      return {
-        exitCode: 0,
-        stdout: result.stdout.trimEnd(),
-        stderr: result.stderr.trimEnd(),
-      };
-    } catch (error) {
-      if (
-        error &&
-        typeof error === "object" &&
-        "stdout" in error &&
-        "stderr" in error
-      ) {
-        const execError = error as {
-          code?: number;
-          stdout: string;
-          stderr: string;
-        };
-
-        return {
-          exitCode: execError.code ?? 1,
-          stdout: execError.stdout.trimEnd(),
-          stderr: execError.stderr.trimEnd(),
-        };
-      }
-
-      throw error;
-    }
-  }
-
-  async function assertCommand(
-    [command, args]: [string, string[]],
-    cwd = repoDir,
-  ): Promise<void> {
-    const result = await runCommand(command, args, cwd);
-    assert.strictEqual(
-      result.exitCode,
-      0,
-      `${command} ${args.join(" ")} failed: ${result.stderr || result.stdout}`,
-    );
-  }
+    assert.strictEqual(result.exitCode, 2);
+    assert.match(result.stderr, /Worktree 'missing-worktree' not found/);
+  });
 });
