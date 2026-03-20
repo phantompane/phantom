@@ -6,6 +6,8 @@ const execFile = promisify(execFileCallback);
 export interface GitExecutorOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  trimStdout?: boolean;
+  trimStderr?: boolean;
 }
 
 export interface GitExecutorResult {
@@ -20,6 +22,9 @@ export async function executeGitCommand(
   args: string[],
   options: GitExecutorOptions = {},
 ): Promise<GitExecutorResult> {
+  const trimStdout = options.trimStdout ?? true;
+  const trimStderr = options.trimStderr ?? true;
+
   try {
     const result = await execFile("git", args, {
       cwd: options.cwd,
@@ -28,8 +33,8 @@ export async function executeGitCommand(
     });
 
     return {
-      stdout: result.stdout.trim(),
-      stderr: result.stderr.trim(),
+      stdout: trimStdout ? result.stdout.trim() : result.stdout,
+      stderr: trimStderr ? result.stderr.trim() : result.stderr,
     };
   } catch (error) {
     // Git commands often return non-zero exit codes for normal operations
@@ -54,8 +59,12 @@ export async function executeGitCommand(
 
       // Otherwise, return the output even though the exit code was non-zero
       return {
-        stdout: execError.stdout?.trim() || "",
-        stderr: execError.stderr?.trim() || "",
+        stdout: trimStdout
+          ? (execError.stdout?.trim() ?? "")
+          : (execError.stdout ?? ""),
+        stderr: trimStderr
+          ? (execError.stderr?.trim() ?? "")
+          : (execError.stderr ?? ""),
       };
     }
 

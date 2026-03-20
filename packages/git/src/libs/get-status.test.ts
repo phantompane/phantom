@@ -12,7 +12,7 @@ const { getStatus } = await import("./get-status.ts");
 describe("getStatus", () => {
   it("parses porcelain entries for the provided directory", async () => {
     executeGitCommandMock.mockResolvedValue({
-      stdout: "M  file.txt\nR  old.ts -> new.ts\n?? new-file.ts\n",
+      stdout: " M file.txt\nR  old.ts -> new.ts\n?? new-file.ts\n",
       stderr: "",
     });
 
@@ -23,8 +23,8 @@ describe("getStatus", () => {
     strictEqual(result.isClean, false);
     deepStrictEqual(result.entries, [
       {
-        indexStatus: "M",
-        workingTreeStatus: " ",
+        indexStatus: " ",
+        workingTreeStatus: "M",
         path: "file.txt",
         originalPath: undefined,
       },
@@ -43,7 +43,7 @@ describe("getStatus", () => {
     ]);
     deepStrictEqual(executeGitCommandMock.mock.calls[0], [
       ["status", "--porcelain"],
-      { cwd: "/repo/.git/phantom/worktrees/feature" },
+      { cwd: "/repo/.git/phantom/worktrees/feature", trimStdout: false },
     ]);
   });
 

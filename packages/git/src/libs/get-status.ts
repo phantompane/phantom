@@ -42,6 +42,7 @@ export async function getStatus(
 ): Promise<GitStatusResult> {
   const { stdout } = await executeGitCommand(["status", "--porcelain"], {
     cwd: options.cwd,
+    trimStdout: false,
   });
 
   const entries = stdout

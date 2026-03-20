@@ -6,7 +6,12 @@ import {
   WorktreeAlreadyExistsError,
 } from "@phantompane/core";
 import { isErr } from "@phantompane/shared";
-import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
+import {
+  exitCodes,
+  exitWithError,
+  exitWithSuccess,
+  getProcessExitCode,
+} from "../errors.ts";
 import { output } from "../output.ts";
 
 export async function createHandler(args: string[]): Promise<void> {
@@ -75,7 +80,7 @@ export async function createHandler(args: string[]): Promise<void> {
       result.error instanceof WorktreeActionConflictError ||
       result.error instanceof TmuxSessionRequiredError
         ? exitCodes.validationError
-        : exitCodes.generalError;
+        : (getProcessExitCode(result.error) ?? exitCodes.generalError);
     exitWithError(result.error.message, exitCode);
   }
 

@@ -7,7 +7,7 @@ import {
   WorktreeAlreadyExistsError,
 } from "@phantompane/core";
 import { isErr } from "@phantompane/shared";
-import { exitCodes, exitWithError } from "../errors.ts";
+import { exitCodes, exitWithError, getProcessExitCode } from "../errors.ts";
 import { output } from "../output.ts";
 
 export async function attachHandler(args: string[]): Promise<void> {
@@ -85,6 +85,9 @@ export async function attachHandler(args: string[]): Promise<void> {
     if (result.error instanceof BranchNotFoundError) {
       exitWithError(result.error.message, exitCodes.notFound);
     }
-    exitWithError(result.error.message, exitCodes.generalError);
+    exitWithError(
+      result.error.message,
+      getProcessExitCode(result.error) ?? exitCodes.generalError,
+    );
   }
 }

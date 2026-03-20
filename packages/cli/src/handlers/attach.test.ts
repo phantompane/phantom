@@ -34,6 +34,13 @@ vi.doMock("../errors.ts", () => ({
     generalError: 1,
     success: 0,
   },
+  getProcessExitCode: (error: unknown) =>
+    typeof error === "object" &&
+    error !== null &&
+    "exitCode" in error &&
+    typeof error.exitCode === "number"
+      ? error.exitCode
+      : undefined,
 }));
 
 vi.doMock("../output.ts", () => ({
@@ -120,6 +127,30 @@ describe("attachHandler", () => {
     deepStrictEqual(exitWithErrorMock.mock.calls[0], [
       "The --tmux option can only be used inside a tmux session",
       3,
+    ]);
+  });
+
+  it("preserves process error exit codes from core actions", async () => {
+    resetMocks();
+    runAttachWorktreeMock.mockResolvedValue(
+      err(
+        Object.assign(
+          new Error("Command '/bin/sh' failed with exit code 127"),
+          {
+            exitCode: 127,
+          },
+        ),
+      ),
+    );
+
+    await rejects(
+      async () => await attachHandler(["feature", "--exec", "missing-command"]),
+      /Exit with code 127/,
+    );
+
+    deepStrictEqual(exitWithErrorMock.mock.calls[0], [
+      "Command '/bin/sh' failed with exit code 127",
+      127,
     ]);
   });
 });

@@ -46,6 +46,13 @@ vi.doMock("../errors.ts", () => ({
   },
   exitWithError: exitWithErrorMock,
   exitWithSuccess: exitWithSuccessMock,
+  getProcessExitCode: (error: unknown) =>
+    typeof error === "object" &&
+    error !== null &&
+    "exitCode" in error &&
+    typeof error.exitCode === "number"
+      ? error.exitCode
+      : undefined,
 }));
 
 vi.doMock("../output.ts", () => ({
@@ -132,5 +139,26 @@ describe("createHandler", () => {
 
     strictEqual(exitMock.mock.calls[0][0], 0);
     strictEqual(exitWithSuccessMock.mock.calls.length, 0);
+  });
+
+  it("preserves process error exit codes from core actions", async () => {
+    resetMocks();
+    runCreateWorktreeMock.mockResolvedValue(
+      err(
+        Object.assign(
+          new Error("Command '/bin/sh' failed with exit code 127"),
+          {
+            exitCode: 127,
+          },
+        ),
+      ),
+    );
+
+    await rejects(
+      async () => await createHandler(["feature", "--exec", "missing-command"]),
+      /Exit with code 127/,
+    );
+
+    strictEqual(exitWithErrorMock.mock.calls[0][1], 127);
   });
 });
