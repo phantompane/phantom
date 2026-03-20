@@ -24,6 +24,7 @@ export interface CreateWorktreeOptions {
   branch?: string;
   base?: string;
   copyFiles?: string[];
+  logger?: WorktreeLogger;
 }
 
 export interface CreateWorktreeSuccess {
@@ -66,7 +67,12 @@ export async function createWorktree(
     return nameValidation;
   }
 
-  const { branch = name, base = "HEAD" } = options;
+  const {
+    branch = name,
+    base = "HEAD",
+    copyFiles: requestedCopyFiles,
+    logger,
+  } = options;
 
   const worktreePath = getWorktreePathFromDirectory(
     worktreeDirectory,
@@ -101,7 +107,7 @@ export async function createWorktree(
     let copyError: string | undefined;
 
     const filesToCopy = mergeWorktreeCopyFiles(
-      options.copyFiles,
+      requestedCopyFiles,
       postCreateCopyFiles,
     );
 
@@ -117,12 +123,13 @@ export async function createWorktree(
     }
 
     if (postCreateCommands && postCreateCommands.length > 0) {
-      console.log("\nRunning post-create commands...");
+      logger?.log?.("\nRunning post-create commands...");
       const commandsResult = await executePostCreateCommands({
         gitRoot,
         worktreesDirectory: worktreeDirectory,
         worktreeName: name,
         commands: postCreateCommands,
+        logger,
       });
       if (isErr(commandsResult)) {
         return err(new WorktreeError(commandsResult.error.message));
@@ -183,8 +190,10 @@ export async function runCreateWorktree(
       worktreeName,
       {
         base: options.base,
+        copyFiles: filesToCopy,
+        logger: options.logger,
       },
-      filesToCopy,
+      undefined,
       context.config?.postCreate?.commands,
       context.directoryNameSeparator,
     );

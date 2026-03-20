@@ -3,21 +3,20 @@ import { describe, it, vi } from "vitest";
 import { err, isErr, isOk, ok } from "@phantompane/shared";
 
 const execInWorktreeMock = vi.fn();
-const consoleLogMock = vi.fn();
+const logger = {
+  log: vi.fn(),
+};
 
 vi.doMock("../exec.ts", () => ({
   execInWorktree: execInWorktreeMock,
 }));
-
-// Mock console.log
-console.log = consoleLogMock;
 
 const { executePostCreateCommands } = await import("./post-create.ts");
 
 describe("executePostCreateCommands", () => {
   it("should execute commands successfully", async () => {
     execInWorktreeMock.mockClear();
-    consoleLogMock.mockClear();
+    logger.log.mockClear();
     execInWorktreeMock.mockImplementation(() =>
       Promise.resolve(ok({ exitCode: 0, stdout: "", stderr: "" })),
     );
@@ -27,6 +26,7 @@ describe("executePostCreateCommands", () => {
       worktreesDirectory: "/repo/.git/phantom/worktrees",
       worktreeName: "test",
       commands: ["echo 'test'", "ls"],
+      logger,
     });
 
     deepStrictEqual(isOk(result), true);
@@ -34,9 +34,9 @@ describe("executePostCreateCommands", () => {
       deepStrictEqual(result.value.executedCommands, ["echo 'test'", "ls"]);
     }
     deepStrictEqual(execInWorktreeMock.mock.calls.length, 2);
-    deepStrictEqual(consoleLogMock.mock.calls.length, 2);
-    deepStrictEqual(consoleLogMock.mock.calls[0][0], "Executing: echo 'test'");
-    deepStrictEqual(consoleLogMock.mock.calls[1][0], "Executing: ls");
+    deepStrictEqual(logger.log.mock.calls.length, 2);
+    deepStrictEqual(logger.log.mock.calls[0][0], "Executing: echo 'test'");
+    deepStrictEqual(logger.log.mock.calls[1][0], "Executing: ls");
     deepStrictEqual(execInWorktreeMock.mock.calls[0][3], [
       process.env.SHELL || "/bin/sh",
       "-c",
@@ -51,7 +51,7 @@ describe("executePostCreateCommands", () => {
 
   it("should return error if command execution fails", async () => {
     execInWorktreeMock.mockClear();
-    consoleLogMock.mockClear();
+    logger.log.mockClear();
     execInWorktreeMock.mockImplementation(() =>
       Promise.resolve(err(new Error("Command execution failed"))),
     );
@@ -74,7 +74,7 @@ describe("executePostCreateCommands", () => {
 
   it("should return error if command exits with non-zero code", async () => {
     execInWorktreeMock.mockClear();
-    consoleLogMock.mockClear();
+    logger.log.mockClear();
     execInWorktreeMock.mockImplementation(() =>
       Promise.resolve(ok({ exitCode: 1, stdout: "", stderr: "Error" })),
     );
@@ -98,7 +98,7 @@ describe("executePostCreateCommands", () => {
   it("should execute multiple commands in sequence", async () => {
     let callCount = 0;
     execInWorktreeMock.mockClear();
-    consoleLogMock.mockClear();
+    logger.log.mockClear();
     execInWorktreeMock.mockImplementation(() => {
       callCount++;
       return Promise.resolve(ok({ exitCode: 0, stdout: "", stderr: "" }));
@@ -121,7 +121,7 @@ describe("executePostCreateCommands", () => {
   it("should stop execution on first failed command", async () => {
     let callCount = 0;
     execInWorktreeMock.mockClear();
-    consoleLogMock.mockClear();
+    logger.log.mockClear();
     execInWorktreeMock.mockImplementation(() => {
       callCount++;
       if (callCount === 2) {

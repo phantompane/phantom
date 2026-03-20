@@ -71,13 +71,3 @@ export async function executeGitCommand(
     throw error;
   }
 }
-
-/**
- * Execute a git command in a specific directory
- */
-export async function executeGitCommandInDirectory(
-  directory: string,
-  args: string[],
-): Promise<GitExecutorResult> {
-  return executeGitCommand(["-C", directory, ...args], {});
-}

@@ -1,13 +1,13 @@
 import { err, isErr, ok, type Result } from "@phantompane/shared";
 import { execInWorktree } from "../exec.ts";
-import { getWorktreePathFromDirectory } from "../paths.ts";
-import { copyFiles } from "./file-copier.ts";
+import type { WorktreeLogger } from "./action.ts";
 
 export interface PostCreateExecutionOptions {
   gitRoot: string;
   worktreesDirectory: string;
   worktreeName: string;
   commands: string[];
+  logger?: WorktreeLogger;
 }
 
 export interface PostCreateExecutionResult {
@@ -17,12 +17,13 @@ export interface PostCreateExecutionResult {
 export async function executePostCreateCommands(
   options: PostCreateExecutionOptions,
 ): Promise<Result<PostCreateExecutionResult>> {
-  const { gitRoot, worktreesDirectory, worktreeName, commands } = options;
+  const { gitRoot, worktreesDirectory, worktreeName, commands, logger } =
+    options;
 
   const executedCommands: string[] = [];
 
   for (const command of commands) {
-    console.log(`Executing: ${command}`);
+    logger?.log(`Executing: ${command}`);
     const shell = process.env.SHELL || "/bin/sh";
     const cmdResult = await execInWorktree(
       gitRoot,
@@ -56,25 +57,4 @@ export async function executePostCreateCommands(
   }
 
   return ok({ executedCommands });
-}
-
-export async function copyFilesToWorktree(
-  gitRoot: string,
-  worktreesDirectory: string,
-  worktreeName: string,
-  filesToCopy: string[],
-  directoryNameSeparator: string,
-): Promise<Result<void>> {
-  const worktreePath = getWorktreePathFromDirectory(
-    worktreesDirectory,
-    worktreeName,
-    directoryNameSeparator,
-  );
-  const copyResult = await copyFiles(gitRoot, worktreePath, filesToCopy);
-
-  if (isErr(copyResult)) {
-    return err(copyResult.error);
-  }
-
-  return ok(undefined);
 }

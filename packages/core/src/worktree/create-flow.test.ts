@@ -159,7 +159,7 @@ describe("runCreateWorktree", () => {
       [".env", "config.json"],
     ]);
     strictEqual(
-      logger.log.mock.calls[0][0],
+      logger.log.mock.calls[1][0],
       "Created worktree 'fuzzy-cats-dance' at /repo/.git/phantom/worktrees/fuzzy-cats-dance",
     );
   });

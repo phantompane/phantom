@@ -12,7 +12,7 @@ const getWorktreePathFromDirectoryMock = vi.fn(
     `${worktreeDirectory}/${name.replaceAll("/", separator)}`,
 );
 const validateWorktreeNameMock = vi.fn();
-const copyFilesToWorktreeMock = vi.fn();
+const copyFilesMock = vi.fn();
 const executePostCreateCommandsMock = vi.fn();
 const execInWorktreeMock = vi.fn();
 
@@ -47,8 +47,11 @@ vi.doMock("./validate.ts", () => ({
 }));
 
 vi.doMock("./post-create.ts", () => ({
-  copyFilesToWorktree: copyFilesToWorktreeMock,
   executePostCreateCommands: executePostCreateCommandsMock,
+}));
+
+vi.doMock("./file-copier.ts", () => ({
+  copyFiles: copyFilesMock,
 }));
 
 vi.doMock("../exec.ts", () => ({
@@ -76,7 +79,7 @@ describe("runAttachWorktree", () => {
     createContextMock.mockReset();
     getWorktreePathFromDirectoryMock.mockClear();
     validateWorktreeNameMock.mockReset();
-    copyFilesToWorktreeMock.mockReset();
+    copyFilesMock.mockReset();
     executePostCreateCommandsMock.mockReset();
     execInWorktreeMock.mockReset();
 
@@ -104,7 +107,12 @@ describe("runAttachWorktree", () => {
       },
       preferences: {},
     });
-    copyFilesToWorktreeMock.mockResolvedValue(ok(undefined));
+    copyFilesMock.mockResolvedValue(
+      ok({
+        copiedFiles: [".env", "config.json"],
+        skippedFiles: [],
+      }),
+    );
     executePostCreateCommandsMock.mockResolvedValue(
       ok({ executedCommands: ["npm install"] }),
     );
@@ -120,14 +128,16 @@ describe("runAttachWorktree", () => {
     });
 
     strictEqual(result.ok, true);
-    deepStrictEqual(copyFilesToWorktreeMock.mock.calls[0], [
+    deepStrictEqual(copyFilesMock.mock.calls[0], [
       "/repo",
-      "/repo/.git/phantom/worktrees",
-      "feature",
+      "/repo/.git/phantom/worktrees/feature",
       [".env", "config.json"],
-      "/",
     ]);
-    strictEqual(logger.log.mock.calls[0][0], "Attached phantom: feature");
+    strictEqual(
+      logger.log.mock.calls[0][0],
+      "\nRunning post-create commands...",
+    );
+    strictEqual(logger.log.mock.calls[1][0], "Attached phantom: feature");
   });
 
   it("executes --exec actions from core", async () => {

@@ -28,8 +28,9 @@ export const createWorktreeTool: Tool<typeof schema> = {
       {
         branch: name,
         base: baseBranch,
+        copyFiles: context.config?.postCreate?.copyFiles,
       },
-      context.config?.postCreate?.copyFiles,
+      undefined,
       context.config?.postCreate?.commands,
       context.directoryNameSeparator,
     );
