@@ -72,6 +72,14 @@ vi.doMock("./post-create.ts", () => ({
 
 vi.doMock("@phantompane/process", () => ({
   getPhantomEnv: getPhantomEnvMock,
+  getShellCommand: vi.fn(() => {
+    const shell = process.env.SHELL || "/bin/sh";
+    const shellParts = shell.trim().split(/\s+/);
+    return {
+      command: shellParts[0],
+      args: shellParts.slice(1),
+    };
+  }),
 }));
 
 vi.doMock("@phantompane/tmux", () => ({

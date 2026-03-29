@@ -18,6 +18,14 @@ vi.doMock("@phantompane/process", () => ({
     PHANTOM_NAME: name,
     PHANTOM_PATH: path,
   })),
+  getShellCommand: vi.fn(() => {
+    const shell = process.env.SHELL || "/bin/sh";
+    const shellParts = shell.trim().split(/\s+/);
+    return {
+      command: shellParts[0],
+      args: shellParts.slice(1),
+    };
+  }),
 }));
 
 const { shellInWorktree } = await import("./shell.ts");

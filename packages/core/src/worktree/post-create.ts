@@ -1,3 +1,4 @@
+import { getShellCommand } from "@phantompane/process";
 import { err, isErr, ok, type Result } from "@phantompane/utils";
 import { execInWorktree } from "../exec.ts";
 import type { WorktreeLogger } from "./action.ts";
@@ -24,12 +25,12 @@ export async function executePostCreateCommands(
 
   for (const command of commands) {
     logger?.log(`Executing: ${command}`);
-    const shell = process.env.SHELL || "/bin/sh";
+    const shell = getShellCommand(process.env.SHELL);
     const cmdResult = await execInWorktree(
       gitRoot,
       worktreesDirectory,
       worktreeName,
-      [shell, "-c", command],
+      [shell.command, ...shell.args, "-c", command],
     );
 
     if (isErr(cmdResult)) {

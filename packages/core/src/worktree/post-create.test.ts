@@ -1,5 +1,6 @@
 import { deepStrictEqual } from "node:assert";
 import { describe, it, vi } from "vitest";
+import { getShellCommand } from "@phantompane/process";
 import { err, isErr, isOk, ok } from "@phantompane/utils";
 
 const execInWorktreeMock = vi.fn();
@@ -37,13 +38,16 @@ describe("executePostCreateCommands", () => {
     deepStrictEqual(logger.log.mock.calls.length, 2);
     deepStrictEqual(logger.log.mock.calls[0][0], "Executing: echo 'test'");
     deepStrictEqual(logger.log.mock.calls[1][0], "Executing: ls");
+    const shell = getShellCommand(process.env.SHELL);
     deepStrictEqual(execInWorktreeMock.mock.calls[0][3], [
-      process.env.SHELL || "/bin/sh",
+      shell.command,
+      ...shell.args,
       "-c",
       "echo 'test'",
     ]);
     deepStrictEqual(execInWorktreeMock.mock.calls[1][3], [
-      process.env.SHELL || "/bin/sh",
+      shell.command,
+      ...shell.args,
       "-c",
       "ls",
     ]);

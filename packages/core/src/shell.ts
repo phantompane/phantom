@@ -1,5 +1,6 @@
 import {
   getPhantomEnv,
+  getShellCommand,
   type ProcessError,
   type SpawnSuccess,
   spawnProcess,
@@ -27,11 +28,11 @@ export async function shellInWorktree(
   }
 
   const worktreePath = validation.value.path;
-  const shell = process.env.SHELL || "/bin/sh";
+  const shell = getShellCommand();
 
   return spawnProcess({
-    command: shell,
-    args: [],
+    command: shell.command,
+    args: shell.args,
     options: {
       cwd: worktreePath,
       env: {

@@ -7,7 +7,7 @@ import {
   WorktreeNotFoundError,
 } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
-import { getPhantomEnv } from "@phantompane/process";
+import { getPhantomEnv, getShellCommand } from "@phantompane/process";
 import { isErr } from "@phantompane/utils";
 import { executeTmuxCommand, isInsideTmux } from "@phantompane/tmux";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
@@ -118,11 +118,12 @@ export async function shellHandler(args: string[]): Promise<void> {
         }...`,
       );
 
-      const shell = process.env.SHELL || "/bin/sh";
+      const shell = getShellCommand(process.env.SHELL);
 
       const tmuxResult = await executeTmuxCommand({
         direction: tmuxDirection,
-        command: shell,
+        command: shell.command,
+        args: shell.args,
         cwd: validation.value.path,
         env: getPhantomEnv(worktreeName, validation.value.path),
         windowName: tmuxDirection === "new" ? worktreeName : undefined,

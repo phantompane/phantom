@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { githubCheckout } from "@phantompane/github";
-import { getPhantomEnv } from "@phantompane/process";
+import { getPhantomEnv, getShellCommand } from "@phantompane/process";
 import { isErr } from "@phantompane/utils";
 import { executeTmuxCommand, isInsideTmux } from "@phantompane/tmux";
 import { exitCodes, exitWithError } from "../errors.ts";
@@ -82,11 +82,12 @@ export async function githubCheckoutHandler(args: string[]): Promise<void> {
       }...`,
     );
 
-    const shell = process.env.SHELL || "/bin/sh";
+    const shell = getShellCommand(process.env.SHELL);
 
     const tmuxResult = await executeTmuxCommand({
       direction: tmuxDirection,
-      command: shell,
+      command: shell.command,
+      args: shell.args,
       cwd: result.value.path,
       env: getPhantomEnv(result.value.worktree, result.value.path),
       windowName: tmuxDirection === "new" ? result.value.worktree : undefined,

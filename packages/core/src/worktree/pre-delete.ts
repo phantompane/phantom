@@ -1,5 +1,6 @@
 import { err, isErr, ok, type Result } from "@phantompane/utils";
 import { execInWorktree } from "../exec.ts";
+import { getShellCommand } from "@phantompane/process";
 
 export interface PreDeleteExecutionOptions {
   gitRoot: string;
@@ -21,12 +22,12 @@ export async function executePreDeleteCommands(
 
   for (const command of commands) {
     console.log(`Executing pre-delete command: ${command}`);
-    const shell = process.env.SHELL || "/bin/sh";
+    const shell = getShellCommand(process.env.SHELL);
     const cmdResult = await execInWorktree(
       gitRoot,
       worktreesDirectory,
       worktreeName,
-      [shell, "-c", command],
+      [shell.command, ...shell.args, "-c", command],
     );
 
     if (isErr(cmdResult)) {

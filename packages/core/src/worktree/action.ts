@@ -1,4 +1,4 @@
-import { getPhantomEnv } from "@phantompane/process";
+import { getPhantomEnv, getShellCommand } from "@phantompane/process";
 import { err, isErr, ok, type Result } from "@phantompane/utils";
 import {
   executeTmuxCommand,
@@ -129,12 +129,12 @@ export async function runWorktreeAction(
       `\nExecuting command in worktree '${worktreeName}': ${action.command}`,
     );
 
-    const shell = process.env.SHELL || "/bin/sh";
+    const shell = getShellCommand(process.env.SHELL);
     const execResult = await execInWorktree(
       gitRoot,
       worktreeDirectory,
       worktreeName,
-      [shell, "-c", action.command],
+      [shell.command, ...shell.args, "-c", action.command],
       { interactive: true },
     );
     if (isErr(execResult)) {
@@ -154,10 +154,11 @@ export async function runWorktreeAction(
     }...`,
   );
 
-  const shell = process.env.SHELL || "/bin/sh";
+  const shell = getShellCommand(process.env.SHELL);
   const tmuxResult = await executeTmuxCommand({
     direction: action.direction,
-    command: shell,
+    command: shell.command,
+    args: shell.args,
     cwd: worktreePath,
     env: getPhantomEnv(worktreeName, worktreePath),
     windowName: action.direction === "new" ? worktreeName : undefined,
