@@ -1,6 +1,6 @@
 {
   "name": "@phantompane/mcp",
-  "version": "6.2.0-0",
+  "version": "6.2.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",

@@ -1,6 +1,6 @@
 {
   "name": "@phantompane/cli",
-  "version": "6.2.0-0",
+  "version": "6.2.0",
   "description": "A powerful CLI tool for managing Git worktrees for parallel development",
   "keywords": [
     "git",
