@@ -66,4 +66,69 @@ describeE2E("phantom delete e2e", () => {
     assert.strictEqual(result.exitCode, 3);
     assert.match(result.stderr, /Worktree 'missing-worktree' not found/);
   });
+
+  it("keeps the branch when --keep-branch is provided", async () => {
+    const result = await runCommand(
+      "phantom",
+      ["delete", "removable", "--keep-branch"],
+      {
+        cwd: repo.repoDir,
+        env: repo.env,
+      },
+    );
+
+    assert.strictEqual(result.exitCode, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /Deleted worktree 'removable' and kept its branch 'removable'/,
+    );
+
+    await assert.rejects(access(worktreePath), { code: "ENOENT" });
+
+    const branchResult = await runCommand(
+      "git",
+      ["branch", "--list", "removable"],
+      {
+        cwd: repo.repoDir,
+        env: repo.env,
+      },
+    );
+    assert.strictEqual(branchResult.exitCode, 0, branchResult.stderr);
+    assert.match(branchResult.stdout, /removable/);
+  });
+
+  it("keeps the branch when keepBranch preference is enabled", async () => {
+    await assertCommand(
+      "git",
+      ["config", "--global", "phantom.keepBranch", "true"],
+      {
+        cwd: repo.repoDir,
+        env: repo.env,
+      },
+    );
+
+    const result = await runCommand("phantom", ["delete", "removable"], {
+      cwd: repo.repoDir,
+      env: repo.env,
+    });
+
+    assert.strictEqual(result.exitCode, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /Deleted worktree 'removable' and kept its branch 'removable'/,
+    );
+
+    await assert.rejects(access(worktreePath), { code: "ENOENT" });
+
+    const branchResult = await runCommand(
+      "git",
+      ["branch", "--list", "removable"],
+      {
+        cwd: repo.repoDir,
+        env: repo.env,
+      },
+    );
+    assert.strictEqual(branchResult.exitCode, 0, branchResult.stderr);
+    assert.match(branchResult.stdout, /removable/);
+  });
 });

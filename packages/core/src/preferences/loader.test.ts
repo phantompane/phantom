@@ -1,4 +1,4 @@
-import { deepStrictEqual, equal, rejects } from "node:assert/strict";
+import { deepStrictEqual, equal } from "node:assert/strict";
 import { describe, it, vi } from "vitest";
 
 const configGetRegexpMock = vi.fn();
