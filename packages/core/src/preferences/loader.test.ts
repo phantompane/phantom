@@ -80,7 +80,7 @@ describe("loadPreferences", () => {
     equal(preferences.keepBranch, true);
   });
 
-  it("parses preferences regardless of git config key casing", async () => {
+  it("parses preference keys regardless of git config key casing", async () => {
     resetMocks();
     configGetRegexpMock.mockImplementation(
       async () =>
@@ -96,15 +96,14 @@ describe("loadPreferences", () => {
     equal(preferences.keepBranch, true);
   });
 
-  it("throws on invalid boolean keepBranch preference", async () => {
+  it("defaults invalid keepBranch preference values to false", async () => {
     resetMocks();
     configGetRegexpMock.mockImplementation(
       async () => "phantom.keepbranch\nyes\u0000",
     );
 
-    await rejects(
-      async () => await loadPreferences(),
-      /Invalid phantom preferences/,
-    );
+    const preferences = await loadPreferences();
+
+    equal(preferences.keepBranch, false);
   });
 });
