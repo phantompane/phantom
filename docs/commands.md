@@ -169,6 +169,7 @@ phantom delete <name...> [options]
 **Options:**
 
 - `--force` / `-f` - Force delete with uncommitted changes
+- `--keep-branch` - Delete the worktree but keep its branch
 - `--current` - Delete the current worktree (when inside one)
 - `--fzf` - Select worktree to delete with fzf
 
@@ -183,6 +184,9 @@ phantom delete feature-auth docs-cleanup spike-login
 
 # Force delete
 phantom delete feature-auth --force
+
+# Delete the worktree but keep the branch
+phantom delete feature-auth --keep-branch
 
 # Delete current worktree
 phantom delete --current
@@ -341,6 +345,7 @@ Configure defaults for Phantom commands using global git config. Preferences are
 - `ai` - assistant command for `phantom ai`
 - `worktreesDirectory` - where to store worktrees (relative to the Git repository root; defaults to `.git/phantom/worktrees`)
 - `directoryNameSeparator` - replaces `/` in worktree directory names only (defaults to `/`, which keeps nested directories)
+- `keepBranch` - keeps the branch when deleting a worktree (defaults to `false`)
 
 Set them once to avoid exporting environment variables each time.
 
@@ -353,6 +358,7 @@ phantom preferences get editor
 phantom preferences get ai
 phantom preferences get worktreesDirectory
 phantom preferences get directoryNameSeparator
+phantom preferences get keepBranch
 ```
 
 ### preferences set
@@ -371,6 +377,9 @@ phantom preferences set worktreesDirectory ../phantom-worktrees
 
 # Flatten feature/test to feature-test on disk while keeping the branch name
 phantom preferences set directoryNameSeparator "-"
+
+# Keep branches when deleting worktrees by default
+phantom preferences set keepBranch true
 ```
 
 ### preferences remove
@@ -382,6 +391,7 @@ phantom preferences remove editor
 phantom preferences remove ai
 phantom preferences remove worktreesDirectory
 phantom preferences remove directoryNameSeparator
+phantom preferences remove keepBranch
 ```
 
 **Notes:**
@@ -390,6 +400,7 @@ phantom preferences remove directoryNameSeparator
 - `phantom ai` requires `phantom.ai` to be configured
 - `worktreesDirectory` should be set relative to the Git repository root (default: `.git/phantom/worktrees`)
 - `directoryNameSeparator` only changes the directory path; the worktree/branch name remains unchanged
+- `keepBranch` accepts `true` or `false` and applies to both `phantom delete` and MCP delete requests when the request omits an explicit override
 
 ## GitHub Integration
 

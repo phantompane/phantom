@@ -9,6 +9,7 @@
   - [postCreate.copyFiles](#postcreatecopyfiles)
   - [postCreate.commands](#postcreatecommands)
   - [preDelete.commands](#predeletecommands)
+- [Global Preferences](#global-preferences)
 
 Phantom supports configuration through a `phantom.config.json` file in your repository root. This allows you to define project-level defaults such as where worktrees are stored, which files are copied, and which commands are executed when creating new worktrees. For personal defaults, use `phantom preferences` (stored in your global git config).
 
@@ -186,6 +187,40 @@ An array of commands to execute after creating a new worktree.
 - Execution stops on the first failed command
 - Commands run in the new worktree's directory
 - Output is displayed in real-time
+
+## Global Preferences
+
+Use `phantom preferences` for per-user defaults stored in `git config --global` under the `phantom.*` namespace. These preferences override `phantom.config.json` when both are set for the same behavior.
+
+### Supported Keys
+
+- `editor`: Preferred editor command for `phantom edit`
+- `ai`: Preferred assistant command for `phantom ai`
+- `worktreesDirectory`: Personal default worktree directory relative to the Git repository root
+- `directoryNameSeparator`: Personal default separator for flattening worktree directory names on disk
+- `keepBranch`: Keep branches by default when deleting worktrees through `phantom delete` or MCP
+
+### `keepBranch`
+
+`keepBranch` is a user preference, not a `phantom.config.json` setting. Set it when you want `phantom delete` to remove only the worktree directory while preserving the underlying branch unless you explicitly override that behavior.
+
+**Examples:**
+
+```bash
+# Keep branches by default when deleting worktrees
+phantom preferences set keepBranch true
+
+# Check the current value
+phantom preferences get keepBranch
+
+# Restore the default behavior and delete branches with worktrees again
+phantom preferences remove keepBranch
+```
+
+**Notes:**
+
+- Valid values are `true` and `false`
+- CLI and MCP delete operations both use this preference when no explicit `keepBranch` override is provided
 
 ### preDelete.commands
 
