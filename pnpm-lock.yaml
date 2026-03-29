@@ -56,9 +56,9 @@ importers:
       '@phantompane/process':
         specifier: workspace:*
         version: link:../process
-      '@phantompane/shared':
+      '@phantompane/utils':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../utils
       '@phantompane/tmux':
         specifier: workspace:*
         version: link:../tmux
@@ -73,9 +73,9 @@ importers:
       '@phantompane/process':
         specifier: workspace:*
         version: link:../process
-      '@phantompane/shared':
+      '@phantompane/utils':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../utils
       '@phantompane/tmux':
         specifier: workspace:*
         version: link:../tmux
@@ -91,9 +91,9 @@ importers:
       '@phantompane/process':
         specifier: workspace:*
         version: link:../process
-      '@phantompane/shared':
+      '@phantompane/utils':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../utils
 
   packages/github:
     dependencies:
@@ -109,9 +109,9 @@ importers:
       '@phantompane/process':
         specifier: workspace:*
         version: link:../process
-      '@phantompane/shared':
+      '@phantompane/utils':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../utils
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -133,9 +133,9 @@ importers:
       '@phantompane/process':
         specifier: workspace:*
         version: link:../process
-      '@phantompane/shared':
+      '@phantompane/utils':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../utils
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -146,20 +146,20 @@ importers:
 
   packages/process:
     dependencies:
-      '@phantompane/shared':
+      '@phantompane/utils':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../utils
 
-  packages/shared: {}
+  packages/utils: {}
 
   packages/tmux:
     dependencies:
       '@phantompane/process':
         specifier: workspace:*
         version: link:../process
-      '@phantompane/shared':
+      '@phantompane/utils':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../utils
 
 packages:
 

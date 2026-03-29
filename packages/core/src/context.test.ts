@@ -17,7 +17,7 @@ vi.doMock("./paths.ts", () => ({
   getWorktreesDirectory: getWorktreesDirectoryMock,
 }));
 
-const { ok, err } = await import("@phantompane/shared");
+const { ok, err } = await import("@phantompane/utils");
 const { createContext } = await import("./context.ts");
 
 describe("createContext", () => {

@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@phantompane/shared";
+import { err, ok, type Result } from "@phantompane/utils";
 import { z } from "zod";
 import type { PhantomConfig } from "./loader.ts";
 

@@ -1,5 +1,5 @@
 import { getPhantomEnv } from "@phantompane/process";
-import { err, isErr, ok, type Result } from "@phantompane/shared";
+import { err, isErr, ok, type Result } from "@phantompane/utils";
 import {
   executeTmuxCommand,
   isInsideTmux,

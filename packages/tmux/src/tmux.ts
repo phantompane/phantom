@@ -1,6 +1,6 @@
 import type { ProcessError, SpawnSuccess } from "@phantompane/process";
 import { spawnProcess } from "@phantompane/process";
-import type { Result } from "@phantompane/shared";
+import type { Result } from "@phantompane/utils";
 
 export type TmuxSplitDirection = "new" | "vertical" | "horizontal";
 

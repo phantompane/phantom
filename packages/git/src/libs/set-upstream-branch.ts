@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@phantompane/shared";
+import { err, ok, type Result } from "@phantompane/utils";
 import { executeGitCommand } from "../executor.ts";
 
 export async function setUpstreamBranch(

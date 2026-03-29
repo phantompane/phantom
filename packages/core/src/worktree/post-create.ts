@@ -1,4 +1,4 @@
-import { err, isErr, ok, type Result } from "@phantompane/shared";
+import { err, isErr, ok, type Result } from "@phantompane/utils";
 import { execInWorktree } from "../exec.ts";
 import type { WorktreeLogger } from "./action.ts";
 

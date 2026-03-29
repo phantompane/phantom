@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import { getGitRoot, addWorktree } from "@phantompane/git";
-import { err, isErr, isOk, ok, type Result } from "@phantompane/shared";
+import { err, isErr, isOk, ok, type Result } from "@phantompane/utils";
 import { createContext } from "../context.ts";
 import { getWorktreePathFromDirectory } from "../paths.ts";
 import { executePostCreateCommands } from "./post-create.ts";

@@ -1,6 +1,6 @@
 import { deepEqual, equal, ok } from "node:assert/strict";
 import { describe, it, vi } from "vitest";
-import { isErr, isOk } from "@phantompane/shared";
+import { isErr, isOk } from "@phantompane/utils";
 
 const getGitHubRepoInfoMock = vi.fn();
 const fetchIssueMock = vi.fn();

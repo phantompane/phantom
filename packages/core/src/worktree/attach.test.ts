@@ -1,6 +1,6 @@
 import { deepStrictEqual } from "node:assert";
 import { describe, it, vi } from "vitest";
-import { err, ok } from "@phantompane/shared";
+import { err, ok } from "@phantompane/utils";
 import { BranchNotFoundError, WorktreeAlreadyExistsError } from "./errors.ts";
 
 const validateWorktreeNameMock = vi.fn();

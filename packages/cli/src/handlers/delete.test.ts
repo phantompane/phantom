@@ -1,7 +1,7 @@
 import { rejects, strictEqual } from "node:assert";
 import { afterAll, describe, it, vi } from "vitest";
 import { WorktreeError, WorktreeNotFoundError } from "@phantompane/core";
-import { err, ok } from "@phantompane/shared";
+import { err, ok } from "@phantompane/utils";
 
 const exitMock = vi.fn();
 const consoleLogMock = vi.fn();

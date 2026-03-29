@@ -1,6 +1,6 @@
 import { copyFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { err, ok, type Result } from "@phantompane/shared";
+import { err, ok, type Result } from "@phantompane/utils";
 
 export interface CopyFileResult {
   copiedFiles: string[];

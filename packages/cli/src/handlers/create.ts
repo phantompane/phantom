@@ -5,7 +5,7 @@ import {
   WorktreeActionConflictError,
   WorktreeAlreadyExistsError,
 } from "@phantompane/core";
-import { isErr } from "@phantompane/shared";
+import { isErr } from "@phantompane/utils";
 import {
   exitCodes,
   exitWithError,

@@ -4,7 +4,7 @@ import {
   type SpawnSuccess,
   spawnProcess,
 } from "@phantompane/process";
-import { err, isErr, type Result } from "@phantompane/shared";
+import { err, isErr, type Result } from "@phantompane/utils";
 import type { WorktreeNotFoundError } from "./worktree/errors.ts";
 import { validateWorktreeExists } from "./worktree/validate.ts";
 

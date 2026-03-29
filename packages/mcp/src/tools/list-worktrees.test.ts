@@ -18,7 +18,7 @@ vi.doMock("@phantompane/git", () => ({
   getGitRoot: getGitRootMock,
 }));
 
-vi.doMock("@phantompane/shared", () => ({
+vi.doMock("@phantompane/utils", () => ({
   isOk: isOkMock,
   ok: okMock,
   err: errMock,

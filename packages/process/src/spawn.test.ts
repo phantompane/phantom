@@ -3,7 +3,7 @@ import { deepStrictEqual, strictEqual } from "node:assert";
 import { EventEmitter } from "node:events";
 import path from "node:path";
 import { describe, it, vi } from "vitest";
-import { isErr, isOk } from "@phantompane/shared";
+import { isErr, isOk } from "@phantompane/utils";
 import {
   ProcessExecutionError,
   ProcessSignalError,

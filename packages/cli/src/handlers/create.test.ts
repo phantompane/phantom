@@ -5,7 +5,7 @@ import {
   WorktreeActionConflictError,
   WorktreeAlreadyExistsError,
 } from "@phantompane/core";
-import { err, ok } from "@phantompane/shared";
+import { err, ok } from "@phantompane/utils";
 
 const exitMock = vi.fn();
 const runCreateWorktreeMock = vi.fn();

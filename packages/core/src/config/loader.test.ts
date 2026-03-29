@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, test } from "vitest";
-import { isErr, isOk } from "@phantompane/shared";
+import { isErr, isOk } from "@phantompane/utils";
 import { ConfigNotFoundError, ConfigParseError, loadConfig } from "./loader.ts";
 import { ConfigValidationError } from "./validate.ts";
 

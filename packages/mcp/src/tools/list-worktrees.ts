@@ -1,6 +1,6 @@
 import { listWorktrees } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
-import { isOk } from "@phantompane/shared";
+import { isOk } from "@phantompane/utils";
 import { z } from "zod";
 import type { Tool } from "./types.ts";
 

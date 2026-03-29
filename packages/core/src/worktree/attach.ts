@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { getGitRoot, addWorktree, branchExists } from "@phantompane/git";
-import { err, isErr, ok, type Result } from "@phantompane/shared";
+import { err, isErr, ok, type Result } from "@phantompane/utils";
 import { createContext } from "../context.ts";
 import { getWorktreePathFromDirectory } from "../paths.ts";
 import {

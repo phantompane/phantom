@@ -1,5 +1,5 @@
 import { selectWithFzf } from "@phantompane/process";
-import { isErr, type Result } from "@phantompane/shared";
+import { isErr, type Result } from "@phantompane/utils";
 import { listWorktrees } from "./list.ts";
 
 export interface SelectWorktreeResult {

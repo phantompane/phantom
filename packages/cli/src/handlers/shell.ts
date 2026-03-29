@@ -8,7 +8,7 @@ import {
 } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
 import { getPhantomEnv } from "@phantompane/process";
-import { isErr } from "@phantompane/shared";
+import { isErr } from "@phantompane/utils";
 import { executeTmuxCommand, isInsideTmux } from "@phantompane/tmux";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";

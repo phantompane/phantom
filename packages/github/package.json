@@ -15,7 +15,7 @@
     "@phantompane/core": "workspace:*",
     "@phantompane/git": "workspace:*",
     "@phantompane/process": "workspace:*",
-    "@phantompane/shared": "workspace:*",
+    "@phantompane/utils": "workspace:*",
     "@octokit/rest": "^22.0.1",
     "zod": "^4.3.6"
   }

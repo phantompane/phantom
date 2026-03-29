@@ -13,6 +13,6 @@
   },
   "dependencies": {
     "@phantompane/process": "workspace:*",
-    "@phantompane/shared": "workspace:*"
+    "@phantompane/utils": "workspace:*"
   }
 }
