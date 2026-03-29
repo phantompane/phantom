@@ -130,4 +130,140 @@ describe("copyFiles", () => {
     );
     assert.strictEqual(copiedFile, '{"env": "local"}');
   });
+
+  test("should copy files matching wildcard pattern", async () => {
+    await writeFile(path.join(sourceDir, ".env"), "TEST=value");
+    await writeFile(path.join(sourceDir, ".env.local"), "LOCAL=value");
+    await writeFile(path.join(sourceDir, ".env.production"), "PROD=value");
+    await writeFile(path.join(sourceDir, "config.json"), '{"key": "value"}');
+
+    const result = await copyFiles(sourceDir, targetDir, [".env*"]);
+
+    assert.strictEqual(isOk(result), true);
+    if (isOk(result)) {
+      assert.strictEqual(result.value.copiedFiles.length, 3);
+      assert.ok(result.value.copiedFiles.includes(".env"));
+      assert.ok(result.value.copiedFiles.includes(".env.local"));
+      assert.ok(result.value.copiedFiles.includes(".env.production"));
+    }
+
+    const copiedEnv = await readFile(path.join(targetDir, ".env"), "utf-8");
+    assert.strictEqual(copiedEnv, "TEST=value");
+  });
+
+  test("should copy files matching recursive pattern", async () => {
+    await mkdir(path.join(sourceDir, "config", "db"), { recursive: true });
+    await mkdir(path.join(sourceDir, "config", "api"), { recursive: true });
+
+    await writeFile(
+      path.join(sourceDir, "config", "db", "database.local.yml"),
+      "db: local",
+    );
+    await writeFile(
+      path.join(sourceDir, "config", "api", "api.local.yml"),
+      "api: local",
+    );
+    await writeFile(
+      path.join(sourceDir, "config", "settings.yml"),
+      "settings: default",
+    );
+
+    const result = await copyFiles(sourceDir, targetDir, [
+      "config/**/*.local.yml",
+    ]);
+
+    assert.strictEqual(isOk(result), true);
+    if (isOk(result)) {
+      assert.strictEqual(result.value.copiedFiles.length, 2);
+      assert.ok(
+        result.value.copiedFiles.includes(
+          path.join("config", "db", "database.local.yml"),
+        ),
+      );
+      assert.ok(
+        result.value.copiedFiles.includes(
+          path.join("config", "api", "api.local.yml"),
+        ),
+      );
+    }
+
+    const copiedDb = await readFile(
+      path.join(targetDir, "config", "db", "database.local.yml"),
+      "utf-8",
+    );
+    assert.strictEqual(copiedDb, "db: local");
+  });
+
+  test("should skip patterns with no matches", async () => {
+    await writeFile(path.join(sourceDir, "file.txt"), "content");
+
+    const result = await copyFiles(sourceDir, targetDir, ["*.nonexistent"]);
+
+    assert.strictEqual(isOk(result), true);
+    if (isOk(result)) {
+      assert.deepStrictEqual(result.value.copiedFiles, []);
+      assert.deepStrictEqual(result.value.skippedFiles, []);
+    }
+  });
+
+  test("should combine glob patterns and exact paths", async () => {
+    await writeFile(path.join(sourceDir, ".env"), "TEST=value");
+    await writeFile(path.join(sourceDir, ".env.local"), "LOCAL=value");
+    await writeFile(path.join(sourceDir, "config.json"), '{"key": "value"}');
+
+    const result = await copyFiles(sourceDir, targetDir, [
+      ".env*",
+      "config.json",
+    ]);
+
+    assert.strictEqual(isOk(result), true);
+    if (isOk(result)) {
+      assert.strictEqual(result.value.copiedFiles.length, 3);
+      assert.ok(result.value.copiedFiles.includes(".env"));
+      assert.ok(result.value.copiedFiles.includes(".env.local"));
+      assert.ok(result.value.copiedFiles.includes("config.json"));
+    }
+  });
+
+  test("should deduplicate files from overlapping patterns", async () => {
+    await writeFile(path.join(sourceDir, ".env"), "TEST=value");
+    await writeFile(path.join(sourceDir, ".env.local"), "LOCAL=value");
+
+    const result = await copyFiles(sourceDir, targetDir, [".env*", ".env"]);
+
+    assert.strictEqual(isOk(result), true);
+    if (isOk(result)) {
+      // Should only copy each file once
+      assert.strictEqual(result.value.copiedFiles.length, 2);
+      assert.strictEqual(
+        result.value.copiedFiles.filter((f) => f === ".env").length,
+        1,
+      );
+    }
+  });
+
+  test("should preserve subdirectory structure for matched files", async () => {
+    await mkdir(path.join(sourceDir, "nested"), { recursive: true });
+    await writeFile(path.join(sourceDir, "nested", "file1.txt"), "content1");
+    await writeFile(path.join(sourceDir, "nested", "file2.txt"), "content2");
+
+    const result = await copyFiles(sourceDir, targetDir, ["nested/*.txt"]);
+
+    assert.strictEqual(isOk(result), true);
+    if (isOk(result)) {
+      assert.strictEqual(result.value.copiedFiles.length, 2);
+      assert.ok(
+        result.value.copiedFiles.includes(path.join("nested", "file1.txt")),
+      );
+      assert.ok(
+        result.value.copiedFiles.includes(path.join("nested", "file2.txt")),
+      );
+    }
+
+    const copiedFile1 = await readFile(
+      path.join(targetDir, "nested", "file1.txt"),
+      "utf-8",
+    );
+    assert.strictEqual(copiedFile1, "content1");
+  });
 });
