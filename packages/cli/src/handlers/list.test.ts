@@ -1,6 +1,6 @@
 import { rejects, strictEqual } from "node:assert";
 import { afterAll, describe, it, vi } from "vitest";
-import { err, ok } from "@phantompane/shared";
+import { err, ok } from "@phantompane/utils";
 
 const exitMock = vi.fn();
 const consoleLogMock = vi.fn();

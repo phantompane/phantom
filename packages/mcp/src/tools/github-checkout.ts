@@ -1,5 +1,5 @@
 import { githubCheckout } from "@phantompane/github";
-import { isOk } from "@phantompane/shared";
+import { isOk } from "@phantompane/utils";
 import { z } from "zod";
 import type { Tool } from "./types.ts";
 

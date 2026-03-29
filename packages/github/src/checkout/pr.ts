@@ -4,7 +4,7 @@ import {
   validateWorktreeExists,
 } from "@phantompane/core";
 import { fetch, getGitRoot, setUpstreamBranch } from "@phantompane/git";
-import { err, isErr, ok, type Result } from "@phantompane/shared";
+import { err, isErr, ok, type Result } from "@phantompane/utils";
 import type { GitHubPullRequest } from "../api/index.ts";
 
 export interface CheckoutResult {

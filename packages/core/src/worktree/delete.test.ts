@@ -1,6 +1,6 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { describe, it, vi } from "vitest";
-import { isErr, isOk, ok, err } from "@phantompane/shared";
+import { isErr, isOk, ok, err } from "@phantompane/utils";
 import { WorktreeError, WorktreeNotFoundError } from "./errors.ts";
 
 const validateWorktreeExistsMock = vi.fn();

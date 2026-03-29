@@ -1,6 +1,6 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { describe, it, vi } from "vitest";
-import { err, isErr, isOk, ok } from "@phantompane/shared";
+import { err, isErr, isOk, ok } from "@phantompane/utils";
 import { WorktreeAlreadyExistsError, WorktreeError } from "./errors.ts";
 
 const accessMock = vi.fn();

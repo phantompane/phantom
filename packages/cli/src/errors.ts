@@ -1,4 +1,4 @@
-import { exitCodes } from "@phantompane/shared";
+import { exitCodes } from "./constants/exit-codes.ts";
 import { output } from "./output.ts";
 
 export { exitCodes };

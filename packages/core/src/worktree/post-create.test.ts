@@ -1,6 +1,6 @@
 import { deepStrictEqual } from "node:assert";
 import { describe, it, vi } from "vitest";
-import { err, isErr, isOk, ok } from "@phantompane/shared";
+import { err, isErr, isOk, ok } from "@phantompane/utils";
 
 const execInWorktreeMock = vi.fn();
 const logger = {

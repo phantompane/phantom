@@ -3,9 +3,9 @@
 ## Project Structure & Module Organization
 
 - Monorepo managed by pnpm; source lives in `packages/`.
-- Key packages: `cli` (user-facing CLI), `core` (worktree orchestration/validation), `git` (executor/helpers), `github` (API + checkout flows), `mcp` (MCP tools), `process` (spawn/tmux utilities), `shared` (types/guards).
+- Key packages: `cli` (user-facing CLI), `core` (worktree orchestration/validation), `git` (executor/helpers), `github` (API + checkout flows), `mcp` (MCP tools), `process` (spawn/tmux utilities), `utils` (types/guards).
 - Docs and assets: `docs/`; shared configs: `.oxfmtrc.json`, `.oxlintrc.json`, `tsconfig*.json`, `phantom.config.json`; builds land in package-level `dist/`.
-- Principles: single responsibility, separation of concerns, centralized git executor, dependency flow CLI → core → git/process/shared.
+- Principles: single responsibility, separation of concerns, centralized git executor, dependency flow CLI → core → git/process/utils.
 
 ## Build, Test, and Development Commands
 

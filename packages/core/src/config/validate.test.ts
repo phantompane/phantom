@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, test } from "vitest";
-import { isErr, isOk } from "@phantompane/shared";
+import { isErr, isOk } from "@phantompane/utils";
 import { ConfigValidationError, validateConfig } from "./validate.ts";
 
 describe("validateConfig", () => {

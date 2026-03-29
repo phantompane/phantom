@@ -4,7 +4,7 @@ import {
   getStatus,
   listWorktrees as gitListWorktrees,
 } from "@phantompane/git";
-import { ok, type Result } from "@phantompane/shared";
+import { ok, type Result } from "@phantompane/utils";
 import { getWorktreePathFromDirectory } from "../paths.ts";
 
 export interface WorktreeInfo {

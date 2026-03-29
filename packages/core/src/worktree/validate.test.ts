@@ -1,6 +1,6 @@
 import { deepStrictEqual } from "node:assert";
 import { describe, it, vi } from "vitest";
-import { err, ok } from "@phantompane/shared";
+import { err, ok } from "@phantompane/utils";
 
 const listWorktreesMock = vi.fn();
 
@@ -10,7 +10,7 @@ vi.doMock("./list.ts", () => ({
 
 const { validateWorktreeExists, validateWorktreeDoesNotExist } =
   await import("./validate.ts");
-const { isOk, isErr } = await import("@phantompane/shared");
+const { isOk, isErr } = await import("@phantompane/utils");
 
 describe("validateWorktreeExists", () => {
   const resetMocks = () => {

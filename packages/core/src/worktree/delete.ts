@@ -3,7 +3,7 @@ import {
   getStatus,
   removeWorktree as gitRemoveWorktree,
 } from "@phantompane/git";
-import { err, isErr, isOk, ok, type Result } from "@phantompane/shared";
+import { err, isErr, isOk, ok, type Result } from "@phantompane/utils";
 import { WorktreeError, type WorktreeNotFoundError } from "./errors.ts";
 import { executePreDeleteCommands } from "./pre-delete.ts";
 import { validateWorktreeExists } from "./validate.ts";

@@ -1,6 +1,6 @@
 import { equal, ok } from "node:assert/strict";
 import { describe, it, vi } from "vitest";
-import { isErr, isOk } from "@phantompane/shared";
+import { isErr, isOk } from "@phantompane/utils";
 
 const getGitRootMock = vi.fn();
 const fetchMock = vi.fn();

@@ -12,6 +12,6 @@
     "test": "vitest run --root ../.. packages/process/src"
   },
   "dependencies": {
-    "@phantompane/shared": "workspace:*"
+    "@phantompane/utils": "workspace:*"
   }
 }

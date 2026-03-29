@@ -1,6 +1,6 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { afterAll, describe, it, vi } from "vitest";
-import { ok } from "@phantompane/shared";
+import { ok } from "@phantompane/utils";
 
 const accessMock = vi.fn();
 const mkdirMock = vi.fn();

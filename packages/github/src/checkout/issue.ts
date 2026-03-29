@@ -4,7 +4,7 @@ import {
   validateWorktreeExists,
 } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
-import { err, isErr, ok, type Result } from "@phantompane/shared";
+import { err, isErr, ok, type Result } from "@phantompane/utils";
 import { type GitHubIssue, isPullRequest } from "../api/index.ts";
 import type { CheckoutResult } from "./pr.ts";
 

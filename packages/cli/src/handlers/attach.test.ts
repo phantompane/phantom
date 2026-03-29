@@ -6,7 +6,7 @@ import {
   WorktreeActionConflictError,
   WorktreeAlreadyExistsError,
 } from "@phantompane/core";
-import { err, ok } from "@phantompane/shared";
+import { err, ok } from "@phantompane/utils";
 
 const exitWithErrorMock = vi.fn((message, code) => {
   throw new Error(`Exit with code ${code}: ${message}`);
