@@ -96,7 +96,7 @@ describe("loadPreferences", () => {
     equal(preferences.keepBranch, true);
   });
 
-  it("defaults invalid keepBranch preference values to false", async () => {
+  it("ignores invalid keepBranch preference values", async () => {
     resetMocks();
     configGetRegexpMock.mockImplementation(
       async () => "phantom.keepbranch\nyes\u0000",
@@ -104,6 +104,6 @@ describe("loadPreferences", () => {
 
     const preferences = await loadPreferences();
 
-    equal(preferences.keepBranch, false);
+    equal(preferences.keepBranch, undefined);
   });
 });

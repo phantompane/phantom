@@ -63,7 +63,8 @@ function parsePreferences(output: string): Preferences {
     } else if (strippedKey === "directorynameseparator") {
       preferences.directoryNameSeparator = value;
     } else if (strippedKey === "keepbranch") {
-      preferences.keepBranch = value === "true";
+      preferences.keepBranch =
+        value === "true" ? true : value === "false" ? false : undefined;
     }
   }
 
