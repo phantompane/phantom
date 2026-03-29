@@ -65,6 +65,7 @@ describe("deleteWorktreeTool", () => {
     const shape = schema.shape;
     strictEqual(shape.name instanceof z.ZodString, true);
     strictEqual(shape.force instanceof z.ZodOptional, true);
+    strictEqual(shape.keepBranch instanceof z.ZodOptional, true);
   });
 
   it("should delete worktree successfully without force", async () => {
@@ -77,6 +78,7 @@ describe("deleteWorktreeTool", () => {
         gitRoot,
         worktreesDirectory: "/path/to/repo/.git/phantom/worktrees",
         config: null,
+        preferences: {},
       }),
     );
     deleteWorktreeMock.mockImplementation(() => Promise.resolve(okMock({})));
@@ -92,7 +94,7 @@ describe("deleteWorktreeTool", () => {
       gitRoot,
       "/path/to/repo/.git/phantom/worktrees",
       "feature-1",
-      { force: undefined },
+      { force: undefined, keepBranch: undefined },
       undefined,
     ]);
 
@@ -116,6 +118,7 @@ describe("deleteWorktreeTool", () => {
         gitRoot,
         worktreesDirectory: "/path/to/repo/.git/phantom/worktrees",
         config: null,
+        preferences: {},
       }),
     );
     deleteWorktreeMock.mockImplementation(() => Promise.resolve(okMock({})));
@@ -133,7 +136,7 @@ describe("deleteWorktreeTool", () => {
       gitRoot,
       "/path/to/repo/.git/phantom/worktrees",
       "feature-2",
-      { force: true },
+      { force: true, keepBranch: undefined },
       undefined,
     ]);
 
@@ -157,6 +160,7 @@ describe("deleteWorktreeTool", () => {
         gitRoot,
         worktreesDirectory: "/path/to/repo/.git/phantom/worktrees",
         config: null,
+        preferences: {},
       }),
     );
     deleteWorktreeMock.mockImplementation(() => Promise.resolve(errorResult));
@@ -180,6 +184,12 @@ describe("deleteWorktreeTool", () => {
       deleteWorktreeTool.inputSchema.safeParse(validInputWithForce);
     strictEqual(parsedWithForce.success, true);
 
+    const validInputWithKeepBranch = { name: "valid-name", keepBranch: true };
+    const parsedWithKeepBranch = deleteWorktreeTool.inputSchema.safeParse(
+      validInputWithKeepBranch,
+    );
+    strictEqual(parsedWithKeepBranch.success, true);
+
     const invalidInput = { force: true };
     const parsedInvalid =
       deleteWorktreeTool.inputSchema.safeParse(invalidInput);
@@ -189,5 +199,36 @@ describe("deleteWorktreeTool", () => {
     const parsedInvalidType =
       deleteWorktreeTool.inputSchema.safeParse(invalidForceType);
     strictEqual(parsedInvalidType.success, false);
+
+    const invalidKeepBranchType = { name: "valid-name", keepBranch: "true" };
+    const parsedInvalidKeepBranchType =
+      deleteWorktreeTool.inputSchema.safeParse(invalidKeepBranchType);
+    strictEqual(parsedInvalidKeepBranchType.success, false);
+  });
+
+  it("should use keepBranch preference when MCP option is omitted", async () => {
+    resetMocks();
+    const gitRoot = "/path/to/repo";
+
+    getGitRootMock.mockImplementation(() => Promise.resolve(gitRoot));
+    createContextMock.mockImplementation(() =>
+      Promise.resolve({
+        gitRoot,
+        worktreesDirectory: "/path/to/repo/.git/phantom/worktrees",
+        config: null,
+        preferences: { keepBranch: true },
+      }),
+    );
+    deleteWorktreeMock.mockImplementation(() => Promise.resolve(okMock({})));
+
+    await deleteWorktreeTool.handler({ name: "feature-3" }, handlerExtra);
+
+    deepStrictEqual(deleteWorktreeMock.mock.calls[0], [
+      gitRoot,
+      "/path/to/repo/.git/phantom/worktrees",
+      "feature-3",
+      { force: undefined, keepBranch: true },
+      undefined,
+    ]);
   });
 });

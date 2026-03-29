@@ -74,7 +74,7 @@ describe("preferencesRemoveHandler", () => {
 
     await rejects(
       async () => await preferencesRemoveHandler(["unknown"]),
-      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator/,
+      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch/,
     );
 
     strictEqual(exitMock.mock.calls[0][0], 3);
@@ -152,6 +152,23 @@ describe("preferencesRemoveHandler", () => {
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Removed phantom.directoryNameSeparator from global git config",
+    );
+    strictEqual(exitMock.mock.calls[0][0], 0);
+  });
+
+  it("unsets keepBranch preference via git config --global", async () => {
+    resetMocks();
+    configUnsetMock.mockImplementation(async () => undefined);
+
+    await rejects(
+      async () => await preferencesRemoveHandler(["keepBranch"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(configUnsetMock.mock.calls[0][0].key, "phantom.keepBranch");
+    strictEqual(
+      consoleLogMock.mock.calls[0][0],
+      "Removed phantom.keepBranch from global git config",
     );
     strictEqual(exitMock.mock.calls[0][0], 0);
   });

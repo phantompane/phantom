@@ -146,7 +146,7 @@ _phantom_completion() {
             ;;
         delete)
             if [[ "\${cur}" == -* ]]; then
-                local opts="--force --current --fzf"
+                local opts="--force --keep-branch --current --fzf"
                 COMPREPLY=( $(compgen -W "\${opts}" -- "\${cur}") )
             else
                 local worktrees=$(_phantom_list_worktrees_no_default)
@@ -272,19 +272,19 @@ _phantom_completion() {
                 return 0
             elif [[ \${words[2]} == "get" ]]; then
                 if [[ \${cword} -eq 3 ]]; then
-                    local keys="editor ai worktreesDirectory directoryNameSeparator"
+                    local keys="editor ai worktreesDirectory directoryNameSeparator keepBranch"
                     COMPREPLY=( $(compgen -W "\${keys}" -- "\${cur}") )
                     return 0
                 fi
             elif [[ \${words[2]} == "set" ]]; then
                 if [[ \${cword} -eq 3 ]]; then
-                    local keys="editor ai worktreesDirectory directoryNameSeparator"
+                    local keys="editor ai worktreesDirectory directoryNameSeparator keepBranch"
                     COMPREPLY=( $(compgen -W "\${keys}" -- "\${cur}") )
                     return 0
                 fi
             elif [[ \${words[2]} == "remove" ]]; then
                 if [[ \${cword} -eq 3 ]]; then
-                    local keys="editor ai worktreesDirectory directoryNameSeparator"
+                    local keys="editor ai worktreesDirectory directoryNameSeparator keepBranch"
                     COMPREPLY=( $(compgen -W "\${keys}" -- "\${cur}") )
                     return 0
                 fi

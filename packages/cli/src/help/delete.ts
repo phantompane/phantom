@@ -18,6 +18,11 @@ export const deleteHelp: CommandHelp = {
       description: "Delete the current worktree",
     },
     {
+      name: "--keep-branch",
+      type: "boolean",
+      description: "Delete the worktree but keep its branch",
+    },
+    {
       name: "--fzf",
       type: "boolean",
       description: "Use fzf for interactive selection",
@@ -41,6 +46,10 @@ export const deleteHelp: CommandHelp = {
       command: "phantom delete --current",
     },
     {
+      description: "Delete a worktree while keeping its branch",
+      command: "phantom delete feature-auth --keep-branch",
+    },
+    {
       description: "Delete a worktree with interactive fzf selection",
       command: "phantom delete --fzf",
     },
@@ -49,6 +58,7 @@ export const deleteHelp: CommandHelp = {
     "By default, deletion will fail if the worktree has uncommitted changes",
     "You can pass multiple worktree names to delete them at once",
     "The associated branch will also be deleted if it's not checked out elsewhere",
+    "Use --keep-branch to delete only the worktree and preserve the branch",
     "With --fzf, you can interactively select the worktree to delete",
   ],
 };

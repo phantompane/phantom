@@ -74,7 +74,7 @@ describe("preferencesSetHandler", () => {
 
     await rejects(
       async () => await preferencesSetHandler(["unknown", "value"]),
-      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator/,
+      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch/,
     );
 
     strictEqual(exitMock.mock.calls[0][0], 3);
@@ -185,5 +185,31 @@ describe("preferencesSetHandler", () => {
       "Set phantom.directoryNameSeparator (global) to '-'",
     );
     strictEqual(exitMock.mock.calls[0][0], 0);
+  });
+
+  it("sets keepBranch preference via git config --global", async () => {
+    resetMocks();
+    configSetMock.mockImplementation(async () => undefined);
+
+    await rejects(
+      async () => await preferencesSetHandler(["keepBranch", "true"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(configSetMock.mock.calls[0][0].key, "phantom.keepBranch");
+    strictEqual(configSetMock.mock.calls[0][0].value, "true");
+    strictEqual(
+      consoleLogMock.mock.calls[0][0],
+      "Set phantom.keepBranch (global) to 'true'",
+    );
+  });
+
+  it("rejects invalid keepBranch preference values", async () => {
+    resetMocks();
+
+    await rejects(
+      async () => await preferencesSetHandler(["keepBranch", "yes"]),
+      /Exit with code 3: Preference 'keepBranch' must be 'true' or 'false'/,
+    );
   });
 });

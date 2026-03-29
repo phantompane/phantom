@@ -124,6 +124,32 @@ describe("deleteWorktree", () => {
     ]);
   });
 
+  it("keeps the branch when keepBranch is enabled", async () => {
+    resetMocks();
+    validateWorktreeExistsMock.mockResolvedValue(
+      ok({ path: "/test/repo/.git/phantom/worktrees/feature" }),
+    );
+    getStatusMock.mockResolvedValue(cleanStatus());
+    removeWorktreeMock.mockResolvedValue(undefined);
+
+    const result = await deleteWorktree(
+      "/test/repo",
+      "/test/repo/.git/phantom/worktrees",
+      "feature",
+      { keepBranch: true },
+      undefined,
+    );
+
+    strictEqual(isOk(result), true);
+    if (isOk(result)) {
+      strictEqual(
+        result.value.message,
+        "Deleted worktree 'feature' and kept its branch 'feature'",
+      );
+    }
+    strictEqual(deleteBranchMock.mock.calls.length, 0);
+  });
+
   it("fails when the worktree does not exist", async () => {
     resetMocks();
     validateWorktreeExistsMock.mockResolvedValue(

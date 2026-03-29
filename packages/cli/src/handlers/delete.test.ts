@@ -47,6 +47,7 @@ vi.doMock("@phantompane/core", () => ({
     Promise.resolve({
       gitRoot,
       worktreesDirectory: `${gitRoot}/.git/phantom/worktrees`,
+      preferences: {},
     }),
   ),
   loadConfig: vi.fn(() =>
@@ -115,6 +116,7 @@ describe("deleteHandler", () => {
     strictEqual(deleteWorktreeMock.mock.calls[0][2], "feature");
     const deleteOptions = deleteWorktreeMock.mock.calls[0][3];
     strictEqual(deleteOptions.force, false);
+    strictEqual(deleteOptions.keepBranch, false);
 
     strictEqual(consoleLogMock.mock.calls.length, 1);
     strictEqual(
@@ -147,6 +149,7 @@ describe("deleteHandler", () => {
       strictEqual(call[1], "/test/repo/.git/phantom/worktrees");
       const deleteOptions = call[3];
       strictEqual(deleteOptions.force, false);
+      strictEqual(deleteOptions.keepBranch, false);
     }
     strictEqual(
       deleteWorktreeMock.mock.calls.map((call) => call[2]).join(","),
@@ -201,6 +204,7 @@ describe("deleteHandler", () => {
     strictEqual(deleteWorktreeMock.mock.calls[0][2], "issues/93");
     const deleteOptions = deleteWorktreeMock.mock.calls[0][3];
     strictEqual(deleteOptions.force, false);
+    strictEqual(deleteOptions.keepBranch, false);
 
     strictEqual(consoleLogMock.mock.calls.length, 1);
     strictEqual(
@@ -293,6 +297,7 @@ describe("deleteHandler", () => {
     strictEqual(deleteWorktreeMock.mock.calls.length, 1);
     const deleteOptions = deleteWorktreeMock.mock.calls[0][3];
     strictEqual(deleteOptions.force, true);
+    strictEqual(deleteOptions.keepBranch, false);
 
     strictEqual(consoleLogMock.mock.calls.length, 1);
     strictEqual(exitMock.mock.calls[0][0], 0);
@@ -322,5 +327,26 @@ describe("deleteHandler", () => {
     strictEqual(exitMock.mock.calls.length, 2);
     strictEqual(exitMock.mock.calls[0][0], 3); // first call with validationError
     strictEqual(exitMock.mock.calls[1][0], 1); // second call with generalError
+  });
+
+  it("should pass keepBranch when --keep-branch is provided", async () => {
+    resetMocks();
+    getGitRootMock.mockImplementation(() => Promise.resolve("/test/repo"));
+    deleteWorktreeMock.mockImplementation(() =>
+      Promise.resolve(
+        ok({
+          message: "Deleted worktree 'feature' and kept its branch 'feature'",
+        }),
+      ),
+    );
+
+    await rejects(
+      async () => await deleteHandler(["feature", "--keep-branch"]),
+      /Exit with code 0: success/,
+    );
+
+    const deleteOptions = deleteWorktreeMock.mock.calls[0][3];
+    strictEqual(deleteOptions.force, false);
+    strictEqual(deleteOptions.keepBranch, true);
   });
 });

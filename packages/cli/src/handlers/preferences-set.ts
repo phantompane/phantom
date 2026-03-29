@@ -7,6 +7,7 @@ const supportedKeys = [
   "ai",
   "worktreesDirectory",
   "directoryNameSeparator",
+  "keepBranch",
 ] as const;
 
 export async function preferencesSetHandler(args: string[]): Promise<void> {
@@ -31,6 +32,13 @@ export async function preferencesSetHandler(args: string[]): Promise<void> {
   if (!value) {
     exitWithError(
       `Preference '${inputKey}' requires a value`,
+      exitCodes.validationError,
+    );
+  }
+
+  if (inputKey === "keepBranch" && value !== "true" && value !== "false") {
+    exitWithError(
+      "Preference 'keepBranch' must be 'true' or 'false'",
       exitCodes.validationError,
     );
   }

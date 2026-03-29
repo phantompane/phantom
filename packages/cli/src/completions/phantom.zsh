@@ -82,6 +82,7 @@ _phantom() {
                         worktrees=(${(f)"$(phantom list --names --no-default 2>/dev/null)"})
                         _arguments \
                             '--force[Force deletion even if worktree has uncommitted changes (-f)]' \
+                            '--keep-branch[Delete the worktree but keep its branch]' \
                             '--current[Delete the current worktree]' \
                             '--fzf[Use fzf for interactive selection]' \
                             '*:worktree:(${(q)worktrees[@]})'
@@ -114,7 +115,7 @@ _phantom() {
                 preferences)
                     _arguments \
                         '1:subcommand:(get set remove)' \
-                        '2:key:(editor ai worktreesDirectory directoryNameSeparator)'
+                        '2:key:(editor ai worktreesDirectory directoryNameSeparator keepBranch)'
                     ;;
                 completion)
                     _arguments \

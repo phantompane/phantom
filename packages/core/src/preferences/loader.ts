@@ -6,6 +6,7 @@ export interface Preferences {
   ai?: string;
   worktreesDirectory?: string;
   directoryNameSeparator?: string;
+  keepBranch?: boolean;
 }
 
 export class PreferencesValidationError extends Error {
@@ -21,6 +22,7 @@ const preferencesSchema = z
     ai: z.string().optional(),
     worktreesDirectory: z.string().optional(),
     directoryNameSeparator: z.string().optional(),
+    keepBranch: z.boolean().optional(),
   })
   .passthrough();
 
@@ -60,6 +62,14 @@ function parsePreferences(output: string): Preferences {
       preferences.worktreesDirectory = value;
     } else if (strippedKey === "directorynameseparator") {
       preferences.directoryNameSeparator = value;
+    } else if (strippedKey === "keepbranch") {
+      const normalizedValue = value.toLowerCase();
+      preferences.keepBranch =
+        normalizedValue === "true"
+          ? true
+          : normalizedValue === "false"
+            ? false
+            : value;
     }
   }
 

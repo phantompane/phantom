@@ -8,6 +8,7 @@ const supportedKeys = [
   "ai",
   "worktreesDirectory",
   "directoryNameSeparator",
+  "keepBranch",
 ] as const;
 
 export async function preferencesRemoveHandler(args: string[]): Promise<void> {

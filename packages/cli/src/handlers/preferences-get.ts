@@ -8,6 +8,7 @@ const supportedKeys = [
   "ai",
   "worktreesDirectory",
   "directoryNameSeparator",
+  "keepBranch",
 ] as const;
 
 export async function preferencesGetHandler(args: string[]): Promise<void> {
@@ -45,7 +46,9 @@ export async function preferencesGetHandler(args: string[]): Promise<void> {
             ? preferences.worktreesDirectory
             : inputKey === "directoryNameSeparator"
               ? preferences.directoryNameSeparator
-              : undefined;
+              : inputKey === "keepBranch"
+                ? preferences.keepBranch?.toString()
+                : undefined;
 
     if (value === undefined) {
       output.log(

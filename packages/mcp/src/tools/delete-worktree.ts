@@ -10,13 +10,17 @@ const schema = z.object({
     .boolean()
     .optional()
     .describe("Force deletion even if there are uncommitted changes"),
+  keepBranch: z
+    .boolean()
+    .optional()
+    .describe("Keep the branch after deleting the worktree"),
 });
 
 export const deleteWorktreeTool: Tool<typeof schema> = {
   name: "phantom_delete_worktree",
   description: "Delete a Git worktree (phantom)",
   inputSchema: schema,
-  handler: async ({ name, force }) => {
+  handler: async ({ name, force, keepBranch }) => {
     const gitRoot = await getGitRoot();
     const context = await createContext(gitRoot);
     const result = await deleteWorktree(
@@ -25,6 +29,7 @@ export const deleteWorktreeTool: Tool<typeof schema> = {
       name,
       {
         force,
+        keepBranch: keepBranch ?? context.preferences.keepBranch,
       },
       context.config?.preDelete?.commands,
     );
