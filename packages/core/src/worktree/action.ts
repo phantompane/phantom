@@ -1,10 +1,10 @@
+import { getPhantomEnv } from "@phantompane/process";
+import { err, isErr, ok, type Result } from "@phantompane/shared";
 import {
   executeTmuxCommand,
-  getPhantomEnv,
   isInsideTmux,
   type TmuxSplitDirection,
-} from "@phantompane/process";
-import { err, isErr, ok, type Result } from "@phantompane/shared";
+} from "@phantompane/tmux";
 import { execInWorktree } from "../exec.ts";
 import { shellInWorktree } from "../shell.ts";
 import {

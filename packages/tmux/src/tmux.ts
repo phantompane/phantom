@@ -1,6 +1,6 @@
+import type { ProcessError, SpawnSuccess } from "@phantompane/process";
+import { spawnProcess } from "@phantompane/process";
 import type { Result } from "@phantompane/shared";
-import type { ProcessError } from "./errors.ts";
-import { type SpawnSuccess, spawnProcess } from "./spawn.ts";
 
 export type TmuxSplitDirection = "new" | "vertical" | "horizontal";
 
@@ -45,23 +45,19 @@ export async function executeTmuxCommand(
     tmuxArgs.push("-c", cwd);
   }
 
-  // Add environment variables safely
   if (env) {
     for (const [key, value] of Object.entries(env)) {
       tmuxArgs.push("-e", `${key}=${value}`);
     }
   }
 
-  // Add the command and arguments
   tmuxArgs.push(command);
   if (args && args.length > 0) {
     tmuxArgs.push(...args);
   }
 
-  const result = await spawnProcess({
+  return spawnProcess({
     command: "tmux",
     args: tmuxArgs,
   });
-
-  return result;
 }

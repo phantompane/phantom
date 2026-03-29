@@ -48,13 +48,16 @@ vi.doMock("@phantompane/git", () => ({
 }));
 
 vi.doMock("@phantompane/process", () => ({
-  isInsideTmux: isInsideTmuxMock,
-  executeTmuxCommand: executeTmuxCommandMock,
   getPhantomEnv: vi.fn((name, path) => ({
     PHANTOM: "1",
     PHANTOM_NAME: name,
     PHANTOM_PATH: path,
   })),
+}));
+
+vi.doMock("@phantompane/tmux", () => ({
+  isInsideTmux: isInsideTmuxMock,
+  executeTmuxCommand: executeTmuxCommandMock,
 }));
 
 vi.doMock("@phantompane/core", () => ({

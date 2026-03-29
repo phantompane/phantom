@@ -31,9 +31,12 @@ vi.doMock("@phantompane/github", () => ({
 }));
 
 vi.doMock("@phantompane/process", () => ({
+  getPhantomEnv: getPhantomEnvMock,
+}));
+
+vi.doMock("@phantompane/tmux", () => ({
   isInsideTmux: isInsideTmuxMock,
   executeTmuxCommand: executeTmuxCommandMock,
-  getPhantomEnv: getPhantomEnvMock,
 }));
 
 const { githubCheckoutHandler } = await import("./github-checkout.ts");

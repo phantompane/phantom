@@ -63,8 +63,11 @@ vi.doMock("../shell.ts", () => ({
 }));
 
 vi.doMock("@phantompane/process", () => ({
-  executeTmuxCommand: vi.fn(),
   getPhantomEnv: vi.fn(),
+}));
+
+vi.doMock("@phantompane/tmux", () => ({
+  executeTmuxCommand: vi.fn(),
   isInsideTmux: vi.fn(() => Promise.resolve(true)),
 }));
 

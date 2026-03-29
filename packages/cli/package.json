@@ -24,6 +24,7 @@
     "@phantompane/github": "workspace:*",
     "@phantompane/mcp": "workspace:*",
     "@phantompane/process": "workspace:*",
-    "@phantompane/shared": "workspace:*"
+    "@phantompane/shared": "workspace:*",
+    "@phantompane/tmux": "workspace:*"
   }
 }

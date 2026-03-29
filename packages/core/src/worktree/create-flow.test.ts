@@ -71,8 +71,11 @@ vi.doMock("./post-create.ts", () => ({
 }));
 
 vi.doMock("@phantompane/process", () => ({
-  executeTmuxCommand: executeTmuxCommandMock,
   getPhantomEnv: getPhantomEnvMock,
+}));
+
+vi.doMock("@phantompane/tmux", () => ({
+  executeTmuxCommand: executeTmuxCommandMock,
   isInsideTmux: isInsideTmuxMock,
 }));
 
