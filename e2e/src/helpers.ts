@@ -1,9 +1,8 @@
 import assert from "node:assert";
 import { execFile as execFileCallback } from "node:child_process";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe } from "vitest";
 
@@ -29,12 +28,6 @@ export interface RepoContext {
   repoDir: string;
   rootDir: string;
 }
-
-const helpersDir = dirname(fileURLToPath(import.meta.url));
-const localPhantomEntry = resolve(
-  helpersDir,
-  "../../packages/cli/src/bin/phantom.ts",
-);
 
 export async function runCommand(
   command: string,
@@ -99,25 +92,15 @@ export async function setupRepo(): Promise<RepoContext> {
   const rootDir = await mkdtemp(join(tmpdir(), "phantom-e2e-"));
   const repoDir = join(rootDir, "repo");
   const homeDir = join(rootDir, "home");
-  const binDir = join(rootDir, "bin");
 
   await mkdir(repoDir, { recursive: true });
-  await mkdir(binDir, { recursive: true });
   await mkdir(join(homeDir, ".config", "git"), { recursive: true });
   await writeFile(join(homeDir, ".gitconfig"), "");
-  await writeFile(
-    join(binDir, "phantom"),
-    `#!/usr/bin/env sh
-exec node --no-warnings --experimental-strip-types "${localPhantomEntry}" "$@"
-`,
-  );
-  await chmod(join(binDir, "phantom"), 0o755);
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     GIT_CONFIG_NOSYSTEM: "1",
     HOME: homeDir,
-    PATH: `${binDir}:${process.env.PATH ?? ""}`,
     XDG_CONFIG_HOME: join(homeDir, ".config"),
   };
 
