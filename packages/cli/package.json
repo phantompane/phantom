@@ -23,6 +23,7 @@
     "@phantompane/git": "workspace:*",
     "@phantompane/github": "workspace:*",
     "@phantompane/mcp": "workspace:*",
+    "@phantompane/preferences": "workspace:*",
     "@phantompane/process": "workspace:*",
     "@phantompane/utils": "workspace:*",
     "@phantompane/tmux": "workspace:*"

@@ -1,15 +1,13 @@
 import { parseArgs } from "node:util";
-import { loadPreferences } from "@phantompane/core";
+import {
+  getPreferenceConfigKey,
+  getPreferenceValue,
+  isPreferenceKey,
+  loadPreferences,
+  supportedPreferenceKeys,
+} from "@phantompane/preferences";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
-
-const supportedKeys = [
-  "editor",
-  "ai",
-  "worktreesDirectory",
-  "directoryNameSeparator",
-  "keepBranch",
-] as const;
 
 export async function preferencesGetHandler(args: string[]): Promise<void> {
   const { positionals } = parseArgs({
@@ -28,31 +26,20 @@ export async function preferencesGetHandler(args: string[]): Promise<void> {
 
   const inputKey = positionals[0];
 
-  if (!supportedKeys.includes(inputKey as (typeof supportedKeys)[number])) {
+  if (!isPreferenceKey(inputKey)) {
     exitWithError(
-      `Unknown preference '${inputKey}'. Supported keys: ${supportedKeys.join(", ")}`,
+      `Unknown preference '${inputKey}'. Supported keys: ${supportedPreferenceKeys.join(", ")}`,
       exitCodes.validationError,
     );
   }
 
   try {
     const preferences = await loadPreferences();
-    const value =
-      inputKey === "editor"
-        ? preferences.editor
-        : inputKey === "ai"
-          ? preferences.ai
-          : inputKey === "worktreesDirectory"
-            ? preferences.worktreesDirectory
-            : inputKey === "directoryNameSeparator"
-              ? preferences.directoryNameSeparator
-              : inputKey === "keepBranch"
-                ? preferences.keepBranch?.toString()
-                : undefined;
+    const value = getPreferenceValue(preferences, inputKey);
 
     if (value === undefined) {
       output.log(
-        `Preference '${inputKey}' is not set (git config --global phantom.${inputKey})`,
+        `Preference '${inputKey}' is not set (git config --global ${getPreferenceConfigKey(inputKey)})`,
       );
     } else {
       output.log(value);

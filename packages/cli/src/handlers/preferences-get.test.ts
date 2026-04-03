@@ -19,6 +19,17 @@ afterAll(() => {
   process.env = originalProcessEnv;
 });
 
+vi.doMock("@phantompane/preferences", async () => {
+  const actual = await vi.importActual<
+    typeof import("@phantompane/preferences")
+  >("@phantompane/preferences");
+
+  return {
+    ...actual,
+    loadPreferences: loadPreferencesMock,
+  };
+});
+
 vi.doMock("@phantompane/core", () => ({
   loadPreferences: loadPreferencesMock,
 }));

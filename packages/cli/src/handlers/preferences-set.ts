@@ -1,14 +1,12 @@
 import { configSet } from "@phantompane/git";
+import {
+  getPreferenceConfigKey,
+  isPreferenceKey,
+  supportedPreferenceKeys,
+  validatePreferenceValue,
+} from "@phantompane/preferences";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
-
-const supportedKeys = [
-  "editor",
-  "ai",
-  "worktreesDirectory",
-  "directoryNameSeparator",
-  "keepBranch",
-] as const;
 
 export async function preferencesSetHandler(args: string[]): Promise<void> {
   if (args.length < 2) {
@@ -20,9 +18,9 @@ export async function preferencesSetHandler(args: string[]): Promise<void> {
 
   const [inputKey, ...valueParts] = args;
 
-  if (!supportedKeys.includes(inputKey as (typeof supportedKeys)[number])) {
+  if (!isPreferenceKey(inputKey)) {
     exitWithError(
-      `Unknown preference '${inputKey}'. Supported keys: ${supportedKeys.join(", ")}`,
+      `Unknown preference '${inputKey}'. Supported keys: ${supportedPreferenceKeys.join(", ")}`,
       exitCodes.validationError,
     );
   }
@@ -36,21 +34,21 @@ export async function preferencesSetHandler(args: string[]): Promise<void> {
     );
   }
 
-  if (inputKey === "keepBranch" && value !== "true" && value !== "false") {
-    exitWithError(
-      "Preference 'keepBranch' must be 'true' or 'false'",
-      exitCodes.validationError,
-    );
+  const validationError = validatePreferenceValue(inputKey, value);
+  if (validationError) {
+    exitWithError(validationError, exitCodes.validationError);
   }
 
   try {
+    const configKey = getPreferenceConfigKey(inputKey);
+
     await configSet({
-      key: `phantom.${inputKey}`,
+      key: configKey,
       value,
       global: true,
     });
 
-    output.log(`Set phantom.${inputKey} (global) to '${value}'`);
+    output.log(`Set ${configKey} (global) to '${value}'`);
     exitWithSuccess();
   } catch (error) {
     exitWithError(

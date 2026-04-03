@@ -5,11 +5,11 @@ const loadConfigMock = vi.fn();
 const loadPreferencesMock = vi.fn();
 const getWorktreesDirectoryMock = vi.fn();
 
-vi.doMock("./config/loader.ts", () => ({
+vi.doMock("@phantompane/config", () => ({
   loadConfig: loadConfigMock,
 }));
 
-vi.doMock("./preferences/loader.ts", () => ({
+vi.doMock("@phantompane/preferences", () => ({
   loadPreferences: loadPreferencesMock,
 }));
 

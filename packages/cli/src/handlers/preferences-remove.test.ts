@@ -23,6 +23,14 @@ vi.doMock("@phantompane/git", () => ({
   configUnset: configUnsetMock,
 }));
 
+vi.doMock(
+  "@phantompane/preferences",
+  async () =>
+    await vi.importActual<typeof import("@phantompane/preferences")>(
+      "@phantompane/preferences",
+    ),
+);
+
 vi.doMock("../output.ts", () => ({
   output: {
     log: consoleLogMock,
