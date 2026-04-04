@@ -1,0 +1,26 @@
+{
+  "name": "@phantompane/gui",
+  "version": "6.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --host 0.0.0.0 --port 3000 --strictPort",
+    "build": "vite build",
+    "lint": "oxfmt --check . && oxlint .",
+    "fix": "oxfmt --write . && oxlint --fix .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/gui/src"
+  },
+  "dependencies": {
+    "hono": "^4.12.10",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router": "^7.14.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "vite": "^8.0.3"
+  }
+}

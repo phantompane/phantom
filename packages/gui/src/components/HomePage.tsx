@@ -44,7 +44,7 @@ export function HomePage() {
   return (
     <main className="shell">
       <section className="panel">
-        <p className="eyebrow">Phantom Server</p>
+        <p className="eyebrow">Phantom GUI</p>
         <h1>Vite SPA hosted by Hono</h1>
         <p className="lede">
           React Router is running in declarative mode, and API calls use Hono

@@ -1,4 +1,4 @@
-import { cp, readFile, rename, writeFile } from "node:fs/promises";
+import { cp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
@@ -10,9 +10,13 @@ if (!packageJson.version) {
 }
 
 const distDir = "dist";
+const publicDir = join(distDir, "public");
+
+await rm(publicDir, { recursive: true, force: true });
 
 await rename(join(distDir, "index.js"), join(distDir, "server.js"));
 await rename(join(distDir, "index.js.map"), join(distDir, "server.js.map"));
+await cp("../gui/dist", publicDir, { recursive: true });
 
 await cp("../../LICENSE", join(distDir, "LICENSE"));
 await cp("../../README.md", join(distDir, "README.md"));

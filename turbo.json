@@ -17,6 +17,10 @@
       "dependsOn": ["^build", "transit"],
       "outputs": ["dist/**"]
     },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
     "compile": {
       "dependsOn": ["^build", "transit"],
       "outputs": ["dist/**", "output/**"]

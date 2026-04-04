@@ -1,8 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["node"]
   },
-  "include": ["build-package.ts", "src/**/*", "tsdown.config.ts"],
+  "include": ["src/**/*", "vite.config.ts"],
   "exclude": ["node_modules"]
 }

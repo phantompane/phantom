@@ -3,11 +3,12 @@
   "version": "6.2.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./api": "./src/api.ts"
+  },
   "scripts": {
-    "dev": "concurrently -k -n api,web -c blue,green \"pnpm run dev:api\" \"pnpm run dev:web\"",
-    "dev:api": "node --watch --no-warnings --experimental-strip-types src/server/dev.ts",
-    "dev:web": "vite dev --host 0.0.0.0 --port 3000 --strictPort",
-    "build": "tsdown && vite build && node --no-warnings --experimental-strip-types build-package.ts",
+    "dev": "node --watch --no-warnings --experimental-strip-types src/server/dev.ts",
+    "build": "pnpm --filter @phantompane/gui build && tsdown && node --no-warnings --experimental-strip-types build-package.ts",
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
     "typecheck": "tsc --noEmit",
@@ -17,16 +18,9 @@
     "@hono/node-server": "^1.19.12",
     "@hono/zod-validator": "^0.7.6",
     "hono": "^4.12.10",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "react-router": "^7.14.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "concurrently": "^9.2.1",
-    "vite": "^8.0.3"
+    "@phantompane/gui": "workspace:*"
   }
 }
