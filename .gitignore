@@ -5,6 +5,12 @@ Thumbs.db
 # Dependencies
 node_modules
 .turbo
+packages/*/.turbo
+
+# Package build outputs
+packages/gui/dist
+packages/server/dist
+
 .worktrees
 .devenv*
 .pre-commit-config.yaml

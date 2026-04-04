@@ -15,6 +15,7 @@ _phantom() {
         'edit:Open a worktree in your configured editor'
         'ai:Launch your configured AI coding assistant in a worktree'
         'shell:Open an interactive shell in a worktree directory'
+        'serve:Launch the experimental GUI and backend'
         'preferences:Manage editor/ai/worktreesDirectory/directoryNameSeparator preferences (git config --global)'
         'github:GitHub integration commands'
         'gh:GitHub integration commands (alias)'
@@ -111,6 +112,9 @@ _phantom() {
                     worktrees=(${(f)"$(phantom list --names 2>/dev/null)"})
                     _arguments \
                         '1:worktree:(${(q)worktrees[@]})'
+                    ;;
+                serve)
+                    _arguments
                     ;;
                 preferences)
                     _arguments \

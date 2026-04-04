@@ -1,5 +1,5 @@
-import { chmod, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, cp, mkdir, readdir, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
@@ -24,6 +24,25 @@ export default defineConfig({
         outputFiles
           .filter((file) => file.endsWith(".js"))
           .map((file) => chmod(join(ctx.options.outDir, file), 0o755)),
+      );
+
+      const artifacts = [
+        {
+          source: resolve("..", "server", "dist"),
+          target: join(ctx.options.outDir, "server"),
+        },
+        {
+          source: resolve("..", "gui", "dist"),
+          target: join(ctx.options.outDir, "gui"),
+        },
+      ];
+
+      await Promise.all(
+        artifacts.map(async ({ source, target }) => {
+          await rm(target, { force: true, recursive: true });
+          await mkdir(target, { recursive: true });
+          await cp(source, target, { force: true, recursive: true });
+        }),
       );
     },
   },

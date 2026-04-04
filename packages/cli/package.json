@@ -20,11 +20,13 @@
   },
   "dependencies": {
     "@phantompane/core": "workspace:*",
+    "@phantompane/gui": "workspace:*",
     "@phantompane/git": "workspace:*",
     "@phantompane/github": "workspace:*",
     "@phantompane/mcp": "workspace:*",
     "@phantompane/preferences": "workspace:*",
     "@phantompane/process": "workspace:*",
+    "@phantompane/server": "workspace:*",
     "@phantompane/utils": "workspace:*",
     "@phantompane/tmux": "workspace:*"
   }

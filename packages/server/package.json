@@ -1,0 +1,20 @@
+{
+  "name": "@phantompane/server",
+  "version": "6.2.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsdown",
+    "dev": "node --no-warnings --experimental-strip-types src/dev.ts",
+    "lint": "oxfmt --check . && oxlint .",
+    "fix": "oxfmt --write . && oxlint --fix .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/server/src"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.2",
+    "hono": "^4.9.8"
+  }
+}
