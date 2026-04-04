@@ -6,11 +6,10 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build && node --no-warnings --experimental-strip-types build-package.ts",
-    "lint": "oxfmt --check app src build-package.ts next-env.d.ts next.config.ts package.json tsconfig.json dist/package.json && oxlint app src build-package.ts next-env.d.ts next.config.ts",
-    "fix": "oxfmt --write app src build-package.ts next-env.d.ts next.config.ts package.json tsconfig.json dist/package.json && oxlint --fix app src build-package.ts next-env.d.ts next.config.ts",
+    "lint": "oxfmt --check . && oxlint .",
+    "fix": "oxfmt --write . && oxlint --fix .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --root ../.. packages/server/src",
-    "prepublishOnly": "pnpm build"
+    "test": "vitest run --root ../.. packages/server/src"
   },
   "dependencies": {
     "next": "16.2.2",

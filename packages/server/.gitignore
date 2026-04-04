@@ -1,0 +1,6 @@
+.next
+dist/.next
+dist/public
+dist/server.js
+node_modules
+.turbo

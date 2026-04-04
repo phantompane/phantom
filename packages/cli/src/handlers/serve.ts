@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { exitWithError } from "../errors.ts";
 import { helpFormatter } from "../help.ts";
+import { output } from "../output.ts";
 import { serveHelp } from "../help/serve.ts";
 
 export async function serveHandler(args: string[] = []): Promise<void> {
@@ -26,6 +27,9 @@ export async function serveHandler(args: string[] = []): Promise<void> {
 
   try {
     process.env.PORT ??= "9640";
+    output.warn(
+      "Warning: `phantom serve` is experimental and may change without notice.",
+    );
 
     const require = createRequire(import.meta.url);
     let serverPath: string;

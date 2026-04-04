@@ -2,7 +2,7 @@ import type { CommandHelp } from "../help.ts";
 
 export const serveHelp: CommandHelp = {
   name: "serve",
-  description: "Start the standalone Phantom server",
+  description: "Start the experimental standalone Phantom server",
   usage: "phantom serve [options]",
   options: [
     {
@@ -14,11 +14,12 @@ export const serveHelp: CommandHelp = {
   ],
   examples: [
     {
-      description: "Start the standalone server",
+      description: "Start the experimental standalone server",
       command: "phantom serve",
     },
   ],
   notes: [
+    "This command is experimental and may change without notice.",
     "By default, the standalone server listens on port 9640.",
     "This command imports the standalone Next.js server entrypoint generated under packages/server/dist/server.js.",
   ],
