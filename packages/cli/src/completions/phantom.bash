@@ -72,7 +72,7 @@ _phantom_completion() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="create attach list where delete exec edit ai shell preferences github gh version completion mcp"
+    local commands="create attach list where delete exec edit ai shell serve preferences github gh version completion mcp"
     local global_opts="--help --version"
 
     if [[ ${cword} -eq 1 ]]; then
