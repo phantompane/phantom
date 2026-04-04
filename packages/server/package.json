@@ -1,0 +1,24 @@
+{
+  "name": "@phantompane/server-private",
+  "version": "6.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build && node --no-warnings --experimental-strip-types build-package.ts",
+    "lint": "oxfmt --check app src build-package.ts next-env.d.ts next.config.ts package.json tsconfig.json dist/package.json && oxlint app src build-package.ts next-env.d.ts next.config.ts",
+    "fix": "oxfmt --write app src build-package.ts next-env.d.ts next.config.ts package.json tsconfig.json dist/package.json && oxlint --fix app src build-package.ts next-env.d.ts next.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/server/src",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "next": "16.2.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3"
+  }
+}

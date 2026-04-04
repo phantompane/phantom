@@ -93,6 +93,7 @@ complete -c phantom -n "__phantom_using_command" -a "exec" -d "Execute a command
 complete -c phantom -n "__phantom_using_command" -a "edit" -d "Open a worktree in your configured editor"
 complete -c phantom -n "__phantom_using_command" -a "ai" -d "Launch your configured AI coding assistant in a worktree"
 complete -c phantom -n "__phantom_using_command" -a "shell" -d "Open an interactive shell in a worktree directory"
+complete -c phantom -n "__phantom_using_command" -a "serve" -d "Start the standalone Phantom server"
 complete -c phantom -n "__phantom_using_command" -a "preferences" -d "Manage editor/ai/worktreesDirectory/directoryNameSeparator preferences (stored in git config --global)"
 complete -c phantom -n "__phantom_using_command" -a "github" -d "GitHub integration commands"
 complete -c phantom -n "__phantom_using_command" -a "gh" -d "GitHub integration commands (alias)"

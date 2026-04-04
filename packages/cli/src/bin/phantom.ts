@@ -17,6 +17,7 @@ import { preferencesGetHandler } from "../handlers/preferences-get.ts";
 import { preferencesRemoveHandler } from "../handlers/preferences-remove.ts";
 import { preferencesSetHandler } from "../handlers/preferences-set.ts";
 import { shellHandler } from "../handlers/shell.ts";
+import { serveHandler } from "../handlers/serve.ts";
 import { versionHandler } from "../handlers/version.ts";
 import { whereHandler } from "../handlers/where.ts";
 import { aiHelp } from "../help/ai.ts";
@@ -36,6 +37,7 @@ import {
   preferencesSetHelp,
 } from "../help/preferences.ts";
 import { shellHelp } from "../help/shell.ts";
+import { serveHelp } from "../help/serve.ts";
 import { versionHelp } from "../help/version.ts";
 import { whereHelp } from "../help/where.ts";
 import { type CommandHelp, helpFormatter } from "../help.ts";
@@ -102,6 +104,12 @@ const commands: Command[] = [
     description: "Open an interactive shell in a worktree directory",
     handler: shellHandler,
     help: shellHelp,
+  },
+  {
+    name: "serve",
+    description: "Start the standalone Phantom server",
+    handler: serveHandler,
+    help: serveHelp,
   },
   {
     name: "preferences",

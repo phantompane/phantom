@@ -1,0 +1,34 @@
+{
+  "name": "@phantompane/server",
+  "version": "6.2.0",
+  "description": "Standalone Next.js server package for Phantom",
+  "keywords": [
+    "nextjs",
+    "server",
+    "phantom"
+  ],
+  "homepage": "https://github.com/phantompane/phantom#readme",
+  "bugs": {
+    "url": "https://github.com/phantompane/phantom/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phantompane/phantom.git"
+  },
+  "license": "MIT",
+  "author": "aku11i",
+  "type": "module",
+  "main": "./server.js",
+  "files": [
+    ".next",
+    "package.json",
+    "public",
+    "README.md",
+    "LICENSE",
+    "server.js"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {}
+}
