@@ -2,5 +2,6 @@
 dist/.next
 dist/public
 dist/server.js
+dist/server.js.map
 node_modules
 .turbo

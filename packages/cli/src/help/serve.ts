@@ -21,6 +21,6 @@ export const serveHelp: CommandHelp = {
   notes: [
     "This command is experimental and may change without notice.",
     "By default, the standalone server listens on port 9640.",
-    "This command imports the standalone Next.js server entrypoint generated under packages/server/dist/server.js.",
+    "This command imports the server entrypoint generated under packages/server/dist/server.js.",
   ],
 };

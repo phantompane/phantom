@@ -1,0 +1,88 @@
+:root {
+  color: #e8ecf3;
+  background:
+    radial-gradient(circle at top, rgba(91, 141, 239, 0.22), transparent 32%),
+    linear-gradient(180deg, #09111f 0%, #030712 100%);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.panel {
+  width: min(720px, 100%);
+  border: 1px solid rgba(153, 172, 203, 0.18);
+  background: rgba(9, 17, 31, 0.78);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(18px);
+  border-radius: 24px;
+  padding: 32px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: #8fb5ff;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 3.6rem);
+  line-height: 0.95;
+}
+
+.lede {
+  margin: 16px 0 0;
+  color: #bfd0ee;
+  font-size: 1.02rem;
+  line-height: 1.6;
+}
+
+.statusGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin: 28px 0 0;
+}
+
+.statusGrid div {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(148, 163, 184, 0.1);
+}
+
+dt {
+  color: #8fa1c0;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+dd {
+  margin: 10px 0 0;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .panel {
+    padding: 24px;
+    border-radius: 20px;
+  }
+}

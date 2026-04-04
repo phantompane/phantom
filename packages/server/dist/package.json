@@ -1,11 +1,13 @@
 {
   "name": "@phantompane/server",
   "version": "6.2.0",
-  "description": "Standalone Next.js server package for Phantom",
+  "description": "Hono-hosted React SPA package for Phantom",
   "keywords": [
-    "nextjs",
+    "hono",
+    "react",
     "server",
-    "phantom"
+    "phantom",
+    "vite"
   ],
   "homepage": "https://github.com/phantompane/phantom#readme",
   "bugs": {
@@ -20,11 +22,10 @@
   "type": "module",
   "main": "./server.js",
   "files": [
-    ".next",
     "package.json",
-    "public",
     "README.md",
     "LICENSE",
+    "public",
     "server.js"
   ],
   "engines": {
