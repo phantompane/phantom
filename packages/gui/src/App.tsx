@@ -2,16 +2,10 @@ import { useEffect, useState } from "react";
 import { hc } from "hono/client";
 import type { AppType } from "@phantompane/server";
 
-type StatusPayload = {
-  mode: string;
-  name: string;
-  now: string;
-};
-
 const client = hc<AppType>("/");
 
 export function App() {
-  const [status, setStatus] = useState<StatusPayload | null>(null);
+  const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -26,20 +20,20 @@ export function App() {
           throw new Error(`Request failed with status ${response.status}`);
         }
 
-        const payload = (await response.json()) as StatusPayload;
+        await response.json();
 
         if (!active) {
           return;
         }
 
-        setStatus(payload);
+        setConnected(true);
         setError(null);
       } catch (loadError) {
         if (!active) {
           return;
         }
 
-        setStatus(null);
+        setConnected(false);
         setError(
           loadError instanceof Error ? loadError.message : String(loadError),
         );
@@ -76,11 +70,11 @@ export function App() {
           </div>
           <div>
             <dt>Runtime</dt>
-            <dd>{loading ? "loading..." : (status?.name ?? "unavailable")}</dd>
+            <dd>{loading ? "loading..." : connected ? "connected" : "unavailable"}</dd>
           </div>
           <div>
-            <dt>Updated</dt>
-            <dd>{loading ? "loading..." : formatTimestamp(status?.now)}</dd>
+            <dt>Status</dt>
+            <dd>{loading ? "loading..." : connected ? "ready" : "offline"}</dd>
           </div>
         </dl>
         {error ? (
@@ -93,21 +87,4 @@ export function App() {
       </section>
     </main>
   );
-}
-
-function formatTimestamp(value?: string) {
-  if (!value) {
-    return "unavailable";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "medium",
-  }).format(date);
 }

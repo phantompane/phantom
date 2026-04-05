@@ -6,8 +6,6 @@ describe("server app", () => {
     const response = await app.request("/api/rpc/status");
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      name: "phantom serve",
-    });
+    await expect(response.json()).resolves.toEqual({});
   });
 });
