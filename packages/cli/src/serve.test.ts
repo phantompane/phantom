@@ -22,42 +22,6 @@ async function createTemporaryDirectory(): Promise<string> {
 }
 
 describe("resolveServeServerEntry", () => {
-  it("finds the bundled app server entry from the source CLI entrypoint", async () => {
-    const directory = await createTemporaryDirectory();
-    const cliEntry = join(
-      directory,
-      "packages",
-      "cli",
-      "src",
-      "bin",
-      "phantom.ts",
-    );
-    const serverEntry = join(
-      directory,
-      "packages",
-      "cli",
-      "dist",
-      "app",
-      ".output",
-      "server",
-      "index.mjs",
-    );
-
-    await mkdir(join(directory, "packages", "cli", "src", "bin"), {
-      recursive: true,
-    });
-    await mkdir(
-      join(directory, "packages", "cli", "dist", "app", ".output", "server"),
-      {
-        recursive: true,
-      },
-    );
-    await writeFile(cliEntry, "");
-    await writeFile(serverEntry, "");
-
-    strictEqual(await resolveServeServerEntry(cliEntry), serverEntry);
-  });
-
   it("finds the app server entry from the bundled CLI entrypoint", async () => {
     const directory = await createTemporaryDirectory();
     const cliEntry = join(directory, "packages", "cli", "dist", "phantom.js");
@@ -92,6 +56,45 @@ describe("resolveServeServerEntry", () => {
       recursive: true,
     });
     await writeFile(cliEntry, "");
+
+    await rejects(
+      resolveServeServerEntry(cliEntry),
+      /Could not find Phantom server assets/,
+    );
+  });
+
+  it("throws when called from the source CLI entrypoint", async () => {
+    const directory = await createTemporaryDirectory();
+    const cliEntry = join(
+      directory,
+      "packages",
+      "cli",
+      "src",
+      "bin",
+      "phantom.ts",
+    );
+    const serverEntry = join(
+      directory,
+      "packages",
+      "cli",
+      "dist",
+      "app",
+      ".output",
+      "server",
+      "index.mjs",
+    );
+
+    await mkdir(join(directory, "packages", "cli", "src", "bin"), {
+      recursive: true,
+    });
+    await mkdir(
+      join(directory, "packages", "cli", "dist", "app", ".output", "server"),
+      {
+        recursive: true,
+      },
+    );
+    await writeFile(cliEntry, "");
+    await writeFile(serverEntry, "");
 
     await rejects(
       resolveServeServerEntry(cliEntry),

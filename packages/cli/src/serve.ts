@@ -19,16 +19,6 @@ export async function resolveServeServerEntry(
   );
   const candidates = [
     join(entryDirectory, "app", ".output", "server", "index.mjs"),
-    join(
-      entryDirectory,
-      "..",
-      "..",
-      "dist",
-      "app",
-      ".output",
-      "server",
-      "index.mjs",
-    ),
   ];
 
   for (const candidate of candidates) {
