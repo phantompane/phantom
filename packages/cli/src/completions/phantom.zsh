@@ -15,6 +15,7 @@ _phantom() {
         'edit:Open a worktree in your configured editor'
         'ai:Launch your configured AI coding assistant in a worktree'
         'shell:Open an interactive shell in a worktree directory'
+        'serve:Start the bundled Phantom web server'
         'preferences:Manage editor/ai/worktreesDirectory/directoryNameSeparator preferences (git config --global)'
         'github:GitHub integration commands'
         'gh:GitHub integration commands (alias)'
@@ -120,6 +121,11 @@ _phantom() {
                 completion)
                     _arguments \
                         '1:shell:(fish zsh bash)'
+                    ;;
+                serve)
+                    _arguments \
+                        '--host[Host interface to bind the server to]:host:' \
+                        '--port[Port to bind the server to]:port:'
                     ;;
                 github|gh)
                     if [[ ${#line} -eq 1 ]]; then

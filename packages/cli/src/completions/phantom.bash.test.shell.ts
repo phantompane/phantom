@@ -23,6 +23,20 @@ describe("phantom.bash completion", () => {
     );
   });
 
+  it("completes serve when typing phantom s", () => {
+    const { completions, result } = runBashCompletion(completionScriptPath, [
+      "phantom",
+      "s",
+    ]);
+
+    strictEqual(result.status, 0, result.stderr);
+
+    ok(
+      completions.includes("serve"),
+      `Expected serve to be offered, got: ${completions.join(", ")}`,
+    );
+  });
+
   it("completes exec command arguments with the target command's completion", () => {
     const setupScript = `
 _dummy_complete() {

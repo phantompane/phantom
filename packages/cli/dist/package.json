@@ -28,6 +28,7 @@
   },
   "files": [
     "phantom.js",
+    "app",
     "README.md",
     "LICENSE"
   ],

@@ -1,6 +1,13 @@
-import { chmod, readdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { chmod, cp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { defineConfig } from "tsdown";
+
+const execFileAsync = promisify(execFile);
+const packageManagerCommand =
+  process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const appOutputDirectory = join("..", "app", ".output");
 
 export default defineConfig({
   entry: ["src/bin/*.ts"],
@@ -18,6 +25,19 @@ export default defineConfig({
   fixedExtension: false,
   hooks: {
     async "build:done"(ctx) {
+      await execFileAsync(packageManagerCommand, [
+        "--filter",
+        "app-private",
+        "build",
+      ]);
+
+      const bundledAppDirectory = join(ctx.options.outDir, "app");
+
+      await rm(bundledAppDirectory, { recursive: true, force: true });
+      await cp(appOutputDirectory, join(bundledAppDirectory, ".output"), {
+        recursive: true,
+      });
+
       const outputFiles = await readdir(ctx.options.outDir);
 
       await Promise.all(
