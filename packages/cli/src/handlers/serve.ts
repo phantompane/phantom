@@ -1,6 +1,6 @@
-import { access } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { access, realpath } from "node:fs/promises";
+import { basename, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { exitWithError } from "../errors.ts";
 import { serveHelp } from "../help/serve.ts";
@@ -46,15 +46,19 @@ export async function serveHandler(args: string[] = []): Promise<void> {
     process.env.PORT = port;
     process.env.NITRO_PORT = port;
 
-    const entryDirectory = resolve(
-      process.argv[1] ? dirname(process.argv[1]) : process.cwd(),
-    );
-    const serverEntry = join(
-      entryDirectory,
-      "app",
-      ".output",
-      "server",
-      "index.mjs",
+    const currentModulePath = fileURLToPath(import.meta.url);
+    const bundledEntrypoint =
+      basename(currentModulePath) === "phantom.js" &&
+      basename(dirname(currentModulePath)) === "dist"
+        ? currentModulePath
+        : process.argv[1]
+          ? await realpath(process.argv[1])
+          : currentModulePath;
+    const serverEntry = fileURLToPath(
+      new URL(
+        "./app/.output/server/index.mjs",
+        pathToFileURL(bundledEntrypoint),
+      ),
     );
 
     try {

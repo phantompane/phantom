@@ -1,5 +1,12 @@
 import { rejects, strictEqual } from "node:assert";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it, vi } from "vitest";
@@ -107,6 +114,7 @@ describe("serveHandler", () => {
   it("uses port 9640 by default", async () => {
     const { cliEntry, serverEntry } = await createBundledCliFixture();
     process.argv[1] = cliEntry;
+    const resolvedServerEntry = await realpath(serverEntry);
 
     await serveHandler([]);
 
@@ -120,7 +128,7 @@ describe("serveHandler", () => {
     strictEqual(consoleLogMock.mock.calls.length, 1);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
-      `Starting Phantom server from ${serverEntry}`,
+      `Starting Phantom server from ${resolvedServerEntry}`,
     );
   });
 
@@ -133,6 +141,26 @@ describe("serveHandler", () => {
     strictEqual(process.env.PORT, "4100");
     strictEqual(process.env.NITRO_PORT, "4100");
     strictEqual(consoleWarnMock.mock.calls.length, 1);
+  });
+
+  it("resolves bundled server assets from a symlinked CLI entrypoint", async () => {
+    const { cliEntry, serverEntry } = await createBundledCliFixture();
+    const directory = await createTemporaryDirectory();
+    const symlinkEntry = join(directory, "bin", "phantom");
+    const resolvedServerEntry = await realpath(serverEntry);
+
+    await mkdir(join(directory, "bin"), { recursive: true });
+    await symlink(cliEntry, symlinkEntry);
+    process.argv[1] = symlinkEntry;
+
+    await serveHandler([]);
+
+    strictEqual(consoleWarnMock.mock.calls.length, 1);
+    strictEqual(consoleLogMock.mock.calls.length, 1);
+    strictEqual(
+      consoleLogMock.mock.calls[0][0],
+      `Starting Phantom server from ${resolvedServerEntry}`,
+    );
   });
 
   it("fails when bundled server assets are missing", async () => {
