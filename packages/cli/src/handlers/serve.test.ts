@@ -1,16 +1,10 @@
 import { rejects, strictEqual } from "node:assert";
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it, vi } from "vitest";
 
+const fileURLToPathMock = vi.hoisted(() => vi.fn());
 const consoleLogMock = vi.fn();
 const consoleErrorMock = vi.fn();
 const consoleWarnMock = vi.fn();
@@ -25,6 +19,15 @@ const originalNitroHost = process.env.NITRO_HOST;
 const originalPort = process.env.PORT;
 const originalNitroPort = process.env.NITRO_PORT;
 const originalArgv = [...process.argv];
+
+vi.doMock("node:url", async () => {
+  const actual = await vi.importActual<typeof import("node:url")>("node:url");
+
+  return {
+    ...actual,
+    fileURLToPath: fileURLToPathMock,
+  };
+});
 
 vi.doMock("../output.ts", () => ({
   output: {
@@ -105,7 +108,7 @@ async function createBundledCliFixture(): Promise<{
     },
   );
   await writeFile(cliEntry, "");
-  await writeFile(serverEntry, "");
+  await writeFile(serverEntry, "export default {};\n");
 
   return { cliEntry, serverEntry };
 }
@@ -113,8 +116,7 @@ async function createBundledCliFixture(): Promise<{
 describe("serveHandler", () => {
   it("uses port 9640 by default", async () => {
     const { cliEntry, serverEntry } = await createBundledCliFixture();
-    process.argv[1] = cliEntry;
-    const resolvedServerEntry = await realpath(serverEntry);
+    fileURLToPathMock.mockReturnValue(cliEntry);
 
     await serveHandler([]);
 
@@ -128,13 +130,13 @@ describe("serveHandler", () => {
     strictEqual(consoleLogMock.mock.calls.length, 1);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
-      `Starting Phantom server from ${resolvedServerEntry}`,
+      `Starting Phantom server from ${serverEntry}`,
     );
   });
 
   it("lets --port override the default port", async () => {
     const { cliEntry } = await createBundledCliFixture();
-    process.argv[1] = cliEntry;
+    fileURLToPathMock.mockReturnValue(cliEntry);
 
     await serveHandler(["--port", "4100"]);
 
@@ -143,15 +145,10 @@ describe("serveHandler", () => {
     strictEqual(consoleWarnMock.mock.calls.length, 1);
   });
 
-  it("resolves bundled server assets from a symlinked CLI entrypoint", async () => {
+  it("ignores process.argv[1] and resolves from the bundled entrypoint path", async () => {
     const { cliEntry, serverEntry } = await createBundledCliFixture();
-    const directory = await createTemporaryDirectory();
-    const symlinkEntry = join(directory, "bin", "phantom");
-    const resolvedServerEntry = await realpath(serverEntry);
-
-    await mkdir(join(directory, "bin"), { recursive: true });
-    await symlink(cliEntry, symlinkEntry);
-    process.argv[1] = symlinkEntry;
+    fileURLToPathMock.mockReturnValue(cliEntry);
+    process.argv[1] = "/tmp/fake-bin/phantom";
 
     await serveHandler([]);
 
@@ -159,7 +156,7 @@ describe("serveHandler", () => {
     strictEqual(consoleLogMock.mock.calls.length, 1);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
-      `Starting Phantom server from ${resolvedServerEntry}`,
+      `Starting Phantom server from ${serverEntry}`,
     );
   });
 
@@ -171,49 +168,7 @@ describe("serveHandler", () => {
       recursive: true,
     });
     await writeFile(cliEntry, "");
-    process.argv[1] = cliEntry;
-
-    await rejects(
-      serveHandler([]),
-      /Exit: Failed to start Phantom server: Could not find Phantom server assets/,
-    );
-
-    strictEqual(consoleWarnMock.mock.calls.length, 1);
-  });
-
-  it("fails when called from the source CLI entrypoint", async () => {
-    const directory = await createTemporaryDirectory();
-    const cliEntry = join(
-      directory,
-      "packages",
-      "cli",
-      "src",
-      "bin",
-      "phantom.ts",
-    );
-    const serverEntry = join(
-      directory,
-      "packages",
-      "cli",
-      "dist",
-      "app",
-      ".output",
-      "server",
-      "index.mjs",
-    );
-
-    await mkdir(join(directory, "packages", "cli", "src", "bin"), {
-      recursive: true,
-    });
-    await mkdir(
-      join(directory, "packages", "cli", "dist", "app", ".output", "server"),
-      {
-        recursive: true,
-      },
-    );
-    await writeFile(cliEntry, "");
-    await writeFile(serverEntry, "");
-    process.argv[1] = cliEntry;
+    fileURLToPathMock.mockReturnValue(cliEntry);
 
     await rejects(
       serveHandler([]),
