@@ -1,9 +1,47 @@
+import { access } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { exitWithError } from "../errors.ts";
 import { serveHelp } from "../help/serve.ts";
 import { helpFormatter } from "../help.ts";
 import { output } from "../output.ts";
-import { resolveServeServerEntry, startServeServer } from "../serve.ts";
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveServeServerEntry(
+  entryPath: string | undefined = process.argv[1],
+): Promise<string> {
+  const entryDirectory = resolve(
+    entryPath ? dirname(entryPath) : process.cwd(),
+  );
+  const candidate = join(
+    entryDirectory,
+    "app",
+    ".output",
+    "server",
+    "index.mjs",
+  );
+
+  if (await pathExists(candidate)) {
+    return candidate;
+  }
+
+  throw new Error(
+    "Could not find Phantom server assets. Run `pnpm --filter @phantompane/cli-private build` first.",
+  );
+}
+
+export async function startServeServer(serverEntry: string): Promise<void> {
+  await import(pathToFileURL(serverEntry).href);
+}
 
 export async function serveHandler(args: string[] = []): Promise<void> {
   const { values } = parseArgs({
