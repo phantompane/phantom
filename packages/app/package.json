@@ -7,8 +7,8 @@
     "build": "vite build && tsc --noEmit",
     "preview": "vite preview",
     "start": "node .output/server/index.mjs",
-    "lint": "oxfmt --check . '!src/routeTree.gen.ts' && oxlint .",
-    "fix": "oxfmt --write . '!src/routeTree.gen.ts' && oxlint --fix .",
+    "lint": "oxfmt --check . '!src/routeTree.gen.ts' && oxlint --ignore-pattern src/routeTree.gen.ts .",
+    "fix": "oxfmt --write . '!src/routeTree.gen.ts' && oxlint --fix --ignore-pattern src/routeTree.gen.ts .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --root ../.. packages/app/src"
   },
