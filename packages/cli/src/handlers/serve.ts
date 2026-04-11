@@ -30,15 +30,15 @@ export async function serveHandler(args: string[] = []): Promise<void> {
   }
 
   try {
+    const port = values.port ?? "9640";
+
     if (values.host) {
       process.env.HOST = values.host;
       process.env.NITRO_HOST = values.host;
     }
 
-    if (values.port) {
-      process.env.PORT = values.port;
-      process.env.NITRO_PORT = values.port;
-    }
+    process.env.PORT = port;
+    process.env.NITRO_PORT = port;
 
     const serverEntry = await resolveServeServerEntry();
     output.log(`Starting Phantom server from ${serverEntry}`);

@@ -26,7 +26,7 @@ export const serveHelp: CommandHelp = {
   ],
   examples: [
     {
-      description: "Start the bundled server with the default host and port",
+      description: "Start the bundled server on the default port 9640",
       command: "phantom serve",
     },
     {
@@ -36,6 +36,7 @@ export const serveHelp: CommandHelp = {
   ],
   notes: [
     "The server runs the bundled TanStack Start application shipped with Phantom.",
+    "The default port is 9640.",
     "Build the CLI first so packages/cli/dist/app/.output is available.",
     "The underlying Nitro server also respects HOST/PORT and NITRO_HOST/NITRO_PORT.",
   ],
