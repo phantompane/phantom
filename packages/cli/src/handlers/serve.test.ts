@@ -29,7 +29,7 @@ vi.doMock("../errors.ts", () => ({
   exitWithError: exitWithErrorMock,
 }));
 
-const { resolveServeServerEntry, serveHandler } = await import("./serve.ts");
+const { serveHandler } = await import("./serve.ts");
 
 afterEach(async () => {
   vi.clearAllMocks();
@@ -101,14 +101,33 @@ async function createBundledCliFixture(): Promise<{
   return { cliEntry, serverEntry };
 }
 
-describe("resolveServeServerEntry", () => {
-  it("finds the app server entry from the bundled CLI entrypoint", async () => {
+describe("serveHandler", () => {
+  it("uses port 9640 by default", async () => {
     const { cliEntry, serverEntry } = await createBundledCliFixture();
+    process.argv[1] = cliEntry;
 
-    strictEqual(await resolveServeServerEntry(cliEntry), serverEntry);
+    await serveHandler([]);
+
+    strictEqual(process.env.PORT, "9640");
+    strictEqual(process.env.NITRO_PORT, "9640");
+    strictEqual(consoleLogMock.mock.calls.length, 1);
+    strictEqual(
+      consoleLogMock.mock.calls[0][0],
+      `Starting Phantom server from ${serverEntry}`,
+    );
   });
 
-  it("throws when the bundled server entry is missing", async () => {
+  it("lets --port override the default port", async () => {
+    const { cliEntry } = await createBundledCliFixture();
+    process.argv[1] = cliEntry;
+
+    await serveHandler(["--port", "4100"]);
+
+    strictEqual(process.env.PORT, "4100");
+    strictEqual(process.env.NITRO_PORT, "4100");
+  });
+
+  it("fails when bundled server assets are missing", async () => {
     const directory = await createTemporaryDirectory();
     const cliEntry = join(directory, "packages", "cli", "dist", "phantom.js");
 
@@ -116,14 +135,15 @@ describe("resolveServeServerEntry", () => {
       recursive: true,
     });
     await writeFile(cliEntry, "");
+    process.argv[1] = cliEntry;
 
     await rejects(
-      resolveServeServerEntry(cliEntry),
-      /Could not find Phantom server assets/,
+      serveHandler([]),
+      /Exit: Failed to start Phantom server: Could not find Phantom server assets/,
     );
   });
 
-  it("throws when called from the source CLI entrypoint", async () => {
+  it("fails when called from the source CLI entrypoint", async () => {
     const directory = await createTemporaryDirectory();
     const cliEntry = join(
       directory,
@@ -155,37 +175,11 @@ describe("resolveServeServerEntry", () => {
     );
     await writeFile(cliEntry, "");
     await writeFile(serverEntry, "");
+    process.argv[1] = cliEntry;
 
     await rejects(
-      resolveServeServerEntry(cliEntry),
-      /Could not find Phantom server assets/,
+      serveHandler([]),
+      /Exit: Failed to start Phantom server: Could not find Phantom server assets/,
     );
-  });
-});
-
-describe("serveHandler", () => {
-  it("uses port 9640 by default", async () => {
-    const { cliEntry, serverEntry } = await createBundledCliFixture();
-    process.argv[1] = cliEntry;
-
-    await serveHandler([]);
-
-    strictEqual(process.env.PORT, "9640");
-    strictEqual(process.env.NITRO_PORT, "9640");
-    strictEqual(consoleLogMock.mock.calls.length, 1);
-    strictEqual(
-      consoleLogMock.mock.calls[0][0],
-      `Starting Phantom server from ${serverEntry}`,
-    );
-  });
-
-  it("lets --port override the default port", async () => {
-    const { cliEntry } = await createBundledCliFixture();
-    process.argv[1] = cliEntry;
-
-    await serveHandler(["--port", "4100"]);
-
-    strictEqual(process.env.PORT, "4100");
-    strictEqual(process.env.NITRO_PORT, "4100");
   });
 });
