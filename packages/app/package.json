@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build && tsc --noEmit",
+    "postbuild": "node --no-warnings --experimental-strip-types scripts/postbuild.ts",
     "preview": "vite preview",
     "start": "node .output/server/index.mjs",
     "lint": "oxfmt --check . '!src/routeTree.gen.ts' && oxlint --ignore-pattern src/routeTree.gen.ts .",
