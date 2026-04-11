@@ -34,6 +34,10 @@ export async function serveHandler(args: string[] = []): Promise<void> {
   try {
     const port = values.port ?? "9640";
 
+    output.warn(
+      "Warning: `phantom serve` is experimental and may change without notice.",
+    );
+
     if (values.host) {
       process.env.HOST = values.host;
       process.env.NITRO_HOST = values.host;

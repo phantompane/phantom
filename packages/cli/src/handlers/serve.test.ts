@@ -6,6 +6,7 @@ import { afterEach, describe, it, vi } from "vitest";
 
 const consoleLogMock = vi.fn();
 const consoleErrorMock = vi.fn();
+const consoleWarnMock = vi.fn();
 const exitWithErrorMock = vi.fn((message: string) => {
   consoleErrorMock(`Error: ${message}`);
   throw new Error(`Exit: ${message}`);
@@ -22,6 +23,7 @@ vi.doMock("../output.ts", () => ({
   output: {
     log: consoleLogMock,
     error: consoleErrorMock,
+    warn: consoleWarnMock,
   },
 }));
 
@@ -110,6 +112,11 @@ describe("serveHandler", () => {
 
     strictEqual(process.env.PORT, "9640");
     strictEqual(process.env.NITRO_PORT, "9640");
+    strictEqual(consoleWarnMock.mock.calls.length, 1);
+    strictEqual(
+      consoleWarnMock.mock.calls[0][0],
+      "Warning: `phantom serve` is experimental and may change without notice.",
+    );
     strictEqual(consoleLogMock.mock.calls.length, 1);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
@@ -125,6 +132,7 @@ describe("serveHandler", () => {
 
     strictEqual(process.env.PORT, "4100");
     strictEqual(process.env.NITRO_PORT, "4100");
+    strictEqual(consoleWarnMock.mock.calls.length, 1);
   });
 
   it("fails when bundled server assets are missing", async () => {
@@ -141,6 +149,8 @@ describe("serveHandler", () => {
       serveHandler([]),
       /Exit: Failed to start Phantom server: Could not find Phantom server assets/,
     );
+
+    strictEqual(consoleWarnMock.mock.calls.length, 1);
   });
 
   it("fails when called from the source CLI entrypoint", async () => {
@@ -181,5 +191,7 @@ describe("serveHandler", () => {
       serveHandler([]),
       /Exit: Failed to start Phantom server: Could not find Phantom server assets/,
     );
+
+    strictEqual(consoleWarnMock.mock.calls.length, 1);
   });
 });

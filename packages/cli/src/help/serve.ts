@@ -2,7 +2,7 @@ import type { CommandHelp } from "../help.ts";
 
 export const serveHelp: CommandHelp = {
   name: "serve",
-  description: "Start the bundled Phantom web server",
+  description: "Start the experimental bundled Phantom web server",
   usage: "phantom serve [options]",
   options: [
     {
@@ -35,6 +35,7 @@ export const serveHelp: CommandHelp = {
     },
   ],
   notes: [
+    "Experimental: this command and its runtime behavior may change without notice.",
     "The server runs the bundled TanStack Start application shipped with Phantom.",
     "The default port is 9640.",
     "Build the CLI first so packages/cli/dist/app/.output is available.",
