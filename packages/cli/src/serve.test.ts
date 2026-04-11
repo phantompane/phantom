@@ -22,7 +22,7 @@ async function createTemporaryDirectory(): Promise<string> {
 }
 
 describe("resolveServeServerEntry", () => {
-  it("finds the app server entry from the source CLI layout", async () => {
+  it("finds the bundled app server entry from the source CLI entrypoint", async () => {
     const directory = await createTemporaryDirectory();
     const cliEntry = join(
       directory,
@@ -35,6 +35,8 @@ describe("resolveServeServerEntry", () => {
     const serverEntry = join(
       directory,
       "packages",
+      "cli",
+      "dist",
       "app",
       ".output",
       "server",
@@ -44,16 +46,19 @@ describe("resolveServeServerEntry", () => {
     await mkdir(join(directory, "packages", "cli", "src", "bin"), {
       recursive: true,
     });
-    await mkdir(join(directory, "packages", "app", ".output", "server"), {
-      recursive: true,
-    });
+    await mkdir(
+      join(directory, "packages", "cli", "dist", "app", ".output", "server"),
+      {
+        recursive: true,
+      },
+    );
     await writeFile(cliEntry, "");
     await writeFile(serverEntry, "");
 
     strictEqual(await resolveServeServerEntry(cliEntry), serverEntry);
   });
 
-  it("finds the bundled app server entry from the dist layout", async () => {
+  it("finds the app server entry from the bundled CLI entrypoint", async () => {
     const directory = await createTemporaryDirectory();
     const cliEntry = join(directory, "packages", "cli", "dist", "phantom.js");
     const serverEntry = join(

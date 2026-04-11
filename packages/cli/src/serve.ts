@@ -14,29 +14,27 @@ async function pathExists(path: string): Promise<boolean> {
 export async function resolveServeServerEntry(
   entryPath: string | undefined = process.argv[1],
 ): Promise<string> {
-  let currentDirectory = resolve(
+  const entryDirectory = resolve(
     entryPath ? dirname(entryPath) : process.cwd(),
   );
-
-  while (true) {
-    const candidate = join(
-      currentDirectory,
+  const candidates = [
+    join(entryDirectory, "app", ".output", "server", "index.mjs"),
+    join(
+      entryDirectory,
+      "..",
+      "..",
+      "dist",
       "app",
       ".output",
       "server",
       "index.mjs",
-    );
+    ),
+  ];
 
+  for (const candidate of candidates) {
     if (await pathExists(candidate)) {
       return candidate;
     }
-
-    const parentDirectory = dirname(currentDirectory);
-    if (parentDirectory === currentDirectory) {
-      break;
-    }
-
-    currentDirectory = parentDirectory;
   }
 
   throw new Error(
