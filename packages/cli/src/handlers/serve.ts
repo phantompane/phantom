@@ -58,9 +58,7 @@ export async function serveHandler(args: string[] = []): Promise<void> {
     try {
       await access(serverEntry);
     } catch {
-      throw new Error(
-        "Could not find Phantom server assets. Run `pnpm --filter @phantompane/cli-private build` first.",
-      );
+      throw new Error("Could not find Phantom server assets.");
     }
 
     output.log(`Starting Phantom server from ${serverEntry}`);

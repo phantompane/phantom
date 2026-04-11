@@ -38,7 +38,7 @@ export const serveHelp: CommandHelp = {
     "Experimental: this command and its runtime behavior may change without notice.",
     "The server runs the bundled TanStack Start application shipped with Phantom.",
     "The default port is 9640.",
-    "Build the CLI first so packages/cli/dist/app/.output is available.",
+    "The bundled app assets must exist under packages/cli/dist/app/.output.",
     "The underlying Nitro server also respects HOST/PORT and NITRO_HOST/NITRO_PORT.",
   ],
 };
