@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@tanstack/react-router": "^1.168.13",
-    "@tanstack/react-start": "^1.167.23",
+    "@tanstack/react-start": "^1.167.41",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
   },
