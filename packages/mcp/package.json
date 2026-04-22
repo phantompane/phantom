@@ -22,6 +22,6 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@modelcontextprotocol/inspector": "^0.21.1"
+    "@modelcontextprotocol/inspector": "^0.21.2"
   }
 }
