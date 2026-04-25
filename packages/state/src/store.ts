@@ -1,12 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import type {
-  ChatMessageRecord,
-  ChatRecord,
-  ProjectRecord,
-  ServeState,
-} from "./types";
+import { serveStateSchema } from "./types.ts";
+import type { ProjectRecord, ServeState } from "./types.ts";
 
 const STATE_FILE_NAME = "state.json";
 
@@ -14,7 +10,7 @@ function now(): string {
   return new Date().toISOString();
 }
 
-export function createEmptyState(): ServeState {
+function createEmptyState(): ServeState {
   return {
     version: 1,
     projects: [],
@@ -31,7 +27,7 @@ export function getDefaultServeDataDir(env = process.env): string {
     stateHome && isAbsolute(stateHome)
       ? stateHome
       : join(homedir(), ".local", "state");
-  return join(baseStateDir, "phantom", "serve");
+  return join(baseStateDir, "phantom");
 }
 
 export function getServeDataDir(): string {
@@ -40,58 +36,6 @@ export function getServeDataDir(): string {
 
 function getStatePath(dataDir: string): string {
   return join(dataDir, STATE_FILE_NAME);
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === "string";
-}
-
-function validateProject(value: unknown): value is ProjectRecord {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    isString(record.id) &&
-    isString(record.name) &&
-    isString(record.rootPath) &&
-    isString(record.createdAt) &&
-    isString(record.updatedAt) &&
-    isString(record.lastOpenedAt)
-  );
-}
-
-function validateChat(value: unknown): value is ChatRecord {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    isString(record.id) &&
-    isString(record.projectId) &&
-    isString(record.worktreeName) &&
-    isString(record.worktreePath) &&
-    isString(record.branchName) &&
-    (isString(record.codexThreadId) || record.codexThreadId === null) &&
-    isString(record.title) &&
-    isString(record.status) &&
-    isString(record.createdAt) &&
-    isString(record.updatedAt)
-  );
-}
-
-function validateMessage(value: unknown): value is ChatMessageRecord {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    isString(record.id) &&
-    isString(record.chatId) &&
-    isString(record.role) &&
-    isString(record.text) &&
-    isString(record.createdAt)
-  );
 }
 
 function validateState(value: unknown): ServeState {
@@ -103,29 +47,12 @@ function validateState(value: unknown): ServeState {
   if (state.version !== 1) {
     throw new Error("Unsupported serve state version");
   }
-  if (
-    !Array.isArray(state.projects) ||
-    !state.projects.every(validateProject) ||
-    !Array.isArray(state.chats) ||
-    !state.chats.every(validateChat) ||
-    !Array.isArray(state.messages) ||
-    !state.messages.every(validateMessage)
-  ) {
+  const result = serveStateSchema.safeParse(value);
+  if (!result.success) {
     throw new Error("Serve state has an invalid shape");
   }
 
-  return {
-    version: 1,
-    projects: state.projects,
-    chats: state.chats,
-    messages: state.messages,
-    selectedProjectId: isString(state.selectedProjectId)
-      ? state.selectedProjectId
-      : null,
-    selectedChatId: isString(state.selectedChatId)
-      ? state.selectedChatId
-      : null,
-  };
+  return result.data;
 }
 
 export class ServeStateStore {
@@ -134,7 +61,7 @@ export class ServeStateStore {
 
   constructor(private readonly dataDir = getServeDataDir()) {}
 
-  async load(): Promise<ServeState> {
+  private async loadOrCreateState(): Promise<ServeState> {
     if (this.state) {
       return this.state;
     }
@@ -142,7 +69,9 @@ export class ServeStateStore {
     const statePath = getStatePath(this.dataDir);
     try {
       const content = await readFile(statePath, "utf8");
-      this.state = validateState(JSON.parse(content));
+      const state = validateState(JSON.parse(content));
+      this.state = state;
+      return state;
     } catch (error) {
       if (
         error &&
@@ -150,13 +79,23 @@ export class ServeStateStore {
         "code" in error &&
         error.code === "ENOENT"
       ) {
-        this.state = createEmptyState();
+        const state = createEmptyState();
+        await this.save(state);
+        return state;
       } else {
         throw error;
       }
     }
+  }
 
-    return this.state;
+  async load(): Promise<ServeState> {
+    if (this.state) {
+      return this.state;
+    }
+
+    const nextLoad = this.updateChain.then(() => this.loadOrCreateState());
+    this.updateChain = nextLoad.catch(() => undefined);
+    return nextLoad;
   }
 
   async save(state: ServeState): Promise<void> {
@@ -172,7 +111,7 @@ export class ServeStateStore {
     updater: (state: ServeState) => ServeState | Promise<ServeState>,
   ): Promise<ServeState> {
     const nextUpdate = this.updateChain.then(async () => {
-      const state = await this.load();
+      const state = await this.loadOrCreateState();
       const nextState = await updater({
         ...state,
         projects: [...state.projects],

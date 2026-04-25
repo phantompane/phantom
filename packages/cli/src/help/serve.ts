@@ -33,7 +33,7 @@ export const serveHelp: CommandHelp = {
       name: "data-dir",
       type: "string",
       description: "Directory for Phantom serve state",
-      example: "--data-dir ~/.local/state/phantom/serve",
+      example: "--data-dir ~/.local/state/phantom",
     },
     {
       name: "open",
