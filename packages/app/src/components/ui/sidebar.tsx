@@ -116,35 +116,44 @@ export function Sidebar({
   collapsible?: "none" | "offcanvas";
   variant?: "inset" | "sidebar";
 }) {
-  const { state } = useSidebar();
+  const { setOpen, state } = useSidebar();
   const isOffcanvasCollapsed =
     state === "collapsed" && collapsible === "offcanvas";
   return (
-    <aside
-      data-collapsible={state === "collapsed" ? collapsible : ""}
-      data-state={state}
-      data-variant={variant}
-      className={cn(
-        "group/sidebar relative hidden h-svh shrink-0 flex-col overflow-hidden text-sidebar-foreground transition-[width] duration-[var(--motion-duration-normal)] ease-[var(--motion-ease-standard)] md:flex",
-        isOffcanvasCollapsed && "w-0 border-r-0",
-        (state === "expanded" || collapsible === "none") &&
-          "w-[--sidebar-width]",
-        !isOffcanvasCollapsed &&
-          variant === "sidebar" &&
-          "border-r border-sidebar-border bg-sidebar",
-        !isOffcanvasCollapsed &&
-          variant === "inset" &&
-          "border-r border-sidebar-border bg-sidebar",
-        className,
+    <>
+      {!isOffcanvasCollapsed && collapsible === "offcanvas" && (
+        <button
+          aria-label="Close sidebar"
+          className="fixed inset-0 z-30 bg-[var(--surface-overlay)] md:hidden"
+          onClick={() => setOpen(false)}
+          type="button"
+        />
       )}
-      {...props}
-    >
-      {!isOffcanvasCollapsed && (
-        <div className="flex h-full min-h-0 flex-col bg-sidebar">
-          {children}
-        </div>
-      )}
-    </aside>
+      <aside
+        data-collapsible={state === "collapsed" ? collapsible : ""}
+        data-state={state}
+        data-variant={variant}
+        className={cn(
+          "group/sidebar fixed inset-y-0 left-0 z-40 flex h-svh w-[var(--sidebar-width)] shrink-0 flex-col overflow-hidden text-sidebar-foreground transition-transform duration-[var(--motion-duration-normal)] ease-[var(--motion-ease-standard)] md:relative md:z-auto",
+          isOffcanvasCollapsed && "hidden",
+          !isOffcanvasCollapsed && "translate-x-0",
+          !isOffcanvasCollapsed &&
+            variant === "sidebar" &&
+            "border-r border-sidebar-border bg-sidebar",
+          !isOffcanvasCollapsed &&
+            variant === "inset" &&
+            "border-r border-sidebar-border bg-sidebar",
+          className,
+        )}
+        {...props}
+      >
+        {!isOffcanvasCollapsed && (
+          <div className="flex h-full min-h-0 flex-col bg-sidebar">
+            {children}
+          </div>
+        )}
+      </aside>
+    </>
   );
 }
 

@@ -297,6 +297,11 @@ function Home() {
 
   async function addProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const trimmedProjectPath = projectPath.trim();
+    if (!trimmedProjectPath) {
+      return;
+    }
+
     setError(null);
     setIsBusy(true);
     try {
@@ -304,7 +309,7 @@ function Home() {
         "/api/projects",
         {
           method: "POST",
-          body: JSON.stringify({ path: projectPath }),
+          body: JSON.stringify({ path: trimmedProjectPath }),
         },
       );
       setProjectPath("");
@@ -590,7 +595,7 @@ function Home() {
               >
                 Cancel
               </Button>
-              <Button disabled={isBusy || !projectPath} type="submit">
+              <Button disabled={isBusy || !projectPath.trim()} type="submit">
                 Add project
               </Button>
             </DialogFooter>
