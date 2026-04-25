@@ -1,9 +1,13 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "vitest";
-import { ServeStateStore, createEmptyState } from "./storage";
+import {
+  ServeStateStore,
+  createEmptyState,
+  getDefaultServeDataDir,
+} from "./storage";
 
 const temporaryDirectories: string[] = [];
 
@@ -22,6 +26,27 @@ async function createTemporaryDirectory(): Promise<string> {
 }
 
 describe("ServeStateStore", () => {
+  it("uses the XDG state directory by default", () => {
+    strictEqual(
+      getDefaultServeDataDir({ XDG_STATE_HOME: "/xdg/state" }),
+      "/xdg/state/phantom/serve",
+    );
+  });
+
+  it("falls back to the XDG default state directory", () => {
+    strictEqual(
+      getDefaultServeDataDir({ XDG_STATE_HOME: "" }),
+      join(homedir(), ".local", "state", "phantom", "serve"),
+    );
+  });
+
+  it("ignores a relative XDG state directory", () => {
+    strictEqual(
+      getDefaultServeDataDir({ XDG_STATE_HOME: "relative/state" }),
+      join(homedir(), ".local", "state", "phantom", "serve"),
+    );
+  });
+
   it("loads missing state as an empty state", async () => {
     const store = new ServeStateStore(await createTemporaryDirectory());
 

@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import type {
   ChatMessageRecord,
   ChatRecord,
@@ -25,27 +25,13 @@ export function createEmptyState(): ServeState {
   };
 }
 
-export function getDefaultServeDataDir(
-  platform = process.platform,
-  env = process.env,
-): string {
-  if (platform === "darwin") {
-    return join(
-      homedir(),
-      "Library",
-      "Application Support",
-      "phantom",
-      "serve",
-    );
-  }
-
-  if (platform === "win32") {
-    const appData = env.APPDATA ?? join(homedir(), "AppData", "Roaming");
-    return join(appData, "phantom", "serve");
-  }
-
-  const stateHome = env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
-  return join(stateHome, "phantom", "serve");
+export function getDefaultServeDataDir(env = process.env): string {
+  const stateHome = env.XDG_STATE_HOME;
+  const baseStateDir =
+    stateHome && isAbsolute(stateHome)
+      ? stateHome
+      : join(homedir(), ".local", "state");
+  return join(baseStateDir, "phantom", "serve");
 }
 
 export function getServeDataDir(): string {

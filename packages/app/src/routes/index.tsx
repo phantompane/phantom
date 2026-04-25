@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Clock3,
   FolderGit2,
+  GitBranch,
   Inbox,
   MessageSquare,
   MessageSquarePlus,
@@ -12,7 +13,14 @@ import {
   Square,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import {
@@ -52,6 +60,7 @@ import type {
   ChatRecord,
   ChatStatus,
   PhantomEvent,
+  ProjectWorktreeRecord,
   ProjectRecord,
 } from "../server/types";
 
@@ -120,6 +129,45 @@ type VisibleMessageRecord = ChatMessageRecord & {
   role: "assistant" | "error" | "user";
 };
 
+function firstProjectWorktree(
+  projectId: string | null,
+  worktreesByProject: Record<string, ProjectWorktreeRecord[]>,
+): ProjectWorktreeRecord | null {
+  if (!projectId) {
+    return null;
+  }
+  return worktreesByProject[projectId]?.[0] ?? null;
+}
+
+function formatLeadingEllipsisPath(path: string, maxLength = 44): string {
+  if (path.length <= maxLength) {
+    return path;
+  }
+
+  const suffixLength = maxLength - 3;
+  const suffix = path.slice(-suffixLength);
+  const slashIndex = suffix.indexOf("/");
+  return `...${slashIndex > 0 ? suffix.slice(slashIndex) : suffix}`;
+}
+
+function dedupeChatThreads(chats: ChatRecord[]): ChatRecord[] {
+  const chatsWithThreads = chats.filter((chat) => chat.codexThreadId);
+  const source = chatsWithThreads.length > 0 ? chatsWithThreads : chats;
+  const chatsByThread = new Map<string, ChatRecord>();
+
+  for (const chat of source) {
+    const key = chat.codexThreadId ?? chat.id;
+    const current = chatsByThread.get(key);
+    if (!current || chat.updatedAt.localeCompare(current.updatedAt) > 0) {
+      chatsByThread.set(key, chat);
+    }
+  }
+
+  return [...chatsByThread.values()].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  );
+}
+
 function Home() {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
@@ -128,9 +176,15 @@ function Home() {
   const [chatsByProject, setChatsByProject] = useState<
     Record<string, ChatRecord[]>
   >({});
+  const [worktreesByProject, setWorktreesByProject] = useState<
+    Record<string, ProjectWorktreeRecord[]>
+  >({});
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [selectedWorktreePath, setSelectedWorktreePath] = useState<
+    string | null
+  >(null);
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
@@ -155,6 +209,29 @@ function Home() {
         .find((chat) => chat.id === selectedChatId) ?? null,
     [chatsByProject, selectedChatId],
   );
+  const isChatRunning = Boolean(selectedChat?.activeTurnId);
+
+  const selectedWorktree = useMemo(() => {
+    if (!selectedProjectId || !selectedWorktreePath) {
+      return null;
+    }
+    return (
+      (worktreesByProject[selectedProjectId] ?? []).find(
+        (worktree) => worktree.path === selectedWorktreePath,
+      ) ?? null
+    );
+  }, [selectedProjectId, selectedWorktreePath, worktreesByProject]);
+
+  const selectedWorktreeChats = useMemo(() => {
+    if (!selectedProjectId || !selectedWorktree) {
+      return [];
+    }
+    return dedupeChatThreads(
+      (chatsByProject[selectedProjectId] ?? []).filter(
+        (chat) => chat.worktreePath === selectedWorktree.path,
+      ),
+    );
+  }, [chatsByProject, selectedProjectId, selectedWorktree]);
 
   const visibleMessages = useMemo(
     () =>
@@ -181,7 +258,7 @@ function Home() {
       next.add(selectedProjectId);
       return next;
     });
-    void refreshChats(selectedProjectId);
+    void refreshChats(selectedProjectId, { sync: true });
   }, [selectedProjectId]);
 
   useEffect(() => {
@@ -224,18 +301,49 @@ function Home() {
     };
   }, [selectedChatId, selectedProjectId]);
 
+  useEffect(() => {
+    if (
+      selectedWorktreeChats.length === 0 ||
+      selectedWorktreeChats.some((chat) => chat.id === selectedChatId)
+    ) {
+      return;
+    }
+    setSelectedChatId(selectedWorktreeChats[0]?.id ?? null);
+  }, [selectedChatId, selectedWorktreeChats]);
+
   async function refreshProjects() {
     const data = await fetchJson<{ projects: ProjectRecord[] }>(
       "/api/projects",
     );
     setProjects(data.projects);
-    const chatEntries = await Promise.all(
+    const projectDataEntries = await Promise.all(
       data.projects.map(
-        async (project) => [project.id, await loadChats(project.id)] as const,
+        async (project) =>
+          [
+            project.id,
+            await loadProjectData(project.id, { sync: true }),
+          ] as const,
       ),
     );
-    const nextChatsByProject = Object.fromEntries(chatEntries);
+    const nextChatsByProject = Object.fromEntries(
+      projectDataEntries.map(([projectId, projectData]) => [
+        projectId,
+        projectData.chats,
+      ]),
+    );
+    const nextWorktreesByProject = Object.fromEntries(
+      projectDataEntries.map(([projectId, projectData]) => [
+        projectId,
+        projectData.worktrees,
+      ]),
+    );
     setChatsByProject(nextChatsByProject);
+    setWorktreesByProject(nextWorktreesByProject);
+    const fallbackProjectId = selectedProjectId ?? data.projects[0]?.id ?? null;
+    const fallbackWorktree = firstProjectWorktree(
+      fallbackProjectId,
+      nextWorktreesByProject,
+    );
     setSelectedProjectId((current) => {
       const nextProjectId = current ?? data.projects[0]?.id ?? null;
       if (nextProjectId) {
@@ -247,32 +355,64 @@ function Home() {
       }
       return nextProjectId;
     });
+    setSelectedWorktreePath((current) => {
+      if (
+        fallbackProjectId &&
+        current &&
+        (nextWorktreesByProject[fallbackProjectId] ?? []).some(
+          (worktree) => worktree.path === current,
+        )
+      ) {
+        return current;
+      }
+      return fallbackWorktree?.path ?? null;
+    });
     setSelectedChatId((current) =>
       Object.values(nextChatsByProject)
         .flat()
         .some((chat) => chat.id === current)
         ? current
-        : null,
+        : (fallbackWorktree?.chatId ?? null),
     );
   }
 
-  async function loadChats(projectId: string) {
-    const data = await fetchJson<{ chats: ChatRecord[] }>(
-      `/api/projects/${projectId}/chats`,
-    );
-    return data.chats;
+  async function loadProjectData(
+    projectId: string,
+    options: { sync?: boolean } = {},
+  ) {
+    return await fetchJson<{
+      chats: ChatRecord[];
+      worktrees: ProjectWorktreeRecord[];
+    }>(`/api/projects/${projectId}/chats${options.sync ? "?sync=1" : ""}`);
   }
 
-  async function refreshChats(projectId: string) {
-    const nextChats = await loadChats(projectId);
+  async function refreshChats(
+    projectId: string,
+    options: { sync?: boolean } = {},
+  ) {
+    const projectData = await loadProjectData(projectId, options);
     setChatsByProject((current) => ({
       ...current,
-      [projectId]: nextChats,
+      [projectId]: projectData.chats,
     }));
-    setSelectedChatId((current) =>
-      nextChats.some((chat) => chat.id === current)
+    setWorktreesByProject((current) => ({
+      ...current,
+      [projectId]: projectData.worktrees,
+    }));
+    const fallbackWorktree = firstProjectWorktree(projectId, {
+      ...worktreesByProject,
+      [projectId]: projectData.worktrees,
+    });
+    setSelectedWorktreePath((current) =>
+      current &&
+      projectData.worktrees.some((worktree) => worktree.path === current)
         ? current
-        : (nextChats[0]?.id ?? null),
+        : (fallbackWorktree?.path ?? null),
+    );
+    setSelectedChatId((current) =>
+      projectData.chats.some((chat) => chat.id === current)
+        ? current
+        : (fallbackWorktree?.chatId ?? null),
     );
   }
 
@@ -287,6 +427,19 @@ function Home() {
         ),
       };
     });
+    setWorktreesByProject((current) => ({
+      ...current,
+      [data.chat.projectId]: (current[data.chat.projectId] ?? []).map(
+        (worktree) =>
+          worktree.chatId === chatId
+            ? {
+                ...worktree,
+                chatStatus: data.chat.status,
+                chatTitle: data.chat.title,
+              }
+            : worktree,
+      ),
+    }));
   }
 
   async function refreshMessages(chatId: string) {
@@ -342,7 +495,8 @@ function Home() {
       );
       setSelectedProjectId(projectId);
       setExpandedProjectIds((current) => new Set(current).add(projectId));
-      await refreshChats(projectId);
+      await refreshChats(projectId, { sync: true });
+      setSelectedWorktreePath(data.chat.worktreePath);
       setSelectedChatId(data.chat.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -370,6 +524,26 @@ function Home() {
       setComposerText(text);
       setError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    const isImeComposing =
+      event.nativeEvent.isComposing || event.keyCode === 229;
+    if (
+      event.key !== "Enter" ||
+      event.shiftKey ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey ||
+      isImeComposing
+    ) {
+      return;
+    }
+    if (!selectedChatId || !composerText.trim() || isChatRunning) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
   }
 
   async function interruptChat() {
@@ -416,21 +590,11 @@ function Home() {
     });
   }
 
-  function selectProject(projectId: string) {
+  function selectWorktree(projectId: string, worktree: ProjectWorktreeRecord) {
     setSelectedProjectId(projectId);
+    setSelectedWorktreePath(worktree.path);
+    setSelectedChatId(worktree.chatId);
     setExpandedProjectIds((current) => new Set(current).add(projectId));
-    const projectChats = chatsByProject[projectId] ?? [];
-    setSelectedChatId((current) =>
-      projectChats.some((chat) => chat.id === current)
-        ? current
-        : (projectChats[0]?.id ?? null),
-    );
-  }
-
-  function selectChat(chat: ChatRecord) {
-    setSelectedProjectId(chat.projectId);
-    setSelectedChatId(chat.id);
-    setExpandedProjectIds((current) => new Set(current).add(chat.projectId));
   }
 
   return (
@@ -478,43 +642,25 @@ function Home() {
                     const isProjectExpanded = expandedProjectIds.has(
                       project.id,
                     );
-                    const isProjectSelected = project.id === selectedProjectId;
-                    const projectChats = chatsByProject[project.id] ?? [];
+                    const projectWorktrees =
+                      worktreesByProject[project.id] ?? [];
 
                     return (
                       <SidebarMenuItem key={project.id}>
-                        <div
-                          className={cn(
-                            "group/project flex items-center rounded-[var(--radius-sm)]",
-                            isProjectSelected && "bg-sidebar-accent",
-                          )}
-                        >
-                          <Button
-                            aria-label={
-                              isProjectExpanded
-                                ? "Collapse project"
-                                : "Expand project"
-                            }
-                            className="ml-1 size-7 text-[var(--icon-color-default)] group-data-[state=collapsed]/sidebar:hidden"
-                            onClick={() => toggleProject(project.id)}
-                            size="icon"
-                            type="button"
-                            variant="ghost"
-                          >
-                            <ChevronRight
-                              className={cn(
-                                "transition-transform duration-[var(--motion-duration-fast)]",
-                                isProjectExpanded && "rotate-90",
-                              )}
-                            />
-                          </Button>
+                        <div className="group/project flex items-center rounded-[var(--radius-sm)]">
                           <SidebarMenuButton
+                            aria-expanded={isProjectExpanded}
                             className="min-h-8 flex-1 group-data-[state=collapsed]/sidebar:flex-none"
-                            isActive={isProjectSelected}
-                            onClick={() => selectProject(project.id)}
+                            onClick={() => toggleProject(project.id)}
                             title={project.name}
                             type="button"
                           >
+                            <ChevronRight
+                              className={cn(
+                                "size-4 shrink-0 text-[var(--icon-color-default)] transition-transform duration-[var(--motion-duration-fast)] group-data-[state=collapsed]/sidebar:hidden",
+                                isProjectExpanded && "rotate-90",
+                              )}
+                            />
                             <FolderGit2 className="size-4 text-[var(--icon-color-default)]" />
                             <span className="min-w-0 flex-1 group-data-[state=collapsed]/sidebar:hidden">
                               <span className="block truncate font-medium">
@@ -537,26 +683,37 @@ function Home() {
                         </div>
                         {isProjectExpanded && (
                           <SidebarMenuSub>
-                            {projectChats.length === 0 ? (
+                            {projectWorktrees.length === 0 ? (
                               <li className="px-2 py-1.5 text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
                                 No worktrees
                               </li>
                             ) : (
-                              projectChats.map((chat) => {
+                              projectWorktrees.map((worktree) => {
+                                const title = `${worktree.name} (${worktree.path})${
+                                  worktree.isClean ? "" : " [dirty]"
+                                }`;
                                 return (
-                                  <SidebarMenuSubItem key={chat.id}>
+                                  <SidebarMenuSubItem key={worktree.path}>
                                     <SidebarMenuSubButton
-                                      isActive={chat.id === selectedChatId}
-                                      onClick={() => selectChat(chat)}
-                                      title={chat.title}
+                                      disabled={!worktree.chatId}
+                                      isActive={
+                                        worktree.path === selectedWorktreePath
+                                      }
+                                      onClick={() =>
+                                        selectWorktree(project.id, worktree)
+                                      }
+                                      title={title}
                                       type="button"
                                     >
-                                      <MessageSquare className="size-3.5 text-[var(--icon-color-default)]" />
+                                      <GitBranch className="size-3.5 text-[var(--icon-color-default)]" />
                                       <span className="min-w-0 flex-1">
                                         <span className="block truncate font-medium">
-                                          {chat.title}
+                                          {worktree.name}
                                         </span>
                                       </span>
+                                      {!worktree.isClean && (
+                                        <span className="size-1.5 shrink-0 rounded-full bg-[var(--semantic-warning-fg)]" />
+                                      )}
                                     </SidebarMenuSubButton>
                                   </SidebarMenuSubItem>
                                 );
@@ -617,25 +774,20 @@ function Home() {
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <p className="truncate text-[length:var(--font-size-xl)] font-semibold leading-tight">
-                {selectedChat?.title ?? "Workspace"}
+                {selectedWorktree?.name ?? selectedProject?.name ?? "Workspace"}
               </p>
               {selectedChat && <StatusBadge status={selectedChat.status} />}
             </div>
-            <p className="truncate text-[length:var(--font-size-xs)] text-muted-foreground">
-              {selectedProject?.name ?? "No project selected"}
-              {selectedChat ? ` / ${selectedChat.branchName}` : ""}
+            <p className="flex min-w-0 text-[length:var(--font-size-xs)] text-muted-foreground">
+              <span className="shrink-0">
+                {selectedProject?.name ?? "No project selected"}
+                {selectedWorktree ? " / " : ""}
+              </span>
+              {selectedWorktree && (
+                <LeadingEllipsisText text={selectedWorktree.path} />
+              )}
             </p>
           </div>
-          <Button
-            disabled={!selectedChat?.activeTurnId}
-            onClick={interruptChat}
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            <Square className="size-3" />
-            Stop
-          </Button>
         </header>
 
         {error && (
@@ -686,17 +838,20 @@ function Home() {
           </div>
         )}
 
+        {selectedWorktree && (
+          <ChatHistoryBar
+            chats={selectedWorktreeChats}
+            selectedChatId={selectedChatId}
+            onSelectChat={setSelectedChatId}
+          />
+        )}
+
         <section className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
           {visibleMessages.length === 0 ? (
             <EmptyTimeline
               hasChat={Boolean(selectedChat)}
-              isBusy={isBusy}
+              hasWorktree={Boolean(selectedWorktree)}
               selectedProject={selectedProject}
-              onCreateChat={
-                selectedProject
-                  ? () => void createChat(selectedProject.id)
-                  : undefined
-              }
               onOpenProjectDialog={() => setIsAddProjectOpen(true)}
             />
           ) : (
@@ -729,22 +884,83 @@ function Home() {
                 rows={2}
                 value={composerText}
                 onChange={(event) => setComposerText(event.target.value)}
+                onKeyDown={handleComposerKeyDown}
               />
             </div>
             <Button
-              aria-label="Send message"
+              aria-label={isChatRunning ? "Stop turn" : "Send message"}
               className="size-10"
-              disabled={!selectedChatId || !composerText.trim()}
+              disabled={
+                isChatRunning
+                  ? !selectedChat?.activeTurnId
+                  : !selectedChatId || !composerText.trim()
+              }
+              onClick={isChatRunning ? interruptChat : undefined}
               size="icon"
-              title="Send"
-              type="submit"
+              title={isChatRunning ? "Stop turn" : "Send"}
+              type={isChatRunning ? "button" : "submit"}
+              variant={isChatRunning ? "destructive" : "default"}
             >
-              <Send />
+              {isChatRunning ? <Square /> : <Send />}
             </Button>
           </div>
         </form>
       </SidebarInset>
     </SidebarProvider>
+  );
+}
+
+function ChatHistoryBar({
+  chats,
+  onSelectChat,
+  selectedChatId,
+}: {
+  chats: ChatRecord[];
+  onSelectChat: (chatId: string) => void;
+  selectedChatId: string | null;
+}) {
+  return (
+    <div className="border-b border-border bg-[var(--surface-panel)] px-4 py-2">
+      <div className="mx-auto flex max-w-[var(--layout-max-content-width)] items-center gap-2">
+        <div className="shrink-0 text-[length:var(--font-size-xs)] font-medium text-[var(--text-secondary)]">
+          Chat history
+        </div>
+        <div
+          aria-label="Chat history"
+          className="flex min-w-0 flex-1 gap-1 overflow-x-auto"
+          role="tablist"
+        >
+          {chats.length === 0 ? (
+            <span className="px-2 py-1 text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+              No chat history
+            </span>
+          ) : (
+            chats.map((chat) => {
+              const isSelected = chat.id === selectedChatId;
+              return (
+                <button
+                  aria-selected={isSelected}
+                  className={cn(
+                    "inline-flex max-w-44 shrink-0 items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 text-[length:var(--font-size-xs)] outline-none transition-colors hover:bg-sidebar-accent focus-visible:shadow-[var(--state-focus-ring)]",
+                    isSelected
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-[var(--text-secondary)]",
+                  )}
+                  key={chat.id}
+                  onClick={() => onSelectChat(chat.id)}
+                  role="tab"
+                  title={chat.title}
+                  type="button"
+                >
+                  <MessageSquare className="size-3.5 shrink-0" />
+                  <span className="truncate">{chat.title}</span>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -755,6 +971,14 @@ function StatusBadge({ status }: { status: ChatStatus }) {
       <span className={cn("size-1.5 rounded-full", meta.dot)} />
       {meta.label}
     </Badge>
+  );
+}
+
+function LeadingEllipsisText({ text }: { text: string }) {
+  return (
+    <span className="block min-w-0 truncate" title={text}>
+      {formatLeadingEllipsisPath(text)}
+    </span>
   );
 }
 
@@ -787,14 +1011,12 @@ function SystemBanner({
 
 function EmptyTimeline({
   hasChat,
-  isBusy,
-  onCreateChat,
+  hasWorktree,
   onOpenProjectDialog,
   selectedProject,
 }: {
   hasChat: boolean;
-  isBusy: boolean;
-  onCreateChat?: () => void;
+  hasWorktree: boolean;
   onOpenProjectDialog: () => void;
   selectedProject: ProjectRecord | null;
 }) {
@@ -806,27 +1028,28 @@ function EmptyTimeline({
         </div>
         <div>
           <h2 className="text-[length:var(--font-size-xl)] font-semibold">
-            {hasChat ? "No messages yet" : "Select a worktree"}
+            {hasChat
+              ? "No messages yet"
+              : hasWorktree
+                ? "Select chat history"
+                : "Select a worktree"}
           </h2>
           <p className="mt-1 text-[length:var(--font-size-md)] text-muted-foreground">
             {hasChat
               ? "Send a message to start a focused Codex session."
-              : "Create a worktree under a project to begin a Codex session."}
+              : hasWorktree
+                ? "Choose a chat history for this worktree."
+                : "Create a worktree under a project to begin a Codex session."}
           </p>
         </div>
-        <div className="flex justify-center gap-2">
-          {selectedProject ? (
-            <Button disabled={isBusy} onClick={onCreateChat} type="button">
-              <MessageSquarePlus className="size-4" />
-              Create worktree
-            </Button>
-          ) : (
+        {!selectedProject && (
+          <div className="flex justify-center gap-2">
             <Button onClick={onOpenProjectDialog} type="button">
               <Plus className="size-4" />
               Add project
             </Button>
-          )}
-        </div>
+          </div>
+        )}
       </section>
     </div>
   );

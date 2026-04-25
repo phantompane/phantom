@@ -11,13 +11,22 @@ import { getServeServices } from "../../../../server/services";
 export const Route = createFileRoute("/api/projects/$projectId/chats")({
   server: {
     handlers: {
-      GET: async ({ params }: ServerRouteContext) => {
+      GET: async ({ request, params }: ServerRouteContext) => {
         try {
           if (!params.projectId) {
             throw new Error("Project id is required");
           }
-          const chats = await getServeServices().listChats(params.projectId);
-          return json({ chats });
+          const services = getServeServices();
+          const shouldSync =
+            new URL(request.url).searchParams.get("sync") === "1";
+          const worktrees = await services.listProjectWorktrees(
+            params.projectId,
+            {
+              sync: shouldSync,
+            },
+          );
+          const chats = await services.listChats(params.projectId);
+          return json({ chats, worktrees });
         } catch (error) {
           return handleApiError(error);
         }

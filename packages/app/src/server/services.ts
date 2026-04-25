@@ -3,6 +3,7 @@ import { basename, isAbsolute } from "node:path";
 import { getGitRoot } from "@phantompane/git";
 import {
   deleteBranch,
+  listWorktrees,
   removeWorktree,
   runCreateWorktree,
 } from "@phantompane/core";
@@ -14,10 +15,16 @@ import {
   ServeStateStore,
   touchProject,
 } from "./storage";
+import {
+  listCodexSessionsForWorktree,
+  listCodexSessionsForWorktrees,
+  type ImportedCodexSession,
+} from "./codex-history";
 import type {
   ChatMessageRecord,
   ChatRecord,
   ChatStatus,
+  ProjectWorktreeRecord,
   ProjectRecord,
   ServeState,
 } from "./types";
@@ -39,6 +46,7 @@ export interface ServeServicesOptions {
   eventHub?: EventHub;
   store?: ServeStateStore;
   codex?: CodexBridge;
+  codexHome?: string;
 }
 
 interface PendingApprovalRequest {
@@ -62,6 +70,7 @@ export class ServeServices {
   readonly eventHub: EventHub;
   readonly store: ServeStateStore;
   readonly codex: CodexBridge;
+  private readonly codexHome?: string;
   private readonly loadedThreadIds = new Set<string>();
   private readonly approvalRequests = new Map<string, PendingApprovalRequest>();
   private readonly pendingTurnEvents = new Map<
@@ -74,6 +83,7 @@ export class ServeServices {
     this.eventHub = options.eventHub ?? new EventHub();
     this.store = options.store ?? new ServeStateStore();
     this.codex = options.codex ?? new CodexBridge();
+    this.codexHome = options.codexHome;
     this.codex.onNotification((message) => {
       void this.handleCodexNotification(message);
     });
@@ -177,6 +187,152 @@ export class ServeServices {
     return state.chats.filter((chat) => chat.projectId === projectId);
   }
 
+  async listProjectWorktrees(
+    projectId: string,
+    options: { sync?: boolean } = {},
+  ): Promise<ProjectWorktreeRecord[]> {
+    const state = await this.store.load();
+    if (options.sync === false) {
+      return projectWorktreesFromPersistedChats(state, projectId);
+    }
+
+    const project = this.requireProject(state, projectId);
+    let result;
+    try {
+      result = await listWorktrees(project.rootPath);
+    } catch {
+      return projectWorktreesFromPersistedChats(state, projectId);
+    }
+    if (!result.ok) {
+      return projectWorktreesFromPersistedChats(state, projectId);
+    }
+
+    const { worktrees } = result.value;
+    const timestamp = createTimestamp();
+    const importedSessions = await listCodexSessionsForWorktrees({
+      codexHome: this.codexHome,
+      projectId,
+      worktrees: worktrees.map((worktree) => ({
+        branchName: worktree.branch,
+        worktreeName: worktree.name,
+        worktreePath: worktree.path,
+      })),
+    });
+
+    if (
+      shouldSyncProjectWorktreeChats({
+        importedSessions,
+        projectId,
+        state,
+        worktrees,
+      })
+    ) {
+      await this.store.update((nextState) => {
+        const existingChatsByPath = new Map(
+          nextState.chats
+            .filter((chat) => chat.projectId === projectId)
+            .map((chat) => [chat.worktreePath, chat]),
+        );
+        const importedWorktreePaths = new Set(
+          importedSessions.map((session) => session.chat.worktreePath),
+        );
+        const chatsToAdd = worktrees
+          .filter(
+            (worktree) =>
+              !existingChatsByPath.has(worktree.path) &&
+              !importedWorktreePaths.has(worktree.path),
+          )
+          .map((worktree) => ({
+            id: createRecordId("chat"),
+            projectId,
+            worktreeName: worktree.name,
+            worktreePath: worktree.path,
+            branchName: worktree.branch,
+            codexThreadId: null,
+            title: worktree.name,
+            status: "idle" as const,
+            activeTurnId: null,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          }));
+        const importableSessions = importedSessions.filter(
+          (session) =>
+            !nextState.chats.some((chat) =>
+              shouldPreferExistingChatOverImport(chat, session.chat),
+            ),
+        );
+        const importableMessages = importableSessions.flatMap(
+          (session) => session.messages,
+        );
+
+        if (chatsToAdd.length === 0 && importableSessions.length === 0) {
+          return nextState;
+        }
+        const chatsToRemove = nextState.chats.filter(
+          (chat) =>
+            !shouldPreserveChatDuringImport(
+              chat,
+              projectId,
+              importableSessions,
+            ),
+        );
+        const chatIdsToRemove = new Set(chatsToRemove.map((chat) => chat.id));
+        const selectedReplacement = findImportedReplacement(
+          nextState.selectedChatId,
+          chatsToRemove,
+          importableSessions,
+        );
+
+        return {
+          ...nextState,
+          chats: [
+            ...nextState.chats.filter((chat) => !chatIdsToRemove.has(chat.id)),
+            ...importableSessions.map((session) => session.chat),
+            ...chatsToAdd,
+          ],
+          messages: [
+            ...nextState.messages.filter(
+              (message) => !chatIdsToRemove.has(message.chatId),
+            ),
+            ...importableMessages,
+          ],
+          selectedChatId:
+            nextState.selectedChatId &&
+            chatIdsToRemove.has(nextState.selectedChatId)
+              ? (selectedReplacement?.chat.id ?? nextState.selectedChatId)
+              : nextState.selectedChatId,
+        };
+      });
+    }
+
+    const syncedState = await this.store.load();
+    const syncedChatsByPath = new Map<string, ChatRecord[]>();
+    for (const chat of syncedState.chats.filter(
+      (candidate) => candidate.projectId === projectId,
+    )) {
+      syncedChatsByPath.set(chat.worktreePath, [
+        ...(syncedChatsByPath.get(chat.worktreePath) ?? []),
+        chat,
+      ]);
+    }
+
+    return worktrees.map((worktree) => {
+      const chat = latestChatForWorktree(
+        syncedChatsByPath.get(worktree.path) ?? [],
+      );
+      return {
+        name: worktree.name,
+        path: worktree.path,
+        pathToDisplay: worktree.pathToDisplay,
+        branch: worktree.branch,
+        isClean: worktree.isClean,
+        chatId: chat?.id ?? null,
+        chatStatus: chat?.status ?? null,
+        chatTitle: chat?.title ?? worktree.name,
+      };
+    });
+  }
+
   async createChat(
     projectId: string,
     input: CreateChatInput,
@@ -191,6 +347,56 @@ export class ServeServices {
 
     if (!createResult.ok) {
       throw createResult.error;
+    }
+
+    let importedSessions: ImportedCodexSession[];
+    try {
+      importedSessions = await listCodexSessionsForWorktree({
+        branchName: createResult.value.name,
+        codexHome: this.codexHome,
+        projectId,
+        worktreeName: createResult.value.name,
+        worktreePath: createResult.value.path,
+      });
+    } catch (error) {
+      try {
+        await rollbackCreatedWorktree(
+          project.rootPath,
+          createResult.value.path,
+          createResult.value.name,
+        );
+      } catch (rollbackError) {
+        throw new Error(
+          `Failed to import Codex history: ${toErrorMessage(error)}. Rollback failed: ${toErrorMessage(rollbackError)}`,
+        );
+      }
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+    const latestImportedSession = importedSessions[0];
+    if (latestImportedSession) {
+      let selectedImportedChat = latestImportedSession.chat;
+      await this.store.update((nextState) => {
+        selectedImportedChat =
+          findExistingChatForImportedSession(
+            nextState.chats,
+            projectId,
+            latestImportedSession.chat,
+          ) ?? latestImportedSession.chat;
+        return {
+          ...mergeImportedSessionsForProject(
+            nextState,
+            projectId,
+            importedSessions,
+          ),
+          selectedProjectId: projectId,
+          selectedChatId: selectedImportedChat.id,
+        };
+      });
+
+      this.eventHub.emit("chat.created", selectedImportedChat, {
+        chatId: selectedImportedChat.id,
+      });
+      return selectedImportedChat;
     }
 
     let codexThreadId: string;
@@ -918,6 +1124,198 @@ function createMessage(
     itemId,
     createdAt: createTimestamp(),
   };
+}
+
+function latestChatForWorktree(chats: ChatRecord[]): ChatRecord | null {
+  const sortedChats = [...chats].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  );
+  return (
+    sortedChats.find((chat) => chat.codexThreadId) ?? sortedChats[0] ?? null
+  );
+}
+
+function projectWorktreesFromPersistedChats(
+  state: ServeState,
+  projectId: string,
+): ProjectWorktreeRecord[] {
+  const chatsByPath = new Map<string, ChatRecord[]>();
+  for (const chat of state.chats.filter(
+    (chat) => chat.projectId === projectId,
+  )) {
+    chatsByPath.set(chat.worktreePath, [
+      ...(chatsByPath.get(chat.worktreePath) ?? []),
+      chat,
+    ]);
+  }
+
+  return Array.from(chatsByPath.values())
+    .map((chats) => latestChatForWorktree(chats))
+    .filter((chat): chat is ChatRecord => Boolean(chat))
+    .sort((left, right) => left.worktreeName.localeCompare(right.worktreeName))
+    .map((chat) => ({
+      name: chat.worktreeName,
+      path: chat.worktreePath,
+      pathToDisplay: chat.worktreePath,
+      branch: chat.branchName,
+      isClean: true,
+      chatId: chat.id,
+      chatStatus: chat.status,
+      chatTitle: chat.title,
+    }));
+}
+
+function shouldSyncProjectWorktreeChats({
+  importedSessions,
+  projectId,
+  state,
+  worktrees,
+}: {
+  importedSessions: ImportedCodexSession[];
+  projectId: string;
+  state: ServeState;
+  worktrees: Array<{ path: string }>;
+}): boolean {
+  const existingChatsByPath = new Map(
+    state.chats
+      .filter((chat) => chat.projectId === projectId)
+      .map((chat) => [chat.worktreePath, chat]),
+  );
+  const importedWorktreePaths = new Set(
+    importedSessions.map((session) => session.chat.worktreePath),
+  );
+  return (
+    worktrees.some(
+      (worktree) =>
+        !existingChatsByPath.has(worktree.path) &&
+        !importedWorktreePaths.has(worktree.path),
+    ) ||
+    importedSessions.some(
+      (session) =>
+        !state.chats.some((chat) =>
+          shouldPreferExistingChatOverImport(chat, session.chat),
+        ),
+    )
+  );
+}
+
+function shouldPreferExistingChatOverImport(
+  chat: ChatRecord,
+  importedChat: ChatRecord,
+): boolean {
+  if (chat.projectId !== importedChat.projectId) {
+    return false;
+  }
+  if (
+    chat.codexThreadId !== null &&
+    chat.codexThreadId === importedChat.codexThreadId
+  ) {
+    return true;
+  }
+  if (chat.codexThreadId !== null) {
+    return false;
+  }
+  return (
+    Boolean(
+      chat.activeTurnId ||
+      chat.status === "running" ||
+      chat.status === "waitingForApproval",
+    ) && chat.worktreePath === importedChat.worktreePath
+  );
+}
+
+function findExistingChatForImportedSession(
+  chats: ChatRecord[],
+  projectId: string,
+  importedChat: ChatRecord,
+): ChatRecord | null {
+  return (
+    chats.find(
+      (chat) =>
+        chat.projectId === projectId &&
+        (chat.id === importedChat.id ||
+          shouldPreferExistingChatOverImport(chat, importedChat)),
+    ) ?? null
+  );
+}
+
+function mergeImportedSessionsForProject(
+  state: ServeState,
+  projectId: string,
+  importedSessions: ImportedCodexSession[],
+): ServeState {
+  const importableSessions = importedSessions.filter(
+    (session) =>
+      !state.chats.some((chat) =>
+        shouldPreferExistingChatOverImport(chat, session.chat),
+      ),
+  );
+  const chatsToRemove = state.chats.filter(
+    (chat) =>
+      !shouldPreserveChatDuringImport(chat, projectId, importableSessions),
+  );
+  const chatIdsToRemove = new Set(chatsToRemove.map((chat) => chat.id));
+
+  return {
+    ...state,
+    chats: [
+      ...state.chats.filter((chat) => !chatIdsToRemove.has(chat.id)),
+      ...importableSessions.map((session) => session.chat),
+    ],
+    messages: [
+      ...state.messages.filter(
+        (message) => !chatIdsToRemove.has(message.chatId),
+      ),
+      ...importableSessions.flatMap((session) => session.messages),
+    ],
+  };
+}
+
+function shouldPreserveChatDuringImport(
+  chat: ChatRecord,
+  projectId: string,
+  importedSessions: ImportedCodexSession[],
+): boolean {
+  if (chat.projectId !== projectId) {
+    return true;
+  }
+  if (
+    chat.activeTurnId ||
+    chat.status === "running" ||
+    chat.status === "waitingForApproval"
+  ) {
+    return true;
+  }
+  return !importedSessions.some((session) => {
+    const importedChat = session.chat;
+    return (
+      chat.id === importedChat.id ||
+      (chat.codexThreadId !== null &&
+        chat.codexThreadId === importedChat.codexThreadId) ||
+      (chat.codexThreadId === null &&
+        chat.worktreePath === importedChat.worktreePath)
+    );
+  });
+}
+
+function findImportedReplacement(
+  selectedChatId: string | null,
+  removedChats: ChatRecord[],
+  importedSessions: ImportedCodexSession[],
+): ImportedCodexSession | null {
+  const removedChat = removedChats.find((chat) => chat.id === selectedChatId);
+  if (!removedChat) {
+    return null;
+  }
+  return (
+    importedSessions.find((session) => {
+      const importedChat = session.chat;
+      return (
+        removedChat.codexThreadId === importedChat.codexThreadId ||
+        removedChat.worktreePath === importedChat.worktreePath
+      );
+    }) ?? null
+  );
 }
 
 function getParamObject(params: unknown): Record<string, unknown> | null {

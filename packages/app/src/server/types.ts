@@ -38,6 +38,17 @@ export interface ChatRecord {
   updatedAt: string;
 }
 
+export interface ProjectWorktreeRecord {
+  name: string;
+  path: string;
+  pathToDisplay: string;
+  branch: string;
+  isClean: boolean;
+  chatId: string | null;
+  chatStatus: ChatStatus | null;
+  chatTitle: string;
+}
+
 export interface ServeState {
   version: 1;
   projects: ProjectRecord[];

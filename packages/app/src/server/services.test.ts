@@ -1,5 +1,5 @@
 import { deepStrictEqual, rejects, strictEqual } from "node:assert";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it, vi } from "vitest";
@@ -10,6 +10,7 @@ import type { ChatRecord, ProjectRecord, ServeState } from "./types";
 
 const coreMocks = vi.hoisted(() => ({
   deleteBranch: vi.fn(),
+  listWorktrees: vi.fn(),
   removeWorktree: vi.fn(),
   runCreateWorktree: vi.fn(),
 }));
@@ -118,14 +119,599 @@ async function createHarness(state: ServeState): Promise<{
   const store = new ServeStateStore(await createTemporaryDirectory());
   await store.save(state);
   const codex = new FakeCodexBridge();
+  const codexHome = await createTemporaryDirectory();
   const services = new ServeServices({
     codex: codex as unknown as CodexBridge,
+    codexHome,
     store,
   });
   return { codex, services, store };
 }
 
+class ImportRaceStore extends ServeStateStore {
+  private hasInjectedState = false;
+
+  constructor(
+    dataDir: string,
+    private readonly injectState: (state: ServeState) => ServeState,
+  ) {
+    super(dataDir);
+  }
+
+  override async update(
+    updater: (state: ServeState) => ServeState | Promise<ServeState>,
+  ): Promise<ServeState> {
+    if (!this.hasInjectedState) {
+      this.hasInjectedState = true;
+      await this.save(this.injectState(await this.load()));
+    }
+    return await super.update(updater);
+  }
+}
+
+async function writeCodexSession(
+  codexHome: string,
+  lines: Array<Record<string, unknown>>,
+  fileName = "rollout-2026-04-25T00-00-00-019dc000-0000-7000-8000-000000000001.jsonl",
+): Promise<void> {
+  const directory = join(codexHome, "archived_sessions");
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    join(directory, fileName),
+    `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+  );
+}
+
 describe("ServeServices", () => {
+  it("lists project worktrees with phantom list data and creates missing chat records", async () => {
+    const state = {
+      ...createEmptyState(),
+      projects: [createProject()],
+    };
+    const { services, store } = await createHarness(state);
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "main",
+            path: "/repo",
+            pathToDisplay: ".",
+            branch: "main",
+            isClean: true,
+          },
+          {
+            name: "feature/list",
+            path: "/repo/.git/phantom/worktrees/feature/list",
+            pathToDisplay: ".git/phantom/worktrees/feature/list",
+            branch: "feature/list",
+            isClean: false,
+          },
+        ],
+      },
+    });
+
+    const worktrees = await services.listProjectWorktrees("proj_1");
+
+    deepStrictEqual(
+      worktrees.map((worktree) => ({
+        name: worktree.name,
+        path: worktree.path,
+        pathToDisplay: worktree.pathToDisplay,
+        isClean: worktree.isClean,
+        chatStatus: worktree.chatStatus,
+      })),
+      [
+        {
+          name: "main",
+          path: "/repo",
+          pathToDisplay: ".",
+          isClean: true,
+          chatStatus: "idle",
+        },
+        {
+          name: "feature/list",
+          path: "/repo/.git/phantom/worktrees/feature/list",
+          pathToDisplay: ".git/phantom/worktrees/feature/list",
+          isClean: false,
+          chatStatus: "idle",
+        },
+      ],
+    );
+    strictEqual(
+      worktrees.every((worktree) => worktree.chatId),
+      true,
+    );
+
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.chats.map((chat) => chat.worktreePath),
+      ["/repo", "/repo/.git/phantom/worktrees/feature/list"],
+    );
+  });
+
+  it("does not persist state when worktree sync has no changes", async () => {
+    const state = {
+      ...createEmptyState(),
+      projects: [createProject()],
+      chats: [createChat({ worktreeName: "main", worktreePath: "/repo" })],
+    };
+    const { services, store } = await createHarness(state);
+    const saveSpy = vi.spyOn(store, "save");
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "main",
+            path: "/repo",
+            pathToDisplay: ".",
+            branch: "main",
+            isClean: true,
+          },
+        ],
+      },
+    });
+
+    const worktrees = await services.listProjectWorktrees("proj_1");
+
+    strictEqual(worktrees[0]?.chatId, "chat_1");
+    strictEqual(saveSpy.mock.calls.length, 0);
+  });
+
+  it("falls back to persisted chats when live worktree listing fails", async () => {
+    const state = {
+      ...createEmptyState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          branchName: "main",
+          title: "Persisted main",
+          worktreeName: "main",
+          worktreePath: "/repo",
+        }),
+      ],
+    };
+    const { services } = await createHarness(state);
+    coreMocks.listWorktrees.mockRejectedValueOnce(new Error("git failed"));
+
+    const worktrees = await services.listProjectWorktrees("proj_1");
+
+    deepStrictEqual(worktrees, [
+      {
+        name: "main",
+        path: "/repo",
+        pathToDisplay: "/repo",
+        branch: "main",
+        isClean: true,
+        chatId: "chat_1",
+        chatStatus: "idle",
+        chatTitle: "Persisted main",
+      },
+    ]);
+  });
+
+  it("imports existing Codex chat history for project worktrees", async () => {
+    const state = {
+      ...createEmptyState(),
+      projects: [createProject()],
+    };
+    const store = new ServeStateStore(await createTemporaryDirectory());
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const codexHome = await createTemporaryDirectory();
+    await writeCodexSession(codexHome, [
+      {
+        timestamp: "2026-04-25T00:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "019dc000-0000-7000-8000-000000000001",
+          timestamp: "2026-04-25T00:00:00.000Z",
+          cwd: "/repo/.git/phantom/worktrees/feature/list",
+          source: "vscode",
+        },
+      },
+      {
+        timestamp: "2026-04-25T00:01:00.000Z",
+        type: "event_msg",
+        payload: {
+          type: "thread_name_updated",
+          thread_name: "Existing work",
+        },
+      },
+      {
+        timestamp: "2026-04-25T00:02:00.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Please update the page" }],
+        },
+      },
+      {
+        timestamp: "2026-04-25T00:03:00.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "I updated the page." }],
+        },
+      },
+    ]);
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      codexHome,
+      store,
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature/list",
+            path: "/repo/.git/phantom/worktrees/feature/list",
+            pathToDisplay: ".git/phantom/worktrees/feature/list",
+            branch: "feature/list",
+            isClean: true,
+          },
+        ],
+      },
+    });
+
+    const worktrees = await services.listProjectWorktrees("proj_1");
+
+    strictEqual(worktrees[0]?.chatTitle, "Existing work");
+    strictEqual(worktrees[0]?.chatStatus, "idle");
+    const savedState = await store.load();
+    strictEqual(savedState.chats.length, 1);
+    strictEqual(
+      savedState.chats[0]?.codexThreadId,
+      "019dc000-0000-7000-8000-000000000001",
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => [message.role, message.text]),
+      [
+        ["user", "Please update the page"],
+        ["assistant", "I updated the page."],
+      ],
+    );
+  });
+
+  it("preserves local chats that already match imported Codex threads", async () => {
+    const threadId = "019dc000-0000-7000-8000-000000000001";
+    const worktreePath = "/repo/.git/phantom/worktrees/feature/list";
+    const state = {
+      ...createEmptyState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          id: "chat_local",
+          codexThreadId: threadId,
+          title: "feature/list",
+          worktreeName: "feature/list",
+          worktreePath,
+          branchName: "feature/list",
+          updatedAt: "2026-04-25T00:04:00.000Z",
+        }),
+      ],
+      messages: [
+        {
+          id: "msg_local",
+          chatId: "chat_local",
+          role: "user" as const,
+          text: "hi",
+          createdAt: "2026-04-25T00:04:00.000Z",
+        },
+      ],
+      selectedChatId: "chat_local",
+    };
+    const store = new ServeStateStore(await createTemporaryDirectory());
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const codexHome = await createTemporaryDirectory();
+    await writeCodexSession(codexHome, [
+      {
+        timestamp: "2026-04-25T00:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: threadId,
+          timestamp: "2026-04-25T00:00:00.000Z",
+          cwd: worktreePath,
+          source: "vscode",
+        },
+      },
+      {
+        timestamp: "2026-04-25T00:01:00.000Z",
+        type: "event_msg",
+        payload: {
+          type: "thread_name_updated",
+          thread_name: "hi",
+        },
+      },
+      {
+        timestamp: "2026-04-25T00:02:00.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "hi" }],
+        },
+      },
+    ]);
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      codexHome,
+      store,
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature/list",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/feature/list",
+            branch: "feature/list",
+            isClean: true,
+          },
+        ],
+      },
+    });
+
+    const worktrees = await services.listProjectWorktrees("proj_1");
+
+    strictEqual(worktrees[0]?.chatId, "chat_local");
+    strictEqual(worktrees[0]?.chatTitle, "feature/list");
+    const savedState = await store.load();
+    strictEqual(savedState.chats.length, 1);
+    strictEqual(savedState.chats[0]?.id, "chat_local");
+    strictEqual(savedState.selectedChatId, "chat_local");
+    deepStrictEqual(
+      savedState.messages.map((message) => [message.chatId, message.text]),
+      [["chat_local", "hi"]],
+    );
+  });
+
+  it("imports distinct Codex threads when a failed local chat exists for the same worktree", async () => {
+    const failedThreadId = "019dc000-0000-7000-8000-000000000001";
+    const importedThreadId = "019dc000-0000-7000-8000-000000000002";
+    const worktreePath = "/repo/.git/phantom/worktrees/feature/list";
+    const state = {
+      ...createEmptyState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          id: "chat_failed",
+          codexThreadId: failedThreadId,
+          title: "failed",
+          status: "failed",
+          worktreeName: "feature/list",
+          worktreePath,
+          branchName: "feature/list",
+          updatedAt: "2026-04-25T00:04:00.000Z",
+        }),
+      ],
+      selectedChatId: "chat_failed",
+    };
+    const store = new ServeStateStore(await createTemporaryDirectory());
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const codexHome = await createTemporaryDirectory();
+    await writeCodexSession(
+      codexHome,
+      [
+        {
+          timestamp: "2026-04-25T00:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: importedThreadId,
+            timestamp: "2026-04-25T00:00:00.000Z",
+            cwd: worktreePath,
+            source: "vscode",
+          },
+        },
+        {
+          timestamp: "2026-04-25T00:01:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "thread_name_updated",
+            thread_name: "imported",
+          },
+        },
+      ],
+      "rollout-2026-04-25T00-00-00-019dc000-0000-7000-8000-000000000002.jsonl",
+    );
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      codexHome,
+      store,
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature/list",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/feature/list",
+            branch: "feature/list",
+            isClean: true,
+          },
+        ],
+      },
+    });
+
+    await services.listProjectWorktrees("proj_1");
+
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.chats.map((chat) => [chat.id, chat.codexThreadId]),
+      [
+        ["chat_failed", failedThreadId],
+        [`chat_codex_${importedThreadId}`, importedThreadId],
+      ],
+    );
+  });
+
+  it("uses the latest existing Codex thread after creating a worktree", async () => {
+    const state = {
+      ...createEmptyState(),
+      projects: [createProject()],
+    };
+    const store = new ServeStateStore(await createTemporaryDirectory());
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const codexHome = await createTemporaryDirectory();
+    await writeCodexSession(codexHome, [
+      {
+        timestamp: "2026-04-25T00:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: "019dc000-0000-7000-8000-000000000002",
+          timestamp: "2026-04-25T00:00:00.000Z",
+          cwd: "/repo/.git/phantom/worktrees/feature",
+          source: "vscode",
+        },
+      },
+      {
+        timestamp: "2026-04-25T00:01:00.000Z",
+        type: "event_msg",
+        payload: {
+          type: "thread_name_updated",
+          thread_name: "Continue feature",
+        },
+      },
+      {
+        timestamp: "2026-04-25T00:02:00.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Continue from here" }],
+        },
+      },
+    ]);
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      codexHome,
+      store,
+    });
+    coreMocks.runCreateWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: "feature",
+        path: "/repo/.git/phantom/worktrees/feature",
+      },
+    });
+
+    const chat = await services.createChat("proj_1", { name: "feature" });
+
+    strictEqual(chat.title, "Continue feature");
+    strictEqual(chat.codexThreadId, "019dc000-0000-7000-8000-000000000002");
+    strictEqual(codex.startThread.mock.calls.length, 0);
+    const savedState = await store.load();
+    strictEqual(savedState.selectedChatId, chat.id);
+    deepStrictEqual(
+      savedState.messages.map((message) => [message.role, message.text]),
+      [["user", "Continue from here"]],
+    );
+  });
+
+  it("deduplicates imported chats against current state when creating a worktree", async () => {
+    const threadId = "019dc000-0000-7000-8000-000000000002";
+    const worktreePath = "/repo/.git/phantom/worktrees/feature";
+    const state = {
+      ...createEmptyState(),
+      projects: [createProject()],
+    };
+    const importedChat = createChat({
+      id: `chat_codex_${threadId}`,
+      codexThreadId: threadId,
+      title: "Continue feature",
+      worktreeName: "feature",
+      worktreePath,
+      branchName: "feature",
+    });
+    const store = new ImportRaceStore(
+      await createTemporaryDirectory(),
+      (currentState) => ({
+        ...currentState,
+        chats: [...currentState.chats, importedChat],
+        messages: [
+          ...currentState.messages,
+          {
+            id: `${importedChat.id}_msg_0`,
+            chatId: importedChat.id,
+            role: "user" as const,
+            text: "Continue from here",
+            createdAt: "2026-04-25T00:02:00.000Z",
+          },
+        ],
+      }),
+    );
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const codexHome = await createTemporaryDirectory();
+    await writeCodexSession(codexHome, [
+      {
+        timestamp: "2026-04-25T00:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: threadId,
+          timestamp: "2026-04-25T00:00:00.000Z",
+          cwd: worktreePath,
+          source: "vscode",
+        },
+      },
+      {
+        timestamp: "2026-04-25T00:01:00.000Z",
+        type: "event_msg",
+        payload: {
+          type: "thread_name_updated",
+          thread_name: "Continue feature",
+        },
+      },
+      {
+        timestamp: "2026-04-25T00:02:00.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Continue from here" }],
+        },
+      },
+    ]);
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      codexHome,
+      store,
+    });
+    coreMocks.runCreateWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: "feature",
+        path: worktreePath,
+      },
+    });
+
+    const chat = await services.createChat("proj_1", { name: "feature" });
+
+    strictEqual(chat.id, importedChat.id);
+    const savedState = await store.load();
+    strictEqual(
+      savedState.chats.filter((candidate) => candidate.id === importedChat.id)
+        .length,
+      1,
+    );
+    strictEqual(
+      savedState.messages.filter(
+        (message) => message.id === `${importedChat.id}_msg_0`,
+      ).length,
+      1,
+    );
+    strictEqual(savedState.selectedChatId, importedChat.id);
+  });
+
   it("rejects approval responses from a different chat", async () => {
     const state = {
       ...createEmptyState(),
@@ -299,6 +885,38 @@ describe("ServeServices", () => {
     ]);
     deepStrictEqual(coreMocks.deleteBranch.mock.calls[0], ["/repo", "feature"]);
     strictEqual((await store.load()).chats.length, 0);
+  });
+
+  it("skips non-directory Codex history roots when creating a worktree", async () => {
+    const state = {
+      ...createEmptyState(),
+      projects: [createProject()],
+    };
+    const store = new ServeStateStore(await createTemporaryDirectory());
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const codexHome = await createTemporaryDirectory();
+    await writeFile(join(codexHome, "sessions"), "not a directory");
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      codexHome,
+      store,
+    });
+    coreMocks.runCreateWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: "feature",
+        path: "/repo/.git/phantom/worktrees/feature",
+      },
+    });
+    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_1" } });
+
+    const chat = await services.createChat("proj_1", { name: "feature" });
+
+    strictEqual(chat.codexThreadId, "thread_1");
+    strictEqual(coreMocks.removeWorktree.mock.calls.length, 0);
+    strictEqual(coreMocks.deleteBranch.mock.calls.length, 0);
+    strictEqual((await store.load()).chats.length, 1);
   });
 
   it("rolls back a created worktree when Codex omits the thread id", async () => {
