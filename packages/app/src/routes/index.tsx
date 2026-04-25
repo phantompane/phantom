@@ -1,16 +1,56 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
+  AlertTriangle,
+  ChevronRight,
+  Clock3,
   FolderGit2,
-  Loader2,
+  Inbox,
+  MessageSquare,
   MessageSquarePlus,
   Plus,
   Send,
   Square,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupAction,
+  SidebarGroupContent,
+  SidebarGroupHeader,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+} from "../components/ui/sidebar";
+import { Textarea } from "../components/ui/textarea";
+import { cn } from "../lib/utils";
 import type {
   ChatMessageRecord,
   ChatRecord,
+  ChatStatus,
   PhantomEvent,
   ProjectRecord,
 } from "../server/types";
@@ -35,22 +75,66 @@ const chatEventNames = [
   "auth.updated",
 ];
 
+const statusMeta: Record<
+  ChatStatus,
+  {
+    badge: "danger" | "info" | "secondary" | "success" | "warning";
+    dot: string;
+    label: string;
+  }
+> = {
+  archived: {
+    badge: "secondary",
+    dot: "bg-[var(--color-gray-400)]",
+    label: "Archived",
+  },
+  failed: {
+    badge: "danger",
+    dot: "bg-[var(--semantic-danger-fg)]",
+    label: "Failed",
+  },
+  idle: {
+    badge: "secondary",
+    dot: "bg-[var(--color-gray-500)]",
+    label: "Idle",
+  },
+  running: {
+    badge: "info",
+    dot: "bg-[var(--semantic-info-fg)]",
+    label: "Running",
+  },
+  waitingForApproval: {
+    badge: "warning",
+    dot: "bg-[var(--semantic-warning-fg)]",
+    label: "Approval",
+  },
+};
+
 interface PendingApproval {
   requestId: string;
   method: string;
   params: unknown;
 }
 
+type VisibleMessageRecord = ChatMessageRecord & {
+  role: "assistant" | "error" | "user";
+};
+
 function Home() {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
-  const [chats, setChats] = useState<ChatRecord[]>([]);
+  const [chatsByProject, setChatsByProject] = useState<
+    Record<string, ChatRecord[]>
+  >({});
+  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
+  const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
   const [projectPath, setProjectPath] = useState("");
-  const [newChatName, setNewChatName] = useState("");
   const [composerText, setComposerText] = useState("");
   const [status, setStatus] = useState("Starting");
   const [error, setError] = useState<string | null>(null);
@@ -62,9 +146,21 @@ function Home() {
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
+
   const selectedChat = useMemo(
-    () => chats.find((chat) => chat.id === selectedChatId) ?? null,
-    [chats, selectedChatId],
+    () =>
+      Object.values(chatsByProject)
+        .flat()
+        .find((chat) => chat.id === selectedChatId) ?? null,
+    [chatsByProject, selectedChatId],
+  );
+
+  const visibleMessages = useMemo(
+    () =>
+      messages.filter(
+        (message): message is VisibleMessageRecord => message.role !== "event",
+      ),
+    [messages],
   );
 
   useEffect(() => {
@@ -76,10 +172,14 @@ function Home() {
 
   useEffect(() => {
     if (!selectedProjectId) {
-      setChats([]);
       setSelectedChatId(null);
       return;
     }
+    setExpandedProjectIds((current) => {
+      const next = new Set(current);
+      next.add(selectedProjectId);
+      return next;
+    });
     void refreshChats(selectedProjectId);
   }, [selectedProjectId]);
 
@@ -128,26 +228,64 @@ function Home() {
       "/api/projects",
     );
     setProjects(data.projects);
-    setSelectedProjectId((current) => current ?? data.projects[0]?.id ?? null);
+    const chatEntries = await Promise.all(
+      data.projects.map(
+        async (project) => [project.id, await loadChats(project.id)] as const,
+      ),
+    );
+    const nextChatsByProject = Object.fromEntries(chatEntries);
+    setChatsByProject(nextChatsByProject);
+    setSelectedProjectId((current) => {
+      const nextProjectId = current ?? data.projects[0]?.id ?? null;
+      if (nextProjectId) {
+        setExpandedProjectIds((expanded) => {
+          const next = new Set(expanded);
+          next.add(nextProjectId);
+          return next;
+        });
+      }
+      return nextProjectId;
+    });
+    setSelectedChatId((current) =>
+      Object.values(nextChatsByProject)
+        .flat()
+        .some((chat) => chat.id === current)
+        ? current
+        : null,
+    );
   }
 
-  async function refreshChats(projectId: string) {
+  async function loadChats(projectId: string) {
     const data = await fetchJson<{ chats: ChatRecord[] }>(
       `/api/projects/${projectId}/chats`,
     );
-    setChats(data.chats);
+    return data.chats;
+  }
+
+  async function refreshChats(projectId: string) {
+    const nextChats = await loadChats(projectId);
+    setChatsByProject((current) => ({
+      ...current,
+      [projectId]: nextChats,
+    }));
     setSelectedChatId((current) =>
-      data.chats.some((chat) => chat.id === current)
+      nextChats.some((chat) => chat.id === current)
         ? current
-        : (data.chats[0]?.id ?? null),
+        : (nextChats[0]?.id ?? null),
     );
   }
 
   async function refreshSelectedChat(chatId: string) {
     const data = await fetchJson<{ chat: ChatRecord }>(`/api/chats/${chatId}`);
-    setChats((current) =>
-      current.map((chat) => (chat.id === chatId ? data.chat : chat)),
-    );
+    setChatsByProject((current) => {
+      const projectChats = current[data.chat.projectId] ?? [];
+      return {
+        ...current,
+        [data.chat.projectId]: projectChats.map((chat) =>
+          chat.id === chatId ? data.chat : chat,
+        ),
+      };
+    });
   }
 
   async function refreshMessages(chatId: string) {
@@ -170,6 +308,7 @@ function Home() {
         },
       );
       setProjectPath("");
+      setIsAddProjectOpen(false);
       await refreshProjects();
       setSelectedProjectId(data.project.id);
     } catch (err) {
@@ -179,22 +318,20 @@ function Home() {
     }
   }
 
-  async function createChat() {
-    if (!selectedProjectId) {
-      return;
-    }
+  async function createChat(projectId: string) {
     setError(null);
     setIsBusy(true);
     try {
       const data = await fetchJson<{ chat: ChatRecord }>(
-        `/api/projects/${selectedProjectId}/chats`,
+        `/api/projects/${projectId}/chats`,
         {
           method: "POST",
-          body: JSON.stringify({ name: newChatName || undefined }),
+          body: JSON.stringify({}),
         },
       );
-      setNewChatName("");
-      await refreshChats(selectedProjectId);
+      setSelectedProjectId(projectId);
+      setExpandedProjectIds((current) => new Set(current).add(projectId));
+      await refreshChats(projectId);
       setSelectedChatId(data.chat.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -255,244 +392,451 @@ function Home() {
     }
   }
 
+  function toggleProject(projectId: string) {
+    setExpandedProjectIds((current) => {
+      const next = new Set(current);
+      if (next.has(projectId)) {
+        next.delete(projectId);
+      } else {
+        next.add(projectId);
+      }
+      return next;
+    });
+  }
+
+  function selectProject(projectId: string) {
+    setSelectedProjectId(projectId);
+    setExpandedProjectIds((current) => new Set(current).add(projectId));
+    const projectChats = chatsByProject[projectId] ?? [];
+    setSelectedChatId((current) =>
+      projectChats.some((chat) => chat.id === current)
+        ? current
+        : (projectChats[0]?.id ?? null),
+    );
+  }
+
+  function selectChat(chat: ChatRecord) {
+    setSelectedProjectId(chat.projectId);
+    setSelectedChatId(chat.id);
+    setExpandedProjectIds((current) => new Set(current).add(chat.projectId));
+  }
+
   return (
-    <main className="grid h-screen min-h-0 grid-cols-[260px_300px_1fr] bg-slate-50 text-slate-950">
-      <aside className="flex min-h-0 flex-col border-r border-slate-200 bg-white">
-        <div className="flex h-12 items-center gap-2 border-b border-slate-200 px-3">
-          <FolderGit2 className="size-4 text-slate-600" />
-          <h1 className="text-sm font-semibold">Phantom</h1>
-          <span className="ml-auto text-xs text-slate-500">{status}</span>
-        </div>
-
-        <form className="border-b border-slate-200 p-3" onSubmit={addProject}>
-          <label className="text-xs font-medium text-slate-600">
-            Project path
-          </label>
-          <div className="mt-2 flex gap-2">
-            <input
-              className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-slate-500"
-              placeholder="/Users/me/project"
-              value={projectPath}
-              onChange={(event) => setProjectPath(event.target.value)}
-            />
-            <button
-              className="inline-flex size-8 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-              disabled={isBusy || !projectPath}
-              title="Add project"
-              type="submit"
-            >
-              {isBusy ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Plus className="size-4" />
-              )}
-            </button>
+    <SidebarProvider className="h-screen min-h-0">
+      <Sidebar collapsible="offcanvas" variant="inset">
+        <SidebarHeader>
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--color-gray-900)] text-primary-foreground">
+            <FolderGit2 className="size-4" />
           </div>
-        </form>
+          <div className="min-w-0 flex-1 group-data-[state=collapsed]/sidebar:hidden">
+            <h1 className="truncate text-[length:var(--font-size-lg)] font-semibold leading-tight">
+              Phantom
+            </h1>
+          </div>
+          <Badge
+            className="max-w-24 truncate group-data-[state=collapsed]/sidebar:hidden"
+            variant={status === "Ready" ? "success" : "warning"}
+          >
+            {status}
+          </Badge>
+        </SidebarHeader>
 
-        <nav className="min-h-0 flex-1 overflow-y-auto p-2">
-          {projects.length === 0 ? (
-            <p className="px-2 py-3 text-sm text-slate-500">
-              Add a Git project to begin.
-            </p>
-          ) : (
-            projects.map((project) => (
-              <button
-                className={`mb-1 block w-full rounded-md px-2 py-2 text-left text-sm ${
-                  project.id === selectedProjectId
-                    ? "bg-slate-900 text-white"
-                    : "text-slate-700 hover:bg-slate-100"
-                }`}
-                key={project.id}
-                onClick={() => setSelectedProjectId(project.id)}
-                type="button"
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupHeader>
+              <SidebarGroupLabel>Projects</SidebarGroupLabel>
+              <SidebarGroupAction
+                aria-label="Add project"
+                onClick={() => setIsAddProjectOpen(true)}
+                title="Add project"
               >
-                <span className="block truncate font-medium">
-                  {project.name}
-                </span>
-                <span className="block truncate text-xs opacity-70">
-                  {project.rootPath}
-                </span>
-              </button>
-            ))
-          )}
-        </nav>
-      </aside>
+                <Plus className="size-4" />
+              </SidebarGroupAction>
+            </SidebarGroupHeader>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {projects.length === 0 ? (
+                  <li className="px-2 py-4 group-data-[state=collapsed]/sidebar:hidden">
+                    <div className="rounded-[var(--radius-md)] border border-dashed border-sidebar-border bg-[var(--surface-card)] px-3 py-3 text-[length:var(--font-size-sm)] text-muted-foreground">
+                      Add a Git project to begin.
+                    </div>
+                  </li>
+                ) : (
+                  projects.map((project) => {
+                    const isProjectExpanded = expandedProjectIds.has(
+                      project.id,
+                    );
+                    const isProjectSelected = project.id === selectedProjectId;
+                    const projectChats = chatsByProject[project.id] ?? [];
 
-      <section className="flex min-h-0 flex-col border-r border-slate-200 bg-white">
-        <div className="flex h-12 items-center border-b border-slate-200 px-3">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">
-              {selectedProject?.name ?? "No project"}
-            </p>
-            <p className="truncate text-xs text-slate-500">
-              {selectedProject?.rootPath ?? "Select or add a project"}
-            </p>
-          </div>
-        </div>
+                    return (
+                      <SidebarMenuItem key={project.id}>
+                        <div
+                          className={cn(
+                            "group/project flex items-center rounded-[var(--radius-sm)]",
+                            isProjectSelected && "bg-sidebar-accent",
+                          )}
+                        >
+                          <Button
+                            aria-label={
+                              isProjectExpanded
+                                ? "Collapse project"
+                                : "Expand project"
+                            }
+                            className="ml-1 size-7 text-[var(--icon-color-default)] group-data-[state=collapsed]/sidebar:hidden"
+                            onClick={() => toggleProject(project.id)}
+                            size="icon"
+                            type="button"
+                            variant="ghost"
+                          >
+                            <ChevronRight
+                              className={cn(
+                                "transition-transform duration-[var(--motion-duration-fast)]",
+                                isProjectExpanded && "rotate-90",
+                              )}
+                            />
+                          </Button>
+                          <SidebarMenuButton
+                            className="min-h-8 flex-1 group-data-[state=collapsed]/sidebar:flex-none"
+                            isActive={isProjectSelected}
+                            onClick={() => selectProject(project.id)}
+                            title={project.name}
+                            type="button"
+                          >
+                            <FolderGit2 className="size-4 text-[var(--icon-color-default)]" />
+                            <span className="min-w-0 flex-1 group-data-[state=collapsed]/sidebar:hidden">
+                              <span className="block truncate font-medium">
+                                {project.name}
+                              </span>
+                            </span>
+                          </SidebarMenuButton>
+                          <Button
+                            aria-label={`Create worktree in ${project.name}`}
+                            className="mr-1 size-7 text-[var(--icon-color-default)] group-data-[state=collapsed]/sidebar:hidden"
+                            disabled={isBusy}
+                            onClick={() => void createChat(project.id)}
+                            size="icon"
+                            title="Create worktree"
+                            type="button"
+                            variant="ghost"
+                          >
+                            <MessageSquarePlus className="size-4" />
+                          </Button>
+                        </div>
+                        {isProjectExpanded && (
+                          <SidebarMenuSub>
+                            {projectChats.length === 0 ? (
+                              <li className="px-2 py-1.5 text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+                                No worktrees
+                              </li>
+                            ) : (
+                              projectChats.map((chat) => {
+                                return (
+                                  <SidebarMenuSubItem key={chat.id}>
+                                    <SidebarMenuSubButton
+                                      isActive={chat.id === selectedChatId}
+                                      onClick={() => selectChat(chat)}
+                                      title={chat.title}
+                                      type="button"
+                                    >
+                                      <MessageSquare className="size-3.5 text-[var(--icon-color-default)]" />
+                                      <span className="min-w-0 flex-1">
+                                        <span className="block truncate font-medium">
+                                          {chat.title}
+                                        </span>
+                                      </span>
+                                    </SidebarMenuSubButton>
+                                  </SidebarMenuSubItem>
+                                );
+                              })
+                            )}
+                          </SidebarMenuSub>
+                        )}
+                      </SidebarMenuItem>
+                    );
+                  })
+                )}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
 
-        <div className="border-b border-slate-200 p-3">
-          <label className="text-xs font-medium text-slate-600">New chat</label>
-          <div className="mt-2 flex gap-2">
-            <input
-              className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-slate-500"
-              placeholder="optional-name"
-              value={newChatName}
-              onChange={(event) => setNewChatName(event.target.value)}
-            />
-            <button
-              className="inline-flex size-8 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-              disabled={!selectedProjectId || isBusy}
-              onClick={createChat}
-              title="Create chat"
-              type="button"
-            >
-              <MessageSquarePlus className="size-4" />
-            </button>
-          </div>
-        </div>
+        <SidebarRail />
+      </Sidebar>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">
-          {chats.map((chat) => (
-            <button
-              className={`mb-1 block w-full rounded-md px-2 py-2 text-left text-sm ${
-                chat.id === selectedChatId
-                  ? "bg-slate-900 text-white"
-                  : "text-slate-700 hover:bg-slate-100"
-              }`}
-              key={chat.id}
-              onClick={() => setSelectedChatId(chat.id)}
-              type="button"
-            >
-              <span className="block truncate font-medium">{chat.title}</span>
-              <span className="block truncate text-xs opacity-70">
-                {chat.status} / {chat.branchName}
-              </span>
-            </button>
-          ))}
-        </div>
-      </section>
+      <Dialog open={isAddProjectOpen} onOpenChange={setIsAddProjectOpen}>
+        <DialogContent aria-labelledby="add-project-title">
+          <DialogHeader>
+            <DialogTitle id="add-project-title">Add project</DialogTitle>
+            <DialogDescription>
+              Add a local Git project to the Phantom sidebar.
+            </DialogDescription>
+          </DialogHeader>
+          <form className="grid gap-4" onSubmit={addProject}>
+            <div className="grid gap-2">
+              <Label htmlFor="project-path">Project path</Label>
+              <Input
+                id="project-path"
+                placeholder="/Users/me/project"
+                value={projectPath}
+                onChange={(event) => setProjectPath(event.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                onClick={() => setIsAddProjectOpen(false)}
+                type="button"
+                variant="outline"
+              >
+                Cancel
+              </Button>
+              <Button disabled={isBusy || !projectPath} type="submit">
+                Add project
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-      <section className="flex min-h-0 flex-col">
-        <header className="flex h-12 items-center gap-3 border-b border-slate-200 bg-white px-4">
+      <SidebarInset>
+        <header className="flex min-h-[var(--layout-topbar-height)] items-center gap-3 border-b border-border bg-[var(--surface-panel)] px-4">
+          <SidebarTrigger className="-ml-1" />
+          <div className="h-5 w-px bg-[var(--border-divider)]" />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">
-              {selectedChat?.title ?? "No chat selected"}
-            </p>
-            <p className="truncate text-xs text-slate-500">
-              {selectedChat?.worktreePath ??
-                "Create a chat to create a worktree"}
+            <div className="flex min-w-0 items-center gap-2">
+              <p className="truncate text-[length:var(--font-size-xl)] font-semibold leading-tight">
+                {selectedChat?.title ?? "Workspace"}
+              </p>
+              {selectedChat && <StatusBadge status={selectedChat.status} />}
+            </div>
+            <p className="truncate text-[length:var(--font-size-xs)] text-muted-foreground">
+              {selectedProject?.name ?? "No project selected"}
+              {selectedChat ? ` / ${selectedChat.branchName}` : ""}
             </p>
           </div>
-          <button
-            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+          <Button
             disabled={!selectedChat?.activeTurnId}
             onClick={interruptChat}
+            size="sm"
             type="button"
+            variant="outline"
           >
             <Square className="size-3" />
             Stop
-          </button>
+          </Button>
         </header>
 
         {error && (
-          <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
-            {error}
-          </div>
+          <SystemBanner tone="danger">
+            <AlertTriangle className="size-4" />
+            <span>{error}</span>
+          </SystemBanner>
         )}
 
         {pendingApproval && (
-          <div className="border-b border-amber-200 bg-amber-50 px-4 py-3">
-            <p className="text-sm font-medium text-amber-900">
-              Approval requested
-            </p>
-            <p className="mt-1 text-xs text-amber-800">
-              {pendingApproval.method}
-            </p>
-            <div className="mt-3 flex gap-2">
-              <button
-                className="rounded-md bg-slate-900 px-3 py-1.5 text-sm text-white"
-                onClick={() => void answerApproval("accept")}
-                type="button"
-              >
-                Accept
-              </button>
-              <button
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
-                onClick={() => void answerApproval("acceptForSession")}
-                type="button"
-              >
-                Accept for session
-              </button>
-              <button
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
-                onClick={() => void answerApproval("decline")}
-                type="button"
-              >
-                Decline
-              </button>
+          <div className="border-b border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] px-4 py-3 text-[var(--semantic-warning-fg)]">
+            <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="flex items-center gap-2 text-[length:var(--font-size-md)] font-semibold">
+                  <Clock3 className="size-4" />
+                  Approval requested
+                </p>
+                <p className="mt-1 truncate font-mono text-[length:var(--font-size-xs)]">
+                  {pendingApproval.method}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Button
+                  onClick={() => void answerApproval("accept")}
+                  size="sm"
+                  type="button"
+                >
+                  Accept
+                </Button>
+                <Button
+                  onClick={() => void answerApproval("acceptForSession")}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Accept for session
+                </Button>
+                <Button
+                  onClick={() => void answerApproval("decline")}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Decline
+                </Button>
+              </div>
             </div>
           </div>
         )}
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          {messages.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-sm text-slate-500">
-              Send a message to start working with Codex.
-            </div>
+        <section className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          {visibleMessages.length === 0 ? (
+            <EmptyTimeline
+              hasChat={Boolean(selectedChat)}
+              selectedProject={selectedProject}
+              onCreateChat={
+                selectedProject
+                  ? () => void createChat(selectedProject.id)
+                  : undefined
+              }
+              onOpenProjectDialog={() => setIsAddProjectOpen(true)}
+            />
           ) : (
-            <div className="mx-auto flex max-w-4xl flex-col gap-3">
-              {messages.map((message) => (
-                <article
-                  className={`rounded-md border px-3 py-2 text-sm ${
-                    message.role === "user"
-                      ? "ml-auto max-w-[75%] border-slate-900 bg-slate-900 text-white"
-                      : message.role === "assistant"
-                        ? "mr-auto max-w-[80%] border-slate-200 bg-white"
-                        : message.role === "error"
-                          ? "border-red-200 bg-red-50 text-red-800"
-                          : "border-slate-200 bg-slate-100 text-slate-600"
-                  }`}
-                  key={message.id}
-                >
-                  <pre className="whitespace-pre-wrap break-words font-sans">
-                    {message.text}
-                  </pre>
-                </article>
+            <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">
+              {visibleMessages.map((message) => (
+                <MessageCard key={message.id} message={message} />
               ))}
             </div>
           )}
-        </div>
+        </section>
 
         <form
-          className="border-t border-slate-200 bg-white p-3"
+          className="border-t border-border bg-[var(--surface-floating)] p-3 backdrop-blur"
           onSubmit={sendMessage}
         >
-          <div className="mx-auto flex max-w-4xl gap-2">
-            <textarea
-              className="min-h-11 flex-1 resize-none rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-              disabled={!selectedChatId}
-              placeholder={
-                selectedChatId
-                  ? "Ask Codex to work in this worktree"
-                  : "Create a chat first"
-              }
-              rows={2}
-              value={composerText}
-              onChange={(event) => setComposerText(event.target.value)}
-            />
-            <button
-              className="inline-flex h-11 w-11 items-center justify-center rounded-md bg-slate-900 text-white hover:bg-slate-700 disabled:opacity-50"
+          <div className="mx-auto flex max-w-[var(--layout-max-content-width)] items-end gap-2 border border-transparent border-t-[var(--border-divider)] bg-transparent p-1">
+            <div className="min-w-0 flex-1">
+              <Label className="sr-only" htmlFor="composer">
+                Message
+              </Label>
+              <Textarea
+                className="min-h-12 border-0 bg-transparent px-2 py-2 shadow-none focus-visible:shadow-none"
+                disabled={!selectedChatId}
+                id="composer"
+                placeholder={
+                  selectedChatId
+                    ? "Ask Codex to work in this worktree"
+                    : "Create or select a worktree to start"
+                }
+                rows={2}
+                value={composerText}
+                onChange={(event) => setComposerText(event.target.value)}
+              />
+            </div>
+            <Button
+              aria-label="Send message"
+              className="size-10"
               disabled={!selectedChatId || !composerText.trim()}
+              size="icon"
               title="Send"
               type="submit"
             >
-              <Send className="size-4" />
-            </button>
+              <Send />
+            </Button>
           </div>
         </form>
+      </SidebarInset>
+    </SidebarProvider>
+  );
+}
+
+function StatusBadge({ status }: { status: ChatStatus }) {
+  const meta = statusMeta[status];
+  return (
+    <Badge variant={meta.badge}>
+      <span className={cn("size-1.5 rounded-full", meta.dot)} />
+      {meta.label}
+    </Badge>
+  );
+}
+
+function SystemBanner({
+  children,
+  tone,
+}: {
+  children: ReactNode;
+  tone: "danger" | "info";
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "border-[var(--semantic-danger-border)] bg-[var(--semantic-danger-bg)] text-[var(--semantic-danger-fg)]"
+      : "border-[var(--semantic-info-border)] bg-[var(--semantic-info-bg)] text-[var(--semantic-info-fg)]";
+
+  return (
+    <div
+      className={cn(
+        "border-b px-4 py-2 text-[length:var(--font-size-sm)]",
+        toneClass,
+      )}
+      role="status"
+    >
+      <div className="mx-auto flex max-w-[var(--layout-max-content-width)] items-center gap-2">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function EmptyTimeline({
+  hasChat,
+  onCreateChat,
+  onOpenProjectDialog,
+  selectedProject,
+}: {
+  hasChat: boolean;
+  onCreateChat?: () => void;
+  onOpenProjectDialog: () => void;
+  selectedProject: ProjectRecord | null;
+}) {
+  return (
+    <div className="mx-auto flex h-full max-w-[var(--layout-max-content-width)] items-center justify-center py-8">
+      <section className="grid w-full max-w-xl gap-4 px-5 py-6 text-center">
+        <div className="mx-auto flex size-10 items-center justify-center rounded-[var(--radius-md)] bg-[var(--surface-code)] text-[var(--icon-color-default)]">
+          <Inbox className="size-5" />
+        </div>
+        <div>
+          <h2 className="text-[length:var(--font-size-xl)] font-semibold">
+            {hasChat ? "No messages yet" : "Select a worktree"}
+          </h2>
+          <p className="mt-1 text-[length:var(--font-size-md)] text-muted-foreground">
+            {hasChat
+              ? "Send a message to start a focused Codex session."
+              : "Create a worktree under a project to begin a Codex session."}
+          </p>
+        </div>
+        <div className="flex justify-center gap-2">
+          {selectedProject ? (
+            <Button onClick={onCreateChat} type="button">
+              <MessageSquarePlus className="size-4" />
+              Create worktree
+            </Button>
+          ) : (
+            <Button onClick={onOpenProjectDialog} type="button">
+              <Plus className="size-4" />
+              Add project
+            </Button>
+          )}
+        </div>
       </section>
-    </main>
+    </div>
+  );
+}
+
+function MessageCard({ message }: { message: VisibleMessageRecord }) {
+  const isUser = message.role === "user";
+  const isError = message.role === "error";
+
+  return (
+    <article
+      className={cn(
+        "rounded-[var(--radius-lg)] border px-4 py-3 shadow-[var(--shadow-xs)]",
+        isUser &&
+          "ml-auto max-w-[78%] border-transparent bg-[var(--color-gray-900)] text-primary-foreground",
+        message.role === "assistant" &&
+          "mr-auto max-w-[82%] border-border bg-card text-card-foreground",
+        isError &&
+          "border-[var(--semantic-danger-border)] bg-[var(--semantic-danger-bg)] text-[var(--semantic-danger-fg)]",
+      )}
+    >
+      <pre className="whitespace-pre-wrap break-words font-sans text-[length:var(--font-size-md)] leading-[var(--line-height-relaxed)]">
+        {message.text}
+      </pre>
+    </article>
   );
 }
 
