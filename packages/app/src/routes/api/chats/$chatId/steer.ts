@@ -21,7 +21,7 @@ export const Route = createFileRoute("/api/chats/$chatId/steer")({
           if (!text) {
             throw new Error("Message text is required");
           }
-          const chat = await getServeServices().sendMessage(params.chatId, {
+          const chat = await getServeServices().steerMessage(params.chatId, {
             text,
           });
           return json({ chat });

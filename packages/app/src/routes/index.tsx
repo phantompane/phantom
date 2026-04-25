@@ -136,7 +136,11 @@ function Home() {
       `/api/projects/${projectId}/chats`,
     );
     setChats(data.chats);
-    setSelectedChatId((current) => current ?? data.chats[0]?.id ?? null);
+    setSelectedChatId((current) =>
+      data.chats.some((chat) => chat.id === current)
+        ? current
+        : (data.chats[0]?.id ?? null),
+    );
   }
 
   async function refreshSelectedChat(chatId: string) {

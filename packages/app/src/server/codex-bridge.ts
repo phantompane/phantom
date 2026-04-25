@@ -11,6 +11,7 @@ export type JsonValue =
 
 export type CodexNotificationHandler = (message: CodexMessage) => void;
 export type CodexServerRequestHandler = (message: CodexMessage) => void;
+export type CodexProcessExitHandler = (error: Error) => void;
 
 export interface CodexMessage {
   id?: number | string;
@@ -54,6 +55,7 @@ export class CodexBridge {
   private readonly serverRequests = new Map<number | string, CodexMessage>();
   private readonly notificationHandlers = new Set<CodexNotificationHandler>();
   private readonly serverRequestHandlers = new Set<CodexServerRequestHandler>();
+  private readonly processExitHandlers = new Set<CodexProcessExitHandler>();
 
   constructor(
     private readonly codexBin = getCodexBin(),
@@ -68,6 +70,11 @@ export class CodexBridge {
   onServerRequest(handler: CodexServerRequestHandler): () => void {
     this.serverRequestHandlers.add(handler);
     return () => this.serverRequestHandlers.delete(handler);
+  }
+
+  onProcessExit(handler: CodexProcessExitHandler): () => void {
+    this.processExitHandlers.add(handler);
+    return () => this.processExitHandlers.delete(handler);
   }
 
   async ensureStarted(): Promise<void> {
@@ -159,35 +166,36 @@ export class CodexBridge {
   }
 
   private async start(): Promise<void> {
+    this.stderr = "";
     this.proc = this.spawnCodexProcess(this.codexBin, ["app-server"], {
       stdio: ["pipe", "pipe", "pipe"],
     }) as ChildProcessWithoutNullStreams;
+    const proc = this.proc;
 
-    this.proc.stderr.on("data", (chunk: Buffer) => {
+    proc.stderr.on("data", (chunk: Buffer) => {
       this.stderr += chunk.toString("utf8");
       if (this.stderr.length > 8000) {
         this.stderr = this.stderr.slice(-8000);
       }
     });
 
-    this.proc.on("error", (error) => {
-      this.rejectPending(error);
+    proc.on("error", (error) => {
+      this.handleProcessExit(proc, error);
     });
 
-    this.proc.on("exit", (code, signal) => {
+    proc.on("exit", (code, signal) => {
       const suffix = this.stderr.trim() ? `: ${this.stderr.trim()}` : "";
-      this.rejectPending(
+      this.handleProcessExit(
+        proc,
         new Error(
           `Codex App Server exited with ${
             signal ? `signal ${signal}` : `code ${code ?? 0}`
           }${suffix}`,
         ),
       );
-      this.proc = null;
-      this.initialized = null;
     });
 
-    const rl = readline.createInterface({ input: this.proc.stdout });
+    const rl = readline.createInterface({ input: proc.stdout });
     rl.on("line", (line) => this.handleLine(line));
 
     await this.sendRequest("initialize", {
@@ -281,5 +289,22 @@ export class CodexBridge {
       pending.reject(error);
     }
     this.pendingRequests.clear();
+  }
+
+  private handleProcessExit(
+    proc: ChildProcessWithoutNullStreams,
+    error: Error,
+  ): void {
+    if (this.proc !== proc) {
+      return;
+    }
+
+    this.rejectPending(error);
+    this.serverRequests.clear();
+    this.proc = null;
+    this.initialized = null;
+    for (const handler of this.processExitHandlers) {
+      handler(error);
+    }
   }
 }

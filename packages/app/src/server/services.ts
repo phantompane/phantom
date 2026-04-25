@@ -80,6 +80,9 @@ export class ServeServices {
     this.codex.onServerRequest((message) => {
       void this.handleCodexServerRequest(message);
     });
+    this.codex.onProcessExit(() => {
+      this.loadedThreadIds.clear();
+    });
   }
 
   async getHealth() {
@@ -253,6 +256,21 @@ export class ServeServices {
     chatId: string,
     input: SendMessageInput,
   ): Promise<ChatRecord> {
+    return this.submitMessage(chatId, input, { requireActiveTurn: false });
+  }
+
+  async steerMessage(
+    chatId: string,
+    input: SendMessageInput,
+  ): Promise<ChatRecord> {
+    return this.submitMessage(chatId, input, { requireActiveTurn: true });
+  }
+
+  private async submitMessage(
+    chatId: string,
+    input: SendMessageInput,
+    options: { requireActiveTurn: boolean },
+  ): Promise<ChatRecord> {
     const text = input.text.trim();
     if (!text) {
       throw new Error("Message text cannot be empty");
@@ -270,6 +288,9 @@ export class ServeServices {
     );
     const isSteeringActiveTurn =
       chat.status === "running" && Boolean(chat.activeTurnId);
+    if (options.requireActiveTurn && !isSteeringActiveTurn) {
+      throw new Error("Chat does not have an active Codex turn");
+    }
     if (!isSteeringActiveTurn) {
       if (this.pendingChatTurns.has(chatId)) {
         throw new Error("Chat already has an active Codex turn");

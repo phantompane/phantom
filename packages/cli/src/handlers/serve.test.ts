@@ -20,7 +20,7 @@ const spawnMock = vi.fn(
     _command: string,
     _args: string[],
     _options: { detached: boolean; stdio: "ignore" },
-  ) => ({ unref: vi.fn() }),
+  ) => ({ on: vi.fn(), unref: vi.fn() }),
 );
 const exitWithErrorMock = vi.fn((message: string) => {
   consoleErrorMock(`Error: ${message}`);
@@ -213,6 +213,31 @@ describe("serveHandler", () => {
     await serveHandler(["--open"]);
 
     strictEqual(spawnMock.mock.calls.length, 1);
+  });
+
+  it("keeps serving when the browser launcher fails", async () => {
+    const { cliEntry } = await createBundledCliFixture();
+    fileURLToPathMock.mockReturnValue(cliEntry);
+    const child = {
+      on: vi.fn((event: string, handler: (error: Error) => void) => {
+        if (event === "error") {
+          handler(new Error("ENOENT"));
+        }
+        return child;
+      }),
+      unref: vi.fn(),
+    };
+    spawnMock.mockReturnValueOnce(child);
+
+    await serveHandler(["--open"]);
+
+    strictEqual(consoleLogMock.mock.calls.length, 2);
+    strictEqual(
+      consoleWarnMock.mock.calls.some(
+        (call) => call[0] === "Failed to open browser: ENOENT",
+      ),
+      true,
+    );
   });
 
   it("ignores process.argv[1] and resolves from the bundled entrypoint path", async () => {

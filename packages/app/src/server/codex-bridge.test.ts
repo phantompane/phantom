@@ -153,6 +153,8 @@ describe("CodexBridge", () => {
 
   it("propagates app-server exits to pending requests", async () => {
     const { bridge, proc } = createBridge();
+    const processExitHandler = vi.fn();
+    bridge.onProcessExit(processExitHandler);
 
     const models = bridge.listModels();
     await vi.waitFor(() => expect(findWrite(proc, "initialize")).toBeDefined());
@@ -161,6 +163,23 @@ describe("CodexBridge", () => {
     await expect(models).rejects.toThrow(
       "Codex App Server exited with code 1: boom",
     );
+    expect(processExitHandler).toHaveBeenCalledOnce();
+  });
+
+  it("clears server requests when the app-server exits", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    proc.send({
+      id: 99,
+      method: "item/commandExecution/requestApproval",
+      params: { threadId: "thread_1" },
+    });
+    proc.failWithStderr("boom");
+
+    expect(() =>
+      bridge.respondToServerRequest(99, { decision: "accept" }),
+    ).toThrow("Codex server request '99' was not found");
   });
 
   it("does not serialize active turns across different threads", async () => {

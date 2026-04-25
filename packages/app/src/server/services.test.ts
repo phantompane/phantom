@@ -21,6 +21,7 @@ const timestamp = "2026-04-25T00:00:00.000Z";
 
 class FakeCodexBridge {
   readonly notificationHandlers: Array<(message: CodexMessage) => void> = [];
+  readonly processExitHandlers: Array<(error: Error) => void> = [];
   readonly serverRequestHandlers: Array<(message: CodexMessage) => void> = [];
   readonly interruptTurn = vi.fn();
   readonly listModels = vi.fn();
@@ -39,6 +40,17 @@ class FakeCodexBridge {
   onServerRequest(handler: (message: CodexMessage) => void): () => void {
     this.serverRequestHandlers.push(handler);
     return () => undefined;
+  }
+
+  onProcessExit(handler: (error: Error) => void): () => void {
+    this.processExitHandlers.push(handler);
+    return () => undefined;
+  }
+
+  emitProcessExit(error = new Error("Codex exited")): void {
+    for (const handler of this.processExitHandlers) {
+      handler(error);
+    }
   }
 
   emitServerRequest(message: CodexMessage): void {
@@ -318,6 +330,34 @@ describe("ServeServices", () => {
     ]);
     deepStrictEqual(coreMocks.deleteBranch.mock.calls[0], ["/repo", "feature"]);
     strictEqual((await store.load()).chats.length, 0);
+  });
+
+  it("resumes persisted threads again after the Codex app-server exits", async () => {
+    const state = {
+      ...createEmptyState(),
+      projects: [createProject()],
+    };
+    const { codex, services } = await createHarness(state);
+    coreMocks.runCreateWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: "feature",
+        path: "/repo/.git/phantom/worktrees/feature",
+      },
+    });
+    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_1" } });
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_1" } });
+
+    const chat = await services.createChat("proj_1", { name: "feature" });
+    codex.emitProcessExit();
+    await services.sendMessage(chat.id, { text: "resume after restart" });
+
+    deepStrictEqual(codex.resumeThread.mock.calls[0], [
+      "thread_1",
+      "/repo/.git/phantom/worktrees/feature",
+    ]);
+    strictEqual(codex.startTurn.mock.calls.length, 1);
   });
 
   it("does not broadcast unmapped approval requests as answerable approvals", async () => {
@@ -793,6 +833,26 @@ describe("ServeServices", () => {
       "adjust course",
     ]);
     strictEqual(codex.startTurn.mock.calls.length, 0);
+  });
+
+  it("rejects steer requests when the chat has no active turn", async () => {
+    const state = {
+      ...createEmptyState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+    };
+    const { codex, services, store } = await createHarness(state);
+
+    await rejects(
+      services.steerMessage("chat_1", { text: "adjust course" }),
+      /Chat does not have an active Codex turn/,
+    );
+
+    const savedState = await store.load();
+    strictEqual(savedState.messages.length, 0);
+    strictEqual(savedState.chats[0]?.status, "idle");
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+    strictEqual(codex.steerTurn.mock.calls.length, 0);
   });
 
   it("removes streamed messages from a failed new turn", async () => {

@@ -26,11 +26,20 @@ function openBrowser(url: string): void {
         : "xdg-open";
   const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
 
-  const child = spawn(command, args, {
-    detached: true,
-    stdio: "ignore",
-  });
-  child.unref();
+  try {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.on("error", (error) => {
+      output.warn(`Failed to open browser: ${error.message}`);
+    });
+    child.unref();
+  } catch (error) {
+    output.warn(
+      `Failed to open browser: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 export async function serveHandler(args: string[] = []): Promise<void> {
