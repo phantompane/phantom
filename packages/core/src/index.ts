@@ -2,6 +2,7 @@ export * from "@phantompane/config";
 export * from "@phantompane/preferences";
 export * from "./context.ts";
 export * from "./exec.ts";
+export * from "./github/checkout.ts";
 export * from "./paths.ts";
 export * from "./shell.ts";
 export * from "./worktree/attach.ts";

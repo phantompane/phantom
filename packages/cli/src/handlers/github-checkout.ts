@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { githubCheckout } from "@phantompane/github";
+import { githubCheckout } from "@phantompane/core";
 import { getPhantomEnv } from "@phantompane/process";
 import { isErr } from "@phantompane/utils";
 import { executeTmuxCommand, isInsideTmux } from "@phantompane/tmux";

@@ -1,11 +1,9 @@
-import {
-  attachWorktreeCore,
-  createContext,
-  validateWorktreeExists,
-} from "@phantompane/core";
 import { fetch, getGitRoot, setUpstreamBranch } from "@phantompane/git";
+import type { GitHubPullRequest } from "@phantompane/github";
 import { err, isErr, ok, type Result } from "@phantompane/utils";
-import type { GitHubPullRequest } from "../api/index.ts";
+import { createContext } from "../../context.ts";
+import { attachWorktreeCore } from "../../worktree/attach.ts";
+import { validateWorktreeExists } from "../../worktree/validate.ts";
 
 export interface CheckoutResult {
   message: string;

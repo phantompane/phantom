@@ -102,9 +102,6 @@ importers:
       '@phantompane/git':
         specifier: workspace:*
         version: link:../git
-      '@phantompane/github':
-        specifier: workspace:*
-        version: link:../github
       '@phantompane/mcp':
         specifier: workspace:*
         version: link:../mcp
@@ -142,6 +139,9 @@ importers:
       '@phantompane/git':
         specifier: workspace:*
         version: link:../git
+      '@phantompane/github':
+        specifier: workspace:*
+        version: link:../github
       '@phantompane/preferences':
         specifier: workspace:*
         version: link:../preferences
@@ -172,18 +172,6 @@ importers:
       '@octokit/rest':
         specifier: ^22.0.1
         version: 22.0.1
-      '@phantompane/core':
-        specifier: workspace:*
-        version: link:../core
-      '@phantompane/git':
-        specifier: workspace:*
-        version: link:../git
-      '@phantompane/process':
-        specifier: workspace:*
-        version: link:../process
-      '@phantompane/utils':
-        specifier: workspace:*
-        version: link:../utils
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -199,9 +187,6 @@ importers:
       '@phantompane/git':
         specifier: workspace:*
         version: link:../git
-      '@phantompane/github':
-        specifier: workspace:*
-        version: link:../github
       '@phantompane/process':
         specifier: workspace:*
         version: link:../process

@@ -23,7 +23,6 @@
   "dependencies": {
     "@phantompane/core": "workspace:*",
     "@phantompane/git": "workspace:*",
-    "@phantompane/github": "workspace:*",
     "@phantompane/mcp": "workspace:*",
     "@phantompane/preferences": "workspace:*",
     "@phantompane/process": "workspace:*",

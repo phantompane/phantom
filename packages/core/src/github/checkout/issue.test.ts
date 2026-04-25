@@ -6,31 +6,26 @@ const getGitRootMock = vi.fn();
 const createWorktreeCoreMock = vi.fn();
 const isPullRequestMock = vi.fn();
 const createContextMock = vi.fn();
-const getWorktreePathFromDirectoryMock = vi.fn();
 const validateWorktreeExistsMock = vi.fn();
-
-// Mock the WorktreeAlreadyExistsError class
-class MockWorktreeAlreadyExistsError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "WorktreeAlreadyExistsError";
-  }
-}
 
 vi.doMock("@phantompane/git", () => ({
   getGitRoot: getGitRootMock,
 }));
 
-vi.doMock("@phantompane/core", () => ({
-  createWorktree: createWorktreeCoreMock,
-  WorktreeAlreadyExistsError: MockWorktreeAlreadyExistsError,
-  createContext: createContextMock,
-  getWorktreePathFromDirectory: getWorktreePathFromDirectoryMock,
-  validateWorktreeExists: validateWorktreeExistsMock,
+vi.doMock("@phantompane/github", () => ({
+  isPullRequest: isPullRequestMock,
 }));
 
-vi.doMock("../api/index.ts", () => ({
-  isPullRequest: isPullRequestMock,
+vi.doMock("../../context.ts", () => ({
+  createContext: createContextMock,
+}));
+
+vi.doMock("../../worktree/create.ts", () => ({
+  createWorktree: createWorktreeCoreMock,
+}));
+
+vi.doMock("../../worktree/validate.ts", () => ({
+  validateWorktreeExists: validateWorktreeExistsMock,
 }));
 
 const { checkoutIssue } = await import("./issue.ts");

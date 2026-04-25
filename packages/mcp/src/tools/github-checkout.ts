@@ -1,4 +1,4 @@
-import { githubCheckout } from "@phantompane/github";
+import { githubCheckout } from "@phantompane/core";
 import { isOk } from "@phantompane/utils";
 import { z } from "zod";
 import type { Tool } from "./types.ts";
