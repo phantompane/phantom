@@ -26,15 +26,6 @@ describe("paths", () => {
       );
     });
 
-    it("should handle Windows-style paths", () => {
-      const gitRoot = "C:\\test\\repo";
-      const result = getWorktreesDirectory(gitRoot, undefined);
-      // path.join normalizes separators based on the platform
-      strictEqual(result.includes(".git"), true);
-      strictEqual(result.includes("phantom"), true);
-      strictEqual(result.includes("worktrees"), true);
-    });
-
     describe("with worktreesDirectory", () => {
       it("should return default path when worktreesDirectory is undefined", () => {
         const gitRoot = "/test/repo";

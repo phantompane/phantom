@@ -8,8 +8,7 @@ import { describe } from "vitest";
 
 const execFile = promisify(execFileCallback);
 
-export const describeE2E =
-  process.platform === "win32" ? describe.skip : describe;
+export const describeE2E = describe;
 
 export interface CommandResult {
   exitCode: number;

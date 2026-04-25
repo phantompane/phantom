@@ -11,10 +11,9 @@ const binaryName = "phantom";
 const bunExecutable = "bun";
 type Target = {
   bunTarget: string;
-  os: "linux" | "darwin" | "windows";
+  os: "linux" | "darwin";
   arch: "x64" | "arm64";
   binaryFileName: string;
-  archiveExtension: "tar.gz" | "zip";
 };
 
 const targets: Target[] = [
@@ -23,35 +22,24 @@ const targets: Target[] = [
     os: "linux",
     arch: "x64",
     binaryFileName: binaryName,
-    archiveExtension: "tar.gz",
   },
   {
     bunTarget: "bun-linux-arm64",
     os: "linux",
     arch: "arm64",
     binaryFileName: binaryName,
-    archiveExtension: "tar.gz",
   },
   {
     bunTarget: "bun-darwin-arm64",
     os: "darwin",
     arch: "arm64",
     binaryFileName: binaryName,
-    archiveExtension: "tar.gz",
   },
   {
     bunTarget: "bun-darwin-x64",
     os: "darwin",
     arch: "x64",
     binaryFileName: binaryName,
-    archiveExtension: "tar.gz",
-  },
-  {
-    bunTarget: "bun-windows-x64",
-    os: "windows",
-    arch: "x64",
-    binaryFileName: `${binaryName}.exe`,
-    archiveExtension: "zip",
   },
 ];
 const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
@@ -68,14 +56,10 @@ await mkdir(outputDir, { recursive: true });
 
 for (const target of targets) {
   await compile(target);
-  const archiveName = `phantom-v${version}-${target.os}-${target.arch}.${target.archiveExtension}`;
+  const archiveName = `phantom-v${version}-${target.os}-${target.arch}.tar.gz`;
   const archivePath = join(outputDir, archiveName);
   console.log(`Packing ${archiveName}...`);
-  if (target.archiveExtension === "zip") {
-    await zip(archivePath, join(distDir, target.binaryFileName));
-  } else {
-    await tarGz(archivePath, distDir, target.binaryFileName);
-  }
+  await tarGz(archivePath, distDir, target.binaryFileName);
   console.log(`Packaged ${archivePath}`);
 }
 
@@ -105,8 +89,4 @@ async function tarGz(
   fileName: string,
 ): Promise<void> {
   await execFileAsync("tar", ["-czf", archivePath, "-C", sourceDir, fileName]);
-}
-
-async function zip(archivePath: string, filePath: string): Promise<void> {
-  await execFileAsync("zip", ["-j", archivePath, filePath]);
 }

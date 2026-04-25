@@ -32,6 +32,10 @@
     "README.md",
     "LICENSE"
   ],
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "engines": {
     "node": ">=22.0.0"
   },
