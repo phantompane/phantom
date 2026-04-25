@@ -80,8 +80,8 @@ export class ServeServices {
     this.codex.onServerRequest((message) => {
       void this.handleCodexServerRequest(message);
     });
-    this.codex.onProcessExit(() => {
-      this.loadedThreadIds.clear();
+    this.codex.onProcessExit((error) => {
+      void this.handleCodexProcessExit(error);
     });
   }
 
@@ -491,6 +491,45 @@ export class ServeServices {
       ),
     }));
     return threadId;
+  }
+
+  private async handleCodexProcessExit(error: Error): Promise<void> {
+    this.loadedThreadIds.clear();
+    this.approvalRequests.clear();
+    this.pendingTurnEvents.clear();
+    this.pendingChatTurns.clear();
+
+    const affectedChatIds: string[] = [];
+    await this.store.update((state) => ({
+      ...state,
+      chats: state.chats.map((chat) => {
+        const hasTransientTurn =
+          chat.status === "running" ||
+          chat.status === "waitingForApproval" ||
+          Boolean(chat.activeTurnId);
+        if (!hasTransientTurn) {
+          return chat;
+        }
+        affectedChatIds.push(chat.id);
+        return {
+          ...chat,
+          status: "failed",
+          activeTurnId: null,
+          updatedAt: createTimestamp(),
+        };
+      }),
+    }));
+
+    for (const chatId of affectedChatIds) {
+      this.eventHub.emit(
+        "agent.error",
+        {
+          message: "Codex App Server exited; chat turn state was reset",
+          error: error.message,
+        },
+        { chatId },
+      );
+    }
   }
 
   private async handleCodexNotification(message: CodexMessage): Promise<void> {

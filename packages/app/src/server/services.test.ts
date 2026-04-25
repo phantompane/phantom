@@ -360,6 +360,79 @@ describe("ServeServices", () => {
     strictEqual(codex.startTurn.mock.calls.length, 1);
   });
 
+  it("resets transient chat state after the Codex app-server exits", async () => {
+    const state = {
+      ...createEmptyState(),
+      projects: [createProject()],
+      chats: [
+        createChat({ status: "running", activeTurnId: "turn_1" }),
+        createChat({
+          id: "chat_2",
+          worktreeName: "other",
+          worktreePath: "/repo/.git/phantom/worktrees/other",
+          branchName: "other",
+          codexThreadId: "thread_2",
+          title: "other",
+          status: "running",
+          activeTurnId: "turn_2",
+        }),
+        createChat({
+          id: "chat_3",
+          worktreeName: "idle",
+          worktreePath: "/repo/.git/phantom/worktrees/idle",
+          branchName: "idle",
+          codexThreadId: "thread_3",
+          title: "idle",
+        }),
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+
+    codex.emitServerRequest({
+      id: 100,
+      method: "item/commandExecution/requestApproval",
+      params: { threadId: "thread_2", turnId: "turn_2" },
+    });
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).chats[1]?.status, "waitingForApproval");
+    });
+    const approvalRequest = emitSpy.mock.calls.find(
+      (call) => call[0] === "agent.approval.requested",
+    )?.[1] as { requestId: string } | undefined;
+    if (!approvalRequest) {
+      throw new Error("Approval request was not emitted");
+    }
+
+    codex.emitProcessExit();
+
+    await vi.waitFor(async () => {
+      const savedState = await store.load();
+      strictEqual(savedState.chats[0]?.status, "failed");
+      strictEqual(savedState.chats[0]?.activeTurnId, null);
+      strictEqual(savedState.chats[1]?.status, "failed");
+      strictEqual(savedState.chats[1]?.activeTurnId, null);
+      strictEqual(savedState.chats[2]?.status, "idle");
+      strictEqual(savedState.chats[2]?.activeTurnId, null);
+    });
+    strictEqual(
+      emitSpy.mock.calls.filter((call) => call[0] === "agent.error").length,
+      2,
+    );
+    await rejects(
+      services.answerApproval("chat_2", approvalRequest.requestId, {
+        decision: "accept",
+      }),
+      /was not found/,
+    );
+
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_3" } });
+    await services.sendMessage("chat_2", { text: "recover" });
+
+    strictEqual(codex.startTurn.mock.calls.length, 1);
+  });
+
   it("does not broadcast unmapped approval requests as answerable approvals", async () => {
     const state = {
       ...createEmptyState(),
