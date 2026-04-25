@@ -8,12 +8,11 @@ export interface GitWorktree {
   isPrunable: boolean;
 }
 
-export async function listWorktrees(_gitRoot: string): Promise<GitWorktree[]> {
-  const { stdout } = await executeGitCommand([
-    "worktree",
-    "list",
-    "--porcelain",
-  ]);
+export async function listWorktrees(gitRoot: string): Promise<GitWorktree[]> {
+  const { stdout } = await executeGitCommand(
+    ["worktree", "list", "--porcelain"],
+    { cwd: gitRoot },
+  );
 
   const worktrees: GitWorktree[] = [];
   let currentWorktree: Partial<GitWorktree> = {};

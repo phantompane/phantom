@@ -23,6 +23,23 @@ export const serveHelp: CommandHelp = {
       description: "Port to bind the server to",
       example: "--port 4000",
     },
+    {
+      name: "codex-bin",
+      type: "string",
+      description: "Codex executable to use for the App Server backend",
+      example: "--codex-bin /usr/local/bin/codex",
+    },
+    {
+      name: "data-dir",
+      type: "string",
+      description: "Directory for Phantom serve state",
+      example: "--data-dir ~/.local/state/phantom/serve",
+    },
+    {
+      name: "open",
+      type: "boolean",
+      description: "Open the web interface in the default browser",
+    },
   ],
   examples: [
     {
@@ -37,7 +54,9 @@ export const serveHelp: CommandHelp = {
   notes: [
     "Experimental: this command and its runtime behavior may change without notice.",
     "The server runs the bundled TanStack Start application shipped with Phantom.",
+    "The default host is 127.0.0.1.",
     "The default port is 9640.",
+    "The Codex executable defaults to codex.",
     "The bundled app assets must exist under packages/cli/dist/app/.output.",
     "The underlying Nitro server also respects HOST/PORT and NITRO_HOST/NITRO_PORT.",
   ],

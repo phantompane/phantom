@@ -37,6 +37,7 @@ export interface CreateWorktreeSuccess {
 
 export interface RunCreateWorktreeOptions {
   name?: string;
+  gitRoot?: string;
   base?: string;
   copyFiles?: string[];
   action?: WorktreeActionOptions;
@@ -100,6 +101,7 @@ export async function createWorktree(
       path: worktreePath,
       branch,
       base,
+      cwd: gitRoot,
     });
 
     let copiedFiles: string[] | undefined;
@@ -163,7 +165,7 @@ export async function runCreateWorktree(
   }
 
   try {
-    const gitRoot = await getGitRoot();
+    const gitRoot = options.gitRoot ?? (await getGitRoot());
     const context = await createContext(gitRoot);
 
     let worktreeName = options.name;
