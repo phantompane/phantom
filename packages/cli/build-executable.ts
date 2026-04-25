@@ -1,11 +1,19 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { access, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const entryPoint = join("src", "bin", "phantom.ts");
 const distDir = "dist";
+const appAssetsDir = "app";
+const appServerEntry = join(
+  distDir,
+  appAssetsDir,
+  ".output",
+  "server",
+  "index.mjs",
+);
 const outputDir = "output";
 const binaryName = "phantom";
 const bunExecutable = "bun";
@@ -53,6 +61,7 @@ if (!version) {
 
 await mkdir(distDir, { recursive: true });
 await mkdir(outputDir, { recursive: true });
+await access(appServerEntry);
 
 for (const target of targets) {
   await compile(target);
@@ -88,5 +97,12 @@ async function tarGz(
   sourceDir: string,
   fileName: string,
 ): Promise<void> {
-  await execFileAsync("tar", ["-czf", archivePath, "-C", sourceDir, fileName]);
+  await execFileAsync("tar", [
+    "-czf",
+    archivePath,
+    "-C",
+    sourceDir,
+    fileName,
+    appAssetsDir,
+  ]);
 }

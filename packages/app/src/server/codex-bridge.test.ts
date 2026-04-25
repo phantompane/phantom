@@ -133,6 +133,24 @@ describe("CodexBridge", () => {
     });
   });
 
+  it("responds to string server request ids without coercing them", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    proc.send({
+      id: "99",
+      method: "item/commandExecution/requestApproval",
+      params: { threadId: "thread_1" },
+    });
+
+    bridge.respondToServerRequest("99", { decision: "decline" });
+
+    expect(proc.writes).toContainEqual({
+      id: "99",
+      result: { decision: "decline" },
+    });
+  });
+
   it("propagates app-server exits to pending requests", async () => {
     const { bridge, proc } = createBridge();
 

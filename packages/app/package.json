@@ -5,11 +5,10 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build && tsc --noEmit",
-    "postbuild": "rm -rf ../cli/dist/app/.output && mkdir -p ../cli/dist/app && cp -R .output ../cli/dist/app/.output",
     "preview": "vite preview",
     "start": "node .output/server/index.mjs",
-    "lint": "oxfmt --check . '!src/routeTree.gen.ts' && oxlint --ignore-pattern src/routeTree.gen.ts .",
-    "fix": "oxfmt --write . '!src/routeTree.gen.ts' && oxlint --fix --ignore-pattern src/routeTree.gen.ts .",
+    "lint": "oxfmt --check . '!src/routeTree.gen.ts' '!**/.output/**' && oxlint --ignore-pattern src/routeTree.gen.ts --ignore-pattern '**/.output/**' .",
+    "fix": "oxfmt --write . '!src/routeTree.gen.ts' '!**/.output/**' && oxlint --fix --ignore-pattern src/routeTree.gen.ts --ignore-pattern '**/.output/**' .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --root ../.. packages/app/src"
   },

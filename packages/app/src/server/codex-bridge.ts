@@ -89,15 +89,13 @@ export class CodexBridge {
     this.write({ method, params: params ?? {} });
   }
 
-  respondToServerRequest(requestId: string, result: unknown): void {
-    const numericRequestId = Number.isFinite(Number(requestId))
-      ? Number(requestId)
-      : requestId;
-    if (!this.serverRequests.has(numericRequestId)) {
+  respondToServerRequest(requestId: number | string, result: unknown): void {
+    const serverRequestId = this.resolveServerRequestId(requestId);
+    if (serverRequestId === null) {
       throw new Error(`Codex server request '${requestId}' was not found`);
     }
-    this.serverRequests.delete(numericRequestId);
-    this.write({ id: numericRequestId, result });
+    this.serverRequests.delete(serverRequestId);
+    this.write({ id: serverRequestId, result });
   }
 
   async readAccount(): Promise<unknown> {
@@ -219,6 +217,28 @@ export class CodexBridge {
       throw new Error("Codex App Server is not running");
     }
     this.proc.stdin.write(`${JSON.stringify(message)}\n`);
+  }
+
+  private resolveServerRequestId(
+    requestId: number | string,
+  ): number | string | null {
+    if (this.serverRequests.has(requestId)) {
+      return requestId;
+    }
+
+    if (typeof requestId === "number") {
+      return null;
+    }
+
+    const numericRequestId = Number(requestId);
+    if (
+      Number.isFinite(numericRequestId) &&
+      this.serverRequests.has(numericRequestId)
+    ) {
+      return numericRequestId;
+    }
+
+    return null;
   }
 
   private handleLine(line: string): void {

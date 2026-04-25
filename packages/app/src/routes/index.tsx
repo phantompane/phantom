@@ -239,13 +239,12 @@ function Home() {
     }
     setError(null);
     try {
-      await fetchJson(
-        `/api/chats/${selectedChatId}/approvals/${pendingApproval.requestId}`,
-        {
-          method: "POST",
-          body: JSON.stringify({ decision }),
-        },
-      );
+      const chatPath = encodeURIComponent(selectedChatId);
+      const requestPath = encodeURIComponent(pendingApproval.requestId);
+      await fetchJson(`/api/chats/${chatPath}/approvals/${requestPath}`, {
+        method: "POST",
+        body: JSON.stringify({ decision }),
+      });
       setPendingApproval(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
