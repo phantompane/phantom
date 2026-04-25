@@ -32,7 +32,7 @@ interface PendingRequest {
 
 type SpawnCodexProcess = typeof spawn;
 
-function getCodexBin(): string {
+export function getCodexBin(): string {
   return process.env.PHANTOM_SERVE_CODEX_BIN ?? "codex";
 }
 

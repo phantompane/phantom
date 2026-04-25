@@ -41,6 +41,9 @@ importers:
 
   packages/app:
     dependencies:
+      '@phantompane/codex':
+        specifier: workspace:*
+        version: link:../codex
       '@phantompane/core':
         specifier: workspace:*
         version: link:../core
@@ -119,6 +122,8 @@ importers:
         version: link:../utils
 
   packages/cli/dist: {}
+
+  packages/codex: {}
 
   packages/config:
     dependencies:

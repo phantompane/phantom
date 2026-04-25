@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "vitest";
-import { listCodexSessionsForWorktrees } from "./codex-history";
+import { listCodexSessionsForWorktrees } from "./history.ts";
 
 const temporaryDirectories: string[] = [];
 

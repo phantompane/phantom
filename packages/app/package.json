@@ -13,6 +13,7 @@
     "test": "vitest run --root ../.. packages/app/src"
   },
   "dependencies": {
+    "@phantompane/codex": "workspace:*",
     "@phantompane/core": "workspace:*",
     "@phantompane/git": "workspace:*",
     "@tanstack/react-router": "^1.168.22",

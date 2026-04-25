@@ -1,9 +1,8 @@
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import type { ChatMessageRecord, ChatRecord } from "./types";
 
-interface CodexHistoryOptions {
+export interface CodexHistoryOptions {
   branchName: string;
   codexHome?: string;
   projectId: string;
@@ -11,21 +10,43 @@ interface CodexHistoryOptions {
   worktreePath: string;
 }
 
-interface CodexHistoryWorktree {
+export interface CodexHistoryWorktree {
   branchName: string;
   worktreeName: string;
   worktreePath: string;
 }
 
-interface CodexProjectHistoryOptions {
+export interface CodexProjectHistoryOptions {
   codexHome?: string;
   projectId: string;
   worktrees: CodexHistoryWorktree[];
 }
 
 export interface ImportedCodexSession {
-  chat: ChatRecord;
-  messages: ChatMessageRecord[];
+  chat: ImportedCodexChatRecord;
+  messages: ImportedCodexChatMessageRecord[];
+}
+
+export interface ImportedCodexChatRecord {
+  id: string;
+  projectId: string;
+  worktreeName: string;
+  worktreePath: string;
+  branchName: string;
+  codexThreadId: string;
+  title: string;
+  status: "idle";
+  activeTurnId: null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ImportedCodexChatMessageRecord {
+  id: string;
+  chatId: string;
+  role: "assistant" | "user";
+  text: string;
+  createdAt: string;
 }
 
 interface ParsedCodexSession {

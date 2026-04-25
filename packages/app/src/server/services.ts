@@ -7,7 +7,23 @@ import {
   removeWorktree,
   runCreateWorktree,
 } from "@phantompane/core";
-import { CodexBridge, type CodexMessage } from "./codex-bridge";
+import {
+  CodexBridge,
+  extractServerRequestIdFromParams,
+  extractThreadId,
+  extractThreadIdFromParams,
+  extractTurnId,
+  extractTurnIdFromParams,
+  getCodexBin,
+  getParamObject,
+  getServerRequestId,
+  listCodexSessionsForWorktree,
+  listCodexSessionsForWorktrees,
+  mapCodexMethodToEvent,
+  summarizeCodexEvent,
+  type CodexMessage,
+  type ImportedCodexSession,
+} from "@phantompane/codex";
 import { EventHub } from "./event-hub";
 import {
   createRecordId,
@@ -15,11 +31,6 @@ import {
   ServeStateStore,
   touchProject,
 } from "./storage";
-import {
-  listCodexSessionsForWorktree,
-  listCodexSessionsForWorktrees,
-  type ImportedCodexSession,
-} from "./codex-history";
 import type {
   ChatMessageRecord,
   ChatRecord,
@@ -101,7 +112,7 @@ export class ServeServices {
       ok: true,
       projectCount: state.projects.length,
       chatCount: state.chats.length,
-      codexBin: process.env.PHANTOM_SERVE_CODEX_BIN ?? "codex",
+      codexBin: getCodexBin(),
       dataDir: process.env.PHANTOM_SERVE_DATA_DIR ?? null,
     };
   }
@@ -374,7 +385,7 @@ export class ServeServices {
     }
     const latestImportedSession = importedSessions[0];
     if (latestImportedSession) {
-      let selectedImportedChat = latestImportedSession.chat;
+      let selectedImportedChat: ChatRecord = latestImportedSession.chat;
       await this.store.update((nextState) => {
         selectedImportedChat =
           findExistingChatForImportedSession(
@@ -1318,74 +1329,6 @@ function findImportedReplacement(
   );
 }
 
-function getParamObject(params: unknown): Record<string, unknown> | null {
-  return params && typeof params === "object" && !Array.isArray(params)
-    ? (params as Record<string, unknown>)
-    : null;
-}
-
-function extractThreadId(result: unknown): string {
-  const object = getParamObject(result);
-  const thread = getParamObject(object?.thread);
-  const threadId = thread?.id;
-  if (typeof threadId !== "string") {
-    throw new Error("Codex response did not include a thread id");
-  }
-  return threadId;
-}
-
-function extractTurnId(result: unknown): string | null {
-  const object = getParamObject(result);
-  const turn = getParamObject(object?.turn);
-  const turnId = turn?.id;
-  return typeof turnId === "string" ? turnId : null;
-}
-
-function extractThreadIdFromParams(params: unknown): string | null {
-  const object = getParamObject(params);
-  if (!object) {
-    return null;
-  }
-  if (typeof object.threadId === "string") {
-    return object.threadId;
-  }
-  const thread = getParamObject(object.thread);
-  return typeof thread?.id === "string" ? thread.id : null;
-}
-
-function extractTurnIdFromParams(params: unknown): string | null {
-  const object = getParamObject(params);
-  if (!object) {
-    return null;
-  }
-  if (typeof object.turnId === "string") {
-    return object.turnId;
-  }
-  const turn = getParamObject(object.turn);
-  return typeof turn?.id === "string" ? turn.id : null;
-}
-
-function getServerRequestId(requestId: unknown): ServerRequestId | null {
-  if (typeof requestId === "string" || typeof requestId === "number") {
-    return requestId;
-  }
-  return null;
-}
-
-function extractServerRequestIdFromParams(
-  params: unknown,
-): ServerRequestId | null {
-  const object = getParamObject(params);
-  if (!object) {
-    return null;
-  }
-  return (
-    getServerRequestId(object.requestId) ??
-    getServerRequestId(object.serverRequestId) ??
-    getServerRequestId(object.id)
-  );
-}
-
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -1411,53 +1354,6 @@ async function rollbackCreatedWorktree(
   if (errors.length > 0) {
     throw new Error(errors.join("; "));
   }
-}
-
-function mapCodexMethodToEvent(method: string): string {
-  if (method === "thread/started") {
-    return "agent.thread.started";
-  }
-  if (method === "turn/started") {
-    return "agent.turn.started";
-  }
-  if (method === "turn/completed") {
-    return "agent.turn.completed";
-  }
-  if (method.startsWith("item/") && method.endsWith("/requestApproval")) {
-    return "agent.approval.requested";
-  }
-  if (method.startsWith("item/")) {
-    return method.includes("delta") ? "agent.item.delta" : "agent.item.updated";
-  }
-  if (method === "serverRequest/resolved") {
-    return "agent.approval.resolved";
-  }
-  if (method === "account/updated") {
-    return "auth.updated";
-  }
-  if (method === "error") {
-    return "agent.error";
-  }
-  return "agent.event";
-}
-
-function summarizeCodexEvent(method: string, params: unknown): string {
-  const object = getParamObject(params);
-  if (method === "item/started" || method === "item/completed") {
-    const item = getParamObject(object?.item);
-    const type = typeof item?.type === "string" ? item.type : "item";
-    return `${method}: ${type}`;
-  }
-  if (method === "turn/completed") {
-    const turn = getParamObject(object?.turn);
-    const status = typeof turn?.status === "string" ? turn.status : "unknown";
-    return `turn completed: ${status}`;
-  }
-  if (method === "error") {
-    const error = getParamObject(object?.error);
-    return typeof error?.message === "string" ? error.message : "Codex error";
-  }
-  return method;
 }
 
 let services: ServeServices | null = null;

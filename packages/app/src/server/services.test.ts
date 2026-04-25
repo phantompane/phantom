@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it, vi } from "vitest";
-import type { CodexBridge, CodexMessage } from "./codex-bridge";
+import type { CodexBridge, CodexMessage } from "@phantompane/codex";
 import { ServeServices } from "./services";
 import { createEmptyState, ServeStateStore } from "./storage";
 import type { ChatRecord, ProjectRecord, ServeState } from "./types";
