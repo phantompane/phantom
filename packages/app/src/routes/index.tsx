@@ -12,7 +12,7 @@ import {
   Square,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import {
@@ -139,6 +139,7 @@ function Home() {
   const [status, setStatus] = useState("Starting");
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const createChatInFlightRef = useRef(false);
   const [pendingApproval, setPendingApproval] =
     useState<PendingApproval | null>(null);
 
@@ -324,7 +325,12 @@ function Home() {
   }
 
   async function createChat(projectId: string) {
+    if (isBusy || createChatInFlightRef.current) {
+      return;
+    }
+
     setError(null);
+    createChatInFlightRef.current = true;
     setIsBusy(true);
     try {
       const data = await fetchJson<{ chat: ChatRecord }>(
@@ -341,6 +347,7 @@ function Home() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      createChatInFlightRef.current = false;
       setIsBusy(false);
     }
   }
@@ -683,6 +690,7 @@ function Home() {
           {visibleMessages.length === 0 ? (
             <EmptyTimeline
               hasChat={Boolean(selectedChat)}
+              isBusy={isBusy}
               selectedProject={selectedProject}
               onCreateChat={
                 selectedProject
@@ -779,11 +787,13 @@ function SystemBanner({
 
 function EmptyTimeline({
   hasChat,
+  isBusy,
   onCreateChat,
   onOpenProjectDialog,
   selectedProject,
 }: {
   hasChat: boolean;
+  isBusy: boolean;
   onCreateChat?: () => void;
   onOpenProjectDialog: () => void;
   selectedProject: ProjectRecord | null;
@@ -806,7 +816,7 @@ function EmptyTimeline({
         </div>
         <div className="flex justify-center gap-2">
           {selectedProject ? (
-            <Button onClick={onCreateChat} type="button">
+            <Button disabled={isBusy} onClick={onCreateChat} type="button">
               <MessageSquarePlus className="size-4" />
               Create worktree
             </Button>
