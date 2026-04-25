@@ -2,3 +2,5 @@ packages:
   - "e2e"
   - "packages/*"
   - "packages/cli/dist"
+
+minimumReleaseAge: 20160
