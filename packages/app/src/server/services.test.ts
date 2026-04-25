@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it, vi } from "vitest";
 import type { CodexBridge, CodexMessage } from "@phantompane/codex";
+import { ServeStateStore } from "@phantompane/state";
+import type { ChatRecord, ProjectRecord, ServeState } from "@phantompane/state";
 import { ServeServices } from "./services";
-import { createEmptyState, ServeStateStore } from "./storage";
-import type { ChatRecord, ProjectRecord, ServeState } from "./types";
 
 const coreMocks = vi.hoisted(() => ({
   deleteBranch: vi.fn(),
@@ -111,6 +111,18 @@ function createChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   };
 }
 
+function createTestState(overrides: Partial<ServeState> = {}): ServeState {
+  return {
+    version: 1,
+    projects: [],
+    chats: [],
+    messages: [],
+    selectedProjectId: null,
+    selectedChatId: null,
+    ...overrides,
+  };
+}
+
 async function createHarness(state: ServeState): Promise<{
   codex: FakeCodexBridge;
   services: ServeServices;
@@ -165,7 +177,7 @@ async function writeCodexSession(
 describe("ServeServices", () => {
   it("lists project worktrees with phantom list data and creates missing chat records", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
     };
     const { services, store } = await createHarness(state);
@@ -232,7 +244,7 @@ describe("ServeServices", () => {
 
   it("does not persist state when worktree sync has no changes", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat({ worktreeName: "main", worktreePath: "/repo" })],
     };
@@ -261,7 +273,7 @@ describe("ServeServices", () => {
 
   it("falls back to persisted chats when live worktree listing fails", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [
         createChat({
@@ -293,7 +305,7 @@ describe("ServeServices", () => {
 
   it("imports existing Codex chat history for project worktrees", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
     };
     const store = new ServeStateStore(await createTemporaryDirectory());
@@ -381,7 +393,7 @@ describe("ServeServices", () => {
     const threadId = "019dc000-0000-7000-8000-000000000001";
     const worktreePath = "/repo/.git/phantom/worktrees/feature/list";
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [
         createChat({
@@ -477,7 +489,7 @@ describe("ServeServices", () => {
     const importedThreadId = "019dc000-0000-7000-8000-000000000002";
     const worktreePath = "/repo/.git/phantom/worktrees/feature/list";
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [
         createChat({
@@ -555,7 +567,7 @@ describe("ServeServices", () => {
 
   it("uses the latest existing Codex thread after creating a worktree", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
     };
     const store = new ServeStateStore(await createTemporaryDirectory());
@@ -621,7 +633,7 @@ describe("ServeServices", () => {
     const threadId = "019dc000-0000-7000-8000-000000000002";
     const worktreePath = "/repo/.git/phantom/worktrees/feature";
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
     };
     const importedChat = createChat({
@@ -714,7 +726,7 @@ describe("ServeServices", () => {
 
   it("rejects approval responses from a different chat", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [
         createChat({ status: "running", activeTurnId: "turn_1" }),
@@ -802,7 +814,7 @@ describe("ServeServices", () => {
 
   it("keeps numeric and string Codex approval ids separate", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [
         createChat({ status: "running", activeTurnId: "turn_1" }),
@@ -858,7 +870,7 @@ describe("ServeServices", () => {
 
   it("rolls back a created worktree when Codex thread startup fails", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
     };
     const { codex, services, store } = await createHarness(state);
@@ -889,7 +901,7 @@ describe("ServeServices", () => {
 
   it("skips non-directory Codex history roots when creating a worktree", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
     };
     const store = new ServeStateStore(await createTemporaryDirectory());
@@ -921,7 +933,7 @@ describe("ServeServices", () => {
 
   it("rolls back a created worktree when Codex omits the thread id", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
     };
     const { codex, services, store } = await createHarness(state);
@@ -952,7 +964,7 @@ describe("ServeServices", () => {
 
   it("resumes persisted threads again after the Codex app-server exits", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
     };
     const { codex, services } = await createHarness(state);
@@ -980,7 +992,7 @@ describe("ServeServices", () => {
 
   it("resets transient chat state after the Codex app-server exits", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [
         createChat({ status: "running", activeTurnId: "turn_1" }),
@@ -1053,7 +1065,7 @@ describe("ServeServices", () => {
 
   it("does not broadcast unmapped approval requests as answerable approvals", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat()],
     };
@@ -1084,7 +1096,7 @@ describe("ServeServices", () => {
 
   it("ignores resolved approval notifications without a mapped chat", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
     };
@@ -1109,7 +1121,7 @@ describe("ServeServices", () => {
 
   it("declines approval requests when the chat has no active turn", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat({ status: "idle", activeTurnId: null })],
     };
@@ -1151,7 +1163,7 @@ describe("ServeServices", () => {
 
   it("declines approval requests for stale turns", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat({ status: "running", activeTurnId: "turn_current" })],
     };
@@ -1195,7 +1207,7 @@ describe("ServeServices", () => {
 
   it("returns a waiting approval chat to running for tracked resolved requests", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
     };
@@ -1239,7 +1251,7 @@ describe("ServeServices", () => {
 
   it("does not persist a user message when Codex rejects a turn", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat()],
     };
@@ -1259,7 +1271,7 @@ describe("ServeServices", () => {
 
   it("buffers approval requests until a new turn is committed", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat()],
     };
@@ -1298,7 +1310,7 @@ describe("ServeServices", () => {
 
   it("declines buffered approval requests from a failed new turn", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat()],
     };
@@ -1350,7 +1362,7 @@ describe("ServeServices", () => {
 
   it("keeps the user message before fast Codex stream events", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat()],
     };
@@ -1382,7 +1394,7 @@ describe("ServeServices", () => {
 
   it("keeps pending stream order when new notifications arrive during replay", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat()],
     };
@@ -1438,7 +1450,7 @@ describe("ServeServices", () => {
 
   it("rejects a second new turn while the chat is starting one", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat()],
     };
@@ -1479,7 +1491,7 @@ describe("ServeServices", () => {
 
   it("rejects messages while the chat is waiting for approval", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [
         createChat({ status: "waitingForApproval", activeTurnId: "turn_1" }),
@@ -1501,7 +1513,7 @@ describe("ServeServices", () => {
 
   it("keeps a running chat active when steering fails", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
     };
@@ -1528,7 +1540,7 @@ describe("ServeServices", () => {
 
   it("rejects steer requests when the chat has no active turn", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat({ status: "idle", activeTurnId: null })],
     };
@@ -1548,7 +1560,7 @@ describe("ServeServices", () => {
 
   it("removes streamed messages from a failed new turn", async () => {
     const state = {
-      ...createEmptyState(),
+      ...createTestState(),
       projects: [createProject()],
       chats: [createChat()],
     };

@@ -50,6 +50,9 @@ importers:
       '@phantompane/git':
         specifier: workspace:*
         version: link:../git
+      '@phantompane/state':
+        specifier: workspace:*
+        version: link:../state
       '@tanstack/react-router':
         specifier: ^1.168.22
         version: 1.168.22(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -230,6 +233,12 @@ importers:
       '@phantompane/utils':
         specifier: workspace:*
         version: link:../utils
+
+  packages/state:
+    dependencies:
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
 
   packages/tmux:
     dependencies:
