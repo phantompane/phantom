@@ -167,6 +167,35 @@ describe("runCreateWorktree", () => {
     );
   });
 
+  it("creates from an explicit git root without reading the current cwd", async () => {
+    resetMocks();
+    accessMock.mockResolvedValue(undefined);
+    validateWorktreeNameMock.mockReturnValue(ok(undefined));
+    validateWorktreeDoesNotExistMock.mockResolvedValue(ok(undefined));
+    addWorktreeMock.mockResolvedValue(undefined);
+    createContextMock.mockResolvedValue({
+      gitRoot: "/selected/repo",
+      worktreesDirectory: "/selected/repo/.git/phantom/worktrees",
+      directoryNameSeparator: "/",
+      config: null,
+      preferences: {},
+    });
+
+    const result = await runCreateWorktree({
+      gitRoot: "/selected/repo",
+      name: "web-chat",
+    });
+
+    strictEqual(result.ok, true);
+    strictEqual(getGitRootMock.mock.calls.length, 0);
+    deepStrictEqual(addWorktreeMock.mock.calls[0][0], {
+      path: "/selected/repo/.git/phantom/worktrees/web-chat",
+      branch: "web-chat",
+      base: "HEAD",
+      cwd: "/selected/repo",
+    });
+  });
+
   it("returns a validation error when multiple open actions are requested", async () => {
     resetMocks();
 

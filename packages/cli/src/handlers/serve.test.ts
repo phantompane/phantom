@@ -8,6 +8,20 @@ const fileURLToPathMock = vi.hoisted(() => vi.fn());
 const consoleLogMock = vi.fn();
 const consoleErrorMock = vi.fn();
 const consoleWarnMock = vi.fn();
+const spawnSyncMock = vi.fn(
+  (
+    _command: string,
+    _args: string[],
+    _options: { stdio: "ignore" },
+  ): { status: number; error?: Error } => ({ status: 0 }),
+);
+const spawnMock = vi.fn(
+  (
+    _command: string,
+    _args: string[],
+    _options: { detached: boolean; stdio: "ignore" },
+  ) => ({ on: vi.fn(), unref: vi.fn() }),
+);
 const exitWithErrorMock = vi.fn((message: string) => {
   consoleErrorMock(`Error: ${message}`);
   throw new Error(`Exit: ${message}`);
@@ -18,6 +32,8 @@ const originalHost = process.env.HOST;
 const originalNitroHost = process.env.NITRO_HOST;
 const originalPort = process.env.PORT;
 const originalNitroPort = process.env.NITRO_PORT;
+const originalCodexBin = process.env.PHANTOM_SERVE_CODEX_BIN;
+const originalDataDir = process.env.PHANTOM_SERVE_DATA_DIR;
 const originalArgv = [...process.argv];
 
 vi.doMock("node:url", async () => {
@@ -39,6 +55,11 @@ vi.doMock("../output.ts", () => ({
 
 vi.doMock("../errors.ts", () => ({
   exitWithError: exitWithErrorMock,
+}));
+
+vi.doMock("node:child_process", () => ({
+  spawn: spawnMock,
+  spawnSync: spawnSyncMock,
 }));
 
 const { serveHandler } = await import("./serve.ts");
@@ -69,6 +90,18 @@ afterEach(async () => {
     delete process.env.NITRO_PORT;
   } else {
     process.env.NITRO_PORT = originalNitroPort;
+  }
+
+  if (originalCodexBin === undefined) {
+    delete process.env.PHANTOM_SERVE_CODEX_BIN;
+  } else {
+    process.env.PHANTOM_SERVE_CODEX_BIN = originalCodexBin;
+  }
+
+  if (originalDataDir === undefined) {
+    delete process.env.PHANTOM_SERVE_DATA_DIR;
+  } else {
+    process.env.PHANTOM_SERVE_DATA_DIR = originalDataDir;
   }
 
   await Promise.all(
@@ -120,17 +153,25 @@ describe("serveHandler", () => {
 
     await serveHandler([]);
 
+    strictEqual(process.env.HOST, "127.0.0.1");
+    strictEqual(process.env.NITRO_HOST, "127.0.0.1");
     strictEqual(process.env.PORT, "9640");
     strictEqual(process.env.NITRO_PORT, "9640");
+    strictEqual(process.env.PHANTOM_SERVE_CODEX_BIN, "codex");
+    strictEqual(spawnSyncMock.mock.calls[0][0], "codex");
     strictEqual(consoleWarnMock.mock.calls.length, 1);
     strictEqual(
       consoleWarnMock.mock.calls[0][0],
       "Warning: `phantom serve` is experimental and may change without notice.",
     );
-    strictEqual(consoleLogMock.mock.calls.length, 1);
+    strictEqual(consoleLogMock.mock.calls.length, 2);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       `Starting Phantom server from ${serverEntry}`,
+    );
+    strictEqual(
+      consoleLogMock.mock.calls[1][0],
+      "Phantom server listening at http://127.0.0.1:9640",
     );
   });
 
@@ -145,6 +186,60 @@ describe("serveHandler", () => {
     strictEqual(consoleWarnMock.mock.calls.length, 1);
   });
 
+  it("passes host, codex binary, and data directory through the environment", async () => {
+    const { cliEntry } = await createBundledCliFixture();
+    fileURLToPathMock.mockReturnValue(cliEntry);
+
+    await serveHandler([
+      "--host",
+      "0.0.0.0",
+      "--codex-bin",
+      "/opt/codex",
+      "--data-dir",
+      "/tmp/phantom-serve",
+    ]);
+
+    strictEqual(process.env.HOST, "0.0.0.0");
+    strictEqual(process.env.NITRO_HOST, "0.0.0.0");
+    strictEqual(process.env.PHANTOM_SERVE_CODEX_BIN, "/opt/codex");
+    strictEqual(process.env.PHANTOM_SERVE_DATA_DIR, "/tmp/phantom-serve");
+    strictEqual(spawnSyncMock.mock.calls[0][0], "/opt/codex");
+  });
+
+  it("opens the browser when --open is provided", async () => {
+    const { cliEntry } = await createBundledCliFixture();
+    fileURLToPathMock.mockReturnValue(cliEntry);
+
+    await serveHandler(["--open"]);
+
+    strictEqual(spawnMock.mock.calls.length, 1);
+  });
+
+  it("keeps serving when the browser launcher fails", async () => {
+    const { cliEntry } = await createBundledCliFixture();
+    fileURLToPathMock.mockReturnValue(cliEntry);
+    const child = {
+      on: vi.fn((event: string, handler: (error: Error) => void) => {
+        if (event === "error") {
+          handler(new Error("ENOENT"));
+        }
+        return child;
+      }),
+      unref: vi.fn(),
+    };
+    spawnMock.mockReturnValueOnce(child);
+
+    await serveHandler(["--open"]);
+
+    strictEqual(consoleLogMock.mock.calls.length, 2);
+    strictEqual(
+      consoleWarnMock.mock.calls.some(
+        (call) => call[0] === "Failed to open browser: ENOENT",
+      ),
+      true,
+    );
+  });
+
   it("ignores process.argv[1] and resolves from the bundled entrypoint path", async () => {
     const { cliEntry, serverEntry } = await createBundledCliFixture();
     fileURLToPathMock.mockReturnValue(cliEntry);
@@ -153,7 +248,7 @@ describe("serveHandler", () => {
     await serveHandler([]);
 
     strictEqual(consoleWarnMock.mock.calls.length, 1);
-    strictEqual(consoleLogMock.mock.calls.length, 1);
+    strictEqual(consoleLogMock.mock.calls.length, 2);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       `Starting Phantom server from ${serverEntry}`,
@@ -176,5 +271,19 @@ describe("serveHandler", () => {
     );
 
     strictEqual(consoleWarnMock.mock.calls.length, 1);
+  });
+
+  it("fails when the Codex executable cannot be found", async () => {
+    const { cliEntry } = await createBundledCliFixture();
+    fileURLToPathMock.mockReturnValue(cliEntry);
+    spawnSyncMock.mockReturnValueOnce({
+      status: 1,
+      error: new Error("ENOENT"),
+    });
+
+    await rejects(
+      serveHandler(["--codex-bin", "missing-codex"]),
+      /Exit: Failed to start Phantom server: Could not find Codex executable 'missing-codex'/,
+    );
   });
 });

@@ -10,33 +10,201 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiProjectsRouteImport } from './routes/api/projects'
+import { Route as ApiModelsRouteImport } from './routes/api/models'
+import { Route as ApiHealthRouteImport } from './routes/api/health'
+import { Route as ApiEventsRouteImport } from './routes/api/events'
+import { Route as ApiAuthRouteImport } from './routes/api/auth'
+import { Route as ApiProjectsProjectIdRouteImport } from './routes/api/projects/$projectId'
+import { Route as ApiChatsChatIdRouteImport } from './routes/api/chats/$chatId'
+import { Route as ApiProjectsProjectIdChatsRouteImport } from './routes/api/projects/$projectId/chats'
+import { Route as ApiChatsChatIdSteerRouteImport } from './routes/api/chats/$chatId/steer'
+import { Route as ApiChatsChatIdMessagesRouteImport } from './routes/api/chats/$chatId/messages'
+import { Route as ApiChatsChatIdInterruptRouteImport } from './routes/api/chats/$chatId/interrupt'
+import { Route as ApiChatsChatIdEventsRouteImport } from './routes/api/chats/$chatId/events'
+import { Route as ApiChatsChatIdApprovalsRequestIdRouteImport } from './routes/api/chats/$chatId/approvals/$requestId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiProjectsRoute = ApiProjectsRouteImport.update({
+  id: '/api/projects',
+  path: '/api/projects',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiModelsRoute = ApiModelsRouteImport.update({
+  id: '/api/models',
+  path: '/api/models',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHealthRoute = ApiHealthRouteImport.update({
+  id: '/api/health',
+  path: '/api/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiEventsRoute = ApiEventsRouteImport.update({
+  id: '/api/events',
+  path: '/api/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthRoute = ApiAuthRouteImport.update({
+  id: '/api/auth',
+  path: '/api/auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProjectsProjectIdRoute = ApiProjectsProjectIdRouteImport.update({
+  id: '/$projectId',
+  path: '/$projectId',
+  getParentRoute: () => ApiProjectsRoute,
+} as any)
+const ApiChatsChatIdRoute = ApiChatsChatIdRouteImport.update({
+  id: '/api/chats/$chatId',
+  path: '/api/chats/$chatId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProjectsProjectIdChatsRoute =
+  ApiProjectsProjectIdChatsRouteImport.update({
+    id: '/chats',
+    path: '/chats',
+    getParentRoute: () => ApiProjectsProjectIdRoute,
+  } as any)
+const ApiChatsChatIdSteerRoute = ApiChatsChatIdSteerRouteImport.update({
+  id: '/steer',
+  path: '/steer',
+  getParentRoute: () => ApiChatsChatIdRoute,
+} as any)
+const ApiChatsChatIdMessagesRoute = ApiChatsChatIdMessagesRouteImport.update({
+  id: '/messages',
+  path: '/messages',
+  getParentRoute: () => ApiChatsChatIdRoute,
+} as any)
+const ApiChatsChatIdInterruptRoute = ApiChatsChatIdInterruptRouteImport.update({
+  id: '/interrupt',
+  path: '/interrupt',
+  getParentRoute: () => ApiChatsChatIdRoute,
+} as any)
+const ApiChatsChatIdEventsRoute = ApiChatsChatIdEventsRouteImport.update({
+  id: '/events',
+  path: '/events',
+  getParentRoute: () => ApiChatsChatIdRoute,
+} as any)
+const ApiChatsChatIdApprovalsRequestIdRoute =
+  ApiChatsChatIdApprovalsRequestIdRouteImport.update({
+    id: '/approvals/$requestId',
+    path: '/approvals/$requestId',
+    getParentRoute: () => ApiChatsChatIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/auth': typeof ApiAuthRoute
+  '/api/events': typeof ApiEventsRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/models': typeof ApiModelsRoute
+  '/api/projects': typeof ApiProjectsRouteWithChildren
+  '/api/chats/$chatId': typeof ApiChatsChatIdRouteWithChildren
+  '/api/projects/$projectId': typeof ApiProjectsProjectIdRouteWithChildren
+  '/api/chats/$chatId/events': typeof ApiChatsChatIdEventsRoute
+  '/api/chats/$chatId/interrupt': typeof ApiChatsChatIdInterruptRoute
+  '/api/chats/$chatId/messages': typeof ApiChatsChatIdMessagesRoute
+  '/api/chats/$chatId/steer': typeof ApiChatsChatIdSteerRoute
+  '/api/projects/$projectId/chats': typeof ApiProjectsProjectIdChatsRoute
+  '/api/chats/$chatId/approvals/$requestId': typeof ApiChatsChatIdApprovalsRequestIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/auth': typeof ApiAuthRoute
+  '/api/events': typeof ApiEventsRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/models': typeof ApiModelsRoute
+  '/api/projects': typeof ApiProjectsRouteWithChildren
+  '/api/chats/$chatId': typeof ApiChatsChatIdRouteWithChildren
+  '/api/projects/$projectId': typeof ApiProjectsProjectIdRouteWithChildren
+  '/api/chats/$chatId/events': typeof ApiChatsChatIdEventsRoute
+  '/api/chats/$chatId/interrupt': typeof ApiChatsChatIdInterruptRoute
+  '/api/chats/$chatId/messages': typeof ApiChatsChatIdMessagesRoute
+  '/api/chats/$chatId/steer': typeof ApiChatsChatIdSteerRoute
+  '/api/projects/$projectId/chats': typeof ApiProjectsProjectIdChatsRoute
+  '/api/chats/$chatId/approvals/$requestId': typeof ApiChatsChatIdApprovalsRequestIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/auth': typeof ApiAuthRoute
+  '/api/events': typeof ApiEventsRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/models': typeof ApiModelsRoute
+  '/api/projects': typeof ApiProjectsRouteWithChildren
+  '/api/chats/$chatId': typeof ApiChatsChatIdRouteWithChildren
+  '/api/projects/$projectId': typeof ApiProjectsProjectIdRouteWithChildren
+  '/api/chats/$chatId/events': typeof ApiChatsChatIdEventsRoute
+  '/api/chats/$chatId/interrupt': typeof ApiChatsChatIdInterruptRoute
+  '/api/chats/$chatId/messages': typeof ApiChatsChatIdMessagesRoute
+  '/api/chats/$chatId/steer': typeof ApiChatsChatIdSteerRoute
+  '/api/projects/$projectId/chats': typeof ApiProjectsProjectIdChatsRoute
+  '/api/chats/$chatId/approvals/$requestId': typeof ApiChatsChatIdApprovalsRequestIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/api/auth'
+    | '/api/events'
+    | '/api/health'
+    | '/api/models'
+    | '/api/projects'
+    | '/api/chats/$chatId'
+    | '/api/projects/$projectId'
+    | '/api/chats/$chatId/events'
+    | '/api/chats/$chatId/interrupt'
+    | '/api/chats/$chatId/messages'
+    | '/api/chats/$chatId/steer'
+    | '/api/projects/$projectId/chats'
+    | '/api/chats/$chatId/approvals/$requestId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/api/auth'
+    | '/api/events'
+    | '/api/health'
+    | '/api/models'
+    | '/api/projects'
+    | '/api/chats/$chatId'
+    | '/api/projects/$projectId'
+    | '/api/chats/$chatId/events'
+    | '/api/chats/$chatId/interrupt'
+    | '/api/chats/$chatId/messages'
+    | '/api/chats/$chatId/steer'
+    | '/api/projects/$projectId/chats'
+    | '/api/chats/$chatId/approvals/$requestId'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/auth'
+    | '/api/events'
+    | '/api/health'
+    | '/api/models'
+    | '/api/projects'
+    | '/api/chats/$chatId'
+    | '/api/projects/$projectId'
+    | '/api/chats/$chatId/events'
+    | '/api/chats/$chatId/interrupt'
+    | '/api/chats/$chatId/messages'
+    | '/api/chats/$chatId/steer'
+    | '/api/projects/$projectId/chats'
+    | '/api/chats/$chatId/approvals/$requestId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiAuthRoute: typeof ApiAuthRoute
+  ApiEventsRoute: typeof ApiEventsRoute
+  ApiHealthRoute: typeof ApiHealthRoute
+  ApiModelsRoute: typeof ApiModelsRoute
+  ApiProjectsRoute: typeof ApiProjectsRouteWithChildren
+  ApiChatsChatIdRoute: typeof ApiChatsChatIdRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +216,151 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/projects': {
+      id: '/api/projects'
+      path: '/api/projects'
+      fullPath: '/api/projects'
+      preLoaderRoute: typeof ApiProjectsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/models': {
+      id: '/api/models'
+      path: '/api/models'
+      fullPath: '/api/models'
+      preLoaderRoute: typeof ApiModelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/health': {
+      id: '/api/health'
+      path: '/api/health'
+      fullPath: '/api/health'
+      preLoaderRoute: typeof ApiHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/events': {
+      id: '/api/events'
+      path: '/api/events'
+      fullPath: '/api/events'
+      preLoaderRoute: typeof ApiEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth': {
+      id: '/api/auth'
+      path: '/api/auth'
+      fullPath: '/api/auth'
+      preLoaderRoute: typeof ApiAuthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/projects/$projectId': {
+      id: '/api/projects/$projectId'
+      path: '/$projectId'
+      fullPath: '/api/projects/$projectId'
+      preLoaderRoute: typeof ApiProjectsProjectIdRouteImport
+      parentRoute: typeof ApiProjectsRoute
+    }
+    '/api/chats/$chatId': {
+      id: '/api/chats/$chatId'
+      path: '/api/chats/$chatId'
+      fullPath: '/api/chats/$chatId'
+      preLoaderRoute: typeof ApiChatsChatIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/projects/$projectId/chats': {
+      id: '/api/projects/$projectId/chats'
+      path: '/chats'
+      fullPath: '/api/projects/$projectId/chats'
+      preLoaderRoute: typeof ApiProjectsProjectIdChatsRouteImport
+      parentRoute: typeof ApiProjectsProjectIdRoute
+    }
+    '/api/chats/$chatId/steer': {
+      id: '/api/chats/$chatId/steer'
+      path: '/steer'
+      fullPath: '/api/chats/$chatId/steer'
+      preLoaderRoute: typeof ApiChatsChatIdSteerRouteImport
+      parentRoute: typeof ApiChatsChatIdRoute
+    }
+    '/api/chats/$chatId/messages': {
+      id: '/api/chats/$chatId/messages'
+      path: '/messages'
+      fullPath: '/api/chats/$chatId/messages'
+      preLoaderRoute: typeof ApiChatsChatIdMessagesRouteImport
+      parentRoute: typeof ApiChatsChatIdRoute
+    }
+    '/api/chats/$chatId/interrupt': {
+      id: '/api/chats/$chatId/interrupt'
+      path: '/interrupt'
+      fullPath: '/api/chats/$chatId/interrupt'
+      preLoaderRoute: typeof ApiChatsChatIdInterruptRouteImport
+      parentRoute: typeof ApiChatsChatIdRoute
+    }
+    '/api/chats/$chatId/events': {
+      id: '/api/chats/$chatId/events'
+      path: '/events'
+      fullPath: '/api/chats/$chatId/events'
+      preLoaderRoute: typeof ApiChatsChatIdEventsRouteImport
+      parentRoute: typeof ApiChatsChatIdRoute
+    }
+    '/api/chats/$chatId/approvals/$requestId': {
+      id: '/api/chats/$chatId/approvals/$requestId'
+      path: '/approvals/$requestId'
+      fullPath: '/api/chats/$chatId/approvals/$requestId'
+      preLoaderRoute: typeof ApiChatsChatIdApprovalsRequestIdRouteImport
+      parentRoute: typeof ApiChatsChatIdRoute
+    }
   }
 }
 
+interface ApiProjectsProjectIdRouteChildren {
+  ApiProjectsProjectIdChatsRoute: typeof ApiProjectsProjectIdChatsRoute
+}
+
+const ApiProjectsProjectIdRouteChildren: ApiProjectsProjectIdRouteChildren = {
+  ApiProjectsProjectIdChatsRoute: ApiProjectsProjectIdChatsRoute,
+}
+
+const ApiProjectsProjectIdRouteWithChildren =
+  ApiProjectsProjectIdRoute._addFileChildren(ApiProjectsProjectIdRouteChildren)
+
+interface ApiProjectsRouteChildren {
+  ApiProjectsProjectIdRoute: typeof ApiProjectsProjectIdRouteWithChildren
+}
+
+const ApiProjectsRouteChildren: ApiProjectsRouteChildren = {
+  ApiProjectsProjectIdRoute: ApiProjectsProjectIdRouteWithChildren,
+}
+
+const ApiProjectsRouteWithChildren = ApiProjectsRoute._addFileChildren(
+  ApiProjectsRouteChildren,
+)
+
+interface ApiChatsChatIdRouteChildren {
+  ApiChatsChatIdEventsRoute: typeof ApiChatsChatIdEventsRoute
+  ApiChatsChatIdInterruptRoute: typeof ApiChatsChatIdInterruptRoute
+  ApiChatsChatIdMessagesRoute: typeof ApiChatsChatIdMessagesRoute
+  ApiChatsChatIdSteerRoute: typeof ApiChatsChatIdSteerRoute
+  ApiChatsChatIdApprovalsRequestIdRoute: typeof ApiChatsChatIdApprovalsRequestIdRoute
+}
+
+const ApiChatsChatIdRouteChildren: ApiChatsChatIdRouteChildren = {
+  ApiChatsChatIdEventsRoute: ApiChatsChatIdEventsRoute,
+  ApiChatsChatIdInterruptRoute: ApiChatsChatIdInterruptRoute,
+  ApiChatsChatIdMessagesRoute: ApiChatsChatIdMessagesRoute,
+  ApiChatsChatIdSteerRoute: ApiChatsChatIdSteerRoute,
+  ApiChatsChatIdApprovalsRequestIdRoute: ApiChatsChatIdApprovalsRequestIdRoute,
+}
+
+const ApiChatsChatIdRouteWithChildren = ApiChatsChatIdRoute._addFileChildren(
+  ApiChatsChatIdRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiAuthRoute: ApiAuthRoute,
+  ApiEventsRoute: ApiEventsRoute,
+  ApiHealthRoute: ApiHealthRoute,
+  ApiModelsRoute: ApiModelsRoute,
+  ApiProjectsRoute: ApiProjectsRouteWithChildren,
+  ApiChatsChatIdRoute: ApiChatsChatIdRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

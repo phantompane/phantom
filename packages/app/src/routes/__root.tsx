@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import type { ReactNode } from "react";
+import "../styles.css";
 import {
   HeadContent,
   Outlet,
@@ -19,7 +20,7 @@ export const Route = createRootRoute({
         content: "width=device-width, initial-scale=1",
       },
       {
-        title: "app-private",
+        title: "Phantom Serve",
       },
     ],
   }),

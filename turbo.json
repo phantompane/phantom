@@ -17,8 +17,20 @@
       "dependsOn": ["^build", "transit"],
       "outputs": ["dist/**"]
     },
+    "app-private#build": {
+      "dependsOn": ["^build", "transit"],
+      "outputs": [".output/**"]
+    },
+    "@phantompane/cli-private#build": {
+      "dependsOn": ["app-private#build", "^build", "transit"],
+      "outputs": ["dist/**"]
+    },
     "compile": {
       "dependsOn": ["^build", "transit"],
+      "outputs": ["dist/**", "output/**"]
+    },
+    "@phantompane/cli-private#compile": {
+      "dependsOn": ["app-private#build", "^build", "transit"],
       "outputs": ["dist/**", "output/**"]
     },
     "lint": {

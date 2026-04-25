@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "phantom": "node --no-warnings --experimental-strip-types src/bin/phantom.ts",
-    "build": "tsdown",
+    "build": "pnpm run build-app && tsdown && pnpm run copy-app",
+    "build-app": "pnpm --dir ../app run build",
+    "copy-app": "node --no-warnings --experimental-strip-types copy-app-assets.ts",
     "precompile": "rm -f output/*",
-    "compile": "node --no-warnings --experimental-strip-types build-executable.ts",
+    "compile": "pnpm run build-app && pnpm run copy-app && node --no-warnings --experimental-strip-types build-executable.ts",
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
     "typecheck": "tsc --noEmit",

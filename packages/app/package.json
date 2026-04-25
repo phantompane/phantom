@@ -5,26 +5,30 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build && tsc --noEmit",
-    "postbuild": "rm -rf ../cli/dist/app/.output && mkdir -p ../cli/dist/app && cp -R .output ../cli/dist/app/.output",
     "preview": "vite preview",
     "start": "node .output/server/index.mjs",
-    "lint": "oxfmt --check . '!src/routeTree.gen.ts' && oxlint --ignore-pattern src/routeTree.gen.ts .",
-    "fix": "oxfmt --write . '!src/routeTree.gen.ts' && oxlint --fix --ignore-pattern src/routeTree.gen.ts .",
+    "lint": "oxfmt --check . '!src/routeTree.gen.ts' '!**/.output/**' && oxlint --ignore-pattern src/routeTree.gen.ts --ignore-pattern '**/.output/**' .",
+    "fix": "oxfmt --write . '!src/routeTree.gen.ts' '!**/.output/**' && oxlint --fix --ignore-pattern src/routeTree.gen.ts --ignore-pattern '**/.output/**' .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --root ../.. packages/app/src"
   },
   "dependencies": {
+    "@phantompane/core": "workspace:*",
+    "@phantompane/git": "workspace:*",
     "@tanstack/react-router": "^1.168.22",
     "@tanstack/react-start": "^1.167.41",
+    "lucide-react": "^0.523.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.17",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "nitro": "^3.0.260311-beta",
+    "tailwindcss": "^4.1.17",
     "typescript": "^5.9.3",
     "vite": "^8.0.8"
   }
