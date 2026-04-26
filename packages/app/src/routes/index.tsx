@@ -179,6 +179,10 @@ function firstProjectWorktree(
   return worktreesByProject[projectId]?.[0] ?? null;
 }
 
+function getWorktreeExpansionKey(projectId: string, worktreePath: string) {
+  return `${projectId}:${worktreePath}`;
+}
+
 function formatLeadingEllipsisPath(path: string, maxLength = 44): string {
   if (path.length <= maxLength) {
     return path;
@@ -279,6 +283,9 @@ function Home() {
     Record<string, ProjectWorktreeRecord[]>
   >({});
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [expandedWorktreeKeys, setExpandedWorktreeKeys] = useState<Set<string>>(
     () => new Set(),
   );
   const [selectedWorktreePath, setSelectedWorktreePath] = useState<
@@ -465,16 +472,39 @@ function Home() {
     );
   }, [selectedProjectId, selectedWorktreePath, worktreesByProject]);
 
+  const chatsByWorktreeByProject = useMemo(() => {
+    const nextChatsByWorktreeByProject: Record<
+      string,
+      Map<string, ChatRecord[]>
+    > = {};
+
+    for (const [projectId, projectChats] of Object.entries(chatsByProject)) {
+      const chatsByWorktree = new Map<string, ChatRecord[]>();
+      for (const chat of projectChats) {
+        const worktreeChats = chatsByWorktree.get(chat.worktreePath) ?? [];
+        worktreeChats.push(chat);
+        chatsByWorktree.set(chat.worktreePath, worktreeChats);
+      }
+
+      for (const [worktreePath, worktreeChats] of chatsByWorktree) {
+        chatsByWorktree.set(worktreePath, dedupeChatThreads(worktreeChats));
+      }
+
+      nextChatsByWorktreeByProject[projectId] = chatsByWorktree;
+    }
+
+    return nextChatsByWorktreeByProject;
+  }, [chatsByProject]);
+
   const selectedWorktreeChats = useMemo(() => {
     if (!selectedProjectId || !selectedWorktree) {
       return [];
     }
-    return dedupeChatThreads(
-      (chatsByProject[selectedProjectId] ?? []).filter(
-        (chat) => chat.worktreePath === selectedWorktree.path,
-      ),
+    return (
+      chatsByWorktreeByProject[selectedProjectId]?.get(selectedWorktree.path) ??
+      []
     );
-  }, [chatsByProject, selectedProjectId, selectedWorktree]);
+  }, [chatsByWorktreeByProject, selectedProjectId, selectedWorktree]);
 
   const visibleMessages = useMemo(
     () =>
@@ -698,6 +728,23 @@ function Home() {
     }
     setSelectedChatId(selectedWorktreeChats[0]?.id ?? null);
   }, [selectedChatId, selectedWorktreeChats]);
+
+  useEffect(() => {
+    if (!selectedProjectId || !selectedWorktreePath || !selectedChatId) {
+      return;
+    }
+
+    setExpandedWorktreeKeys((current) => {
+      const selectedWorktreeKey = getWorktreeExpansionKey(
+        selectedProjectId,
+        selectedWorktreePath,
+      );
+      if (current.has(selectedWorktreeKey)) {
+        return current;
+      }
+      return new Set(current).add(selectedWorktreeKey);
+    });
+  }, [selectedChatId, selectedProjectId, selectedWorktreePath]);
 
   function setProjectLoading(projectId: string, isLoading: boolean) {
     setLoadingProjectIds((current) => {
@@ -1024,6 +1071,11 @@ function Home() {
       );
       setSelectedProjectId(projectId);
       setExpandedProjectIds((current) => new Set(current).add(projectId));
+      setExpandedWorktreeKeys((current) =>
+        new Set(current).add(
+          getWorktreeExpansionKey(projectId, data.chat.worktreePath),
+        ),
+      );
       const didRefresh = await refreshChats(projectId, { sync: true });
       if (!didRefresh) {
         return;
@@ -1273,11 +1325,41 @@ function Home() {
     });
   }
 
+  function toggleWorktreeChats(projectId: string, worktreePath: string) {
+    const worktreeKey = getWorktreeExpansionKey(projectId, worktreePath);
+    setExpandedWorktreeKeys((current) => {
+      const next = new Set(current);
+      if (next.has(worktreeKey)) {
+        next.delete(worktreeKey);
+      } else {
+        next.add(worktreeKey);
+      }
+      return next;
+    });
+  }
+
   function selectWorktree(projectId: string, worktree: ProjectWorktreeRecord) {
     setSelectedProjectId(projectId);
     setSelectedWorktreePath(worktree.path);
     setSelectedChatId(worktree.chatId);
     setExpandedProjectIds((current) => new Set(current).add(projectId));
+    setExpandedWorktreeKeys((current) =>
+      new Set(current).add(getWorktreeExpansionKey(projectId, worktree.path)),
+    );
+  }
+
+  function selectChat(
+    projectId: string,
+    worktree: ProjectWorktreeRecord,
+    chatId: string,
+  ) {
+    setSelectedProjectId(projectId);
+    setSelectedWorktreePath(worktree.path);
+    setSelectedChatId(chatId);
+    setExpandedProjectIds((current) => new Set(current).add(projectId));
+    setExpandedWorktreeKeys((current) =>
+      new Set(current).add(getWorktreeExpansionKey(projectId, worktree.path)),
+    );
   }
 
   function selectFile(path: string) {
@@ -1408,9 +1490,8 @@ function Home() {
                                 const isSelectedWorktree =
                                   worktree.path === selectedWorktreePath;
                                 const worktreeChats =
-                                  chatsByProject[project.id]?.filter(
-                                    (chat) =>
-                                      chat.worktreePath === worktree.path,
+                                  chatsByWorktreeByProject[project.id]?.get(
+                                    worktree.path,
                                   ) ?? [];
                                 const activeWorktreeChat =
                                   worktreeChats.find(
@@ -1429,6 +1510,15 @@ function Home() {
                                     ? statusMeta[activeWorktreeChat.status]
                                         .label
                                     : null;
+                                const worktreeKey = getWorktreeExpansionKey(
+                                  project.id,
+                                  worktree.path,
+                                );
+                                const isWorktreeExpanded =
+                                  expandedWorktreeKeys.has(worktreeKey);
+                                const isChatListLoading =
+                                  loadingProjectIds.has(project.id) &&
+                                  worktreeChats.length === 0;
                                 const title = `${worktree.name} (${worktree.path})${
                                   worktree.isClean ? "" : " [dirty]"
                                 }${
@@ -1446,8 +1536,33 @@ function Home() {
                                   canDeleteWorktree || Boolean(worktree.path);
                                 return (
                                   <SidebarMenuSubItem key={worktree.path}>
-                                    <div className="group/worktree flex items-center rounded-[var(--radius-sm)]">
+                                    <div className="group/worktree flex items-center gap-0.5 rounded-[var(--radius-sm)]">
+                                      <button
+                                        aria-expanded={isWorktreeExpanded}
+                                        aria-label={`${isWorktreeExpanded ? "Collapse" : "Expand"} chats for ${worktree.name}`}
+                                        className="inline-flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--icon-color-default)] outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:shadow-[var(--state-focus-ring)]"
+                                        onClick={() =>
+                                          toggleWorktreeChats(
+                                            project.id,
+                                            worktree.path,
+                                          )
+                                        }
+                                        title={
+                                          isWorktreeExpanded
+                                            ? "Collapse chats"
+                                            : "Expand chats"
+                                        }
+                                        type="button"
+                                      >
+                                        <ChevronRight
+                                          className={cn(
+                                            "size-3.5 transition-transform duration-[var(--motion-duration-fast)]",
+                                            isWorktreeExpanded && "rotate-90",
+                                          )}
+                                        />
+                                      </button>
                                       <SidebarMenuSubButton
+                                        className="flex-1"
                                         disabled={!worktree.chatId}
                                         isActive={isSelectedWorktree}
                                         onClick={() =>
@@ -1534,6 +1649,20 @@ function Home() {
                                         </DropdownMenu>
                                       )}
                                     </div>
+                                    {isWorktreeExpanded && (
+                                      <SidebarChatList
+                                        chats={worktreeChats}
+                                        isLoading={isChatListLoading}
+                                        selectedChatId={selectedChatId}
+                                        onSelectChat={(chatId) =>
+                                          selectChat(
+                                            project.id,
+                                            worktree,
+                                            chatId,
+                                          )
+                                        }
+                                      />
+                                    )}
                                   </SidebarMenuSubItem>
                                 );
                               })
@@ -1738,19 +1867,6 @@ function Home() {
           </div>
         )}
 
-        {selectedWorktree && (
-          <ChatHistoryBar
-            chats={selectedWorktreeChats}
-            isLoading={Boolean(
-              selectedProjectId &&
-              loadingProjectIds.has(selectedProjectId) &&
-              selectedWorktreeChats.length === 0,
-            )}
-            selectedChatId={selectedChatId}
-            onSelectChat={setSelectedChatId}
-          />
-        )}
-
         <section
           aria-busy={isMessagesLoading || isSendingMessage || isChatRunning}
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
@@ -1952,7 +2068,7 @@ function Home() {
   );
 }
 
-function ChatHistoryBar({
+function SidebarChatList({
   chats,
   isLoading,
   onSelectChat,
@@ -1964,49 +2080,53 @@ function ChatHistoryBar({
   selectedChatId: string | null;
 }) {
   return (
-    <div className="border-b border-border bg-[var(--surface-panel)] px-4 py-2">
-      <div className="mx-auto flex max-w-[var(--layout-max-content-width)] items-center gap-2">
-        <div className="shrink-0 text-[length:var(--font-size-xs)] font-medium text-[var(--text-secondary)]">
-          Chat history
-        </div>
-        <div
-          aria-label="Chat history"
-          className="flex min-w-0 flex-1 gap-1 overflow-x-auto"
-          role="tablist"
-        >
-          {isLoading ? (
-            <InlineLoading className="px-2 py-1" label="Loading chats" />
-          ) : chats.length === 0 ? (
-            <span className="px-2 py-1 text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
-              No chat history
-            </span>
-          ) : (
-            chats.map((chat) => {
-              const isSelected = chat.id === selectedChatId;
-              return (
-                <button
-                  aria-selected={isSelected}
+    <ul
+      aria-label="Chat history"
+      className="ml-7 mt-1 space-y-1 border-l border-sidebar-border pl-2"
+    >
+      {isLoading ? (
+        <li className="px-2 py-1.5">
+          <InlineLoading label="Loading chats" />
+        </li>
+      ) : chats.length === 0 ? (
+        <li className="px-2 py-1.5 text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+          No chat history
+        </li>
+      ) : (
+        chats.map((chat) => {
+          const isSelected = chat.id === selectedChatId;
+          return (
+            <li className="min-w-0" key={chat.id}>
+              <button
+                aria-current={isSelected ? "page" : undefined}
+                className={cn(
+                  "flex min-h-7 w-full min-w-0 items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 text-left text-[length:var(--font-size-xs)] outline-none transition-colors duration-[var(--motion-duration-fast)] hover:bg-sidebar-accent focus-visible:shadow-[var(--state-focus-ring)]",
+                  isSelected
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-[var(--text-secondary)]",
+                )}
+                onClick={() => onSelectChat(chat.id)}
+                title={chat.title}
+                type="button"
+              >
+                <MessageSquare className="size-3.5 shrink-0 text-[var(--icon-color-default)]" />
+                <span className="min-w-0 flex-1 truncate">{chat.title}</span>
+                <span
+                  aria-hidden="true"
                   className={cn(
-                    "inline-flex max-w-44 shrink-0 items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 text-[length:var(--font-size-xs)] outline-none transition-colors hover:bg-sidebar-accent focus-visible:shadow-[var(--state-focus-ring)]",
-                    isSelected
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-[var(--text-secondary)]",
+                    "size-1.5 shrink-0 rounded-full",
+                    statusMeta[chat.status].dot,
                   )}
-                  key={chat.id}
-                  onClick={() => onSelectChat(chat.id)}
-                  role="tab"
-                  title={chat.title}
-                  type="button"
-                >
-                  <MessageSquare className="size-3.5 shrink-0" />
-                  <span className="truncate">{chat.title}</span>
-                </button>
-              );
-            })
-          )}
-        </div>
-      </div>
-    </div>
+                />
+                <span className="sr-only">
+                  Status: {statusMeta[chat.status].label}
+                </span>
+              </button>
+            </li>
+          );
+        })
+      )}
+    </ul>
   );
 }
 
