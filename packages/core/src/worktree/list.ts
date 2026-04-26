@@ -22,6 +22,7 @@ export interface ListWorktreesSuccess {
 
 export interface ListWorktreesOptions {
   excludeDefault?: boolean;
+  includePrunable?: boolean;
 }
 
 export async function getWorktreeBranch(worktreePath: string): Promise<string> {
@@ -75,14 +76,18 @@ export async function listWorktrees(
 ): Promise<Result<ListWorktreesSuccess, never>> {
   try {
     const gitWorktrees = await gitListWorktrees(gitRoot);
+    const includePrunable = options.includePrunable ?? true;
+    const availableGitWorktrees = includePrunable
+      ? gitWorktrees
+      : gitWorktrees.filter((worktree) => !worktree.isPrunable);
     const excludeDefault = options.excludeDefault ?? false;
     const filteredWorktrees = excludeDefault
-      ? gitWorktrees.filter((worktree) => worktree.path !== gitRoot)
-      : gitWorktrees;
+      ? availableGitWorktrees.filter((worktree) => worktree.path !== gitRoot)
+      : availableGitWorktrees;
 
     if (filteredWorktrees.length === 0) {
       const message =
-        excludeDefault && gitWorktrees.length > 0
+        excludeDefault && availableGitWorktrees.length > 0
           ? "No sub worktrees found"
           : "No worktrees found";
       return ok({

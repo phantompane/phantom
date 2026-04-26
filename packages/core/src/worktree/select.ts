@@ -18,6 +18,7 @@ export async function selectWorktreeWithFzf(
 ): Promise<Result<SelectWorktreeResult | null, Error>> {
   const listResult = await listWorktrees(gitRoot, {
     excludeDefault: options.excludeDefault,
+    includePrunable: false,
   });
 
   if (isErr(listResult)) {
