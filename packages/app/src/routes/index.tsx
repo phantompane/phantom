@@ -24,6 +24,7 @@ import {
   FormEvent,
   KeyboardEvent,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -101,6 +102,9 @@ const chatEventNames = [
   "auth.updated",
 ];
 
+const chatScrollStorageKeyPrefix = "phantom.chatScroll:v1:";
+const chatScrollBottomThreshold = 4;
+
 const statusMeta: Record<
   ChatStatus,
   {
@@ -151,6 +155,12 @@ type VisibleMessageRecord = ChatMessageRecord & {
   role: "assistant" | "error" | "user";
 };
 
+interface StoredChatScrollPosition {
+  pinnedToBottom: boolean;
+  top: number;
+  version: 1;
+}
+
 function firstProjectWorktree(
   projectId: string | null,
   worktreesByProject: Record<string, ProjectWorktreeRecord[]>,
@@ -190,6 +200,65 @@ function dedupeChatThreads(chats: ChatRecord[]): ChatRecord[] {
   );
 }
 
+function getChatScrollStorageKey(chatId: string): string {
+  return `${chatScrollStorageKeyPrefix}${chatId}`;
+}
+
+function readStoredChatScrollPosition(
+  chatId: string,
+): StoredChatScrollPosition | null {
+  try {
+    const rawValue = window.localStorage.getItem(
+      getChatScrollStorageKey(chatId),
+    );
+    if (!rawValue) {
+      return null;
+    }
+    const parsedValue = JSON.parse(
+      rawValue,
+    ) as Partial<StoredChatScrollPosition>;
+    if (
+      parsedValue.version !== 1 ||
+      typeof parsedValue.top !== "number" ||
+      !Number.isFinite(parsedValue.top)
+    ) {
+      return null;
+    }
+    return {
+      version: 1,
+      pinnedToBottom: parsedValue.pinnedToBottom === true,
+      top: Math.max(0, parsedValue.top),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredChatScrollPosition(
+  chatId: string,
+  timeline: HTMLElement,
+): void {
+  try {
+    window.localStorage.setItem(
+      getChatScrollStorageKey(chatId),
+      JSON.stringify({
+        version: 1,
+        pinnedToBottom: isChatTimelineScrolledToBottom(timeline),
+        top: Math.max(0, Math.round(timeline.scrollTop)),
+      } satisfies StoredChatScrollPosition),
+    );
+  } catch {
+    // Ignore storage failures so the chat view remains usable in private modes.
+  }
+}
+
+function isChatTimelineScrolledToBottom(timeline: HTMLElement): boolean {
+  return (
+    timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight <=
+    chatScrollBottomThreshold
+  );
+}
+
 function Home() {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
@@ -209,6 +278,7 @@ function Home() {
   >(null);
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
+  const [messagesChatId, setMessagesChatId] = useState<string | null>(null);
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
   const [projectPath, setProjectPath] = useState("");
   const [deleteWorktreeTarget, setDeleteWorktreeTarget] =
@@ -235,6 +305,11 @@ function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const createChatInFlightRef = useRef(false);
+  const chatTimelineRef = useRef<HTMLElement | null>(null);
+  const isChatTimelinePinnedToBottomRef = useRef(true);
+  const shouldIgnoreNextChatTimelineScrollRef = useRef(false);
+  const scrollSaveAnimationFrameRef = useRef<number | null>(null);
+  const scrollRestoredChatIdRef = useRef<string | null>(null);
   const selectedProjectIdRef = useRef<string | null>(null);
   const selectedChatIdRef = useRef<string | null>(null);
   const selectedChatVersionRef = useRef(0);
@@ -407,9 +482,16 @@ function Home() {
   useEffect(() => {
     selectedChatIdRef.current = selectedChatId;
     selectedChatVersionRef.current += 1;
+    isChatTimelinePinnedToBottomRef.current = true;
+    scrollRestoredChatIdRef.current = null;
+    if (scrollSaveAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(scrollSaveAnimationFrameRef.current);
+      scrollSaveAnimationFrameRef.current = null;
+    }
 
     if (!selectedChatId) {
       setMessages([]);
+      setMessagesChatId(null);
       setPendingApproval(null);
       setSelectedFiles([]);
       setSelectedSkillPaths(new Set());
@@ -424,6 +506,8 @@ function Home() {
     setFileSearchQuery("");
     setFileSearchResults([]);
     setSkills([]);
+    setMessages([]);
+    setMessagesChatId(null);
     const chatContextController = new AbortController();
     void refreshMessages(selectedChatId);
     void refreshSelectedChat(selectedChatId);
@@ -452,6 +536,7 @@ function Home() {
     source.onerror = () => setStatus("Event stream disconnected");
 
     return () => {
+      saveChatScrollPosition(selectedChatId);
       chatContextController.abort();
       for (const eventName of chatEventNames) {
         source.removeEventListener(eventName, handleEvent);
@@ -459,6 +544,49 @@ function Home() {
       source.close();
     };
   }, [selectedChatId, selectedProjectId]);
+
+  useLayoutEffect(() => {
+    if (!selectedChatId || messagesChatId !== selectedChatId) {
+      return;
+    }
+
+    const timeline = chatTimelineRef.current;
+    if (!timeline) {
+      return;
+    }
+
+    if (scrollRestoredChatIdRef.current !== selectedChatId) {
+      const storedScrollPosition = readStoredChatScrollPosition(selectedChatId);
+      const shouldRestoreToBottom =
+        !storedScrollPosition || storedScrollPosition.pinnedToBottom;
+      shouldIgnoreNextChatTimelineScrollRef.current = true;
+      timeline.scrollTop = shouldRestoreToBottom
+        ? timeline.scrollHeight
+        : storedScrollPosition.top;
+      scrollRestoredChatIdRef.current = selectedChatId;
+      isChatTimelinePinnedToBottomRef.current =
+        shouldRestoreToBottom || isChatTimelineScrolledToBottom(timeline);
+      return;
+    }
+
+    if (isChatTimelinePinnedToBottomRef.current) {
+      shouldIgnoreNextChatTimelineScrollRef.current = true;
+      timeline.scrollTop = timeline.scrollHeight;
+    }
+  }, [messagesChatId, selectedChatId, visibleMessages]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollSaveAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(scrollSaveAnimationFrameRef.current);
+        scrollSaveAnimationFrameRef.current = null;
+      }
+      const chatId = selectedChatIdRef.current;
+      if (chatId) {
+        saveChatScrollPosition(chatId);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedEffort || selectedEffort === "auto") {
@@ -698,7 +826,45 @@ function Home() {
     const data = await fetchJson<{ messages: ChatMessageRecord[] }>(
       `/api/chats/${chatId}/messages`,
     );
+    if (selectedChatIdRef.current !== chatId) {
+      return;
+    }
     setMessages(data.messages);
+    setMessagesChatId(chatId);
+  }
+
+  function saveChatScrollPosition(chatId: string) {
+    const timeline = chatTimelineRef.current;
+    if (!timeline || scrollRestoredChatIdRef.current !== chatId) {
+      return;
+    }
+    writeStoredChatScrollPosition(chatId, timeline);
+  }
+
+  function scheduleSelectedChatScrollPositionSave() {
+    const chatId = selectedChatIdRef.current;
+    const timeline = chatTimelineRef.current;
+    if (!chatId || !timeline || scrollRestoredChatIdRef.current !== chatId) {
+      return;
+    }
+    isChatTimelinePinnedToBottomRef.current =
+      isChatTimelineScrolledToBottom(timeline);
+    if (shouldIgnoreNextChatTimelineScrollRef.current) {
+      shouldIgnoreNextChatTimelineScrollRef.current = false;
+      return;
+    }
+    if (scrollSaveAnimationFrameRef.current !== null) {
+      return;
+    }
+    scrollSaveAnimationFrameRef.current = requestAnimationFrame(() => {
+      scrollSaveAnimationFrameRef.current = null;
+      if (
+        selectedChatIdRef.current === chatId &&
+        scrollRestoredChatIdRef.current === chatId
+      ) {
+        saveChatScrollPosition(chatId);
+      }
+    });
   }
 
   async function addProject(event: FormEvent<HTMLFormElement>) {
@@ -1324,7 +1490,11 @@ function Home() {
           />
         )}
 
-        <section className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <section
+          className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
+          ref={chatTimelineRef}
+          onScroll={scheduleSelectedChatScrollPositionSave}
+        >
           {visibleMessages.length === 0 ? (
             <EmptyTimeline
               hasChat={Boolean(selectedChat)}
