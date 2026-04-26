@@ -1,4 +1,4 @@
-import { Check, ChevronsUpDown, Search } from "lucide-react";
+import { Check, ChevronsUpDown, LoaderCircle, Search } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/utils";
@@ -19,6 +19,7 @@ export interface ComboboxProps {
   disabled?: boolean;
   emptyMessage?: string;
   icon?: ReactNode;
+  isLoading?: boolean;
   onQueryChange?: (query: string) => void;
   onValueChange: (value: string) => void;
   options: ComboboxOption[];
@@ -38,6 +39,7 @@ export function Combobox({
   disabled = false,
   emptyMessage = "No results",
   icon,
+  isLoading = false,
   onQueryChange,
   onValueChange,
   options,
@@ -183,7 +185,14 @@ export function Combobox({
         role="combobox"
         type="button"
       >
-        {icon}
+        {isLoading ? (
+          <LoaderCircle
+            aria-hidden="true"
+            className="size-3.5 shrink-0 animate-spin text-[var(--icon-color-muted)]"
+          />
+        ) : (
+          icon
+        )}
         <span className="min-w-0 truncate">
           {selectedOption?.label ?? placeholder}
         </span>
@@ -214,6 +223,12 @@ export function Combobox({
               onChange={(event) => updateQuery(event.target.value)}
               onKeyDown={handleSearchKeyDown}
             />
+            {isLoading && (
+              <LoaderCircle
+                aria-hidden="true"
+                className="size-3.5 shrink-0 animate-spin text-[var(--icon-color-muted)]"
+              />
+            )}
           </div>
           <div
             className="max-h-64 overflow-y-auto p-1"

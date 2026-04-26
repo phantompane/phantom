@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import type { ReactNode } from "react";
+import { Suspense } from "react";
 import "../styles.css";
 import {
   HeadContent,
@@ -8,6 +9,7 @@ import {
   Scripts,
   createRootRoute,
 } from "@tanstack/react-router";
+import { RoutePending } from "../components/loading";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -31,7 +33,9 @@ export const Route = createRootRoute({
 function RootComponent() {
   return (
     <RootDocument>
-      <Outlet />
+      <Suspense fallback={<RoutePending />}>
+        <Outlet />
+      </Suspense>
     </RootDocument>
   );
 }
