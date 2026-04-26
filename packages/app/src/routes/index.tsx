@@ -11,10 +11,12 @@ import {
   Inbox,
   MessageSquare,
   MessageSquarePlus,
+  MoreHorizontal,
   Plus,
   Send,
   Sparkles,
   Square,
+  Trash2,
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -37,6 +39,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import {
@@ -134,6 +142,11 @@ interface PendingApproval {
   params: unknown;
 }
 
+interface DeleteWorktreeTarget {
+  projectId: string;
+  worktreePath: string;
+}
+
 type VisibleMessageRecord = ChatMessageRecord & {
   role: "assistant" | "error" | "user";
 };
@@ -198,6 +211,12 @@ function Home() {
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
   const [projectPath, setProjectPath] = useState("");
+  const [deleteWorktreeTarget, setDeleteWorktreeTarget] =
+    useState<DeleteWorktreeTarget | null>(null);
+  const [deleteWorktreeBranchMode, setDeleteWorktreeBranchMode] = useState<
+    "default" | "keep" | "delete"
+  >("default");
+  const [deleteWorktreeForce, setDeleteWorktreeForce] = useState(false);
   const [composerText, setComposerText] = useState("");
   const [models, setModels] = useState<CodexModelRecord[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
@@ -216,6 +235,7 @@ function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const createChatInFlightRef = useRef(false);
+  const selectedProjectIdRef = useRef<string | null>(null);
   const selectedChatIdRef = useRef<string | null>(null);
   const selectedChatVersionRef = useRef(0);
   const sendMessageRequestIdRef = useRef(0);
@@ -311,6 +331,27 @@ function Home() {
     [fileSearchResults, selectedFiles],
   );
 
+  const pendingDeleteProject = useMemo(
+    () =>
+      deleteWorktreeTarget
+        ? (projects.find(
+            (project) => project.id === deleteWorktreeTarget.projectId,
+          ) ?? null)
+        : null,
+    [deleteWorktreeTarget, projects],
+  );
+
+  const pendingDeleteWorktree = useMemo(() => {
+    if (!deleteWorktreeTarget) {
+      return null;
+    }
+    return (
+      (worktreesByProject[deleteWorktreeTarget.projectId] ?? []).find(
+        (worktree) => worktree.path === deleteWorktreeTarget.worktreePath,
+      ) ?? null
+    );
+  }, [deleteWorktreeTarget, worktreesByProject]);
+
   const selectedWorktree = useMemo(() => {
     if (!selectedProjectId || !selectedWorktreePath) {
       return null;
@@ -350,6 +391,7 @@ function Home() {
   }, []);
 
   useEffect(() => {
+    selectedProjectIdRef.current = selectedProjectId;
     if (!selectedProjectId) {
       setSelectedChatId(null);
       return;
@@ -595,7 +637,7 @@ function Home() {
 
   async function refreshChats(
     projectId: string,
-    options: { sync?: boolean } = {},
+    options: { sync?: boolean; updateSelection?: boolean } = {},
   ) {
     const projectData = await loadProjectData(projectId, options);
     setChatsByProject((current) => ({
@@ -606,6 +648,9 @@ function Home() {
       ...current,
       [projectId]: projectData.worktrees,
     }));
+    if (options.updateSelection === false) {
+      return;
+    }
     const fallbackWorktree = firstProjectWorktree(projectId, {
       ...worktreesByProject,
       [projectId]: projectData.worktrees,
@@ -709,6 +754,64 @@ function Home() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       createChatInFlightRef.current = false;
+      setIsBusy(false);
+    }
+  }
+
+  function openDeleteWorktree(
+    projectId: string,
+    worktree: ProjectWorktreeRecord,
+  ) {
+    setError(null);
+    setDeleteWorktreeBranchMode("default");
+    setDeleteWorktreeForce(false);
+    setDeleteWorktreeTarget({ projectId, worktreePath: worktree.path });
+  }
+
+  function closeDeleteWorktreeDialog() {
+    setDeleteWorktreeTarget(null);
+    setDeleteWorktreeBranchMode("default");
+    setDeleteWorktreeForce(false);
+  }
+
+  async function deleteSelectedWorktree(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!deleteWorktreeTarget || !pendingDeleteWorktree) {
+      return;
+    }
+
+    setError(null);
+    setIsBusy(true);
+    try {
+      const projectId = deleteWorktreeTarget.projectId;
+      const deleteWorktreeInput: {
+        force: boolean;
+        keepBranch?: boolean;
+        name: string;
+        path: string;
+      } = {
+        name: pendingDeleteWorktree.name,
+        path: pendingDeleteWorktree.path,
+        force: deleteWorktreeForce,
+      };
+      if (deleteWorktreeBranchMode === "keep") {
+        deleteWorktreeInput.keepBranch = true;
+      }
+      if (deleteWorktreeBranchMode === "delete") {
+        deleteWorktreeInput.keepBranch = false;
+      }
+      await fetchJson(`/api/projects/${projectId}/worktrees`, {
+        method: "DELETE",
+        body: JSON.stringify(deleteWorktreeInput),
+      });
+      closeDeleteWorktreeDialog();
+      await refreshChats(projectId, {
+        sync: true,
+        updateSelection: selectedProjectIdRef.current === projectId,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
       setIsBusy(false);
     }
   }
@@ -946,32 +1049,71 @@ function Home() {
                               </li>
                             ) : (
                               projectWorktrees.map((worktree) => {
+                                const isSelectedWorktree =
+                                  worktree.path === selectedWorktreePath;
                                 const title = `${worktree.name} (${worktree.path})${
                                   worktree.isClean ? "" : " [dirty]"
                                 }`;
+                                const canDeleteWorktree =
+                                  worktree.isManagedByPhantom;
                                 return (
                                   <SidebarMenuSubItem key={worktree.path}>
-                                    <SidebarMenuSubButton
-                                      disabled={!worktree.chatId}
-                                      isActive={
-                                        worktree.path === selectedWorktreePath
-                                      }
-                                      onClick={() =>
-                                        selectWorktree(project.id, worktree)
-                                      }
-                                      title={title}
-                                      type="button"
-                                    >
-                                      <GitBranch className="size-3.5 text-[var(--icon-color-default)]" />
-                                      <span className="min-w-0 flex-1">
-                                        <span className="block truncate font-medium">
-                                          {worktree.name}
+                                    <div className="group/worktree flex items-center rounded-[var(--radius-sm)]">
+                                      <SidebarMenuSubButton
+                                        disabled={!worktree.chatId}
+                                        isActive={isSelectedWorktree}
+                                        onClick={() =>
+                                          selectWorktree(project.id, worktree)
+                                        }
+                                        title={title}
+                                        type="button"
+                                      >
+                                        <GitBranch className="size-3.5 text-[var(--icon-color-default)]" />
+                                        <span className="min-w-0 flex-1">
+                                          <span className="block truncate font-medium">
+                                            {worktree.name}
+                                          </span>
                                         </span>
-                                      </span>
-                                      {!worktree.isClean && (
-                                        <span className="size-1.5 shrink-0 rounded-full bg-[var(--semantic-warning-fg)]" />
+                                        {!worktree.isClean && (
+                                          <span className="size-1.5 shrink-0 rounded-full bg-[var(--semantic-warning-fg)]" />
+                                        )}
+                                      </SidebarMenuSubButton>
+                                      {canDeleteWorktree && (
+                                        <DropdownMenu>
+                                          <DropdownMenuTrigger asChild>
+                                            <Button
+                                              aria-label={`Open actions for ${worktree.name}`}
+                                              className={cn(
+                                                "mr-1 size-7 text-[var(--icon-color-default)] opacity-100 data-[state=open]:opacity-100 sm:opacity-0 sm:group-focus-within/worktree:opacity-100 sm:group-hover/worktree:opacity-100",
+                                                isSelectedWorktree &&
+                                                  "sm:opacity-100",
+                                              )}
+                                              disabled={isBusy}
+                                              size="icon"
+                                              title="Worktree actions"
+                                              type="button"
+                                              variant="ghost"
+                                            >
+                                              <MoreHorizontal className="size-4" />
+                                            </Button>
+                                          </DropdownMenuTrigger>
+                                          <DropdownMenuContent align="end">
+                                            <DropdownMenuItem
+                                              onSelect={() =>
+                                                openDeleteWorktree(
+                                                  project.id,
+                                                  worktree,
+                                                )
+                                              }
+                                              variant="destructive"
+                                            >
+                                              <Trash2 className="size-4" />
+                                              <span>Delete worktree</span>
+                                            </DropdownMenuItem>
+                                          </DropdownMenuContent>
+                                        </DropdownMenu>
                                       )}
-                                    </SidebarMenuSubButton>
+                                    </div>
                                   </SidebarMenuSubItem>
                                 );
                               })
@@ -1018,6 +1160,85 @@ function Home() {
               </Button>
               <Button disabled={isBusy || !projectPath.trim()} type="submit">
                 Add project
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(deleteWorktreeTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeDeleteWorktreeDialog();
+          }
+        }}
+      >
+        <DialogContent aria-labelledby="delete-worktree-title">
+          <DialogHeader>
+            <DialogTitle id="delete-worktree-title">
+              Delete worktree
+            </DialogTitle>
+            <DialogDescription>
+              Remove this worktree from{" "}
+              {pendingDeleteProject?.name ?? "the project"}.
+            </DialogDescription>
+          </DialogHeader>
+          <form className="grid gap-4" onSubmit={deleteSelectedWorktree}>
+            <div className="grid gap-2 rounded-[var(--radius-sm)] bg-[var(--surface-code)] px-3 py-2">
+              <p className="truncate text-[length:var(--font-size-sm)] font-medium">
+                {pendingDeleteWorktree?.name ?? "Unknown worktree"}
+              </p>
+              {pendingDeleteWorktree && (
+                <p className="truncate font-mono text-[length:var(--font-size-xs)] text-muted-foreground">
+                  {pendingDeleteWorktree.path}
+                </p>
+              )}
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="delete-worktree-branch-mode">
+                Branch handling
+              </Label>
+              <select
+                className="h-9 rounded-[var(--radius-sm)] border border-input bg-background px-3 text-[length:var(--font-size-sm)] shadow-xs outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                id="delete-worktree-branch-mode"
+                onChange={(event) =>
+                  setDeleteWorktreeBranchMode(
+                    event.target.value as "default" | "keep" | "delete",
+                  )
+                }
+                value={deleteWorktreeBranchMode}
+              >
+                <option value="default">Use project preference</option>
+                <option value="keep">Keep branch</option>
+                <option value="delete">Delete branch</option>
+              </select>
+            </div>
+            <label className="flex items-start gap-2 text-[length:var(--font-size-sm)] text-[var(--semantic-danger-fg)]">
+              <input
+                checked={deleteWorktreeForce}
+                className="mt-0.5 size-4 accent-[var(--semantic-danger-fg)]"
+                onChange={(event) =>
+                  setDeleteWorktreeForce(event.target.checked)
+                }
+                type="checkbox"
+              />
+              <span>Force delete uncommitted changes</span>
+            </label>
+            <DialogFooter>
+              <Button
+                onClick={closeDeleteWorktreeDialog}
+                type="button"
+                variant="outline"
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={isBusy || !pendingDeleteWorktree}
+                type="submit"
+                variant="destructive"
+              >
+                Delete
               </Button>
             </DialogFooter>
           </form>

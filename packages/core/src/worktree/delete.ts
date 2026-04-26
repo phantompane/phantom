@@ -1,3 +1,4 @@
+import { isAbsolute, relative } from "node:path";
 import {
   deleteBranch as gitDeleteBranch,
   getStatus,
@@ -11,6 +12,7 @@ import { validateWorktreeExists } from "./validate.ts";
 export interface DeleteWorktreeOptions {
   force?: boolean;
   keepBranch?: boolean;
+  path?: string;
 }
 
 export interface DeleteWorktreeSuccess {
@@ -83,18 +85,31 @@ export async function deleteWorktree(
 > {
   const { force = false } = options || {};
   const keepBranch = options?.keepBranch ?? false;
+  const validateOptions: { excludeDefault: true; expectedPath?: string } = {
+    excludeDefault: true,
+  };
+  if (options?.path) {
+    validateOptions.expectedPath = options.path;
+  }
 
   const validation = await validateWorktreeExists(
     gitRoot,
     worktreeDirectory,
     name,
-    { excludeDefault: true },
+    validateOptions,
   );
   if (isErr(validation)) {
     return err(validation.error);
   }
 
   const worktreePath = validation.value.path;
+  if (!isPathInsideDirectory(worktreePath, worktreeDirectory)) {
+    return err(
+      new WorktreeError(
+        `Worktree '${name}' is not managed by Phantom and cannot be deleted.`,
+      ),
+    );
+  }
 
   const status = await getWorktreeChangesStatus(worktreePath);
 
@@ -153,4 +168,11 @@ export async function deleteWorktree(
     const errorMessage = error instanceof Error ? error.message : String(error);
     return err(new WorktreeError(`worktree remove failed: ${errorMessage}`));
   }
+}
+
+function isPathInsideDirectory(path: string, directory: string): boolean {
+  const relativePath = relative(directory, path);
+  return Boolean(
+    relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath),
+  );
 }

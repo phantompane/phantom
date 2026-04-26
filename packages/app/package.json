@@ -17,6 +17,7 @@
     "@phantompane/core": "workspace:*",
     "@phantompane/git": "workspace:*",
     "@phantompane/state": "workspace:*",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@tanstack/react-router": "^1.168.22",
     "@tanstack/react-start": "^1.167.41",
     "lucide-react": "^0.523.0",

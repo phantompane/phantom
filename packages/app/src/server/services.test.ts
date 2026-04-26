@@ -9,7 +9,9 @@ import type { ChatRecord, ProjectRecord, ServeState } from "@phantompane/state";
 import { ServeServices } from "./services";
 
 const coreMocks = vi.hoisted(() => ({
+  createContext: vi.fn(),
   deleteBranch: vi.fn(),
+  deleteWorktree: vi.fn(),
   listWorktrees: vi.fn(),
   removeWorktree: vi.fn(),
   runCreateWorktree: vi.fn(),
@@ -298,11 +300,48 @@ describe("ServeServices", () => {
         pathToDisplay: "/repo",
         branch: "main",
         isClean: true,
+        isManagedByPhantom: false,
         chatId: "chat_1",
         chatStatus: "idle",
         chatTitle: "Persisted main",
       },
     ]);
+  });
+
+  it("preserves managed status when returning persisted chats without sync", async () => {
+    const worktreePath = "/repo/.git/phantom/worktrees/feature";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          branchName: "feature",
+          title: "Persisted feature",
+          worktreeName: "feature",
+          worktreePath,
+        }),
+      ],
+    };
+    const { services } = await createHarness(state);
+
+    const worktrees = await services.listProjectWorktrees("proj_1", {
+      sync: false,
+    });
+
+    deepStrictEqual(worktrees, [
+      {
+        name: "feature",
+        path: worktreePath,
+        pathToDisplay: worktreePath,
+        branch: "feature",
+        isClean: true,
+        isManagedByPhantom: true,
+        chatId: "chat_1",
+        chatStatus: "idle",
+        chatTitle: "Persisted feature",
+      },
+    ]);
+    strictEqual(coreMocks.listWorktrees.mock.calls.length, 0);
   });
 
   it("imports existing Codex chat history for project worktrees", async () => {
@@ -899,6 +938,396 @@ describe("ServeServices", () => {
     ]);
     deepStrictEqual(coreMocks.deleteBranch.mock.calls[0], ["/repo", "feature"]);
     strictEqual((await store.load()).chats.length, 0);
+  });
+
+  it("deletes a project worktree and removes its local chat history", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          id: "chat_feature",
+          worktreeName: "feature",
+          worktreePath: "/repo/.git/phantom/worktrees/feature",
+          branchName: "feature",
+        }),
+        createChat({
+          id: "chat_other",
+          worktreeName: "other",
+          worktreePath: "/repo/.git/phantom/worktrees/other",
+          branchName: "other",
+        }),
+      ],
+      messages: [
+        {
+          id: "msg_feature",
+          chatId: "chat_feature",
+          role: "user" as const,
+          text: "remove me",
+          createdAt: timestamp,
+        },
+        {
+          id: "msg_other",
+          chatId: "chat_other",
+          role: "user" as const,
+          text: "keep me",
+          createdAt: timestamp,
+        },
+      ],
+      selectedChatId: "chat_feature",
+    };
+    const { services, store } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: { keepBranch: true },
+      config: { preDelete: { commands: ["pnpm stop"] } },
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature",
+            path: "/repo/.git/phantom/worktrees/feature",
+            pathToDisplay: ".git/phantom/worktrees/feature",
+            branch: "feature",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    coreMocks.deleteWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: { message: "Deleted worktree 'feature'" },
+    });
+
+    const result = await services.deleteProjectWorktree("proj_1", {
+      name: "feature",
+      force: true,
+    });
+
+    deepStrictEqual(result, { message: "Deleted worktree 'feature'" });
+    deepStrictEqual(coreMocks.deleteWorktree.mock.calls[0], [
+      "/repo",
+      "/repo/.git/phantom/worktrees",
+      "feature",
+      {
+        force: true,
+        keepBranch: true,
+        path: "/repo/.git/phantom/worktrees/feature",
+      },
+      ["pnpm stop"],
+    ]);
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.chats.map((chat) => chat.id),
+      ["chat_other"],
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => message.id),
+      ["msg_other"],
+    );
+    strictEqual(savedState.selectedChatId, null);
+  });
+
+  it("deletes persisted chats matched by worktree path when names drift", async () => {
+    const worktreePath = "/repo/.git/phantom/worktrees/renamed";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          id: "chat_renamed",
+          worktreeName: "old-name",
+          worktreePath,
+          branchName: "old-name",
+        }),
+      ],
+      messages: [
+        {
+          id: "msg_renamed",
+          chatId: "chat_renamed",
+          role: "user" as const,
+          text: "remove me too",
+          createdAt: timestamp,
+        },
+      ],
+      selectedChatId: "chat_renamed",
+    };
+    const { services, store } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "renamed",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/renamed",
+            branch: "renamed",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    coreMocks.deleteWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: { message: "Deleted worktree 'renamed'" },
+    });
+
+    await services.deleteProjectWorktree("proj_1", { name: "renamed" });
+
+    const savedState = await store.load();
+    deepStrictEqual(savedState.chats, []);
+    deepStrictEqual(savedState.messages, []);
+    strictEqual(savedState.selectedChatId, null);
+  });
+
+  it("rejects deleting worktrees outside the managed Phantom directory", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { services } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature",
+            path: "/repo/other-worktree",
+            pathToDisplay: "other-worktree",
+            branch: "feature",
+            isClean: true,
+          },
+          {
+            name: "feature",
+            path: "/repo/.git/phantom/worktrees/feature",
+            pathToDisplay: ".git/phantom/worktrees/feature",
+            branch: "feature",
+            isClean: true,
+          },
+        ],
+      },
+    });
+
+    await rejects(
+      services.deleteProjectWorktree("proj_1", {
+        name: "feature",
+        path: "/repo/other-worktree",
+      }),
+      /not managed by Phantom/,
+    );
+
+    strictEqual(coreMocks.deleteWorktree.mock.calls.length, 0);
+  });
+
+  it("deletes and cleans up only the selected worktree path when names collide", async () => {
+    const targetPath = "/repo/.git/phantom/worktrees/first";
+    const otherPath = "/repo/.git/phantom/worktrees/second";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          id: "chat_target",
+          branchName: "abc1234",
+          worktreeName: "abc1234",
+          worktreePath: targetPath,
+        }),
+        createChat({
+          id: "chat_other",
+          branchName: "abc1234",
+          worktreeName: "abc1234",
+          worktreePath: otherPath,
+        }),
+      ],
+      messages: [
+        {
+          id: "msg_target",
+          chatId: "chat_target",
+          role: "user" as const,
+          text: "remove me",
+          createdAt: timestamp,
+        },
+        {
+          id: "msg_other",
+          chatId: "chat_other",
+          role: "user" as const,
+          text: "keep me",
+          createdAt: timestamp,
+        },
+      ],
+      selectedChatId: "chat_target",
+    };
+    const { services, store } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "abc1234",
+            path: targetPath,
+            pathToDisplay: ".git/phantom/worktrees/first",
+            branch: "abc1234",
+            isClean: true,
+          },
+          {
+            name: "abc1234",
+            path: otherPath,
+            pathToDisplay: ".git/phantom/worktrees/second",
+            branch: "abc1234",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    coreMocks.deleteWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: { message: "Deleted worktree 'abc1234'" },
+    });
+
+    await services.deleteProjectWorktree("proj_1", {
+      name: "abc1234",
+      path: targetPath,
+    });
+
+    deepStrictEqual(coreMocks.deleteWorktree.mock.calls[0], [
+      "/repo",
+      "/repo/.git/phantom/worktrees",
+      "abc1234",
+      { force: undefined, keepBranch: false, path: targetPath },
+      undefined,
+    ]);
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.chats.map((chat) => chat.id),
+      ["chat_other"],
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => message.id),
+      ["msg_other"],
+    );
+    strictEqual(savedState.selectedChatId, null);
+  });
+
+  it("does not delete a worktree with an active chat", async () => {
+    const worktreePath = "/repo/.git/phantom/worktrees/worktree";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          branchName: "old-name",
+          status: "running",
+          activeTurnId: "turn_1",
+          worktreeName: "old-name",
+          worktreePath,
+        }),
+      ],
+    };
+    const { services } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "worktree",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/worktree",
+            branch: "worktree",
+            isClean: true,
+          },
+        ],
+      },
+    });
+
+    await rejects(
+      services.deleteProjectWorktree("proj_1", { name: "worktree" }),
+      /has an active chat/,
+    );
+
+    strictEqual(coreMocks.deleteWorktree.mock.calls.length, 0);
+  });
+
+  it("does not delete a worktree while a chat is starting a turn", async () => {
+    const worktreePath = "/repo/.git/phantom/worktrees/worktree";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ worktreePath })],
+    };
+    const { codex, services } = await createHarness(state);
+    let resolveStartTurn: ((value: unknown) => void) | undefined;
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStartTurn = resolve;
+        }),
+    );
+
+    const send = services.sendMessage("chat_1", { text: "start work" });
+    await vi.waitFor(() => {
+      strictEqual(codex.startTurn.mock.calls.length, 1);
+    });
+
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "worktree",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/worktree",
+            branch: "worktree",
+            isClean: true,
+          },
+        ],
+      },
+    });
+
+    await rejects(
+      services.deleteProjectWorktree("proj_1", { name: "worktree" }),
+      /has an active chat/,
+    );
+
+    strictEqual(coreMocks.deleteWorktree.mock.calls.length, 0);
+    if (!resolveStartTurn) {
+      throw new Error("startTurn was not invoked");
+    }
+    resolveStartTurn({ turn: { id: "turn_1" } });
+    await send;
   });
 
   it("skips non-directory Codex history roots when creating a worktree", async () => {
