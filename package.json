@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "turbo run dev",
     "build": "turbo run build",
     "test": "turbo run test --filter=!@phantompane/e2e",
     "test:e2e": "pnpm --filter @phantompane/e2e test",
