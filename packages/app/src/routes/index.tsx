@@ -958,7 +958,7 @@ function Home() {
   }
 
   return (
-    <SidebarProvider className="h-screen min-h-0">
+    <SidebarProvider className="app-shell">
       <Sidebar collapsible="offcanvas" variant="inset">
         <SidebarHeader>
           <div className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--color-gray-900)] text-primary-foreground">
@@ -1342,7 +1342,7 @@ function Home() {
         </section>
 
         <form
-          className="border-t border-border bg-[var(--surface-floating)] p-3 backdrop-blur"
+          className="chat-composer border-t border-border bg-[var(--surface-floating)] backdrop-blur"
           onSubmit={sendMessage}
         >
           <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">

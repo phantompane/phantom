@@ -156,6 +156,10 @@
   --layout-topbar-height: 56px;
   --layout-panel-min-width: 320px;
   --layout-max-content-width: 1200px;
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
 
   --icon-size-xs: 12px;
   --icon-size-sm: 14px;
@@ -241,6 +245,39 @@ body {
   line-height: var(--line-height-normal);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+
+.app-shell {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  padding-block-start: var(--safe-area-inset-top);
+  padding-inline-end: var(--safe-area-inset-right);
+  padding-inline-start: var(--safe-area-inset-left);
+}
+
+.chat-composer {
+  flex-shrink: 0;
+  padding-block-start: var(--space-3);
+  padding-block-end: calc(var(--space-3) + var(--safe-area-inset-bottom));
+  padding-inline: var(--space-3);
+}
+
+@media (max-width: 767px) {
+  aside[data-variant] {
+    top: var(--safe-area-inset-top);
+    bottom: var(--safe-area-inset-bottom);
+    left: var(--safe-area-inset-left);
+    height: calc(
+      100dvh - var(--safe-area-inset-top) - var(--safe-area-inset-bottom)
+    );
+  }
+}
+
+@supports not (height: 100dvh) {
+  .app-shell {
+    height: 100vh;
+  }
 }
 
 button,
