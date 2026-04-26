@@ -7,20 +7,25 @@ export interface WorktreeExistsSuccess {
   path: string;
 }
 
+export interface ValidateWorktreeExistsOptions extends ListWorktreesOptions {
+  expectedPath?: string;
+}
+
 export async function validateWorktreeExists(
   gitRoot: string,
   _worktreeDirectory: string,
   name: string,
-  options: ListWorktreesOptions = {},
+  options: ValidateWorktreeExistsOptions = {},
 ): Promise<Result<WorktreeExistsSuccess, WorktreeNotFoundError>> {
-  const worktreesResult = await listWorktrees(gitRoot, options);
+  const { expectedPath, ...listOptions } = options;
+  const worktreesResult = await listWorktrees(gitRoot, listOptions);
 
   if (isErr(worktreesResult)) {
     return err(new WorktreeNotFoundError(name));
   }
 
   const worktree = worktreesResult.value.worktrees.find(
-    (wt) => wt.name === name,
+    (wt) => wt.name === name && (!expectedPath || wt.path === expectedPath),
   );
 
   if (!worktree) {

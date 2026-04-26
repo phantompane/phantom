@@ -2,7 +2,9 @@ import { realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getGitRoot } from "@phantompane/git";
 import {
+  createContext,
   deleteBranch,
+  deleteWorktree as deleteWorktreeCore,
   listWorktrees,
   removeWorktree,
   runCreateWorktree,
@@ -47,6 +49,17 @@ import type {
 export interface CreateChatInput {
   name?: string;
   base?: string;
+}
+
+export interface DeleteProjectWorktreeInput {
+  force?: boolean;
+  keepBranch?: boolean;
+  name: string;
+  path?: string;
+}
+
+export interface DeleteProjectWorktreeResult {
+  message: string;
 }
 
 export interface SendMessageInput {
@@ -211,19 +224,34 @@ export class ServeServices {
     options: { sync?: boolean } = {},
   ): Promise<ProjectWorktreeRecord[]> {
     const state = await this.store.load();
+    const project = this.requireProject(state, projectId);
+    const worktreesDirectory = await getProjectWorktreesDirectory(
+      project.rootPath,
+    );
     if (options.sync === false) {
-      return projectWorktreesFromPersistedChats(state, projectId);
+      return projectWorktreesFromPersistedChats(
+        state,
+        projectId,
+        worktreesDirectory,
+      );
     }
 
-    const project = this.requireProject(state, projectId);
     let result;
     try {
       result = await listWorktrees(project.rootPath);
     } catch {
-      return projectWorktreesFromPersistedChats(state, projectId);
+      return projectWorktreesFromPersistedChats(
+        state,
+        projectId,
+        worktreesDirectory,
+      );
     }
     if (!result.ok) {
-      return projectWorktreesFromPersistedChats(state, projectId);
+      return projectWorktreesFromPersistedChats(
+        state,
+        projectId,
+        worktreesDirectory,
+      );
     }
 
     const { worktrees } = result.value;
@@ -345,6 +373,10 @@ export class ServeServices {
         pathToDisplay: worktree.pathToDisplay,
         branch: worktree.branch,
         isClean: worktree.isClean,
+        isManagedByPhantom: isPathInsideDirectory(
+          worktree.path,
+          worktreesDirectory,
+        ),
         chatId: chat?.id ?? null,
         chatStatus: chat?.status ?? null,
         chatTitle: chat?.title ?? worktree.name,
@@ -464,6 +496,91 @@ export class ServeServices {
 
     this.eventHub.emit("chat.created", chat, { chatId: chat.id });
     return chat;
+  }
+
+  async deleteProjectWorktree(
+    projectId: string,
+    input: DeleteProjectWorktreeInput,
+  ): Promise<DeleteProjectWorktreeResult> {
+    const worktreeName = input.name.trim();
+    if (!worktreeName) {
+      throw new Error("Worktree name is required");
+    }
+    const worktreePath = input.path?.trim();
+
+    const state = await this.store.load();
+    const project = this.requireProject(state, projectId);
+    const context = await createContext(project.rootPath);
+    const worktreesResult = await listWorktrees(context.gitRoot, {
+      excludeDefault: true,
+    });
+    const targetWorktree = worktreesResult.ok
+      ? worktreesResult.value.worktrees.find(
+          (worktree) =>
+            worktree.name === worktreeName &&
+            (!worktreePath || worktree.path === worktreePath),
+        )
+      : null;
+    if (!targetWorktree) {
+      throw new Error(`Worktree '${worktreeName}' not found`);
+    }
+    if (
+      !isPathInsideDirectory(targetWorktree.path, context.worktreesDirectory)
+    ) {
+      throw new Error(
+        `Worktree '${worktreeName}' is not managed by Phantom and cannot be deleted from Serve.`,
+      );
+    }
+    const worktreeChats = state.chats.filter(
+      (chat) =>
+        chat.projectId === projectId &&
+        chat.worktreePath === targetWorktree.path,
+    );
+    const activeChat = worktreeChats.find(
+      (chat) =>
+        this.pendingChatTurns.has(chat.id) ||
+        chat.status === "running" ||
+        chat.status === "waitingForApproval" ||
+        Boolean(chat.activeTurnId),
+    );
+    if (activeChat) {
+      throw new Error(
+        `Worktree '${worktreeName}' has an active chat. Stop the chat before deleting the worktree.`,
+      );
+    }
+
+    const result = await deleteWorktreeCore(
+      context.gitRoot,
+      context.worktreesDirectory,
+      worktreeName,
+      {
+        force: input.force,
+        keepBranch: input.keepBranch ?? context.preferences.keepBranch ?? false,
+        path: targetWorktree.path,
+      },
+      context.config?.preDelete?.commands,
+    );
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    const removedChatIds = new Set(worktreeChats.map((chat) => chat.id));
+    await this.store.update((nextState) => ({
+      ...nextState,
+      chats: nextState.chats.filter((chat) => !removedChatIds.has(chat.id)),
+      messages: nextState.messages.filter(
+        (message) => !removedChatIds.has(message.chatId),
+      ),
+      selectedChatId: removedChatIds.has(nextState.selectedChatId ?? "")
+        ? null
+        : nextState.selectedChatId,
+    }));
+
+    this.eventHub.emit("worktree.removed", {
+      projectId,
+      worktreeName,
+    });
+    return { message: result.value.message };
   }
 
   async getChat(chatId: string): Promise<ChatRecord> {
@@ -1254,6 +1371,7 @@ function latestChatForWorktree(chats: ChatRecord[]): ChatRecord | null {
 function projectWorktreesFromPersistedChats(
   state: ServeState,
   projectId: string,
+  worktreesDirectory: string,
 ): ProjectWorktreeRecord[] {
   const chatsByPath = new Map<string, ChatRecord[]>();
   for (const chat of state.chats.filter(
@@ -1275,10 +1393,32 @@ function projectWorktreesFromPersistedChats(
       pathToDisplay: chat.worktreePath,
       branch: chat.branchName,
       isClean: true,
+      isManagedByPhantom: isPathInsideDirectory(
+        chat.worktreePath,
+        worktreesDirectory,
+      ),
       chatId: chat.id,
       chatStatus: chat.status,
       chatTitle: chat.title,
     }));
+}
+
+async function getProjectWorktreesDirectory(
+  projectRootPath: string,
+): Promise<string> {
+  try {
+    const context = await createContext(projectRootPath);
+    return context.worktreesDirectory;
+  } catch {
+    return join(projectRootPath, ".git", "phantom", "worktrees");
+  }
+}
+
+function isPathInsideDirectory(path: string, directory: string): boolean {
+  const relativePath = relative(directory, path);
+  return Boolean(
+    relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath),
+  );
 }
 
 function shouldSyncProjectWorktreeChats({

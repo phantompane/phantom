@@ -150,6 +150,67 @@ describe("deleteWorktree", () => {
     strictEqual(deleteBranchMock.mock.calls.length, 0);
   });
 
+  it("validates the expected worktree path when provided", async () => {
+    resetMocks();
+    validateWorktreeExistsMock.mockResolvedValue(
+      ok({ path: "/test/repo/.git/phantom/worktrees/second" }),
+    );
+    getStatusMock.mockResolvedValue(cleanStatus());
+    removeWorktreeMock.mockResolvedValue(undefined);
+    deleteBranchMock.mockResolvedValue(undefined);
+
+    const result = await deleteWorktree(
+      "/test/repo",
+      "/test/repo/.git/phantom/worktrees",
+      "abc1234",
+      { path: "/test/repo/.git/phantom/worktrees/second" },
+      undefined,
+    );
+
+    strictEqual(isOk(result), true);
+    deepStrictEqual(validateWorktreeExistsMock.mock.calls[0], [
+      "/test/repo",
+      "/test/repo/.git/phantom/worktrees",
+      "abc1234",
+      {
+        excludeDefault: true,
+        expectedPath: "/test/repo/.git/phantom/worktrees/second",
+      },
+    ]);
+    deepStrictEqual(removeWorktreeMock.mock.calls[0], [
+      {
+        gitRoot: "/test/repo",
+        path: "/test/repo/.git/phantom/worktrees/second",
+        force: false,
+      },
+    ]);
+  });
+
+  it("rejects worktrees outside the managed directory", async () => {
+    resetMocks();
+    validateWorktreeExistsMock.mockResolvedValue(
+      ok({ path: "/test/repo/other-worktree" }),
+    );
+
+    const result = await deleteWorktree(
+      "/test/repo",
+      "/test/repo/.git/phantom/worktrees",
+      "feature",
+      {},
+      undefined,
+    );
+
+    strictEqual(isErr(result), true);
+    if (isErr(result)) {
+      strictEqual(
+        result.error.message,
+        "Worktree 'feature' is not managed by Phantom and cannot be deleted.",
+      );
+    }
+    strictEqual(getStatusMock.mock.calls.length, 0);
+    strictEqual(removeWorktreeMock.mock.calls.length, 0);
+  });
+
   it("fails when the worktree does not exist", async () => {
     resetMocks();
     validateWorktreeExistsMock.mockResolvedValue(

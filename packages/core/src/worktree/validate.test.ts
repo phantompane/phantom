@@ -69,6 +69,77 @@ describe("validateWorktreeExists", () => {
     }
   });
 
+  it("should return ok for worktrees outside the managed directory", async () => {
+    resetMocks();
+    listWorktreesMock.mockImplementation(() =>
+      Promise.resolve(
+        ok({
+          worktrees: [
+            {
+              name: "my-feature",
+              path: "/test/repo/other-worktree",
+              branch: "my-feature",
+              isClean: true,
+            },
+          ],
+        }),
+      ),
+    );
+
+    const result = await validateWorktreeExists(
+      "/test/repo",
+      "/test/repo/.git/phantom/worktrees",
+      "my-feature",
+    );
+
+    deepStrictEqual(isOk(result), true);
+    if (isOk(result)) {
+      deepStrictEqual(result.value, {
+        path: "/test/repo/other-worktree",
+      });
+    }
+  });
+
+  it("should use the expected path when worktree names collide", async () => {
+    resetMocks();
+    listWorktreesMock.mockImplementation(() =>
+      Promise.resolve(
+        ok({
+          worktrees: [
+            {
+              name: "abc1234",
+              path: "/test/repo/.git/phantom/worktrees/first",
+              branch: "abc1234",
+              isClean: true,
+            },
+            {
+              name: "abc1234",
+              path: "/test/repo/.git/phantom/worktrees/second",
+              branch: "abc1234",
+              isClean: true,
+            },
+          ],
+        }),
+      ),
+    );
+
+    const result = await validateWorktreeExists(
+      "/test/repo",
+      "/test/repo/.git/phantom/worktrees",
+      "abc1234",
+      {
+        expectedPath: "/test/repo/.git/phantom/worktrees/second",
+      },
+    );
+
+    deepStrictEqual(isOk(result), true);
+    if (isOk(result)) {
+      deepStrictEqual(result.value, {
+        path: "/test/repo/.git/phantom/worktrees/second",
+      });
+    }
+  });
+
   it("should return err when worktree listing fails", async () => {
     resetMocks();
     listWorktreesMock.mockImplementation(() =>
