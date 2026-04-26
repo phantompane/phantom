@@ -270,25 +270,491 @@ describe("ServeServices", () => {
     };
     const { services, store } = await createHarness(state);
     const saveSpy = vi.spyOn(store, "save");
-    coreMocks.listWorktrees.mockResolvedValueOnce({
-      ok: true,
-      value: {
-        worktrees: [
-          {
-            name: "main",
-            path: "/repo",
-            pathToDisplay: ".",
-            branch: "main",
-            isClean: true,
-          },
-        ],
-      },
-    });
+    coreMocks.listWorktrees
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "main",
+              path: "/repo",
+              pathToDisplay: ".",
+              branch: "main",
+              isClean: true,
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "main",
+              path: "/repo",
+              pathToDisplay: ".",
+              branch: "main",
+              isClean: true,
+            },
+          ],
+        },
+      });
 
     const worktrees = await services.listProjectWorktrees("proj_1");
 
     strictEqual(worktrees[0]?.chatId, "chat_1");
     strictEqual(saveSpy.mock.calls.length, 0);
+  });
+
+  it("removes persisted chats for worktrees missing from a live sync", async () => {
+    const staleWorktreePath = "/repo/.git/phantom/worktrees/deleted";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({ worktreeName: "main", worktreePath: "/repo" }),
+        createChat({
+          id: "chat_stale",
+          branchName: "deleted",
+          title: "Deleted worktree",
+          worktreeName: "deleted",
+          worktreePath: staleWorktreePath,
+        }),
+      ],
+      messages: [
+        {
+          id: "msg_stale",
+          chatId: "chat_stale",
+          role: "user" as const,
+          text: "stale",
+          createdAt: timestamp,
+        },
+      ],
+      selectedChatId: "chat_stale",
+    };
+    const { services, store } = await createHarness(state);
+    coreMocks.listWorktrees
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "main",
+              path: "/repo",
+              pathToDisplay: ".",
+              branch: "main",
+              isClean: true,
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "main",
+              path: "/repo",
+              pathToDisplay: ".",
+              branch: "main",
+              isClean: true,
+            },
+          ],
+        },
+      });
+
+    const worktrees = await services.listProjectWorktrees("proj_1");
+
+    deepStrictEqual(
+      worktrees.map((worktree) => worktree.path),
+      ["/repo"],
+    );
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.chats.map((chat) => chat.id),
+      ["chat_1"],
+    );
+    deepStrictEqual(savedState.messages, []);
+    strictEqual(savedState.selectedChatId, null);
+  });
+
+  it("does not prune persisted chats when a live sync omits the main worktree", async () => {
+    const featureWorktreePath = "/repo/.git/phantom/worktrees/feature";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({ worktreeName: "main", worktreePath: "/repo" }),
+        createChat({
+          id: "chat_feature",
+          branchName: "feature",
+          title: "Feature",
+          worktreeName: "feature",
+          worktreePath: featureWorktreePath,
+        }),
+      ],
+    };
+    const { services, store } = await createHarness(state);
+    coreMocks.listWorktrees
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "feature",
+              path: featureWorktreePath,
+              pathToDisplay: ".git/phantom/worktrees/feature",
+              branch: "feature",
+              isClean: true,
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "feature",
+              path: featureWorktreePath,
+              pathToDisplay: ".git/phantom/worktrees/feature",
+              branch: "feature",
+              isClean: true,
+            },
+          ],
+        },
+      });
+
+    await services.listProjectWorktrees("proj_1");
+
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.chats.map((chat) => chat.id),
+      ["chat_1", "chat_feature"],
+    );
+  });
+
+  it("does not prune chats for worktrees that are known but hidden from display", async () => {
+    const prunableWorktreePath = "/repo/.git/phantom/worktrees/prunable";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({ worktreeName: "main", worktreePath: "/repo" }),
+        createChat({
+          id: "chat_prunable",
+          branchName: "prunable",
+          title: "Temporarily unavailable",
+          worktreeName: "prunable",
+          worktreePath: prunableWorktreePath,
+        }),
+      ],
+      messages: [
+        {
+          id: "msg_prunable",
+          chatId: "chat_prunable",
+          role: "user" as const,
+          text: "keep this too",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { services, store } = await createHarness(state);
+    coreMocks.listWorktrees
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "main",
+              path: "/repo",
+              pathToDisplay: ".",
+              branch: "main",
+              isClean: true,
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "main",
+              path: "/repo",
+              pathToDisplay: ".",
+              branch: "main",
+              isClean: true,
+            },
+            {
+              name: "prunable",
+              path: prunableWorktreePath,
+              pathToDisplay: ".git/phantom/worktrees/prunable",
+              branch: "prunable",
+              isClean: true,
+            },
+          ],
+        },
+      });
+
+    const worktrees = await services.listProjectWorktrees("proj_1");
+
+    deepStrictEqual(
+      worktrees.map((worktree) => worktree.path),
+      ["/repo"],
+    );
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.chats.map((chat) => chat.id),
+      ["chat_1", "chat_prunable"],
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => message.id),
+      ["msg_prunable"],
+    );
+  });
+
+  it("does not prune active chats for worktrees missing from a live sync", async () => {
+    const staleWorktreePath = "/repo/.git/phantom/worktrees/running";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({ worktreeName: "main", worktreePath: "/repo" }),
+        createChat({
+          id: "chat_running",
+          activeTurnId: "turn_1",
+          branchName: "running",
+          status: "running",
+          title: "Running worktree",
+          worktreeName: "running",
+          worktreePath: staleWorktreePath,
+        }),
+      ],
+      messages: [
+        {
+          id: "msg_running",
+          chatId: "chat_running",
+          role: "user" as const,
+          text: "keep this",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { services, store } = await createHarness(state);
+    coreMocks.listWorktrees
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "main",
+              path: "/repo",
+              pathToDisplay: ".",
+              branch: "main",
+              isClean: true,
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "main",
+              path: "/repo",
+              pathToDisplay: ".",
+              branch: "main",
+              isClean: true,
+            },
+          ],
+        },
+      });
+
+    await services.listProjectWorktrees("proj_1");
+
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.chats.map((chat) => chat.id),
+      ["chat_1", "chat_running"],
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => message.id),
+      ["msg_running"],
+    );
+  });
+
+  it("does not prune a missing-worktree chat that becomes active during sync", async () => {
+    const staleWorktreePath = "/repo/.git/phantom/worktrees/running";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({ worktreeName: "main", worktreePath: "/repo" }),
+        createChat({
+          id: "chat_running",
+          branchName: "running",
+          title: "Running worktree",
+          worktreeName: "running",
+          worktreePath: staleWorktreePath,
+        }),
+      ],
+      messages: [
+        {
+          id: "msg_running",
+          chatId: "chat_running",
+          role: "user" as const,
+          text: "keep this",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const store = new ImportRaceStore(
+      await createTemporaryDirectory(),
+      (currentState) => ({
+        ...currentState,
+        chats: currentState.chats.map((chat) =>
+          chat.id === "chat_running"
+            ? {
+                ...chat,
+                activeTurnId: "turn_1",
+                status: "running",
+              }
+            : chat,
+        ),
+      }),
+    );
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      codexHome: await createTemporaryDirectory(),
+      store,
+    });
+    coreMocks.listWorktrees
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "main",
+              path: "/repo",
+              pathToDisplay: ".",
+              branch: "main",
+              isClean: true,
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "main",
+              path: "/repo",
+              pathToDisplay: ".",
+              branch: "main",
+              isClean: true,
+            },
+          ],
+        },
+      });
+
+    await services.listProjectWorktrees("proj_1");
+
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.chats.map((chat) => [chat.id, chat.status]),
+      [
+        ["chat_1", "idle"],
+        ["chat_running", "running"],
+      ],
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => message.id),
+      ["msg_running"],
+    );
+  });
+
+  it("does not prune chats created after the live worktree snapshot", async () => {
+    const staleWorktreePath = "/repo/.git/phantom/worktrees/deleted";
+    const concurrentWorktreePath = "/repo/.git/phantom/worktrees/concurrent";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({ worktreeName: "main", worktreePath: "/repo" }),
+        createChat({
+          id: "chat_stale",
+          branchName: "deleted",
+          title: "Deleted worktree",
+          worktreeName: "deleted",
+          worktreePath: staleWorktreePath,
+        }),
+      ],
+    };
+    const store = new ImportRaceStore(
+      await createTemporaryDirectory(),
+      (currentState) => ({
+        ...currentState,
+        chats: [
+          ...currentState.chats,
+          createChat({
+            id: "chat_concurrent",
+            branchName: "concurrent",
+            title: "Concurrent worktree",
+            worktreeName: "concurrent",
+            worktreePath: concurrentWorktreePath,
+          }),
+        ],
+      }),
+    );
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      codexHome: await createTemporaryDirectory(),
+      store,
+    });
+    coreMocks.listWorktrees
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "main",
+              path: "/repo",
+              pathToDisplay: ".",
+              branch: "main",
+              isClean: true,
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "main",
+              path: "/repo",
+              pathToDisplay: ".",
+              branch: "main",
+              isClean: true,
+            },
+          ],
+        },
+      });
+
+    await services.listProjectWorktrees("proj_1");
+
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.chats.map((chat) => chat.id),
+      ["chat_1", "chat_concurrent"],
+    );
   });
 
   it("pins the main worktree above managed worktrees", async () => {

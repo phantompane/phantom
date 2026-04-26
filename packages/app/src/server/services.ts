@@ -275,6 +275,15 @@ export class ServeServices {
     }
 
     const { worktrees } = result.value;
+    const displayWorktreePaths = new Set(
+      worktrees.map((worktree) => worktree.path),
+    );
+    const knownWorktreePaths = await getKnownProjectWorktreePaths(
+      project.rootPath,
+    );
+    const canPruneMissingWorktreeChats = Boolean(
+      knownWorktreePaths?.has(project.rootPath),
+    );
     const timestamp = createTimestamp();
     const importedSessions = await listCodexSessionsForWorktrees({
       codexHome: this.codexHome,
@@ -289,6 +298,8 @@ export class ServeServices {
     if (
       shouldSyncProjectWorktreeChats({
         importedSessions,
+        canPruneMissingWorktreeChats,
+        knownWorktreePaths,
         projectId,
         state,
         worktrees,
@@ -331,18 +342,35 @@ export class ServeServices {
         const importableMessages = importableSessions.flatMap(
           (session) => session.messages,
         );
-
-        if (chatsToAdd.length === 0 && importableSessions.length === 0) {
-          return nextState;
-        }
+        const initialMissingWorktreeChatIds = new Set(
+          state.chats
+            .filter(
+              (chat) =>
+                canPruneMissingWorktreeChats &&
+                chat.projectId === projectId &&
+                !knownWorktreePaths?.has(chat.worktreePath),
+            )
+            .map((chat) => chat.id),
+        );
         const chatsToRemove = nextState.chats.filter(
           (chat) =>
-            !shouldPreserveChatDuringImport(
+            !shouldPreserveChatDuringWorktreeSync(
               chat,
               projectId,
+              displayWorktreePaths,
+              knownWorktreePaths,
+              initialMissingWorktreeChatIds,
+              this.pendingChatTurns,
               importableSessions,
             ),
         );
+        if (
+          chatsToAdd.length === 0 &&
+          importableSessions.length === 0 &&
+          chatsToRemove.length === 0
+        ) {
+          return nextState;
+        }
         const chatIdsToRemove = new Set(chatsToRemove.map((chat) => chat.id));
         const selectedReplacement = findImportedReplacement(
           nextState.selectedChatId,
@@ -366,7 +394,7 @@ export class ServeServices {
           selectedChatId:
             nextState.selectedChatId &&
             chatIdsToRemove.has(nextState.selectedChatId)
-              ? (selectedReplacement?.chat.id ?? nextState.selectedChatId)
+              ? (selectedReplacement?.chat.id ?? null)
               : nextState.selectedChatId,
         };
       });
@@ -1561,6 +1589,20 @@ async function getProjectWorktreesDirectory(
   }
 }
 
+async function getKnownProjectWorktreePaths(
+  projectRootPath: string,
+): Promise<Set<string> | null> {
+  try {
+    const result = await listWorktrees(projectRootPath);
+    if (!result.ok) {
+      return null;
+    }
+    return new Set(result.value.worktrees.map((worktree) => worktree.path));
+  } catch {
+    return null;
+  }
+}
+
 function isPathInsideDirectory(path: string, directory: string): boolean {
   const relativePath = relative(directory, path);
   return Boolean(
@@ -1570,11 +1612,15 @@ function isPathInsideDirectory(path: string, directory: string): boolean {
 
 function shouldSyncProjectWorktreeChats({
   importedSessions,
+  canPruneMissingWorktreeChats,
+  knownWorktreePaths,
   projectId,
   state,
   worktrees,
 }: {
   importedSessions: ImportedCodexSession[];
+  canPruneMissingWorktreeChats: boolean;
+  knownWorktreePaths: ReadonlySet<string> | null;
   projectId: string;
   state: ServeState;
   worktrees: Array<{ path: string }>;
@@ -1588,6 +1634,12 @@ function shouldSyncProjectWorktreeChats({
     importedSessions.map((session) => session.chat.worktreePath),
   );
   return (
+    (canPruneMissingWorktreeChats &&
+      state.chats.some(
+        (chat) =>
+          chat.projectId === projectId &&
+          !knownWorktreePaths?.has(chat.worktreePath),
+      )) ||
     worktrees.some(
       (worktree) =>
         !existingChatsByPath.has(worktree.path) &&
@@ -1672,6 +1724,45 @@ function mergeImportedSessionsForProject(
       ...importableSessions.flatMap((session) => session.messages),
     ],
   };
+}
+
+function shouldPreserveChatDuringWorktreeSync(
+  chat: ChatRecord,
+  projectId: string,
+  displayWorktreePaths: ReadonlySet<string>,
+  knownWorktreePaths: ReadonlySet<string> | null,
+  initialMissingWorktreeChatIds: ReadonlySet<string>,
+  pendingChatTurns: ReadonlySet<string>,
+  importedSessions: ImportedCodexSession[],
+): boolean {
+  if (chat.projectId !== projectId) {
+    return true;
+  }
+  if (displayWorktreePaths.has(chat.worktreePath)) {
+    return shouldPreserveChatDuringImport(chat, projectId, importedSessions);
+  }
+  if (knownWorktreePaths?.has(chat.worktreePath)) {
+    return true;
+  }
+  if (knownWorktreePaths) {
+    return (
+      !initialMissingWorktreeChatIds.has(chat.id) ||
+      isChatActive(chat, pendingChatTurns)
+    );
+  }
+  return true;
+}
+
+function isChatActive(
+  chat: ChatRecord,
+  pendingChatTurns: ReadonlySet<string>,
+): boolean {
+  return Boolean(
+    pendingChatTurns.has(chat.id) ||
+    chat.activeTurnId ||
+    chat.status === "running" ||
+    chat.status === "waitingForApproval",
+  );
 }
 
 function shouldPreserveChatDuringImport(
