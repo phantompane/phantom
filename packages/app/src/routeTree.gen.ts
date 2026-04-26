@@ -19,6 +19,7 @@ import { Route as ApiProjectsProjectIdRouteImport } from './routes/api/projects/
 import { Route as ApiChatsChatIdRouteImport } from './routes/api/chats/$chatId'
 import { Route as ApiProjectsProjectIdWorktreesRouteImport } from './routes/api/projects/$projectId/worktrees'
 import { Route as ApiProjectsProjectIdChatsRouteImport } from './routes/api/projects/$projectId/chats'
+import { Route as ApiProjectsProjectIdWorktreesSyncRouteImport } from './routes/api/projects/$projectId/worktrees/sync'
 import { Route as ApiChatsChatIdSteerRouteImport } from './routes/api/chats/$chatId/steer'
 import { Route as ApiChatsChatIdMessagesRouteImport } from './routes/api/chats/$chatId/messages'
 import { Route as ApiChatsChatIdInterruptRouteImport } from './routes/api/chats/$chatId/interrupt'
@@ -77,6 +78,12 @@ const ApiProjectsProjectIdChatsRoute =
     path: '/chats',
     getParentRoute: () => ApiProjectsProjectIdRoute,
   } as any)
+const ApiProjectsProjectIdWorktreesSyncRoute =
+  ApiProjectsProjectIdWorktreesSyncRouteImport.update({
+    id: '/sync',
+    path: '/sync',
+    getParentRoute: () => ApiProjectsProjectIdWorktreesRoute,
+  } as any)
 const ApiChatsChatIdSteerRoute = ApiChatsChatIdSteerRouteImport.update({
   id: '/steer',
   path: '/steer',
@@ -118,7 +125,8 @@ export interface FileRoutesByFullPath {
   '/api/chats/$chatId/messages': typeof ApiChatsChatIdMessagesRoute
   '/api/chats/$chatId/steer': typeof ApiChatsChatIdSteerRoute
   '/api/projects/$projectId/chats': typeof ApiProjectsProjectIdChatsRoute
-  '/api/projects/$projectId/worktrees': typeof ApiProjectsProjectIdWorktreesRoute
+  '/api/projects/$projectId/worktrees': typeof ApiProjectsProjectIdWorktreesRouteWithChildren
+  '/api/projects/$projectId/worktrees/sync': typeof ApiProjectsProjectIdWorktreesSyncRoute
   '/api/chats/$chatId/approvals/$requestId': typeof ApiChatsChatIdApprovalsRequestIdRoute
 }
 export interface FileRoutesByTo {
@@ -135,7 +143,8 @@ export interface FileRoutesByTo {
   '/api/chats/$chatId/messages': typeof ApiChatsChatIdMessagesRoute
   '/api/chats/$chatId/steer': typeof ApiChatsChatIdSteerRoute
   '/api/projects/$projectId/chats': typeof ApiProjectsProjectIdChatsRoute
-  '/api/projects/$projectId/worktrees': typeof ApiProjectsProjectIdWorktreesRoute
+  '/api/projects/$projectId/worktrees': typeof ApiProjectsProjectIdWorktreesRouteWithChildren
+  '/api/projects/$projectId/worktrees/sync': typeof ApiProjectsProjectIdWorktreesSyncRoute
   '/api/chats/$chatId/approvals/$requestId': typeof ApiChatsChatIdApprovalsRequestIdRoute
 }
 export interface FileRoutesById {
@@ -153,7 +162,8 @@ export interface FileRoutesById {
   '/api/chats/$chatId/messages': typeof ApiChatsChatIdMessagesRoute
   '/api/chats/$chatId/steer': typeof ApiChatsChatIdSteerRoute
   '/api/projects/$projectId/chats': typeof ApiProjectsProjectIdChatsRoute
-  '/api/projects/$projectId/worktrees': typeof ApiProjectsProjectIdWorktreesRoute
+  '/api/projects/$projectId/worktrees': typeof ApiProjectsProjectIdWorktreesRouteWithChildren
+  '/api/projects/$projectId/worktrees/sync': typeof ApiProjectsProjectIdWorktreesSyncRoute
   '/api/chats/$chatId/approvals/$requestId': typeof ApiChatsChatIdApprovalsRequestIdRoute
 }
 export interface FileRouteTypes {
@@ -173,6 +183,7 @@ export interface FileRouteTypes {
     | '/api/chats/$chatId/steer'
     | '/api/projects/$projectId/chats'
     | '/api/projects/$projectId/worktrees'
+    | '/api/projects/$projectId/worktrees/sync'
     | '/api/chats/$chatId/approvals/$requestId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -190,6 +201,7 @@ export interface FileRouteTypes {
     | '/api/chats/$chatId/steer'
     | '/api/projects/$projectId/chats'
     | '/api/projects/$projectId/worktrees'
+    | '/api/projects/$projectId/worktrees/sync'
     | '/api/chats/$chatId/approvals/$requestId'
   id:
     | '__root__'
@@ -207,6 +219,7 @@ export interface FileRouteTypes {
     | '/api/chats/$chatId/steer'
     | '/api/projects/$projectId/chats'
     | '/api/projects/$projectId/worktrees'
+    | '/api/projects/$projectId/worktrees/sync'
     | '/api/chats/$chatId/approvals/$requestId'
   fileRoutesById: FileRoutesById
 }
@@ -285,6 +298,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiProjectsProjectIdWorktreesRouteImport
       parentRoute: typeof ApiProjectsProjectIdRoute
     }
+    '/api/projects/$projectId/worktrees/sync': {
+      id: '/api/projects/$projectId/worktrees/sync'
+      path: '/sync'
+      fullPath: '/api/projects/$projectId/worktrees/sync'
+      preLoaderRoute: typeof ApiProjectsProjectIdWorktreesSyncRouteImport
+      parentRoute: typeof ApiProjectsProjectIdWorktreesRoute
+    }
     '/api/projects/$projectId/chats': {
       id: '/api/projects/$projectId/chats'
       path: '/chats'
@@ -332,12 +352,27 @@ declare module '@tanstack/react-router' {
 
 interface ApiProjectsProjectIdRouteChildren {
   ApiProjectsProjectIdChatsRoute: typeof ApiProjectsProjectIdChatsRoute
-  ApiProjectsProjectIdWorktreesRoute: typeof ApiProjectsProjectIdWorktreesRoute
+  ApiProjectsProjectIdWorktreesRoute: typeof ApiProjectsProjectIdWorktreesRouteWithChildren
 }
+
+interface ApiProjectsProjectIdWorktreesRouteChildren {
+  ApiProjectsProjectIdWorktreesSyncRoute: typeof ApiProjectsProjectIdWorktreesSyncRoute
+}
+
+const ApiProjectsProjectIdWorktreesRouteChildren: ApiProjectsProjectIdWorktreesRouteChildren =
+  {
+    ApiProjectsProjectIdWorktreesSyncRoute:
+      ApiProjectsProjectIdWorktreesSyncRoute,
+  }
+
+const ApiProjectsProjectIdWorktreesRouteWithChildren =
+  ApiProjectsProjectIdWorktreesRoute._addFileChildren(
+    ApiProjectsProjectIdWorktreesRouteChildren,
+  )
 
 const ApiProjectsProjectIdRouteChildren: ApiProjectsProjectIdRouteChildren = {
   ApiProjectsProjectIdChatsRoute: ApiProjectsProjectIdChatsRoute,
-  ApiProjectsProjectIdWorktreesRoute: ApiProjectsProjectIdWorktreesRoute,
+  ApiProjectsProjectIdWorktreesRoute: ApiProjectsProjectIdWorktreesRouteWithChildren,
 }
 
 const ApiProjectsProjectIdRouteWithChildren =

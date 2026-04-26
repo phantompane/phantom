@@ -17,7 +17,16 @@ const coreMocks = vi.hoisted(() => ({
   runCreateWorktree: vi.fn(),
 }));
 
+const gitMocks = vi.hoisted(() => ({
+  getGitRoot: vi.fn(),
+  getRemoteDefaultBranch: vi.fn(),
+  getRemotes: vi.fn(),
+  getUpstreamBranch: vi.fn(),
+  pull: vi.fn(),
+}));
+
 vi.mock("@phantompane/core", () => coreMocks);
+vi.mock("@phantompane/git", () => gitMocks);
 
 const temporaryDirectories: string[] = [];
 const timestamp = "2026-04-25T00:00:00.000Z";
@@ -215,6 +224,7 @@ describe("ServeServices", () => {
         path: worktree.path,
         pathToDisplay: worktree.pathToDisplay,
         isClean: worktree.isClean,
+        isMainWorktree: worktree.isMainWorktree,
         chatStatus: worktree.chatStatus,
       })),
       [
@@ -223,6 +233,7 @@ describe("ServeServices", () => {
           path: "/repo",
           pathToDisplay: ".",
           isClean: true,
+          isMainWorktree: true,
           chatStatus: "idle",
         },
         {
@@ -230,6 +241,7 @@ describe("ServeServices", () => {
           path: "/repo/.git/phantom/worktrees/feature/list",
           pathToDisplay: ".git/phantom/worktrees/feature/list",
           isClean: false,
+          isMainWorktree: false,
           chatStatus: "idle",
         },
       ],
@@ -275,6 +287,51 @@ describe("ServeServices", () => {
     strictEqual(saveSpy.mock.calls.length, 0);
   });
 
+  it("pins the main worktree above managed worktrees", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { services } = await createHarness(state);
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature/list",
+            path: "/repo/.git/phantom/worktrees/feature/list",
+            pathToDisplay: ".git/phantom/worktrees/feature/list",
+            branch: "feature/list",
+            isClean: true,
+          },
+          {
+            name: "main",
+            path: "/repo",
+            pathToDisplay: ".",
+            branch: "main",
+            isClean: true,
+          },
+        ],
+      },
+    });
+
+    const worktrees = await services.listProjectWorktrees("proj_1");
+
+    deepStrictEqual(
+      worktrees.map((worktree) => ({
+        path: worktree.path,
+        isMainWorktree: worktree.isMainWorktree,
+      })),
+      [
+        { path: "/repo", isMainWorktree: true },
+        {
+          path: "/repo/.git/phantom/worktrees/feature/list",
+          isMainWorktree: false,
+        },
+      ],
+    );
+  });
+
   it("falls back to persisted chats when live worktree listing fails", async () => {
     const state = {
       ...createTestState(),
@@ -300,6 +357,7 @@ describe("ServeServices", () => {
         pathToDisplay: "/repo",
         branch: "main",
         isClean: true,
+        isMainWorktree: true,
         isManagedByPhantom: false,
         chatId: "chat_1",
         chatStatus: "idle",
@@ -335,6 +393,7 @@ describe("ServeServices", () => {
         pathToDisplay: worktreePath,
         branch: "feature",
         isClean: true,
+        isMainWorktree: false,
         isManagedByPhantom: true,
         chatId: "chat_1",
         chatStatus: "idle",
@@ -938,6 +997,249 @@ describe("ServeServices", () => {
     ]);
     deepStrictEqual(coreMocks.deleteBranch.mock.calls[0], ["/repo", "feature"]);
     strictEqual((await store.load()).chats.length, 0);
+  });
+
+  it("syncs a project worktree branch with git pull", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { services } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "main",
+            path: "/repo",
+            pathToDisplay: ".",
+            branch: "main",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    gitMocks.getUpstreamBranch.mockResolvedValueOnce("origin/main");
+    gitMocks.getRemotes.mockResolvedValueOnce(["origin"]);
+    gitMocks.pull.mockResolvedValueOnce({ ok: true, value: undefined });
+
+    const result = await services.syncProjectWorktreeBranch("proj_1", {
+      name: "main",
+      path: "/repo",
+    });
+
+    deepStrictEqual(result, { message: "Synced branch 'main'" });
+    deepStrictEqual(gitMocks.getUpstreamBranch.mock.calls[0], [
+      { cwd: "/repo" },
+    ]);
+    deepStrictEqual(gitMocks.pull.mock.calls[0], [
+      { cwd: "/repo", remote: "origin", branch: "main" },
+    ]);
+  });
+
+  it("syncs a project worktree branch with a slash-named upstream remote", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { services } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature/sync",
+            path: "/repo/.git/phantom/worktrees/feature/sync",
+            pathToDisplay: ".git/phantom/worktrees/feature/sync",
+            branch: "feature/sync",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    gitMocks.getUpstreamBranch.mockResolvedValueOnce("fork/team/feature/sync");
+    gitMocks.getRemotes.mockResolvedValueOnce(["fork", "fork/team"]);
+    gitMocks.pull.mockResolvedValueOnce({ ok: true, value: undefined });
+
+    await services.syncProjectWorktreeBranch("proj_1", {
+      name: "feature/sync",
+      path: "/repo/.git/phantom/worktrees/feature/sync",
+    });
+
+    deepStrictEqual(gitMocks.pull.mock.calls[0], [
+      {
+        cwd: "/repo/.git/phantom/worktrees/feature/sync",
+        remote: "fork/team",
+        branch: "feature/sync",
+      },
+    ]);
+  });
+
+  it("syncs a project worktree branch with a local upstream", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { services } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature/sync",
+            path: "/repo/.git/phantom/worktrees/feature/sync",
+            pathToDisplay: ".git/phantom/worktrees/feature/sync",
+            branch: "feature/sync",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    gitMocks.getUpstreamBranch.mockResolvedValueOnce("main");
+    gitMocks.getRemotes.mockResolvedValueOnce([]);
+    gitMocks.pull.mockResolvedValueOnce({ ok: true, value: undefined });
+
+    await services.syncProjectWorktreeBranch("proj_1", {
+      name: "feature/sync",
+      path: "/repo/.git/phantom/worktrees/feature/sync",
+    });
+
+    deepStrictEqual(gitMocks.pull.mock.calls[0], [
+      {
+        cwd: "/repo/.git/phantom/worktrees/feature/sync",
+        remote: undefined,
+        branch: undefined,
+      },
+    ]);
+  });
+
+  it("syncs a project worktree branch against the remote default branch when no upstream is configured", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { services } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature/sync",
+            path: "/repo/.git/phantom/worktrees/feature/sync",
+            pathToDisplay: ".git/phantom/worktrees/feature/sync",
+            branch: "feature/sync",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    gitMocks.getUpstreamBranch.mockResolvedValueOnce(null);
+    gitMocks.getRemotes.mockResolvedValueOnce(["upstream"]);
+    gitMocks.getRemoteDefaultBranch.mockResolvedValueOnce("trunk");
+    gitMocks.pull.mockResolvedValueOnce({ ok: true, value: undefined });
+
+    await services.syncProjectWorktreeBranch("proj_1", {
+      name: "feature/sync",
+      path: "/repo/.git/phantom/worktrees/feature/sync",
+    });
+
+    deepStrictEqual(gitMocks.pull.mock.calls[0], [
+      {
+        cwd: "/repo/.git/phantom/worktrees/feature/sync",
+        remote: "upstream",
+        branch: "trunk",
+      },
+    ]);
+  });
+
+  it.each([
+    {
+      description: "running",
+      chat: { status: "running" as const },
+    },
+    {
+      description: "waiting for approval",
+      chat: { status: "waitingForApproval" as const },
+    },
+    {
+      description: "active turn",
+      chat: { activeTurnId: "turn_1" },
+    },
+    {
+      description: "pending turn",
+      chat: {},
+      markPending: true,
+    },
+  ])("does not sync a worktree with a $description chat", async (scenario) => {
+    const worktreePath = "/repo/.git/phantom/worktrees/worktree";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          ...scenario.chat,
+          worktreeName: "worktree",
+          worktreePath,
+        }),
+      ],
+    };
+    const { services } = await createHarness(state);
+    if (scenario.markPending) {
+      (
+        services as unknown as { pendingChatTurns: Set<string> }
+      ).pendingChatTurns.add("chat_1");
+    }
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "worktree",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/worktree",
+            branch: "worktree",
+            isClean: true,
+          },
+        ],
+      },
+    });
+
+    await rejects(
+      services.syncProjectWorktreeBranch("proj_1", { name: "worktree" }),
+      /has an active chat/,
+    );
+
+    strictEqual(gitMocks.pull.mock.calls.length, 0);
   });
 
   it("deletes a project worktree and removes its local chat history", async () => {

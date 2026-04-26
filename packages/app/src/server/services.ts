@@ -1,6 +1,12 @@
 import { realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { getGitRoot } from "@phantompane/git";
+import {
+  getGitRoot,
+  getRemoteDefaultBranch,
+  getRemotes,
+  getUpstreamBranch,
+  pull,
+} from "@phantompane/git";
 import {
   createContext,
   deleteBranch,
@@ -59,6 +65,15 @@ export interface DeleteProjectWorktreeInput {
 }
 
 export interface DeleteProjectWorktreeResult {
+  message: string;
+}
+
+export interface SyncProjectWorktreeBranchInput {
+  name: string;
+  path?: string;
+}
+
+export interface SyncProjectWorktreeBranchResult {
   message: string;
 }
 
@@ -233,6 +248,7 @@ export class ServeServices {
         state,
         projectId,
         worktreesDirectory,
+        project.rootPath,
       );
     }
 
@@ -244,6 +260,7 @@ export class ServeServices {
         state,
         projectId,
         worktreesDirectory,
+        project.rootPath,
       );
     }
     if (!result.ok) {
@@ -251,6 +268,7 @@ export class ServeServices {
         state,
         projectId,
         worktreesDirectory,
+        project.rootPath,
       );
     }
 
@@ -363,25 +381,79 @@ export class ServeServices {
       ]);
     }
 
-    return worktrees.map((worktree) => {
-      const chat = latestChatForWorktree(
-        syncedChatsByPath.get(worktree.path) ?? [],
+    return sortProjectWorktrees(
+      worktrees.map((worktree) => {
+        const chat = latestChatForWorktree(
+          syncedChatsByPath.get(worktree.path) ?? [],
+        );
+        return {
+          name: worktree.name,
+          path: worktree.path,
+          pathToDisplay: worktree.pathToDisplay,
+          branch: worktree.branch,
+          isClean: worktree.isClean,
+          isMainWorktree: worktree.path === project.rootPath,
+          isManagedByPhantom: isPathInsideDirectory(
+            worktree.path,
+            worktreesDirectory,
+          ),
+          chatId: chat?.id ?? null,
+          chatStatus: chat?.status ?? null,
+          chatTitle: chat?.title ?? worktree.name,
+        };
+      }),
+    );
+  }
+
+  async syncProjectWorktreeBranch(
+    projectId: string,
+    input: SyncProjectWorktreeBranchInput,
+  ): Promise<SyncProjectWorktreeBranchResult> {
+    const worktreeName = input.name.trim();
+    if (!worktreeName) {
+      throw new Error("Worktree name is required");
+    }
+    const worktreePath = input.path?.trim();
+
+    const state = await this.store.load();
+    const project = this.requireProject(state, projectId);
+    const context = await createContext(project.rootPath);
+    const worktreesResult = await listWorktrees(context.gitRoot);
+    const targetWorktree = worktreesResult.ok
+      ? worktreesResult.value.worktrees.find(
+          (worktree) =>
+            worktree.name === worktreeName &&
+            (!worktreePath || worktree.path === worktreePath),
+        )
+      : null;
+    if (!targetWorktree) {
+      throw new Error(`Worktree '${worktreeName}' not found`);
+    }
+    const activeChat = findActiveWorktreeChat(
+      state.chats,
+      projectId,
+      targetWorktree.path,
+      this.pendingChatTurns,
+    );
+    if (activeChat) {
+      throw new Error(
+        `Worktree '${worktreeName}' has an active chat. Stop the chat before syncing the branch.`,
       );
-      return {
-        name: worktree.name,
-        path: worktree.path,
-        pathToDisplay: worktree.pathToDisplay,
-        branch: worktree.branch,
-        isClean: worktree.isClean,
-        isManagedByPhantom: isPathInsideDirectory(
-          worktree.path,
-          worktreesDirectory,
-        ),
-        chatId: chat?.id ?? null,
-        chatStatus: chat?.status ?? null,
-        chatTitle: chat?.title ?? worktree.name,
-      };
+    }
+
+    const pullTarget = await getWorktreePullTarget(targetWorktree.path);
+    const result = await pull({
+      cwd: targetWorktree.path,
+      remote: pullTarget.remote,
+      branch: pullTarget.branch,
     });
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    return {
+      message: `Synced branch '${targetWorktree.branch}'`,
+    };
   }
 
   async createChat(
@@ -536,12 +608,11 @@ export class ServeServices {
         chat.projectId === projectId &&
         chat.worktreePath === targetWorktree.path,
     );
-    const activeChat = worktreeChats.find(
-      (chat) =>
-        this.pendingChatTurns.has(chat.id) ||
-        chat.status === "running" ||
-        chat.status === "waitingForApproval" ||
-        Boolean(chat.activeTurnId),
+    const activeChat = findActiveWorktreeChat(
+      worktreeChats,
+      projectId,
+      targetWorktree.path,
+      this.pendingChatTurns,
     );
     if (activeChat) {
       throw new Error(
@@ -1368,10 +1439,71 @@ function latestChatForWorktree(chats: ChatRecord[]): ChatRecord | null {
   );
 }
 
+function findActiveWorktreeChat(
+  chats: ChatRecord[],
+  projectId: string,
+  worktreePath: string,
+  pendingChatTurns: ReadonlySet<string>,
+): ChatRecord | undefined {
+  return chats.find(
+    (chat) =>
+      chat.projectId === projectId &&
+      chat.worktreePath === worktreePath &&
+      (pendingChatTurns.has(chat.id) ||
+        chat.status === "running" ||
+        chat.status === "waitingForApproval" ||
+        Boolean(chat.activeTurnId)),
+  );
+}
+
+async function getWorktreePullTarget(
+  worktreePath: string,
+): Promise<{ branch?: string; remote?: string }> {
+  const remotes = await getRemotes({ cwd: worktreePath });
+  const normalizedUpstream = (
+    await getUpstreamBranch({ cwd: worktreePath })
+  )?.trim();
+  if (normalizedUpstream) {
+    const upstreamRemote = findUpstreamRemote(remotes, normalizedUpstream);
+    if (upstreamRemote) {
+      return {
+        remote: upstreamRemote,
+        branch: normalizedUpstream.slice(upstreamRemote.length + 1),
+      };
+    }
+    return {};
+  }
+
+  const remote = remotes.includes("origin") ? "origin" : remotes[0];
+  if (!remote) {
+    throw new Error(
+      "Cannot sync branch because no Git remotes are configured.",
+    );
+  }
+
+  return {
+    remote,
+    branch:
+      (await getRemoteDefaultBranch({ cwd: worktreePath, remote })) ?? "HEAD",
+  };
+}
+
+function findUpstreamRemote(
+  remotes: string[],
+  upstreamBranch: string,
+): string | null {
+  return (
+    remotes
+      .filter((remote) => upstreamBranch.startsWith(`${remote}/`))
+      .sort((left, right) => right.length - left.length)[0] ?? null
+  );
+}
+
 function projectWorktreesFromPersistedChats(
   state: ServeState,
   projectId: string,
   worktreesDirectory: string,
+  projectRootPath: string,
 ): ProjectWorktreeRecord[] {
   const chatsByPath = new Map<string, ChatRecord[]>();
   for (const chat of state.chats.filter(
@@ -1383,24 +1515,37 @@ function projectWorktreesFromPersistedChats(
     ]);
   }
 
-  return Array.from(chatsByPath.values())
-    .map((chats) => latestChatForWorktree(chats))
-    .filter((chat): chat is ChatRecord => Boolean(chat))
-    .sort((left, right) => left.worktreeName.localeCompare(right.worktreeName))
-    .map((chat) => ({
-      name: chat.worktreeName,
-      path: chat.worktreePath,
-      pathToDisplay: chat.worktreePath,
-      branch: chat.branchName,
-      isClean: true,
-      isManagedByPhantom: isPathInsideDirectory(
-        chat.worktreePath,
-        worktreesDirectory,
-      ),
-      chatId: chat.id,
-      chatStatus: chat.status,
-      chatTitle: chat.title,
-    }));
+  return sortProjectWorktrees(
+    Array.from(chatsByPath.values())
+      .map((chats) => latestChatForWorktree(chats))
+      .filter((chat): chat is ChatRecord => Boolean(chat))
+      .map((chat) => ({
+        name: chat.worktreeName,
+        path: chat.worktreePath,
+        pathToDisplay: chat.worktreePath,
+        branch: chat.branchName,
+        isClean: true,
+        isMainWorktree: chat.worktreePath === projectRootPath,
+        isManagedByPhantom: isPathInsideDirectory(
+          chat.worktreePath,
+          worktreesDirectory,
+        ),
+        chatId: chat.id,
+        chatStatus: chat.status,
+        chatTitle: chat.title,
+      })),
+  );
+}
+
+function sortProjectWorktrees(
+  worktrees: ProjectWorktreeRecord[],
+): ProjectWorktreeRecord[] {
+  return [...worktrees].sort((left, right) => {
+    if (left.isMainWorktree !== right.isMainWorktree) {
+      return left.isMainWorktree ? -1 : 1;
+    }
+    return left.name.localeCompare(right.name);
+  });
 }
 
 async function getProjectWorktreesDirectory(

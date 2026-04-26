@@ -13,6 +13,7 @@ import {
   MessageSquarePlus,
   MoreHorizontal,
   Plus,
+  RefreshCw,
   Send,
   Sparkles,
   Square,
@@ -816,6 +817,35 @@ function Home() {
     }
   }
 
+  async function syncWorktreeBranch(
+    projectId: string,
+    worktree: ProjectWorktreeRecord,
+  ) {
+    if (isBusy) {
+      return;
+    }
+
+    setError(null);
+    setIsBusy(true);
+    try {
+      await fetchJson(`/api/projects/${projectId}/worktrees/sync`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: worktree.name,
+          path: worktree.path,
+        }),
+      });
+      await refreshChats(projectId, {
+        sync: true,
+        updateSelection: selectedProjectIdRef.current === projectId,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedChatId || !composerText.trim()) {
@@ -1053,9 +1083,15 @@ function Home() {
                                   worktree.path === selectedWorktreePath;
                                 const title = `${worktree.name} (${worktree.path})${
                                   worktree.isClean ? "" : " [dirty]"
+                                }${
+                                  worktree.isMainWorktree
+                                    ? " [main worktree]"
+                                    : ""
                                 }`;
                                 const canDeleteWorktree =
                                   worktree.isManagedByPhantom;
+                                const canShowActions =
+                                  canDeleteWorktree || Boolean(worktree.path);
                                 return (
                                   <SidebarMenuSubItem key={worktree.path}>
                                     <div className="group/worktree flex items-center rounded-[var(--radius-sm)]">
@@ -1068,17 +1104,33 @@ function Home() {
                                         title={title}
                                         type="button"
                                       >
-                                        <GitBranch className="size-3.5 text-[var(--icon-color-default)]" />
+                                        {worktree.isMainWorktree ? (
+                                          <FolderGit2 className="size-3.5 text-[var(--icon-color-default)]" />
+                                        ) : (
+                                          <GitBranch className="size-3.5 text-[var(--icon-color-default)]" />
+                                        )}
                                         <span className="min-w-0 flex-1">
-                                          <span className="block truncate font-medium">
-                                            {worktree.name}
+                                          <span className="flex min-w-0 items-center gap-1.5">
+                                            <span className="block min-w-0 truncate font-medium">
+                                              {worktree.name}
+                                            </span>
+                                            {worktree.isMainWorktree && (
+                                              <span className="shrink-0 rounded-[var(--radius-sm)] bg-[var(--surface-muted)] px-1.5 py-0.5 text-[length:var(--font-size-xs)] font-medium leading-none text-[var(--text-tertiary)]">
+                                                Main
+                                              </span>
+                                            )}
                                           </span>
+                                          {worktree.isMainWorktree && (
+                                            <span className="block truncate text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+                                              Git root
+                                            </span>
+                                          )}
                                         </span>
                                         {!worktree.isClean && (
                                           <span className="size-1.5 shrink-0 rounded-full bg-[var(--semantic-warning-fg)]" />
                                         )}
                                       </SidebarMenuSubButton>
-                                      {canDeleteWorktree && (
+                                      {canShowActions && (
                                         <DropdownMenu>
                                           <DropdownMenuTrigger asChild>
                                             <Button
@@ -1099,17 +1151,32 @@ function Home() {
                                           </DropdownMenuTrigger>
                                           <DropdownMenuContent align="end">
                                             <DropdownMenuItem
+                                              disabled={isBusy}
                                               onSelect={() =>
-                                                openDeleteWorktree(
+                                                void syncWorktreeBranch(
                                                   project.id,
                                                   worktree,
                                                 )
                                               }
-                                              variant="destructive"
                                             >
-                                              <Trash2 className="size-4" />
-                                              <span>Delete worktree</span>
+                                              <RefreshCw className="size-4" />
+                                              <span>Sync branch</span>
                                             </DropdownMenuItem>
+                                            {canDeleteWorktree && (
+                                              <DropdownMenuItem
+                                                disabled={isBusy}
+                                                onSelect={() =>
+                                                  openDeleteWorktree(
+                                                    project.id,
+                                                    worktree,
+                                                  )
+                                                }
+                                                variant="destructive"
+                                              >
+                                                <Trash2 className="size-4" />
+                                                <span>Delete worktree</span>
+                                              </DropdownMenuItem>
+                                            )}
                                           </DropdownMenuContent>
                                         </DropdownMenu>
                                       )}

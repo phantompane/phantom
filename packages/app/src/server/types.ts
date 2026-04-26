@@ -14,6 +14,7 @@ export interface ProjectWorktreeRecord {
   pathToDisplay: string;
   branch: string;
   isClean: boolean;
+  isMainWorktree: boolean;
   isManagedByPhantom: boolean;
   chatId: string | null;
   chatStatus: ChatStatus | null;
