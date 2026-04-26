@@ -19,6 +19,39 @@ export interface ProjectWorktreeRecord {
   chatTitle: string;
 }
 
+export interface CodexFileRecord {
+  name: string;
+  path: string;
+  relativePath: string;
+  root: string;
+  score: number;
+}
+
+export interface CodexModelRecord {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  defaultReasoningEffort: string | null;
+  inputModalities: string[];
+  isDefault: boolean;
+  supportedReasoningEfforts: string[];
+}
+
+export interface CodexSkillRecord {
+  name: string;
+  path: string;
+  displayName: string;
+  description: string;
+  shortDescription: string | null;
+  enabled: boolean;
+}
+
+export interface CodexTurnContextItem {
+  name: string;
+  path: string;
+}
+
 export interface PhantomEvent {
   id: number;
   type: string;

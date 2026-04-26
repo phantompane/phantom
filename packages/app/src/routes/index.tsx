@@ -1,8 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   AlertTriangle,
+  Bot,
+  Brain,
   ChevronRight,
   Clock3,
+  FileText,
   FolderGit2,
   GitBranch,
   Inbox,
@@ -10,7 +13,9 @@ import {
   MessageSquarePlus,
   Plus,
   Send,
+  Sparkles,
   Square,
+  X,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import {
@@ -23,6 +28,7 @@ import {
 } from "react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Combobox, type ComboboxOption } from "../components/ui/combobox";
 import {
   Dialog,
   DialogContent,
@@ -59,6 +65,9 @@ import type {
   ChatMessageRecord,
   ChatRecord,
   ChatStatus,
+  CodexFileRecord,
+  CodexModelRecord,
+  CodexSkillRecord,
   PhantomEvent,
   ProjectWorktreeRecord,
   ProjectRecord,
@@ -190,10 +199,26 @@ function Home() {
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
   const [projectPath, setProjectPath] = useState("");
   const [composerText, setComposerText] = useState("");
+  const [models, setModels] = useState<CodexModelRecord[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [selectedEffort, setSelectedEffort] = useState<string | null>(null);
+  const [skills, setSkills] = useState<CodexSkillRecord[]>([]);
+  const [selectedSkillPaths, setSelectedSkillPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [fileSearchQuery, setFileSearchQuery] = useState("");
+  const fileSearchRequestIdRef = useRef(0);
+  const [fileSearchResults, setFileSearchResults] = useState<CodexFileRecord[]>(
+    [],
+  );
+  const [selectedFiles, setSelectedFiles] = useState<CodexFileRecord[]>([]);
   const [status, setStatus] = useState("Starting");
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const createChatInFlightRef = useRef(false);
+  const selectedChatIdRef = useRef<string | null>(null);
+  const selectedChatVersionRef = useRef(0);
+  const sendMessageRequestIdRef = useRef(0);
   const [pendingApproval, setPendingApproval] =
     useState<PendingApproval | null>(null);
 
@@ -210,6 +235,81 @@ function Home() {
     [chatsByProject, selectedChatId],
   );
   const isChatRunning = Boolean(selectedChat?.activeTurnId);
+
+  const selectedModel = useMemo(
+    () =>
+      models.find((model) => model.id === selectedModelId) ??
+      models.find((model) => model.isDefault) ??
+      models[0] ??
+      null,
+    [models, selectedModelId],
+  );
+
+  const selectedSkills = useMemo(
+    () => skills.filter((skill) => selectedSkillPaths.has(skill.path)),
+    [selectedSkillPaths, skills],
+  );
+
+  const modelOptions = useMemo<ComboboxOption[]>(
+    () =>
+      models.map((model) => ({
+        value: model.id,
+        label: model.displayName,
+        description: model.description || model.model,
+        keywords: [model.model],
+      })),
+    [models],
+  );
+
+  const effortOptions = useMemo<ComboboxOption[]>(() => {
+    const supportedEfforts = selectedModel?.supportedReasoningEfforts.length
+      ? selectedModel.supportedReasoningEfforts
+      : ["low", "medium", "high", "xhigh"];
+    return [
+      {
+        value: "auto",
+        label: "Auto",
+        description: selectedModel?.defaultReasoningEffort
+          ? `Default: ${selectedModel.defaultReasoningEffort}`
+          : "Use model default",
+      },
+      ...supportedEfforts.map((effort) => ({
+        value: effort,
+        label: formatReasoningEffort(effort),
+      })),
+    ];
+  }, [selectedModel]);
+
+  const skillOptions = useMemo<ComboboxOption[]>(
+    () =>
+      skills
+        .filter((skill) => skill.enabled && !selectedSkillPaths.has(skill.path))
+        .map((skill) => ({
+          value: skill.path,
+          label: skill.displayName,
+          description: skill.shortDescription ?? skill.description,
+          keywords: [skill.name],
+        })),
+    [selectedSkillPaths, skills],
+  );
+
+  const fileOptions = useMemo<ComboboxOption[]>(
+    () =>
+      fileSearchResults
+        .filter(
+          (file) =>
+            !selectedFiles.some(
+              (selectedFile) => selectedFile.path === file.path,
+            ),
+        )
+        .map((file) => ({
+          value: file.path,
+          label: file.relativePath,
+          description: file.root,
+          keywords: [file.name],
+        })),
+    [fileSearchResults, selectedFiles],
+  );
 
   const selectedWorktree = useMemo(() => {
     if (!selectedProjectId || !selectedWorktreePath) {
@@ -243,6 +343,7 @@ function Home() {
 
   useEffect(() => {
     void refreshProjects();
+    void refreshModels();
     void fetchJson("/api/auth")
       .then(() => setStatus("Ready"))
       .catch((err: Error) => setStatus(err.message));
@@ -262,14 +363,29 @@ function Home() {
   }, [selectedProjectId]);
 
   useEffect(() => {
+    selectedChatIdRef.current = selectedChatId;
+    selectedChatVersionRef.current += 1;
+
     if (!selectedChatId) {
       setMessages([]);
       setPendingApproval(null);
+      setSelectedFiles([]);
+      setSelectedSkillPaths(new Set());
+      setFileSearchQuery("");
+      setFileSearchResults([]);
+      setSkills([]);
       return;
     }
 
+    setSelectedFiles([]);
+    setSelectedSkillPaths(new Set());
+    setFileSearchQuery("");
+    setFileSearchResults([]);
+    setSkills([]);
+    const chatContextController = new AbortController();
     void refreshMessages(selectedChatId);
     void refreshSelectedChat(selectedChatId);
+    void refreshChatContext(selectedChatId, chatContextController.signal);
 
     const source = new EventSource(`/api/chats/${selectedChatId}/events`);
     const handleEvent = (event: MessageEvent<string>) => {
@@ -294,12 +410,64 @@ function Home() {
     source.onerror = () => setStatus("Event stream disconnected");
 
     return () => {
+      chatContextController.abort();
       for (const eventName of chatEventNames) {
         source.removeEventListener(eventName, handleEvent);
       }
       source.close();
     };
   }, [selectedChatId, selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedEffort || selectedEffort === "auto") {
+      return;
+    }
+    const supportedEfforts = selectedModel?.supportedReasoningEfforts ?? [];
+    if (
+      supportedEfforts.length > 0 &&
+      !supportedEfforts.includes(selectedEffort)
+    ) {
+      setSelectedEffort(null);
+    }
+  }, [selectedEffort, selectedModel]);
+
+  useEffect(() => {
+    const requestId = fileSearchRequestIdRef.current + 1;
+    fileSearchRequestIdRef.current = requestId;
+
+    if (!selectedChatId || !fileSearchQuery.trim()) {
+      setFileSearchResults([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const query = fileSearchQuery.trim();
+    const timeout = setTimeout(() => {
+      void fetchJson<{ files: CodexFileRecord[] }>(
+        `/api/chats/${selectedChatId}?fileQuery=${encodeURIComponent(query)}`,
+        { signal: controller.signal },
+      )
+        .then((data) => {
+          if (
+            controller.signal.aborted ||
+            fileSearchRequestIdRef.current !== requestId
+          ) {
+            return;
+          }
+          setFileSearchResults(data.files);
+        })
+        .catch((err: Error) => {
+          if (err.name !== "AbortError") {
+            setError(err.message);
+          }
+        });
+    }, 160);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [fileSearchQuery, selectedChatId]);
 
   useEffect(() => {
     if (
@@ -374,6 +542,45 @@ function Home() {
         ? current
         : (fallbackWorktree?.chatId ?? null),
     );
+  }
+
+  async function refreshModels() {
+    try {
+      const data = await fetchJson<{ models: CodexModelRecord[] }>(
+        "/api/models",
+      );
+      setModels(data.models);
+      setSelectedModelId((current) => {
+        if (current && data.models.some((model) => model.id === current)) {
+          return current;
+        }
+        return (
+          data.models.find((model) => model.isDefault)?.id ??
+          data.models[0]?.id ??
+          null
+        );
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function refreshChatContext(chatId: string, signal?: AbortSignal) {
+    try {
+      const data = await fetchJson<{ skills: CodexSkillRecord[] }>(
+        `/api/chats/${chatId}?context=skills`,
+        { signal },
+      );
+      if (signal?.aborted) {
+        return;
+      }
+      setSkills(data.skills);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        return;
+      }
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function loadProjectData(
@@ -512,15 +719,48 @@ function Home() {
       return;
     }
     setError(null);
+    const requestChatId = selectedChatId;
+    const requestChatVersion = selectedChatVersionRef.current;
+    const requestId = sendMessageRequestIdRef.current + 1;
+    sendMessageRequestIdRef.current = requestId;
+    const isCurrentSendRequest = () =>
+      selectedChatIdRef.current === requestChatId &&
+      selectedChatVersionRef.current === requestChatVersion &&
+      sendMessageRequestIdRef.current === requestId;
     const text = composerText;
     setComposerText("");
+    const turnModel = selectedModel?.id ?? selectedModel?.model;
+    const turnEffort = selectedEffort === "auto" ? null : selectedEffort;
+    const files = selectedFiles.map((file) => ({
+      name: file.relativePath,
+      path: file.path,
+    }));
+    const selectedSkillItems = selectedSkills.map((skill) => ({
+      name: skill.name,
+      path: skill.path,
+    }));
     try {
-      await fetchJson(`/api/chats/${selectedChatId}/messages`, {
+      await fetchJson(`/api/chats/${requestChatId}/messages`, {
         method: "POST",
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({
+          effort: turnEffort,
+          files,
+          model: turnModel,
+          skills: selectedSkillItems,
+          text,
+        }),
       });
-      await refreshMessages(selectedChatId);
+      if (!isCurrentSendRequest()) {
+        return;
+      }
+      setSelectedFiles([]);
+      setSelectedSkillPaths(new Set());
+      setFileSearchQuery("");
+      await refreshMessages(requestChatId);
     } catch (err) {
+      if (!isCurrentSendRequest()) {
+        return;
+      }
       setComposerText(text);
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -595,6 +835,23 @@ function Home() {
     setSelectedWorktreePath(worktree.path);
     setSelectedChatId(worktree.chatId);
     setExpandedProjectIds((current) => new Set(current).add(projectId));
+  }
+
+  function selectFile(path: string) {
+    const file = fileSearchResults.find((candidate) => candidate.path === path);
+    if (!file) {
+      return;
+    }
+    setSelectedFiles((current) =>
+      current.some((selectedFile) => selectedFile.path === file.path)
+        ? current
+        : [...current, file],
+    );
+    setFileSearchQuery("");
+  }
+
+  function selectSkill(path: string) {
+    setSelectedSkillPaths((current) => new Set(current).add(path));
   }
 
   return (
@@ -867,42 +1124,141 @@ function Home() {
           className="border-t border-border bg-[var(--surface-floating)] p-3 backdrop-blur"
           onSubmit={sendMessage}
         >
-          <div className="mx-auto flex max-w-[var(--layout-max-content-width)] items-end gap-2 border border-transparent border-t-[var(--border-divider)] bg-transparent p-1">
-            <div className="min-w-0 flex-1">
-              <Label className="sr-only" htmlFor="composer">
-                Message
-              </Label>
-              <Textarea
-                className="min-h-12 border-0 bg-transparent px-2 py-2 shadow-none focus-visible:shadow-none"
-                disabled={!selectedChatId}
-                id="composer"
-                placeholder={
-                  selectedChatId
-                    ? "Ask Codex to work in this worktree"
-                    : "Create or select a worktree to start"
+          <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">
+            {(selectedFiles.length > 0 || selectedSkills.length > 0) && (
+              <div className="flex min-h-8 flex-wrap items-center gap-2 px-1">
+                {selectedFiles.map((file) => (
+                  <ContextChip
+                    icon={<FileText className="size-3.5" />}
+                    key={file.path}
+                    label={file.relativePath}
+                    onRemove={() =>
+                      setSelectedFiles((current) =>
+                        current.filter(
+                          (selectedFile) => selectedFile.path !== file.path,
+                        ),
+                      )
+                    }
+                  />
+                ))}
+                {selectedSkills.map((skill) => (
+                  <ContextChip
+                    icon={<Sparkles className="size-3.5" />}
+                    key={skill.path}
+                    label={skill.displayName}
+                    onRemove={() =>
+                      setSelectedSkillPaths((current) => {
+                        const next = new Set(current);
+                        next.delete(skill.path);
+                        return next;
+                      })
+                    }
+                  />
+                ))}
+              </div>
+            )}
+            <div className="flex items-end gap-2">
+              <div className="min-w-0 flex-1">
+                <Label className="sr-only" htmlFor="composer">
+                  Message
+                </Label>
+                <Textarea
+                  className="min-h-12 border-0 bg-transparent px-2 py-2 shadow-none focus-visible:shadow-none"
+                  disabled={!selectedChatId}
+                  id="composer"
+                  placeholder={
+                    selectedChatId
+                      ? "Ask Codex to work in this worktree"
+                      : "Create or select a worktree to start"
+                  }
+                  rows={2}
+                  value={composerText}
+                  onChange={(event) => setComposerText(event.target.value)}
+                  onKeyDown={handleComposerKeyDown}
+                />
+              </div>
+              <Button
+                aria-label={isChatRunning ? "Stop turn" : "Send message"}
+                className="size-10"
+                disabled={
+                  isChatRunning
+                    ? !selectedChat?.activeTurnId
+                    : !selectedChatId || !composerText.trim()
                 }
-                rows={2}
-                value={composerText}
-                onChange={(event) => setComposerText(event.target.value)}
-                onKeyDown={handleComposerKeyDown}
+                onClick={isChatRunning ? interruptChat : undefined}
+                size="icon"
+                title={isChatRunning ? "Stop turn" : "Send"}
+                type={isChatRunning ? "button" : "submit"}
+                variant={isChatRunning ? "destructive" : "default"}
+              >
+                {isChatRunning ? <Square /> : <Send />}
+              </Button>
+            </div>
+            <div className="flex min-h-8 flex-wrap items-center gap-2 border-t border-[var(--border-divider)] px-1 pt-2">
+              <Combobox
+                aria-label="Select model"
+                className="w-36 max-w-full sm:w-40"
+                disabled={models.length === 0 || isChatRunning}
+                emptyMessage="No models"
+                icon={<Bot className="size-3.5" />}
+                options={modelOptions}
+                placeholder="Model"
+                searchPlaceholder="Search models"
+                side="top"
+                triggerClassName="w-full justify-between"
+                value={selectedModel?.id ?? null}
+                onValueChange={setSelectedModelId}
+              />
+              <Combobox
+                aria-label="Select reasoning effort"
+                className="w-28 max-w-full"
+                disabled={!selectedModel || isChatRunning}
+                icon={<Brain className="size-3.5" />}
+                options={effortOptions}
+                placeholder="Effort"
+                searchPlaceholder="Search effort"
+                side="top"
+                triggerClassName="w-full justify-between"
+                value={selectedEffort ?? "auto"}
+                onValueChange={(value) =>
+                  setSelectedEffort(value === "auto" ? null : value)
+                }
+              />
+              <Combobox
+                aria-label="Attach file"
+                className="w-32 max-w-full"
+                disabled={!selectedChatId || isChatRunning}
+                emptyMessage={
+                  fileSearchQuery.trim() ? "No files" : "Type to search"
+                }
+                icon={<FileText className="size-3.5" />}
+                options={fileOptions}
+                placeholder="Files"
+                query={fileSearchQuery}
+                searchPlaceholder="Search files"
+                shouldFilter={false}
+                side="top"
+                triggerClassName="w-full justify-between"
+                value={null}
+                onQueryChange={setFileSearchQuery}
+                onValueChange={selectFile}
+              />
+              <Combobox
+                aria-label="Select skill"
+                align="end"
+                className="w-32 max-w-full"
+                disabled={!selectedChatId || isChatRunning}
+                emptyMessage="No skills"
+                icon={<Sparkles className="size-3.5" />}
+                options={skillOptions}
+                placeholder="Skills"
+                searchPlaceholder="Search skills"
+                side="top"
+                triggerClassName="w-full justify-between"
+                value={null}
+                onValueChange={selectSkill}
               />
             </div>
-            <Button
-              aria-label={isChatRunning ? "Stop turn" : "Send message"}
-              className="size-10"
-              disabled={
-                isChatRunning
-                  ? !selectedChat?.activeTurnId
-                  : !selectedChatId || !composerText.trim()
-              }
-              onClick={isChatRunning ? interruptChat : undefined}
-              size="icon"
-              title={isChatRunning ? "Stop turn" : "Send"}
-              type={isChatRunning ? "button" : "submit"}
-              variant={isChatRunning ? "destructive" : "default"}
-            >
-              {isChatRunning ? <Square /> : <Send />}
-            </Button>
           </div>
         </form>
       </SidebarInset>
@@ -980,6 +1336,40 @@ function LeadingEllipsisText({ text }: { text: string }) {
       {formatLeadingEllipsisPath(text)}
     </span>
   );
+}
+
+function ContextChip({
+  icon,
+  label,
+  onRemove,
+}: {
+  icon: ReactNode;
+  label: string;
+  onRemove: () => void;
+}) {
+  return (
+    <span className="inline-flex h-8 max-w-52 items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border-divider)] bg-[var(--surface-code)] px-2 text-[length:var(--font-size-sm)] text-[var(--text-secondary)]">
+      {icon}
+      <span className="min-w-0 truncate">{label}</span>
+      <button
+        aria-label={`Remove ${label}`}
+        className="rounded-[var(--radius-xs)] text-[var(--icon-color-muted)] outline-none transition-colors hover:bg-[var(--state-hover-bg)] hover:text-[var(--icon-color-active)] focus-visible:shadow-[var(--state-focus-ring)]"
+        onClick={onRemove}
+        title={`Remove ${label}`}
+        type="button"
+      >
+        <X className="size-3.5" />
+      </button>
+    </span>
+  );
+}
+
+function formatReasoningEffort(effort: string): string {
+  return effort
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 function SystemBanner({

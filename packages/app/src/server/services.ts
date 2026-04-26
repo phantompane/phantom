@@ -1,5 +1,5 @@
-import { realpath } from "node:fs/promises";
-import { basename, isAbsolute } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getGitRoot } from "@phantompane/git";
 import {
   deleteBranch,
@@ -35,6 +35,10 @@ import type {
   ChatMessageRecord,
   ChatRecord,
   ChatStatus,
+  CodexFileRecord,
+  CodexModelRecord,
+  CodexSkillRecord,
+  CodexTurnContextItem,
   ProjectWorktreeRecord,
   ProjectRecord,
   ServeState,
@@ -46,6 +50,10 @@ export interface CreateChatInput {
 }
 
 export interface SendMessageInput {
+  effort?: string;
+  files?: CodexTurnContextItem[];
+  model?: string;
+  skills?: CodexTurnContextItem[];
   text: string;
 }
 
@@ -508,6 +516,7 @@ export class ServeServices {
     if (options.requireActiveTurn && !isSteeringActiveTurn) {
       throw new Error("Chat does not have an active Codex turn");
     }
+    const turnOptions = await this.createCodexTurnOptions(input, chat);
     if (!isSteeringActiveTurn) {
       if (this.pendingChatTurns.has(chatId)) {
         throw new Error("Chat already has an active Codex turn");
@@ -532,7 +541,16 @@ export class ServeServices {
         const threadId = await this.ensureThread(chat);
         const activeTurnId = chat.activeTurnId;
         if (chat.status === "running" && activeTurnId) {
-          await this.codex.steerTurn(threadId, activeTurnId, text);
+          if (turnOptions) {
+            await this.codex.steerTurn(
+              threadId,
+              activeTurnId,
+              text,
+              turnOptions,
+            );
+          } else {
+            await this.codex.steerTurn(threadId, activeTurnId, text);
+          }
         } else {
           const existingPendingTurn = this.pendingTurnEvents.get(threadId);
           if (existingPendingTurn) {
@@ -547,11 +565,14 @@ export class ServeServices {
             discard: false,
             events: [],
           });
-          const turnResult = await this.codex.startTurn(
-            threadId,
-            text,
-            chat.worktreePath,
-          );
+          const turnResult = turnOptions
+            ? await this.codex.startTurn(
+                threadId,
+                text,
+                chat.worktreePath,
+                turnOptions,
+              )
+            : await this.codex.startTurn(threadId, text, chat.worktreePath);
           const turnId = extractTurnId(turnResult);
           if (turnId) {
             nextStatus = "running";
@@ -679,8 +700,92 @@ export class ServeServices {
     return this.codex.readAccount();
   }
 
-  async listModels(): Promise<unknown> {
-    return this.codex.listModels();
+  async listModels(): Promise<CodexModelRecord[]> {
+    return normalizeModelRecords(await this.codex.listModels());
+  }
+
+  async listSkills(chatId: string): Promise<CodexSkillRecord[]> {
+    const chat = await this.getChat(chatId);
+    return normalizeSkillRecords(
+      await this.codex.listSkills([chat.worktreePath]),
+    );
+  }
+
+  async searchFiles(chatId: string, query: string): Promise<CodexFileRecord[]> {
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) {
+      return [];
+    }
+
+    const chat = await this.getChat(chatId);
+    return normalizeFileRecords(
+      await this.codex.searchFiles(trimmedQuery, [chat.worktreePath]),
+    );
+  }
+
+  private async createCodexTurnOptions(
+    input: SendMessageInput,
+    chat: ChatRecord,
+  ): Promise<
+    | {
+        effort?: string;
+        files?: CodexTurnContextItem[];
+        model?: string;
+        skills?: CodexTurnContextItem[];
+      }
+    | undefined
+  > {
+    const files = await normalizeFileContextItems(
+      input.files,
+      chat.worktreePath,
+    );
+    const skills = await this.normalizeSkillContextItems(
+      input.skills,
+      chat.worktreePath,
+    );
+    if (
+      !input.effort &&
+      !input.model &&
+      files.length === 0 &&
+      skills.length === 0
+    ) {
+      return undefined;
+    }
+    return {
+      effort: input.effort,
+      files: files.length > 0 ? files : undefined,
+      model: input.model,
+      skills: skills.length > 0 ? skills : undefined,
+    };
+  }
+
+  private async normalizeSkillContextItems(
+    items: CodexTurnContextItem[] | undefined,
+    worktreePath: string,
+  ): Promise<CodexTurnContextItem[]> {
+    const normalized = normalizeTurnContextItems(items);
+    if (normalized.length === 0) {
+      return [];
+    }
+
+    const availableSkills = normalizeSkillRecords(
+      await this.codex.listSkills([worktreePath]),
+    );
+    const skillsByPath = new Map(
+      availableSkills
+        .filter((skill) => skill.enabled)
+        .map((skill) => [skill.path, skill]),
+    );
+    return normalized.map((item) => {
+      const skill = skillsByPath.get(item.path);
+      if (!skill) {
+        throw new Error(`Skill context path is not available: ${item.path}`);
+      }
+      return {
+        name: skill.name,
+        path: skill.path,
+      };
+    });
   }
 
   private async ensureThread(chat: ChatRecord): Promise<string> {
@@ -1327,6 +1432,208 @@ function findImportedReplacement(
       );
     }) ?? null
   );
+}
+
+function normalizeTurnContextItems(
+  items: CodexTurnContextItem[] | undefined,
+): CodexTurnContextItem[] {
+  return (items ?? [])
+    .map((item) => ({
+      name: item.name.trim(),
+      path: item.path.trim(),
+    }))
+    .filter((item) => item.name && item.path);
+}
+
+async function normalizeFileContextItems(
+  items: CodexTurnContextItem[] | undefined,
+  worktreePath: string,
+): Promise<CodexTurnContextItem[]> {
+  const normalized = normalizeTurnContextItems(items);
+  if (normalized.length === 0) {
+    return [];
+  }
+
+  const realWorktreePath = await realpath(worktreePath);
+  return await Promise.all(
+    normalized.map(async (item) => {
+      const resolvedPath = resolve(item.path);
+      if (!isPathInside(worktreePath, resolvedPath)) {
+        throw new Error(
+          `File context path must be within the chat worktree: ${item.path}`,
+        );
+      }
+
+      let realFilePath: string;
+      try {
+        realFilePath = await realpath(resolvedPath);
+      } catch {
+        throw new Error(
+          `File context path is not an existing file: ${item.path}`,
+        );
+      }
+      if (!isPathInside(realWorktreePath, realFilePath)) {
+        throw new Error(
+          `File context path must resolve within the chat worktree: ${item.path}`,
+        );
+      }
+      if (!(await stat(realFilePath)).isFile()) {
+        throw new Error(`File context path is not a file: ${item.path}`);
+      }
+
+      return {
+        name: item.name,
+        path: resolvedPath,
+      };
+    }),
+  );
+}
+
+function isPathInside(rootPath: string, candidatePath: string): boolean {
+  const normalizedRoot = resolve(rootPath);
+  const normalizedCandidate = resolve(candidatePath);
+  const relativePath = relative(normalizedRoot, normalizedCandidate);
+  return (
+    relativePath === "" ||
+    (relativePath !== ".." &&
+      !relativePath.startsWith(`..${sep}`) &&
+      !isAbsolute(relativePath))
+  );
+}
+
+function normalizeModelRecords(value: unknown): CodexModelRecord[] {
+  const source =
+    getRecordArray(value, "data") ?? getRecordArray(value, "models");
+  return (source ?? [])
+    .map((model) => {
+      const id =
+        getRecordString(model, "id") ?? getRecordString(model, "model");
+      if (!id) {
+        return null;
+      }
+      const modelName = getRecordString(model, "model") ?? id;
+      return {
+        id,
+        model: modelName,
+        displayName: getRecordString(model, "displayName") ?? id,
+        description: getRecordString(model, "description") ?? "",
+        defaultReasoningEffort:
+          getRecordString(model, "defaultReasoningEffort") ?? null,
+        inputModalities: getStringArray(model.inputModalities),
+        isDefault: model.isDefault === true,
+        supportedReasoningEfforts: getReasoningEfforts(model),
+      } satisfies CodexModelRecord;
+    })
+    .filter((model): model is CodexModelRecord => Boolean(model));
+}
+
+function normalizeSkillRecords(value: unknown): CodexSkillRecord[] {
+  const entries =
+    getRecordArray(value, "data") ?? getRecordArray(value, "skills");
+  const skills = (entries ?? []).flatMap((entry) => {
+    if (Array.isArray(entry.skills)) {
+      return entry.skills.filter(isRecord);
+    }
+    return isRecord(entry) ? [entry] : [];
+  });
+  return skills
+    .map((skill) => {
+      const name = getRecordString(skill, "name");
+      const path = getRecordString(skill, "path");
+      if (!name || !path) {
+        return null;
+      }
+      const skillInterface = isRecord(skill.interface) ? skill.interface : null;
+      const shortDescription =
+        getRecordString(skillInterface, "shortDescription") ??
+        getRecordString(skill, "shortDescription") ??
+        null;
+      return {
+        name,
+        path,
+        displayName: getRecordString(skillInterface, "displayName") ?? name,
+        description: getRecordString(skill, "description") ?? "",
+        shortDescription,
+        enabled: skill.enabled !== false,
+      } satisfies CodexSkillRecord;
+    })
+    .filter((skill): skill is CodexSkillRecord => Boolean(skill));
+}
+
+function normalizeFileRecords(value: unknown): CodexFileRecord[] {
+  const files = getRecordArray(value, "files");
+  return (files ?? [])
+    .map((file) => {
+      const matchType = getRecordString(file, "match_type");
+      if (matchType && matchType !== "file") {
+        return null;
+      }
+      const root = getRecordString(file, "root");
+      const relativePath = getRecordString(file, "path");
+      if (!root || !relativePath) {
+        return null;
+      }
+      return {
+        name:
+          getRecordString(file, "file_name") ??
+          relativePath.split("/").pop() ??
+          relativePath,
+        path: join(root, relativePath),
+        relativePath,
+        root,
+        score:
+          typeof file.score === "number" && Number.isFinite(file.score)
+            ? file.score
+            : 0,
+      } satisfies CodexFileRecord;
+    })
+    .filter((file): file is CodexFileRecord => Boolean(file));
+}
+
+function getReasoningEfforts(model: Record<string, unknown>): string[] {
+  const supported = model.supportedReasoningEfforts;
+  if (!Array.isArray(supported)) {
+    return [];
+  }
+  return supported
+    .map((effort) =>
+      typeof effort === "string"
+        ? effort
+        : getRecordString(effort, "reasoningEffort"),
+    )
+    .filter((effort): effort is string => Boolean(effort));
+}
+
+function getRecordArray(
+  value: unknown,
+  key: string,
+): Array<Record<string, unknown>> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const candidate = value[key];
+  if (!Array.isArray(candidate)) {
+    return undefined;
+  }
+  return candidate.filter(isRecord);
+}
+
+function getRecordString(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const candidate = value[key];
+  return typeof candidate === "string" ? candidate : undefined;
+}
+
+function getStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function toErrorMessage(error: unknown): string {
