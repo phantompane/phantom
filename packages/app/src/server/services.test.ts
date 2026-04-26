@@ -1,5 +1,5 @@
 import { deepStrictEqual, rejects, strictEqual } from "node:assert";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it, vi } from "vitest";
@@ -26,9 +26,11 @@ class FakeCodexBridge {
   readonly serverRequestHandlers: Array<(message: CodexMessage) => void> = [];
   readonly interruptTurn = vi.fn();
   readonly listModels = vi.fn();
+  readonly listSkills = vi.fn();
   readonly readAccount = vi.fn();
   readonly respondToServerRequest = vi.fn();
   readonly resumeThread = vi.fn();
+  readonly searchFiles = vi.fn();
   readonly startThread = vi.fn();
   readonly startTurn = vi.fn();
   readonly steerTurn = vi.fn();
@@ -988,6 +990,167 @@ describe("ServeServices", () => {
       "/repo/.git/phantom/worktrees/feature",
     ]);
     strictEqual(codex.startTurn.mock.calls.length, 1);
+  });
+
+  it("passes selected model, effort, files, and skills to Codex turns", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    await mkdir(join(worktreePath, "src"));
+    const filePath = join(worktreePath, "src/index.ts");
+    await writeFile(filePath, "export {};\n");
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.listSkills.mockResolvedValueOnce({
+      skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
+    });
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_1" } });
+
+    await services.sendMessage("chat_1", {
+      effort: "high",
+      files: [
+        {
+          name: "src/index.ts",
+          path: filePath,
+        },
+      ],
+      model: "gpt-5.2",
+      skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
+      text: "please edit",
+    });
+
+    deepStrictEqual(codex.startTurn.mock.calls[0], [
+      "thread_1",
+      "please edit",
+      worktreePath,
+      {
+        effort: "high",
+        files: [
+          {
+            name: "src/index.ts",
+            path: filePath,
+          },
+        ],
+        model: "gpt-5.2",
+        skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
+      },
+    ]);
+  });
+
+  it("rejects file context paths outside the chat worktree", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const outsidePath = join(await createTemporaryDirectory(), "secret.txt");
+    await writeFile(outsidePath, "secret\n");
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { codex, services } = await createHarness(state);
+
+    await rejects(
+      services.sendMessage("chat_1", {
+        files: [{ name: "secret.txt", path: outsidePath }],
+        text: "please read",
+      }),
+      /File context path must be within the chat worktree/,
+    );
+
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+  });
+
+  it("rejects file context paths that resolve to directories", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const directoryPath = join(worktreePath, "src");
+    await mkdir(directoryPath);
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { codex, services } = await createHarness(state);
+
+    await rejects(
+      services.sendMessage("chat_1", {
+        files: [{ name: "src", path: directoryPath }],
+        text: "please read",
+      }),
+      /File context path is not a file/,
+    );
+
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+  });
+
+  it("rejects file context symlinks that resolve outside the chat worktree", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const outsidePath = join(await createTemporaryDirectory(), "secret.txt");
+    await writeFile(outsidePath, "secret\n");
+    const linkPath = join(worktreePath, "secret.txt");
+    await symlink(outsidePath, linkPath);
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { codex, services } = await createHarness(state);
+
+    await rejects(
+      services.sendMessage("chat_1", {
+        files: [{ name: "secret.txt", path: linkPath }],
+        text: "please read",
+      }),
+      /File context path must resolve within the chat worktree/,
+    );
+
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+  });
+
+  it("rejects skill context paths that are unavailable for the chat cwd", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.listSkills.mockResolvedValueOnce({ skills: [] });
+
+    await rejects(
+      services.sendMessage("chat_1", {
+        skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
+        text: "please review",
+      }),
+      /Skill context path is not available/,
+    );
+
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+  });
+
+  it("filters fuzzy search results to file matches", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.searchFiles.mockResolvedValueOnce({
+      files: [
+        { root: "/repo", path: "src", match_type: "dir" },
+        { root: "/repo", path: "src/index.ts", match_type: "file" },
+      ],
+    });
+
+    deepStrictEqual(await services.searchFiles("chat_1", "src"), [
+      {
+        name: "index.ts",
+        path: "/repo/src/index.ts",
+        relativePath: "src/index.ts",
+        root: "/repo",
+        score: 0,
+      },
+    ]);
   });
 
   it("resets transient chat state after the Codex app-server exits", async () => {

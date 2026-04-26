@@ -25,6 +25,18 @@ export interface CodexMessage {
   };
 }
 
+export interface CodexTurnContextItem {
+  name: string;
+  path: string;
+}
+
+export interface CodexTurnOptions {
+  effort?: string;
+  files?: CodexTurnContextItem[];
+  model?: string;
+  skills?: CodexTurnContextItem[];
+}
+
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -36,14 +48,32 @@ export function getCodexBin(): string {
   return process.env.PHANTOM_SERVE_CODEX_BIN ?? "codex";
 }
 
-function createUserInput(text: string): Array<Record<string, unknown>> {
-  return [
+function createUserInput(
+  text: string,
+  options: CodexTurnOptions = {},
+): Array<Record<string, unknown>> {
+  const input: Array<Record<string, unknown>> = [
     {
       type: "text",
       text,
       text_elements: [],
     },
   ];
+  for (const skill of options.skills ?? []) {
+    input.push({
+      type: "skill",
+      name: skill.name,
+      path: skill.path,
+    });
+  }
+  for (const file of options.files ?? []) {
+    input.push({
+      type: "mention",
+      name: file.name,
+      path: file.path,
+    });
+  }
+  return input;
 }
 
 export class CodexBridge {
@@ -116,9 +146,28 @@ export class CodexBridge {
     });
   }
 
-  async startThread(cwd: string): Promise<unknown> {
+  async listSkills(cwds: string[]): Promise<unknown> {
+    return this.request("skills/list", {
+      cwds,
+      forceReload: false,
+    });
+  }
+
+  async searchFiles(query: string, roots: string[]): Promise<unknown> {
+    return this.request("fuzzyFileSearch", {
+      query,
+      roots,
+      cancellationToken: null,
+    });
+  }
+
+  async startThread(
+    cwd: string,
+    options: CodexTurnOptions = {},
+  ): Promise<unknown> {
     return this.request("thread/start", {
       cwd,
+      model: options.model,
       serviceName: "phantom_serve",
       experimentalRawEvents: false,
       persistExtendedHistory: true,
@@ -138,11 +187,14 @@ export class CodexBridge {
     threadId: string,
     text: string,
     cwd: string,
+    options: CodexTurnOptions = {},
   ): Promise<unknown> {
     return this.request("turn/start", {
       threadId,
       cwd,
-      input: createUserInput(text),
+      input: createUserInput(text, options),
+      model: options.model,
+      effort: options.effort,
     });
   }
 
@@ -150,11 +202,14 @@ export class CodexBridge {
     threadId: string,
     turnId: string,
     text: string,
+    options: CodexTurnOptions = {},
   ): Promise<unknown> {
     return this.request("turn/steer", {
       threadId,
       expectedTurnId: turnId,
-      input: createUserInput(text),
+      input: createUserInput(text, options),
+      model: options.model,
+      effort: options.effort,
     });
   }
 

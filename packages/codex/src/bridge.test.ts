@@ -133,6 +133,76 @@ describe("CodexBridge", () => {
     });
   });
 
+  it("passes model, effort, file mentions, and skills to new turns", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    const turn = bridge.startTurn("thread_1", "please edit", "/repo", {
+      effort: "high",
+      files: [{ name: "src/index.ts", path: "/repo/src/index.ts" }],
+      model: "gpt-5.2",
+      skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
+    });
+
+    await vi.waitFor(() => expect(findWrite(proc, "turn/start")).toBeDefined());
+    const request = findWrite(proc, "turn/start");
+    expect(request?.params).toEqual({
+      threadId: "thread_1",
+      cwd: "/repo",
+      input: [
+        {
+          type: "text",
+          text: "please edit",
+          text_elements: [],
+        },
+        {
+          type: "skill",
+          name: "review",
+          path: "/skills/review/SKILL.md",
+        },
+        {
+          type: "mention",
+          name: "src/index.ts",
+          path: "/repo/src/index.ts",
+        },
+      ],
+      model: "gpt-5.2",
+      effort: "high",
+    });
+
+    proc.send({ id: request?.id, result: { turn: { id: "turn_1" } } });
+    await expect(turn).resolves.toEqual({ turn: { id: "turn_1" } });
+  });
+
+  it("passes model and effort to steer turns", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    const turn = bridge.steerTurn("thread_1", "turn_1", "continue", {
+      effort: "high",
+      model: "gpt-5.2",
+    });
+
+    await vi.waitFor(() => expect(findWrite(proc, "turn/steer")).toBeDefined());
+    const request = findWrite(proc, "turn/steer");
+    expect(request?.params).toEqual({
+      threadId: "thread_1",
+      expectedTurnId: "turn_1",
+      input: [
+        {
+          type: "text",
+          text: "continue",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.2",
+      effort: "high",
+    });
+
+    proc.send({ id: request?.id, result: { turn: { id: "turn_1" } } });
+    await expect(turn).resolves.toEqual({ turn: { id: "turn_1" } });
+  });
+
   it("responds to string server request ids without coercing them", async () => {
     const { bridge, proc } = createBridge();
     await initializeBridge(bridge, proc);

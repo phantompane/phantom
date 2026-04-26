@@ -33,6 +33,10 @@ export const Route = createFileRoute("/api/chats/$chatId/messages")({
             throw new Error("Message text is required");
           }
           const chat = await getServeServices().sendMessage(params.chatId, {
+            effort: getString(body, "effort"),
+            files: getContextItems(body, "files"),
+            model: getString(body, "model"),
+            skills: getContextItems(body, "skills"),
             text,
           });
           return json({ chat });
@@ -43,3 +47,27 @@ export const Route = createFileRoute("/api/chats/$chatId/messages")({
     },
   },
 });
+
+function getContextItems(
+  body: Record<string, unknown>,
+  key: string,
+): Array<{ name: string; path: string }> | undefined {
+  const value = body[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return null;
+      }
+      const record = item as Record<string, unknown>;
+      return {
+        name: typeof record.name === "string" ? record.name : "",
+        path: typeof record.path === "string" ? record.path : "",
+      };
+    })
+    .filter((item): item is { name: string; path: string } =>
+      Boolean(item?.name && item.path),
+    );
+}
