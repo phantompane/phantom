@@ -230,6 +230,127 @@ describe("listWorktrees", () => {
     cwdMock.mockRestore();
   });
 
+  it("includes prunable worktrees by default for validation and cleanup flows", async () => {
+    resetMocks();
+    const cwdMock = mockCwd();
+    gitListWorktreesMock.mockResolvedValue([
+      {
+        path: "/test/repo",
+        branch: "main",
+        head: "abc123",
+        isLocked: false,
+        isPrunable: false,
+      },
+      {
+        path: "/test/repo/.git/phantom/worktrees/stale-feature",
+        branch: "stale-feature",
+        head: "def456",
+        isLocked: false,
+        isPrunable: true,
+      },
+      {
+        path: "/test/repo/.git/phantom/worktrees/active-feature",
+        branch: "active-feature",
+        head: "ghi789",
+        isLocked: false,
+        isPrunable: false,
+      },
+    ]);
+    getStatusMock.mockResolvedValue(cleanStatus());
+
+    const result = await listWorktrees("/test/repo");
+
+    ok(result.ok);
+    if (result.ok) {
+      deepStrictEqual(
+        normalizeWorktrees(result.value.worktrees),
+        normalizeWorktrees([
+          {
+            name: "main",
+            path: "/test/repo",
+            pathToDisplay: ".",
+            branch: "main",
+            isClean: true,
+          },
+          {
+            name: "stale-feature",
+            path: "/test/repo/.git/phantom/worktrees/stale-feature",
+            pathToDisplay: ".git/phantom/worktrees/stale-feature",
+            branch: "stale-feature",
+            isClean: true,
+          },
+          {
+            name: "active-feature",
+            path: "/test/repo/.git/phantom/worktrees/active-feature",
+            pathToDisplay: ".git/phantom/worktrees/active-feature",
+            branch: "active-feature",
+            isClean: true,
+          },
+        ]),
+      );
+    }
+
+    cwdMock.mockRestore();
+  });
+
+  it("excludes prunable worktrees from display-oriented lists", async () => {
+    resetMocks();
+    const cwdMock = mockCwd();
+    gitListWorktreesMock.mockResolvedValue([
+      {
+        path: "/test/repo",
+        branch: "main",
+        head: "abc123",
+        isLocked: false,
+        isPrunable: false,
+      },
+      {
+        path: "/test/repo/.git/phantom/worktrees/stale-feature",
+        branch: "stale-feature",
+        head: "def456",
+        isLocked: false,
+        isPrunable: true,
+      },
+      {
+        path: "/test/repo/.git/phantom/worktrees/active-feature",
+        branch: "active-feature",
+        head: "ghi789",
+        isLocked: false,
+        isPrunable: false,
+      },
+    ]);
+    getStatusMock.mockResolvedValue(cleanStatus());
+
+    const result = await listWorktrees("/test/repo", {
+      includePrunable: false,
+    });
+
+    ok(result.ok);
+    if (result.ok) {
+      deepStrictEqual(
+        normalizeWorktrees(result.value.worktrees),
+        normalizeWorktrees([
+          {
+            name: "main",
+            path: "/test/repo",
+            pathToDisplay: ".",
+            branch: "main",
+            isClean: true,
+          },
+          {
+            name: "active-feature",
+            path: "/test/repo/.git/phantom/worktrees/active-feature",
+            pathToDisplay: ".git/phantom/worktrees/active-feature",
+            branch: "active-feature",
+            isClean: true,
+          },
+        ]),
+      );
+    }
+
+    cwdMock.mockRestore();
+  });
+
   it("includes non-phantom worktrees and sibling paths", async () => {
     resetMocks();
     const cwdMock = mockCwd();

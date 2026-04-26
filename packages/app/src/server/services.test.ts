@@ -218,6 +218,10 @@ describe("ServeServices", () => {
 
     const worktrees = await services.listProjectWorktrees("proj_1");
 
+    deepStrictEqual(coreMocks.listWorktrees.mock.calls[0], [
+      "/repo",
+      { includePrunable: false },
+    ]);
     deepStrictEqual(
       worktrees.map((worktree) => ({
         name: worktree.name,

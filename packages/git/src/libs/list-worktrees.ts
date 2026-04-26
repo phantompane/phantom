@@ -38,9 +38,9 @@ export async function listWorktrees(gitRoot: string): Promise<GitWorktree[]> {
         : fullBranch;
     } else if (line === "detached") {
       currentWorktree.branch = "(detached HEAD)";
-    } else if (line === "locked") {
+    } else if (line.startsWith("locked")) {
       currentWorktree.isLocked = true;
-    } else if (line === "prunable") {
+    } else if (line.startsWith("prunable")) {
       currentWorktree.isPrunable = true;
     }
   }

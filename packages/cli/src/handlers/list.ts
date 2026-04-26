@@ -46,7 +46,10 @@ export async function listHandler(args: string[] = []): Promise<void> {
         output.log(selectResult.value.name);
       }
     } else {
-      const result = await listWorktreesCore(gitRoot, { excludeDefault });
+      const result = await listWorktreesCore(gitRoot, {
+        excludeDefault,
+        includePrunable: false,
+      });
 
       if (isErr(result)) {
         exitWithError("Failed to list worktrees", exitCodes.generalError);

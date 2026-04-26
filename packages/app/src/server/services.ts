@@ -254,7 +254,9 @@ export class ServeServices {
 
     let result;
     try {
-      result = await listWorktrees(project.rootPath);
+      result = await listWorktrees(project.rootPath, {
+        includePrunable: false,
+      });
     } catch {
       return projectWorktreesFromPersistedChats(
         state,

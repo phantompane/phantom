@@ -126,6 +126,7 @@ describe("listHandler", () => {
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(listWorktreesCoreMock.mock.calls.length, 1);
     strictEqual(listWorktreesCoreMock.mock.calls[0][0], "/test/repo");
+    strictEqual(listWorktreesCoreMock.mock.calls[0][1]?.includePrunable, false);
     strictEqual(consoleLogMock.mock.calls.length, 3);
     strictEqual(consoleLogMock.mock.calls[0][0], "main (.)");
     strictEqual(
@@ -164,6 +165,7 @@ describe("listHandler", () => {
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(listWorktreesCoreMock.mock.calls.length, 1);
     strictEqual(listWorktreesCoreMock.mock.calls[0][1]?.excludeDefault, true);
+    strictEqual(listWorktreesCoreMock.mock.calls[0][1]?.includePrunable, false);
     strictEqual(consoleLogMock.mock.calls.length, 1);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
