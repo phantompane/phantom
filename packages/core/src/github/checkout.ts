@@ -1,7 +1,13 @@
 import { err, type Result } from "@phantompane/utils";
-import { fetchIssue, getGitHubRepoInfo, isPullRequest } from "./api/index.ts";
+import {
+  fetchIssue,
+  getGitHubRepoInfo,
+  isPullRequest,
+} from "@phantompane/github";
 import { checkoutIssue } from "./checkout/issue.ts";
 import { type CheckoutResult, checkoutPullRequest } from "./checkout/pr.ts";
+
+export type { CheckoutResult } from "./checkout/pr.ts";
 
 export interface GitHubCheckoutOptions {
   number: string;

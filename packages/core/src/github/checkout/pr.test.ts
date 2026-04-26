@@ -7,16 +7,7 @@ const fetchMock = vi.fn();
 const attachWorktreeCoreMock = vi.fn();
 const setUpstreamBranchMock = vi.fn();
 const createContextMock = vi.fn();
-const getWorktreePathFromDirectoryMock = vi.fn();
 const validateWorktreeExistsMock = vi.fn();
-
-// Mock the WorktreeAlreadyExistsError class
-class MockWorktreeAlreadyExistsError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "WorktreeAlreadyExistsError";
-  }
-}
 
 vi.doMock("@phantompane/git", () => ({
   getGitRoot: getGitRootMock,
@@ -24,11 +15,15 @@ vi.doMock("@phantompane/git", () => ({
   setUpstreamBranch: setUpstreamBranchMock,
 }));
 
-vi.doMock("@phantompane/core", () => ({
-  attachWorktreeCore: attachWorktreeCoreMock,
-  WorktreeAlreadyExistsError: MockWorktreeAlreadyExistsError,
+vi.doMock("../../context.ts", () => ({
   createContext: createContextMock,
-  getWorktreePathFromDirectory: getWorktreePathFromDirectoryMock,
+}));
+
+vi.doMock("../../worktree/attach.ts", () => ({
+  attachWorktreeCore: attachWorktreeCoreMock,
+}));
+
+vi.doMock("../../worktree/validate.ts", () => ({
   validateWorktreeExists: validateWorktreeExistsMock,
 }));
 

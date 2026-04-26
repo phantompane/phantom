@@ -1,11 +1,9 @@
-import {
-  createContext,
-  createWorktree as createWorktreeCore,
-  validateWorktreeExists,
-} from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
+import { type GitHubIssue, isPullRequest } from "@phantompane/github";
 import { err, isErr, ok, type Result } from "@phantompane/utils";
-import { type GitHubIssue, isPullRequest } from "../api/index.ts";
+import { createContext } from "../../context.ts";
+import { createWorktree as createWorktreeCore } from "../../worktree/create.ts";
+import { validateWorktreeExists } from "../../worktree/validate.ts";
 import type { CheckoutResult } from "./pr.ts";
 
 export async function checkoutIssue(

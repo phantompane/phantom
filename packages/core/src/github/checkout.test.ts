@@ -8,7 +8,7 @@ const isPullRequestMock = vi.fn();
 const checkoutPullRequestMock = vi.fn();
 const checkoutIssueMock = vi.fn();
 
-vi.doMock("./api/index.ts", () => ({
+vi.doMock("@phantompane/github", () => ({
   getGitHubRepoInfo: getGitHubRepoInfoMock,
   fetchIssue: fetchIssueMock,
   isPullRequest: isPullRequestMock,

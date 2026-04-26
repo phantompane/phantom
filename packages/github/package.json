@@ -12,10 +12,6 @@
     "test": "vitest run --root ../.. packages/github/src"
   },
   "dependencies": {
-    "@phantompane/core": "workspace:*",
-    "@phantompane/git": "workspace:*",
-    "@phantompane/process": "workspace:*",
-    "@phantompane/utils": "workspace:*",
     "@octokit/rest": "^22.0.1",
     "zod": "^4.3.6"
   }
