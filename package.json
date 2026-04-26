@@ -1,6 +1,6 @@
 {
   "name": "@phantompane/monorepo",
-  "version": "6.2.0",
+  "version": "6.3.0-0",
   "packageManager": "pnpm@10.33.2",
   "private": true,
   "type": "module",
