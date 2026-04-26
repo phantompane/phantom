@@ -33,6 +33,14 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Combobox, type ComboboxOption } from "../components/ui/combobox";
 import {
+  ActivityCard,
+  InlineLoading,
+  LoadingSpinner,
+  ProjectListSkeleton,
+  TimelineSkeleton,
+  WorktreeListSkeleton,
+} from "../components/loading";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -304,6 +312,19 @@ function Home() {
   const [status, setStatus] = useState("Starting");
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isProjectsLoading, setIsProjectsLoading] = useState(true);
+  const [loadingProjectIds, setLoadingProjectIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [isModelsLoading, setIsModelsLoading] = useState(true);
+  const [isMessagesLoading, setIsMessagesLoading] = useState(false);
+  const [isChatContextLoading, setIsChatContextLoading] = useState(false);
+  const [isFileSearchLoading, setIsFileSearchLoading] = useState(false);
+  const [creatingProjectId, setCreatingProjectId] = useState<string | null>(
+    null,
+  );
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isInterrupting, setIsInterrupting] = useState(false);
   const createChatInFlightRef = useRef(false);
   const chatTimelineRef = useRef<HTMLElement | null>(null);
   const isChatTimelinePinnedToBottomRef = useRef(true);
@@ -314,6 +335,7 @@ function Home() {
   const selectedChatIdRef = useRef<string | null>(null);
   const selectedChatVersionRef = useRef(0);
   const sendMessageRequestIdRef = useRef(0);
+  const pendingSendChatIdsRef = useRef<Set<string>>(new Set());
   const [pendingApproval, setPendingApproval] =
     useState<PendingApproval | null>(null);
 
@@ -456,6 +478,15 @@ function Home() {
       ),
     [messages],
   );
+  const showProjectListSkeleton = isProjectsLoading && projects.length === 0;
+  const showTimelineSkeleton =
+    Boolean(selectedChatId) &&
+    isMessagesLoading &&
+    visibleMessages.length === 0;
+  const showActivityCard =
+    Boolean(selectedChatId) &&
+    !showTimelineSkeleton &&
+    (isSendingMessage || isChatRunning);
 
   useEffect(() => {
     void refreshProjects();
@@ -488,6 +519,11 @@ function Home() {
       cancelAnimationFrame(scrollSaveAnimationFrameRef.current);
       scrollSaveAnimationFrameRef.current = null;
     }
+    setIsSendingMessage(
+      Boolean(
+        selectedChatId && pendingSendChatIdsRef.current.has(selectedChatId),
+      ),
+    );
 
     if (!selectedChatId) {
       setMessages([]);
@@ -498,6 +534,9 @@ function Home() {
       setFileSearchQuery("");
       setFileSearchResults([]);
       setSkills([]);
+      setIsMessagesLoading(false);
+      setIsChatContextLoading(false);
+      setIsFileSearchLoading(false);
       return;
     }
 
@@ -509,7 +548,7 @@ function Home() {
     setMessages([]);
     setMessagesChatId(null);
     const chatContextController = new AbortController();
-    void refreshMessages(selectedChatId);
+    void refreshMessages(selectedChatId, { showLoading: true });
     void refreshSelectedChat(selectedChatId);
     void refreshChatContext(selectedChatId, chatContextController.signal);
 
@@ -573,7 +612,7 @@ function Home() {
       shouldIgnoreNextChatTimelineScrollRef.current = true;
       timeline.scrollTop = timeline.scrollHeight;
     }
-  }, [messagesChatId, selectedChatId, visibleMessages]);
+  }, [messagesChatId, selectedChatId, showActivityCard, visibleMessages]);
 
   useEffect(() => {
     return () => {
@@ -607,11 +646,13 @@ function Home() {
 
     if (!selectedChatId || !fileSearchQuery.trim()) {
       setFileSearchResults([]);
+      setIsFileSearchLoading(false);
       return;
     }
 
     const controller = new AbortController();
     const query = fileSearchQuery.trim();
+    setIsFileSearchLoading(true);
     const timeout = setTimeout(() => {
       void fetchJson<{ files: CodexFileRecord[] }>(
         `/api/chats/${selectedChatId}?fileQuery=${encodeURIComponent(query)}`,
@@ -629,6 +670,14 @@ function Home() {
         .catch((err: Error) => {
           if (err.name !== "AbortError") {
             setError(err.message);
+          }
+        })
+        .finally(() => {
+          if (
+            !controller.signal.aborted &&
+            fileSearchRequestIdRef.current === requestId
+          ) {
+            setIsFileSearchLoading(false);
           }
         });
     }, 160);
@@ -649,72 +698,95 @@ function Home() {
     setSelectedChatId(selectedWorktreeChats[0]?.id ?? null);
   }, [selectedChatId, selectedWorktreeChats]);
 
-  async function refreshProjects() {
-    const data = await fetchJson<{ projects: ProjectRecord[] }>(
-      "/api/projects",
-    );
-    setProjects(data.projects);
-    const projectDataEntries = await Promise.all(
-      data.projects.map(
-        async (project) =>
-          [
-            project.id,
-            await loadProjectData(project.id, { sync: true }),
-          ] as const,
-      ),
-    );
-    const nextChatsByProject = Object.fromEntries(
-      projectDataEntries.map(([projectId, projectData]) => [
-        projectId,
-        projectData.chats,
-      ]),
-    );
-    const nextWorktreesByProject = Object.fromEntries(
-      projectDataEntries.map(([projectId, projectData]) => [
-        projectId,
-        projectData.worktrees,
-      ]),
-    );
-    setChatsByProject(nextChatsByProject);
-    setWorktreesByProject(nextWorktreesByProject);
-    const fallbackProjectId = selectedProjectId ?? data.projects[0]?.id ?? null;
-    const fallbackWorktree = firstProjectWorktree(
-      fallbackProjectId,
-      nextWorktreesByProject,
-    );
-    setSelectedProjectId((current) => {
-      const nextProjectId = current ?? data.projects[0]?.id ?? null;
-      if (nextProjectId) {
-        setExpandedProjectIds((expanded) => {
-          const next = new Set(expanded);
-          next.add(nextProjectId);
-          return next;
-        });
+  function setProjectLoading(projectId: string, isLoading: boolean) {
+    setLoadingProjectIds((current) => {
+      const next = new Set(current);
+      if (isLoading) {
+        next.add(projectId);
+      } else {
+        next.delete(projectId);
       }
-      return nextProjectId;
+      return next;
     });
-    setSelectedWorktreePath((current) => {
-      if (
-        fallbackProjectId &&
-        current &&
-        (nextWorktreesByProject[fallbackProjectId] ?? []).some(
-          (worktree) => worktree.path === current,
-        )
-      ) {
-        return current;
-      }
-      return fallbackWorktree?.path ?? null;
-    });
-    setSelectedChatId((current) =>
-      Object.values(nextChatsByProject)
-        .flat()
-        .some((chat) => chat.id === current)
-        ? current
-        : (fallbackWorktree?.chatId ?? null),
-    );
+  }
+
+  async function refreshProjects(): Promise<boolean> {
+    setIsProjectsLoading(true);
+    try {
+      const data = await fetchJson<{ projects: ProjectRecord[] }>(
+        "/api/projects",
+      );
+      setProjects(data.projects);
+      const projectDataEntries = await Promise.all(
+        data.projects.map(
+          async (project) =>
+            [
+              project.id,
+              await loadProjectData(project.id, { sync: true }),
+            ] as const,
+        ),
+      );
+      const nextChatsByProject = Object.fromEntries(
+        projectDataEntries.map(([projectId, projectData]) => [
+          projectId,
+          projectData.chats,
+        ]),
+      );
+      const nextWorktreesByProject = Object.fromEntries(
+        projectDataEntries.map(([projectId, projectData]) => [
+          projectId,
+          projectData.worktrees,
+        ]),
+      );
+      setChatsByProject(nextChatsByProject);
+      setWorktreesByProject(nextWorktreesByProject);
+      const fallbackProjectId =
+        selectedProjectId ?? data.projects[0]?.id ?? null;
+      const fallbackWorktree = firstProjectWorktree(
+        fallbackProjectId,
+        nextWorktreesByProject,
+      );
+      setSelectedProjectId((current) => {
+        const nextProjectId = current ?? data.projects[0]?.id ?? null;
+        if (nextProjectId) {
+          setExpandedProjectIds((expanded) => {
+            const next = new Set(expanded);
+            next.add(nextProjectId);
+            return next;
+          });
+        }
+        return nextProjectId;
+      });
+      setSelectedWorktreePath((current) => {
+        if (
+          fallbackProjectId &&
+          current &&
+          (nextWorktreesByProject[fallbackProjectId] ?? []).some(
+            (worktree) => worktree.path === current,
+          )
+        ) {
+          return current;
+        }
+        return fallbackWorktree?.path ?? null;
+      });
+      setSelectedChatId((current) =>
+        Object.values(nextChatsByProject)
+          .flat()
+          .some((chat) => chat.id === current)
+          ? current
+          : (fallbackWorktree?.chatId ?? null),
+      );
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
+    } finally {
+      setIsProjectsLoading(false);
+    }
   }
 
   async function refreshModels() {
+    setIsModelsLoading(true);
     try {
       const data = await fetchJson<{ models: CodexModelRecord[] }>(
         "/api/models",
@@ -732,10 +804,13 @@ function Home() {
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsModelsLoading(false);
     }
   }
 
   async function refreshChatContext(chatId: string, signal?: AbortSignal) {
+    setIsChatContextLoading(true);
     try {
       const data = await fetchJson<{ skills: CodexSkillRecord[] }>(
         `/api/chats/${chatId}?context=skills`,
@@ -750,13 +825,20 @@ function Home() {
         return;
       }
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (!signal?.aborted) {
+        setIsChatContextLoading(false);
+      }
     }
   }
 
   async function loadProjectData(
     projectId: string,
     options: { sync?: boolean } = {},
-  ) {
+  ): Promise<{
+    chats: ChatRecord[];
+    worktrees: ProjectWorktreeRecord[];
+  }> {
     return await fetchJson<{
       chats: ChatRecord[];
       worktrees: ProjectWorktreeRecord[];
@@ -766,34 +848,43 @@ function Home() {
   async function refreshChats(
     projectId: string,
     options: { sync?: boolean; updateSelection?: boolean } = {},
-  ) {
-    const projectData = await loadProjectData(projectId, options);
-    setChatsByProject((current) => ({
-      ...current,
-      [projectId]: projectData.chats,
-    }));
-    setWorktreesByProject((current) => ({
-      ...current,
-      [projectId]: projectData.worktrees,
-    }));
-    if (options.updateSelection === false) {
-      return;
+  ): Promise<boolean> {
+    setProjectLoading(projectId, true);
+    try {
+      const projectData = await loadProjectData(projectId, options);
+      setChatsByProject((current) => ({
+        ...current,
+        [projectId]: projectData.chats,
+      }));
+      setWorktreesByProject((current) => ({
+        ...current,
+        [projectId]: projectData.worktrees,
+      }));
+      if (options.updateSelection === false) {
+        return true;
+      }
+      const fallbackWorktree = firstProjectWorktree(projectId, {
+        ...worktreesByProject,
+        [projectId]: projectData.worktrees,
+      });
+      setSelectedWorktreePath((current) =>
+        current &&
+        projectData.worktrees.some((worktree) => worktree.path === current)
+          ? current
+          : (fallbackWorktree?.path ?? null),
+      );
+      setSelectedChatId((current) =>
+        projectData.chats.some((chat) => chat.id === current)
+          ? current
+          : (fallbackWorktree?.chatId ?? null),
+      );
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
+    } finally {
+      setProjectLoading(projectId, false);
     }
-    const fallbackWorktree = firstProjectWorktree(projectId, {
-      ...worktreesByProject,
-      [projectId]: projectData.worktrees,
-    });
-    setSelectedWorktreePath((current) =>
-      current &&
-      projectData.worktrees.some((worktree) => worktree.path === current)
-        ? current
-        : (fallbackWorktree?.path ?? null),
-    );
-    setSelectedChatId((current) =>
-      projectData.chats.some((chat) => chat.id === current)
-        ? current
-        : (fallbackWorktree?.chatId ?? null),
-    );
   }
 
   async function refreshSelectedChat(chatId: string) {
@@ -822,15 +913,30 @@ function Home() {
     }));
   }
 
-  async function refreshMessages(chatId: string) {
-    const data = await fetchJson<{ messages: ChatMessageRecord[] }>(
-      `/api/chats/${chatId}/messages`,
-    );
-    if (selectedChatIdRef.current !== chatId) {
-      return;
+  async function refreshMessages(
+    chatId: string,
+    options: { showLoading?: boolean } = {},
+  ) {
+    if (options.showLoading) {
+      setIsMessagesLoading(true);
     }
-    setMessages(data.messages);
-    setMessagesChatId(chatId);
+    try {
+      const data = await fetchJson<{ messages: ChatMessageRecord[] }>(
+        `/api/chats/${chatId}/messages`,
+      );
+      if (selectedChatIdRef.current === chatId) {
+        setMessages(data.messages);
+        setMessagesChatId(chatId);
+      }
+    } catch (err) {
+      if (selectedChatIdRef.current === chatId) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      if (options.showLoading && selectedChatIdRef.current === chatId) {
+        setIsMessagesLoading(false);
+      }
+    }
   }
 
   function saveChatScrollPosition(chatId: string) {
@@ -886,7 +992,10 @@ function Home() {
       );
       setProjectPath("");
       setIsAddProjectOpen(false);
-      await refreshProjects();
+      const didRefresh = await refreshProjects();
+      if (!didRefresh) {
+        return;
+      }
       setSelectedProjectId(data.project.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -902,6 +1011,7 @@ function Home() {
 
     setError(null);
     createChatInFlightRef.current = true;
+    setCreatingProjectId(projectId);
     setIsBusy(true);
     try {
       const data = await fetchJson<{ chat: ChatRecord }>(
@@ -913,13 +1023,17 @@ function Home() {
       );
       setSelectedProjectId(projectId);
       setExpandedProjectIds((current) => new Set(current).add(projectId));
-      await refreshChats(projectId, { sync: true });
+      const didRefresh = await refreshChats(projectId, { sync: true });
+      if (!didRefresh) {
+        return;
+      }
       setSelectedWorktreePath(data.chat.worktreePath);
       setSelectedChatId(data.chat.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       createChatInFlightRef.current = false;
+      setCreatingProjectId(null);
       setIsBusy(false);
     }
   }
@@ -984,7 +1098,12 @@ function Home() {
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedChatId || !composerText.trim()) {
+    if (
+      !selectedChatId ||
+      !composerText.trim() ||
+      isSendingMessage ||
+      pendingSendChatIdsRef.current.has(selectedChatId)
+    ) {
       return;
     }
     setError(null);
@@ -1008,6 +1127,8 @@ function Home() {
       name: skill.name,
       path: skill.path,
     }));
+    pendingSendChatIdsRef.current.add(requestChatId);
+    setIsSendingMessage(true);
     try {
       await fetchJson(`/api/chats/${requestChatId}/messages`, {
         method: "POST",
@@ -1032,6 +1153,14 @@ function Home() {
       }
       setComposerText(text);
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      pendingSendChatIdsRef.current.delete(requestChatId);
+      if (
+        isCurrentSendRequest() ||
+        selectedChatIdRef.current === requestChatId
+      ) {
+        setIsSendingMessage(false);
+      }
     }
   }
 
@@ -1048,7 +1177,12 @@ function Home() {
     ) {
       return;
     }
-    if (!selectedChatId || !composerText.trim() || isChatRunning) {
+    if (
+      !selectedChatId ||
+      !composerText.trim() ||
+      isChatRunning ||
+      isSendingMessage
+    ) {
       return;
     }
     event.preventDefault();
@@ -1060,12 +1194,15 @@ function Home() {
       return;
     }
     setError(null);
+    setIsInterrupting(true);
     try {
       await fetchJson(`/api/chats/${selectedChatId}/interrupt`, {
         method: "POST",
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsInterrupting(false);
     }
   }
 
@@ -1136,9 +1273,10 @@ function Home() {
             </h1>
           </div>
           <Badge
-            className="max-w-24 truncate group-data-[state=collapsed]/sidebar:hidden"
+            className="max-w-28 truncate group-data-[state=collapsed]/sidebar:hidden"
             variant={status === "Ready" ? "success" : "warning"}
           >
+            {status !== "Ready" && <LoadingSpinner className="size-3" />}
             {status}
           </Badge>
         </SidebarHeader>
@@ -1157,7 +1295,11 @@ function Home() {
             </SidebarGroupHeader>
             <SidebarGroupContent>
               <SidebarMenu>
-                {projects.length === 0 ? (
+                {showProjectListSkeleton ? (
+                  <li className="px-2 py-1 group-data-[state=collapsed]/sidebar:hidden">
+                    <ProjectListSkeleton />
+                  </li>
+                ) : projects.length === 0 ? (
                   <li className="px-2 py-4 group-data-[state=collapsed]/sidebar:hidden">
                     <div className="rounded-[var(--radius-md)] border border-dashed border-sidebar-border bg-[var(--surface-card)] px-3 py-3 text-[length:var(--font-size-sm)] text-muted-foreground">
                       Add a Git project to begin.
@@ -1170,6 +1312,9 @@ function Home() {
                     );
                     const projectWorktrees =
                       worktreesByProject[project.id] ?? [];
+                    const isProjectDataLoading =
+                      loadingProjectIds.has(project.id) &&
+                      worktreesByProject[project.id] === undefined;
 
                     return (
                       <SidebarMenuItem key={project.id}>
@@ -1204,12 +1349,20 @@ function Home() {
                             type="button"
                             variant="ghost"
                           >
-                            <MessageSquarePlus className="size-4" />
+                            {creatingProjectId === project.id ? (
+                              <LoadingSpinner className="size-4" />
+                            ) : (
+                              <MessageSquarePlus className="size-4" />
+                            )}
                           </Button>
                         </div>
                         {isProjectExpanded && (
                           <SidebarMenuSub>
-                            {projectWorktrees.length === 0 ? (
+                            {isProjectDataLoading ? (
+                              <li className="px-2 py-1.5">
+                                <WorktreeListSkeleton />
+                              </li>
+                            ) : projectWorktrees.length === 0 ? (
                               <li className="px-2 py-1.5 text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
                                 No worktrees
                               </li>
@@ -1325,6 +1478,7 @@ function Home() {
                 Cancel
               </Button>
               <Button disabled={isBusy || !projectPath.trim()} type="submit">
+                {isBusy && <LoadingSpinner />}
                 Add project
               </Button>
             </DialogFooter>
@@ -1404,6 +1558,7 @@ function Home() {
                 type="submit"
                 variant="destructive"
               >
+                {isBusy && <LoadingSpinner />}
                 Delete
               </Button>
             </DialogFooter>
@@ -1485,17 +1640,25 @@ function Home() {
         {selectedWorktree && (
           <ChatHistoryBar
             chats={selectedWorktreeChats}
+            isLoading={Boolean(
+              selectedProjectId &&
+              loadingProjectIds.has(selectedProjectId) &&
+              selectedWorktreeChats.length === 0,
+            )}
             selectedChatId={selectedChatId}
             onSelectChat={setSelectedChatId}
           />
         )}
 
         <section
+          aria-busy={isMessagesLoading || isSendingMessage || isChatRunning}
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
           ref={chatTimelineRef}
           onScroll={scheduleSelectedChatScrollPositionSave}
         >
-          {visibleMessages.length === 0 ? (
+          {showTimelineSkeleton ? (
+            <TimelineSkeleton />
+          ) : visibleMessages.length === 0 && !showActivityCard ? (
             <EmptyTimeline
               hasChat={Boolean(selectedChat)}
               hasWorktree={Boolean(selectedWorktree)}
@@ -1507,6 +1670,17 @@ function Home() {
               {visibleMessages.map((message) => (
                 <MessageCard key={message.id} message={message} />
               ))}
+              {showActivityCard && (
+                <ActivityCard
+                  label={
+                    isSendingMessage ? "Sending message" : "Codex is working"
+                  }
+                >
+                  {isSendingMessage
+                    ? "Waiting for the session to accept the turn."
+                    : "New output will appear here as it arrives."}
+                </ActivityCard>
+              )}
             </div>
           )}
         </section>
@@ -1569,31 +1743,54 @@ function Home() {
                 />
               </div>
               <Button
-                aria-label={isChatRunning ? "Stop turn" : "Send message"}
+                aria-label={
+                  isChatRunning
+                    ? "Stop turn"
+                    : isSendingMessage
+                      ? "Sending message"
+                      : "Send message"
+                }
                 className="size-10"
                 disabled={
                   isChatRunning
-                    ? !selectedChat?.activeTurnId
-                    : !selectedChatId || !composerText.trim()
+                    ? !selectedChat?.activeTurnId || isInterrupting
+                    : isSendingMessage ||
+                      !selectedChatId ||
+                      !composerText.trim()
                 }
                 onClick={isChatRunning ? interruptChat : undefined}
                 size="icon"
-                title={isChatRunning ? "Stop turn" : "Send"}
+                title={
+                  isChatRunning
+                    ? "Stop turn"
+                    : isSendingMessage
+                      ? "Sending"
+                      : "Send"
+                }
                 type={isChatRunning ? "button" : "submit"}
                 variant={isChatRunning ? "destructive" : "default"}
               >
-                {isChatRunning ? <Square /> : <Send />}
+                {isSendingMessage || isInterrupting ? (
+                  <LoadingSpinner />
+                ) : isChatRunning ? (
+                  <Square />
+                ) : (
+                  <Send />
+                )}
               </Button>
             </div>
             <div className="flex min-h-8 flex-wrap items-center gap-2 border-t border-[var(--border-divider)] px-1 pt-2">
               <Combobox
                 aria-label="Select model"
                 className="w-36 max-w-full sm:w-40"
-                disabled={models.length === 0 || isChatRunning}
-                emptyMessage="No models"
+                disabled={
+                  isModelsLoading || models.length === 0 || isChatRunning
+                }
+                emptyMessage={isModelsLoading ? "Loading models" : "No models"}
                 icon={<Bot className="size-3.5" />}
+                isLoading={isModelsLoading}
                 options={modelOptions}
-                placeholder="Model"
+                placeholder={isModelsLoading ? "Loading" : "Model"}
                 searchPlaceholder="Search models"
                 side="top"
                 triggerClassName="w-full justify-between"
@@ -1620,9 +1817,14 @@ function Home() {
                 className="w-32 max-w-full"
                 disabled={!selectedChatId || isChatRunning}
                 emptyMessage={
-                  fileSearchQuery.trim() ? "No files" : "Type to search"
+                  isFileSearchLoading
+                    ? "Searching files"
+                    : fileSearchQuery.trim()
+                      ? "No files"
+                      : "Type to search"
                 }
                 icon={<FileText className="size-3.5" />}
+                isLoading={isFileSearchLoading}
                 options={fileOptions}
                 placeholder="Files"
                 query={fileSearchQuery}
@@ -1638,11 +1840,16 @@ function Home() {
                 aria-label="Select skill"
                 align="end"
                 className="w-32 max-w-full"
-                disabled={!selectedChatId || isChatRunning}
-                emptyMessage="No skills"
+                disabled={
+                  !selectedChatId || isChatRunning || isChatContextLoading
+                }
+                emptyMessage={
+                  isChatContextLoading ? "Loading skills" : "No skills"
+                }
                 icon={<Sparkles className="size-3.5" />}
+                isLoading={isChatContextLoading}
                 options={skillOptions}
-                placeholder="Skills"
+                placeholder={isChatContextLoading ? "Loading" : "Skills"}
                 searchPlaceholder="Search skills"
                 side="top"
                 triggerClassName="w-full justify-between"
@@ -1659,10 +1866,12 @@ function Home() {
 
 function ChatHistoryBar({
   chats,
+  isLoading,
   onSelectChat,
   selectedChatId,
 }: {
   chats: ChatRecord[];
+  isLoading: boolean;
   onSelectChat: (chatId: string) => void;
   selectedChatId: string | null;
 }) {
@@ -1677,7 +1886,9 @@ function ChatHistoryBar({
           className="flex min-w-0 flex-1 gap-1 overflow-x-auto"
           role="tablist"
         >
-          {chats.length === 0 ? (
+          {isLoading ? (
+            <InlineLoading className="px-2 py-1" label="Loading chats" />
+          ) : chats.length === 0 ? (
             <span className="px-2 py-1 text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
               No chat history
             </span>
