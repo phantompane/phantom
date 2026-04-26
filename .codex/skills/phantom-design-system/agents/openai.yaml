@@ -1,0 +1,6 @@
+interface:
+  display_name: "Phantom Design System"
+  short_description: "Apply DESIGN.md to Phantom UI work"
+  default_prompt: "Use $phantom-design-system when changing Phantom UI or frontend code."
+policy:
+  allow_implicit_invocation: true
