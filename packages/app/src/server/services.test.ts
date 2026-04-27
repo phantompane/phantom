@@ -153,6 +153,15 @@ async function createHarness(state: ServeState): Promise<{
   return { codex, services, store };
 }
 
+function markChatActiveInCurrentProcess(
+  services: ServeServices,
+  chatId: string,
+): void {
+  (
+    services as unknown as { activeTurnChatIds: Set<string> }
+  ).activeTurnChatIds.add(chatId);
+}
+
 class ImportRaceStore extends ServeStateStore {
   private hasInjectedState = false;
 
@@ -542,6 +551,7 @@ describe("ServeServices", () => {
       ],
     };
     const { services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_running");
     coreMocks.listWorktrees
       .mockResolvedValueOnce({
         ok: true,
@@ -871,6 +881,23 @@ describe("ServeServices", () => {
       },
     ]);
     strictEqual(coreMocks.listWorktrees.mock.calls.length, 0);
+  });
+
+  it("resets stale transient chat state when listing chats", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_stale" })],
+    };
+    const { services, store } = await createHarness(state);
+
+    const chats = await services.listChats("proj_1");
+
+    strictEqual(chats[0]?.status, "idle");
+    strictEqual(chats[0]?.activeTurnId, null);
+    const savedState = await store.load();
+    strictEqual(savedState.chats[0]?.status, "idle");
+    strictEqual(savedState.chats[0]?.activeTurnId, null);
   });
 
   it("imports existing Codex chat history for project worktrees", async () => {
@@ -1682,6 +1709,8 @@ describe("ServeServices", () => {
       (
         services as unknown as { pendingChatTurns: Set<string> }
       ).pendingChatTurns.add("chat_1");
+    } else {
+      markChatActiveInCurrentProcess(services, "chat_1");
     }
     coreMocks.createContext.mockResolvedValueOnce({
       gitRoot: "/repo",
@@ -2001,6 +2030,75 @@ describe("ServeServices", () => {
     strictEqual(savedState.selectedChatId, null);
   });
 
+  it("does not let stale transient chat state block worktree deletion", async () => {
+    const worktreePath = "/repo/.git/phantom/worktrees/worktree";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          branchName: "worktree",
+          status: "running",
+          activeTurnId: "turn_stale",
+          worktreeName: "worktree",
+          worktreePath,
+        }),
+      ],
+      messages: [
+        {
+          id: "msg_stale",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "turn started",
+          createdAt: timestamp,
+        },
+      ],
+      selectedChatId: "chat_1",
+    };
+    const { services, store } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "worktree",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/worktree",
+            branch: "worktree",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    coreMocks.deleteWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: { message: "Deleted worktree 'worktree'" },
+    });
+
+    const result = await services.deleteProjectWorktree("proj_1", {
+      name: "worktree",
+    });
+
+    deepStrictEqual(result, { message: "Deleted worktree 'worktree'" });
+    deepStrictEqual(coreMocks.deleteWorktree.mock.calls[0], [
+      "/repo",
+      "/repo/.git/phantom/worktrees",
+      "worktree",
+      { force: undefined, keepBranch: false, path: worktreePath },
+      undefined,
+    ]);
+    const savedState = await store.load();
+    deepStrictEqual(savedState.chats, []);
+    deepStrictEqual(savedState.messages, []);
+    strictEqual(savedState.selectedChatId, null);
+  });
+
   it("does not delete a worktree with an active chat", async () => {
     const worktreePath = "/repo/.git/phantom/worktrees/worktree";
     const state = {
@@ -2017,6 +2115,7 @@ describe("ServeServices", () => {
       ],
     };
     const { services } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
     coreMocks.createContext.mockResolvedValueOnce({
       gitRoot: "/repo",
       worktreesDirectory: "/repo/.git/phantom/worktrees",
@@ -2862,6 +2961,7 @@ describe("ServeServices", () => {
       ],
     };
     const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
 
     await rejects(
       services.sendMessage("chat_1", { text: "continue" }),
@@ -2882,6 +2982,7 @@ describe("ServeServices", () => {
       chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
     };
     const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
     codex.resumeThread.mockResolvedValueOnce({});
     codex.steerTurn.mockRejectedValueOnce(new Error("steer rejected"));
 

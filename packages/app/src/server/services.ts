@@ -125,6 +125,7 @@ export class ServeServices {
     PendingTurnEventBuffer
   >();
   private readonly pendingChatTurns = new Set<string>();
+  private readonly activeTurnChatIds = new Set<string>();
 
   constructor(options: ServeServicesOptions = {}) {
     this.eventHub = options.eventHub ?? new EventHub();
@@ -143,6 +144,7 @@ export class ServeServices {
   }
 
   async getHealth() {
+    await this.resetStaleTransientChatState();
     const state = await this.store.load();
     return {
       ok: true,
@@ -154,6 +156,7 @@ export class ServeServices {
   }
 
   async listProjects(): Promise<ProjectRecord[]> {
+    await this.resetStaleTransientChatState();
     const state = await this.store.load();
     return state.projects;
   }
@@ -230,6 +233,7 @@ export class ServeServices {
   }
 
   async listChats(projectId: string): Promise<ChatRecord[]> {
+    await this.resetStaleTransientChatState();
     const state = await this.store.load();
     return state.chats.filter((chat) => chat.projectId === projectId);
   }
@@ -238,6 +242,7 @@ export class ServeServices {
     projectId: string,
     options: { sync?: boolean } = {},
   ): Promise<ProjectWorktreeRecord[]> {
+    await this.resetStaleTransientChatState();
     const state = await this.store.load();
     const project = this.requireProject(state, projectId);
     const worktreesDirectory = await getProjectWorktreesDirectory(
@@ -439,6 +444,7 @@ export class ServeServices {
     projectId: string,
     input: SyncProjectWorktreeBranchInput,
   ): Promise<SyncProjectWorktreeBranchResult> {
+    await this.resetStaleTransientChatState();
     const worktreeName = input.name.trim();
     if (!worktreeName) {
       throw new Error("Worktree name is required");
@@ -604,6 +610,7 @@ export class ServeServices {
     projectId: string,
     input: DeleteProjectWorktreeInput,
   ): Promise<DeleteProjectWorktreeResult> {
+    await this.resetStaleTransientChatState();
     const worktreeName = input.name.trim();
     if (!worktreeName) {
       throw new Error("Worktree name is required");
@@ -685,11 +692,13 @@ export class ServeServices {
   }
 
   async getChat(chatId: string): Promise<ChatRecord> {
+    await this.resetStaleTransientChatState();
     const state = await this.store.load();
     return this.requireChat(state, chatId);
   }
 
   async getMessages(chatId: string): Promise<ChatMessageRecord[]> {
+    await this.resetStaleTransientChatState();
     const state = await this.store.load();
     this.requireChat(state, chatId);
     return state.messages.filter((message) => message.chatId === chatId);
@@ -714,6 +723,7 @@ export class ServeServices {
     input: SendMessageInput,
     options: { requireActiveTurn: boolean },
   ): Promise<ChatRecord> {
+    await this.resetStaleTransientChatState();
     const text = input.text.trim();
     if (!text) {
       throw new Error("Message text cannot be empty");
@@ -793,6 +803,7 @@ export class ServeServices {
             : await this.codex.startTurn(threadId, text, chat.worktreePath);
           const turnId = extractTurnId(turnResult);
           if (turnId) {
+            this.activeTurnChatIds.add(chatId);
             nextStatus = "running";
             nextActiveTurnId = turnId;
           }
@@ -860,6 +871,7 @@ export class ServeServices {
   }
 
   async interruptChat(chatId: string): Promise<void> {
+    await this.resetStaleTransientChatState();
     const chat = await this.getChat(chatId);
     if (!chat.codexThreadId || !chat.activeTurnId) {
       throw new Error("Chat does not have an active Codex turn");
@@ -872,6 +884,7 @@ export class ServeServices {
     requestId: string,
     input: ApprovalInput,
   ): Promise<void> {
+    await this.resetStaleTransientChatState();
     const chat = await this.getChat(chatId);
     const pendingApproval = this.approvalRequests.get(requestId);
     if (!pendingApproval) {
@@ -1038,6 +1051,7 @@ export class ServeServices {
     this.approvalRequests.clear();
     this.pendingTurnEvents.clear();
     this.pendingChatTurns.clear();
+    this.activeTurnChatIds.clear();
 
     const affectedChatIds: string[] = [];
     await this.store.update((state) => ({
@@ -1285,6 +1299,7 @@ export class ServeServices {
     params: unknown,
   ): Promise<boolean> {
     if (method === "turn/started") {
+      this.activeTurnChatIds.add(chatId);
       await this.updateChatStatus(
         chatId,
         "running",
@@ -1296,6 +1311,7 @@ export class ServeServices {
       const turn = getParamObject(params)?.turn as
         | { status?: string }
         | undefined;
+      this.activeTurnChatIds.delete(chatId);
       await this.updateChatStatus(
         chatId,
         turn?.status === "failed" ? "failed" : "idle",
@@ -1318,6 +1334,54 @@ export class ServeServices {
       await this.updateChatStatus(chatId, "running", undefined);
     }
     return true;
+  }
+
+  private async resetStaleTransientChatState(): Promise<void> {
+    const state = await this.store.load();
+    if (!state.chats.some((chat) => this.isStaleTransientChat(chat))) {
+      return;
+    }
+
+    const timestamp = createTimestamp();
+    await this.store.update((nextState) => ({
+      ...nextState,
+      chats: nextState.chats.map((chat) =>
+        this.isStaleTransientChat(chat)
+          ? {
+              ...chat,
+              status: "idle",
+              activeTurnId: null,
+              updatedAt: timestamp,
+            }
+          : chat,
+      ),
+    }));
+  }
+
+  private isStaleTransientChat(chat: ChatRecord): boolean {
+    return Boolean(
+      (chat.status === "running" ||
+        chat.status === "waitingForApproval" ||
+        chat.activeTurnId) &&
+      !this.isChatActiveInCurrentProcess(chat),
+    );
+  }
+
+  private isChatActiveInCurrentProcess(chat: ChatRecord): boolean {
+    return Boolean(
+      this.pendingChatTurns.has(chat.id) ||
+      this.activeTurnChatIds.has(chat.id) ||
+      this.hasApprovalRequestForChat(chat.id),
+    );
+  }
+
+  private hasApprovalRequestForChat(chatId: string): boolean {
+    for (const approvalRequest of this.approvalRequests.values()) {
+      if (approvalRequest.chatId === chatId) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private deleteApprovalRequestByServerId(
