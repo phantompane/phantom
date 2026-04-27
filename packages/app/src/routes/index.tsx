@@ -904,20 +904,29 @@ function Home() {
         ...current,
         [projectId]: projectData.chats,
       }));
-      setWorktreesByProject((current) => ({
-        ...current,
-        [projectId]: projectData.worktrees,
-      }));
-      if (options.updateSelection === false) {
+      if (options.sync) {
+        setWorktreesByProject((current) => ({
+          ...current,
+          [projectId]: projectData.worktrees,
+        }));
+      }
+      if ((options.updateSelection ?? options.sync === true) === false) {
         return true;
       }
-      const fallbackWorktree = firstProjectWorktree(projectId, {
-        ...worktreesByProject,
-        [projectId]: projectData.worktrees,
-      });
+      const nextWorktreesByProject = options.sync
+        ? {
+            ...worktreesByProject,
+            [projectId]: projectData.worktrees,
+          }
+        : worktreesByProject;
+      const fallbackWorktree = firstProjectWorktree(
+        projectId,
+        nextWorktreesByProject,
+      );
+      const nextProjectWorktrees = nextWorktreesByProject[projectId] ?? [];
       setSelectedWorktreePath((current) =>
         current &&
-        projectData.worktrees.some((worktree) => worktree.path === current)
+        nextProjectWorktrees.some((worktree) => worktree.path === current)
           ? current
           : (fallbackWorktree?.path ?? null),
       );
