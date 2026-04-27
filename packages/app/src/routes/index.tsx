@@ -77,6 +77,7 @@ import {
   SidebarTrigger,
 } from "../components/ui/sidebar";
 import { Textarea } from "../components/ui/textarea";
+import { shouldSubmitComposerOnEnter } from "../lib/composer-keyboard";
 import { cn } from "../lib/utils";
 import type {
   ChatMessageRecord,
@@ -1263,15 +1264,17 @@ function Home() {
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    const isImeComposing =
-      event.nativeEvent.isComposing || event.keyCode === 229;
     if (
-      event.key !== "Enter" ||
-      event.shiftKey ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.altKey ||
-      isImeComposing
+      !shouldSubmitComposerOnEnter({
+        altKey: event.altKey,
+        code: event.code,
+        ctrlKey: event.ctrlKey,
+        isComposing: event.nativeEvent.isComposing,
+        key: event.key,
+        keyCode: event.keyCode,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+      })
     ) {
       return;
     }
@@ -1945,6 +1948,7 @@ function Home() {
                 <Textarea
                   className="min-h-12 border-0 bg-transparent px-2 py-2 shadow-none focus-visible:shadow-none"
                   disabled={!selectedChatId}
+                  enterKeyHint="enter"
                   id="composer"
                   placeholder={
                     selectedChatId
