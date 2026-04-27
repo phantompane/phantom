@@ -34,7 +34,6 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Combobox, type ComboboxOption } from "../components/ui/combobox";
 import {
-  ActivityCard,
   InlineLoading,
   LoadingSpinner,
   ProjectListSkeleton,
@@ -367,6 +366,11 @@ function Home() {
     () => skills.filter((skill) => selectedSkillPaths.has(skill.path)),
     [selectedSkillPaths, skills],
   );
+  const hasSelectedContext =
+    selectedFiles.length > 0 || selectedSkills.length > 0;
+  const canSendMessage =
+    Boolean(selectedChatId) &&
+    Boolean(composerText.trim() || hasSelectedContext);
 
   const modelOptions = useMemo<ComboboxOption[]>(
     () =>
@@ -484,10 +488,6 @@ function Home() {
     Boolean(selectedChatId) &&
     isMessagesLoading &&
     visibleMessages.length === 0;
-  const showActivityCard =
-    Boolean(selectedChatId) &&
-    !showTimelineSkeleton &&
-    (isSendingMessage || isChatRunning);
 
   useEffect(() => {
     void refreshProjects();
@@ -613,7 +613,7 @@ function Home() {
       shouldIgnoreNextChatTimelineScrollRef.current = true;
       timeline.scrollTop = timeline.scrollHeight;
     }
-  }, [messagesChatId, selectedChatId, showActivityCard, visibleMessages]);
+  }, [messagesChatId, selectedChatId, visibleMessages]);
 
   useEffect(() => {
     return () => {
@@ -1130,7 +1130,7 @@ function Home() {
     event.preventDefault();
     if (
       !selectedChatId ||
-      !composerText.trim() ||
+      !canSendMessage ||
       isSendingMessage ||
       pendingSendChatIdsRef.current.has(selectedChatId)
     ) {
@@ -1145,7 +1145,14 @@ function Home() {
       selectedChatIdRef.current === requestChatId &&
       selectedChatVersionRef.current === requestChatVersion &&
       sendMessageRequestIdRef.current === requestId;
-    const text = composerText;
+    const composerInput = composerText;
+    const text =
+      composerInput.trim().length > 0
+        ? composerInput
+        : getContextOnlyMessage({
+            hasFiles: selectedFiles.length > 0,
+            hasSkills: selectedSkills.length > 0,
+          });
     setComposerText("");
     const turnModel = selectedModel?.id ?? selectedModel?.model;
     const turnEffort = selectedEffort === "auto" ? null : selectedEffort;
@@ -1181,7 +1188,7 @@ function Home() {
       if (!isCurrentSendRequest()) {
         return;
       }
-      setComposerText(text);
+      setComposerText(composerInput);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       pendingSendChatIdsRef.current.delete(requestChatId);
@@ -1209,7 +1216,7 @@ function Home() {
     }
     if (
       !selectedChatId ||
-      !composerText.trim() ||
+      !canSendMessage ||
       isChatRunning ||
       isSendingMessage
     ) {
@@ -1400,11 +1407,37 @@ function Home() {
                               projectWorktrees.map((worktree) => {
                                 const isSelectedWorktree =
                                   worktree.path === selectedWorktreePath;
+                                const worktreeChats =
+                                  chatsByProject[project.id]?.filter(
+                                    (chat) =>
+                                      chat.worktreePath === worktree.path,
+                                  ) ?? [];
+                                const activeWorktreeChat =
+                                  worktreeChats.find(
+                                    (chat) =>
+                                      chat.status === "running" ||
+                                      chat.status === "waitingForApproval" ||
+                                      Boolean(chat.activeTurnId),
+                                  ) ?? null;
+                                const isWorktreeSending =
+                                  isSendingMessage &&
+                                  selectedChat?.projectId === project.id &&
+                                  selectedChat.worktreePath === worktree.path;
+                                const worktreeActivityLabel = isWorktreeSending
+                                  ? "Sending message"
+                                  : activeWorktreeChat
+                                    ? statusMeta[activeWorktreeChat.status]
+                                        .label
+                                    : null;
                                 const title = `${worktree.name} (${worktree.path})${
                                   worktree.isClean ? "" : " [dirty]"
                                 }${
                                   worktree.isMainWorktree
                                     ? " [main worktree]"
+                                    : ""
+                                }${
+                                  worktreeActivityLabel
+                                    ? ` [${worktreeActivityLabel}]`
                                     : ""
                                 }`;
                                 const canDeleteWorktree =
@@ -1433,20 +1466,21 @@ function Home() {
                                             <span className="block min-w-0 truncate font-medium">
                                               {worktree.name}
                                             </span>
-                                            {worktree.isMainWorktree && (
-                                              <span className="shrink-0 rounded-[var(--radius-sm)] bg-[var(--surface-muted)] px-1.5 py-0.5 text-[length:var(--font-size-xs)] font-medium leading-none text-[var(--text-tertiary)]">
-                                                Main
-                                              </span>
-                                            )}
                                           </span>
-                                          {worktree.isMainWorktree && (
-                                            <span className="block truncate text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
-                                              Git root
-                                            </span>
-                                          )}
                                         </span>
                                         {!worktree.isClean && (
                                           <span className="size-1.5 shrink-0 rounded-full bg-[var(--semantic-warning-fg)]" />
+                                        )}
+                                        {worktreeActivityLabel && (
+                                          <WorktreeActivityIndicator
+                                            label={worktreeActivityLabel}
+                                            status={
+                                              isWorktreeSending
+                                                ? "running"
+                                                : (activeWorktreeChat?.status ??
+                                                  "running")
+                                            }
+                                          />
                                         )}
                                       </SidebarMenuSubButton>
                                       {canShowActions && (
@@ -1725,7 +1759,7 @@ function Home() {
         >
           {showTimelineSkeleton ? (
             <TimelineSkeleton />
-          ) : visibleMessages.length === 0 && !showActivityCard ? (
+          ) : visibleMessages.length === 0 ? (
             <EmptyTimeline
               hasChat={Boolean(selectedChat)}
               hasWorktree={Boolean(selectedWorktree)}
@@ -1737,17 +1771,6 @@ function Home() {
               {visibleMessages.map((message) => (
                 <MessageCard key={message.id} message={message} />
               ))}
-              {showActivityCard && (
-                <ActivityCard
-                  label={
-                    isSendingMessage ? "Sending message" : "Codex is working"
-                  }
-                >
-                  {isSendingMessage
-                    ? "Waiting for the session to accept the turn."
-                    : "New output will appear here as it arrives."}
-                </ActivityCard>
-              )}
             </div>
           )}
         </section>
@@ -1821,9 +1844,7 @@ function Home() {
                 disabled={
                   isChatRunning
                     ? !selectedChat?.activeTurnId || isInterrupting
-                    : isSendingMessage ||
-                      !selectedChatId ||
-                      !composerText.trim()
+                    : isSendingMessage || !canSendMessage
                 }
                 onClick={isChatRunning ? interruptChat : undefined}
                 size="icon"
@@ -1989,6 +2010,37 @@ function ChatHistoryBar({
   );
 }
 
+function WorktreeActivityIndicator({
+  label,
+  status,
+}: {
+  label: string;
+  status: ChatStatus;
+}) {
+  const meta = statusMeta[status];
+  const isActiveTurn = status === "running";
+
+  return (
+    <span
+      aria-label={label}
+      className={cn(
+        "flex size-4 shrink-0 items-center justify-center rounded-full",
+        isActiveTurn
+          ? "text-[var(--semantic-info-fg)]"
+          : "bg-[var(--surface-card)]",
+      )}
+      role="status"
+      title={label}
+    >
+      {isActiveTurn ? (
+        <LoadingSpinner className="size-3" />
+      ) : (
+        <span className={cn("size-1.5 rounded-full", meta.dot)} />
+      )}
+    </span>
+  );
+}
+
 function StatusBadge({ status }: { status: ChatStatus }) {
   const meta = statusMeta[status];
   return (
@@ -2039,6 +2091,22 @@ function formatReasoningEffort(effort: string): string {
     .filter(Boolean)
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join(" ");
+}
+
+function getContextOnlyMessage({
+  hasFiles,
+  hasSkills,
+}: {
+  hasFiles: boolean;
+  hasSkills: boolean;
+}): string {
+  if (hasFiles && hasSkills) {
+    return "Use the selected files and skills as context.";
+  }
+  if (hasFiles) {
+    return "Use the selected files as context.";
+  }
+  return "Use the selected skills as context.";
 }
 
 function SystemBanner({
@@ -2121,13 +2189,12 @@ function MessageCard({ message }: { message: VisibleMessageRecord }) {
   return (
     <article
       className={cn(
-        "rounded-[var(--radius-lg)] border px-4 py-3 shadow-[var(--shadow-xs)]",
         isUser &&
-          "ml-auto max-w-[78%] border-transparent bg-[var(--color-gray-900)] text-primary-foreground",
+          "ml-auto max-w-[78%] rounded-[var(--radius-lg)] border border-transparent bg-[var(--color-gray-900)] px-4 py-3 text-primary-foreground shadow-[var(--shadow-xs)]",
         message.role === "assistant" &&
-          "mr-auto max-w-[82%] border-border bg-card text-card-foreground",
+          "mr-auto max-w-[82%] px-2 py-1 text-[var(--text-primary)]",
         isError &&
-          "border-[var(--semantic-danger-border)] bg-[var(--semantic-danger-bg)] text-[var(--semantic-danger-fg)]",
+          "rounded-[var(--radius-lg)] border border-[var(--semantic-danger-border)] bg-[var(--semantic-danger-bg)] px-4 py-3 text-[var(--semantic-danger-fg)] shadow-[var(--shadow-xs)]",
       )}
     >
       <pre className="whitespace-pre-wrap break-words font-sans text-[length:var(--font-size-md)] leading-[var(--line-height-relaxed)]">
