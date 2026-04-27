@@ -729,23 +729,6 @@ function Home() {
     setSelectedChatId(selectedWorktreeChats[0]?.id ?? null);
   }, [selectedChatId, selectedWorktreeChats]);
 
-  useEffect(() => {
-    if (!selectedProjectId || !selectedWorktreePath || !selectedChatId) {
-      return;
-    }
-
-    setExpandedWorktreeKeys((current) => {
-      const selectedWorktreeKey = getWorktreeExpansionKey(
-        selectedProjectId,
-        selectedWorktreePath,
-      );
-      if (current.has(selectedWorktreeKey)) {
-        return current;
-      }
-      return new Set(current).add(selectedWorktreeKey);
-    });
-  }, [selectedChatId, selectedProjectId, selectedWorktreePath]);
-
   function setProjectLoading(projectId: string, isLoading: boolean) {
     setLoadingProjectIds((current) => {
       const next = new Set(current);
@@ -1352,9 +1335,6 @@ function Home() {
     setSelectedWorktreePath(worktree.path);
     setSelectedChatId(worktree.chatId);
     setExpandedProjectIds((current) => new Set(current).add(projectId));
-    setExpandedWorktreeKeys((current) =>
-      new Set(current).add(getWorktreeExpansionKey(projectId, worktree.path)),
-    );
   }
 
   function selectChat(
