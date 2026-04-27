@@ -1,9 +1,31 @@
 import { describe, expect, it } from "vitest";
 import { shouldSubmitComposerOnEnter } from "./composer-keyboard";
 
-function createEnvironment(options: { virtualKeyboardHeight?: number } = {}) {
+function createEnvironment(
+  options: {
+    coarsePointer?: boolean;
+    finePointer?: boolean;
+    hover?: boolean;
+    maxTouchPoints?: number;
+    mobileUserAgentData?: boolean;
+    userAgent?: string;
+    virtualKeyboardHeight?: number;
+  } = {},
+) {
   return {
+    matchMedia: (query: string) => {
+      const matches =
+        (query === "(pointer: coarse)" && options.coarsePointer) ||
+        (query === "(any-pointer: fine)" && options.finePointer) ||
+        (query === "(hover: hover)" && options.hover);
+      return { matches: Boolean(matches) };
+    },
     navigator: {
+      maxTouchPoints: options.maxTouchPoints ?? 0,
+      userAgent: options.userAgent ?? "",
+      userAgentData: {
+        mobile: options.mobileUserAgentData ?? false,
+      },
       virtualKeyboard: {
         boundingRect: {
           height: options.virtualKeyboardHeight ?? 0,
@@ -87,6 +109,31 @@ describe("shouldSubmitComposerOnEnter", () => {
       shouldSubmitComposerOnEnter(
         { code: "Enter", key: "Enter" },
         createEnvironment({ virtualKeyboardHeight: 280 }),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not submit Enter on Android Chrome software keyboard events", () => {
+    expect(
+      shouldSubmitComposerOnEnter(
+        { code: "Enter", key: "Enter" },
+        createEnvironment({
+          maxTouchPoints: 5,
+          userAgent:
+            "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/126.0 Mobile Safari/537.36",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not submit Enter on coarse touch-only environments", () => {
+    expect(
+      shouldSubmitComposerOnEnter(
+        { code: "Enter", key: "Enter" },
+        createEnvironment({
+          coarsePointer: true,
+          maxTouchPoints: 5,
+        }),
       ),
     ).toBe(false);
   });
