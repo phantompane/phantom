@@ -45,10 +45,6 @@ const approvalSchema = z.object({
   decision: z.enum(["accept", "acceptForSession", "decline", "cancel"]),
 });
 
-const projectChatsQuerySchema = z.object({
-  sync: z.string().optional(),
-});
-
 const chatQuerySchema = z.object({
   context: z.string().optional(),
   fileQuery: z.string().optional(),
@@ -165,25 +161,26 @@ export const rpcRoutes = new Hono()
       return handleApiError(c, error);
     }
   })
-  .get(
-    "/projects/:projectId/chats",
-    query(projectChatsQuerySchema),
-    async (c) => {
-      try {
-        const services = getServeServices();
-        const projectId = c.req.param("projectId");
-        const requestQuery = c.req.valid("query");
-        const shouldSync = requestQuery.sync === "1";
-        const worktrees = await services.listProjectWorktrees(projectId, {
-          sync: shouldSync,
-        });
-        const chats = await services.listChats(projectId);
-        return c.json({ chats, worktrees }, 200);
-      } catch (error) {
-        return handleApiError(c, error);
-      }
-    },
-  )
+  .get("/projects/:projectId/worktrees", async (c) => {
+    try {
+      const worktrees = await getServeServices().listProjectWorktrees(
+        c.req.param("projectId"),
+      );
+      return c.json({ worktrees }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .get("/projects/:projectId/chats", async (c) => {
+    try {
+      const chats = await getServeServices().listChats(
+        c.req.param("projectId"),
+      );
+      return c.json({ chats }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
   .post("/projects/:projectId/chats", jsonBody(createChatSchema), async (c) => {
     try {
       const body = c.req.valid("json");

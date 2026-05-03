@@ -11,11 +11,6 @@ import type {
   ProjectWorktreeRecord,
 } from "@phantompane/server";
 
-export interface ProjectData {
-  chats: ChatRecord[];
-  worktrees: ProjectWorktreeRecord[];
-}
-
 export function authQueryOptions() {
   return queryOptions({
     queryKey: queryKeys.auth,
@@ -39,14 +34,25 @@ export function modelsQueryOptions() {
   });
 }
 
-export function projectDataQueryOptions(projectId: string, sync = false) {
+export function projectWorktreesQueryOptions(projectId: string) {
   return queryOptions({
-    queryKey: queryKeys.projectData(projectId, sync),
+    queryKey: queryKeys.projectWorktrees(projectId),
     queryFn: async () =>
-      readRpcJson<ProjectData>(
+      readRpcJson<{ worktrees: ProjectWorktreeRecord[] }>(
+        await api.projects[":projectId"].worktrees.$get({
+          param: { projectId: routeParam(projectId) },
+        }),
+      ),
+  });
+}
+
+export function projectChatsQueryOptions(projectId: string) {
+  return queryOptions({
+    queryKey: queryKeys.projectChats(projectId),
+    queryFn: async () =>
+      readRpcJson<{ chats: ChatRecord[] }>(
         await api.projects[":projectId"].chats.$get({
           param: { projectId: routeParam(projectId) },
-          query: sync ? { sync: "1" } : {},
         }),
       ),
   });

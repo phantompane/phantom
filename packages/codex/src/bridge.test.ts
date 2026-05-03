@@ -133,6 +133,50 @@ describe("CodexBridge", () => {
     });
   });
 
+  it("requests thread metadata and thread contents", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    const threads = bridge.listThreads({
+      archived: false,
+      cwd: ["/repo", "/repo/.git/phantom/worktrees/feature"],
+      limit: 100,
+      sortDirection: "desc",
+      sortKey: "updated_at",
+      useStateDbOnly: true,
+    });
+
+    await vi.waitFor(() =>
+      expect(findWrite(proc, "thread/list")).toBeDefined(),
+    );
+    const listRequest = findWrite(proc, "thread/list");
+    expect(listRequest?.params).toEqual({
+      archived: false,
+      cursor: null,
+      cwd: ["/repo", "/repo/.git/phantom/worktrees/feature"],
+      limit: 100,
+      searchTerm: undefined,
+      sortDirection: "desc",
+      sortKey: "updated_at",
+      sourceKinds: undefined,
+      useStateDbOnly: true,
+    });
+    proc.send({ id: listRequest?.id, result: { threads: [] } });
+    await expect(threads).resolves.toEqual({ threads: [] });
+
+    const thread = bridge.readThread("thread_1", { includeTurns: true });
+    await vi.waitFor(() =>
+      expect(findWrite(proc, "thread/read")).toBeDefined(),
+    );
+    const readRequest = findWrite(proc, "thread/read");
+    expect(readRequest?.params).toEqual({
+      threadId: "thread_1",
+      includeTurns: true,
+    });
+    proc.send({ id: readRequest?.id, result: { thread: { id: "thread_1" } } });
+    await expect(thread).resolves.toEqual({ thread: { id: "thread_1" } });
+  });
+
   it("passes model, effort, file mentions, and skills to new turns", async () => {
     const { bridge, proc } = createBridge();
     await initializeBridge(bridge, proc);

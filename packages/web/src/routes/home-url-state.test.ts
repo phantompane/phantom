@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  findValidatedSelectedProjectChat,
   findValidatedSelectedChat,
   getSelectableReasoningEfforts,
   isShareableFileSearchQuery,
+  mergeWorktreesWithChats,
+  retainRecordsForProjects,
 } from "./home-url-state";
 
 describe("isShareableFileSearchQuery", () => {
@@ -39,6 +42,54 @@ describe("findValidatedSelectedChat", () => {
   });
 });
 
+describe("findValidatedSelectedProjectChat", () => {
+  it("rejects stale chats whose project is no longer present", () => {
+    const chatsByProject = {
+      "project-removed": [{ id: "chat-stale", projectId: "project-removed" }],
+    };
+
+    expect(
+      findValidatedSelectedProjectChat(
+        chatsByProject,
+        [{ id: "project-current" }],
+        "chat-stale",
+        "project-removed",
+      ),
+    ).toBeNull();
+  });
+
+  it("accepts chats from the refreshed project list", () => {
+    const chat = { id: "chat-current", projectId: "project-current" };
+    const chatsByProject = {
+      "project-current": [chat],
+      "project-removed": [{ id: "chat-stale", projectId: "project-removed" }],
+    };
+
+    expect(
+      findValidatedSelectedProjectChat(
+        chatsByProject,
+        [{ id: "project-current" }],
+        "chat-current",
+        "project-current",
+      ),
+    ).toBe(chat);
+  });
+});
+
+describe("retainRecordsForProjects", () => {
+  it("drops records for projects that are absent from the refreshed list", () => {
+    expect(
+      retainRecordsForProjects(
+        {
+          "project-current": ["current"],
+          "project-removed": ["stale"],
+        },
+        new Set(["project-current"]),
+      ),
+    ).toEqual({ "project-current": ["current"] });
+  });
+});
+
 describe("getSelectableReasoningEfforts", () => {
   it("uses fallback efforts before model metadata is available", () => {
     expect(getSelectableReasoningEfforts(null)).toEqual([
@@ -53,5 +104,59 @@ describe("getSelectableReasoningEfforts", () => {
     expect(
       getSelectableReasoningEfforts({ supportedReasoningEfforts: [] }),
     ).toEqual([]);
+  });
+});
+
+describe("mergeWorktreesWithChats", () => {
+  it("attaches the latest chat for each worktree and clears stale chat fields", () => {
+    const worktrees = [
+      {
+        name: "feature",
+        path: "/repo/feature",
+        chatId: null,
+        chatStatus: null,
+        chatTitle: "feature",
+      },
+      {
+        name: "empty",
+        path: "/repo/empty",
+        chatId: "chat-stale",
+        chatStatus: "failed",
+        chatTitle: "stale",
+      },
+    ];
+    const chats = [
+      {
+        id: "chat-old",
+        worktreePath: "/repo/feature",
+        title: "old",
+        status: "idle",
+        updatedAt: "2026-04-25T00:00:00.000Z",
+      },
+      {
+        id: "chat-new",
+        worktreePath: "/repo/feature",
+        title: "new",
+        status: "running",
+        updatedAt: "2026-04-25T00:01:00.000Z",
+      },
+    ];
+
+    expect(mergeWorktreesWithChats(worktrees, chats)).toEqual([
+      {
+        name: "feature",
+        path: "/repo/feature",
+        chatId: "chat-new",
+        chatStatus: "running",
+        chatTitle: "new",
+      },
+      {
+        name: "empty",
+        path: "/repo/empty",
+        chatId: null,
+        chatStatus: null,
+        chatTitle: "empty",
+      },
+    ]);
   });
 });
