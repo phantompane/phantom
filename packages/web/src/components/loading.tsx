@@ -16,7 +16,7 @@ export function Skeleton({ className }: { className?: string }) {
     <span
       aria-hidden="true"
       className={cn(
-        "block animate-pulse rounded-[var(--radius-sm)] bg-[var(--color-gray-200)]",
+        "block animate-pulse rounded-[var(--radius-sm)] bg-[var(--skeleton-bg)]",
         className,
       )}
     />
@@ -153,7 +153,7 @@ function MessageSkeleton({
       className={cn(
         "rounded-[var(--radius-lg)] border px-4 py-3 shadow-[var(--shadow-xs)]",
         align === "right"
-          ? "ml-auto w-[min(78%,34rem)] border-transparent bg-[var(--color-gray-900)]/10"
+          ? "ml-auto w-[min(78%,34rem)] border-transparent bg-[var(--chat-user-skeleton-bg)]"
           : "mr-auto w-[min(82%,42rem)] border-border bg-card",
       )}
     >
