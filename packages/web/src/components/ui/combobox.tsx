@@ -1,8 +1,21 @@
 import { Check, ChevronsUpDown, LoaderCircle, Search } from "lucide-react";
-import type { KeyboardEvent, ReactNode } from "react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import { cn } from "../../lib/utils";
 import { Input } from "./input";
+
+const popoverOffset = 4;
+const viewportPadding = 16;
+const popoverWidth = 320;
+const listboxMaxHeight = 256;
 
 export interface ComboboxOption {
   description?: string;
@@ -54,7 +67,11 @@ export function Combobox({
   const [isOpen, setIsOpen] = useState(false);
   const [activeOptionIndex, setActiveOptionIndex] = useState(-1);
   const [internalQuery, setInternalQuery] = useState("");
+  const [floatingStyle, setFloatingStyle] = useState<CSSProperties>({});
   const rootRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const listboxRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
   const searchQuery = query ?? internalQuery;
   const selectedOption = options.find((option) => option.value === value);
@@ -82,7 +99,11 @@ export function Combobox({
     }
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (
+        !rootRef.current?.contains(target) &&
+        !popoverRef.current?.contains(target)
+      ) {
         setIsOpen(false);
       }
     };
@@ -105,6 +126,85 @@ export function Combobox({
       setInternalQuery("");
     }
   }, [isOpen, query]);
+
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const updatePosition = () => {
+      const trigger = rootRef.current;
+      const popover = popoverRef.current;
+      if (!trigger || !popover) {
+        return;
+      }
+
+      const visualViewport = window.visualViewport;
+      const viewportLeft = visualViewport?.offsetLeft ?? 0;
+      const viewportTop = visualViewport?.offsetTop ?? 0;
+      const viewportWidth = visualViewport?.width ?? window.innerWidth;
+      const viewportHeight = visualViewport?.height ?? window.innerHeight;
+      const triggerRect = trigger.getBoundingClientRect();
+      const availableWidth = Math.max(0, viewportWidth - viewportPadding * 2);
+      const availableHeight = Math.max(0, viewportHeight - viewportPadding * 2);
+      const width = Math.min(popoverWidth, availableWidth);
+      const maxHeight = availableHeight;
+      const searchHeight =
+        searchRef.current?.getBoundingClientRect().height ?? 0;
+      const listHeight = listboxRef.current
+        ? Math.min(listboxRef.current.scrollHeight, listboxMaxHeight)
+        : 0;
+      const height = Math.min(searchHeight + listHeight, maxHeight);
+      const minLeft = viewportLeft + viewportPadding;
+      const maxLeft = viewportLeft + viewportWidth - viewportPadding - width;
+      const minTop = viewportTop + viewportPadding;
+      const maxTop = viewportTop + viewportHeight - viewportPadding - height;
+      const preferredLeft =
+        align === "end" ? triggerRect.right - width : triggerRect.left;
+      const preferredTop =
+        side === "top"
+          ? triggerRect.top - popoverOffset - height
+          : triggerRect.bottom + popoverOffset;
+
+      const nextStyle = {
+        left: clamp(preferredLeft, minLeft, Math.max(minLeft, maxLeft)),
+        maxHeight,
+        top: clamp(preferredTop, minTop, Math.max(minTop, maxTop)),
+        width,
+      };
+      setFloatingStyle((current) =>
+        hasSameFloatingStyle(current, nextStyle) ? current : nextStyle,
+      );
+    };
+
+    updatePosition();
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(updatePosition);
+    const observedPopover = popoverRef.current;
+    if (observedPopover) {
+      resizeObserver?.observe(observedPopover);
+    }
+    if (searchRef.current) {
+      resizeObserver?.observe(searchRef.current);
+    }
+    if (listboxRef.current) {
+      resizeObserver?.observe(listboxRef.current);
+    }
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    window.visualViewport?.addEventListener("resize", updatePosition);
+    window.visualViewport?.addEventListener("scroll", updatePosition);
+
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+      window.visualViewport?.removeEventListener("resize", updatePosition);
+      window.visualViewport?.removeEventListener("scroll", updatePosition);
+      resizeObserver?.disconnect();
+    };
+  }, [align, emptyMessage, filteredOptions, isLoading, isOpen, side]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -170,6 +270,99 @@ export function Combobox({
     }
   }
 
+  const popover =
+    isOpen && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className="fixed z-50 flex overflow-hidden rounded-[var(--radius-md)] border border-border bg-popover text-popover-foreground shadow-[var(--shadow-md)]"
+            ref={popoverRef}
+            style={floatingStyle}
+          >
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div
+                className="flex shrink-0 items-center gap-2 border-b border-[var(--border-divider)] px-2 py-2"
+                ref={searchRef}
+              >
+                <Search className="size-3.5 shrink-0 text-[var(--icon-color-muted)]" />
+                <Input
+                  aria-activedescendant={
+                    activeOptionIndex >= 0
+                      ? `${listboxId}-option-${activeOptionIndex}`
+                      : undefined
+                  }
+                  aria-autocomplete="list"
+                  aria-controls={listboxId}
+                  autoFocus
+                  className="h-7 border-0 bg-transparent px-0 py-0 shadow-none focus-visible:shadow-none"
+                  placeholder={searchPlaceholder}
+                  value={searchQuery}
+                  onChange={(event) => updateQuery(event.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                />
+                {isLoading && (
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="size-3.5 shrink-0 animate-spin text-[var(--icon-color-muted)]"
+                  />
+                )}
+              </div>
+              <div
+                className="min-h-0 max-h-64 flex-1 overflow-y-auto p-1"
+                id={listboxId}
+                ref={listboxRef}
+                role="listbox"
+              >
+                {filteredOptions.length === 0 ? (
+                  <div className="px-2 py-3 text-[length:var(--font-size-sm)] text-[var(--text-tertiary)]">
+                    {emptyMessage}
+                  </div>
+                ) : (
+                  filteredOptions.map((option, index) => {
+                    const isSelected = option.value === value;
+                    const isActive = index === activeOptionIndex;
+                    return (
+                      <button
+                        aria-selected={isSelected}
+                        className={cn(
+                          "flex w-full min-w-0 items-start gap-2 rounded-[var(--radius-sm)] px-2 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:shadow-[var(--state-focus-ring)] disabled:pointer-events-none disabled:opacity-[var(--opacity-disabled)]",
+                          (isActive || isSelected) &&
+                            "bg-[var(--state-selected-bg)]",
+                        )}
+                        disabled={option.disabled}
+                        id={`${listboxId}-option-${index}`}
+                        key={option.value}
+                        onClick={() => selectOption(option)}
+                        onMouseEnter={() => setActiveOptionIndex(index)}
+                        role="option"
+                        type="button"
+                      >
+                        <Check
+                          className={cn(
+                            "mt-0.5 size-3.5 shrink-0 text-[var(--icon-color-active)]",
+                            !isSelected && "opacity-0",
+                          )}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[length:var(--font-size-sm)] font-medium text-[var(--text-primary)]">
+                            {option.label}
+                          </span>
+                          {option.description && (
+                            <span className="mt-0.5 block truncate text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+                              {option.description}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
     <div className={cn("relative min-w-0", className)} ref={rootRef}>
       <button
@@ -198,90 +391,7 @@ export function Combobox({
         </span>
         <ChevronsUpDown className="size-3.5 shrink-0 text-[var(--icon-color-muted)]" />
       </button>
-      {isOpen && (
-        <div
-          className={cn(
-            "absolute z-50 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-[var(--radius-md)] border border-border bg-popover text-popover-foreground shadow-[var(--shadow-md)]",
-            side === "top" ? "bottom-full mb-1" : "top-full mt-1",
-            align === "end" ? "right-0" : "left-0",
-          )}
-        >
-          <div className="flex items-center gap-2 border-b border-[var(--border-divider)] px-2 py-2">
-            <Search className="size-3.5 shrink-0 text-[var(--icon-color-muted)]" />
-            <Input
-              aria-activedescendant={
-                activeOptionIndex >= 0
-                  ? `${listboxId}-option-${activeOptionIndex}`
-                  : undefined
-              }
-              aria-autocomplete="list"
-              aria-controls={listboxId}
-              autoFocus
-              className="h-7 border-0 bg-transparent px-0 py-0 shadow-none focus-visible:shadow-none"
-              placeholder={searchPlaceholder}
-              value={searchQuery}
-              onChange={(event) => updateQuery(event.target.value)}
-              onKeyDown={handleSearchKeyDown}
-            />
-            {isLoading && (
-              <LoaderCircle
-                aria-hidden="true"
-                className="size-3.5 shrink-0 animate-spin text-[var(--icon-color-muted)]"
-              />
-            )}
-          </div>
-          <div
-            className="max-h-64 overflow-y-auto p-1"
-            id={listboxId}
-            role="listbox"
-          >
-            {filteredOptions.length === 0 ? (
-              <div className="px-2 py-3 text-[length:var(--font-size-sm)] text-[var(--text-tertiary)]">
-                {emptyMessage}
-              </div>
-            ) : (
-              filteredOptions.map((option, index) => {
-                const isSelected = option.value === value;
-                const isActive = index === activeOptionIndex;
-                return (
-                  <button
-                    aria-selected={isSelected}
-                    className={cn(
-                      "flex w-full min-w-0 items-start gap-2 rounded-[var(--radius-sm)] px-2 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:shadow-[var(--state-focus-ring)] disabled:pointer-events-none disabled:opacity-[var(--opacity-disabled)]",
-                      (isActive || isSelected) &&
-                        "bg-[var(--state-selected-bg)]",
-                    )}
-                    disabled={option.disabled}
-                    id={`${listboxId}-option-${index}`}
-                    key={option.value}
-                    onClick={() => selectOption(option)}
-                    onMouseEnter={() => setActiveOptionIndex(index)}
-                    role="option"
-                    type="button"
-                  >
-                    <Check
-                      className={cn(
-                        "mt-0.5 size-3.5 shrink-0 text-[var(--icon-color-active)]",
-                        !isSelected && "opacity-0",
-                      )}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[length:var(--font-size-sm)] font-medium text-[var(--text-primary)]">
-                        {option.label}
-                      </span>
-                      {option.description && (
-                        <span className="mt-0.5 block truncate text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
-                          {option.description}
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
+      {popover}
     </div>
   );
 }
@@ -303,4 +413,20 @@ function getNextEnabledIndex(
     }
   }
   return -1;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function hasSameFloatingStyle(
+  current: CSSProperties,
+  next: Required<Pick<CSSProperties, "left" | "maxHeight" | "top" | "width">>,
+): boolean {
+  return (
+    current.left === next.left &&
+    current.maxHeight === next.maxHeight &&
+    current.top === next.top &&
+    current.width === next.width
+  );
 }
