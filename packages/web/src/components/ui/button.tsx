@@ -3,14 +3,14 @@ import { cn } from "../../lib/utils";
 
 const variants = {
   default:
-    "bg-primary text-primary-foreground shadow-[var(--shadow-xs)] hover:bg-[var(--color-gray-800)]",
+    "bg-primary text-primary-foreground shadow-[var(--shadow-xs)] hover:bg-[var(--button-primary-hover-bg)]",
   destructive:
-    "bg-destructive text-destructive-foreground shadow-[var(--shadow-xs)] hover:bg-[var(--color-rose-500)] focus-visible:ring-[var(--semantic-danger-border)]/40",
+    "bg-destructive text-destructive-foreground shadow-[var(--shadow-xs)] hover:bg-[var(--button-destructive-hover-bg)] focus-visible:ring-[var(--semantic-danger-border)]/40",
   ghost: "hover:bg-accent hover:text-accent-foreground",
   outline:
     "border border-input bg-[var(--surface-card)] shadow-[var(--shadow-xs)] hover:bg-accent hover:text-accent-foreground",
   secondary:
-    "bg-secondary text-secondary-foreground shadow-[var(--shadow-xs)] hover:bg-[var(--color-gray-150)]",
+    "bg-secondary text-secondary-foreground shadow-[var(--shadow-xs)] hover:bg-[var(--button-secondary-hover-bg)]",
 } as const;
 
 const sizes = {

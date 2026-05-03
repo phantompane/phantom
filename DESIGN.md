@@ -125,6 +125,125 @@ Primitive colors should not be used directly in components. Map them through sem
 }
 ```
 
+### Dark Mode
+
+Product surfaces must support both light and dark themes through the same
+purpose-based tokens. Components should not branch on theme or use primitive
+colors directly for foregrounds, backgrounds, status dots, skeletons, or
+scrollbars.
+
+Theme activation should follow this order:
+
+- Default to the light token set in `:root`.
+- Respect the system preference with `@media (prefers-color-scheme: dark)`.
+- Allow explicit overrides through `data-theme="light"` and
+  `data-theme="dark"` on the document root for future settings surfaces.
+
+Dark mode should remain quiet and low-saturation. It should not become a high
+contrast black UI; use charcoal surfaces, soft dividers, and muted semantic
+tones that remain readable during long sessions.
+
+Recommended dark token values:
+
+```css
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface-window: #15171b;
+    --surface-sidebar: #1a1c21;
+    --surface-panel: #181a1f;
+    --surface-card: #20232a;
+    --surface-code: #1d2026;
+    --surface-input: #20232a;
+    --surface-floating: rgba(32, 35, 42, 0.86);
+    --surface-overlay: rgba(4, 6, 10, 0.62);
+
+    --text-primary: #e6e8ee;
+    --text-secondary: #b3b7c1;
+    --text-tertiary: #858b98;
+    --text-muted: #686f7c;
+    --text-disabled: #565c67;
+
+    --border-subtle: #292d35;
+    --border-default: #353a45;
+    --border-strong: #444a56;
+    --border-focus: #697493;
+    --border-divider: rgba(230, 232, 238, 0.08);
+
+    --semantic-success-bg: #1c2a22;
+    --semantic-success-fg: #85c59b;
+    --semantic-success-border: #3f7b54;
+
+    --semantic-danger-bg: #2e2026;
+    --semantic-danger-fg: #d58ba2;
+    --semantic-danger-border: #8f5164;
+
+    --semantic-warning-bg: #2d271a;
+    --semantic-warning-fg: #d5bd70;
+    --semantic-warning-border: #8e7536;
+
+    --semantic-info-bg: #202537;
+    --semantic-info-fg: #9aa9df;
+    --semantic-info-border: #586a9c;
+
+    --diff-added-bg: #233129;
+    --diff-added-bg-soft: #1c2a22;
+    --diff-added-fg: #85c59b;
+    --diff-added-border: #3f7b54;
+
+    --diff-removed-bg: #34252b;
+    --diff-removed-bg-soft: #2e2026;
+    --diff-removed-fg: #d58ba2;
+    --diff-removed-border: #8f5164;
+
+    --diff-hunk-bg: #28263a;
+    --diff-hunk-fg: #b7abe7;
+    --diff-hunk-border: #645b92;
+
+    --shadow-xs: 0 1px 2px rgba(4, 6, 10, 0.24);
+    --shadow-sm: 0 2px 8px rgba(4, 6, 10, 0.28);
+    --shadow-md: 0 10px 28px rgba(4, 6, 10, 0.36);
+    --shadow-lg: 0 18px 54px rgba(4, 6, 10, 0.48);
+
+    --state-hover-bg: rgba(230, 232, 238, 0.06);
+    --state-pressed-bg: rgba(230, 232, 238, 0.1);
+    --state-selected-bg: rgba(230, 232, 238, 0.08);
+    --state-focus-ring: 0 0 0 3px rgba(132, 149, 210, 0.26);
+
+    --icon-color-default: #9aa0ac;
+    --icon-color-muted: #717987;
+    --icon-color-active: #eef0f4;
+
+    --button-primary-bg: #d9dde6;
+    --button-primary-fg: #171a20;
+    --button-primary-hover-bg: #c8ceda;
+    --button-secondary-bg: #242832;
+    --button-secondary-fg: var(--text-primary);
+    --button-secondary-hover-bg: #2b303a;
+    --button-destructive-bg: #8f5164;
+    --button-destructive-fg: #fdfdfd;
+    --button-destructive-hover-bg: #a96678;
+
+    --brand-mark-bg: #d9dde6;
+    --brand-mark-fg: #171a20;
+    --chat-user-bg: #d9dde6;
+    --chat-user-fg: #171a20;
+    --chat-user-skeleton-bg: rgba(217, 221, 230, 0.14);
+    --skeleton-bg: #2b3039;
+    --scrollbar-thumb: #3f4653;
+    --scrollbar-thumb-hover: #525b6a;
+    --status-archived-dot: #747b89;
+    --status-idle-dot: #9aa0ac;
+
+    color-scheme: dark;
+  }
+}
+```
+
+When a component needs a theme-sensitive value that is not a reusable surface,
+text, border, semantic, diff, or state token, create a component-specific token
+such as `--button-primary-hover-bg`, `--chat-user-bg`,
+`--skeleton-bg`, or `--scrollbar-thumb`.
+
 ### Surface Tokens
 
 ```css

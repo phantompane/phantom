@@ -155,7 +155,7 @@ const statusMeta: Record<
 > = {
   archived: {
     badge: "secondary",
-    dot: "bg-[var(--color-gray-400)]",
+    dot: "bg-[var(--status-archived-dot)]",
     label: "Archived",
   },
   failed: {
@@ -165,7 +165,7 @@ const statusMeta: Record<
   },
   idle: {
     badge: "secondary",
-    dot: "bg-[var(--color-gray-500)]",
+    dot: "bg-[var(--status-idle-dot)]",
     label: "Idle",
   },
   running: {
@@ -1774,7 +1774,7 @@ export function HomeRoute() {
     <SidebarProvider className="app-shell">
       <Sidebar collapsible="offcanvas" variant="inset">
         <SidebarHeader>
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--color-gray-900)] text-primary-foreground">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--brand-mark-bg)] text-[var(--brand-mark-fg)]">
             <FolderGit2 className="size-4" />
           </div>
           <div className="min-w-0 flex-1 group-data-[state=collapsed]/sidebar:hidden">
@@ -2142,7 +2142,7 @@ export function HomeRoute() {
                 Branch handling
               </Label>
               <select
-                className="h-9 rounded-[var(--radius-sm)] border border-input bg-background px-3 text-[length:var(--font-size-sm)] shadow-xs outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="h-9 rounded-[var(--radius-sm)] border border-input bg-[var(--surface-input)] px-3 text-[length:var(--font-size-sm)] shadow-[var(--shadow-xs)] outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:shadow-[var(--state-focus-ring)] disabled:cursor-not-allowed disabled:opacity-[var(--opacity-disabled)]"
                 id="delete-worktree-branch-mode"
                 onChange={(event) =>
                   setDeleteWorktreeBranchMode(
@@ -2708,7 +2708,7 @@ function MessageCard({ message }: { message: VisibleMessageRecord }) {
     <article
       className={cn(
         isUser &&
-          "ml-auto max-w-[78%] rounded-[var(--radius-lg)] border border-transparent bg-[var(--color-gray-900)] px-4 py-3 text-primary-foreground shadow-[var(--shadow-xs)]",
+          "ml-auto max-w-[78%] rounded-[var(--radius-lg)] border border-transparent bg-[var(--chat-user-bg)] px-4 py-3 text-[var(--chat-user-fg)] shadow-[var(--shadow-xs)]",
         message.role === "assistant" &&
           "mr-auto max-w-[82%] px-2 py-1 text-[var(--text-primary)]",
         isError &&
