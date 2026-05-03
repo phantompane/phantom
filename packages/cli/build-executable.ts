@@ -7,13 +7,7 @@ const execFileAsync = promisify(execFile);
 const entryPoint = join("src", "bin", "phantom.ts");
 const distDir = "dist";
 const appAssetsDir = "app";
-const appServerEntry = join(
-  distDir,
-  appAssetsDir,
-  ".output",
-  "server",
-  "index.mjs",
-);
+const appServerEntry = join(distDir, appAssetsDir, "server", "start.mjs");
 const outputDir = "output";
 const binaryName = "phantom";
 const bunExecutable = "bun";

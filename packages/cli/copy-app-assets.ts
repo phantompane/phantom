@@ -1,34 +1,49 @@
 import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-const appDirectory = join("..", "app");
-const appOutputDirectory = join(appDirectory, ".output");
-const appServerEntry = join(appOutputDirectory, "server", "index.mjs");
-const targetOutputDirectory = join("dist", "app", ".output");
+const serverDirectory = join("..", "server");
+const webDirectory = join("..", "web");
+const serverOutputDirectory = join(serverDirectory, "dist");
+const webOutputDirectory = join(webDirectory, "dist");
+const serverEntry = join(serverOutputDirectory, "start.mjs");
+const webIndex = join(webOutputDirectory, "index.html");
+const targetAppDirectory = join("dist", "app");
+const targetServerDirectory = join(targetAppDirectory, "server");
+const targetWebDirectory = join(targetAppDirectory, "web");
 const sourcePaths = [
-  join(appDirectory, "package.json"),
-  join(appDirectory, "src"),
-  join(appDirectory, "tsconfig.json"),
-  join(appDirectory, "vite.config.ts"),
+  join(serverDirectory, "package.json"),
+  join(serverDirectory, "src"),
+  join(serverDirectory, "tsconfig.json"),
+  join(webDirectory, "index.html"),
+  join(webDirectory, "package.json"),
+  join(webDirectory, "src"),
+  join(webDirectory, "tsconfig.json"),
+  join(webDirectory, "vite.config.ts"),
 ];
 
 await assertFreshAppBuild();
-await rm(targetOutputDirectory, { recursive: true, force: true });
-await mkdir(dirname(targetOutputDirectory), { recursive: true });
-await cp(appOutputDirectory, targetOutputDirectory, { recursive: true });
+await rm(targetAppDirectory, { recursive: true, force: true });
+await mkdir(dirname(targetAppDirectory), { recursive: true });
+await cp(serverOutputDirectory, targetServerDirectory, { recursive: true });
+await cp(webOutputDirectory, targetWebDirectory, { recursive: true });
 
 async function assertFreshAppBuild(): Promise<void> {
-  const outputStat = await stat(appServerEntry).catch(() => null);
-  if (!outputStat) {
+  const serverOutputStat = await stat(serverEntry).catch(() => null);
+  const webOutputStat = await stat(webIndex).catch(() => null);
+  if (!serverOutputStat || !webOutputStat) {
     throw new Error(
-      "Phantom app assets are missing. Run `pnpm --filter app-private build` before building the CLI.",
+      "Phantom app assets are missing. Run `pnpm --filter @phantompane/server build` and `pnpm --filter @phantompane/web build` before building the CLI.",
     );
   }
 
   const sourceMtime = await getNewestMtime(sourcePaths);
-  if (sourceMtime > outputStat.mtimeMs) {
+  const oldestOutputMtime = Math.min(
+    serverOutputStat.mtimeMs,
+    webOutputStat.mtimeMs,
+  );
+  if (sourceMtime > oldestOutputMtime) {
     throw new Error(
-      "Phantom app assets are stale. Run `pnpm --filter app-private build` before building the CLI.",
+      "Phantom app assets are stale. Run `pnpm --filter @phantompane/server build` and `pnpm --filter @phantompane/web build` before building the CLI.",
     );
   }
 }

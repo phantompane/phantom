@@ -101,10 +101,11 @@ export async function serveHandler(args: string[] = []): Promise<void> {
     const serverEntry = join(
       dirname(bundledEntrypoint),
       "app",
-      ".output",
       "server",
-      "index.mjs",
+      "start.mjs",
     );
+    const webDistDirectory = join(dirname(bundledEntrypoint), "app", "web");
+    process.env.PHANTOM_WEB_DIST_DIR = webDistDirectory;
 
     try {
       await access(serverEntry);

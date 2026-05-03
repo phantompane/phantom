@@ -1,0 +1,340 @@
+import { Hono, type Context } from "hono";
+import { validator } from "hono/validator";
+import { z } from "zod";
+import { createSseResponse, parseLastEventId } from "./event-hub.ts";
+import { getServeServices } from "./services.ts";
+import type { ApiErrorBody, CodexTurnContextItem } from "./types.ts";
+
+const contextItemSchema = z.object({
+  name: z.string().min(1),
+  path: z.string().min(1),
+});
+
+const createProjectSchema = z.object({
+  path: z.string().min(1, "Project path is required"),
+});
+
+const createChatSchema = z.object({
+  name: z.string().optional(),
+  base: z.string().optional(),
+});
+
+const worktreeSchema = z.object({
+  name: z.string().min(1, "Worktree name is required"),
+  path: z.string().optional(),
+});
+
+const deleteWorktreeSchema = worktreeSchema.extend({
+  force: z.boolean().optional(),
+  keepBranch: z.boolean().optional(),
+});
+
+const sendMessageSchema = z.object({
+  text: z.string().min(1, "Message text is required"),
+  effort: z.string().nullable().optional(),
+  model: z.string().nullable().optional(),
+  files: z.array(contextItemSchema).optional(),
+  skills: z.array(contextItemSchema).optional(),
+});
+
+const steerMessageSchema = z.object({
+  text: z.string().min(1, "Message text is required"),
+});
+
+const approvalSchema = z.object({
+  decision: z.enum(["accept", "acceptForSession", "decline", "cancel"]),
+});
+
+const projectChatsQuerySchema = z.object({
+  sync: z.string().optional(),
+});
+
+const chatQuerySchema = z.object({
+  context: z.string().optional(),
+  fileQuery: z.string().optional(),
+});
+
+function jsonError(c: Context, message: string, status: 400 | 404 = 400) {
+  return c.json(
+    {
+      error: {
+        message,
+      },
+    } satisfies ApiErrorBody,
+    status,
+  );
+}
+
+function handleApiError(c: Context, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const status: 400 | 404 =
+    message.includes("not found") || message.includes("Not found") ? 404 : 400;
+  return jsonError(c, message, status);
+}
+
+function jsonBody<TSchema extends z.ZodType>(schema: TSchema) {
+  return validator("json", (value, c) => {
+    const result = schema.safeParse(value);
+    if (!result.success) {
+      return jsonError(
+        c,
+        result.error.issues[0]?.message ?? "Request body is invalid",
+      );
+    }
+    return result.data as z.infer<TSchema>;
+  });
+}
+
+function query<TSchema extends z.ZodType>(schema: TSchema) {
+  return validator("query", (value, c) => {
+    const result = schema.safeParse(value);
+    if (!result.success) {
+      return jsonError(
+        c,
+        result.error.issues[0]?.message ?? "Request query is invalid",
+      );
+    }
+    return result.data as z.infer<TSchema>;
+  });
+}
+
+function optionalString(value: string | null | undefined): string | undefined {
+  return value ?? undefined;
+}
+
+function contextItems(
+  value: z.infer<typeof sendMessageSchema>["files"],
+): CodexTurnContextItem[] | undefined {
+  return value?.map((item) => ({
+    name: item.name,
+    path: item.path,
+  }));
+}
+
+export const rpcRoutes = new Hono()
+  .get("/health", async (c) => {
+    try {
+      return c.json(await getServeServices().getHealth(), 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .get("/auth", async (c) => {
+    try {
+      return c.json({ auth: await getServeServices().readAuth() }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .get("/events", (c) => {
+    const services = getServeServices();
+    const stream = services.eventHub.subscribe(
+      (event) => event.scope === "global",
+      parseLastEventId(c.req.raw),
+    );
+    return createSseResponse(stream);
+  })
+  .get("/models", async (c) => {
+    try {
+      return c.json({ models: await getServeServices().listModels() }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .get("/projects", async (c) => {
+    try {
+      return c.json({ projects: await getServeServices().listProjects() }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .post("/projects", jsonBody(createProjectSchema), async (c) => {
+    try {
+      const body = c.req.valid("json");
+      const project = await getServeServices().addProject(body.path);
+      return c.json({ project }, 201);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .delete("/projects/:projectId", async (c) => {
+    try {
+      await getServeServices().removeProject(c.req.param("projectId"));
+      return c.json({}, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .get(
+    "/projects/:projectId/chats",
+    query(projectChatsQuerySchema),
+    async (c) => {
+      try {
+        const services = getServeServices();
+        const projectId = c.req.param("projectId");
+        const requestQuery = c.req.valid("query");
+        const shouldSync = requestQuery.sync === "1";
+        const worktrees = await services.listProjectWorktrees(projectId, {
+          sync: shouldSync,
+        });
+        const chats = await services.listChats(projectId);
+        return c.json({ chats, worktrees }, 200);
+      } catch (error) {
+        return handleApiError(c, error);
+      }
+    },
+  )
+  .post("/projects/:projectId/chats", jsonBody(createChatSchema), async (c) => {
+    try {
+      const body = c.req.valid("json");
+      const chat = await getServeServices().createChat(
+        c.req.param("projectId"),
+        {
+          name: body.name,
+          base: body.base,
+        },
+      );
+      return c.json({ chat }, 201);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .delete(
+    "/projects/:projectId/worktrees",
+    jsonBody(deleteWorktreeSchema),
+    async (c) => {
+      try {
+        const body = c.req.valid("json");
+        const result = await getServeServices().deleteProjectWorktree(
+          c.req.param("projectId"),
+          {
+            name: body.name,
+            path: body.path,
+            force: body.force,
+            keepBranch: body.keepBranch,
+          },
+        );
+        return c.json(result, 200);
+      } catch (error) {
+        return handleApiError(c, error);
+      }
+    },
+  )
+  .post(
+    "/projects/:projectId/worktrees/sync",
+    jsonBody(worktreeSchema),
+    async (c) => {
+      try {
+        const body = c.req.valid("json");
+        const result = await getServeServices().syncProjectWorktreeBranch(
+          c.req.param("projectId"),
+          {
+            name: body.name,
+            path: body.path,
+          },
+        );
+        return c.json(result, 200);
+      } catch (error) {
+        return handleApiError(c, error);
+      }
+    },
+  )
+  .get("/chats/:chatId", query(chatQuerySchema), async (c) => {
+    try {
+      const services = getServeServices();
+      const chatId = c.req.param("chatId");
+      const requestQuery = c.req.valid("query");
+      if (requestQuery.context === "skills") {
+        const skills = await services.listSkills(chatId);
+        return c.json({ skills }, 200);
+      }
+      if (requestQuery.fileQuery !== undefined) {
+        const files = await services.searchFiles(
+          chatId,
+          requestQuery.fileQuery,
+        );
+        return c.json({ files }, 200);
+      }
+      const chat = await services.getChat(chatId);
+      return c.json({ chat }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .get("/chats/:chatId/events", (c) => {
+    const chatId = c.req.param("chatId");
+    const services = getServeServices();
+    const stream = services.eventHub.subscribe(
+      (event) => event.scope === "global" || event.chatId === chatId,
+      parseLastEventId(c.req.raw),
+    );
+    return createSseResponse(stream);
+  })
+  .get("/chats/:chatId/messages", async (c) => {
+    try {
+      const messages = await getServeServices().getMessages(
+        c.req.param("chatId"),
+      );
+      return c.json({ messages }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .post("/chats/:chatId/messages", jsonBody(sendMessageSchema), async (c) => {
+    try {
+      const body = c.req.valid("json");
+      const chat = await getServeServices().sendMessage(c.req.param("chatId"), {
+        effort: optionalString(body.effort),
+        files: contextItems(body.files),
+        model: optionalString(body.model),
+        skills: contextItems(body.skills),
+        text: body.text,
+      });
+      return c.json({ chat }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .post("/chats/:chatId/interrupt", async (c) => {
+    try {
+      await getServeServices().interruptChat(c.req.param("chatId"));
+      return c.json({}, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .post("/chats/:chatId/steer", jsonBody(steerMessageSchema), async (c) => {
+    try {
+      const body = c.req.valid("json");
+      const chat = await getServeServices().steerMessage(
+        c.req.param("chatId"),
+        {
+          text: body.text,
+        },
+      );
+      return c.json({ chat }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .post(
+    "/chats/:chatId/approvals/:requestId",
+    jsonBody(approvalSchema),
+    async (c) => {
+      try {
+        const body = c.req.valid("json");
+        await getServeServices().answerApproval(
+          c.req.param("chatId"),
+          c.req.param("requestId"),
+          {
+            decision: body.decision,
+          },
+        );
+        return c.json({}, 200);
+      } catch (error) {
+        return handleApiError(c, error);
+      }
+    },
+  );
+
+export type AppType = typeof rpcRoutes;

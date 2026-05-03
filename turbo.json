@@ -21,12 +21,21 @@
       "dependsOn": ["^build", "transit"],
       "outputs": ["dist/**"]
     },
-    "app-private#build": {
+    "@phantompane/server#build": {
       "dependsOn": ["^build", "transit"],
-      "outputs": [".output/**"]
+      "outputs": ["dist/**"]
+    },
+    "@phantompane/web#build": {
+      "dependsOn": ["@phantompane/server#build", "^build", "transit"],
+      "outputs": ["dist/**"]
     },
     "@phantompane/cli-private#build": {
-      "dependsOn": ["app-private#build", "^build", "transit"],
+      "dependsOn": [
+        "@phantompane/server#build",
+        "@phantompane/web#build",
+        "^build",
+        "transit"
+      ],
       "outputs": ["dist/**"]
     },
     "compile": {
@@ -34,7 +43,12 @@
       "outputs": ["dist/**", "output/**"]
     },
     "@phantompane/cli-private#compile": {
-      "dependsOn": ["app-private#build", "^build", "transit"],
+      "dependsOn": [
+        "@phantompane/server#build",
+        "@phantompane/web#build",
+        "^build",
+        "transit"
+      ],
       "outputs": ["dist/**", "output/**"]
     },
     "lint": {

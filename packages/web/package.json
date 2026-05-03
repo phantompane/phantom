@@ -1,0 +1,36 @@
+{
+  "name": "@phantompane/web",
+  "version": "6.3.0-0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build && tsc --noEmit",
+    "preview": "vite preview",
+    "lint": "oxfmt --check . && oxlint .",
+    "fix": "oxfmt --write . && oxlint --fix .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/web/src"
+  },
+  "dependencies": {
+    "@phantompane/server": "workspace:*",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@tanstack/react-query": "^5.90.12",
+    "hono": "^4.12.12",
+    "lucide-react": "^0.523.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "react-router": "^7.10.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.1.17",
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "tailwindcss": "4.1.17",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.8",
+    "vitest": "^4.1.2"
+  }
+}
