@@ -25,26 +25,58 @@ type ComposerEnterKeyEnvironment = {
   };
 };
 
+export type ComposerEnterAction = "modifiedSubmit" | "submit";
+export type ComposerSubmitMode = "queue" | "send" | "steer";
+
+type ComposerChatState = {
+  activeTurnId?: string | null;
+  status?: string | null;
+};
+
 export function shouldSubmitComposerOnEnter(
   event: ComposerEnterKeyEvent,
   environment: ComposerEnterKeyEnvironment = globalThis,
 ): boolean {
+  return getComposerEnterAction(event, environment) === "submit";
+}
+
+export function getComposerEnterAction(
+  event: ComposerEnterKeyEvent,
+  environment: ComposerEnterKeyEnvironment = globalThis,
+): ComposerEnterAction | null {
   const isImeComposing = event.isComposing || event.keyCode === 229;
   if (
     event.key !== "Enter" ||
     event.shiftKey ||
-    event.metaKey ||
-    event.ctrlKey ||
     event.altKey ||
     isImeComposing
   ) {
-    return false;
+    return null;
   }
 
-  return (
-    isHardwareEnterKey(event) &&
-    !isLikelyMobileTextEntryEnvironment(environment)
-  );
+  if (
+    !isHardwareEnterKey(event) ||
+    isLikelyMobileTextEntryEnvironment(environment)
+  ) {
+    return null;
+  }
+
+  return event.metaKey || event.ctrlKey ? "modifiedSubmit" : "submit";
+}
+
+export function getComposerSubmitModeForEnter(
+  action: ComposerEnterAction,
+  chat: ComposerChatState | null | undefined,
+): ComposerSubmitMode | null {
+  if (action === "modifiedSubmit") {
+    return "queue";
+  }
+
+  if (!chat?.activeTurnId) {
+    return "send";
+  }
+
+  return chat.status === "running" ? "steer" : null;
 }
 
 function isHardwareEnterKey(event: ComposerEnterKeyEvent): boolean {

@@ -28,6 +28,7 @@ function createTestState(overrides: Partial<ServeState> = {}): ServeState {
     projects: [],
     chats: [],
     messages: [],
+    queuedMessages: [],
     selectedProjectId: null,
     selectedChatId: null,
     ...overrides,

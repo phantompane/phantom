@@ -37,9 +37,8 @@ const sendMessageSchema = z.object({
   skills: z.array(contextItemSchema).optional(),
 });
 
-const steerMessageSchema = z.object({
-  text: z.string().min(1, "Message text is required"),
-});
+const steerMessageSchema = sendMessageSchema;
+const queueMessageSchema = sendMessageSchema;
 
 const approvalSchema = z.object({
   decision: z.enum(["accept", "acceptForSession", "decline", "cancel"]),
@@ -306,6 +305,28 @@ export const rpcRoutes = new Hono()
       const chat = await getServeServices().steerMessage(
         c.req.param("chatId"),
         {
+          effort: optionalString(body.effort),
+          files: contextItems(body.files),
+          model: optionalString(body.model),
+          skills: contextItems(body.skills),
+          text: body.text,
+        },
+      );
+      return c.json({ chat }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .post("/chats/:chatId/queue", jsonBody(queueMessageSchema), async (c) => {
+    try {
+      const body = c.req.valid("json");
+      const chat = await getServeServices().queueMessage(
+        c.req.param("chatId"),
+        {
+          effort: optionalString(body.effort),
+          files: contextItems(body.files),
+          model: optionalString(body.model),
+          skills: contextItems(body.skills),
           text: body.text,
         },
       );

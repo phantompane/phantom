@@ -37,7 +37,9 @@ import {
   createChatMutation,
   deleteWorktreeMutation,
   interruptChatMutation,
+  queueMessageMutation,
   sendMessageMutation,
+  steerMessageMutation,
   syncWorktreeMutation,
 } from "../api/mutations";
 import {
@@ -100,7 +102,11 @@ import {
   SidebarTrigger,
 } from "../components/ui/sidebar";
 import { Textarea } from "../components/ui/textarea";
-import { shouldSubmitComposerOnEnter } from "../lib/composer-keyboard";
+import {
+  getComposerEnterAction,
+  getComposerSubmitModeForEnter,
+  type ComposerSubmitMode,
+} from "../lib/composer-keyboard";
 import { cn } from "../lib/utils";
 import {
   findValidatedSelectedProjectChat,
@@ -522,6 +528,24 @@ export function HomeRoute() {
       chatId: string;
       input: Parameters<typeof sendMessageMutation>[1];
     }) => sendMessageMutation(chatId, input),
+  });
+  const steerMessageRequest = useMutation({
+    mutationFn: ({
+      chatId,
+      input,
+    }: {
+      chatId: string;
+      input: Parameters<typeof steerMessageMutation>[1];
+    }) => steerMessageMutation(chatId, input),
+  });
+  const queueMessageRequest = useMutation({
+    mutationFn: ({
+      chatId,
+      input,
+    }: {
+      chatId: string;
+      input: Parameters<typeof queueMessageMutation>[1];
+    }) => queueMessageMutation(chatId, input),
   });
   const interruptChatRequest = useMutation({
     mutationFn: interruptChatMutation,
@@ -1637,11 +1661,16 @@ export function HomeRoute() {
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await submitComposer("send");
+  }
+
+  async function submitComposer(mode: ComposerSubmitMode) {
     if (
       !selectedChatId ||
       !canSendMessage ||
       isSendingMessage ||
-      pendingSendChatIdsRef.current.has(selectedChatId)
+      pendingSendChatIdsRef.current.has(selectedChatId) ||
+      (mode === "steer" && !selectedChat?.activeTurnId)
     ) {
       return;
     }
@@ -1681,7 +1710,13 @@ export function HomeRoute() {
     pendingSendChatIdsRef.current.add(requestChatId);
     setIsSendingMessage(true);
     try {
-      await sendMessageRequest.mutateAsync({
+      const mutation =
+        mode === "steer"
+          ? steerMessageRequest
+          : mode === "queue"
+            ? queueMessageRequest
+            : sendMessageRequest;
+      await mutation.mutateAsync({
         chatId: requestChatId,
         input: {
           effort: turnEffort,
@@ -1719,30 +1754,32 @@ export function HomeRoute() {
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (
-      !shouldSubmitComposerOnEnter({
-        altKey: event.altKey,
-        code: event.code,
-        ctrlKey: event.ctrlKey,
-        isComposing: event.nativeEvent.isComposing,
-        key: event.key,
-        keyCode: event.keyCode,
-        metaKey: event.metaKey,
-        shiftKey: event.shiftKey,
-      })
-    ) {
+    const action = getComposerEnterAction({
+      altKey: event.altKey,
+      code: event.code,
+      ctrlKey: event.ctrlKey,
+      isComposing: event.nativeEvent.isComposing,
+      key: event.key,
+      keyCode: event.keyCode,
+      metaKey: event.metaKey,
+      shiftKey: event.shiftKey,
+    });
+    if (!action) {
       return;
     }
-    if (
-      !selectedChatId ||
-      !canSendMessage ||
-      isChatRunning ||
-      isSendingMessage
-    ) {
+    if (!selectedChatId || !canSendMessage || isSendingMessage) {
+      return;
+    }
+    const submitMode = getComposerSubmitModeForEnter(action, selectedChat);
+    if (!submitMode) {
       return;
     }
     event.preventDefault();
-    event.currentTarget.form?.requestSubmit();
+    if (submitMode === "send") {
+      event.currentTarget.form?.requestSubmit();
+      return;
+    }
+    void submitComposer(submitMode);
   }
 
   async function interruptChat() {

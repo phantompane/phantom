@@ -73,6 +73,30 @@ export async function sendMessageMutation(
   );
 }
 
+export async function steerMessageMutation(
+  chatId: string,
+  input: SendMessageInput,
+) {
+  return readRpcJson<{ chat: ChatRecord }>(
+    await api.chats[":chatId"].steer.$post({
+      param: { chatId: routeParam(chatId) },
+      json: input,
+    }),
+  );
+}
+
+export async function queueMessageMutation(
+  chatId: string,
+  input: SendMessageInput,
+) {
+  return readRpcJson<{ chat: ChatRecord }>(
+    await api.chats[":chatId"].queue.$post({
+      param: { chatId: routeParam(chatId) },
+      json: input,
+    }),
+  );
+}
+
 export async function interruptChatMutation(chatId: string) {
   return readRpcJson<unknown>(
     await api.chats[":chatId"].interrupt.$post({

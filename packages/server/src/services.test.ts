@@ -132,6 +132,7 @@ function createTestState(overrides: Partial<ServeState> = {}): ServeState {
     projects: [],
     chats: [],
     messages: [],
+    queuedMessages: [],
     selectedProjectId: null,
     selectedChatId: null,
     ...overrides,
@@ -140,6 +141,7 @@ function createTestState(overrides: Partial<ServeState> = {}): ServeState {
 
 async function createHarness(state: ServeState): Promise<{
   codex: FakeCodexBridge;
+  codexHome: string;
   services: ServeServices;
   store: ServeStateStore;
 }> {
@@ -152,7 +154,7 @@ async function createHarness(state: ServeState): Promise<{
     codexHome,
     store,
   });
-  return { codex, services, store };
+  return { codex, codexHome, services, store };
 }
 
 function markChatActiveInCurrentProcess(
@@ -1168,6 +1170,69 @@ describe("ServeServices", () => {
     );
   });
 
+  it("preserves queued chats when syncing Codex thread metadata", async () => {
+    const worktreePath = "/repo/.git/phantom/worktrees/worktree";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          codexThreadId: null,
+          worktreeName: "worktree",
+          worktreePath,
+          branchName: "worktree",
+        }),
+      ],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "queued while pending",
+          eventType: "chat.message.queued",
+          createdAt: timestamp,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued while pending",
+          createdAt: timestamp,
+        },
+      ],
+      selectedChatId: "chat_1",
+    };
+    const { codex, services, store } = await createHarness(state);
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "main",
+            path: "/repo",
+            pathToDisplay: ".",
+            branch: "main",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    codex.listThreads.mockResolvedValueOnce({ threads: [] });
+
+    const chats = await services.listChats("proj_1");
+
+    strictEqual(chats[0]?.id, "chat_1");
+    const savedState = await store.load();
+    strictEqual(savedState.chats.length, 1);
+    strictEqual(savedState.chats[0]?.id, "chat_1");
+    strictEqual(savedState.chats[0]?.codexThreadId, null);
+    strictEqual(savedState.queuedMessages[0]?.text, "queued while pending");
+    strictEqual(savedState.messages[0]?.text, "queued while pending");
+    strictEqual(savedState.selectedChatId, "chat_1");
+  });
+
   it("adds distinct Codex threads when a failed local chat exists for the same worktree", async () => {
     const failedThreadId = "019dc000-0000-7000-8000-000000000001";
     const importedThreadId = "019dc000-0000-7000-8000-000000000002";
@@ -1668,6 +1733,75 @@ describe("ServeServices", () => {
     ]);
   });
 
+  it("keeps a worktree busy until all overlapping syncs finish", async () => {
+    const worktreePath = "/repo/.git/phantom/worktrees/worktree";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          worktreeName: "worktree",
+          worktreePath,
+        }),
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValue({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValue({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "worktree",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/worktree",
+            branch: "worktree",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    gitMocks.getUpstreamBranch.mockResolvedValue("origin/worktree");
+    gitMocks.getRemotes.mockResolvedValue(["origin"]);
+    const resolvePulls: Array<() => void> = [];
+    gitMocks.pull.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePulls.push(() => resolve({ ok: true, value: undefined }));
+        }),
+    );
+
+    const firstSync = services.syncProjectWorktreeBranch("proj_1", {
+      name: "worktree",
+    });
+    await vi.waitFor(() => {
+      strictEqual(gitMocks.pull.mock.calls.length, 1);
+    });
+    const secondSync = services.syncProjectWorktreeBranch("proj_1", {
+      name: "worktree",
+    });
+    await vi.waitFor(() => {
+      strictEqual(gitMocks.pull.mock.calls.length, 2);
+    });
+
+    resolvePulls[0]!();
+    await firstSync;
+
+    await rejects(
+      services.sendMessage("chat_1", { text: "during second sync" }),
+      /busy/,
+    );
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+
+    resolvePulls[1]!();
+    await secondSync;
+  });
+
   it.each([
     {
       description: "running",
@@ -1686,6 +1820,11 @@ describe("ServeServices", () => {
       chat: {},
       markPending: true,
     },
+    {
+      description: "queued message",
+      chat: {},
+      hasQueuedMessage: true,
+    },
   ])("does not sync a worktree with a $description chat", async (scenario) => {
     const worktreePath = "/repo/.git/phantom/worktrees/worktree";
     const state = {
@@ -1698,13 +1837,24 @@ describe("ServeServices", () => {
           worktreePath,
         }),
       ],
+      queuedMessages: scenario.hasQueuedMessage
+        ? [
+            {
+              id: "queue_1",
+              chatId: "chat_1",
+              messageId: "msg_queued",
+              text: "queued before sync",
+              createdAt: timestamp,
+            },
+          ]
+        : [],
     };
     const { services } = await createHarness(state);
     if (scenario.markPending) {
       (
         services as unknown as { pendingChatTurns: Set<string> }
       ).pendingChatTurns.add("chat_1");
-    } else {
+    } else if (!scenario.hasQueuedMessage) {
       markChatActiveInCurrentProcess(services, "chat_1");
     }
     coreMocks.createContext.mockResolvedValueOnce({
@@ -1734,6 +1884,78 @@ describe("ServeServices", () => {
     );
 
     strictEqual(gitMocks.pull.mock.calls.length, 0);
+  });
+
+  it("does not sync when a queued message appears after sync starts", async () => {
+    const worktreePath = "/repo/.git/phantom/worktrees/worktree";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          worktreeName: "worktree",
+          worktreePath,
+        }),
+      ],
+    };
+    const { services, store } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockImplementationOnce(async () => {
+      await store.update((currentState) => ({
+        ...currentState,
+        messages: [
+          ...currentState.messages,
+          {
+            id: "msg_queued",
+            chatId: "chat_1",
+            role: "user" as const,
+            text: "queued during sync",
+            eventType: "chat.message.queued",
+            createdAt: timestamp,
+          },
+        ],
+        queuedMessages: [
+          ...currentState.queuedMessages,
+          {
+            id: "queue_1",
+            chatId: "chat_1",
+            messageId: "msg_queued",
+            text: "queued during sync",
+            createdAt: timestamp,
+          },
+        ],
+      }));
+      return {
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "worktree",
+              path: worktreePath,
+              pathToDisplay: ".git/phantom/worktrees/worktree",
+              branch: "worktree",
+              isClean: true,
+            },
+          ],
+        },
+      };
+    });
+
+    await rejects(
+      services.syncProjectWorktreeBranch("proj_1", { name: "worktree" }),
+      /has an active chat/,
+    );
+
+    strictEqual(gitMocks.pull.mock.calls.length, 0);
+    strictEqual(
+      (await store.load()).queuedMessages[0]?.text,
+      "queued during sync",
+    );
   });
 
   it("deletes a project worktree and removes its local chat history", async () => {
@@ -2138,6 +2360,135 @@ describe("ServeServices", () => {
     );
 
     strictEqual(coreMocks.deleteWorktree.mock.calls.length, 0);
+  });
+
+  it("does not delete a worktree with queued messages", async () => {
+    const worktreePath = "/repo/.git/phantom/worktrees/worktree";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          branchName: "old-name",
+          worktreeName: "old-name",
+          worktreePath,
+        }),
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued before delete",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { services, store } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "worktree",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/worktree",
+            branch: "worktree",
+            isClean: true,
+          },
+        ],
+      },
+    });
+
+    await rejects(
+      services.deleteProjectWorktree("proj_1", { name: "worktree" }),
+      /has an active chat/,
+    );
+
+    strictEqual(coreMocks.deleteWorktree.mock.calls.length, 0);
+    strictEqual(
+      (await store.load()).queuedMessages[0]?.text,
+      "queued before delete",
+    );
+  });
+
+  it("does not delete when a queued message appears after delete starts", async () => {
+    const worktreePath = "/repo/.git/phantom/worktrees/worktree";
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          branchName: "old-name",
+          worktreeName: "old-name",
+          worktreePath,
+        }),
+      ],
+    };
+    const { services, store } = await createHarness(state);
+    coreMocks.createContext.mockResolvedValueOnce({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      preferences: {},
+      config: {},
+    });
+    coreMocks.listWorktrees.mockImplementationOnce(async () => {
+      await store.update((currentState) => ({
+        ...currentState,
+        messages: [
+          ...currentState.messages,
+          {
+            id: "msg_queued",
+            chatId: "chat_1",
+            role: "user" as const,
+            text: "queued during delete",
+            eventType: "chat.message.queued",
+            createdAt: timestamp,
+          },
+        ],
+        queuedMessages: [
+          ...currentState.queuedMessages,
+          {
+            id: "queue_1",
+            chatId: "chat_1",
+            messageId: "msg_queued",
+            text: "queued during delete",
+            createdAt: timestamp,
+          },
+        ],
+      }));
+      return {
+        ok: true,
+        value: {
+          worktrees: [
+            {
+              name: "worktree",
+              path: worktreePath,
+              pathToDisplay: ".git/phantom/worktrees/worktree",
+              branch: "worktree",
+              isClean: true,
+            },
+          ],
+        },
+      };
+    });
+
+    await rejects(
+      services.deleteProjectWorktree("proj_1", { name: "worktree" }),
+      /has an active chat/,
+    );
+
+    strictEqual(coreMocks.deleteWorktree.mock.calls.length, 0);
+    strictEqual(
+      (await store.load()).queuedMessages[0]?.text,
+      "queued during delete",
+    );
   });
 
   it("does not delete a worktree while a chat is starting a turn", async () => {
@@ -3014,6 +3365,645 @@ describe("ServeServices", () => {
     const savedState = await store.load();
     strictEqual(savedState.messages.length, 0);
     strictEqual(savedState.chats[0]?.status, "idle");
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+    strictEqual(codex.steerTurn.mock.calls.length, 0);
+  });
+
+  it("queues a message while a chat is running and starts it after the active turn completes", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_2" } });
+
+    await services.queueMessage("chat_1", { text: "follow up next" });
+
+    let savedState = await store.load();
+    strictEqual(savedState.messages[0]?.text, "follow up next");
+    strictEqual(savedState.queuedMessages[0]?.text, "follow up next");
+    strictEqual(savedState.chats[0]?.status, "running");
+    strictEqual(savedState.chats[0]?.activeTurnId, "turn_1");
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+    strictEqual(codex.steerTurn.mock.calls.length, 0);
+
+    codex.emitNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread_1",
+        turn: { id: "turn_1", status: "completed" },
+      },
+    });
+
+    await vi.waitFor(() => {
+      strictEqual(codex.startTurn.mock.calls.length, 1);
+    });
+    deepStrictEqual(codex.startTurn.mock.calls[0], [
+      "thread_1",
+      "follow up next",
+      "/repo/.git/phantom/worktrees/worktree",
+    ]);
+    savedState = await store.load();
+    strictEqual(savedState.queuedMessages.length, 0);
+    strictEqual(savedState.chats[0]?.status, "running");
+    strictEqual(savedState.chats[0]?.activeTurnId, "turn_2");
+    deepStrictEqual(
+      savedState.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.text),
+      ["follow up next"],
+    );
+  });
+
+  it("starts immediately when an active turn completes before the queue update is serialized", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const store = new ImportRaceStore(
+      await createTemporaryDirectory(),
+      (currentState) => ({
+        ...currentState,
+        chats: currentState.chats.map((chat) =>
+          chat.id === "chat_1"
+            ? { ...chat, status: "idle", activeTurnId: null }
+            : chat,
+        ),
+      }),
+    );
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      codexHome: await createTemporaryDirectory(),
+      store,
+    });
+    markChatActiveInCurrentProcess(services, "chat_1");
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_2" } });
+
+    await services.queueMessage("chat_1", { text: "race follow up" });
+
+    const savedState = await store.load();
+    strictEqual(savedState.queuedMessages.length, 0);
+    strictEqual(savedState.chats[0]?.status, "running");
+    strictEqual(savedState.chats[0]?.activeTurnId, "turn_2");
+    deepStrictEqual(
+      savedState.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.text),
+      ["race follow up"],
+    );
+    deepStrictEqual(codex.startTurn.mock.calls[0], [
+      "thread_1",
+      "race follow up",
+      "/repo/.git/phantom/worktrees/worktree",
+    ]);
+  });
+
+  it("queues messages while a new turn is pending but not yet persisted as running", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+    };
+    const { codex, services, store } = await createHarness(state);
+    (
+      services as unknown as { pendingChatTurns: Set<string> }
+    ).pendingChatTurns.add("chat_1");
+
+    await services.queueMessage("chat_1", { text: "during pending start" });
+
+    const savedState = await store.load();
+    strictEqual(savedState.messages[0]?.text, "during pending start");
+    strictEqual(savedState.queuedMessages[0]?.text, "during pending start");
+    strictEqual(savedState.chats[0]?.status, "idle");
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+    strictEqual(codex.steerTurn.mock.calls.length, 0);
+  });
+
+  it("queues messages while a new turn is normalizing context before starting", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+    };
+    const { codex, services, store } = await createHarness(state);
+    let resolveSkills!: (value: unknown) => void;
+    codex.listSkills.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSkills = resolve;
+        }),
+    );
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_1" } });
+
+    const firstSend = services.sendMessage("chat_1", {
+      skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
+      text: "start with skill",
+    });
+    await vi.waitFor(() => {
+      strictEqual(codex.listSkills.mock.calls.length, 1);
+    });
+
+    await services.queueMessage("chat_1", {
+      text: "queued during context normalization",
+    });
+
+    let savedState = await store.load();
+    strictEqual(
+      savedState.queuedMessages[0]?.text,
+      "queued during context normalization",
+    );
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+
+    resolveSkills({
+      skills: [
+        {
+          enabled: true,
+          name: "review",
+          path: "/skills/review/SKILL.md",
+        },
+      ],
+    });
+    await firstSend;
+
+    savedState = await store.load();
+    strictEqual(savedState.queuedMessages.length, 1);
+    strictEqual(savedState.chats[0]?.status, "running");
+    strictEqual(savedState.chats[0]?.activeTurnId, "turn_1");
+    strictEqual(codex.startTurn.mock.calls.length, 1);
+  });
+
+  it("drains queued messages when a pending new turn fails during context normalization", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+    };
+    const { codex, services, store } = await createHarness(state);
+    let rejectSkills!: (error: Error) => void;
+    codex.listSkills.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectSkills = reject;
+        }),
+    );
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_1" } });
+
+    const firstSend = services.sendMessage("chat_1", {
+      skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
+      text: "start with invalid skill context",
+    });
+    await vi.waitFor(() => {
+      strictEqual(codex.listSkills.mock.calls.length, 1);
+    });
+
+    await services.queueMessage("chat_1", {
+      text: "queued after failed normalization",
+    });
+    rejectSkills(new Error("skills unavailable"));
+    await rejects(firstSend, /skills unavailable/);
+
+    await vi.waitFor(() => {
+      strictEqual(codex.startTurn.mock.calls.length, 1);
+    });
+    const savedState = await store.load();
+    strictEqual(savedState.queuedMessages.length, 0);
+    strictEqual(savedState.chats[0]?.status, "running");
+    strictEqual(savedState.chats[0]?.activeTurnId, "turn_1");
+    deepStrictEqual(
+      savedState.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.text),
+      ["queued after failed normalization"],
+    );
+  });
+
+  it("keeps queued messages when a pending new turn fails after starting", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+    };
+    const { codex, services, store } = await createHarness(state);
+    let rejectStart!: (error: Error) => void;
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectStart = reject;
+        }),
+    );
+
+    const firstSend = services.sendMessage("chat_1", {
+      text: "start but fail",
+    });
+    await vi.waitFor(() => {
+      strictEqual(codex.startTurn.mock.calls.length, 1);
+    });
+
+    await services.queueMessage("chat_1", {
+      text: "queued after rejected start",
+    });
+    rejectStart(new Error("Codex rejected the turn"));
+    await rejects(firstSend, /Codex rejected the turn/);
+
+    const savedState = await store.load();
+    strictEqual(savedState.queuedMessages.length, 1);
+    strictEqual(
+      savedState.queuedMessages[0]?.text,
+      "queued after rejected start",
+    );
+    deepStrictEqual(
+      savedState.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.text),
+      ["queued after rejected start"],
+    );
+    strictEqual(savedState.messages[0]?.eventType, "chat.message.queued");
+    strictEqual(savedState.chats[0]?.status, "failed");
+    strictEqual(savedState.chats[0]?.activeTurnId, null);
+  });
+
+  it("continues draining when a queued turn completes before buffered events flush", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn
+      .mockImplementationOnce(async () => {
+        codex.emitNotification({
+          method: "turn/completed",
+          params: {
+            threadId: "thread_1",
+            turn: { id: "turn_2", status: "completed" },
+          },
+        });
+        return { turn: { id: "turn_2" } };
+      })
+      .mockResolvedValueOnce({ turn: { id: "turn_3" } });
+
+    await services.queueMessage("chat_1", { text: "first queued" });
+    await services.queueMessage("chat_1", { text: "second queued" });
+
+    codex.emitNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread_1",
+        turn: { id: "turn_1", status: "completed" },
+      },
+    });
+
+    await vi.waitFor(() => {
+      strictEqual(codex.startTurn.mock.calls.length, 2);
+    });
+    strictEqual((await store.load()).queuedMessages.length, 0);
+    strictEqual(codex.startTurn.mock.calls[0]?.[1], "first queued");
+    strictEqual(codex.startTurn.mock.calls[1]?.[1], "second queued");
+  });
+
+  it("serializes overlapping queued drains without reporting contention", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "queued once",
+          eventType: "chat.message.queued",
+          createdAt: timestamp,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued once",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+    codex.resumeThread.mockResolvedValueOnce({});
+    let resolveStart!: (value: { turn: { id: string } }) => void;
+    codex.startTurn.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    const drainQueuedMessagesAndReport = (
+      services as unknown as {
+        drainQueuedMessagesAndReport(chatId: string): Promise<void>;
+      }
+    ).drainQueuedMessagesAndReport.bind(services);
+
+    const firstDrain = drainQueuedMessagesAndReport("chat_1");
+    await vi.waitFor(() => {
+      strictEqual(codex.startTurn.mock.calls.length, 1);
+    });
+    const secondDrain = drainQueuedMessagesAndReport("chat_1");
+
+    await secondDrain;
+    resolveStart({ turn: { id: "turn_2" } });
+    await firstDrain;
+
+    const savedState = await store.load();
+    strictEqual(codex.startTurn.mock.calls.length, 1);
+    strictEqual(savedState.queuedMessages.length, 0);
+    strictEqual(
+      savedState.messages.some((message) => message.role === "error"),
+      false,
+    );
+    strictEqual(
+      emitSpy.mock.calls.some((call) => call[0] === "agent.error"),
+      false,
+    );
+  });
+
+  it("removes queued records when queued turn promotion fails", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "queued failure",
+          eventType: "chat.message.queued",
+          createdAt: timestamp,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued failure",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockRejectedValueOnce(new Error("queued start failed"));
+
+    codex.emitNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread_1",
+        turn: { id: "turn_1", status: "completed" },
+      },
+    });
+
+    await vi.waitFor(() => {
+      strictEqual(
+        emitSpy.mock.calls.some((call) => call[0] === "agent.error"),
+        true,
+      );
+    });
+    const savedState = await store.load();
+    strictEqual(savedState.queuedMessages.length, 0);
+    strictEqual(savedState.messages[0]?.text, "queued failure");
+    strictEqual(savedState.messages.at(-1)?.role, "error");
+    strictEqual(savedState.messages.at(-1)?.text, "queued start failed");
+    strictEqual(savedState.chats[0]?.status, "failed");
+    strictEqual(savedState.chats[0]?.activeTurnId, null);
+  });
+
+  it("removes queued records when queued turn context normalization fails", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "queued invalid context",
+          eventType: "chat.message.queued",
+          createdAt: timestamp,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued invalid context",
+          skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+    codex.listSkills.mockResolvedValueOnce({ skills: [] });
+
+    codex.emitNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread_1",
+        turn: { id: "turn_1", status: "completed" },
+      },
+    });
+
+    await vi.waitFor(async () => {
+      const savedState = await store.load();
+      strictEqual(savedState.queuedMessages.length, 0);
+      strictEqual(
+        emitSpy.mock.calls.some((call) => call[0] === "agent.error"),
+        true,
+      );
+    });
+    const savedState = await store.load();
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+    strictEqual(savedState.messages[0]?.text, "queued invalid context");
+    strictEqual(savedState.messages[0]?.eventType, undefined);
+    strictEqual(savedState.messages.at(-1)?.role, "error");
+    strictEqual(
+      savedState.messages.at(-1)?.text,
+      "Skill context path is not available: /skills/review/SKILL.md",
+    );
+    strictEqual(savedState.chats[0]?.status, "idle");
+    strictEqual(savedState.chats[0]?.activeTurnId, null);
+  });
+
+  it("removes stale queued records and reports when the queued message is missing", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_missing",
+          text: "missing queued message",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+
+    codex.emitNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread_1",
+        turn: { id: "turn_1", status: "completed" },
+      },
+    });
+
+    await vi.waitFor(() => {
+      strictEqual(
+        emitSpy.mock.calls.some((call) => call[0] === "agent.error"),
+        true,
+      );
+    });
+    const savedState = await store.load();
+    strictEqual(savedState.queuedMessages.length, 0);
+    strictEqual(savedState.messages.at(-1)?.role, "error");
+    strictEqual(
+      savedState.messages.at(-1)?.text,
+      "Queued message was not found",
+    );
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+  });
+
+  it("starts existing queued messages before new sends on inactive chats", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "failed", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "queued first",
+          eventType: "chat.message.queued",
+          createdAt: timestamp,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued first",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_2" } });
+
+    await services.sendMessage("chat_1", { text: "new after queue" });
+
+    const savedState = await store.load();
+    strictEqual(codex.startTurn.mock.calls[0]?.[1], "queued first");
+    strictEqual(savedState.chats[0]?.status, "running");
+    strictEqual(savedState.chats[0]?.activeTurnId, "turn_2");
+    deepStrictEqual(
+      savedState.messages
+        .filter((message) => message.role === "user")
+        .map((message) => [message.text, message.eventType]),
+      [
+        ["queued first", undefined],
+        ["new after queue", "chat.message.queued"],
+      ],
+    );
+    strictEqual(savedState.queuedMessages.length, 1);
+    strictEqual(savedState.queuedMessages[0]?.text, "new after queue");
+  });
+
+  it("drains queued messages one turn at a time", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn
+      .mockResolvedValueOnce({ turn: { id: "turn_2" } })
+      .mockResolvedValueOnce({ turn: { id: "turn_3" } });
+
+    await services.queueMessage("chat_1", { text: "first queued" });
+    await services.queueMessage("chat_1", { text: "second queued" });
+
+    codex.emitNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread_1",
+        turn: { id: "turn_1", status: "completed" },
+      },
+    });
+
+    await vi.waitFor(() => {
+      strictEqual(codex.startTurn.mock.calls.length, 1);
+    });
+    strictEqual((await store.load()).queuedMessages.length, 1);
+    strictEqual(codex.startTurn.mock.calls[0]?.[1], "first queued");
+
+    codex.emitNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread_1",
+        turn: { id: "turn_2", status: "completed" },
+      },
+    });
+
+    await vi.waitFor(() => {
+      strictEqual(codex.startTurn.mock.calls.length, 2);
+    });
+    strictEqual((await store.load()).queuedMessages.length, 0);
+    strictEqual(codex.startTurn.mock.calls[1]?.[1], "second queued");
+  });
+
+  it("queues messages while the chat is waiting for approval", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({ status: "waitingForApproval", activeTurnId: "turn_1" }),
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+
+    await services.queueMessage("chat_1", { text: "after approval" });
+
+    const savedState = await store.load();
+    strictEqual(savedState.messages[0]?.text, "after approval");
+    strictEqual(savedState.queuedMessages[0]?.text, "after approval");
+    strictEqual(savedState.chats[0]?.status, "waitingForApproval");
     strictEqual(codex.startTurn.mock.calls.length, 0);
     strictEqual(codex.steerTurn.mock.calls.length, 0);
   });

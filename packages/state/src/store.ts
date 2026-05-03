@@ -16,6 +16,7 @@ function createEmptyState(): ServeState {
     projects: [],
     chats: [],
     messages: [],
+    queuedMessages: [],
     selectedProjectId: null,
     selectedChatId: null,
   };
@@ -117,6 +118,7 @@ export class ServeStateStore {
         projects: [...state.projects],
         chats: [...state.chats],
         messages: [...state.messages],
+        queuedMessages: [...state.queuedMessages],
       });
       await this.save(nextState);
       return nextState;

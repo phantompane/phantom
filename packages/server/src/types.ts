@@ -5,6 +5,7 @@ export type {
   ChatRecord,
   ChatStatus,
   ProjectRecord,
+  QueuedMessageRecord,
   ServeState,
 } from "@phantompane/state";
 
