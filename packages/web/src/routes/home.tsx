@@ -49,6 +49,7 @@ import {
   projectDataQueryOptions,
   projectsQueryOptions,
 } from "../api/queries";
+import { apiUrl } from "../api/client";
 import { queryKeys } from "../api/query-keys";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -654,7 +655,9 @@ export function HomeRoute() {
     void refreshSelectedChat(selectedChatId);
     void refreshChatContext(selectedChatId, chatContextController.signal);
 
-    const source = new EventSource(`/api/chats/${selectedChatId}/events`);
+    const source = new EventSource(
+      apiUrl(`/chats/${encodeURIComponent(selectedChatId)}/events`),
+    );
     const handleEvent = (event: MessageEvent<string>) => {
       const phantomEvent = JSON.parse(event.data) as PhantomEvent;
       if (phantomEvent.type === "agent.approval.requested") {
