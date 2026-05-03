@@ -25,12 +25,9 @@ import {
   getCodexBin,
   getParamObject,
   getServerRequestId,
-  listCodexSessionsForWorktree,
-  listCodexSessionsForWorktrees,
   mapCodexMethodToEvent,
   summarizeCodexEvent,
   type CodexMessage,
-  type ImportedCodexSession,
 } from "@phantompane/codex";
 import {
   createRecordId,
@@ -113,11 +110,28 @@ type PendingTurnEvent =
   | { kind: "serverRequest"; message: CodexMessage };
 type ServerRequestId = number | string;
 
+interface ProjectWorktreeSnapshot {
+  branch: string;
+  isClean: boolean;
+  name: string;
+  path: string;
+  pathToDisplay: string;
+}
+
+interface CodexThreadRecord {
+  createdAt: string;
+  id: string;
+  preview: string | null;
+  status: ChatStatus;
+  title: string | null;
+  updatedAt: string;
+  worktreePath: string | null;
+}
+
 export class ServeServices {
   readonly eventHub: EventHub;
   readonly store: ServeStateStore;
   readonly codex: CodexBridge;
-  private readonly codexHome?: string;
   private readonly loadedThreadIds = new Set<string>();
   private readonly approvalRequests = new Map<string, PendingApprovalRequest>();
   private readonly pendingTurnEvents = new Map<
@@ -131,7 +145,6 @@ export class ServeServices {
     this.eventHub = options.eventHub ?? new EventHub();
     this.store = options.store ?? new ServeStateStore();
     this.codex = options.codex ?? new CodexBridge();
-    this.codexHome = options.codexHome;
     this.codex.onNotification((message) => {
       void this.handleCodexNotification(message);
     });
@@ -235,12 +248,118 @@ export class ServeServices {
   async listChats(projectId: string): Promise<ChatRecord[]> {
     await this.resetStaleTransientChatState();
     const state = await this.store.load();
-    return state.chats.filter((chat) => chat.projectId === projectId);
+    const project = this.requireProject(state, projectId);
+    const worktrees = await this.listProjectWorktreeSnapshot(projectId);
+    if (!worktrees) {
+      return sortChatsByUpdatedAt(
+        state.chats.filter((chat) => chat.projectId === projectId),
+      );
+    }
+
+    let codexThreads: CodexThreadRecord[];
+    try {
+      codexThreads = await this.listCodexThreadsForWorktrees(worktrees);
+    } catch {
+      return sortChatsByUpdatedAt(
+        state.chats.filter((chat) => chat.projectId === projectId),
+      );
+    }
+
+    const worktreesByPath = new Map(
+      worktrees.map((worktree) => [worktree.path, worktree]),
+    );
+    const canPruneMissingChats = worktreesByPath.has(project.rootPath);
+    const initialProjectChatIds = new Set(
+      state.chats
+        .filter((chat) => chat.projectId === projectId)
+        .map((chat) => chat.id),
+    );
+    const threadChats = codexThreads
+      .map((thread) =>
+        createChatFromCodexThread(project.id, thread, worktreesByPath),
+      )
+      .filter((chat): chat is ChatRecord => Boolean(chat));
+
+    await this.store.update((nextState) => {
+      const existingProjectChats = nextState.chats.filter(
+        (chat) => chat.projectId === projectId,
+      );
+      const existingChatsByThreadId = new Map(
+        existingProjectChats
+          .filter((chat) => chat.codexThreadId)
+          .map((chat) => [chat.codexThreadId, chat]),
+      );
+      const nextProjectChats = threadChats.map((chat) => {
+        const existingChat = existingChatsByThreadId.get(chat.codexThreadId);
+        if (!existingChat) {
+          return chat;
+        }
+        return {
+          ...chat,
+          id: existingChat.id,
+          status: isChatActive(existingChat, this.pendingChatTurns)
+            ? existingChat.status
+            : chat.status,
+          activeTurnId: isChatActive(existingChat, this.pendingChatTurns)
+            ? existingChat.activeTurnId
+            : null,
+          createdAt: existingChat.createdAt,
+        };
+      });
+      const threadChatIds = new Set(nextProjectChats.map((chat) => chat.id));
+      const threadIds = new Set(
+        threadChats
+          .map((chat) => chat.codexThreadId)
+          .filter((threadId): threadId is string => Boolean(threadId)),
+      );
+      const retainedLocalChats = existingProjectChats.filter(
+        (chat) =>
+          !threadChatIds.has(chat.id) &&
+          (!chat.codexThreadId || !threadIds.has(chat.codexThreadId)) &&
+          (worktreesByPath.has(chat.worktreePath) ||
+            !canPruneMissingChats ||
+            isChatActive(chat, this.pendingChatTurns) ||
+            !initialProjectChatIds.has(chat.id)),
+      );
+      const retainedProjectChats = sortChatsByUpdatedAt([
+        ...nextProjectChats,
+        ...retainedLocalChats,
+      ]);
+      const retainedProjectChatIds = new Set(
+        retainedProjectChats.map((chat) => chat.id),
+      );
+      const removedProjectChatIds = new Set(
+        existingProjectChats
+          .filter((chat) => !retainedProjectChatIds.has(chat.id))
+          .map((chat) => chat.id),
+      );
+      const selectedChatId = removedProjectChatIds.has(
+        nextState.selectedChatId ?? "",
+      )
+        ? null
+        : nextState.selectedChatId;
+
+      return {
+        ...nextState,
+        chats: [
+          ...nextState.chats.filter((chat) => chat.projectId !== projectId),
+          ...retainedProjectChats,
+        ],
+        messages: nextState.messages.filter(
+          (message) => !removedProjectChatIds.has(message.chatId),
+        ),
+        selectedChatId,
+      };
+    });
+
+    const syncedState = await this.store.load();
+    return sortChatsByUpdatedAt(
+      syncedState.chats.filter((chat) => chat.projectId === projectId),
+    );
   }
 
   async listProjectWorktrees(
     projectId: string,
-    options: { sync?: boolean } = {},
   ): Promise<ProjectWorktreeRecord[]> {
     await this.resetStaleTransientChatState();
     const state = await this.store.load();
@@ -248,7 +367,9 @@ export class ServeServices {
     const worktreesDirectory = await getProjectWorktreesDirectory(
       project.rootPath,
     );
-    if (options.sync === false) {
+
+    const worktrees = await this.listProjectWorktreeSnapshot(projectId);
+    if (!worktrees) {
       return projectWorktreesFromPersistedChats(
         state,
         projectId,
@@ -257,157 +378,8 @@ export class ServeServices {
       );
     }
 
-    let result;
-    try {
-      result = await listWorktrees(project.rootPath, {
-        includePrunable: false,
-      });
-    } catch {
-      return projectWorktreesFromPersistedChats(
-        state,
-        projectId,
-        worktreesDirectory,
-        project.rootPath,
-      );
-    }
-    if (!result.ok) {
-      return projectWorktreesFromPersistedChats(
-        state,
-        projectId,
-        worktreesDirectory,
-        project.rootPath,
-      );
-    }
-
-    const { worktrees } = result.value;
-    const displayWorktreePaths = new Set(
-      worktrees.map((worktree) => worktree.path),
-    );
-    const knownWorktreePaths = await getKnownProjectWorktreePaths(
-      project.rootPath,
-    );
-    const canPruneMissingWorktreeChats = Boolean(
-      knownWorktreePaths?.has(project.rootPath),
-    );
-    const timestamp = createTimestamp();
-    const importedSessions = await listCodexSessionsForWorktrees({
-      codexHome: this.codexHome,
-      projectId,
-      worktrees: worktrees.map((worktree) => ({
-        branchName: worktree.branch,
-        worktreeName: worktree.name,
-        worktreePath: worktree.path,
-      })),
-    });
-
-    if (
-      shouldSyncProjectWorktreeChats({
-        importedSessions,
-        canPruneMissingWorktreeChats,
-        knownWorktreePaths,
-        projectId,
-        state,
-        worktrees,
-      })
-    ) {
-      await this.store.update((nextState) => {
-        const existingChatsByPath = new Map(
-          nextState.chats
-            .filter((chat) => chat.projectId === projectId)
-            .map((chat) => [chat.worktreePath, chat]),
-        );
-        const importedWorktreePaths = new Set(
-          importedSessions.map((session) => session.chat.worktreePath),
-        );
-        const chatsToAdd = worktrees
-          .filter(
-            (worktree) =>
-              !existingChatsByPath.has(worktree.path) &&
-              !importedWorktreePaths.has(worktree.path),
-          )
-          .map((worktree) => ({
-            id: createRecordId("chat"),
-            projectId,
-            worktreeName: worktree.name,
-            worktreePath: worktree.path,
-            branchName: worktree.branch,
-            codexThreadId: null,
-            title: worktree.name,
-            status: "idle" as const,
-            activeTurnId: null,
-            createdAt: timestamp,
-            updatedAt: timestamp,
-          }));
-        const importableSessions = importedSessions.filter(
-          (session) =>
-            !nextState.chats.some((chat) =>
-              shouldPreferExistingChatOverImport(chat, session.chat),
-            ),
-        );
-        const importableMessages = importableSessions.flatMap(
-          (session) => session.messages,
-        );
-        const initialMissingWorktreeChatIds = new Set(
-          state.chats
-            .filter(
-              (chat) =>
-                canPruneMissingWorktreeChats &&
-                chat.projectId === projectId &&
-                !knownWorktreePaths?.has(chat.worktreePath),
-            )
-            .map((chat) => chat.id),
-        );
-        const chatsToRemove = nextState.chats.filter(
-          (chat) =>
-            !shouldPreserveChatDuringWorktreeSync(
-              chat,
-              projectId,
-              displayWorktreePaths,
-              knownWorktreePaths,
-              initialMissingWorktreeChatIds,
-              this.pendingChatTurns,
-              importableSessions,
-            ),
-        );
-        if (
-          chatsToAdd.length === 0 &&
-          importableSessions.length === 0 &&
-          chatsToRemove.length === 0
-        ) {
-          return nextState;
-        }
-        const chatIdsToRemove = new Set(chatsToRemove.map((chat) => chat.id));
-        const selectedReplacement = findImportedReplacement(
-          nextState.selectedChatId,
-          chatsToRemove,
-          importableSessions,
-        );
-
-        return {
-          ...nextState,
-          chats: [
-            ...nextState.chats.filter((chat) => !chatIdsToRemove.has(chat.id)),
-            ...importableSessions.map((session) => session.chat),
-            ...chatsToAdd,
-          ],
-          messages: [
-            ...nextState.messages.filter(
-              (message) => !chatIdsToRemove.has(message.chatId),
-            ),
-            ...importableMessages,
-          ],
-          selectedChatId:
-            nextState.selectedChatId &&
-            chatIdsToRemove.has(nextState.selectedChatId)
-              ? (selectedReplacement?.chat.id ?? null)
-              : nextState.selectedChatId,
-        };
-      });
-    }
-
-    const syncedState = await this.store.load();
     const syncedChatsByPath = new Map<string, ChatRecord[]>();
-    for (const chat of syncedState.chats.filter(
+    for (const chat of state.chats.filter(
       (candidate) => candidate.projectId === projectId,
     )) {
       syncedChatsByPath.set(chat.worktreePath, [
@@ -438,6 +410,52 @@ export class ServeServices {
         };
       }),
     );
+  }
+
+  private async listProjectWorktreeSnapshot(
+    projectId: string,
+  ): Promise<ProjectWorktreeSnapshot[] | null> {
+    const state = await this.store.load();
+    const project = this.requireProject(state, projectId);
+    try {
+      const result = await listWorktrees(project.rootPath, {
+        includePrunable: false,
+      });
+      if (!result.ok) {
+        return null;
+      }
+      return result.value.worktrees;
+    } catch {
+      return null;
+    }
+  }
+
+  private async listCodexThreadsForWorktrees(
+    worktrees: ProjectWorktreeSnapshot[],
+  ): Promise<CodexThreadRecord[]> {
+    const cwd = worktrees.map((worktree) => worktree.path);
+    if (cwd.length === 0) {
+      return [];
+    }
+
+    const threads: CodexThreadRecord[] = [];
+    let cursor: string | null = null;
+    do {
+      const result = await this.codex.listThreads({
+        archived: false,
+        cursor,
+        cwd,
+        limit: 100,
+        sourceKinds: ["cli", "vscode", "appServer"],
+        sortDirection: "desc",
+        sortKey: "updated_at",
+        useStateDbOnly: true,
+      });
+      threads.push(...normalizeCodexThreadList(result));
+      cursor = normalizeCodexCursor(result, "nextCursor");
+    } while (cursor);
+
+    return threads;
   }
 
   async syncProjectWorktreeBranch(
@@ -506,56 +524,6 @@ export class ServeServices {
 
     if (!createResult.ok) {
       throw createResult.error;
-    }
-
-    let importedSessions: ImportedCodexSession[];
-    try {
-      importedSessions = await listCodexSessionsForWorktree({
-        branchName: createResult.value.name,
-        codexHome: this.codexHome,
-        projectId,
-        worktreeName: createResult.value.name,
-        worktreePath: createResult.value.path,
-      });
-    } catch (error) {
-      try {
-        await rollbackCreatedWorktree(
-          project.rootPath,
-          createResult.value.path,
-          createResult.value.name,
-        );
-      } catch (rollbackError) {
-        throw new Error(
-          `Failed to import Codex history: ${toErrorMessage(error)}. Rollback failed: ${toErrorMessage(rollbackError)}`,
-        );
-      }
-      throw error instanceof Error ? error : new Error(String(error));
-    }
-    const latestImportedSession = importedSessions[0];
-    if (latestImportedSession) {
-      let selectedImportedChat: ChatRecord = latestImportedSession.chat;
-      await this.store.update((nextState) => {
-        selectedImportedChat =
-          findExistingChatForImportedSession(
-            nextState.chats,
-            projectId,
-            latestImportedSession.chat,
-          ) ?? latestImportedSession.chat;
-        return {
-          ...mergeImportedSessionsForProject(
-            nextState,
-            projectId,
-            importedSessions,
-          ),
-          selectedProjectId: projectId,
-          selectedChatId: selectedImportedChat.id,
-        };
-      });
-
-      this.eventHub.emit("chat.created", selectedImportedChat, {
-        chatId: selectedImportedChat.id,
-      });
-      return selectedImportedChat;
     }
 
     let codexThreadId: string;
@@ -700,8 +668,23 @@ export class ServeServices {
   async getMessages(chatId: string): Promise<ChatMessageRecord[]> {
     await this.resetStaleTransientChatState();
     const state = await this.store.load();
-    this.requireChat(state, chatId);
-    return state.messages.filter((message) => message.chatId === chatId);
+    const chat = this.requireChat(state, chatId);
+    const localMessages = state.messages.filter(
+      (message) => message.chatId === chatId,
+    );
+    if (!chat.codexThreadId) {
+      return localMessages;
+    }
+
+    try {
+      const result = await this.codex.readThread(chat.codexThreadId, {
+        includeTurns: true,
+      });
+      const codexMessages = normalizeCodexThreadMessages(result, chat.id);
+      return mergeCodexAndLocalMessages(codexMessages, localMessages);
+    } catch {
+      return localMessages;
+    }
   }
 
   async sendMessage(
@@ -1653,168 +1636,11 @@ async function getProjectWorktreesDirectory(
   }
 }
 
-async function getKnownProjectWorktreePaths(
-  projectRootPath: string,
-): Promise<Set<string> | null> {
-  try {
-    const result = await listWorktrees(projectRootPath);
-    if (!result.ok) {
-      return null;
-    }
-    return new Set(result.value.worktrees.map((worktree) => worktree.path));
-  } catch {
-    return null;
-  }
-}
-
 function isPathInsideDirectory(path: string, directory: string): boolean {
   const relativePath = relative(directory, path);
   return Boolean(
     relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath),
   );
-}
-
-function shouldSyncProjectWorktreeChats({
-  importedSessions,
-  canPruneMissingWorktreeChats,
-  knownWorktreePaths,
-  projectId,
-  state,
-  worktrees,
-}: {
-  importedSessions: ImportedCodexSession[];
-  canPruneMissingWorktreeChats: boolean;
-  knownWorktreePaths: ReadonlySet<string> | null;
-  projectId: string;
-  state: ServeState;
-  worktrees: Array<{ path: string }>;
-}): boolean {
-  const existingChatsByPath = new Map(
-    state.chats
-      .filter((chat) => chat.projectId === projectId)
-      .map((chat) => [chat.worktreePath, chat]),
-  );
-  const importedWorktreePaths = new Set(
-    importedSessions.map((session) => session.chat.worktreePath),
-  );
-  return (
-    (canPruneMissingWorktreeChats &&
-      state.chats.some(
-        (chat) =>
-          chat.projectId === projectId &&
-          !knownWorktreePaths?.has(chat.worktreePath),
-      )) ||
-    worktrees.some(
-      (worktree) =>
-        !existingChatsByPath.has(worktree.path) &&
-        !importedWorktreePaths.has(worktree.path),
-    ) ||
-    importedSessions.some(
-      (session) =>
-        !state.chats.some((chat) =>
-          shouldPreferExistingChatOverImport(chat, session.chat),
-        ),
-    )
-  );
-}
-
-function shouldPreferExistingChatOverImport(
-  chat: ChatRecord,
-  importedChat: ChatRecord,
-): boolean {
-  if (chat.projectId !== importedChat.projectId) {
-    return false;
-  }
-  if (
-    chat.codexThreadId !== null &&
-    chat.codexThreadId === importedChat.codexThreadId
-  ) {
-    return true;
-  }
-  if (chat.codexThreadId !== null) {
-    return false;
-  }
-  return (
-    Boolean(
-      chat.activeTurnId ||
-      chat.status === "running" ||
-      chat.status === "waitingForApproval",
-    ) && chat.worktreePath === importedChat.worktreePath
-  );
-}
-
-function findExistingChatForImportedSession(
-  chats: ChatRecord[],
-  projectId: string,
-  importedChat: ChatRecord,
-): ChatRecord | null {
-  return (
-    chats.find(
-      (chat) =>
-        chat.projectId === projectId &&
-        (chat.id === importedChat.id ||
-          shouldPreferExistingChatOverImport(chat, importedChat)),
-    ) ?? null
-  );
-}
-
-function mergeImportedSessionsForProject(
-  state: ServeState,
-  projectId: string,
-  importedSessions: ImportedCodexSession[],
-): ServeState {
-  const importableSessions = importedSessions.filter(
-    (session) =>
-      !state.chats.some((chat) =>
-        shouldPreferExistingChatOverImport(chat, session.chat),
-      ),
-  );
-  const chatsToRemove = state.chats.filter(
-    (chat) =>
-      !shouldPreserveChatDuringImport(chat, projectId, importableSessions),
-  );
-  const chatIdsToRemove = new Set(chatsToRemove.map((chat) => chat.id));
-
-  return {
-    ...state,
-    chats: [
-      ...state.chats.filter((chat) => !chatIdsToRemove.has(chat.id)),
-      ...importableSessions.map((session) => session.chat),
-    ],
-    messages: [
-      ...state.messages.filter(
-        (message) => !chatIdsToRemove.has(message.chatId),
-      ),
-      ...importableSessions.flatMap((session) => session.messages),
-    ],
-  };
-}
-
-function shouldPreserveChatDuringWorktreeSync(
-  chat: ChatRecord,
-  projectId: string,
-  displayWorktreePaths: ReadonlySet<string>,
-  knownWorktreePaths: ReadonlySet<string> | null,
-  initialMissingWorktreeChatIds: ReadonlySet<string>,
-  pendingChatTurns: ReadonlySet<string>,
-  importedSessions: ImportedCodexSession[],
-): boolean {
-  if (chat.projectId !== projectId) {
-    return true;
-  }
-  if (displayWorktreePaths.has(chat.worktreePath)) {
-    return shouldPreserveChatDuringImport(chat, projectId, importedSessions);
-  }
-  if (knownWorktreePaths?.has(chat.worktreePath)) {
-    return true;
-  }
-  if (knownWorktreePaths) {
-    return (
-      !initialMissingWorktreeChatIds.has(chat.id) ||
-      isChatActive(chat, pendingChatTurns)
-    );
-  }
-  return true;
 }
 
 function isChatActive(
@@ -1829,51 +1655,306 @@ function isChatActive(
   );
 }
 
-function shouldPreserveChatDuringImport(
-  chat: ChatRecord,
-  projectId: string,
-  importedSessions: ImportedCodexSession[],
-): boolean {
-  if (chat.projectId !== projectId) {
-    return true;
-  }
-  if (
-    chat.activeTurnId ||
-    chat.status === "running" ||
-    chat.status === "waitingForApproval"
-  ) {
-    return true;
-  }
-  return !importedSessions.some((session) => {
-    const importedChat = session.chat;
-    return (
-      chat.id === importedChat.id ||
-      (chat.codexThreadId !== null &&
-        chat.codexThreadId === importedChat.codexThreadId) ||
-      (chat.codexThreadId === null &&
-        chat.worktreePath === importedChat.worktreePath)
-    );
-  });
+function normalizeCodexThreadList(value: unknown): CodexThreadRecord[] {
+  const source =
+    getRecordArray(value, "data") ?? getRecordArray(value, "threads");
+  return (source ?? [])
+    .map((thread) => normalizeCodexThread(thread))
+    .filter((thread): thread is CodexThreadRecord => Boolean(thread));
 }
 
-function findImportedReplacement(
-  selectedChatId: string | null,
-  removedChats: ChatRecord[],
-  importedSessions: ImportedCodexSession[],
-): ImportedCodexSession | null {
-  const removedChat = removedChats.find((chat) => chat.id === selectedChatId);
-  if (!removedChat) {
+function normalizeCodexThread(value: unknown): CodexThreadRecord | null {
+  if (!isRecord(value)) {
     return null;
   }
-  return (
-    importedSessions.find((session) => {
-      const importedChat = session.chat;
-      return (
-        removedChat.codexThreadId === importedChat.codexThreadId ||
-        removedChat.worktreePath === importedChat.worktreePath
-      );
-    }) ?? null
+  const id = getRecordString(value, "id") ?? getRecordString(value, "threadId");
+  if (!id) {
+    return null;
+  }
+  const fallbackTimestamp = createTimestamp();
+  const createdAt = normalizeCodexTimestamp(
+    value.createdAt ?? value.created_at,
+    fallbackTimestamp,
   );
+  const updatedAt = normalizeCodexTimestamp(
+    value.updatedAt ?? value.updated_at,
+    createdAt,
+  );
+  return {
+    id,
+    title:
+      getRecordString(value, "title") ??
+      getRecordString(value, "name") ??
+      getRecordString(value, "firstUserMessage") ??
+      null,
+    preview: getRecordString(value, "preview") ?? null,
+    worktreePath: getRecordString(value, "cwd") ?? null,
+    status: normalizeCodexThreadStatus(value.status),
+    createdAt,
+    updatedAt,
+  };
+}
+
+function normalizeCodexCursor(value: unknown, key: string): string | null {
+  return (
+    getRecordString(value, key) ?? getRecordString(value, "next_cursor") ?? null
+  );
+}
+
+function createChatFromCodexThread(
+  projectId: string,
+  thread: CodexThreadRecord,
+  worktreesByPath: ReadonlyMap<string, ProjectWorktreeSnapshot>,
+): ChatRecord | null {
+  if (!thread.worktreePath) {
+    return null;
+  }
+  const worktree = worktreesByPath.get(thread.worktreePath);
+  if (!worktree) {
+    return null;
+  }
+  const title =
+    normalizeTitle(thread.title) ??
+    normalizeTitle(thread.preview) ??
+    worktree.name;
+  return {
+    id: createImportedChatId(thread.id),
+    projectId,
+    worktreeName: worktree.name,
+    worktreePath: worktree.path,
+    branchName: worktree.branch,
+    codexThreadId: thread.id,
+    title,
+    status: thread.status,
+    activeTurnId: null,
+    createdAt: thread.createdAt,
+    updatedAt: thread.updatedAt,
+  };
+}
+
+function normalizeTitle(value: string | null): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function createImportedChatId(threadId: string): string {
+  return `chat_codex_${threadId}`;
+}
+
+function normalizeCodexThreadStatus(value: unknown): ChatStatus {
+  if (typeof value === "string") {
+    if (value === "active" || value === "running") {
+      return "running";
+    }
+    if (value === "systemError" || value === "failed") {
+      return "failed";
+    }
+    return "idle";
+  }
+  if (!isRecord(value)) {
+    return "idle";
+  }
+  const type = getRecordString(value, "type");
+  if (type === "active") {
+    return "running";
+  }
+  if (type === "systemError" || type === "failed") {
+    return "failed";
+  }
+  return "idle";
+}
+
+function normalizeCodexTimestamp(value: unknown, fallback: string): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const millis = value < 10_000_000_000 ? value * 1000 : value;
+    return new Date(millis).toISOString();
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) {
+      return new Date(parsed).toISOString();
+    }
+  }
+  return fallback;
+}
+
+function sortChatsByUpdatedAt(chats: ChatRecord[]): ChatRecord[] {
+  return [...chats].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  );
+}
+
+function normalizeCodexThreadMessages(
+  value: unknown,
+  chatId: string,
+): ChatMessageRecord[] {
+  const thread =
+    getRecordObject(value, "thread") ?? (isRecord(value) ? value : null);
+  const turns = thread ? getRecordArray(thread, "turns") : undefined;
+  if (!turns) {
+    return [];
+  }
+
+  const messages: ChatMessageRecord[] = [];
+  for (const [turnIndex, turn] of turns.entries()) {
+    const turnId =
+      getRecordString(turn, "id") ??
+      getRecordString(turn, "turnId") ??
+      String(turnIndex);
+    const turnTimestamp = normalizeCodexTimestamp(
+      turn.createdAt ?? turn.created_at ?? turn.updatedAt ?? turn.updated_at,
+      createTimestamp(),
+    );
+    const items = getCodexTurnItems(turn);
+    for (const [itemIndex, item] of items.entries()) {
+      const role = normalizeCodexMessageRole(item);
+      if (!role) {
+        continue;
+      }
+      const text = extractCodexText(item).trim();
+      if (!text) {
+        continue;
+      }
+      messages.push({
+        id: `${chatId}_codex_${turnId}_${itemIndex}`,
+        chatId,
+        role,
+        text,
+        itemId: getRecordString(item, "id") ?? undefined,
+        createdAt: normalizeCodexTimestamp(
+          item.createdAt ?? item.created_at ?? item.timestamp,
+          turnTimestamp,
+        ),
+      });
+    }
+  }
+  return messages.sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  );
+}
+
+function getCodexTurnItems(
+  turn: Record<string, unknown>,
+): Array<Record<string, unknown>> {
+  const inputItems = Array.isArray(turn.input)
+    ? turn.input.filter(isRecord).map((item) => ({ ...item, role: "user" }))
+    : [];
+  if (Array.isArray(turn.items)) {
+    return [...inputItems, ...turn.items.filter(isRecord)];
+  }
+  if (Array.isArray(turn.output)) {
+    return [...inputItems, ...turn.output.filter(isRecord)];
+  }
+  return inputItems;
+}
+
+function normalizeCodexMessageRole(
+  item: Record<string, unknown>,
+): "assistant" | "user" | null {
+  const role = getRecordString(item, "role");
+  if (role === "user" || role === "assistant") {
+    return role;
+  }
+  const type = getRecordString(item, "type");
+  if (
+    type === "userMessage" ||
+    type === "user_message" ||
+    type === "input_text"
+  ) {
+    return "user";
+  }
+  if (
+    type === "agentMessage" ||
+    type === "assistantMessage" ||
+    type === "agent_message" ||
+    type === "assistant_message" ||
+    type === "output_text"
+  ) {
+    return "assistant";
+  }
+  return null;
+}
+
+function extractCodexText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(extractCodexText).filter(Boolean).join("");
+  }
+  if (!isRecord(value)) {
+    return "";
+  }
+  const directText =
+    getRecordString(value, "text") ??
+    getRecordString(value, "message") ??
+    getRecordString(value, "input") ??
+    getRecordString(value, "output");
+  if (directText) {
+    return directText;
+  }
+  return extractCodexText(value.content);
+}
+
+function mergeCodexAndLocalMessages(
+  codexMessages: ChatMessageRecord[],
+  localMessages: ChatMessageRecord[],
+): ChatMessageRecord[] {
+  if (codexMessages.length === 0) {
+    return localMessages;
+  }
+  const unmatchedCodexMessages = [...codexMessages];
+  const merged = [
+    ...codexMessages,
+    ...localMessages.filter((message) => {
+      if (message.role === "event" || message.role === "error") {
+        return true;
+      }
+      const matchedCodexIndex = unmatchedCodexMessages.findIndex(
+        (codexMessage) => shouldDeduplicateLocalMessage(codexMessage, message),
+      );
+      if (matchedCodexIndex === -1) {
+        return true;
+      }
+      unmatchedCodexMessages.splice(matchedCodexIndex, 1);
+      return false;
+    }),
+  ];
+  return merged.sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  );
+}
+
+function shouldDeduplicateLocalMessage(
+  codexMessage: ChatMessageRecord,
+  localMessage: ChatMessageRecord,
+): boolean {
+  if (codexMessage.role !== localMessage.role) {
+    return false;
+  }
+  if (codexMessage.itemId && localMessage.itemId) {
+    return codexMessage.itemId === localMessage.itemId;
+  }
+  if (messageFingerprint(codexMessage) !== messageFingerprint(localMessage)) {
+    return false;
+  }
+  return isCodexMessageAtOrAfterLocalMessage(codexMessage, localMessage);
+}
+
+function isCodexMessageAtOrAfterLocalMessage(
+  codexMessage: ChatMessageRecord,
+  localMessage: ChatMessageRecord,
+): boolean {
+  const codexTime = Date.parse(codexMessage.createdAt);
+  const localTime = Date.parse(localMessage.createdAt);
+  if (Number.isFinite(codexTime) && Number.isFinite(localTime)) {
+    return codexTime >= localTime;
+  }
+  return codexMessage.createdAt >= localMessage.createdAt;
+}
+
+function messageFingerprint(message: ChatMessageRecord): string {
+  return `${message.role}:${message.text}`;
 }
 
 function normalizeTurnContextItems(
@@ -2058,6 +2139,17 @@ function getRecordArray(
     return undefined;
   }
   return candidate.filter(isRecord);
+}
+
+function getRecordObject(
+  value: unknown,
+  key: string,
+): Record<string, unknown> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const candidate = value[key];
+  return isRecord(candidate) ? candidate : undefined;
 }
 
 function getRecordString(value: unknown, key: string): string | undefined {

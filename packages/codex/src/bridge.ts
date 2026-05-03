@@ -37,6 +37,22 @@ export interface CodexTurnOptions {
   skills?: CodexTurnContextItem[];
 }
 
+export interface CodexThreadListOptions {
+  archived?: boolean | null;
+  cursor?: string | null;
+  cwd?: string | string[];
+  limit?: number;
+  searchTerm?: string;
+  sortDirection?: "asc" | "desc";
+  sortKey?: "created_at" | "updated_at";
+  sourceKinds?: string[];
+  useStateDbOnly?: boolean;
+}
+
+export interface CodexThreadReadOptions {
+  includeTurns?: boolean;
+}
+
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -158,6 +174,30 @@ export class CodexBridge {
       query,
       roots,
       cancellationToken: null,
+    });
+  }
+
+  async listThreads(options: CodexThreadListOptions = {}): Promise<unknown> {
+    return this.request("thread/list", {
+      archived: options.archived,
+      cursor: options.cursor ?? null,
+      cwd: options.cwd,
+      limit: options.limit,
+      searchTerm: options.searchTerm,
+      sortDirection: options.sortDirection,
+      sortKey: options.sortKey,
+      sourceKinds: options.sourceKinds,
+      useStateDbOnly: options.useStateDbOnly,
+    });
+  }
+
+  async readThread(
+    threadId: string,
+    options: CodexThreadReadOptions = {},
+  ): Promise<unknown> {
+    return this.request("thread/read", {
+      threadId,
+      includeTurns: options.includeTurns,
     });
   }
 

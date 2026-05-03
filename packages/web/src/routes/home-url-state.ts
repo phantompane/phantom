@@ -8,8 +8,28 @@ interface ChatSelectionRecord {
   projectId: string;
 }
 
+interface ProjectSelectionRecord {
+  id: string;
+}
+
 interface ModelReasoningEffortRecord {
   supportedReasoningEfforts: string[];
+}
+
+interface WorktreeChatMergeRecord<TStatus> {
+  id: string;
+  status: TStatus;
+  title: string;
+  updatedAt: string;
+  worktreePath: string;
+}
+
+interface WorktreeMergeRecord<TStatus> {
+  chatId: string | null;
+  chatStatus: TStatus | null;
+  chatTitle: string;
+  name: string;
+  path: string;
 }
 
 export function isShareableFileSearchQuery(value: string): boolean {
@@ -61,6 +81,67 @@ export function findValidatedSelectedChat<TChat extends ChatSelectionRecord>(
   }
 
   return null;
+}
+
+export function findValidatedSelectedProjectChat<
+  TChat extends ChatSelectionRecord,
+  TProject extends ProjectSelectionRecord,
+>(
+  chatsByProject: Record<string, TChat[]>,
+  projects: TProject[],
+  selectedChatId: string | null,
+  requestedProjectId: string | null,
+): TChat | null {
+  const projectIds = new Set(projects.map((project) => project.id));
+  return findValidatedSelectedChat(
+    Object.values(chatsByProject)
+      .flat()
+      .filter((chat) => projectIds.has(chat.projectId)),
+    selectedChatId,
+    requestedProjectId,
+  );
+}
+
+export function retainRecordsForProjects<TRecord>(
+  recordsByProject: Record<string, TRecord[]>,
+  projectIds: ReadonlySet<string>,
+): Record<string, TRecord[]> {
+  return Object.fromEntries(
+    Object.entries(recordsByProject).filter(([projectId]) =>
+      projectIds.has(projectId),
+    ),
+  );
+}
+
+export function mergeWorktreesWithChats<
+  TStatus,
+  TWorktree extends WorktreeMergeRecord<TStatus>,
+  TChat extends WorktreeChatMergeRecord<TStatus>,
+>(worktrees: TWorktree[], chats: TChat[]): TWorktree[] {
+  const latestChatsByPath = new Map<string, TChat>();
+  for (const chat of chats) {
+    const current = latestChatsByPath.get(chat.worktreePath);
+    if (!current || chat.updatedAt.localeCompare(current.updatedAt) > 0) {
+      latestChatsByPath.set(chat.worktreePath, chat);
+    }
+  }
+  return worktrees.map((worktree) => {
+    const chat = latestChatsByPath.get(worktree.path);
+    if (!chat) {
+      return {
+        ...worktree,
+        chatId: null,
+        chatStatus: null,
+        chatTitle: worktree.name,
+      };
+    }
+    return {
+      ...worktree,
+      chatId: chat.id,
+      chatStatus: chat.status,
+      chatTitle: chat.title,
+    };
+  });
 }
 
 export function getSelectableReasoningEfforts(

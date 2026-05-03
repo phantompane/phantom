@@ -47,7 +47,8 @@ import {
   fileSearchQueryOptions,
   messagesQueryOptions,
   modelsQueryOptions,
-  projectDataQueryOptions,
+  projectChatsQueryOptions,
+  projectWorktreesQueryOptions,
   projectsQueryOptions,
 } from "../api/queries";
 import { apiUrl } from "../api/client";
@@ -102,9 +103,12 @@ import { Textarea } from "../components/ui/textarea";
 import { shouldSubmitComposerOnEnter } from "../lib/composer-keyboard";
 import { cn } from "../lib/utils";
 import {
+  findValidatedSelectedProjectChat,
   findValidatedSelectedChat,
   getSelectableReasoningEfforts,
   isShareableFileSearchQuery,
+  mergeWorktreesWithChats,
+  retainRecordsForProjects,
 } from "./home-url-state";
 import type {
   ChatMessageRecord,
@@ -453,6 +457,9 @@ export function HomeRoute() {
   const [loadingProjectIds, setLoadingProjectIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [loadingChatProjectIds, setLoadingChatProjectIds] = useState<
+    Set<string>
+  >(() => new Set());
   const [isModelsLoading, setIsModelsLoading] = useState(true);
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
   const [isChatContextLoading, setIsChatContextLoading] = useState(false);
@@ -471,6 +478,8 @@ export function HomeRoute() {
   const selectedProjectIdRef = useRef<string | null>(null);
   const selectedChatIdRef = useRef<string | null>(null);
   const selectedChatVersionRef = useRef(0);
+  const chatsByProjectRef = useRef(chatsByProject);
+  const worktreesByProjectRef = useRef(worktreesByProject);
   const sendMessageRequestIdRef = useRef(0);
   const pendingSendChatIdsRef = useRef<Set<string>>(new Set());
   const [pendingApproval, setPendingApproval] =
@@ -623,6 +632,8 @@ export function HomeRoute() {
   const selectedProjectId = selectedChat?.projectId ?? requestedProjectId;
   selectedChatIdRef.current = selectedChatId;
   selectedProjectIdRef.current = selectedProjectId;
+  chatsByProjectRef.current = chatsByProject;
+  worktreesByProjectRef.current = worktreesByProject;
   fileSearchQueryRef.current = fileSearchQuery;
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -820,8 +831,10 @@ export function HomeRoute() {
     if (!selectedProjectId) {
       return;
     }
+    void refreshWorktrees(selectedProjectId, {
+      updateSelection: isSelectedChatValidated,
+    });
     void refreshChats(selectedProjectId, {
-      sync: true,
       updateSelection: isSelectedChatValidated,
     });
   }, [isSelectedChatValidated, selectedProjectId]);
@@ -901,7 +914,7 @@ export function HomeRoute() {
       void refreshSelectedChat(selectedChatId);
       if (selectedProjectId) {
         void queryClient.invalidateQueries({
-          queryKey: queryKeys.projectData(selectedProjectId, false),
+          queryKey: queryKeys.projectChats(selectedProjectId),
         });
         void refreshChats(selectedProjectId);
       }
@@ -1109,33 +1122,35 @@ export function HomeRoute() {
     });
   }
 
+  function setChatProjectLoading(projectId: string, isLoading: boolean) {
+    setLoadingChatProjectIds((current) => {
+      const next = new Set(current);
+      if (isLoading) {
+        next.add(projectId);
+      } else {
+        next.delete(projectId);
+      }
+      return next;
+    });
+  }
+
   async function refreshProjects(): Promise<boolean> {
     const requestWorkspaceSelectionKey = workspaceSelectionKeyRef.current;
     setIsProjectsLoading(true);
     try {
       const data = await queryClient.fetchQuery(projectsQueryOptions());
       setProjects(data.projects);
-      const projectDataEntries = await Promise.all(
-        data.projects.map(
-          async (project) =>
-            [
-              project.id,
-              await loadProjectData(project.id, { sync: true }),
-            ] as const,
-        ),
+      const projectIds = new Set(data.projects.map((project) => project.id));
+      const nextChatsByProject = retainRecordsForProjects(
+        chatsByProjectRef.current,
+        projectIds,
       );
-      const nextChatsByProject = Object.fromEntries(
-        projectDataEntries.map(([projectId, projectData]) => [
-          projectId,
-          projectData.chats,
-        ]),
+      const nextWorktreesByProject = retainRecordsForProjects(
+        worktreesByProjectRef.current,
+        projectIds,
       );
-      const nextWorktreesByProject = Object.fromEntries(
-        projectDataEntries.map(([projectId, projectData]) => [
-          projectId,
-          projectData.worktrees,
-        ]),
-      );
+      chatsByProjectRef.current = nextChatsByProject;
+      worktreesByProjectRef.current = nextWorktreesByProject;
       setChatsByProject(nextChatsByProject);
       setWorktreesByProject(nextWorktreesByProject);
       if (workspaceSelectionKeyRef.current !== requestWorkspaceSelectionKey) {
@@ -1144,8 +1159,9 @@ export function HomeRoute() {
       const currentSelectedChatId = selectedChatIdRef.current;
       const currentSelectedProjectId = selectedProjectIdRef.current;
       const currentFileSearchQuery = fileSearchQueryRef.current;
-      const requestedChat = findValidatedSelectedChat(
-        Object.values(nextChatsByProject).flat(),
+      const requestedChat = findValidatedSelectedProjectChat(
+        nextChatsByProject,
+        data.projects,
         currentSelectedChatId,
         currentSelectedProjectId,
       );
@@ -1155,11 +1171,11 @@ export function HomeRoute() {
         data.projects.some((project) => project.id === currentSelectedProjectId)
           ? currentSelectedProjectId
           : (data.projects[0]?.id ?? null));
-      const fallbackWorktree = firstProjectWorktree(
-        fallbackProjectId,
-        nextWorktreesByProject,
-      );
-      const nextChatId = requestedChat?.id ?? fallbackWorktree?.chatId ?? null;
+      const pendingChatId =
+        currentSelectedProjectId === fallbackProjectId
+          ? currentSelectedChatId
+          : null;
+      const nextChatId = requestedChat?.id ?? pendingChatId;
       updateWorkspaceSearchParams(
         {
           projectId: fallbackProjectId,
@@ -1170,6 +1186,14 @@ export function HomeRoute() {
         },
         { replace: true },
       );
+      for (const project of data.projects) {
+        void refreshWorktrees(project.id, {
+          updateSelection: project.id === fallbackProjectId,
+        });
+        void refreshChats(project.id, {
+          updateSelection: project.id === fallbackProjectId,
+        });
+      }
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1213,37 +1237,27 @@ export function HomeRoute() {
     }
   }
 
-  async function loadProjectData(
+  async function refreshWorktrees(
     projectId: string,
-    options: { sync?: boolean } = {},
-  ): Promise<{
-    chats: ChatRecord[];
-    worktrees: ProjectWorktreeRecord[];
-  }> {
-    return await queryClient.fetchQuery(
-      projectDataQueryOptions(projectId, options.sync ?? false),
-    );
-  }
-
-  async function refreshChats(
-    projectId: string,
-    options: { sync?: boolean; updateSelection?: boolean } = {},
+    options: { updateSelection?: boolean } = {},
   ): Promise<boolean> {
     const requestWorkspaceSelectionKey = workspaceSelectionKeyRef.current;
     setProjectLoading(projectId, true);
     try {
-      const projectData = await loadProjectData(projectId, options);
-      setChatsByProject((current) => ({
-        ...current,
-        [projectId]: projectData.chats,
-      }));
-      if (options.sync) {
-        setWorktreesByProject((current) => ({
-          ...current,
-          [projectId]: projectData.worktrees,
-        }));
-      }
-      if ((options.updateSelection ?? options.sync === true) === false) {
+      const data = await queryClient.fetchQuery(
+        projectWorktreesQueryOptions(projectId),
+      );
+      const mergedWorktrees = mergeWorktreesWithChats(
+        data.worktrees,
+        chatsByProjectRef.current[projectId] ?? [],
+      );
+      const nextWorktreesByProject = {
+        ...worktreesByProjectRef.current,
+        [projectId]: mergedWorktrees,
+      };
+      worktreesByProjectRef.current = nextWorktreesByProject;
+      setWorktreesByProject(nextWorktreesByProject);
+      if (options.updateSelection === false) {
         return true;
       }
       if (selectedProjectIdRef.current !== projectId) {
@@ -1252,23 +1266,13 @@ export function HomeRoute() {
       if (workspaceSelectionKeyRef.current !== requestWorkspaceSelectionKey) {
         return true;
       }
-      const nextWorktreesByProject = options.sync
-        ? {
-            ...worktreesByProject,
-            [projectId]: projectData.worktrees,
-          }
-        : worktreesByProject;
       const fallbackWorktree = firstProjectWorktree(
         projectId,
         nextWorktreesByProject,
       );
       const currentSelectedChatId = selectedChatIdRef.current;
       const currentFileSearchQuery = fileSearchQueryRef.current;
-      const nextChatId = projectData.chats.some(
-        (chat) => chat.id === currentSelectedChatId,
-      )
-        ? currentSelectedChatId
-        : (fallbackWorktree?.chatId ?? null);
+      const nextChatId = fallbackWorktree?.chatId ?? currentSelectedChatId;
       updateWorkspaceSearchParams(
         {
           projectId,
@@ -1288,30 +1292,101 @@ export function HomeRoute() {
     }
   }
 
+  async function refreshChats(
+    projectId: string,
+    options: { updateSelection?: boolean } = {},
+  ): Promise<boolean> {
+    const requestWorkspaceSelectionKey = workspaceSelectionKeyRef.current;
+    setChatProjectLoading(projectId, true);
+    try {
+      const data = await queryClient.fetchQuery(
+        projectChatsQueryOptions(projectId),
+      );
+      const nextChatsByProject = {
+        ...chatsByProjectRef.current,
+        [projectId]: data.chats,
+      };
+      chatsByProjectRef.current = nextChatsByProject;
+      setChatsByProject(nextChatsByProject);
+      const currentProjectWorktrees =
+        worktreesByProjectRef.current[projectId] ?? [];
+      const mergedWorktrees = mergeWorktreesWithChats(
+        currentProjectWorktrees,
+        data.chats,
+      );
+      const nextWorktreesByProject = {
+        ...worktreesByProjectRef.current,
+        [projectId]: mergedWorktrees,
+      };
+      worktreesByProjectRef.current = nextWorktreesByProject;
+      setWorktreesByProject(nextWorktreesByProject);
+      if (options.updateSelection === false) {
+        return true;
+      }
+      if (selectedProjectIdRef.current !== projectId) {
+        return true;
+      }
+      if (workspaceSelectionKeyRef.current !== requestWorkspaceSelectionKey) {
+        return true;
+      }
+      const fallbackWorktree = firstProjectWorktree(
+        projectId,
+        nextWorktreesByProject,
+      );
+      const currentSelectedChatId = selectedChatIdRef.current;
+      const currentFileSearchQuery = fileSearchQueryRef.current;
+      const nextChatId = data.chats.some(
+        (chat) => chat.id === currentSelectedChatId,
+      )
+        ? currentSelectedChatId
+        : (fallbackWorktree?.chatId ?? data.chats[0]?.id ?? null);
+      updateWorkspaceSearchParams(
+        {
+          projectId,
+          chatId: nextChatId,
+          clearFileQuery:
+            Boolean(currentFileSearchQuery.trim()) &&
+            currentSelectedChatId !== nextChatId,
+        },
+        { replace: true },
+      );
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
+    } finally {
+      setChatProjectLoading(projectId, false);
+    }
+  }
+
   async function refreshSelectedChat(chatId: string) {
     const data = await queryClient.fetchQuery(chatQueryOptions(chatId));
-    setChatsByProject((current) => {
-      const projectChats = current[data.chat.projectId] ?? [];
-      return {
-        ...current,
-        [data.chat.projectId]: projectChats.map((chat) =>
-          chat.id === chatId ? data.chat : chat,
-        ),
-      };
-    });
-    setWorktreesByProject((current) => ({
-      ...current,
-      [data.chat.projectId]: (current[data.chat.projectId] ?? []).map(
-        (worktree) =>
-          worktree.chatId === chatId
-            ? {
-                ...worktree,
-                chatStatus: data.chat.status,
-                chatTitle: data.chat.title,
-              }
-            : worktree,
+    const projectChats = chatsByProjectRef.current[data.chat.projectId] ?? [];
+    const nextChatsByProject = {
+      ...chatsByProjectRef.current,
+      [data.chat.projectId]: projectChats.map((chat) =>
+        chat.id === chatId ? data.chat : chat,
       ),
-    }));
+    };
+    chatsByProjectRef.current = nextChatsByProject;
+    setChatsByProject(nextChatsByProject);
+
+    const nextWorktreesByProject = {
+      ...worktreesByProjectRef.current,
+      [data.chat.projectId]: (
+        worktreesByProjectRef.current[data.chat.projectId] ?? []
+      ).map((worktree) =>
+        worktree.chatId === chatId
+          ? {
+              ...worktree,
+              chatStatus: data.chat.status,
+              chatTitle: data.chat.title,
+            }
+          : worktree,
+      ),
+    };
+    worktreesByProjectRef.current = nextWorktreesByProject;
+    setWorktreesByProject(nextWorktreesByProject);
   }
 
   async function refreshMessages(
@@ -1418,18 +1493,26 @@ export function HomeRoute() {
     try {
       const data = await createChatRequest.mutateAsync(projectId);
       void queryClient.invalidateQueries({
-        queryKey: queryKeys.projectData(projectId, true),
+        queryKey: queryKeys.projectWorktrees(projectId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.projectChats(projectId),
       });
       setExpandedWorktreeKeys((current) =>
         new Set(current).add(
           getWorktreeExpansionKey(projectId, data.chat.worktreePath),
         ),
       );
-      const didRefresh = await refreshChats(projectId, {
-        sync: true,
+      const didRefreshWorktrees = await refreshWorktrees(projectId, {
         updateSelection: false,
       });
-      if (!didRefresh) {
+      if (!didRefreshWorktrees) {
+        return;
+      }
+      const didRefreshChats = await refreshChats(projectId, {
+        updateSelection: false,
+      });
+      if (!didRefreshChats) {
         return;
       }
       if (workspaceSelectionKeyRef.current !== requestWorkspaceSelectionKey) {
@@ -1496,11 +1579,16 @@ export function HomeRoute() {
         input: deleteWorktreeInput,
       });
       void queryClient.invalidateQueries({
-        queryKey: queryKeys.projectData(projectId, true),
+        queryKey: queryKeys.projectWorktrees(projectId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.projectChats(projectId),
       });
       closeDeleteWorktreeDialog();
+      await refreshWorktrees(projectId, {
+        updateSelection: selectedProjectIdRef.current === projectId,
+      });
       await refreshChats(projectId, {
-        sync: true,
         updateSelection: selectedProjectIdRef.current === projectId,
       });
     } catch (err) {
@@ -1529,10 +1617,15 @@ export function HomeRoute() {
         },
       });
       void queryClient.invalidateQueries({
-        queryKey: queryKeys.projectData(projectId, true),
+        queryKey: queryKeys.projectWorktrees(projectId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.projectChats(projectId),
+      });
+      await refreshWorktrees(projectId, {
+        updateSelection: selectedProjectIdRef.current === projectId,
       });
       await refreshChats(projectId, {
-        sync: true,
         updateSelection: selectedProjectIdRef.current === projectId,
       });
     } catch (err) {
@@ -1909,7 +2002,7 @@ export function HomeRoute() {
                                 const isWorktreeExpanded =
                                   expandedWorktreeKeys.has(worktreeKey);
                                 const isChatListLoading =
-                                  loadingProjectIds.has(project.id) &&
+                                  loadingChatProjectIds.has(project.id) &&
                                   worktreeChats.length === 0;
                                 const title = `${worktree.name} (${worktree.path})${
                                   worktree.isClean ? "" : " [dirty]"

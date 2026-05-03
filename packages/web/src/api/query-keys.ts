@@ -2,8 +2,10 @@ export const queryKeys = {
   auth: ["auth"] as const,
   models: ["models"] as const,
   projects: ["projects"] as const,
-  projectData: (projectId: string, sync: boolean) =>
-    ["projects", projectId, "data", { sync }] as const,
+  projectChats: (projectId: string) =>
+    ["projects", projectId, "chats"] as const,
+  projectWorktrees: (projectId: string) =>
+    ["projects", projectId, "worktrees"] as const,
   chat: (chatId: string) => ["chats", chatId] as const,
   messages: (chatId: string) => ["chats", chatId, "messages"] as const,
   chatSkills: (chatId: string) => ["chats", chatId, "skills"] as const,
