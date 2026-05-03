@@ -11,6 +11,10 @@ export function joinApiPath(baseUrl: string, path: string): string {
   return `${normalizedBase}${normalizedPath}`;
 }
 
+export function routeParam(value: string): string {
+  return encodeURIComponent(value);
+}
+
 export function apiUrl(path: string): string {
   return joinApiPath(apiBaseUrl, path);
 }

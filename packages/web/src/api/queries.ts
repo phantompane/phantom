@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import { api, readRpcJson } from "./client";
+import { api, readRpcJson, routeParam } from "./client";
 import { queryKeys } from "./query-keys";
 import type {
   ChatMessageRecord,
@@ -45,7 +45,7 @@ export function projectDataQueryOptions(projectId: string, sync = false) {
     queryFn: async () =>
       readRpcJson<ProjectData>(
         await api.projects[":projectId"].chats.$get({
-          param: { projectId },
+          param: { projectId: routeParam(projectId) },
           query: sync ? { sync: "1" } : {},
         }),
       ),
@@ -58,7 +58,7 @@ export function chatQueryOptions(chatId: string) {
     queryFn: async () =>
       readRpcJson<{ chat: ChatRecord }>(
         await api.chats[":chatId"].$get({
-          param: { chatId },
+          param: { chatId: routeParam(chatId) },
           query: {},
         }),
       ),
@@ -71,7 +71,7 @@ export function messagesQueryOptions(chatId: string) {
     queryFn: async () =>
       readRpcJson<{ messages: ChatMessageRecord[] }>(
         await api.chats[":chatId"].messages.$get({
-          param: { chatId },
+          param: { chatId: routeParam(chatId) },
         }),
       ),
   });
@@ -84,7 +84,7 @@ export function chatSkillsQueryOptions(chatId: string, signal?: AbortSignal) {
       readRpcJson<{ skills: CodexSkillRecord[] }>(
         await api.chats[":chatId"].$get(
           {
-            param: { chatId },
+            param: { chatId: routeParam(chatId) },
             query: { context: "skills" },
           },
           {
@@ -106,7 +106,7 @@ export function fileSearchQueryOptions(
       readRpcJson<{ files: CodexFileRecord[] }>(
         await api.chats[":chatId"].$get(
           {
-            param: { chatId },
+            param: { chatId: routeParam(chatId) },
             query: { fileQuery },
           },
           {

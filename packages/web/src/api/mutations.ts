@@ -1,4 +1,4 @@
-import { api, readRpcJson } from "./client";
+import { api, readRpcJson, routeParam } from "./client";
 import type {
   ChatRecord,
   CodexTurnContextItem,
@@ -31,7 +31,7 @@ export async function addProjectMutation(path: string) {
 export async function createChatMutation(projectId: string) {
   return readRpcJson<{ chat: ChatRecord }>(
     await api.projects[":projectId"].chats.$post({
-      param: { projectId },
+      param: { projectId: routeParam(projectId) },
       json: {},
     }),
   );
@@ -43,7 +43,7 @@ export async function deleteWorktreeMutation(
 ) {
   return readRpcJson<unknown>(
     await api.projects[":projectId"].worktrees.$delete({
-      param: { projectId },
+      param: { projectId: routeParam(projectId) },
       json: input,
     }),
   );
@@ -55,7 +55,7 @@ export async function syncWorktreeMutation(
 ) {
   return readRpcJson<unknown>(
     await api.projects[":projectId"].worktrees.sync.$post({
-      param: { projectId },
+      param: { projectId: routeParam(projectId) },
       json: input,
     }),
   );
@@ -67,7 +67,7 @@ export async function sendMessageMutation(
 ) {
   return readRpcJson<{ chat: ChatRecord }>(
     await api.chats[":chatId"].messages.$post({
-      param: { chatId },
+      param: { chatId: routeParam(chatId) },
       json: input,
     }),
   );
@@ -76,7 +76,7 @@ export async function sendMessageMutation(
 export async function interruptChatMutation(chatId: string) {
   return readRpcJson<unknown>(
     await api.chats[":chatId"].interrupt.$post({
-      param: { chatId },
+      param: { chatId: routeParam(chatId) },
     }),
   );
 }
@@ -88,7 +88,10 @@ export async function answerApprovalMutation(
 ) {
   return readRpcJson<unknown>(
     await api.chats[":chatId"].approvals[":requestId"].$post({
-      param: { chatId, requestId },
+      param: {
+        chatId: routeParam(chatId),
+        requestId: routeParam(requestId),
+      },
       json: { decision },
     }),
   );

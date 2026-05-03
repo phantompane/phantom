@@ -1,6 +1,6 @@
 import { strictEqual } from "node:assert";
 import { describe, it } from "vitest";
-import { joinApiPath } from "./client";
+import { joinApiPath, routeParam } from "./client";
 
 describe("joinApiPath", () => {
   it("joins the default API base with a path", () => {
@@ -15,5 +15,11 @@ describe("joinApiPath", () => {
       joinApiPath("https://example.test/custom-api/", "chats/chat_1/events"),
       "https://example.test/custom-api/chats/chat_1/events",
     );
+  });
+});
+
+describe("routeParam", () => {
+  it("encodes reserved URL characters for Hono RPC path params", () => {
+    strictEqual(routeParam("request/with#hash"), "request%2Fwith%23hash");
   });
 });
