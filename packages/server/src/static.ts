@@ -27,8 +27,12 @@ export function mountStaticWebAssets(app: Hono): void {
   );
 
   app.get("/*", async (c) => {
-    if (c.req.path.startsWith("/api/")) {
+    if (c.req.path === "/api" || c.req.path.startsWith("/api/")) {
       return c.json({ error: { message: "Not found" } }, 404);
+    }
+
+    if (!shouldServeSpaFallback(c.req.path, c.req.header("Accept"))) {
+      return c.notFound();
     }
 
     const indexPath = join(webDistDirectory, "index.html");
@@ -53,12 +57,27 @@ export async function assertWebAssetsAvailable(): Promise<void> {
   await access(join(getWebDistDirectory(), "index.html"));
 }
 
-function getWebDistDirectory(): string {
+export function getWebDistDirectory(): string {
   if (process.env.PHANTOM_WEB_DIST_DIR) {
     return process.env.PHANTOM_WEB_DIST_DIR;
   }
 
-  return fileURLToPath(new URL("../web/", import.meta.url));
+  return fileURLToPath(new URL("../../web/dist/", import.meta.url));
+}
+
+function shouldServeSpaFallback(path: string, accept: string | undefined) {
+  if (extname(path) !== "") {
+    return false;
+  }
+
+  if (!accept) {
+    return true;
+  }
+
+  return accept.split(",").some((entry) => {
+    const mediaType = entry.split(";")[0]?.trim();
+    return mediaType === "text/html" || mediaType === "*/*";
+  });
 }
 
 export function getContentType(path: string): string {
