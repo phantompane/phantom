@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { shouldSubmitComposerOnEnter } from "./composer-keyboard";
+import {
+  getComposerEnterAction,
+  getComposerSubmitModeForEnter,
+  shouldSubmitComposerOnEnter,
+} from "./composer-keyboard";
 
 function createEnvironment(
   options: {
@@ -38,6 +42,12 @@ function createEnvironment(
 describe("shouldSubmitComposerOnEnter", () => {
   it("submits bare Enter from a hardware keyboard", () => {
     expect(
+      getComposerEnterAction(
+        { code: "Enter", key: "Enter" },
+        createEnvironment(),
+      ),
+    ).toBe("submit");
+    expect(
       shouldSubmitComposerOnEnter(
         { code: "Enter", key: "Enter" },
         createEnvironment(),
@@ -51,7 +61,37 @@ describe("shouldSubmitComposerOnEnter", () => {
     ).toBe(true);
   });
 
+  it("returns a modified submit action for Command or Ctrl Enter", () => {
+    expect(
+      getComposerEnterAction(
+        { code: "Enter", key: "Enter", metaKey: true },
+        createEnvironment(),
+      ),
+    ).toBe("modifiedSubmit");
+    expect(
+      getComposerEnterAction(
+        { code: "Enter", ctrlKey: true, key: "Enter" },
+        createEnvironment(),
+      ),
+    ).toBe("modifiedSubmit");
+    expect(
+      shouldSubmitComposerOnEnter(
+        { code: "Enter", key: "Enter", metaKey: true },
+        createEnvironment(),
+      ),
+    ).toBe(false);
+    expect(
+      shouldSubmitComposerOnEnter(
+        { code: "Enter", ctrlKey: true, key: "Enter" },
+        createEnvironment(),
+      ),
+    ).toBe(false);
+  });
+
   it("does not submit Enter without a hardware key code", () => {
+    expect(getComposerEnterAction({ key: "Enter" }, createEnvironment())).toBe(
+      null,
+    );
     expect(
       shouldSubmitComposerOnEnter({ key: "Enter" }, createEnvironment()),
     ).toBe(false);
@@ -81,12 +121,6 @@ describe("shouldSubmitComposerOnEnter", () => {
     expect(
       shouldSubmitComposerOnEnter(
         { code: "Enter", ctrlKey: true, key: "Enter" },
-        environment,
-      ),
-    ).toBe(false);
-    expect(
-      shouldSubmitComposerOnEnter(
-        { code: "Enter", key: "Enter", metaKey: true },
         environment,
       ),
     ).toBe(false);
@@ -136,5 +170,57 @@ describe("shouldSubmitComposerOnEnter", () => {
         }),
       ),
     ).toBe(false);
+  });
+});
+
+describe("getComposerSubmitModeForEnter", () => {
+  it("sends bare Enter when the chat has no active turn", () => {
+    expect(getComposerSubmitModeForEnter("submit", null)).toBe("send");
+    expect(
+      getComposerSubmitModeForEnter("submit", {
+        activeTurnId: null,
+        status: "idle",
+      }),
+    ).toBe("send");
+  });
+
+  it("queues modified Enter regardless of local active turn state", () => {
+    expect(getComposerSubmitModeForEnter("modifiedSubmit", null)).toBe("queue");
+    expect(
+      getComposerSubmitModeForEnter("modifiedSubmit", {
+        activeTurnId: null,
+        status: "idle",
+      }),
+    ).toBe("queue");
+  });
+
+  it("steers bare Enter only while the active chat is running", () => {
+    expect(
+      getComposerSubmitModeForEnter("submit", {
+        activeTurnId: "turn_1",
+        status: "running",
+      }),
+    ).toBe("steer");
+    expect(
+      getComposerSubmitModeForEnter("submit", {
+        activeTurnId: "turn_1",
+        status: "waitingForApproval",
+      }),
+    ).toBe(null);
+  });
+
+  it("queues Command Enter while the chat has an active turn", () => {
+    expect(
+      getComposerSubmitModeForEnter("modifiedSubmit", {
+        activeTurnId: "turn_1",
+        status: "running",
+      }),
+    ).toBe("queue");
+    expect(
+      getComposerSubmitModeForEnter("modifiedSubmit", {
+        activeTurnId: "turn_1",
+        status: "waitingForApproval",
+      }),
+    ).toBe("queue");
   });
 });

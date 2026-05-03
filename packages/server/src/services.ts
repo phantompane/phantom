@@ -46,6 +46,7 @@ import type {
   CodexTurnContextItem,
   ProjectWorktreeRecord,
   ProjectRecord,
+  QueuedMessageRecord,
   ServeState,
 } from "./types.ts";
 
@@ -103,6 +104,13 @@ interface PendingTurnEventBuffer {
   chatId: string;
   discard: boolean;
   events: PendingTurnEvent[];
+  flushing: boolean;
+}
+
+interface SubmitMessageOptions {
+  existingUserMessageId?: string;
+  queuedMessageId?: string;
+  requireActiveTurn: boolean;
 }
 
 type PendingTurnEvent =
@@ -139,7 +147,11 @@ export class ServeServices {
     PendingTurnEventBuffer
   >();
   private readonly pendingChatTurns = new Set<string>();
+  private readonly drainingQueuedMessageChatIds = new Set<string>();
+  private readonly pendingQueuedMessageDrainChatIds = new Set<string>();
   private readonly activeTurnChatIds = new Set<string>();
+  private readonly activeWorktreeOperationLocks = new Map<string, number>();
+  private readonly reportedAgentErrors = new WeakSet<object>();
 
   constructor(options: ServeServicesOptions = {}) {
     this.eventHub = options.eventHub ?? new EventHub();
@@ -233,6 +245,9 @@ export class ServeServices {
         messages: state.messages.filter(
           (message) => !removedChatIds.has(message.chatId),
         ),
+        queuedMessages: state.queuedMessages.filter(
+          (message) => !removedChatIds.has(message.chatId),
+        ),
         selectedProjectId:
           state.selectedProjectId === projectId
             ? null
@@ -284,6 +299,7 @@ export class ServeServices {
       const existingProjectChats = nextState.chats.filter(
         (chat) => chat.projectId === projectId,
       );
+      const queuedMessageChatIds = getQueuedMessageChatIds(nextState);
       const existingChatsByThreadId = new Map(
         existingProjectChats
           .filter((chat) => chat.codexThreadId)
@@ -319,6 +335,7 @@ export class ServeServices {
           (worktreesByPath.has(chat.worktreePath) ||
             !canPruneMissingChats ||
             isChatActive(chat, this.pendingChatTurns) ||
+            queuedMessageChatIds.has(chat.id) ||
             !initialProjectChatIds.has(chat.id)),
       );
       const retainedProjectChats = sortChatsByUpdatedAt([
@@ -346,6 +363,9 @@ export class ServeServices {
           ...retainedProjectChats,
         ],
         messages: nextState.messages.filter(
+          (message) => !removedProjectChatIds.has(message.chatId),
+        ),
+        queuedMessages: nextState.queuedMessages.filter(
           (message) => !removedProjectChatIds.has(message.chatId),
         ),
         selectedChatId,
@@ -483,26 +503,36 @@ export class ServeServices {
     if (!targetWorktree) {
       throw new Error(`Worktree '${worktreeName}' not found`);
     }
-    const activeChat = findActiveWorktreeChat(
-      state.chats,
+    this.assertNoBlockingWorktreeChat(
+      state,
       projectId,
       targetWorktree.path,
-      this.pendingChatTurns,
+      worktreeName,
+      "syncing the branch",
     );
-    if (activeChat) {
-      throw new Error(
-        `Worktree '${worktreeName}' has an active chat. Stop the chat before syncing the branch.`,
-      );
-    }
 
-    const pullTarget = await getWorktreePullTarget(targetWorktree.path);
-    const result = await pull({
-      cwd: targetWorktree.path,
-      remote: pullTarget.remote,
-      branch: pullTarget.branch,
-    });
-    if (!result.ok) {
-      throw result.error;
+    const releaseWorktreeOperation = this.acquireWorktreeOperationLock(
+      targetWorktree.path,
+    );
+    try {
+      this.assertNoBlockingWorktreeChat(
+        await this.store.load(),
+        projectId,
+        targetWorktree.path,
+        worktreeName,
+        "syncing the branch",
+      );
+      const pullTarget = await getWorktreePullTarget(targetWorktree.path);
+      const result = await pull({
+        cwd: targetWorktree.path,
+        remote: pullTarget.remote,
+        branch: pullTarget.branch,
+      });
+      if (!result.ok) {
+        throw result.error;
+      }
+    } finally {
+      releaseWorktreeOperation();
     }
 
     return {
@@ -608,55 +638,76 @@ export class ServeServices {
         `Worktree '${worktreeName}' is not managed by Phantom and cannot be deleted from Serve.`,
       );
     }
-    const worktreeChats = state.chats.filter(
-      (chat) =>
-        chat.projectId === projectId &&
-        chat.worktreePath === targetWorktree.path,
-    );
-    const activeChat = findActiveWorktreeChat(
-      worktreeChats,
+    this.assertNoBlockingWorktreeChat(
+      state,
       projectId,
       targetWorktree.path,
-      this.pendingChatTurns,
-    );
-    if (activeChat) {
-      throw new Error(
-        `Worktree '${worktreeName}' has an active chat. Stop the chat before deleting the worktree.`,
-      );
-    }
-
-    const result = await deleteWorktreeCore(
-      context.gitRoot,
-      context.worktreesDirectory,
       worktreeName,
-      {
-        force: input.force,
-        keepBranch: input.keepBranch ?? context.preferences.keepBranch ?? false,
-        path: targetWorktree.path,
-      },
-      context.config?.preDelete?.commands,
+      "deleting the worktree",
     );
-    if (!result.ok) {
-      throw result.error;
-    }
 
-    const removedChatIds = new Set(worktreeChats.map((chat) => chat.id));
-    await this.store.update((nextState) => ({
-      ...nextState,
-      chats: nextState.chats.filter((chat) => !removedChatIds.has(chat.id)),
-      messages: nextState.messages.filter(
-        (message) => !removedChatIds.has(message.chatId),
-      ),
-      selectedChatId: removedChatIds.has(nextState.selectedChatId ?? "")
-        ? null
-        : nextState.selectedChatId,
-    }));
+    let deleteMessage = "";
+    const releaseWorktreeOperation = this.acquireWorktreeOperationLock(
+      targetWorktree.path,
+    );
+    try {
+      this.assertNoBlockingWorktreeChat(
+        await this.store.load(),
+        projectId,
+        targetWorktree.path,
+        worktreeName,
+        "deleting the worktree",
+      );
+      const result = await deleteWorktreeCore(
+        context.gitRoot,
+        context.worktreesDirectory,
+        worktreeName,
+        {
+          force: input.force,
+          keepBranch:
+            input.keepBranch ?? context.preferences.keepBranch ?? false,
+          path: targetWorktree.path,
+        },
+        context.config?.preDelete?.commands,
+      );
+      if (!result.ok) {
+        throw result.error;
+      }
+      deleteMessage = result.value.message;
+
+      await this.store.update((nextState) => {
+        const removedChatIds = new Set(
+          nextState.chats
+            .filter(
+              (chat) =>
+                chat.projectId === projectId &&
+                chat.worktreePath === targetWorktree.path,
+            )
+            .map((chat) => chat.id),
+        );
+        return {
+          ...nextState,
+          chats: nextState.chats.filter((chat) => !removedChatIds.has(chat.id)),
+          messages: nextState.messages.filter(
+            (message) => !removedChatIds.has(message.chatId),
+          ),
+          queuedMessages: nextState.queuedMessages.filter(
+            (message) => !removedChatIds.has(message.chatId),
+          ),
+          selectedChatId: removedChatIds.has(nextState.selectedChatId ?? "")
+            ? null
+            : nextState.selectedChatId,
+        };
+      });
+    } finally {
+      releaseWorktreeOperation();
+    }
 
     this.eventHub.emit("worktree.removed", {
       projectId,
       worktreeName,
     });
-    return { message: result.value.message };
+    return { message: deleteMessage };
   }
 
   async getChat(chatId: string): Promise<ChatRecord> {
@@ -691,6 +742,16 @@ export class ServeServices {
     chatId: string,
     input: SendMessageInput,
   ): Promise<ChatRecord> {
+    await this.resetStaleTransientChatState();
+    const state = await this.store.load();
+    const chat = this.requireChat(state, chatId);
+    if (
+      !isChatInActiveTurn(chat) &&
+      !this.pendingChatTurns.has(chatId) &&
+      state.queuedMessages.some((message) => message.chatId === chatId)
+    ) {
+      return this.queueMessage(chatId, input);
+    }
     return this.submitMessage(chatId, input, { requireActiveTurn: false });
   }
 
@@ -701,10 +762,65 @@ export class ServeServices {
     return this.submitMessage(chatId, input, { requireActiveTurn: true });
   }
 
+  async queueMessage(
+    chatId: string,
+    input: SendMessageInput,
+  ): Promise<ChatRecord> {
+    await this.resetStaleTransientChatState();
+    const text = input.text.trim();
+    if (!text) {
+      throw new Error("Message text cannot be empty");
+    }
+
+    let shouldSubmitImmediately = false;
+    let shouldDrainQueuedMessages = false;
+    let queuedUserMessage: ChatMessageRecord | null = null;
+    await this.store.update((nextState) => {
+      const chat = this.requireChat(nextState, chatId);
+      this.assertChatWorktreeIsAvailable(chat);
+      const hasQueuedMessages = nextState.queuedMessages.some(
+        (message) => message.chatId === chatId,
+      );
+      const isQueueBlocked =
+        isChatInActiveTurn(chat) || this.pendingChatTurns.has(chatId);
+      if (!isQueueBlocked && !hasQueuedMessages) {
+        shouldSubmitImmediately = true;
+        return nextState;
+      }
+      shouldDrainQueuedMessages = !isQueueBlocked;
+
+      const userMessage = createMessage(
+        chat.id,
+        "user",
+        text,
+        "chat.message.queued",
+      );
+      const queuedMessage = createQueuedMessage(chat.id, userMessage.id, input);
+      queuedUserMessage = userMessage;
+      return {
+        ...nextState,
+        messages: [...nextState.messages, userMessage],
+        queuedMessages: [...nextState.queuedMessages, queuedMessage],
+      };
+    });
+
+    if (shouldSubmitImmediately) {
+      return this.submitMessage(chatId, input, { requireActiveTurn: false });
+    }
+
+    if (queuedUserMessage) {
+      this.eventHub.emit("chat.message.created", queuedUserMessage, { chatId });
+    }
+    if (shouldDrainQueuedMessages) {
+      await this.drainQueuedMessagesAndReport(chatId);
+    }
+    return await this.getChat(chatId);
+  }
+
   private async submitMessage(
     chatId: string,
     input: SendMessageInput,
-    options: { requireActiveTurn: boolean },
+    options: SubmitMessageOptions,
   ): Promise<ChatRecord> {
     await this.resetStaleTransientChatState();
     const text = input.text.trim();
@@ -717,6 +833,18 @@ export class ServeServices {
     if (chat.status === "waitingForApproval") {
       throw new Error("Chat is waiting for approval");
     }
+    this.assertChatWorktreeIsAvailable(chat);
+    const existingUserMessage = options.existingUserMessageId
+      ? state.messages.find(
+          (message) =>
+            message.id === options.existingUserMessageId &&
+            message.chatId === chatId &&
+            message.role === "user",
+        )
+      : undefined;
+    if (options.existingUserMessageId && !existingUserMessage) {
+      throw new Error("Queued message was not found");
+    }
     const previousMessageIds = new Set(
       state.messages
         .filter((message) => message.chatId === chatId)
@@ -727,7 +855,13 @@ export class ServeServices {
     if (options.requireActiveTurn && !isSteeringActiveTurn) {
       throw new Error("Chat does not have an active Codex turn");
     }
-    const turnOptions = await this.createCodexTurnOptions(input, chat);
+    let pendingChatTurnCleared = false;
+    const clearPendingChatTurn = () => {
+      if (!isSteeringActiveTurn && !pendingChatTurnCleared) {
+        this.pendingChatTurns.delete(chatId);
+        pendingChatTurnCleared = true;
+      }
+    };
     if (!isSteeringActiveTurn) {
       if (this.pendingChatTurns.has(chatId)) {
         throw new Error("Chat already has an active Codex turn");
@@ -735,7 +869,35 @@ export class ServeServices {
       this.pendingChatTurns.add(chatId);
     }
 
-    const userMessage = createMessage(chat.id, "user", text);
+    const turnOptions = await this.createCodexTurnOptions(input, chat).catch(
+      async (error) => {
+        clearPendingChatTurn();
+        if (options.queuedMessageId) {
+          await this.store.update((nextState) => ({
+            ...nextState,
+            messages: existingUserMessage
+              ? nextState.messages.map((message) =>
+                  message.id === existingUserMessage.id
+                    ? { ...message, eventType: undefined }
+                    : message,
+                )
+              : nextState.messages,
+            queuedMessages: nextState.queuedMessages.filter(
+              (message) => message.id !== options.queuedMessageId,
+            ),
+          }));
+        }
+        await this.drainQueuedMessagesAndReport(chatId);
+        throw error;
+      },
+    );
+
+    const userMessage = existingUserMessage
+      ? {
+          ...existingUserMessage,
+          eventType: undefined,
+        }
+      : createMessage(chat.id, "user", text);
     let nextStatus: ChatStatus | null = null;
     let nextActiveTurnId: string | null | undefined;
     let pendingTurnThreadId: string | null = null;
@@ -744,7 +906,11 @@ export class ServeServices {
     try {
       await this.store.update((nextState) => ({
         ...nextState,
-        messages: [...nextState.messages, userMessage],
+        messages: existingUserMessage
+          ? nextState.messages.map((message) =>
+              message.id === userMessage.id ? userMessage : message,
+            )
+          : [...nextState.messages, userMessage],
       }));
       userMessageStored = true;
 
@@ -768,13 +934,16 @@ export class ServeServices {
             if (existingPendingTurn.discard) {
               throw new Error("Chat is waiting for failed Codex turn cleanup");
             }
-            throw new Error("Chat already has an active Codex turn");
+            if (!existingPendingTurn.flushing) {
+              throw new Error("Chat already has an active Codex turn");
+            }
           }
           pendingTurnThreadId = threadId;
           this.pendingTurnEvents.set(threadId, {
             chatId,
             discard: false,
             events: [],
+            flushing: false,
           });
           const turnResult = turnOptions
             ? await this.codex.startTurn(
@@ -795,35 +964,43 @@ export class ServeServices {
         if (pendingTurnThreadId) {
           this.discardPendingTurnEvents(pendingTurnThreadId);
         }
-        await this.store.update((nextState) => ({
-          ...nextState,
-          messages: userMessageStored
-            ? nextState.messages.filter(
-                (message) =>
-                  message.id !== userMessage.id &&
-                  (isSteeringActiveTurn ||
-                    message.chatId !== chatId ||
-                    previousMessageIds.has(message.id)),
-              )
-            : nextState.messages,
-          chats: isSteeringActiveTurn
-            ? nextState.chats
-            : nextState.chats.map((candidate) =>
-                candidate.id === chatId
-                  ? {
-                      ...candidate,
-                      status: "failed",
-                      activeTurnId: chat.activeTurnId ?? null,
-                      updatedAt: createTimestamp(),
-                    }
-                  : candidate,
-              ),
-        }));
-        this.eventHub.emit(
-          "agent.error",
-          { message: toErrorMessage(error) },
-          { chatId },
-        );
+        await this.store.update((nextState) => {
+          const queuedMessageIds = new Set(
+            nextState.queuedMessages.map((message) => message.messageId),
+          );
+          return {
+            ...nextState,
+            messages:
+              userMessageStored && !existingUserMessage
+                ? nextState.messages.filter(
+                    (message) =>
+                      message.id !== userMessage.id &&
+                      (isSteeringActiveTurn ||
+                        message.chatId !== chatId ||
+                        previousMessageIds.has(message.id) ||
+                        queuedMessageIds.has(message.id)),
+                  )
+                : nextState.messages,
+            queuedMessages: options.queuedMessageId
+              ? nextState.queuedMessages.filter(
+                  (message) => message.id !== options.queuedMessageId,
+                )
+              : nextState.queuedMessages,
+            chats: isSteeringActiveTurn
+              ? nextState.chats
+              : nextState.chats.map((candidate) =>
+                  candidate.id === chatId
+                    ? {
+                        ...candidate,
+                        status: "failed",
+                        activeTurnId: chat.activeTurnId ?? null,
+                        updatedAt: createTimestamp(),
+                      }
+                    : candidate,
+                ),
+          };
+        });
+        this.emitAgentError(chatId, error);
         throw error instanceof Error ? error : new Error(String(error));
       }
 
@@ -839,17 +1016,23 @@ export class ServeServices {
               }
             : candidate,
         ),
+        queuedMessages: options.queuedMessageId
+          ? nextState.queuedMessages.filter(
+              (message) => message.id !== options.queuedMessageId,
+            )
+          : nextState.queuedMessages,
       }));
-      this.eventHub.emit("chat.message.created", userMessage, { chatId });
+      if (!existingUserMessage) {
+        this.eventHub.emit("chat.message.created", userMessage, { chatId });
+      }
+      clearPendingChatTurn();
       if (pendingTurnThreadId) {
         await this.flushPendingTurnEvents(pendingTurnThreadId);
       }
 
       return await this.getChat(chatId);
     } finally {
-      if (!isSteeringActiveTurn) {
-        this.pendingChatTurns.delete(chatId);
-      }
+      clearPendingChatTurn();
     }
   }
 
@@ -1100,6 +1283,9 @@ export class ServeServices {
       }
       await this.addMessageFromCodexEvent(chat.id, method, message.params);
       this.eventHub.emit(eventType, message, { chatId: chat.id });
+      if (method === "turn/completed") {
+        await this.drainQueuedMessagesAndReport(chat.id);
+      }
     } else {
       if (method === "serverRequest/resolved") {
         return;
@@ -1201,12 +1387,167 @@ export class ServeServices {
     );
   }
 
+  private async drainQueuedMessages(chatId: string): Promise<void> {
+    const state = await this.store.load();
+    const chat = this.requireChat(state, chatId);
+    if (isChatInActiveTurn(chat) || this.pendingChatTurns.has(chatId)) {
+      return;
+    }
+
+    const queuedMessage = state.queuedMessages.find(
+      (message) => message.chatId === chatId,
+    );
+    if (!queuedMessage) {
+      return;
+    }
+    const queuedUserMessage = state.messages.find(
+      (message) =>
+        message.id === queuedMessage.messageId &&
+        message.chatId === chatId &&
+        message.role === "user",
+    );
+    if (!queuedUserMessage) {
+      await this.store.update((nextState) => ({
+        ...nextState,
+        queuedMessages: nextState.queuedMessages.filter(
+          (message) => message.id !== queuedMessage.id,
+        ),
+      }));
+      await this.drainQueuedMessages(chatId);
+      throw new Error("Queued message was not found");
+    }
+
+    await this.submitMessage(chatId, queuedMessageToSendInput(queuedMessage), {
+      existingUserMessageId: queuedMessage.messageId,
+      queuedMessageId: queuedMessage.id,
+      requireActiveTurn: false,
+    });
+  }
+
+  private async drainQueuedMessagesAndReport(chatId: string): Promise<void> {
+    if (this.drainingQueuedMessageChatIds.has(chatId)) {
+      this.pendingQueuedMessageDrainChatIds.add(chatId);
+      return;
+    }
+
+    this.drainingQueuedMessageChatIds.add(chatId);
+    try {
+      do {
+        this.pendingQueuedMessageDrainChatIds.delete(chatId);
+        try {
+          await this.drainQueuedMessages(chatId);
+        } catch (error) {
+          const wasReported = this.isAgentErrorReported(error);
+          await this.addAgentErrorMessage(chatId, error);
+          if (!wasReported) {
+            this.emitAgentError(chatId, error);
+          }
+        }
+      } while (this.pendingQueuedMessageDrainChatIds.has(chatId));
+    } finally {
+      this.pendingQueuedMessageDrainChatIds.delete(chatId);
+      this.drainingQueuedMessageChatIds.delete(chatId);
+    }
+  }
+
+  private async addAgentErrorMessage(
+    chatId: string,
+    error: unknown,
+  ): Promise<void> {
+    const message = toErrorMessage(error);
+    await this.store.update((state) => {
+      if (!state.chats.some((chat) => chat.id === chatId)) {
+        return state;
+      }
+      return {
+        ...state,
+        messages: [...state.messages, createMessage(chatId, "error", message)],
+      };
+    });
+  }
+
+  private emitAgentError(chatId: string, error: unknown): void {
+    this.markAgentErrorReported(error);
+    this.eventHub.emit(
+      "agent.error",
+      { message: toErrorMessage(error) },
+      { chatId },
+    );
+  }
+
+  private markAgentErrorReported(error: unknown): void {
+    if ((typeof error === "object" || typeof error === "function") && error) {
+      this.reportedAgentErrors.add(error);
+    }
+  }
+
+  private isAgentErrorReported(error: unknown): boolean {
+    if (!error || (typeof error !== "object" && typeof error !== "function")) {
+      return false;
+    }
+    return this.reportedAgentErrors.has(error);
+  }
+
+  private assertChatWorktreeIsAvailable(chat: ChatRecord): void {
+    if (this.isWorktreeOperationActive(chat.worktreePath)) {
+      throw new Error(
+        `Worktree '${chat.worktreeName}' is busy. Wait for the current worktree operation to finish before sending messages.`,
+      );
+    }
+  }
+
+  private acquireWorktreeOperationLock(worktreePath: string): () => void {
+    const activeCount =
+      this.activeWorktreeOperationLocks.get(worktreePath) ?? 0;
+    this.activeWorktreeOperationLocks.set(worktreePath, activeCount + 1);
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      const nextCount =
+        (this.activeWorktreeOperationLocks.get(worktreePath) ?? 1) - 1;
+      if (nextCount > 0) {
+        this.activeWorktreeOperationLocks.set(worktreePath, nextCount);
+      } else {
+        this.activeWorktreeOperationLocks.delete(worktreePath);
+      }
+    };
+  }
+
+  private isWorktreeOperationActive(worktreePath: string): boolean {
+    return (this.activeWorktreeOperationLocks.get(worktreePath) ?? 0) > 0;
+  }
+
+  private assertNoBlockingWorktreeChat(
+    state: ServeState,
+    projectId: string,
+    worktreePath: string,
+    worktreeName: string,
+    action: string,
+  ): void {
+    const activeChat = findActiveWorktreeChat(
+      state.chats,
+      projectId,
+      worktreePath,
+      this.pendingChatTurns,
+      getQueuedMessageChatIds(state),
+    );
+    if (activeChat) {
+      throw new Error(
+        `Worktree '${worktreeName}' has an active chat. Stop the chat before ${action}.`,
+      );
+    }
+  }
+
   private async flushPendingTurnEvents(threadId: string): Promise<void> {
     const pendingTurnEvents = this.pendingTurnEvents.get(threadId);
     if (!pendingTurnEvents || pendingTurnEvents.discard) {
       this.pendingTurnEvents.delete(threadId);
       return;
     }
+    pendingTurnEvents.flushing = true;
     while (!pendingTurnEvents.discard && pendingTurnEvents.events.length > 0) {
       const pendingEvent = pendingTurnEvents.events.shift();
       if (!pendingEvent) {
@@ -1218,6 +1559,7 @@ export class ServeServices {
         await this.processCodexServerRequest(pendingEvent.message);
       }
     }
+    pendingTurnEvents.flushing = false;
     if (this.pendingTurnEvents.get(threadId) === pendingTurnEvents) {
       this.pendingTurnEvents.delete(threadId);
     }
@@ -1507,6 +1849,55 @@ function createMessage(
   };
 }
 
+function createQueuedMessage(
+  chatId: string,
+  messageId: string,
+  input: SendMessageInput,
+): QueuedMessageRecord {
+  return {
+    id: createRecordId("queue"),
+    chatId,
+    messageId,
+    text: input.text.trim(),
+    effort: input.effort,
+    files: cloneContextItems(input.files),
+    model: input.model,
+    skills: cloneContextItems(input.skills),
+    createdAt: createTimestamp(),
+  };
+}
+
+function queuedMessageToSendInput(
+  message: QueuedMessageRecord,
+): SendMessageInput {
+  return {
+    effort: message.effort,
+    files: cloneContextItems(message.files),
+    model: message.model,
+    skills: cloneContextItems(message.skills),
+    text: message.text,
+  };
+}
+
+function cloneContextItems(
+  items: CodexTurnContextItem[] | undefined,
+): CodexTurnContextItem[] | undefined {
+  if (!items || items.length === 0) {
+    return undefined;
+  }
+  return items.map((item) => ({
+    name: item.name,
+    path: item.path,
+  }));
+}
+
+function isChatInActiveTurn(chat: ChatRecord): boolean {
+  return Boolean(
+    chat.activeTurnId &&
+    (chat.status === "running" || chat.status === "waitingForApproval"),
+  );
+}
+
 function latestChatForWorktree(chats: ChatRecord[]): ChatRecord | null {
   const sortedChats = [...chats].sort((left, right) =>
     right.updatedAt.localeCompare(left.updatedAt),
@@ -1521,12 +1912,14 @@ function findActiveWorktreeChat(
   projectId: string,
   worktreePath: string,
   pendingChatTurns: ReadonlySet<string>,
+  queuedMessageChatIds: ReadonlySet<string>,
 ): ChatRecord | undefined {
   return chats.find(
     (chat) =>
       chat.projectId === projectId &&
       chat.worktreePath === worktreePath &&
       (pendingChatTurns.has(chat.id) ||
+        queuedMessageChatIds.has(chat.id) ||
         chat.status === "running" ||
         chat.status === "waitingForApproval" ||
         Boolean(chat.activeTurnId)),
@@ -1653,6 +2046,10 @@ function isChatActive(
     chat.status === "running" ||
     chat.status === "waitingForApproval",
   );
+}
+
+function getQueuedMessageChatIds(state: ServeState): ReadonlySet<string> {
+  return new Set(state.queuedMessages.map((message) => message.chatId));
 }
 
 function normalizeCodexThreadList(value: unknown): CodexThreadRecord[] {

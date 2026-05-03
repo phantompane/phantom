@@ -27,6 +27,23 @@ const chatMessageRecordBaseSchema = z.object({
   createdAt: z.string(),
 });
 
+const turnContextItemBaseSchema = z.object({
+  name: z.string(),
+  path: z.string(),
+});
+
+const queuedMessageRecordBaseSchema = z.object({
+  id: z.string(),
+  chatId: z.string(),
+  messageId: z.string(),
+  text: z.string(),
+  effort: z.string().optional(),
+  files: z.array(turnContextItemBaseSchema).optional(),
+  model: z.string().optional(),
+  skills: z.array(turnContextItemBaseSchema).optional(),
+  createdAt: z.string(),
+});
+
 const chatRecordBaseSchema = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -51,6 +68,7 @@ const serveStateBaseSchema = z.object({
   projects: z.array(projectRecordBaseSchema),
   chats: z.array(chatRecordBaseSchema),
   messages: z.array(chatMessageRecordBaseSchema),
+  queuedMessages: z.array(queuedMessageRecordBaseSchema).default([]),
   selectedProjectId: nullableStringFromUnknownSchema,
   selectedChatId: nullableStringFromUnknownSchema,
 });
@@ -58,6 +76,7 @@ const serveStateBaseSchema = z.object({
 export type ChatStatus = z.infer<typeof chatStatusSchema>;
 export type ProjectRecord = z.infer<typeof projectRecordBaseSchema>;
 export type ChatMessageRecord = z.infer<typeof chatMessageRecordBaseSchema>;
+export type QueuedMessageRecord = z.infer<typeof queuedMessageRecordBaseSchema>;
 export type ChatRecord = z.infer<typeof chatRecordBaseSchema>;
 export type ServeState = z.infer<typeof serveStateBaseSchema>;
 
@@ -65,6 +84,8 @@ export const projectRecordSchema: z.ZodType<ProjectRecord> =
   projectRecordBaseSchema.passthrough();
 export const chatMessageRecordSchema: z.ZodType<ChatMessageRecord> =
   chatMessageRecordBaseSchema.passthrough();
+export const queuedMessageRecordSchema: z.ZodType<QueuedMessageRecord> =
+  queuedMessageRecordBaseSchema.passthrough();
 export const chatRecordSchema: z.ZodType<ChatRecord> =
   chatRecordBaseSchema.passthrough();
 export const serveStateSchema: z.ZodType<ServeState> = z
@@ -73,6 +94,7 @@ export const serveStateSchema: z.ZodType<ServeState> = z
     projects: z.array(projectRecordSchema),
     chats: z.array(chatRecordSchema),
     messages: z.array(chatMessageRecordSchema),
+    queuedMessages: z.array(queuedMessageRecordSchema).default([]),
     selectedProjectId: nullableStringFromUnknownSchema,
     selectedChatId: nullableStringFromUnknownSchema,
   })
