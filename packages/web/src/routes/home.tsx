@@ -474,6 +474,8 @@ export function HomeRoute() {
     null,
   );
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [pendingComposerMode, setPendingComposerMode] =
+    useState<ComposerSubmitMode | null>(null);
   const [isInterrupting, setIsInterrupting] = useState(false);
   const createChatInFlightRef = useRef(false);
   const chatTimelineRef = useRef<HTMLElement | null>(null);
@@ -488,6 +490,9 @@ export function HomeRoute() {
   const worktreesByProjectRef = useRef(worktreesByProject);
   const sendMessageRequestIdRef = useRef(0);
   const pendingSendChatIdsRef = useRef<Set<string>>(new Set());
+  const pendingComposerModesByChatRef = useRef<Map<string, ComposerSubmitMode>>(
+    new Map(),
+  );
   const [pendingApproval, setPendingApproval] =
     useState<PendingApproval | null>(null);
   const queryClient = useQueryClient();
@@ -668,7 +673,8 @@ export function HomeRoute() {
     chatsByProject[selectedProjectId] !== undefined &&
     worktreesByProject[selectedProjectId] !== undefined,
   );
-  const isChatRunning = Boolean(selectedChat?.activeTurnId);
+  const hasActiveTurn = Boolean(selectedChat?.activeTurnId);
+  const isChatRunning = selectedChat?.status === "running" && hasActiveTurn;
 
   const selectedModel = useMemo(
     () =>
@@ -691,6 +697,30 @@ export function HomeRoute() {
     selectedFiles.length > 0 || selectedSkills.length > 0;
   const canSendMessage =
     hasSelectedChat && Boolean(composerText.trim() || hasSelectedContext);
+  const primaryComposerMode: ComposerSubmitMode = hasActiveTurn
+    ? isChatRunning
+      ? "steer"
+      : "queue"
+    : "send";
+  const isComposerBlocked =
+    isSendingMessage ||
+    Boolean(
+      selectedChatId && pendingSendChatIdsRef.current.has(selectedChatId),
+    );
+  const canSubmitPrimaryComposerAction =
+    canSendMessage &&
+    !isComposerBlocked &&
+    (primaryComposerMode !== "steer" || isChatRunning);
+  const canQueueComposerMessage = canSendMessage && !isComposerBlocked;
+  const canInterruptActiveTurn =
+    hasActiveTurn && !isInterrupting && Boolean(selectedChat?.activeTurnId);
+  const areComposerOptionsDisabled = !hasSelectedChat || isSendingMessage;
+  const primaryComposerActionLabel =
+    formatComposerModeAction(primaryComposerMode);
+  const primaryComposerButtonLabel =
+    pendingComposerMode === primaryComposerMode
+      ? formatComposerModeBusy(pendingComposerMode)
+      : primaryComposerActionLabel;
 
   const modelOptions = useMemo<ComboboxOption[]>(
     () =>
@@ -875,6 +905,11 @@ export function HomeRoute() {
       Boolean(
         selectedChatId && pendingSendChatIdsRef.current.has(selectedChatId),
       ),
+    );
+    setPendingComposerMode(
+      selectedChatId
+        ? (pendingComposerModesByChatRef.current.get(selectedChatId) ?? null)
+        : null,
     );
 
     if (!isSelectedChatValidated) {
@@ -1708,7 +1743,9 @@ export function HomeRoute() {
       path: skill.path,
     }));
     pendingSendChatIdsRef.current.add(requestChatId);
+    pendingComposerModesByChatRef.current.set(requestChatId, mode);
     setIsSendingMessage(true);
+    setPendingComposerMode(mode);
     try {
       const mutation =
         mode === "steer"
@@ -1744,11 +1781,15 @@ export function HomeRoute() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       pendingSendChatIdsRef.current.delete(requestChatId);
+      pendingComposerModesByChatRef.current.delete(requestChatId);
       if (
         isCurrentSendRequest() ||
         selectedChatIdRef.current === requestChatId
       ) {
         setIsSendingMessage(false);
+        setPendingComposerMode(
+          pendingComposerModesByChatRef.current.get(requestChatId) ?? null,
+        );
       }
     }
   }
@@ -2390,7 +2431,7 @@ export function HomeRoute() {
         )}
 
         <section
-          aria-busy={isMessagesLoading || isSendingMessage || isChatRunning}
+          aria-busy={isMessagesLoading || isSendingMessage || hasActiveTurn}
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
           ref={chatTimelineRef}
           onScroll={scheduleSelectedChatScrollPositionSave}
@@ -2471,47 +2512,72 @@ export function HomeRoute() {
                   onKeyDown={handleComposerKeyDown}
                 />
               </div>
-              <Button
-                aria-label={
-                  isChatRunning
-                    ? "Stop turn"
-                    : isSendingMessage
-                      ? "Sending message"
-                      : "Send message"
-                }
-                className="size-10"
-                disabled={
-                  isChatRunning
-                    ? !selectedChat?.activeTurnId || isInterrupting
-                    : isSendingMessage || !canSendMessage
-                }
-                onClick={isChatRunning ? interruptChat : undefined}
-                size="icon"
-                title={
-                  isChatRunning
-                    ? "Stop turn"
-                    : isSendingMessage
-                      ? "Sending"
-                      : "Send"
-                }
-                type={isChatRunning ? "button" : "submit"}
-                variant={isChatRunning ? "destructive" : "default"}
-              >
-                {isSendingMessage || isInterrupting ? (
-                  <LoadingSpinner />
-                ) : isChatRunning ? (
-                  <Square />
-                ) : (
-                  <Send />
+              <div className="flex shrink-0 items-end gap-1.5">
+                {primaryComposerMode !== "queue" && (
+                  <Button
+                    aria-label={
+                      pendingComposerMode === "queue"
+                        ? "Queueing message"
+                        : "Queue message"
+                    }
+                    className="size-10"
+                    disabled={!canQueueComposerMessage}
+                    onClick={() => void submitComposer("queue")}
+                    size="icon"
+                    title="Queue message"
+                    type="button"
+                    variant="outline"
+                  >
+                    {pendingComposerMode === "queue" ? (
+                      <LoadingSpinner />
+                    ) : (
+                      <Clock3 />
+                    )}
+                  </Button>
                 )}
-              </Button>
+                <Button
+                  aria-label={primaryComposerButtonLabel}
+                  className="size-10"
+                  disabled={!canSubmitPrimaryComposerAction}
+                  onClick={
+                    hasActiveTurn
+                      ? () => void submitComposer(primaryComposerMode)
+                      : undefined
+                  }
+                  size="icon"
+                  title={primaryComposerActionLabel}
+                  type={hasActiveTurn ? "button" : "submit"}
+                >
+                  {pendingComposerMode === primaryComposerMode ? (
+                    <LoadingSpinner />
+                  ) : primaryComposerMode === "queue" ? (
+                    <Clock3 />
+                  ) : (
+                    <Send />
+                  )}
+                </Button>
+                {hasActiveTurn && (
+                  <Button
+                    aria-label={isInterrupting ? "Stopping turn" : "Stop turn"}
+                    className="size-10"
+                    disabled={!canInterruptActiveTurn}
+                    onClick={interruptChat}
+                    size="icon"
+                    title="Stop turn"
+                    type="button"
+                    variant="destructive"
+                  >
+                    {isInterrupting ? <LoadingSpinner /> : <Square />}
+                  </Button>
+                )}
+              </div>
             </div>
             <div className="flex min-h-8 flex-wrap items-center gap-2 border-t border-[var(--border-divider)] px-1 pt-2">
               <Combobox
                 aria-label="Select model"
                 className="w-36 max-w-full sm:w-40"
                 disabled={
-                  isModelsLoading || models.length === 0 || isChatRunning
+                  isModelsLoading || models.length === 0 || isSendingMessage
                 }
                 emptyMessage={isModelsLoading ? "Loading models" : "No models"}
                 icon={<Bot className="size-3.5" />}
@@ -2529,7 +2595,7 @@ export function HomeRoute() {
               <Combobox
                 aria-label="Select reasoning effort"
                 className="w-28 max-w-full"
-                disabled={!selectedModel || isChatRunning}
+                disabled={!selectedModel || isSendingMessage}
                 icon={<Brain className="size-3.5" />}
                 options={effortOptions}
                 placeholder="Effort"
@@ -2547,7 +2613,7 @@ export function HomeRoute() {
               <Combobox
                 aria-label="Attach file"
                 className="w-32 max-w-full"
-                disabled={!hasSelectedChat || isChatRunning}
+                disabled={areComposerOptionsDisabled}
                 emptyMessage={
                   isFileSearchLoading
                     ? "Searching files"
@@ -2572,9 +2638,7 @@ export function HomeRoute() {
                 aria-label="Select skill"
                 align="end"
                 className="w-32 max-w-full"
-                disabled={
-                  !hasSelectedChat || isChatRunning || isChatContextLoading
-                }
+                disabled={areComposerOptionsDisabled || isChatContextLoading}
                 emptyMessage={
                   isChatContextLoading ? "Loading skills" : "No skills"
                 }
@@ -2739,6 +2803,28 @@ function formatReasoningEffort(effort: string): string {
     .filter(Boolean)
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join(" ");
+}
+
+function formatComposerModeAction(mode: ComposerSubmitMode): string {
+  switch (mode) {
+    case "queue":
+      return "Queue message";
+    case "steer":
+      return "Steer turn";
+    case "send":
+      return "Send message";
+  }
+}
+
+function formatComposerModeBusy(mode: ComposerSubmitMode): string {
+  switch (mode) {
+    case "queue":
+      return "Queueing message";
+    case "steer":
+      return "Steering turn";
+    case "send":
+      return "Sending message";
+  }
 }
 
 function getContextOnlyMessage({
