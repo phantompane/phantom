@@ -1,0 +1,31 @@
+{
+  "name": "@phantompane/server",
+  "version": "6.3.0-0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "dev": "node --no-warnings --experimental-transform-types src/start.ts",
+    "build": "tsdown",
+    "lint": "oxfmt --check . && oxlint .",
+    "fix": "oxfmt --write . && oxlint --fix .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/server/src"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.13",
+    "@phantompane/codex": "workspace:*",
+    "@phantompane/core": "workspace:*",
+    "@phantompane/git": "workspace:*",
+    "@phantompane/state": "workspace:*",
+    "hono": "^4.12.12",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsdown": "^0.21.8",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.2"
+  }
+}

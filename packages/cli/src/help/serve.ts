@@ -53,11 +53,11 @@ export const serveHelp: CommandHelp = {
   ],
   notes: [
     "Experimental: this command and its runtime behavior may change without notice.",
-    "The server runs the bundled TanStack Start application shipped with Phantom.",
+    "The server runs the bundled Hono API and Vite web application shipped with Phantom.",
     "The default host is 127.0.0.1.",
     "The default port is 9640.",
     "The Codex executable defaults to codex.",
-    "The bundled app assets must exist under packages/cli/dist/app/.output.",
-    "The underlying Nitro server also respects HOST/PORT and NITRO_HOST/NITRO_PORT.",
+    "The bundled app assets must exist under packages/cli/dist/app/server and packages/cli/dist/app/web.",
+    "The underlying Hono server respects HOST/PORT.",
   ],
 };
