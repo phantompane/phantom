@@ -29,6 +29,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useSearchParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   answerApprovalMutation,
@@ -100,6 +101,11 @@ import {
 import { Textarea } from "../components/ui/textarea";
 import { shouldSubmitComposerOnEnter } from "../lib/composer-keyboard";
 import { cn } from "../lib/utils";
+import {
+  findValidatedSelectedChat,
+  getSelectableReasoningEfforts,
+  isShareableFileSearchQuery,
+} from "./home-url-state";
 import type {
   ChatMessageRecord,
   ChatRecord,
@@ -130,6 +136,14 @@ const chatEventNames = [
 
 const chatScrollStorageKeyPrefix = "phantom.chatScroll:v1:";
 const chatScrollBottomThreshold = 4;
+const searchParamKeys = {
+  chat: "chat",
+  effort: "effort",
+  expandedProject: "expandedProject",
+  fileQuery: "fileQuery",
+  model: "model",
+  project: "project",
+} as const;
 
 const statusMeta: Record<
   ChatStatus,
@@ -187,6 +201,15 @@ interface StoredChatScrollPosition {
   version: 1;
 }
 
+interface SearchParamUpdateOptions {
+  replace?: boolean;
+}
+
+interface TransientFileSearchQuery {
+  query: string;
+  workspaceSelectionKey: string;
+}
+
 function firstProjectWorktree(
   projectId: string | null,
   worktreesByProject: Record<string, ProjectWorktreeRecord[]>,
@@ -199,6 +222,69 @@ function firstProjectWorktree(
 
 function getWorktreeExpansionKey(projectId: string, worktreePath: string) {
   return `${projectId}:${worktreePath}`;
+}
+
+function readNullableSearchParam(
+  searchParams: URLSearchParams,
+  key: string,
+): string | null {
+  const value = searchParams.get(key)?.trim();
+  return value ? value : null;
+}
+
+function readSearchParamSet(
+  searchParams: URLSearchParams,
+  key: string,
+): Set<string> {
+  const values = searchParams
+    .getAll(key)
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return new Set(values);
+}
+
+function writeNullableSearchParam(
+  searchParams: URLSearchParams,
+  key: string,
+  value: string | null,
+): void {
+  if (value) {
+    searchParams.set(key, value);
+  } else {
+    searchParams.delete(key);
+  }
+}
+
+function writeSearchParamSet(
+  searchParams: URLSearchParams,
+  key: string,
+  values: Set<string>,
+): void {
+  searchParams.delete(key);
+  const sortedValues = [...values].sort();
+  if (sortedValues.length > 0) {
+    searchParams.set(key, sortedValues.join(","));
+  }
+}
+
+function addExpandedProjectSearchParam(
+  searchParams: URLSearchParams,
+  projectId: string | null,
+): void {
+  if (!projectId) {
+    return;
+  }
+  const expandedProjectIds = readSearchParamSet(
+    searchParams,
+    searchParamKeys.expandedProject,
+  );
+  expandedProjectIds.add(projectId);
+  writeSearchParamSet(
+    searchParams,
+    searchParamKeys.expandedProject,
+    expandedProjectIds,
+  );
 }
 
 function formatLeadingEllipsisPath(path: string, maxLength = 44): string {
@@ -290,26 +376,47 @@ function isChatTimelineScrolledToBottom(timeline: HTMLElement): boolean {
 }
 
 export function HomeRoute() {
-  const [projects, setProjects] = useState<ProjectRecord[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
-    null,
+  const [searchParams, setSearchParams] = useSearchParams();
+  const searchParamsRef = useRef(searchParams);
+  searchParamsRef.current = searchParams;
+  const requestedProjectId = readNullableSearchParam(
+    searchParams,
+    searchParamKeys.project,
   );
+  const selectedChatId = readNullableSearchParam(
+    searchParams,
+    searchParamKeys.chat,
+  );
+  const workspaceSelectionKey = `${requestedProjectId ?? ""}\u0000${selectedChatId ?? ""}`;
+  const workspaceSelectionKeyRef = useRef(workspaceSelectionKey);
+  workspaceSelectionKeyRef.current = workspaceSelectionKey;
+  const selectedModelId = readNullableSearchParam(
+    searchParams,
+    searchParamKeys.model,
+  );
+  const selectedEffort = readNullableSearchParam(
+    searchParams,
+    searchParamKeys.effort,
+  );
+  const rawUrlFileSearchQuery =
+    searchParams.get(searchParamKeys.fileQuery) ?? "";
+  const urlFileSearchQuery = isShareableFileSearchQuery(rawUrlFileSearchQuery)
+    ? rawUrlFileSearchQuery
+    : "";
+  const expandedProjectIds = useMemo(
+    () => readSearchParamSet(searchParams, searchParamKeys.expandedProject),
+    [searchParams],
+  );
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [chatsByProject, setChatsByProject] = useState<
     Record<string, ChatRecord[]>
   >({});
   const [worktreesByProject, setWorktreesByProject] = useState<
     Record<string, ProjectWorktreeRecord[]>
   >({});
-  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
-    () => new Set(),
-  );
   const [expandedWorktreeKeys, setExpandedWorktreeKeys] = useState<Set<string>>(
     () => new Set(),
   );
-  const [selectedWorktreePath, setSelectedWorktreePath] = useState<
-    string | null
-  >(null);
-  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
   const [messagesChatId, setMessagesChatId] = useState<string | null>(null);
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
@@ -322,13 +429,18 @@ export function HomeRoute() {
   const [deleteWorktreeForce, setDeleteWorktreeForce] = useState(false);
   const [composerText, setComposerText] = useState("");
   const [models, setModels] = useState<CodexModelRecord[]>([]);
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
-  const [selectedEffort, setSelectedEffort] = useState<string | null>(null);
   const [skills, setSkills] = useState<CodexSkillRecord[]>([]);
   const [selectedSkillPaths, setSelectedSkillPaths] = useState<Set<string>>(
     () => new Set(),
   );
-  const [fileSearchQuery, setFileSearchQuery] = useState("");
+  const [transientFileSearchQuery, setTransientFileSearchQuery] =
+    useState<TransientFileSearchQuery | null>(null);
+  const fileSearchQuery =
+    urlFileSearchQuery ||
+    (transientFileSearchQuery?.workspaceSelectionKey === workspaceSelectionKey
+      ? transientFileSearchQuery.query
+      : "");
+  const fileSearchQueryRef = useRef(fileSearchQuery);
   const fileSearchRequestIdRef = useRef(0);
   const [fileSearchResults, setFileSearchResults] = useState<CodexFileRecord[]>(
     [],
@@ -417,17 +529,109 @@ export function HomeRoute() {
     }) => answerApprovalMutation(chatId, requestId, decision),
   });
 
+  function updateSearchParams(
+    updater: (nextSearchParams: URLSearchParams) => void,
+    options: SearchParamUpdateOptions = {},
+  ) {
+    const nextSearchParams = new URLSearchParams(searchParamsRef.current);
+    updater(nextSearchParams);
+    searchParamsRef.current = nextSearchParams;
+    setSearchParams(nextSearchParams, { replace: options.replace ?? false });
+  }
+
+  function updateWorkspaceSearchParams(
+    selection: {
+      chatId?: string | null;
+      clearFileQuery?: boolean;
+      projectId?: string | null;
+    },
+    options: SearchParamUpdateOptions = {},
+  ) {
+    if (selection.clearFileQuery) {
+      setTransientFileSearchQuery(null);
+    }
+    updateSearchParams((nextSearchParams) => {
+      if ("projectId" in selection) {
+        writeNullableSearchParam(
+          nextSearchParams,
+          searchParamKeys.project,
+          selection.projectId ?? null,
+        );
+        addExpandedProjectSearchParam(
+          nextSearchParams,
+          selection.projectId ?? null,
+        );
+      }
+      if ("chatId" in selection) {
+        writeNullableSearchParam(
+          nextSearchParams,
+          searchParamKeys.chat,
+          selection.chatId ?? null,
+        );
+      }
+      if (selection.clearFileQuery) {
+        nextSearchParams.delete(searchParamKeys.fileQuery);
+      }
+    }, options);
+  }
+
+  function setSearchParamValue(
+    key: string,
+    value: string | null,
+    options: SearchParamUpdateOptions = {},
+  ) {
+    updateSearchParams((nextSearchParams) => {
+      writeNullableSearchParam(nextSearchParams, key, value);
+    }, options);
+  }
+
+  function setFileSearchQuery(value: string) {
+    const nextFileSearchQuery = value.trim() ? value : null;
+    if (!nextFileSearchQuery) {
+      setTransientFileSearchQuery(null);
+      setSearchParamValue(searchParamKeys.fileQuery, null, { replace: true });
+      return;
+    }
+
+    if (!isShareableFileSearchQuery(nextFileSearchQuery)) {
+      setTransientFileSearchQuery({
+        query: value,
+        workspaceSelectionKey,
+      });
+      setSearchParamValue(searchParamKeys.fileQuery, null, { replace: true });
+      return;
+    }
+
+    setTransientFileSearchQuery(null);
+    setSearchParamValue(searchParamKeys.fileQuery, nextFileSearchQuery, {
+      replace: true,
+    });
+  }
+
+  const selectedChat = useMemo(
+    () =>
+      findValidatedSelectedChat(
+        Object.values(chatsByProject).flat(),
+        selectedChatId,
+        requestedProjectId,
+      ),
+    [chatsByProject, requestedProjectId, selectedChatId],
+  );
+  const isSelectedChatValidated = !selectedChatId || Boolean(selectedChat);
+  const hasSelectedChat = Boolean(selectedChat);
+  const validatedSelectedChatId = selectedChat?.id ?? null;
+  const selectedProjectId = selectedChat?.projectId ?? requestedProjectId;
+  selectedChatIdRef.current = selectedChatId;
+  selectedProjectIdRef.current = selectedProjectId;
+  fileSearchQueryRef.current = fileSearchQuery;
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
-
-  const selectedChat = useMemo(
-    () =>
-      Object.values(chatsByProject)
-        .flat()
-        .find((chat) => chat.id === selectedChatId) ?? null,
-    [chatsByProject, selectedChatId],
+  const hasLoadedSelectedProjectData = Boolean(
+    selectedProjectId &&
+    chatsByProject[selectedProjectId] !== undefined &&
+    worktreesByProject[selectedProjectId] !== undefined,
   );
   const isChatRunning = Boolean(selectedChat?.activeTurnId);
 
@@ -439,6 +643,10 @@ export function HomeRoute() {
       null,
     [models, selectedModelId],
   );
+  const selectedModelSupportedEfforts = useMemo(
+    () => getSelectableReasoningEfforts(selectedModel),
+    [selectedModel],
+  );
 
   const selectedSkills = useMemo(
     () => skills.filter((skill) => selectedSkillPaths.has(skill.path)),
@@ -447,8 +655,7 @@ export function HomeRoute() {
   const hasSelectedContext =
     selectedFiles.length > 0 || selectedSkills.length > 0;
   const canSendMessage =
-    Boolean(selectedChatId) &&
-    Boolean(composerText.trim() || hasSelectedContext);
+    hasSelectedChat && Boolean(composerText.trim() || hasSelectedContext);
 
   const modelOptions = useMemo<ComboboxOption[]>(
     () =>
@@ -462,9 +669,6 @@ export function HomeRoute() {
   );
 
   const effortOptions = useMemo<ComboboxOption[]>(() => {
-    const supportedEfforts = selectedModel?.supportedReasoningEfforts.length
-      ? selectedModel.supportedReasoningEfforts
-      : ["low", "medium", "high", "xhigh"];
     return [
       {
         value: "auto",
@@ -473,12 +677,12 @@ export function HomeRoute() {
           ? `Default: ${selectedModel.defaultReasoningEffort}`
           : "Use model default",
       },
-      ...supportedEfforts.map((effort) => ({
+      ...selectedModelSupportedEfforts.map((effort) => ({
         value: effort,
         label: formatReasoningEffort(effort),
       })),
     ];
-  }, [selectedModel]);
+  }, [selectedModel, selectedModelSupportedEfforts]);
 
   const skillOptions = useMemo<ComboboxOption[]>(
     () =>
@@ -533,15 +737,19 @@ export function HomeRoute() {
   }, [deleteWorktreeTarget, worktreesByProject]);
 
   const selectedWorktree = useMemo(() => {
-    if (!selectedProjectId || !selectedWorktreePath) {
+    if (!selectedProjectId) {
       return null;
     }
-    return (
-      (worktreesByProject[selectedProjectId] ?? []).find(
-        (worktree) => worktree.path === selectedWorktreePath,
-      ) ?? null
-    );
-  }, [selectedProjectId, selectedWorktreePath, worktreesByProject]);
+    const projectWorktrees = worktreesByProject[selectedProjectId] ?? [];
+    if (selectedChat) {
+      return (
+        projectWorktrees.find(
+          (worktree) => worktree.path === selectedChat.worktreePath,
+        ) ?? null
+      );
+    }
+    return projectWorktrees[0] ?? null;
+  }, [selectedChat, selectedProjectId, worktreesByProject]);
 
   const chatsByWorktreeByProject = useMemo(() => {
     const nextChatsByWorktreeByProject: Record<
@@ -600,21 +808,25 @@ export function HomeRoute() {
   }, []);
 
   useEffect(() => {
-    selectedProjectIdRef.current = selectedProjectId;
-    if (!selectedProjectId) {
-      setSelectedChatId(null);
-      return;
+    if (
+      rawUrlFileSearchQuery &&
+      !isShareableFileSearchQuery(rawUrlFileSearchQuery)
+    ) {
+      setSearchParamValue(searchParamKeys.fileQuery, null, { replace: true });
     }
-    setExpandedProjectIds((current) => {
-      const next = new Set(current);
-      next.add(selectedProjectId);
-      return next;
-    });
-    void refreshChats(selectedProjectId, { sync: true });
-  }, [selectedProjectId]);
+  }, [rawUrlFileSearchQuery]);
 
   useEffect(() => {
-    selectedChatIdRef.current = selectedChatId;
+    if (!selectedProjectId) {
+      return;
+    }
+    void refreshChats(selectedProjectId, {
+      sync: true,
+      updateSelection: isSelectedChatValidated,
+    });
+  }, [isSelectedChatValidated, selectedProjectId]);
+
+  useEffect(() => {
     selectedChatVersionRef.current += 1;
     isChatTimelinePinnedToBottomRef.current = true;
     scrollRestoredChatIdRef.current = null;
@@ -628,13 +840,26 @@ export function HomeRoute() {
       ),
     );
 
+    if (!isSelectedChatValidated) {
+      setMessages([]);
+      setMessagesChatId(null);
+      setPendingApproval(null);
+      setSelectedFiles([]);
+      setSelectedSkillPaths(new Set());
+      setFileSearchResults([]);
+      setSkills([]);
+      setIsMessagesLoading(false);
+      setIsChatContextLoading(false);
+      setIsFileSearchLoading(false);
+      return;
+    }
+
     if (!selectedChatId) {
       setMessages([]);
       setMessagesChatId(null);
       setPendingApproval(null);
       setSelectedFiles([]);
       setSelectedSkillPaths(new Set());
-      setFileSearchQuery("");
       setFileSearchResults([]);
       setSkills([]);
       setIsMessagesLoading(false);
@@ -645,7 +870,6 @@ export function HomeRoute() {
 
     setSelectedFiles([]);
     setSelectedSkillPaths(new Set());
-    setFileSearchQuery("");
     setFileSearchResults([]);
     setSkills([]);
     setMessages([]);
@@ -696,7 +920,7 @@ export function HomeRoute() {
       }
       source.close();
     };
-  }, [selectedChatId, selectedProjectId]);
+  }, [isSelectedChatValidated, selectedChatId, selectedProjectId]);
 
   useLayoutEffect(() => {
     if (!selectedChatId || messagesChatId !== selectedChatId) {
@@ -742,23 +966,40 @@ export function HomeRoute() {
   }, []);
 
   useEffect(() => {
+    if (
+      selectedModelId &&
+      models.length > 0 &&
+      !models.some((model) => model.id === selectedModelId)
+    ) {
+      setSearchParamValue(searchParamKeys.model, null, { replace: true });
+    }
+  }, [models, selectedModelId]);
+
+  useEffect(() => {
     if (!selectedEffort || selectedEffort === "auto") {
+      if (selectedEffort === "auto") {
+        setSearchParamValue(searchParamKeys.effort, null, { replace: true });
+      }
       return;
     }
-    const supportedEfforts = selectedModel?.supportedReasoningEfforts ?? [];
-    if (
-      supportedEfforts.length > 0 &&
-      !supportedEfforts.includes(selectedEffort)
-    ) {
-      setSelectedEffort(null);
+    if (models.length === 0 || !selectedModel) {
+      return;
     }
-  }, [selectedEffort, selectedModel]);
+    if (!selectedModelSupportedEfforts.includes(selectedEffort)) {
+      setSearchParamValue(searchParamKeys.effort, null, { replace: true });
+    }
+  }, [
+    models.length,
+    selectedEffort,
+    selectedModel,
+    selectedModelSupportedEfforts,
+  ]);
 
   useEffect(() => {
     const requestId = fileSearchRequestIdRef.current + 1;
     fileSearchRequestIdRef.current = requestId;
 
-    if (!selectedChatId || !fileSearchQuery.trim()) {
+    if (!validatedSelectedChatId || !fileSearchQuery.trim()) {
       setFileSearchResults([]);
       setIsFileSearchLoading(false);
       return;
@@ -770,7 +1011,11 @@ export function HomeRoute() {
     const timeout = setTimeout(() => {
       void queryClient
         .fetchQuery(
-          fileSearchQueryOptions(selectedChatId, query, controller.signal),
+          fileSearchQueryOptions(
+            validatedSelectedChatId,
+            query,
+            controller.signal,
+          ),
         )
         .then((data) => {
           if (
@@ -800,17 +1045,57 @@ export function HomeRoute() {
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [fileSearchQuery, selectedChatId]);
+  }, [fileSearchQuery, validatedSelectedChatId]);
 
   useEffect(() => {
     if (
+      !isSelectedChatValidated ||
       selectedWorktreeChats.length === 0 ||
       selectedWorktreeChats.some((chat) => chat.id === selectedChatId)
     ) {
       return;
     }
-    setSelectedChatId(selectedWorktreeChats[0]?.id ?? null);
-  }, [selectedChatId, selectedWorktreeChats]);
+    updateWorkspaceSearchParams(
+      {
+        chatId: selectedWorktreeChats[0]?.id ?? null,
+        clearFileQuery: Boolean(fileSearchQuery.trim()),
+      },
+      { replace: true },
+    );
+  }, [
+    fileSearchQuery,
+    isSelectedChatValidated,
+    selectedChatId,
+    selectedWorktreeChats,
+  ]);
+
+  useEffect(() => {
+    if (
+      !selectedChatId ||
+      isSelectedChatValidated ||
+      !selectedProjectId ||
+      !hasLoadedSelectedProjectData
+    ) {
+      return;
+    }
+    const fallbackChatId =
+      firstProjectWorktree(selectedProjectId, worktreesByProject)?.chatId ??
+      null;
+    updateWorkspaceSearchParams(
+      {
+        chatId: fallbackChatId,
+        clearFileQuery: Boolean(fileSearchQuery.trim()),
+      },
+      { replace: true },
+    );
+  }, [
+    fileSearchQuery,
+    hasLoadedSelectedProjectData,
+    isSelectedChatValidated,
+    selectedChatId,
+    selectedProjectId,
+    worktreesByProject,
+  ]);
 
   function setProjectLoading(projectId: string, isLoading: boolean) {
     setLoadingProjectIds((current) => {
@@ -825,6 +1110,7 @@ export function HomeRoute() {
   }
 
   async function refreshProjects(): Promise<boolean> {
+    const requestWorkspaceSelectionKey = workspaceSelectionKeyRef.current;
     setIsProjectsLoading(true);
     try {
       const data = await queryClient.fetchQuery(projectsQueryOptions());
@@ -852,41 +1138,37 @@ export function HomeRoute() {
       );
       setChatsByProject(nextChatsByProject);
       setWorktreesByProject(nextWorktreesByProject);
+      if (workspaceSelectionKeyRef.current !== requestWorkspaceSelectionKey) {
+        return true;
+      }
+      const currentSelectedChatId = selectedChatIdRef.current;
+      const currentSelectedProjectId = selectedProjectIdRef.current;
+      const currentFileSearchQuery = fileSearchQueryRef.current;
+      const requestedChat = findValidatedSelectedChat(
+        Object.values(nextChatsByProject).flat(),
+        currentSelectedChatId,
+        currentSelectedProjectId,
+      );
       const fallbackProjectId =
-        selectedProjectId ?? data.projects[0]?.id ?? null;
+        requestedChat?.projectId ??
+        (currentSelectedProjectId &&
+        data.projects.some((project) => project.id === currentSelectedProjectId)
+          ? currentSelectedProjectId
+          : (data.projects[0]?.id ?? null));
       const fallbackWorktree = firstProjectWorktree(
         fallbackProjectId,
         nextWorktreesByProject,
       );
-      setSelectedProjectId((current) => {
-        const nextProjectId = current ?? data.projects[0]?.id ?? null;
-        if (nextProjectId) {
-          setExpandedProjectIds((expanded) => {
-            const next = new Set(expanded);
-            next.add(nextProjectId);
-            return next;
-          });
-        }
-        return nextProjectId;
-      });
-      setSelectedWorktreePath((current) => {
-        if (
-          fallbackProjectId &&
-          current &&
-          (nextWorktreesByProject[fallbackProjectId] ?? []).some(
-            (worktree) => worktree.path === current,
-          )
-        ) {
-          return current;
-        }
-        return fallbackWorktree?.path ?? null;
-      });
-      setSelectedChatId((current) =>
-        Object.values(nextChatsByProject)
-          .flat()
-          .some((chat) => chat.id === current)
-          ? current
-          : (fallbackWorktree?.chatId ?? null),
+      const nextChatId = requestedChat?.id ?? fallbackWorktree?.chatId ?? null;
+      updateWorkspaceSearchParams(
+        {
+          projectId: fallbackProjectId,
+          chatId: nextChatId,
+          clearFileQuery:
+            Boolean(currentFileSearchQuery.trim()) &&
+            currentSelectedChatId !== nextChatId,
+        },
+        { replace: true },
       );
       return true;
     } catch (err) {
@@ -902,16 +1184,6 @@ export function HomeRoute() {
     try {
       const data = await queryClient.fetchQuery(modelsQueryOptions());
       setModels(data.models);
-      setSelectedModelId((current) => {
-        if (current && data.models.some((model) => model.id === current)) {
-          return current;
-        }
-        return (
-          data.models.find((model) => model.isDefault)?.id ??
-          data.models[0]?.id ??
-          null
-        );
-      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -957,6 +1229,7 @@ export function HomeRoute() {
     projectId: string,
     options: { sync?: boolean; updateSelection?: boolean } = {},
   ): Promise<boolean> {
+    const requestWorkspaceSelectionKey = workspaceSelectionKeyRef.current;
     setProjectLoading(projectId, true);
     try {
       const projectData = await loadProjectData(projectId, options);
@@ -973,6 +1246,12 @@ export function HomeRoute() {
       if ((options.updateSelection ?? options.sync === true) === false) {
         return true;
       }
+      if (selectedProjectIdRef.current !== projectId) {
+        return true;
+      }
+      if (workspaceSelectionKeyRef.current !== requestWorkspaceSelectionKey) {
+        return true;
+      }
       const nextWorktreesByProject = options.sync
         ? {
             ...worktreesByProject,
@@ -983,17 +1262,22 @@ export function HomeRoute() {
         projectId,
         nextWorktreesByProject,
       );
-      const nextProjectWorktrees = nextWorktreesByProject[projectId] ?? [];
-      setSelectedWorktreePath((current) =>
-        current &&
-        nextProjectWorktrees.some((worktree) => worktree.path === current)
-          ? current
-          : (fallbackWorktree?.path ?? null),
-      );
-      setSelectedChatId((current) =>
-        projectData.chats.some((chat) => chat.id === current)
-          ? current
-          : (fallbackWorktree?.chatId ?? null),
+      const currentSelectedChatId = selectedChatIdRef.current;
+      const currentFileSearchQuery = fileSearchQueryRef.current;
+      const nextChatId = projectData.chats.some(
+        (chat) => chat.id === currentSelectedChatId,
+      )
+        ? currentSelectedChatId
+        : (fallbackWorktree?.chatId ?? null);
+      updateWorkspaceSearchParams(
+        {
+          projectId,
+          chatId: nextChatId,
+          clearFileQuery:
+            Boolean(currentFileSearchQuery.trim()) &&
+            currentSelectedChatId !== nextChatId,
+        },
+        { replace: true },
       );
       return true;
     } catch (err) {
@@ -1096,6 +1380,7 @@ export function HomeRoute() {
     }
 
     setError(null);
+    const requestWorkspaceSelectionKey = workspaceSelectionKeyRef.current;
     setIsBusy(true);
     try {
       const data = await addProjectRequest.mutateAsync(trimmedProjectPath);
@@ -1106,7 +1391,13 @@ export function HomeRoute() {
       if (!didRefresh) {
         return;
       }
-      setSelectedProjectId(data.project.id);
+      if (workspaceSelectionKeyRef.current !== requestWorkspaceSelectionKey) {
+        return;
+      }
+      updateWorkspaceSearchParams({
+        projectId: data.project.id,
+        chatId: null,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1120,6 +1411,7 @@ export function HomeRoute() {
     }
 
     setError(null);
+    const requestWorkspaceSelectionKey = workspaceSelectionKeyRef.current;
     createChatInFlightRef.current = true;
     setCreatingProjectId(projectId);
     setIsBusy(true);
@@ -1128,19 +1420,26 @@ export function HomeRoute() {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.projectData(projectId, true),
       });
-      setSelectedProjectId(projectId);
-      setExpandedProjectIds((current) => new Set(current).add(projectId));
       setExpandedWorktreeKeys((current) =>
         new Set(current).add(
           getWorktreeExpansionKey(projectId, data.chat.worktreePath),
         ),
       );
-      const didRefresh = await refreshChats(projectId, { sync: true });
+      const didRefresh = await refreshChats(projectId, {
+        sync: true,
+        updateSelection: false,
+      });
       if (!didRefresh) {
         return;
       }
-      setSelectedWorktreePath(data.chat.worktreePath);
-      setSelectedChatId(data.chat.id);
+      if (workspaceSelectionKeyRef.current !== requestWorkspaceSelectionKey) {
+        return;
+      }
+      updateWorkspaceSearchParams({
+        projectId,
+        chatId: data.chat.id,
+        clearFileQuery: true,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1272,7 +1571,12 @@ export function HomeRoute() {
           });
     setComposerText("");
     const turnModel = selectedModel?.id ?? selectedModel?.model;
-    const turnEffort = selectedEffort === "auto" ? null : selectedEffort;
+    const turnEffort =
+      selectedModel &&
+      selectedEffort &&
+      selectedModelSupportedEfforts.includes(selectedEffort)
+        ? selectedEffort
+        : null;
     const files = selectedFiles.map((file) => ({
       name: file.relativePath,
       path: file.path,
@@ -1395,14 +1699,21 @@ export function HomeRoute() {
   }
 
   function toggleProject(projectId: string) {
-    setExpandedProjectIds((current) => {
-      const next = new Set(current);
+    updateSearchParams((nextSearchParams) => {
+      const next = readSearchParamSet(
+        nextSearchParams,
+        searchParamKeys.expandedProject,
+      );
       if (next.has(projectId)) {
         next.delete(projectId);
       } else {
         next.add(projectId);
       }
-      return next;
+      writeSearchParamSet(
+        nextSearchParams,
+        searchParamKeys.expandedProject,
+        next,
+      );
     });
   }
 
@@ -1420,10 +1731,11 @@ export function HomeRoute() {
   }
 
   function selectWorktree(projectId: string, worktree: ProjectWorktreeRecord) {
-    setSelectedProjectId(projectId);
-    setSelectedWorktreePath(worktree.path);
-    setSelectedChatId(worktree.chatId);
-    setExpandedProjectIds((current) => new Set(current).add(projectId));
+    updateWorkspaceSearchParams({
+      projectId,
+      chatId: worktree.chatId,
+      clearFileQuery: true,
+    });
   }
 
   function selectChat(
@@ -1431,10 +1743,11 @@ export function HomeRoute() {
     worktree: ProjectWorktreeRecord,
     chatId: string,
   ) {
-    setSelectedProjectId(projectId);
-    setSelectedWorktreePath(worktree.path);
-    setSelectedChatId(chatId);
-    setExpandedProjectIds((current) => new Set(current).add(projectId));
+    updateWorkspaceSearchParams({
+      projectId,
+      chatId,
+      clearFileQuery: true,
+    });
     setExpandedWorktreeKeys((current) =>
       new Set(current).add(getWorktreeExpansionKey(projectId, worktree.path)),
     );
@@ -1566,7 +1879,8 @@ export function HomeRoute() {
                             ) : (
                               projectWorktrees.map((worktree) => {
                                 const isSelectedWorktree =
-                                  worktree.path === selectedWorktreePath;
+                                  selectedProjectId === project.id &&
+                                  selectedWorktree?.path === worktree.path;
                                 const worktreeChats =
                                   chatsByWorktreeByProject[project.id]?.get(
                                     worktree.path,
@@ -2013,11 +2327,11 @@ export function HomeRoute() {
                 </Label>
                 <Textarea
                   className="min-h-12 border-0 bg-transparent px-2 py-2 shadow-none focus-visible:shadow-none"
-                  disabled={!selectedChatId}
+                  disabled={!hasSelectedChat}
                   enterKeyHint="enter"
                   id="composer"
                   placeholder={
-                    selectedChatId
+                    hasSelectedChat
                       ? "Ask Codex to work in this worktree"
                       : "Create or select a worktree to start"
                   }
@@ -2078,7 +2392,9 @@ export function HomeRoute() {
                 side="top"
                 triggerClassName="w-full justify-between"
                 value={selectedModel?.id ?? null}
-                onValueChange={setSelectedModelId}
+                onValueChange={(value) =>
+                  setSearchParamValue(searchParamKeys.model, value)
+                }
               />
               <Combobox
                 aria-label="Select reasoning effort"
@@ -2092,13 +2408,16 @@ export function HomeRoute() {
                 triggerClassName="w-full justify-between"
                 value={selectedEffort ?? "auto"}
                 onValueChange={(value) =>
-                  setSelectedEffort(value === "auto" ? null : value)
+                  setSearchParamValue(
+                    searchParamKeys.effort,
+                    value === "auto" ? null : value,
+                  )
                 }
               />
               <Combobox
                 aria-label="Attach file"
                 className="w-32 max-w-full"
-                disabled={!selectedChatId || isChatRunning}
+                disabled={!hasSelectedChat || isChatRunning}
                 emptyMessage={
                   isFileSearchLoading
                     ? "Searching files"
@@ -2124,7 +2443,7 @@ export function HomeRoute() {
                 align="end"
                 className="w-32 max-w-full"
                 disabled={
-                  !selectedChatId || isChatRunning || isChatContextLoading
+                  !hasSelectedChat || isChatRunning || isChatContextLoading
                 }
                 emptyMessage={
                   isChatContextLoading ? "Loading skills" : "No skills"
