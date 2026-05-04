@@ -204,9 +204,11 @@ function isValidInferredWorktreeName(name: string): boolean {
   });
 }
 
-type PendingTurnEvent =
-  | { kind: "notification"; message: CodexMessage }
-  | { kind: "serverRequest"; message: CodexMessage };
+interface PendingTurnEvent {
+  kind: "notification" | "serverRequest";
+  message: CodexMessage;
+  order: number;
+}
 
 type CodexTurnItemSource = "input" | "item";
 type InternalChatMessageRecord = ChatMessageRecord & {
@@ -245,6 +247,12 @@ export class ServeServices {
     string,
     PendingTurnEventBuffer
   >();
+  private readonly pendingTurnEventsByTurnId = new Map<
+    string,
+    PendingTurnEvent[]
+  >();
+  private readonly pendingTurnThreadsByTurnId = new Map<string, string>();
+  private pendingTurnEventOrder = 0;
   private readonly pendingChatTurns = new Set<string>();
   private readonly drainingQueuedMessageChatIds = new Set<string>();
   private readonly pendingQueuedMessageDrainChatIds = new Set<string>();
@@ -1389,6 +1397,8 @@ export class ServeServices {
             : await this.codex.startTurn(threadId, text, chat.worktreePath);
           const turnId = extractTurnId(turnResult);
           if (turnId) {
+            this.pendingTurnThreadsByTurnId.set(turnId, threadId);
+            this.attachPendingTurnEventsForTurn(threadId, turnId);
             this.activeTurnChatIds.add(chatId);
             nextStatus = "running";
             nextActiveTurnId = turnId;
@@ -1461,6 +1471,12 @@ export class ServeServices {
       }
       clearPendingChatTurn();
       if (pendingTurnThreadId) {
+        if (nextActiveTurnId) {
+          this.attachPendingTurnEventsForTurn(
+            pendingTurnThreadId,
+            nextActiveTurnId,
+          );
+        }
         await this.flushPendingTurnEvents(pendingTurnThreadId);
       }
 
@@ -1650,6 +1666,8 @@ export class ServeServices {
     this.loadedThreadIds.clear();
     this.approvalRequests.clear();
     this.pendingTurnEvents.clear();
+    this.pendingTurnEventsByTurnId.clear();
+    this.pendingTurnThreadsByTurnId.clear();
     this.pendingChatTurns.clear();
     this.activeTurnChatIds.clear();
 
@@ -1688,12 +1706,12 @@ export class ServeServices {
 
   private async handleCodexNotification(message: CodexMessage): Promise<void> {
     const threadId = extractThreadIdFromParams(message.params);
+    const pendingEvent = this.createPendingTurnEvent("notification", message);
+    if (threadId && this.bufferPendingTurnEvent(threadId, pendingEvent)) {
+      return;
+    }
     if (
-      threadId &&
-      this.bufferPendingTurnEvent(threadId, {
-        kind: "notification",
-        message,
-      })
+      await this.bufferPendingTurnEventByTurnId(message.params, pendingEvent)
     ) {
       return;
     }
@@ -1702,8 +1720,7 @@ export class ServeServices {
 
   private async processCodexNotification(message: CodexMessage): Promise<void> {
     const method = message.method ?? "unknown";
-    const threadId = extractThreadIdFromParams(message.params);
-    const chat = threadId ? await this.findChatByThreadId(threadId) : null;
+    const chat = await this.findChatByCodexParams(message.params);
     const eventType = mapCodexMethodToEvent(method);
 
     if (chat) {
@@ -1732,10 +1749,10 @@ export class ServeServices {
     const threadId = extractThreadIdFromParams(message.params);
     if (
       threadId &&
-      this.bufferPendingTurnEvent(threadId, {
-        kind: "serverRequest",
-        message,
-      })
+      this.bufferPendingTurnEvent(
+        threadId,
+        this.createPendingTurnEvent("serverRequest", message),
+      )
     ) {
       return;
     }
@@ -2022,9 +2039,11 @@ export class ServeServices {
     const pendingTurnEvents = this.pendingTurnEvents.get(threadId);
     if (!pendingTurnEvents || pendingTurnEvents.discard) {
       this.pendingTurnEvents.delete(threadId);
+      this.deletePendingTurnThreadMappings(threadId);
       return;
     }
     pendingTurnEvents.flushing = true;
+    pendingTurnEvents.events.sort((a, b) => a.order - b.order);
     while (!pendingTurnEvents.discard && pendingTurnEvents.events.length > 0) {
       const pendingEvent = pendingTurnEvents.events.shift();
       if (!pendingEvent) {
@@ -2039,7 +2058,19 @@ export class ServeServices {
     pendingTurnEvents.flushing = false;
     if (this.pendingTurnEvents.get(threadId) === pendingTurnEvents) {
       this.pendingTurnEvents.delete(threadId);
+      this.deletePendingTurnThreadMappings(threadId);
     }
+  }
+
+  private createPendingTurnEvent(
+    kind: PendingTurnEvent["kind"],
+    message: CodexMessage,
+  ): PendingTurnEvent {
+    return {
+      kind,
+      message,
+      order: this.pendingTurnEventOrder++,
+    };
   }
 
   private bufferPendingTurnEvent(
@@ -2063,6 +2094,77 @@ export class ServeServices {
     return true;
   }
 
+  private async bufferPendingTurnEventByTurnId(
+    params: unknown,
+    event: PendingTurnEvent,
+  ): Promise<boolean> {
+    const turnId = extractTurnIdFromParams(params);
+    if (!turnId) {
+      return false;
+    }
+
+    const threadId = this.pendingTurnThreadsByTurnId.get(turnId);
+    if (threadId) {
+      return this.bufferPendingTurnEvent(threadId, event);
+    }
+
+    if (!this.hasPendingTurnStartup()) {
+      return false;
+    }
+
+    const state = await this.store.load();
+    if (state.chats.some((chat) => chat.activeTurnId === turnId)) {
+      return false;
+    }
+
+    const existingEvents = this.pendingTurnEventsByTurnId.get(turnId);
+    if (existingEvents) {
+      existingEvents.push(event);
+      return true;
+    }
+
+    const events = [event];
+    this.pendingTurnEventsByTurnId.set(turnId, events);
+    const cleanup = setTimeout(() => {
+      if (this.pendingTurnEventsByTurnId.get(turnId) === events) {
+        this.pendingTurnEventsByTurnId.delete(turnId);
+      }
+    }, 30000);
+    cleanup.unref?.();
+    return true;
+  }
+
+  private hasPendingTurnStartup(): boolean {
+    for (const pendingTurnEvents of this.pendingTurnEvents.values()) {
+      if (!pendingTurnEvents.discard) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private attachPendingTurnEventsForTurn(
+    threadId: string,
+    turnId: string,
+  ): void {
+    const events = this.pendingTurnEventsByTurnId.get(turnId);
+    if (!events) {
+      return;
+    }
+    this.pendingTurnEventsByTurnId.delete(turnId);
+    for (const event of events) {
+      this.bufferPendingTurnEvent(threadId, event);
+    }
+  }
+
+  private deletePendingTurnThreadMappings(threadId: string): void {
+    for (const [turnId, mappedThreadId] of this.pendingTurnThreadsByTurnId) {
+      if (mappedThreadId === threadId) {
+        this.pendingTurnThreadsByTurnId.delete(turnId);
+      }
+    }
+  }
+
   private discardPendingTurnEvents(threadId: string): void {
     const pendingTurnEvents = this.pendingTurnEvents.get(threadId);
     if (!pendingTurnEvents) {
@@ -2079,6 +2181,7 @@ export class ServeServices {
       }
     }
     pendingTurnEvents.discard = true;
+    this.deletePendingTurnThreadMappings(threadId);
     pendingTurnEvents.events = [];
     const cleanup = setTimeout(() => {
       if (this.pendingTurnEvents.get(threadId) === pendingTurnEvents) {
@@ -2093,6 +2196,25 @@ export class ServeServices {
   ): Promise<ChatRecord | null> {
     const state = await this.store.load();
     return state.chats.find((chat) => chat.codexThreadId === threadId) ?? null;
+  }
+
+  private async findChatByCodexParams(
+    params: unknown,
+  ): Promise<ChatRecord | null> {
+    const threadId = extractThreadIdFromParams(params);
+    if (threadId) {
+      const chat = await this.findChatByThreadId(threadId);
+      if (chat) {
+        return chat;
+      }
+    }
+
+    const turnId = extractTurnIdFromParams(params);
+    if (!turnId) {
+      return null;
+    }
+    const state = await this.store.load();
+    return state.chats.find((chat) => chat.activeTurnId === turnId) ?? null;
   }
 
   private async applyCodexStateChange(
@@ -2267,6 +2389,160 @@ export class ServeServices {
       return;
     }
 
+    if (method === "turn/plan/updated") {
+      const eventData = normalizePlanEventData(params);
+      await this.upsertRichEventMessage({
+        chatId,
+        eventData,
+        eventType: method,
+        itemId: extractTurnIdFromParams(params) ?? method,
+        text: summarizeCodexEvent(method, params),
+      });
+      return;
+    }
+
+    if (method === "item/plan/delta") {
+      const delta = getRecordString(params, "delta") ?? "";
+      if (!delta) {
+        return;
+      }
+      await this.appendRichEventMessage({
+        chatId,
+        delta,
+        eventData: { kind: "planDelta" },
+        eventType: method,
+        itemId: getRecordString(params, "itemId") ?? method,
+      });
+      return;
+    }
+
+    if (method === "turn/diff/updated") {
+      const eventData = normalizeDiffEventData(params);
+      await this.upsertRichEventMessage({
+        chatId,
+        eventData,
+        eventType: method,
+        itemId: extractTurnIdFromParams(params) ?? method,
+        text: summarizeDiffEvent(eventData),
+      });
+      return;
+    }
+
+    if (
+      method === "item/commandExecution/outputDelta" ||
+      method === "command/exec/outputDelta"
+    ) {
+      const delta = extractCommandOutputDelta(method, params);
+      const eventData = createCommandOutputEventData(method, params);
+      if (!delta) {
+        if (hasCommandOutputMetadataUpdate(method, params)) {
+          await this.mergeRichEventMessage({
+            chatId,
+            eventData,
+            eventType: method,
+            itemId: getCommandOutputItemId(method, params),
+          });
+        }
+        return;
+      }
+      await this.appendRichEventMessage({
+        chatId,
+        delta,
+        eventData,
+        eventType: method,
+        itemId: getCommandOutputItemId(method, params),
+      });
+      return;
+    }
+
+    if (method === "item/fileChange/patchUpdated") {
+      const eventData = normalizeFilePatchEventData(params);
+      await this.upsertRichEventMessage({
+        chatId,
+        eventData,
+        eventType: method,
+        itemId: getRecordString(params, "itemId") ?? method,
+        text: summarizeFilePatchEvent(eventData),
+      });
+      return;
+    }
+
+    if (method === "item/fileChange/outputDelta") {
+      const delta = getRecordString(params, "delta") ?? "";
+      if (!delta) {
+        return;
+      }
+      await this.appendRichEventMessage({
+        chatId,
+        delta,
+        eventData: { kind: "fileChangeOutput" },
+        eventType: method,
+        itemId: getRecordString(params, "itemId") ?? method,
+      });
+      return;
+    }
+
+    if (method.startsWith("item/reasoning/")) {
+      const delta = getRecordString(params, "delta") ?? "";
+      if (!delta) {
+        return;
+      }
+      const eventData = createReasoningEventData(method, params);
+      await this.appendRichEventMessage({
+        chatId,
+        delta,
+        eventData,
+        eventType: method,
+        itemId: getReasoningEventItemId(method, params),
+      });
+      return;
+    }
+
+    if (
+      method === "warning" ||
+      method === "guardianWarning" ||
+      method === "configWarning"
+    ) {
+      await this.addRichEventMessage({
+        chatId,
+        eventData: params,
+        eventType: method,
+        text: summarizeCodexEvent(method, params),
+      });
+      return;
+    }
+
+    if (method === "item/started" || method === "item/completed") {
+      const item = getRecordObject(params, "item");
+      const itemId = getRecordString(item, "id");
+      const itemType = getRecordString(item, "type");
+      if (item && itemId && itemType === "commandExecution") {
+        await this.mergeRichEventMessage({
+          chatId,
+          eventData: createCommandLifecycleEventData(method, item),
+          eventType: "item/commandExecution/outputDelta",
+          itemId,
+          text: getRecordString(item, "aggregatedOutput"),
+        });
+        return;
+      }
+      if (item && itemId && itemType === "fileChange") {
+        const eventData = normalizeFilePatchEventData(item);
+        await this.upsertRichEventMessage({
+          chatId,
+          eventData: {
+            ...eventData,
+            lifecycleEventType: method,
+            status: getRecordString(item, "status") ?? null,
+          },
+          eventType: "item/fileChange/patchUpdated",
+          itemId,
+          text: summarizeFilePatchEvent(eventData),
+        });
+        return;
+      }
+    }
+
     if (
       method === "item/started" ||
       method === "item/completed" ||
@@ -2287,6 +2563,179 @@ export class ServeServices {
         ],
       }));
     }
+  }
+
+  private async addRichEventMessage({
+    chatId,
+    eventData,
+    eventType,
+    itemId,
+    text,
+  }: {
+    chatId: string;
+    eventData: unknown;
+    eventType: string;
+    itemId?: string;
+    text: string;
+  }): Promise<void> {
+    await this.store.update((state) => ({
+      ...state,
+      messages: [
+        ...state.messages,
+        createMessage(chatId, "event", text, eventType, itemId, eventData),
+      ],
+    }));
+  }
+
+  private async upsertRichEventMessage({
+    chatId,
+    eventData,
+    eventType,
+    itemId,
+    text,
+  }: {
+    chatId: string;
+    eventData: unknown;
+    eventType: string;
+    itemId: string;
+    text: string;
+  }): Promise<void> {
+    await this.store.update((state) => {
+      const existingMessage = state.messages.find(
+        (message) =>
+          message.chatId === chatId &&
+          message.role === "event" &&
+          message.eventType === eventType &&
+          message.itemId === itemId,
+      );
+      if (!existingMessage) {
+        return {
+          ...state,
+          messages: [
+            ...state.messages,
+            createMessage(chatId, "event", text, eventType, itemId, eventData),
+          ],
+        };
+      }
+      return {
+        ...state,
+        messages: state.messages.map((message) =>
+          message.id === existingMessage.id
+            ? { ...message, eventData, text }
+            : message,
+        ),
+      };
+    });
+  }
+
+  private async appendRichEventMessage({
+    chatId,
+    delta,
+    eventData,
+    eventType,
+    itemId,
+  }: {
+    chatId: string;
+    delta: string;
+    eventData: Record<string, unknown>;
+    eventType: string;
+    itemId: string;
+  }): Promise<void> {
+    await this.store.update((state) => {
+      const existingMessage = state.messages.find(
+        (message) =>
+          message.chatId === chatId &&
+          message.role === "event" &&
+          message.eventType === eventType &&
+          message.itemId === itemId,
+      );
+      const text = `${existingMessage?.text ?? ""}${delta}`;
+      const existingEventData = isRecord(existingMessage?.eventData)
+        ? existingMessage.eventData
+        : {};
+      const nextEventData = { ...existingEventData, ...eventData, text };
+      if (!existingMessage) {
+        return {
+          ...state,
+          messages: [
+            ...state.messages,
+            createMessage(
+              chatId,
+              "event",
+              text,
+              eventType,
+              itemId,
+              nextEventData,
+            ),
+          ],
+        };
+      }
+      return {
+        ...state,
+        messages: state.messages.map((message) =>
+          message.id === existingMessage.id
+            ? { ...message, eventData: nextEventData, text }
+            : message,
+        ),
+      };
+    });
+  }
+
+  private async mergeRichEventMessage({
+    chatId,
+    eventData,
+    eventType,
+    itemId,
+    text,
+  }: {
+    chatId: string;
+    eventData: Record<string, unknown>;
+    eventType: string;
+    itemId: string;
+    text?: string;
+  }): Promise<void> {
+    await this.store.update((state) => {
+      const existingMessage = state.messages.find(
+        (message) =>
+          message.chatId === chatId &&
+          message.role === "event" &&
+          message.eventType === eventType &&
+          message.itemId === itemId,
+      );
+      const existingEventData = isRecord(existingMessage?.eventData)
+        ? existingMessage.eventData
+        : {};
+      const nextText = text ?? existingMessage?.text ?? "";
+      const nextEventData = {
+        ...existingEventData,
+        ...eventData,
+        text: nextText,
+      };
+      if (!existingMessage) {
+        return {
+          ...state,
+          messages: [
+            ...state.messages,
+            createMessage(
+              chatId,
+              "event",
+              nextText,
+              eventType,
+              itemId,
+              nextEventData,
+            ),
+          ],
+        };
+      }
+      return {
+        ...state,
+        messages: state.messages.map((message) =>
+          message.id === existingMessage.id
+            ? { ...message, eventData: nextEventData, text: nextText }
+            : message,
+        ),
+      };
+    });
   }
 
   private requireProject(state: ServeState, projectId: string): ProjectRecord {
@@ -2314,8 +2763,9 @@ function createMessage(
   text: string,
   eventType?: string,
   itemId?: string,
+  eventData?: unknown,
 ): ChatMessageRecord {
-  return {
+  const message: ChatMessageRecord = {
     id: createRecordId("msg"),
     chatId,
     role,
@@ -2324,6 +2774,7 @@ function createMessage(
     itemId,
     createdAt: createTimestamp(),
   };
+  return eventData === undefined ? message : { ...message, eventData };
 }
 
 function createQueuedMessage(
@@ -3532,6 +3983,205 @@ function normalizeFileRecords(value: unknown): CodexFileRecord[] {
     .filter((file): file is CodexFileRecord => Boolean(file));
 }
 
+interface RichPlanStep {
+  status: "completed" | "inProgress" | "pending";
+  step: string;
+}
+
+interface PlanEventData {
+  explanation: string | null;
+  plan: RichPlanStep[];
+}
+
+interface DiffEventData {
+  diff: string;
+  files: string[];
+}
+
+interface FilePatchEventData {
+  changes: Array<{
+    diff: string;
+    kind: string;
+    path: string;
+  }>;
+}
+
+function normalizePlanEventData(params: unknown): PlanEventData {
+  const explanation = getRecordString(params, "explanation") ?? null;
+  const plan = (getRecordArray(params, "plan") ?? [])
+    .map((step) => {
+      const text = getRecordString(step, "step");
+      const status = getRecordString(step, "status");
+      if (
+        !text ||
+        (status !== "pending" &&
+          status !== "inProgress" &&
+          status !== "completed")
+      ) {
+        return null;
+      }
+      return { step: text, status };
+    })
+    .filter((step): step is RichPlanStep => Boolean(step));
+  return { explanation, plan };
+}
+
+function normalizeDiffEventData(params: unknown): DiffEventData {
+  const diff = getRecordString(params, "diff") ?? "";
+  return {
+    diff,
+    files: extractDiffFilePaths(diff),
+  };
+}
+
+function normalizeFilePatchEventData(params: unknown): FilePatchEventData {
+  const changes = (getRecordArray(params, "changes") ?? [])
+    .map((change) => {
+      const path = getRecordString(change, "path");
+      if (!path) {
+        return null;
+      }
+      return {
+        path,
+        kind: getRecordString(change, "kind") ?? "update",
+        diff: getRecordString(change, "diff") ?? "",
+      };
+    })
+    .filter((change): change is FilePatchEventData["changes"][number] =>
+      Boolean(change),
+    );
+  return { changes };
+}
+
+function summarizeDiffEvent(eventData: DiffEventData): string {
+  if (eventData.files.length === 0) {
+    return eventData.diff ? "Diff updated" : "Diff cleared";
+  }
+  return `Diff updated: ${eventData.files.length} file${
+    eventData.files.length === 1 ? "" : "s"
+  }`;
+}
+
+function summarizeFilePatchEvent(eventData: FilePatchEventData): string {
+  if (eventData.changes.length === 0) {
+    return "File patch updated";
+  }
+  return `File patch updated: ${eventData.changes.length} file${
+    eventData.changes.length === 1 ? "" : "s"
+  }`;
+}
+
+function extractCommandOutputDelta(method: string, params: unknown): string {
+  if (method === "command/exec/outputDelta") {
+    const encoded = getRecordString(params, "deltaBase64");
+    return encoded ? Buffer.from(encoded, "base64").toString("utf8") : "";
+  }
+  return getRecordString(params, "delta") ?? "";
+}
+
+function createCommandOutputEventData(
+  method: string,
+  params: unknown,
+): Record<string, unknown> {
+  if (method === "command/exec/outputDelta") {
+    return {
+      kind: "commandExecOutput",
+      processId: getRecordString(params, "processId") ?? null,
+      stream: getRecordString(params, "stream") ?? "stdout",
+      capReached: Boolean(isRecord(params) && params.capReached === true),
+    };
+  }
+  return { kind: "commandExecutionOutput" };
+}
+
+function hasCommandOutputMetadataUpdate(
+  method: string,
+  params: unknown,
+): boolean {
+  return (
+    method === "command/exec/outputDelta" &&
+    isRecord(params) &&
+    params.capReached === true
+  );
+}
+
+function createCommandLifecycleEventData(
+  method: string,
+  item: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    kind: "commandExecution",
+    lifecycleEventType: method,
+    command: getRecordString(item, "command") ?? null,
+    cwd: getRecordString(item, "cwd") ?? null,
+    processId: getRecordString(item, "processId") ?? null,
+    source: getRecordString(item, "source") ?? null,
+    status: getRecordString(item, "status") ?? null,
+    exitCode: getRecordNumber(item, "exitCode") ?? null,
+    durationMs: getRecordNumber(item, "durationMs") ?? null,
+  };
+}
+
+function getCommandOutputItemId(method: string, params: unknown): string {
+  if (method === "command/exec/outputDelta") {
+    const processId = getRecordString(params, "processId") ?? "process";
+    const stream = getRecordString(params, "stream") ?? "stdout";
+    return `${processId}:${stream}`;
+  }
+  return getRecordString(params, "itemId") ?? method;
+}
+
+function createReasoningEventData(
+  method: string,
+  params: unknown,
+): Record<string, unknown> {
+  if (method === "item/reasoning/summaryTextDelta") {
+    return {
+      kind: "summaryText",
+      summaryIndex: getRecordNumber(params, "summaryIndex") ?? null,
+    };
+  }
+  if (method === "item/reasoning/summaryPartAdded") {
+    return {
+      kind: "summaryPart",
+      summaryIndex: getRecordNumber(params, "summaryIndex") ?? null,
+    };
+  }
+  return {
+    kind: "text",
+    contentIndex: getRecordNumber(params, "contentIndex") ?? null,
+  };
+}
+
+function getReasoningEventItemId(method: string, params: unknown): string {
+  const itemId = getRecordString(params, "itemId") ?? "reasoning";
+  if (method === "item/reasoning/summaryTextDelta") {
+    return `${itemId}:summary:${getRecordNumber(params, "summaryIndex") ?? 0}`;
+  }
+  if (method === "item/reasoning/summaryPartAdded") {
+    return `${itemId}:summary-part:${
+      getRecordNumber(params, "summaryIndex") ?? 0
+    }`;
+  }
+  return `${itemId}:text:${getRecordNumber(params, "contentIndex") ?? 0}`;
+}
+
+function extractDiffFilePaths(diff: string): string[] {
+  const files = new Set<string>();
+  for (const line of diff.split(/\r?\n/)) {
+    const diffMatch = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
+    if (diffMatch?.[2]) {
+      files.add(diffMatch[2]);
+      continue;
+    }
+    const nextFileMatch = /^\+\+\+ b\/(.+)$/.exec(line);
+    if (nextFileMatch?.[1]) {
+      files.add(nextFileMatch[1]);
+    }
+  }
+  return [...files];
+}
+
 function getReasoningEfforts(model: Record<string, unknown>): string[] {
   const supported = model.supportedReasoningEfforts;
   if (!Array.isArray(supported)) {
@@ -3577,6 +4227,16 @@ function getRecordString(value: unknown, key: string): string | undefined {
   }
   const candidate = value[key];
   return typeof candidate === "string" ? candidate : undefined;
+}
+
+function getRecordNumber(value: unknown, key: string): number | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const candidate = value[key];
+  return typeof candidate === "number" && Number.isFinite(candidate)
+    ? candidate
+    : undefined;
 }
 
 function getStringArray(value: unknown): string[] {

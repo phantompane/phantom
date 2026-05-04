@@ -23,6 +23,7 @@ const chatMessageRecordBaseSchema = z.object({
   role: z.enum(["user", "assistant", "event", "error"]),
   text: z.string(),
   eventType: z.string().optional(),
+  eventData: z.unknown().optional(),
   itemId: z.string().optional(),
   createdAt: z.string(),
 });

@@ -5040,6 +5040,324 @@ describe("ServeServices", () => {
     );
   });
 
+  it("buffers threadless turn events until a new turn is committed", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+    };
+    const { codex, services, store } = await createHarness(state);
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockImplementationOnce(async () => {
+      codex.emitNotification({
+        method: "turn/plan/updated",
+        params: {
+          turnId: "turn_1",
+          explanation: "Starting quickly",
+          plan: [{ step: "Inspect code", status: "inProgress" }],
+        },
+      });
+      return { turn: { id: "turn_1" } };
+    });
+
+    await services.sendMessage("chat_1", { text: "hello" });
+
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).messages.length, 2);
+    });
+
+    const savedState = await store.load();
+    const planMessage = savedState.messages.find(
+      (message) => message.eventType === "turn/plan/updated",
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => message.role),
+      ["user", "event"],
+    );
+    strictEqual(savedState.chats[0]?.activeTurnId, "turn_1");
+    strictEqual(planMessage?.text, "plan updated: 1 step");
+    deepStrictEqual(
+      (planMessage?.eventData as { plan?: unknown[] } | undefined)?.plan,
+      [{ step: "Inspect code", status: "inProgress" }],
+    );
+  });
+
+  it("stores rich Codex events as structured timeline messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, services, store } = await createHarness(state);
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+
+    codex.emitNotification({
+      method: "turn/plan/updated",
+      params: {
+        turnId: "turn_1",
+        explanation: "Working through the change",
+        plan: [{ step: "Inspect code", status: "completed" }],
+      },
+    });
+    codex.emitNotification({
+      method: "turn/plan/updated",
+      params: {
+        turnId: "turn_1",
+        explanation: "Working through the change",
+        plan: [
+          { step: "Inspect code", status: "completed" },
+          { step: "Patch UI", status: "inProgress" },
+        ],
+      },
+    });
+    codex.emitNotification({
+      method: "item/commandExecution/outputDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "cmd_1",
+        delta: "first",
+      },
+    });
+    codex.emitNotification({
+      method: "item/commandExecution/outputDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "cmd_1",
+        delta: " second",
+      },
+    });
+    codex.emitNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        item: {
+          type: "commandExecution",
+          id: "cmd_1",
+          command: "pnpm test",
+          cwd: "/repo",
+          processId: "proc_1",
+          source: "agent",
+          status: "completed",
+          commandActions: [],
+          aggregatedOutput: null,
+          exitCode: 0,
+          durationMs: 42,
+        },
+      },
+    });
+    codex.emitNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        item: {
+          type: "commandExecution",
+          id: "cmd_empty",
+          command: "true",
+          cwd: "/repo",
+          processId: null,
+          source: "agent",
+          status: "completed",
+          commandActions: [],
+          aggregatedOutput: null,
+          exitCode: 0,
+          durationMs: 1,
+        },
+      },
+    });
+    codex.emitNotification({
+      method: "command/exec/outputDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        processId: "proc_2",
+        stream: "stdout",
+        deltaBase64: Buffer.from("log").toString("base64"),
+        capReached: false,
+      },
+    });
+    codex.emitNotification({
+      method: "command/exec/outputDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        processId: "proc_2",
+        stream: "stdout",
+        capReached: true,
+      },
+    });
+    codex.emitNotification({
+      method: "item/fileChange/patchUpdated",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "patch_1",
+        changes: [{ path: "src/app.ts", kind: "modify", diff: "@@ patch" }],
+      },
+    });
+    codex.emitNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        item: {
+          type: "fileChange",
+          id: "patch_1",
+          changes: [
+            { path: "src/app.ts", kind: "modify", diff: "@@ final patch" },
+          ],
+          status: "completed",
+        },
+      },
+    });
+
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).messages.length, 5);
+    });
+
+    const savedState = await store.load();
+    const planMessage = savedState.messages.find(
+      (message) => message.eventType === "turn/plan/updated",
+    );
+    const commandMessage = savedState.messages.find(
+      (message) => message.eventType === "item/commandExecution/outputDelta",
+    );
+    const patchMessage = savedState.messages.find(
+      (message) => message.eventType === "item/fileChange/patchUpdated",
+    );
+    const emptyCommandMessage = savedState.messages.find(
+      (message) => message.itemId === "cmd_empty",
+    );
+    const shellCommandMessage = savedState.messages.find(
+      (message) => message.eventType === "command/exec/outputDelta",
+    );
+
+    strictEqual(planMessage?.role, "event");
+    strictEqual(planMessage?.text, "plan updated: 2 steps");
+    deepStrictEqual(
+      (planMessage?.eventData as { plan?: unknown[] } | undefined)?.plan,
+      [
+        { step: "Inspect code", status: "completed" },
+        { step: "Patch UI", status: "inProgress" },
+      ],
+    );
+    strictEqual(commandMessage?.text, "first second");
+    strictEqual(
+      (commandMessage?.eventData as { text?: string } | undefined)?.text,
+      "first second",
+    );
+    deepStrictEqual(
+      {
+        command: (
+          commandMessage?.eventData as { command?: unknown } | undefined
+        )?.command,
+        durationMs: (
+          commandMessage?.eventData as { durationMs?: unknown } | undefined
+        )?.durationMs,
+        exitCode: (
+          commandMessage?.eventData as { exitCode?: unknown } | undefined
+        )?.exitCode,
+        status: (commandMessage?.eventData as { status?: unknown } | undefined)
+          ?.status,
+      },
+      {
+        command: "pnpm test",
+        durationMs: 42,
+        exitCode: 0,
+        status: "completed",
+      },
+    );
+    strictEqual(
+      emptyCommandMessage?.eventType,
+      "item/commandExecution/outputDelta",
+    );
+    strictEqual(emptyCommandMessage?.text, "");
+    strictEqual(shellCommandMessage?.text, "log");
+    strictEqual(
+      (shellCommandMessage?.eventData as { capReached?: boolean } | undefined)
+        ?.capReached,
+      true,
+    );
+    deepStrictEqual(
+      (patchMessage?.eventData as { changes?: unknown[] } | undefined)?.changes,
+      [{ path: "src/app.ts", kind: "modify", diff: "@@ final patch" }],
+    );
+    strictEqual(
+      (patchMessage?.eventData as { status?: string } | undefined)?.status,
+      "completed",
+    );
+    strictEqual(
+      emitSpy.mock.calls.some((call) => call[0] === "agent.plan.updated"),
+      true,
+    );
+    strictEqual(
+      emitSpy.mock.calls.some((call) => call[0] === "agent.command.output"),
+      true,
+    );
+  });
+
+  it("ignores empty reasoning summary parts before summary text arrives", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, store } = await createHarness(state);
+
+    codex.emitNotification({
+      method: "item/reasoning/summaryPartAdded",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "reasoning_1",
+        summaryIndex: 0,
+      },
+    });
+    codex.emitNotification({
+      method: "item/reasoning/summaryTextDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "reasoning_1",
+        summaryIndex: 0,
+        delta: "First",
+      },
+    });
+    codex.emitNotification({
+      method: "item/reasoning/summaryTextDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "reasoning_1",
+        summaryIndex: 0,
+        delta: " second",
+      },
+    });
+
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).messages.length, 1);
+    });
+
+    const savedState = await store.load();
+    strictEqual(
+      savedState.messages.some(
+        (message) => message.eventType === "item/reasoning/summaryPartAdded",
+      ),
+      false,
+    );
+    const reasoningMessage = savedState.messages[0];
+    strictEqual(reasoningMessage?.eventType, "item/reasoning/summaryTextDelta");
+    strictEqual(reasoningMessage?.text, "First second");
+    deepStrictEqual(reasoningMessage?.eventData, {
+      kind: "summaryText",
+      summaryIndex: 0,
+      text: "First second",
+    });
+  });
+
   it("keeps pending stream order when new notifications arrive during replay", async () => {
     const state = {
       ...createTestState(),

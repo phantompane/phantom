@@ -82,6 +82,34 @@ export function mapCodexMethodToEvent(method: string): string {
   if (method === "turn/completed") {
     return "agent.turn.completed";
   }
+  if (method === "turn/plan/updated" || method === "item/plan/delta") {
+    return "agent.plan.updated";
+  }
+  if (method === "turn/diff/updated") {
+    return "agent.diff.updated";
+  }
+  if (
+    method === "item/commandExecution/outputDelta" ||
+    method === "command/exec/outputDelta"
+  ) {
+    return "agent.command.output";
+  }
+  if (
+    method === "item/fileChange/patchUpdated" ||
+    method === "item/fileChange/outputDelta"
+  ) {
+    return "agent.file.updated";
+  }
+  if (method.startsWith("item/reasoning/")) {
+    return "agent.reasoning.updated";
+  }
+  if (
+    method === "warning" ||
+    method === "guardianWarning" ||
+    method === "configWarning"
+  ) {
+    return "agent.warning";
+  }
   if (method.startsWith("item/") && method.endsWith("/requestApproval")) {
     return "agent.approval.requested";
   }
@@ -102,6 +130,40 @@ export function mapCodexMethodToEvent(method: string): string {
 
 export function summarizeCodexEvent(method: string, params: unknown): string {
   const object = getParamObject(params);
+  if (method === "turn/plan/updated") {
+    const plan = Array.isArray(object?.plan) ? object.plan : [];
+    return `plan updated: ${plan.length} step${plan.length === 1 ? "" : "s"}`;
+  }
+  if (method === "turn/diff/updated") {
+    const diff = typeof object?.diff === "string" ? object.diff : "";
+    return diff ? "diff updated" : "diff cleared";
+  }
+  if (
+    method === "item/commandExecution/outputDelta" ||
+    method === "command/exec/outputDelta"
+  ) {
+    return "command output";
+  }
+  if (method === "item/fileChange/patchUpdated") {
+    const changes = Array.isArray(object?.changes) ? object.changes : [];
+    return `file patch updated: ${changes.length} file${
+      changes.length === 1 ? "" : "s"
+    }`;
+  }
+  if (method === "item/fileChange/outputDelta") {
+    return "file change output";
+  }
+  if (method.startsWith("item/reasoning/")) {
+    return "reasoning updated";
+  }
+  if (method === "warning" || method === "guardianWarning") {
+    return typeof object?.message === "string" ? object.message : "Warning";
+  }
+  if (method === "configWarning") {
+    return typeof object?.summary === "string"
+      ? object.summary
+      : "Configuration warning";
+  }
   if (method === "item/started" || method === "item/completed") {
     const item = getParamObject(object?.item);
     const type = typeof item?.type === "string" ? item.type : "item";
