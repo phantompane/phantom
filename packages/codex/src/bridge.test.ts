@@ -183,6 +183,32 @@ describe("CodexBridge", () => {
     await expect(thread).resolves.toEqual({ thread: { id: "thread_1" } });
   });
 
+  it("archives and unarchives threads", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    const archive = bridge.archiveThread("thread_1");
+    await vi.waitFor(() =>
+      expect(findWrite(proc, "thread/archive")).toBeDefined(),
+    );
+    const archiveRequest = findWrite(proc, "thread/archive");
+    expect(archiveRequest?.params).toEqual({ threadId: "thread_1" });
+    proc.send({ id: archiveRequest?.id, result: {} });
+    await expect(archive).resolves.toEqual({});
+
+    const unarchive = bridge.unarchiveThread("thread_1");
+    await vi.waitFor(() =>
+      expect(findWrite(proc, "thread/unarchive")).toBeDefined(),
+    );
+    const unarchiveRequest = findWrite(proc, "thread/unarchive");
+    expect(unarchiveRequest?.params).toEqual({ threadId: "thread_1" });
+    proc.send({
+      id: unarchiveRequest?.id,
+      result: { thread: { id: "thread_1" } },
+    });
+    await expect(unarchive).resolves.toEqual({ thread: { id: "thread_1" } });
+  });
+
   it("passes model, effort, file mentions, and skills to new turns", async () => {
     const { bridge, proc } = createBridge();
     await initializeBridge(bridge, proc);

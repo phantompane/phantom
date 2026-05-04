@@ -67,6 +67,15 @@ export async function createChatMutation(
   );
 }
 
+export async function archiveChatMutation(chatId: string, archived: boolean) {
+  return readRpcJson<{ chat: ChatRecord }>(
+    await api.chats[":chatId"].archive.$post({
+      param: { chatId: routeParam(chatId) },
+      json: { archived },
+    }),
+  );
+}
+
 export async function deleteWorktreeMutation(
   projectId: string,
   input: DeleteWorktreeInput,

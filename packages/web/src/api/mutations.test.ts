@@ -2,6 +2,7 @@ import { strictEqual } from "node:assert";
 import { afterEach, describe, it, vi } from "vitest";
 import {
   answerApprovalMutation,
+  archiveChatMutation,
   createChatMutation,
   deleteProjectMutation,
   deletePendingMessageMutation,
@@ -135,6 +136,36 @@ describe("deleteProjectMutation", () => {
 
     strictEqual(requestMethod, "DELETE");
     strictEqual(requestUrl, "/api/projects/proj%2Fwith%23hash");
+  });
+});
+
+describe("archiveChatMutation", () => {
+  it("encodes chat route params and sends archive state", async () => {
+    let requestBody: string | undefined;
+    let requestUrl: string | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = init?.body?.toString();
+        requestUrl =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        return new Response('{"chat":{"id":"chat_1"}}', {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          status: 200,
+        });
+      }),
+    );
+
+    await archiveChatMutation("chat/with#hash", true);
+
+    strictEqual(requestUrl, "/api/chats/chat%2Fwith%23hash/archive");
+    strictEqual(requestBody, JSON.stringify({ archived: true }));
   });
 });
 

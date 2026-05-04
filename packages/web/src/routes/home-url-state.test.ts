@@ -181,6 +181,44 @@ describe("mergeWorktreesWithChats", () => {
       },
     ]);
   });
+
+  it("prefers a non-archived chat over a newer archived chat", () => {
+    const worktrees = [
+      {
+        name: "feature",
+        path: "/repo/feature",
+        chatId: null,
+        chatStatus: null,
+        chatTitle: "feature",
+      },
+    ];
+    const chats = [
+      {
+        id: "chat-current",
+        worktreePath: "/repo/feature",
+        title: "current",
+        status: "idle",
+        updatedAt: "2026-04-25T00:00:00.000Z",
+      },
+      {
+        id: "chat-archived",
+        worktreePath: "/repo/feature",
+        title: "archived",
+        status: "archived",
+        updatedAt: "2026-04-25T00:01:00.000Z",
+      },
+    ];
+
+    expect(mergeWorktreesWithChats(worktrees, chats)).toEqual([
+      {
+        name: "feature",
+        path: "/repo/feature",
+        chatId: "chat-current",
+        chatStatus: "idle",
+        chatTitle: "current",
+      },
+    ]);
+  });
 });
 
 describe("isKnownWorktreeChat", () => {
