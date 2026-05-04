@@ -177,6 +177,15 @@ function markChatActiveInCurrentProcess(
   ).activeTurnChatIds.add(chatId);
 }
 
+function markChatDrainingQueuedMessages(
+  services: ServeServices,
+  chatId: string,
+): void {
+  (
+    services as unknown as { drainingQueuedMessageChatIds: Set<string> }
+  ).drainingQueuedMessageChatIds.add(chatId);
+}
+
 class ImportRaceStore extends ServeStateStore {
   private hasInjectedState = false;
 
@@ -315,6 +324,129 @@ describe("ServeServices", () => {
 
     strictEqual(worktrees[0]?.chatId, "chat_1");
     strictEqual(saveSpy.mock.calls.length, 0);
+  });
+
+  it("does not remove a project with an active chat", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          status: "running",
+          activeTurnId: "turn_1",
+        }),
+      ],
+      selectedProjectId: "proj_1",
+      selectedChatId: "chat_1",
+    };
+    const { services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+
+    await rejects(
+      services.removeProject("proj_1"),
+      /running, approval, or queued chats/,
+    );
+
+    const savedState = await store.load();
+    strictEqual(savedState.projects.length, 1);
+    strictEqual(savedState.chats.length, 1);
+    strictEqual(savedState.selectedProjectId, "proj_1");
+    strictEqual(savedState.selectedChatId, "chat_1");
+  });
+
+  it("does not remove a project with queued messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "queued draft",
+          createdAt: timestamp,
+          eventType: "chat.message.queued" as const,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued draft",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { services, store } = await createHarness(state);
+
+    await rejects(
+      services.removeProject("proj_1"),
+      /running, approval, or queued chats/,
+    );
+
+    const savedState = await store.load();
+    strictEqual(savedState.projects.length, 1);
+    strictEqual(savedState.chats.length, 1);
+    strictEqual(savedState.queuedMessages.length, 1);
+  });
+
+  it("does not remove a project while queued messages are draining", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      selectedProjectId: "proj_1",
+      selectedChatId: "chat_1",
+    };
+    const { services, store } = await createHarness(state);
+    markChatDrainingQueuedMessages(services, "chat_1");
+
+    await rejects(
+      services.removeProject("proj_1"),
+      /running, approval, or queued chats/,
+    );
+
+    const savedState = await store.load();
+    strictEqual(savedState.projects.length, 1);
+    strictEqual(savedState.chats.length, 1);
+    strictEqual(savedState.selectedProjectId, "proj_1");
+    strictEqual(savedState.selectedChatId, "chat_1");
+  });
+
+  it("does not let stale transient chat state block project removal", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          status: "running",
+          activeTurnId: "turn_stale",
+        }),
+      ],
+      messages: [
+        {
+          id: "msg_stale",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "turn started",
+          createdAt: timestamp,
+        },
+      ],
+      selectedProjectId: "proj_1",
+      selectedChatId: "chat_1",
+    };
+    const { services, store } = await createHarness(state);
+
+    await services.removeProject("proj_1");
+
+    const savedState = await store.load();
+    deepStrictEqual(savedState.projects, []);
+    deepStrictEqual(savedState.chats, []);
+    deepStrictEqual(savedState.messages, []);
+    strictEqual(savedState.selectedProjectId, null);
+    strictEqual(savedState.selectedChatId, null);
   });
 
   it("removes persisted chats for worktrees missing from a live sync", async () => {
@@ -899,6 +1031,74 @@ describe("ServeServices", () => {
     const savedState = await store.load();
     strictEqual(savedState.chats[0]?.status, "idle");
     strictEqual(savedState.chats[0]?.activeTurnId, null);
+  });
+
+  it("annotates project chats with queued message state", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "queued draft",
+          createdAt: timestamp,
+          eventType: "chat.message.queued" as const,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued draft",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { services } = await createHarness(state);
+    markChatDrainingQueuedMessages(services, "chat_1");
+
+    const chats = await services.listChats("proj_1");
+
+    strictEqual(chats[0]?.hasQueuedMessages, true);
+    strictEqual(chats[0]?.isDrainingQueuedMessages, true);
+  });
+
+  it("annotates a selected chat with queued message state", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "queued draft",
+          createdAt: timestamp,
+          eventType: "chat.message.queued" as const,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued draft",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { services } = await createHarness(state);
+    markChatDrainingQueuedMessages(services, "chat_1");
+
+    const chat = await services.getChat("chat_1");
+
+    strictEqual(chat.hasQueuedMessages, true);
+    strictEqual(chat.isDrainingQueuedMessages, true);
   });
 
   it("syncs Codex thread metadata for project chats and reads messages lazily", async () => {

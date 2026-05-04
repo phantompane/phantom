@@ -3,6 +3,7 @@ import { afterEach, describe, it, vi } from "vitest";
 import {
   answerApprovalMutation,
   createChatMutation,
+  deleteProjectMutation,
   deletePendingMessageMutation,
   queueMessageMutation,
   restorePendingMessageMutation,
@@ -104,6 +105,36 @@ describe("createChatMutation", () => {
         initialMessage: "Start here",
       }),
     );
+  });
+});
+
+describe("deleteProjectMutation", () => {
+  it("encodes project route params before calling Hono RPC", async () => {
+    let requestMethod: string | undefined;
+    let requestUrl: string | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        requestMethod = init?.method;
+        requestUrl =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        return new Response("{}", {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          status: 200,
+        });
+      }),
+    );
+
+    await deleteProjectMutation("proj/with#hash");
+
+    strictEqual(requestMethod, "DELETE");
+    strictEqual(requestUrl, "/api/projects/proj%2Fwith%23hash");
   });
 });
 
