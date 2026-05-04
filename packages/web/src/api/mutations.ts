@@ -20,6 +20,11 @@ export interface SendMessageInput {
   text: string;
 }
 
+export interface CreateChatInput {
+  worktreeName?: string;
+  worktreePath?: string;
+}
+
 export async function addProjectMutation(path: string) {
   return readRpcJson<{ project: ProjectRecord }>(
     await api.projects.$post({
@@ -28,11 +33,14 @@ export async function addProjectMutation(path: string) {
   );
 }
 
-export async function createChatMutation(projectId: string) {
+export async function createChatMutation(
+  projectId: string,
+  input: CreateChatInput = {},
+) {
   return readRpcJson<{ chat: ChatRecord }>(
     await api.projects[":projectId"].chats.$post({
       param: { projectId: routeParam(projectId) },
-      json: {},
+      json: input,
     }),
   );
 }

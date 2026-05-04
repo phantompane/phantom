@@ -2,6 +2,7 @@ import { strictEqual } from "node:assert";
 import { afterEach, describe, it, vi } from "vitest";
 import {
   answerApprovalMutation,
+  createChatMutation,
   queueMessageMutation,
   steerMessageMutation,
 } from "./mutations";
@@ -40,6 +41,37 @@ describe("answerApprovalMutation", () => {
     strictEqual(
       requestUrl,
       "/api/chats/chat%2Fwith%23hash/approvals/request%2Fwith%23hash",
+    );
+  });
+});
+
+describe("createChatMutation", () => {
+  it("sends target worktree data when starting a chat in an existing worktree", async () => {
+    let requestBody: string | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = init?.body?.toString();
+        return new Response('{"chat":{"id":"chat_1"}}', {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          status: 201,
+        });
+      }),
+    );
+
+    await createChatMutation("proj_1", {
+      worktreeName: "feature",
+      worktreePath: "/repo/.git/phantom/worktrees/feature",
+    });
+
+    strictEqual(
+      requestBody,
+      JSON.stringify({
+        worktreeName: "feature",
+        worktreePath: "/repo/.git/phantom/worktrees/feature",
+      }),
     );
   });
 });

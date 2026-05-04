@@ -473,6 +473,9 @@ export function HomeRoute() {
   const [creatingProjectId, setCreatingProjectId] = useState<string | null>(
     null,
   );
+  const [creatingWorktreeKey, setCreatingWorktreeKey] = useState<string | null>(
+    null,
+  );
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [pendingComposerMode, setPendingComposerMode] =
     useState<ComposerSubmitMode | null>(null);
@@ -500,7 +503,13 @@ export function HomeRoute() {
     mutationFn: addProjectMutation,
   });
   const createChatRequest = useMutation({
-    mutationFn: createChatMutation,
+    mutationFn: ({
+      input,
+      projectId,
+    }: {
+      input?: Parameters<typeof createChatMutation>[1];
+      projectId: string;
+    }) => createChatMutation(projectId, input),
   });
   const deleteWorktreeRequest = useMutation({
     mutationFn: ({
@@ -1539,18 +1548,36 @@ export function HomeRoute() {
     }
   }
 
-  async function createChat(projectId: string) {
+  async function createChat(
+    projectId: string,
+    worktree?: ProjectWorktreeRecord,
+  ) {
     if (isBusy || createChatInFlightRef.current) {
       return;
     }
 
     setError(null);
     const requestWorkspaceSelectionKey = workspaceSelectionKeyRef.current;
+    const worktreeKey = worktree
+      ? getWorktreeExpansionKey(projectId, worktree.path)
+      : null;
     createChatInFlightRef.current = true;
-    setCreatingProjectId(projectId);
+    if (worktreeKey) {
+      setCreatingWorktreeKey(worktreeKey);
+    } else {
+      setCreatingProjectId(projectId);
+    }
     setIsBusy(true);
     try {
-      const data = await createChatRequest.mutateAsync(projectId);
+      const data = await createChatRequest.mutateAsync({
+        projectId,
+        input: worktree
+          ? {
+              worktreeName: worktree.name,
+              worktreePath: worktree.path,
+            }
+          : {},
+      });
       void queryClient.invalidateQueries({
         queryKey: queryKeys.projectWorktrees(projectId),
       });
@@ -1587,6 +1614,7 @@ export function HomeRoute() {
     } finally {
       createChatInFlightRef.current = false;
       setCreatingProjectId(null);
+      setCreatingWorktreeKey(null);
       setIsBusy(false);
     }
   }
@@ -2077,6 +2105,8 @@ export function HomeRoute() {
                                   project.id,
                                   worktree.path,
                                 );
+                                const isCreatingWorktreeChat =
+                                  creatingWorktreeKey === worktreeKey;
                                 const isWorktreeExpanded =
                                   expandedWorktreeKeys.has(worktreeKey);
                                 const isChatListLoading =
@@ -2161,6 +2191,29 @@ export function HomeRoute() {
                                           />
                                         )}
                                       </SidebarMenuSubButton>
+                                      <Button
+                                        aria-label={`Start new chat in ${worktree.name}`}
+                                        className={cn(
+                                          "size-7 text-[var(--icon-color-default)] opacity-100 sm:opacity-0 sm:group-focus-within/worktree:opacity-100 sm:group-hover/worktree:opacity-100",
+                                          (isSelectedWorktree ||
+                                            isCreatingWorktreeChat) &&
+                                            "sm:opacity-100",
+                                        )}
+                                        disabled={isBusy}
+                                        onClick={() =>
+                                          void createChat(project.id, worktree)
+                                        }
+                                        size="icon"
+                                        title="New chat"
+                                        type="button"
+                                        variant="ghost"
+                                      >
+                                        {isCreatingWorktreeChat ? (
+                                          <LoadingSpinner className="size-4" />
+                                        ) : (
+                                          <MessageSquarePlus className="size-4" />
+                                        )}
+                                      </Button>
                                       {canShowActions && (
                                         <DropdownMenu>
                                           <DropdownMenuTrigger asChild>
