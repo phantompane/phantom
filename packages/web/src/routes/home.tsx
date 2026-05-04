@@ -2201,6 +2201,20 @@ export function HomeRoute() {
     });
   }
 
+  function confirmDeleteWorktree(
+    projectId: string,
+    worktree: ProjectWorktreeRecord,
+  ) {
+    setDeleteWorktreeError(null);
+    setDeleteWorktreeBranchMode("default");
+    setDeleteWorktreeForce(false);
+    setDeleteWorktreeTarget({
+      forceRequired: !worktree.isClean,
+      projectId,
+      worktreePath: worktree.path,
+    });
+  }
+
   function closeDeleteWorktreeDialog() {
     setDeleteWorktreeTarget(null);
     setDeleteWorktreeError(null);
@@ -2411,7 +2425,7 @@ export function HomeRoute() {
       return;
     }
 
-    void openDeleteWorktree(selectedProjectId, selectedWorktree);
+    confirmDeleteWorktree(selectedProjectId, selectedWorktree);
   }
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
@@ -3411,8 +3425,9 @@ export function HomeRoute() {
               Delete worktree
             </DialogTitle>
             <DialogDescription>
-              This worktree has uncommitted changes. Force deletion is required
-              to remove it from{" "}
+              {isDeleteWorktreeForceRequired
+                ? "This worktree has uncommitted changes. Force deletion is required to remove it from "
+                : "This will remove the worktree and its chat history from "}
               {pendingDeleteWorktreeProject?.name ?? "the project"}.
             </DialogDescription>
           </DialogHeader>
@@ -3446,17 +3461,19 @@ export function HomeRoute() {
                 <option value="delete">Delete branch</option>
               </select>
             </div>
-            <label className="flex items-start gap-2 text-[length:var(--font-size-sm)] text-[var(--semantic-danger-fg)]">
-              <input
-                checked={deleteWorktreeForce}
-                className="mt-0.5 size-4 accent-[var(--semantic-danger-fg)]"
-                onChange={(event) =>
-                  setDeleteWorktreeForce(event.target.checked)
-                }
-                type="checkbox"
-              />
-              <span>Force delete uncommitted changes</span>
-            </label>
+            {isDeleteWorktreeForceRequired && (
+              <label className="flex items-start gap-2 text-[length:var(--font-size-sm)] text-[var(--semantic-danger-fg)]">
+                <input
+                  checked={deleteWorktreeForce}
+                  className="mt-0.5 size-4 accent-[var(--semantic-danger-fg)]"
+                  onChange={(event) =>
+                    setDeleteWorktreeForce(event.target.checked)
+                  }
+                  type="checkbox"
+                />
+                <span>Force delete uncommitted changes</span>
+              </label>
+            )}
             {deleteWorktreeError && (
               <InlineNotice
                 message={deleteWorktreeError}
@@ -3557,11 +3574,11 @@ export function HomeRoute() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
-                  aria-label={`Open chat actions for ${selectedWorktree.name}`}
+                  aria-label={`Open worktree actions for ${selectedWorktree.name}`}
                   className="size-8 shrink-0 text-[var(--icon-color-default)]"
                   disabled={isBusy}
                   size="icon"
-                  title="Chat actions"
+                  title="Worktree actions"
                   type="button"
                   variant="ghost"
                 >
