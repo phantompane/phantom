@@ -38,6 +38,10 @@ interface WorktreeMergeRecord<TStatus> {
   path: string;
 }
 
+interface WorktreeSelectionRecord {
+  chatId: string | null;
+}
+
 export function isShareableFileSearchQuery(value: string): boolean {
   let query = value.trim();
   if (!query) {
@@ -148,6 +152,43 @@ export function mergeWorktreesWithChats<
       chatTitle: chat.title,
     };
   });
+}
+
+export function isKnownWorktreeChat<TWorktree extends WorktreeSelectionRecord>(
+  worktrees: TWorktree[],
+  selectedChatId: string | null,
+): boolean {
+  return Boolean(
+    selectedChatId &&
+    worktrees.some((worktree) => worktree.chatId === selectedChatId),
+  );
+}
+
+export function resolveRefreshedWorktreeChatId<
+  TChat extends Pick<ChatSelectionRecord, "id">,
+  TWorktree extends WorktreeSelectionRecord,
+>(
+  chats: TChat[] | undefined,
+  worktrees: TWorktree[],
+  selectedChatId: string | null,
+  fallbackChatId: string | null,
+): string | null {
+  if (!selectedChatId) {
+    return null;
+  }
+
+  if (!chats) {
+    return selectedChatId;
+  }
+
+  if (
+    chats.some((chat) => chat.id === selectedChatId) ||
+    isKnownWorktreeChat(worktrees, selectedChatId)
+  ) {
+    return selectedChatId;
+  }
+
+  return fallbackChatId ?? selectedChatId;
 }
 
 export function getSelectableReasoningEfforts(
