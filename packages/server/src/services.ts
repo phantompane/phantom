@@ -338,12 +338,26 @@ export class ServeServices {
   }
 
   async removeProject(projectId: string): Promise<void> {
+    await this.resetStaleTransientChatState();
     await this.store.update((state) => {
-      const removedChatIds = new Set(
-        state.chats
-          .filter((chat) => chat.projectId === projectId)
-          .map((chat) => chat.id),
+      const queuedMessageChatIds = getQueuedMessageChatIds(state);
+      const projectChats = state.chats.filter(
+        (chat) => chat.projectId === projectId,
       );
+      const activeChat = projectChats.find(
+        (chat) =>
+          isChatActive(chat, this.pendingChatTurns) ||
+          queuedMessageChatIds.has(chat.id) ||
+          this.drainingQueuedMessageChatIds.has(chat.id) ||
+          this.pendingQueuedMessageDrainChatIds.has(chat.id),
+      );
+      if (activeChat) {
+        throw new Error(
+          "Cannot remove project while it has running, approval, or queued chats",
+        );
+      }
+
+      const removedChatIds = new Set(projectChats.map((chat) => chat.id));
 
       return {
         ...state,
@@ -373,8 +387,13 @@ export class ServeServices {
     const project = this.requireProject(state, projectId);
     const worktrees = await this.listProjectWorktreeSnapshot(projectId);
     if (!worktrees) {
-      return sortChatsByUpdatedAt(
-        state.chats.filter((chat) => chat.projectId === projectId),
+      return annotateTransientChatState(
+        sortChatsByUpdatedAt(
+          state.chats.filter((chat) => chat.projectId === projectId),
+        ),
+        state,
+        this.drainingQueuedMessageChatIds,
+        this.pendingQueuedMessageDrainChatIds,
       );
     }
 
@@ -382,8 +401,13 @@ export class ServeServices {
     try {
       codexThreads = await this.listCodexThreadsForWorktrees(worktrees);
     } catch {
-      return sortChatsByUpdatedAt(
-        state.chats.filter((chat) => chat.projectId === projectId),
+      return annotateTransientChatState(
+        sortChatsByUpdatedAt(
+          state.chats.filter((chat) => chat.projectId === projectId),
+        ),
+        state,
+        this.drainingQueuedMessageChatIds,
+        this.pendingQueuedMessageDrainChatIds,
       );
     }
 
@@ -480,8 +504,13 @@ export class ServeServices {
     });
 
     const syncedState = await this.store.load();
-    return sortChatsByUpdatedAt(
-      syncedState.chats.filter((chat) => chat.projectId === projectId),
+    return annotateTransientChatState(
+      sortChatsByUpdatedAt(
+        syncedState.chats.filter((chat) => chat.projectId === projectId),
+      ),
+      syncedState,
+      this.drainingQueuedMessageChatIds,
+      this.pendingQueuedMessageDrainChatIds,
     );
   }
 
@@ -995,7 +1024,12 @@ export class ServeServices {
   async getChat(chatId: string): Promise<ChatRecord> {
     await this.resetStaleTransientChatState();
     const state = await this.store.load();
-    return this.requireChat(state, chatId);
+    return annotateTransientChatState(
+      [this.requireChat(state, chatId)],
+      state,
+      this.drainingQueuedMessageChatIds,
+      this.pendingQueuedMessageDrainChatIds,
+    )[0]!;
   }
 
   async getMessages(chatId: string): Promise<ChatMessageRecord[]> {
@@ -3107,6 +3141,22 @@ function sortChatsByUpdatedAt(chats: ChatRecord[]): ChatRecord[] {
   return [...chats].sort((left, right) =>
     right.updatedAt.localeCompare(left.updatedAt),
   );
+}
+
+function annotateTransientChatState(
+  chats: ChatRecord[],
+  state: ServeState,
+  drainingQueuedMessageChatIds: ReadonlySet<string>,
+  pendingQueuedMessageDrainChatIds: ReadonlySet<string>,
+): ChatRecord[] {
+  const queuedMessageChatIds = getQueuedMessageChatIds(state);
+  return chats.map((chat) => ({
+    ...chat,
+    hasQueuedMessages: queuedMessageChatIds.has(chat.id),
+    isDrainingQueuedMessages:
+      drainingQueuedMessageChatIds.has(chat.id) ||
+      pendingQueuedMessageDrainChatIds.has(chat.id),
+  }));
 }
 
 function normalizeCodexThreadMessages(

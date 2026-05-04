@@ -47,6 +47,14 @@ export async function addProjectMutation(path: string) {
   );
 }
 
+export async function deleteProjectMutation(projectId: string) {
+  return readRpcJson<unknown>(
+    await api.projects[":projectId"].$delete({
+      param: { projectId: routeParam(projectId) },
+    }),
+  );
+}
+
 export async function createChatMutation(
   projectId: string,
   input: CreateChatInput = {},

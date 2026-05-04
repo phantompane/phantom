@@ -43,6 +43,7 @@ import {
   answerApprovalMutation,
   addProjectMutation,
   createChatMutation,
+  deleteProjectMutation,
   deletePendingMessageMutation,
   deleteWorktreeMutation,
   interruptChatMutation,
@@ -489,6 +490,9 @@ export function HomeRoute() {
   const [messagesChatId, setMessagesChatId] = useState<string | null>(null);
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
   const [projectPath, setProjectPath] = useState("");
+  const [deleteProjectTarget, setDeleteProjectTarget] = useState<string | null>(
+    null,
+  );
   const [deleteWorktreeTarget, setDeleteWorktreeTarget] =
     useState<DeleteWorktreeTarget | null>(null);
   const [deleteWorktreeBranchMode, setDeleteWorktreeBranchMode] =
@@ -570,6 +574,9 @@ export function HomeRoute() {
   const queryClient = useQueryClient();
   const addProjectRequest = useMutation({
     mutationFn: addProjectMutation,
+  });
+  const deleteProjectRequest = useMutation({
+    mutationFn: deleteProjectMutation,
   });
   const createChatRequest = useMutation({
     mutationFn: ({
@@ -921,6 +928,35 @@ export function HomeRoute() {
   );
 
   const pendingDeleteProject = useMemo(
+    () =>
+      deleteProjectTarget
+        ? (projects.find((project) => project.id === deleteProjectTarget) ??
+          null)
+        : null,
+    [deleteProjectTarget, projects],
+  );
+
+  const pendingDeleteProjectChats = useMemo(
+    () =>
+      deleteProjectTarget ? (chatsByProject[deleteProjectTarget] ?? []) : [],
+    [chatsByProject, deleteProjectTarget],
+  );
+
+  const pendingDeleteProjectBlockingChat = useMemo(
+    () =>
+      pendingDeleteProjectChats.find(
+        (chat) =>
+          chat.status === "running" ||
+          chat.status === "waitingForApproval" ||
+          Boolean(chat.activeTurnId) ||
+          Boolean(chat.hasQueuedMessages) ||
+          Boolean(chat.isDrainingQueuedMessages) ||
+          pendingSendChatIdsRef.current.has(chat.id),
+      ) ?? null,
+    [pendingDeleteProjectChats],
+  );
+
+  const pendingDeleteWorktreeProject = useMemo(
     () =>
       deleteWorktreeTarget
         ? (projects.find(
@@ -1776,6 +1812,72 @@ export function HomeRoute() {
     }
   }
 
+  function openDeleteProject(project: ProjectRecord) {
+    setError(null);
+    setDeleteProjectTarget(project.id);
+  }
+
+  function closeDeleteProjectDialog() {
+    setDeleteProjectTarget(null);
+  }
+
+  async function deleteSelectedProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!pendingDeleteProject || pendingDeleteProjectBlockingChat) {
+      return;
+    }
+
+    setError(null);
+    setIsBusy(true);
+    const projectId = pendingDeleteProject.id;
+    const deletedProjectChatIds = (
+      chatsByProjectRef.current[projectId] ?? []
+    ).map((chat) => chat.id);
+    const shouldClearComposerContext =
+      selectedProjectIdRef.current === projectId;
+    try {
+      await deleteProjectRequest.mutateAsync(projectId);
+      queryClient.removeQueries({
+        exact: true,
+        queryKey: queryKeys.projects,
+      });
+      queryClient.removeQueries({
+        queryKey: queryKeys.projectWorktrees(projectId),
+      });
+      queryClient.removeQueries({
+        queryKey: queryKeys.projectChats(projectId),
+      });
+      for (const chatId of deletedProjectChatIds) {
+        queryClient.removeQueries({ queryKey: queryKeys.chat(chatId) });
+      }
+      setExpandedWorktreeKeys((current) => {
+        const next = new Set<string>();
+        for (const key of current) {
+          if (!key.startsWith(`${projectId}:`)) {
+            next.add(key);
+          }
+        }
+        return next;
+      });
+      if (shouldClearComposerContext) {
+        setComposerText("");
+        setSelectedFiles([]);
+        setSelectedSkillPaths(new Set());
+        setTransientFileSearchQuery(null);
+        setFileSearchResults([]);
+        setSkills([]);
+        setPendingApproval(null);
+        restoredPendingComposerContextRef.current = null;
+      }
+      closeDeleteProjectDialog();
+      await refreshProjects();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function createProjectChat(
     projectId: string,
     requestWorkspaceSelectionKey: string,
@@ -2563,7 +2665,7 @@ export function HomeRoute() {
                           </SidebarMenuButton>
                           <Button
                             aria-label={`Create worktree in ${project.name}`}
-                            className="mr-1 size-7 text-[var(--icon-color-default)] group-data-[state=collapsed]/sidebar:hidden"
+                            className="size-7 text-[var(--icon-color-default)] group-data-[state=collapsed]/sidebar:hidden"
                             disabled={isBusy}
                             onClick={() => void createChat(project.id)}
                             size="icon"
@@ -2577,6 +2679,35 @@ export function HomeRoute() {
                               <MessageSquarePlus className="size-4" />
                             )}
                           </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                aria-label={`Open actions for ${project.name}`}
+                                className={cn(
+                                  "mr-1 size-7 text-[var(--icon-color-default)] opacity-100 data-[state=open]:opacity-100 group-data-[state=collapsed]/sidebar:hidden sm:opacity-0 sm:group-focus-within/project:opacity-100 sm:group-hover/project:opacity-100",
+                                  selectedProjectId === project.id &&
+                                    "sm:opacity-100",
+                                )}
+                                disabled={isBusy}
+                                size="icon"
+                                title="Project actions"
+                                type="button"
+                                variant="ghost"
+                              >
+                                <MoreHorizontal className="size-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                disabled={isBusy}
+                                onSelect={() => openDeleteProject(project)}
+                                variant="destructive"
+                              >
+                                <Trash2 className="size-4" />
+                                <span>Delete project</span>
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                         {isProjectExpanded && (
                           <SidebarMenuSub>
@@ -2846,6 +2977,69 @@ export function HomeRoute() {
       </Dialog>
 
       <Dialog
+        open={Boolean(deleteProjectTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeDeleteProjectDialog();
+          }
+        }}
+      >
+        <DialogContent aria-labelledby="delete-project-title">
+          <DialogHeader>
+            <DialogTitle id="delete-project-title">Delete project</DialogTitle>
+            <DialogDescription>
+              Remove this project from the Phantom sidebar and delete its
+              Phantom chat history and messages. Local repository files and
+              worktrees are not deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <form className="grid gap-4" onSubmit={deleteSelectedProject}>
+            <div className="grid gap-2 rounded-[var(--radius-sm)] bg-[var(--surface-code)] px-3 py-2">
+              <p className="truncate text-[length:var(--font-size-sm)] font-medium">
+                {pendingDeleteProject?.name ?? "Unknown project"}
+              </p>
+              {pendingDeleteProject && (
+                <p className="truncate font-mono text-[length:var(--font-size-xs)] text-muted-foreground">
+                  {pendingDeleteProject.rootPath}
+                </p>
+              )}
+            </div>
+            <p className="text-[length:var(--font-size-sm)] text-muted-foreground">
+              Projects with running, approval-blocked, or queued chats cannot be
+              deleted.
+            </p>
+            {pendingDeleteProjectBlockingChat && (
+              <div className="rounded-[var(--radius-sm)] border border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] px-3 py-2 text-[length:var(--font-size-sm)] text-[var(--semantic-warning-fg)]">
+                Stop running, approval-blocked, or queued chats before deleting
+                this project.
+              </div>
+            )}
+            <DialogFooter>
+              <Button
+                onClick={closeDeleteProjectDialog}
+                type="button"
+                variant="outline"
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={
+                  isBusy ||
+                  !pendingDeleteProject ||
+                  Boolean(pendingDeleteProjectBlockingChat)
+                }
+                type="submit"
+                variant="destructive"
+              >
+                {isBusy && <LoadingSpinner />}
+                Delete project
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={Boolean(deleteWorktreeTarget)}
         onOpenChange={(open) => {
           if (!open) {
@@ -2860,7 +3054,8 @@ export function HomeRoute() {
             </DialogTitle>
             <DialogDescription>
               This worktree has uncommitted changes. Force deletion is required
-              to remove it from {pendingDeleteProject?.name ?? "the project"}.
+              to remove it from{" "}
+              {pendingDeleteWorktreeProject?.name ?? "the project"}.
             </DialogDescription>
           </DialogHeader>
           <form className="grid gap-4" onSubmit={deleteSelectedWorktree}>
