@@ -5141,6 +5141,65 @@ describe("ServeServices", () => {
     );
   });
 
+  it("ignores empty reasoning summary parts before summary text arrives", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, store } = await createHarness(state);
+
+    codex.emitNotification({
+      method: "item/reasoning/summaryPartAdded",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "reasoning_1",
+        summaryIndex: 0,
+      },
+    });
+    codex.emitNotification({
+      method: "item/reasoning/summaryTextDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "reasoning_1",
+        summaryIndex: 0,
+        delta: "First",
+      },
+    });
+    codex.emitNotification({
+      method: "item/reasoning/summaryTextDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "reasoning_1",
+        summaryIndex: 0,
+        delta: " second",
+      },
+    });
+
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).messages.length, 1);
+    });
+
+    const savedState = await store.load();
+    strictEqual(
+      savedState.messages.some(
+        (message) => message.eventType === "item/reasoning/summaryPartAdded",
+      ),
+      false,
+    );
+    const reasoningMessage = savedState.messages[0];
+    strictEqual(reasoningMessage?.eventType, "item/reasoning/summaryTextDelta");
+    strictEqual(reasoningMessage?.text, "First second");
+    deepStrictEqual(reasoningMessage?.eventData, {
+      kind: "summaryText",
+      summaryIndex: 0,
+      text: "First second",
+    });
+  });
+
   it("keeps pending stream order when new notifications arrive during replay", async () => {
     const state = {
       ...createTestState(),

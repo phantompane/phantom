@@ -46,7 +46,10 @@ export function getRichEventKind(
   ) {
     return "file";
   }
-  if (message.eventType?.startsWith("item/reasoning/")) {
+  if (
+    message.eventType?.startsWith("item/reasoning/") &&
+    message.eventType !== "item/reasoning/summaryPartAdded"
+  ) {
     return "reasoning";
   }
   if (

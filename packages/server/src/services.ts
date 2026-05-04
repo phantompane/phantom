@@ -2352,14 +2352,11 @@ export class ServeServices {
     }
 
     if (method.startsWith("item/reasoning/")) {
-      const eventData = createReasoningEventData(method, params);
-      const delta =
-        method === "item/reasoning/summaryPartAdded"
-          ? "Reasoning summary added"
-          : (getRecordString(params, "delta") ?? "");
+      const delta = getRecordString(params, "delta") ?? "";
       if (!delta) {
         return;
       }
+      const eventData = createReasoningEventData(method, params);
       await this.appendRichEventMessage({
         chatId,
         delta,

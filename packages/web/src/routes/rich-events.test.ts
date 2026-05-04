@@ -35,6 +35,18 @@ describe("rich event helpers", () => {
       "plan",
     );
     strictEqual(
+      getRichEventKind(
+        createMessage({ eventType: "item/reasoning/summaryTextDelta" }),
+      ),
+      "reasoning",
+    );
+    strictEqual(
+      isRichEventMessage(
+        createMessage({ eventType: "item/reasoning/summaryPartAdded" }),
+      ),
+      false,
+    );
+    strictEqual(
       isRichEventMessage(createMessage({ eventType: "item/completed" })),
       false,
     );
