@@ -2179,26 +2179,11 @@ export function HomeRoute() {
     }
   }
 
-  async function openDeleteWorktree(
+  function openDeleteWorktree(
     projectId: string,
     worktree: ProjectWorktreeRecord,
   ) {
-    setDeleteWorktreeError(null);
-    setDeleteWorktreeBranchMode("default");
-    setDeleteWorktreeForce(false);
-    if (!worktree.isClean) {
-      setDeleteWorktreeTarget({
-        forceRequired: true,
-        projectId,
-        worktreePath: worktree.path,
-      });
-      return;
-    }
-
-    await deleteWorktree(projectId, worktree, {
-      branchMode: "default",
-      force: false,
-    });
+    confirmDeleteWorktree(projectId, worktree);
   }
 
   function confirmDeleteWorktree(
