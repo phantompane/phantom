@@ -241,6 +241,14 @@ interface DeleteWorktreeTarget {
 
 type DeleteWorktreeBranchMode = "default" | "keep" | "delete";
 
+type ToastTone = "danger" | "info" | "warning";
+
+interface ToastMessage {
+  id: number;
+  message: string;
+  tone: ToastTone;
+}
+
 interface RestoredPendingComposerContext {
   chatId: string;
   effort: string | null;
@@ -266,6 +274,9 @@ interface TransientFileSearchQuery {
   workspaceSelectionKey: string;
 }
 
+const toastDismissDelayMs = 6000;
+const maxVisibleToasts = 3;
+
 function firstProjectWorktree(
   projectId: string | null,
   worktreesByProject: Record<string, ProjectWorktreeRecord[]>,
@@ -278,6 +289,21 @@ function firstProjectWorktree(
 
 function getWorktreeExpansionKey(projectId: string, worktreePath: string) {
   return `${projectId}:${worktreePath}`;
+}
+
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message;
+  }
+  if (typeof err === "string") {
+    return err;
+  }
+  return "Something went wrong";
+}
+
+function formatErrorMessage(context: string, err: unknown): string {
+  const message = getErrorMessage(err);
+  return message ? `${context}: ${message}` : context;
 }
 
 function readNullableSearchParam(
@@ -518,7 +544,18 @@ export function HomeRoute() {
   );
   const [selectedFiles, setSelectedFiles] = useState<CodexFileRecord[]>([]);
   const [status, setStatus] = useState("Starting");
-  const [error, setError] = useState<string | null>(null);
+  const [sidebarError, setSidebarError] = useState<string | null>(null);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [composerError, setComposerError] = useState<string | null>(null);
+  const [addProjectError, setAddProjectError] = useState<string | null>(null);
+  const [deleteProjectError, setDeleteProjectError] = useState<string | null>(
+    null,
+  );
+  const [deleteWorktreeError, setDeleteWorktreeError] = useState<string | null>(
+    null,
+  );
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [isProjectsLoading, setIsProjectsLoading] = useState(true);
   const [loadingProjectIds, setLoadingProjectIds] = useState<Set<string>>(
@@ -555,6 +592,7 @@ export function HomeRoute() {
   const selectedProjectIdRef = useRef<string | null>(null);
   const selectedChatIdRef = useRef<string | null>(null);
   const selectedChatVersionRef = useRef(0);
+  const toastIdRef = useRef(0);
   const chatsByProjectRef = useRef(chatsByProject);
   const worktreesByProjectRef = useRef(worktreesByProject);
   const githubTargetsByProjectRef = useRef(githubTargetsByProject);
@@ -669,6 +707,33 @@ export function HomeRoute() {
       requestId: string;
     }) => answerApprovalMutation(chatId, requestId, decision),
   });
+
+  function dismissToast(id: number) {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }
+
+  function showToast(message: string, tone: ToastTone = "danger") {
+    const id = toastIdRef.current + 1;
+    toastIdRef.current = id;
+    setToasts((current) =>
+      [...current, { id, message, tone }].slice(-maxVisibleToasts),
+    );
+  }
+
+  useEffect(() => {
+    if (toasts.length === 0) {
+      return;
+    }
+
+    const timers = toasts.map((toast) =>
+      window.setTimeout(() => dismissToast(toast.id), toastDismissDelayMs),
+    );
+    return () => {
+      for (const timer of timers) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [toasts]);
 
   function updateSearchParams(
     updater: (nextSearchParams: URLSearchParams) => void,
@@ -1099,6 +1164,9 @@ export function HomeRoute() {
     selectedChatVersionRef.current += 1;
     isChatTimelinePinnedToBottomRef.current = true;
     scrollRestoredChatIdRef.current = null;
+    setTimelineError(null);
+    setComposerError(null);
+    setApprovalError(null);
     if (scrollSaveAnimationFrameRef.current !== null) {
       cancelAnimationFrame(scrollSaveAnimationFrameRef.current);
       scrollSaveAnimationFrameRef.current = null;
@@ -1302,7 +1370,7 @@ export function HomeRoute() {
         })
         .catch((err: Error) => {
           if (err.name !== "AbortError") {
-            setError(err.message);
+            setComposerError(formatErrorMessage("Could not search files", err));
           }
         })
         .finally(() => {
@@ -1418,6 +1486,7 @@ export function HomeRoute() {
     try {
       const data = await queryClient.fetchQuery(projectsQueryOptions());
       setProjects(data.projects);
+      setSidebarError(null);
       const projectIds = new Set(data.projects.map((project) => project.id));
       const nextChatsByProject = retainRecordsForProjects(
         chatsByProjectRef.current,
@@ -1481,7 +1550,7 @@ export function HomeRoute() {
       }
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setSidebarError(formatErrorMessage("Could not load projects", err));
       return false;
     } finally {
       setIsProjectsLoading(false);
@@ -1494,7 +1563,7 @@ export function HomeRoute() {
       const data = await queryClient.fetchQuery(modelsQueryOptions());
       setModels(data.models);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setComposerError(formatErrorMessage("Could not load models", err));
     } finally {
       setIsModelsLoading(false);
     }
@@ -1514,7 +1583,7 @@ export function HomeRoute() {
       if (err instanceof Error && err.name === "AbortError") {
         return;
       }
-      setError(err instanceof Error ? err.message : String(err));
+      setComposerError(formatErrorMessage("Could not load skills", err));
     } finally {
       if (!signal?.aborted) {
         setIsChatContextLoading(false);
@@ -1575,7 +1644,7 @@ export function HomeRoute() {
       );
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setSidebarError(formatErrorMessage("Could not load worktrees", err));
       return false;
     } finally {
       setProjectLoading(projectId, false);
@@ -1644,7 +1713,7 @@ export function HomeRoute() {
       );
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setSidebarError(formatErrorMessage("Could not load chats", err));
       return false;
     } finally {
       setChatProjectLoading(projectId, false);
@@ -1730,13 +1799,14 @@ export function HomeRoute() {
       ) {
         setMessages(data.messages);
         setMessagesChatId(chatId);
+        setTimelineError(null);
       }
     } catch (err) {
       if (
         selectedChatIdRef.current === chatId &&
         messagesRefreshRequestIdRef.current === requestId
       ) {
-        setError(err instanceof Error ? err.message : String(err));
+        setTimelineError(formatErrorMessage("Could not load messages", err));
       }
     } finally {
       if (options.showLoading && selectedChatIdRef.current === chatId) {
@@ -1779,6 +1849,16 @@ export function HomeRoute() {
     });
   }
 
+  function openAddProjectDialog() {
+    setAddProjectError(null);
+    setIsAddProjectOpen(true);
+  }
+
+  function closeAddProjectDialog() {
+    setIsAddProjectOpen(false);
+    setAddProjectError(null);
+  }
+
   async function addProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedProjectPath = projectPath.trim();
@@ -1786,14 +1866,14 @@ export function HomeRoute() {
       return;
     }
 
-    setError(null);
+    setAddProjectError(null);
     const requestWorkspaceSelectionKey = workspaceSelectionKeyRef.current;
     setIsBusy(true);
     try {
       const data = await addProjectRequest.mutateAsync(trimmedProjectPath);
       void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
       setProjectPath("");
-      setIsAddProjectOpen(false);
+      closeAddProjectDialog();
       const didRefresh = await refreshProjects();
       if (!didRefresh) {
         return;
@@ -1806,19 +1886,20 @@ export function HomeRoute() {
         chatId: null,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setAddProjectError(formatErrorMessage("Could not add project", err));
     } finally {
       setIsBusy(false);
     }
   }
 
   function openDeleteProject(project: ProjectRecord) {
-    setError(null);
+    setDeleteProjectError(null);
     setDeleteProjectTarget(project.id);
   }
 
   function closeDeleteProjectDialog() {
     setDeleteProjectTarget(null);
+    setDeleteProjectError(null);
   }
 
   async function deleteSelectedProject(event: FormEvent<HTMLFormElement>) {
@@ -1827,7 +1908,7 @@ export function HomeRoute() {
       return;
     }
 
-    setError(null);
+    setDeleteProjectError(null);
     setIsBusy(true);
     const projectId = pendingDeleteProject.id;
     const deletedProjectChatIds = (
@@ -1872,7 +1953,9 @@ export function HomeRoute() {
       closeDeleteProjectDialog();
       await refreshProjects();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setDeleteProjectError(
+        formatErrorMessage("Could not delete project", err),
+      );
     } finally {
       setIsBusy(false);
     }
@@ -1931,7 +2014,7 @@ export function HomeRoute() {
       return null;
     }
 
-    setError(null);
+    setSidebarError(null);
     const requestWorkspaceSelectionKey = workspaceSelectionKeyRef.current;
     const worktreeKey = worktree
       ? getWorktreeExpansionKey(projectId, worktree.path)
@@ -1955,7 +2038,7 @@ export function HomeRoute() {
           : {},
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(formatErrorMessage("Could not create worktree", err));
       return null;
     } finally {
       createChatInFlightRef.current = false;
@@ -1969,7 +2052,7 @@ export function HomeRoute() {
     projectId: string,
     worktree: ProjectWorktreeRecord,
   ) {
-    setError(null);
+    setDeleteWorktreeError(null);
     setDeleteWorktreeBranchMode("default");
     setDeleteWorktreeForce(false);
     if (!worktree.isClean) {
@@ -1989,6 +2072,7 @@ export function HomeRoute() {
 
   function closeDeleteWorktreeDialog() {
     setDeleteWorktreeTarget(null);
+    setDeleteWorktreeError(null);
     setDeleteWorktreeBranchMode("default");
     setDeleteWorktreeForce(false);
   }
@@ -2001,7 +2085,7 @@ export function HomeRoute() {
       force: boolean;
     },
   ) {
-    setError(null);
+    setDeleteWorktreeError(null);
     setIsBusy(true);
     try {
       const deleteWorktreeInput: {
@@ -2039,7 +2123,9 @@ export function HomeRoute() {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (!options.force && message.includes("has uncommitted changes")) {
+      const requiresForce =
+        !options.force && message.includes("has uncommitted changes");
+      if (requiresForce) {
         setDeleteWorktreeBranchMode(options.branchMode);
         setDeleteWorktreeForce(false);
         setDeleteWorktreeTarget({
@@ -2048,7 +2134,13 @@ export function HomeRoute() {
           worktreePath: worktree.path,
         });
       }
-      setError(message);
+      if (deleteWorktreeTarget || requiresForce) {
+        setDeleteWorktreeError(
+          formatErrorMessage("Could not delete worktree", message),
+        );
+      } else {
+        showToast(formatErrorMessage("Could not delete worktree", message));
+      }
     } finally {
       setIsBusy(false);
     }
@@ -2078,7 +2170,7 @@ export function HomeRoute() {
       return;
     }
 
-    setError(null);
+    setSidebarError(null);
     setIsBusy(true);
     try {
       await syncWorktreeRequest.mutateAsync({
@@ -2101,7 +2193,7 @@ export function HomeRoute() {
         updateSelection: selectedProjectIdRef.current === projectId,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(formatErrorMessage("Could not sync branch", err));
     } finally {
       setIsBusy(false);
     }
@@ -2198,7 +2290,7 @@ export function HomeRoute() {
         createdChatId ? isCreatedChatSelected() : isRequestWorkspaceSelected()
       ) {
         setComposerText(composerInput);
-        setError(err instanceof Error ? err.message : String(err));
+        setComposerError(formatErrorMessage("Could not send message", err));
       }
     } finally {
       if (createdChatId) {
@@ -2224,7 +2316,7 @@ export function HomeRoute() {
     ) {
       return;
     }
-    setError(null);
+    setComposerError(null);
     const requestChatVersion = selectedChatVersionRef.current;
     const requestId = sendMessageRequestIdRef.current + 1;
     sendMessageRequestIdRef.current = requestId;
@@ -2301,7 +2393,7 @@ export function HomeRoute() {
         return;
       }
       setComposerText(composerInput);
-      setError(err instanceof Error ? err.message : String(err));
+      setComposerError(formatErrorMessage("Could not send message", err));
     } finally {
       pendingSendChatIdsRef.current.delete(requestChatId);
       pendingComposerModesByChatRef.current.delete(requestChatId);
@@ -2322,7 +2414,6 @@ export function HomeRoute() {
       return null;
     }
     const requestChatId = selectedChatId;
-    setError(null);
     try {
       const data = await deletePendingMessageRequest.mutateAsync({
         chatId: requestChatId,
@@ -2334,14 +2425,16 @@ export function HomeRoute() {
       await refreshMessages(requestChatId);
       return data;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(formatErrorMessage("Could not delete pending message", err));
       return null;
     }
   }
 
   async function editPendingMessage(message: VisibleMessageRecord) {
     if (composerText.trim() || hasSelectedContext) {
-      setError("Clear the current message before editing a pending message");
+      setComposerError(
+        "Clear the current message before editing a pending message",
+      );
       composerTextareaRef.current?.focus();
       return;
     }
@@ -2366,14 +2459,15 @@ export function HomeRoute() {
         if (selectedChatIdRef.current === requeueChatId) {
           await refreshMessages(requeueChatId);
         }
-        setError(
+        showToast(
           "Pending message was restored to the queue because the composer changed before editing completed",
+          "warning",
         );
       } catch (err) {
-        setError(
-          `Pending message was deleted but could not be restored: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+        showToast(
+          `Pending message was deleted but could not be restored: ${getErrorMessage(
+            err,
+          )}`,
         );
       }
       return;
@@ -2446,7 +2540,6 @@ export function HomeRoute() {
     if (!selectedChatId) {
       return;
     }
-    setError(null);
     setIsInterrupting(true);
     try {
       await interruptChatRequest.mutateAsync(selectedChatId);
@@ -2454,7 +2547,7 @@ export function HomeRoute() {
         queryKey: queryKeys.chat(selectedChatId),
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(formatErrorMessage("Could not stop turn", err));
     } finally {
       setIsInterrupting(false);
     }
@@ -2464,7 +2557,7 @@ export function HomeRoute() {
     if (!selectedChatId || !pendingApproval) {
       return;
     }
-    setError(null);
+    setApprovalError(null);
     try {
       if (
         decision !== "accept" &&
@@ -2484,7 +2577,7 @@ export function HomeRoute() {
       });
       setPendingApproval(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setApprovalError(formatErrorMessage("Could not answer approval", err));
     }
   }
 
@@ -2600,13 +2693,20 @@ export function HomeRoute() {
               <SidebarGroupLabel>Projects</SidebarGroupLabel>
               <SidebarGroupAction
                 aria-label="Add project"
-                onClick={() => setIsAddProjectOpen(true)}
+                onClick={openAddProjectDialog}
                 title="Add project"
               >
                 <Plus className="size-4" />
               </SidebarGroupAction>
             </SidebarGroupHeader>
             <SidebarGroupContent>
+              {sidebarError && (
+                <InlineNotice
+                  className="mx-2 mb-2 group-data-[state=collapsed]/sidebar:hidden"
+                  message={sidebarError}
+                  onDismiss={() => setSidebarError(null)}
+                />
+              )}
               <SidebarMenu>
                 {showProjectListSkeleton ? (
                   <li className="px-2 py-1 group-data-[state=collapsed]/sidebar:hidden">
@@ -2941,7 +3041,16 @@ export function HomeRoute() {
         <SidebarRail />
       </Sidebar>
 
-      <Dialog open={isAddProjectOpen} onOpenChange={setIsAddProjectOpen}>
+      <Dialog
+        open={isAddProjectOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            openAddProjectDialog();
+          } else {
+            closeAddProjectDialog();
+          }
+        }}
+      >
         <DialogContent aria-labelledby="add-project-title">
           <DialogHeader>
             <DialogTitle id="add-project-title">Add project</DialogTitle>
@@ -2959,9 +3068,15 @@ export function HomeRoute() {
                 onChange={(event) => setProjectPath(event.target.value)}
               />
             </div>
+            {addProjectError && (
+              <InlineNotice
+                message={addProjectError}
+                onDismiss={() => setAddProjectError(null)}
+              />
+            )}
             <DialogFooter>
               <Button
-                onClick={() => setIsAddProjectOpen(false)}
+                onClick={closeAddProjectDialog}
                 type="button"
                 variant="outline"
               >
@@ -3013,6 +3128,12 @@ export function HomeRoute() {
                 Stop running, approval-blocked, or queued chats before deleting
                 this project.
               </div>
+            )}
+            {deleteProjectError && (
+              <InlineNotice
+                message={deleteProjectError}
+                onDismiss={() => setDeleteProjectError(null)}
+              />
             )}
             <DialogFooter>
               <Button
@@ -3099,6 +3220,12 @@ export function HomeRoute() {
               />
               <span>Force delete uncommitted changes</span>
             </label>
+            {deleteWorktreeError && (
+              <InlineNotice
+                message={deleteWorktreeError}
+                onDismiss={() => setDeleteWorktreeError(null)}
+              />
+            )}
             <DialogFooter>
               <Button
                 onClick={closeDeleteWorktreeDialog}
@@ -3123,6 +3250,8 @@ export function HomeRoute() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <ToastViewport toasts={toasts} onDismiss={dismissToast} />
 
       <SidebarInset>
         <header className="flex min-h-[var(--layout-topbar-height)] items-center gap-3 border-b border-border bg-[var(--surface-panel)] px-4">
@@ -3151,13 +3280,6 @@ export function HomeRoute() {
           </div>
         </header>
 
-        {error && (
-          <SystemBanner tone="danger">
-            <AlertTriangle className="size-4" />
-            <span>{error}</span>
-          </SystemBanner>
-        )}
-
         {pendingApproval && (
           <div className="border-b border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] px-4 py-3 text-[var(--semantic-warning-fg)]">
             <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -3169,6 +3291,13 @@ export function HomeRoute() {
                 <p className="mt-1 truncate font-mono text-[length:var(--font-size-xs)]">
                   {pendingApproval.method}
                 </p>
+                {approvalError && (
+                  <InlineNotice
+                    className="mt-2"
+                    message={approvalError}
+                    onDismiss={() => setApprovalError(null)}
+                  />
+                )}
               </div>
               <div className="flex shrink-0 flex-wrap gap-2">
                 <Button
@@ -3210,6 +3339,14 @@ export function HomeRoute() {
           ref={chatTimelineRef}
           onScroll={scheduleSelectedChatScrollPositionSave}
         >
+          {timelineError && (
+            <div className="mx-auto mb-3 max-w-[var(--layout-max-content-width)]">
+              <InlineNotice
+                message={timelineError}
+                onDismiss={() => setTimelineError(null)}
+              />
+            </div>
+          )}
           {showTimelineSkeleton ? (
             <TimelineSkeleton />
           ) : visibleMessages.length === 0 ? (
@@ -3220,7 +3357,7 @@ export function HomeRoute() {
               isGitHubTargetsLoading={isSelectedProjectGitHubTargetsLoading}
               selectedProject={selectedProject}
               selectedGitHubTargetNumber={selectedGitHubTargetNumber}
-              onOpenProjectDialog={() => setIsAddProjectOpen(true)}
+              onOpenProjectDialog={openAddProjectDialog}
               onSelectGitHubTarget={setSelectedGitHubTargetNumber}
             />
           ) : (
@@ -3247,6 +3384,12 @@ export function HomeRoute() {
           onSubmit={sendMessage}
         >
           <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">
+            {composerError && (
+              <InlineNotice
+                message={composerError}
+                onDismiss={() => setComposerError(null)}
+              />
+            )}
             {(selectedFiles.length > 0 || selectedSkills.length > 0) && (
               <div className="flex min-h-8 flex-wrap items-center gap-2 px-1">
                 {selectedFiles.map((file) => (
@@ -3299,7 +3442,12 @@ export function HomeRoute() {
                   rows={2}
                   ref={composerTextareaRef}
                   value={composerText}
-                  onChange={(event) => setComposerText(event.target.value)}
+                  onChange={(event) => {
+                    setComposerText(event.target.value);
+                    if (composerError) {
+                      setComposerError(null);
+                    }
+                  }}
                   onKeyDown={handleComposerKeyDown}
                 />
               </div>
@@ -3634,29 +3782,78 @@ function getContextOnlyMessage({
   return "Use the selected skills as context.";
 }
 
-function SystemBanner({
-  children,
-  tone,
-}: {
-  children: ReactNode;
-  tone: "danger" | "info";
-}) {
-  const toneClass =
-    tone === "danger"
-      ? "border-[var(--semantic-danger-border)] bg-[var(--semantic-danger-bg)] text-[var(--semantic-danger-fg)]"
-      : "border-[var(--semantic-info-border)] bg-[var(--semantic-info-bg)] text-[var(--semantic-info-fg)]";
+function getNoticeToneClass(tone: ToastTone): string {
+  switch (tone) {
+    case "danger":
+      return "border-[var(--semantic-danger-border)] bg-[var(--semantic-danger-bg)] text-[var(--semantic-danger-fg)]";
+    case "info":
+      return "border-[var(--semantic-info-border)] bg-[var(--semantic-info-bg)] text-[var(--semantic-info-fg)]";
+    case "warning":
+      return "border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] text-[var(--semantic-warning-fg)]";
+  }
+}
 
+function InlineNotice({
+  className,
+  message,
+  onDismiss,
+  tone = "danger",
+}: {
+  className?: string;
+  message: string;
+  onDismiss?: () => void;
+  tone?: ToastTone;
+}) {
   return (
     <div
       className={cn(
-        "border-b px-4 py-2 text-[length:var(--font-size-sm)]",
-        toneClass,
+        "flex min-w-0 items-start gap-2 rounded-[var(--radius-sm)] border px-3 py-2 text-left text-[length:var(--font-size-sm)]",
+        getNoticeToneClass(tone),
+        className,
       )}
-      role="status"
+      role={tone === "danger" ? "alert" : "status"}
     >
-      <div className="mx-auto flex max-w-[var(--layout-max-content-width)] items-center gap-2">
-        {children}
-      </div>
+      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+      <span className="min-w-0 flex-1 break-words">{message}</span>
+      {onDismiss && (
+        <button
+          aria-label="Dismiss"
+          className="rounded-[var(--radius-xs)] p-0.5 outline-none transition-colors hover:bg-[var(--state-hover-bg)] focus-visible:shadow-[var(--state-focus-ring)]"
+          onClick={onDismiss}
+          type="button"
+        >
+          <X className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ToastViewport({
+  onDismiss,
+  toasts,
+}: {
+  onDismiss: (id: number) => void;
+  toasts: ToastMessage[];
+}) {
+  if (toasts.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      aria-live="polite"
+      className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2"
+    >
+      {toasts.map((toast) => (
+        <InlineNotice
+          className="pointer-events-auto shadow-[var(--shadow-md)]"
+          key={toast.id}
+          message={toast.message}
+          tone={toast.tone}
+          onDismiss={() => onDismiss(toast.id)}
+        />
+      ))}
     </div>
   );
 }
