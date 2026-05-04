@@ -49,6 +49,7 @@ import type {
   CodexModelRecord,
   CodexSkillRecord,
   CodexTurnContextItem,
+  PendingApprovalRecord,
   ProjectWorktreeRecord,
   ProjectRecord,
   QueuedMessageRecord,
@@ -112,6 +113,8 @@ export interface ServeServicesOptions {
 
 interface PendingApprovalRequest {
   chatId: string;
+  method: string;
+  params: unknown;
   serverRequestId: ServerRequestId;
   responded: boolean;
 }
@@ -1032,6 +1035,24 @@ export class ServeServices {
     )[0]!;
   }
 
+  async getPendingApproval(
+    chatId: string,
+  ): Promise<PendingApprovalRecord | null> {
+    await this.resetStaleTransientChatState();
+    const state = await this.store.load();
+    const chat = this.requireChat(state, chatId);
+    for (const [requestId, approvalRequest] of this.approvalRequests) {
+      if (approvalRequest.chatId === chat.id && !approvalRequest.responded) {
+        return {
+          requestId,
+          method: approvalRequest.method,
+          params: approvalRequest.params,
+        };
+      }
+    }
+    return null;
+  }
+
   async getMessages(chatId: string): Promise<ChatMessageRecord[]> {
     await this.resetStaleTransientChatState();
     const state = await this.store.load();
@@ -1850,9 +1871,12 @@ export class ServeServices {
       return;
     }
 
+    const approvalMethod = message.method ?? "unknown";
     const approvalRequestId = createRecordId("approval");
     this.approvalRequests.set(approvalRequestId, {
       chatId: chat.id,
+      method: approvalMethod,
+      params: message.params,
       serverRequestId,
       responded: false,
     });
@@ -1865,7 +1889,7 @@ export class ServeServices {
       "agent.approval.requested",
       {
         requestId: approvalRequestId,
-        method: message.method,
+        method: approvalMethod,
         params: message.params,
       },
       { chatId: chat.id },
