@@ -206,9 +206,12 @@ interface PendingApproval {
 }
 
 interface DeleteWorktreeTarget {
+  forceRequired: boolean;
   projectId: string;
   worktreePath: string;
 }
+
+type DeleteWorktreeBranchMode = "default" | "keep" | "delete";
 
 interface RestoredPendingComposerContext {
   chatId: string;
@@ -458,9 +461,8 @@ export function HomeRoute() {
   const [projectPath, setProjectPath] = useState("");
   const [deleteWorktreeTarget, setDeleteWorktreeTarget] =
     useState<DeleteWorktreeTarget | null>(null);
-  const [deleteWorktreeBranchMode, setDeleteWorktreeBranchMode] = useState<
-    "default" | "keep" | "delete"
-  >("default");
+  const [deleteWorktreeBranchMode, setDeleteWorktreeBranchMode] =
+    useState<DeleteWorktreeBranchMode>("default");
   const [deleteWorktreeForce, setDeleteWorktreeForce] = useState(false);
   const [composerText, setComposerText] = useState("");
   const [models, setModels] = useState<CodexModelRecord[]>([]);
@@ -884,6 +886,10 @@ export function HomeRoute() {
       ) ?? null
     );
   }, [deleteWorktreeTarget, worktreesByProject]);
+  const isDeleteWorktreeForceRequired = Boolean(
+    deleteWorktreeTarget?.forceRequired ||
+    (pendingDeleteWorktree && !pendingDeleteWorktree.isClean),
+  );
 
   const selectedWorktree = useMemo(() => {
     if (!selectedProjectId) {
@@ -1729,14 +1735,26 @@ export function HomeRoute() {
     }
   }
 
-  function openDeleteWorktree(
+  async function openDeleteWorktree(
     projectId: string,
     worktree: ProjectWorktreeRecord,
   ) {
     setError(null);
     setDeleteWorktreeBranchMode("default");
     setDeleteWorktreeForce(false);
-    setDeleteWorktreeTarget({ projectId, worktreePath: worktree.path });
+    if (!worktree.isClean) {
+      setDeleteWorktreeTarget({
+        forceRequired: true,
+        projectId,
+        worktreePath: worktree.path,
+      });
+      return;
+    }
+
+    await deleteWorktree(projectId, worktree, {
+      branchMode: "default",
+      force: false,
+    });
   }
 
   function closeDeleteWorktreeDialog() {
@@ -1745,30 +1763,31 @@ export function HomeRoute() {
     setDeleteWorktreeForce(false);
   }
 
-  async function deleteSelectedWorktree(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!deleteWorktreeTarget || !pendingDeleteWorktree) {
-      return;
-    }
-
+  async function deleteWorktree(
+    projectId: string,
+    worktree: ProjectWorktreeRecord,
+    options: {
+      branchMode: DeleteWorktreeBranchMode;
+      force: boolean;
+    },
+  ) {
     setError(null);
     setIsBusy(true);
     try {
-      const projectId = deleteWorktreeTarget.projectId;
       const deleteWorktreeInput: {
         force: boolean;
         keepBranch?: boolean;
         name: string;
         path: string;
       } = {
-        name: pendingDeleteWorktree.name,
-        path: pendingDeleteWorktree.path,
-        force: deleteWorktreeForce,
+        name: worktree.name,
+        path: worktree.path,
+        force: options.force,
       };
-      if (deleteWorktreeBranchMode === "keep") {
+      if (options.branchMode === "keep") {
         deleteWorktreeInput.keepBranch = true;
       }
-      if (deleteWorktreeBranchMode === "delete") {
+      if (options.branchMode === "delete") {
         deleteWorktreeInput.keepBranch = false;
       }
       await deleteWorktreeRequest.mutateAsync({
@@ -1789,10 +1808,36 @@ export function HomeRoute() {
         updateSelection: selectedProjectIdRef.current === projectId,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      if (!options.force && message.includes("has uncommitted changes")) {
+        setDeleteWorktreeBranchMode(options.branchMode);
+        setDeleteWorktreeForce(false);
+        setDeleteWorktreeTarget({
+          forceRequired: true,
+          projectId,
+          worktreePath: worktree.path,
+        });
+      }
+      setError(message);
     } finally {
       setIsBusy(false);
     }
+  }
+
+  async function deleteSelectedWorktree(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!deleteWorktreeTarget || !pendingDeleteWorktree) {
+      return;
+    }
+
+    await deleteWorktree(
+      deleteWorktreeTarget.projectId,
+      pendingDeleteWorktree,
+      {
+        branchMode: deleteWorktreeBranchMode,
+        force: deleteWorktreeForce,
+      },
+    );
   }
 
   async function syncWorktreeBranch(
@@ -2586,7 +2631,7 @@ export function HomeRoute() {
                                               <DropdownMenuItem
                                                 disabled={isBusy}
                                                 onSelect={() =>
-                                                  openDeleteWorktree(
+                                                  void openDeleteWorktree(
                                                     project.id,
                                                     worktree,
                                                   )
@@ -2682,8 +2727,8 @@ export function HomeRoute() {
               Delete worktree
             </DialogTitle>
             <DialogDescription>
-              Remove this worktree from{" "}
-              {pendingDeleteProject?.name ?? "the project"}.
+              This worktree has uncommitted changes. Force deletion is required
+              to remove it from {pendingDeleteProject?.name ?? "the project"}.
             </DialogDescription>
           </DialogHeader>
           <form className="grid gap-4" onSubmit={deleteSelectedWorktree}>
@@ -2706,7 +2751,7 @@ export function HomeRoute() {
                 id="delete-worktree-branch-mode"
                 onChange={(event) =>
                   setDeleteWorktreeBranchMode(
-                    event.target.value as "default" | "keep" | "delete",
+                    event.target.value as DeleteWorktreeBranchMode,
                   )
                 }
                 value={deleteWorktreeBranchMode}
@@ -2736,7 +2781,11 @@ export function HomeRoute() {
                 Cancel
               </Button>
               <Button
-                disabled={isBusy || !pendingDeleteWorktree}
+                disabled={
+                  isBusy ||
+                  !pendingDeleteWorktree ||
+                  (isDeleteWorktreeForceRequired && !deleteWorktreeForce)
+                }
                 type="submit"
                 variant="destructive"
               >
