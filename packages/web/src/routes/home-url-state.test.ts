@@ -4,9 +4,11 @@ import {
   findValidatedSelectedChat,
   getSelectableReasoningEfforts,
   getSelectedSkillContextItems,
+  isKnownWorktreeChat,
   isShareableFileSearchQuery,
   mergeWorktreesWithChats,
   retainRecordsForProjects,
+  resolveRefreshedWorktreeChatId,
 } from "./home-url-state";
 
 describe("isShareableFileSearchQuery", () => {
@@ -178,5 +180,69 @@ describe("mergeWorktreesWithChats", () => {
         chatTitle: "empty",
       },
     ]);
+  });
+});
+
+describe("isKnownWorktreeChat", () => {
+  it("accepts a selected chat exposed by refreshed worktree metadata", () => {
+    expect(
+      isKnownWorktreeChat(
+        [{ chatId: "chat-main" }, { chatId: "chat-feature" }],
+        "chat-feature",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects absent and empty selected chat ids", () => {
+    const worktrees = [{ chatId: "chat-main" }, { chatId: null }];
+
+    expect(isKnownWorktreeChat(worktrees, "chat-feature")).toBe(false);
+    expect(isKnownWorktreeChat(worktrees, null)).toBe(false);
+  });
+});
+
+describe("resolveRefreshedWorktreeChatId", () => {
+  it("defers fallback while project chats are still loading", () => {
+    expect(
+      resolveRefreshedWorktreeChatId(
+        undefined,
+        [{ chatId: "chat-latest" }],
+        "chat-older",
+        "chat-main",
+      ),
+    ).toBe("chat-older");
+  });
+
+  it("keeps the selected chat when refreshed worktrees still reference it", () => {
+    expect(
+      resolveRefreshedWorktreeChatId(
+        [],
+        [{ chatId: "chat-main" }, { chatId: "chat-feature" }],
+        "chat-feature",
+        "chat-main",
+      ),
+    ).toBe("chat-feature");
+  });
+
+  it("keeps older selected chat history when the chat list contains it", () => {
+    expect(
+      resolveRefreshedWorktreeChatId(
+        [{ id: "chat-older" }],
+        [{ chatId: "chat-feature-latest" }],
+        "chat-older",
+        "chat-main",
+      ),
+    ).toBe("chat-older");
+  });
+
+  it("falls back only when the selected chat is no longer known", () => {
+    expect(
+      resolveRefreshedWorktreeChatId(
+        [{ id: "chat-main" }],
+        [{ chatId: "chat-main" }],
+        "chat-deleted",
+        "chat-main",
+      ),
+    ).toBe("chat-main");
   });
 });

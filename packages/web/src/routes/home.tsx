@@ -117,9 +117,11 @@ import {
   findValidatedSelectedChat,
   getSelectableReasoningEfforts,
   getSelectedSkillContextItems,
+  isKnownWorktreeChat,
   isShareableFileSearchQuery,
   mergeWorktreesWithChats,
   retainRecordsForProjects,
+  resolveRefreshedWorktreeChatId,
 } from "./home-url-state";
 import type {
   ChatMessageRecord,
@@ -737,6 +739,13 @@ export function HomeRoute() {
     chatsByProject[selectedProjectId] !== undefined &&
     worktreesByProject[selectedProjectId] !== undefined,
   );
+  const isSelectedChatKnownByWorktree = Boolean(
+    selectedProjectId &&
+    isKnownWorktreeChat(
+      worktreesByProject[selectedProjectId] ?? [],
+      selectedChatId,
+    ),
+  );
   const hasActiveTurn = Boolean(selectedChat?.activeTurnId);
   const isChatRunning = selectedChat?.status === "running" && hasActiveTurn;
 
@@ -1220,6 +1229,7 @@ export function HomeRoute() {
     if (
       !selectedChatId ||
       isSelectedChatValidated ||
+      isSelectedChatKnownByWorktree ||
       !selectedProjectId ||
       !hasLoadedSelectedProjectData
     ) {
@@ -1238,6 +1248,7 @@ export function HomeRoute() {
   }, [
     fileSearchQuery,
     hasLoadedSelectedProjectData,
+    isSelectedChatKnownByWorktree,
     isSelectedChatValidated,
     selectedChatId,
     selectedProjectId,
@@ -1406,9 +1417,12 @@ export function HomeRoute() {
       );
       const currentSelectedChatId = selectedChatIdRef.current;
       const currentFileSearchQuery = fileSearchQueryRef.current;
-      const nextChatId = currentSelectedChatId
-        ? (fallbackWorktree?.chatId ?? currentSelectedChatId)
-        : null;
+      const nextChatId = resolveRefreshedWorktreeChatId(
+        chatsByProjectRef.current[projectId],
+        mergedWorktrees,
+        currentSelectedChatId,
+        fallbackWorktree?.chatId ?? null,
+      );
       updateWorkspaceSearchParams(
         {
           projectId,
