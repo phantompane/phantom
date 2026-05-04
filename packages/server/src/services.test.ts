@@ -1407,8 +1407,296 @@ describe("ServeServices", () => {
         message.eventType,
       ]),
       [
-        ["msg_queued", "user", "next", "chat.message.queued"],
         ["chat_1_codex_turn_1_0", "assistant", "done", undefined],
+        ["msg_queued", "user", "next", "chat.message.queued"],
+      ],
+    );
+  });
+
+  it("places live assistant deltas after history and before steered and queued pending messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "start",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_live_delta",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "working",
+          eventType: "item/agentMessage/delta",
+          itemId: "item_live",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "next queued",
+          eventType: "chat.message.queued",
+          createdAt: "2026-04-25T00:03:00.000Z",
+        },
+        {
+          id: "msg_steered",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "adjust now",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:04:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            input: [{ text: "start" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "start", undefined],
+        ["msg_live_delta", "assistant", "working", "item/agentMessage/delta"],
+        ["msg_steered", "user", "adjust now", "chat.message.steered"],
+        ["msg_queued", "user", "next queued", "chat.message.queued"],
+      ],
+    );
+  });
+
+  it("places live assistant deltas before the matching repeated steered Codex item", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_live_delta",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "streaming",
+          eventType: "item/agentMessage/delta",
+          itemId: "item_live",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_steered",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            input: [{ text: "repeat" }],
+            items: [
+              { type: "userMessage", text: "repeat" },
+              { type: "assistantMessage", text: "between repeats" },
+              { type: "userMessage", text: "repeat" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "repeat", undefined],
+        ["chat_1_codex_turn_1_1", "user", "repeat", undefined],
+        ["chat_1_codex_turn_1_2", "assistant", "between repeats", undefined],
+        ["msg_live_delta", "assistant", "streaming", "item/agentMessage/delta"],
+        ["chat_1_codex_turn_1_3", "user", "repeat", undefined],
+      ],
+    );
+  });
+
+  it("uses the later repeated steered occurrence as the live assistant delta boundary", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_steered_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_live_delta",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "streaming",
+          eventType: "item/agentMessage/delta",
+          itemId: "item_live",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+        {
+          id: "msg_steered_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:03:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            input: [{ text: "repeat" }],
+            items: [
+              { type: "userMessage", text: "repeat" },
+              { type: "assistantMessage", text: "between repeats" },
+              { type: "userMessage", text: "repeat" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "repeat", undefined],
+        ["chat_1_codex_turn_1_1", "user", "repeat", undefined],
+        ["chat_1_codex_turn_1_2", "assistant", "between repeats", undefined],
+        ["msg_live_delta", "assistant", "streaming", "item/agentMessage/delta"],
+        ["chat_1_codex_turn_1_3", "user", "repeat", undefined],
+      ],
+    );
+  });
+
+  it("keeps live assistant deltas after history when a repeated steered boundary is still pending", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_steered_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_steered_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+        {
+          id: "msg_live_delta",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "streaming",
+          eventType: "item/agentMessage/delta",
+          itemId: "item_live",
+          createdAt: "2026-04-25T00:03:00.000Z",
+        },
+        {
+          id: "msg_steered_3",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:04:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            input: [{ text: "repeat" }],
+            items: [
+              { type: "userMessage", text: "repeat" },
+              { type: "assistantMessage", text: "between repeats" },
+              { type: "userMessage", text: "repeat" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "repeat", undefined],
+        ["chat_1_codex_turn_1_1", "user", "repeat", undefined],
+        ["chat_1_codex_turn_1_2", "assistant", "between repeats", undefined],
+        ["chat_1_codex_turn_1_3", "user", "repeat", undefined],
+        ["msg_live_delta", "assistant", "streaming", "item/agentMessage/delta"],
+        ["msg_steered_3", "user", "repeat", "chat.message.steered"],
       ],
     );
   });
@@ -1601,7 +1889,7 @@ describe("ServeServices", () => {
     );
   });
 
-  it("keeps queued messages local while matching Codex history exists", async () => {
+  it("keeps queued messages local after matching Codex history", async () => {
     const state = {
       ...createTestState(),
       projects: [createProject()],
@@ -1649,8 +1937,8 @@ describe("ServeServices", () => {
         message.eventType,
       ]),
       [
-        ["msg_queued", "user", "repeat", "chat.message.queued"],
         ["chat_1_codex_turn_1_0", "user", "repeat", undefined],
+        ["msg_queued", "user", "repeat", "chat.message.queued"],
       ],
     );
   });
