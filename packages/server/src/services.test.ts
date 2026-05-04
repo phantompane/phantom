@@ -5127,6 +5127,27 @@ describe("ServeServices", () => {
       },
     });
     codex.emitNotification({
+      method: "command/exec/outputDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        processId: "proc_2",
+        stream: "stdout",
+        deltaBase64: Buffer.from("log").toString("base64"),
+        capReached: false,
+      },
+    });
+    codex.emitNotification({
+      method: "command/exec/outputDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        processId: "proc_2",
+        stream: "stdout",
+        capReached: true,
+      },
+    });
+    codex.emitNotification({
       method: "item/fileChange/patchUpdated",
       params: {
         threadId: "thread_1",
@@ -5152,7 +5173,7 @@ describe("ServeServices", () => {
     });
 
     await vi.waitFor(async () => {
-      strictEqual((await store.load()).messages.length, 4);
+      strictEqual((await store.load()).messages.length, 5);
     });
 
     const savedState = await store.load();
@@ -5167,6 +5188,9 @@ describe("ServeServices", () => {
     );
     const emptyCommandMessage = savedState.messages.find(
       (message) => message.itemId === "cmd_empty",
+    );
+    const shellCommandMessage = savedState.messages.find(
+      (message) => message.eventType === "command/exec/outputDelta",
     );
 
     strictEqual(planMessage?.role, "event");
@@ -5209,6 +5233,12 @@ describe("ServeServices", () => {
       "item/commandExecution/outputDelta",
     );
     strictEqual(emptyCommandMessage?.text, "");
+    strictEqual(shellCommandMessage?.text, "log");
+    strictEqual(
+      (shellCommandMessage?.eventData as { capReached?: boolean } | undefined)
+        ?.capReached,
+      true,
+    );
     deepStrictEqual(
       (patchMessage?.eventData as { changes?: unknown[] } | undefined)?.changes,
       [{ path: "src/app.ts", kind: "modify", diff: "@@ final patch" }],

@@ -2329,13 +2329,22 @@ export class ServeServices {
       method === "command/exec/outputDelta"
     ) {
       const delta = extractCommandOutputDelta(method, params);
+      const eventData = createCommandOutputEventData(method, params);
       if (!delta) {
+        if (hasCommandOutputMetadataUpdate(method, params)) {
+          await this.mergeRichEventMessage({
+            chatId,
+            eventData,
+            eventType: method,
+            itemId: getCommandOutputItemId(method, params),
+          });
+        }
         return;
       }
       await this.appendRichEventMessage({
         chatId,
         delta,
-        eventData: createCommandOutputEventData(method, params),
+        eventData,
         eventType: method,
         itemId: getCommandOutputItemId(method, params),
       });
@@ -3979,6 +3988,17 @@ function createCommandOutputEventData(
     };
   }
   return { kind: "commandExecutionOutput" };
+}
+
+function hasCommandOutputMetadataUpdate(
+  method: string,
+  params: unknown,
+): boolean {
+  return (
+    method === "command/exec/outputDelta" &&
+    isRecord(params) &&
+    params.capReached === true
+  );
 }
 
 function createCommandLifecycleEventData(
