@@ -53,6 +53,8 @@ import type {
 export interface CreateChatInput {
   name?: string;
   base?: string;
+  worktreeName?: string;
+  worktreePath?: string;
 }
 
 export interface DeleteProjectWorktreeInput {
@@ -546,6 +548,59 @@ export class ServeServices {
   ): Promise<ChatRecord> {
     const state = await this.store.load();
     const project = this.requireProject(state, projectId);
+
+    const targetWorktreePath = input.worktreePath?.trim();
+    const targetWorktreeName = input.worktreeName?.trim();
+    const hasExistingWorktreeInput =
+      input.worktreePath !== undefined || input.worktreeName !== undefined;
+    if (hasExistingWorktreeInput) {
+      if (!targetWorktreePath) {
+        throw new Error("Worktree path is required");
+      }
+      const worktreesResult = await listWorktrees(project.rootPath, {
+        includePrunable: false,
+      });
+      if (!worktreesResult.ok) {
+        throw worktreesResult.error;
+      }
+      const targetWorktree = worktreesResult.value.worktrees.find(
+        (worktree) =>
+          worktree.path === targetWorktreePath &&
+          (!targetWorktreeName || worktree.name === targetWorktreeName),
+      );
+      if (!targetWorktree) {
+        throw new Error(`Worktree '${targetWorktreePath}' not found`);
+      }
+
+      const threadResult = await this.codex.startThread(targetWorktree.path);
+      const codexThreadId = extractThreadId(threadResult);
+      this.loadedThreadIds.add(codexThreadId);
+      const timestamp = createTimestamp();
+      const chat: ChatRecord = {
+        id: createRecordId("chat"),
+        projectId,
+        worktreeName: targetWorktree.name,
+        worktreePath: targetWorktree.path,
+        branchName: targetWorktree.branch,
+        codexThreadId,
+        title: targetWorktree.name,
+        status: "idle",
+        activeTurnId: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+
+      await this.store.update((nextState) => ({
+        ...nextState,
+        chats: [...nextState.chats, chat],
+        selectedProjectId: projectId,
+        selectedChatId: chat.id,
+      }));
+
+      this.eventHub.emit("chat.created", chat, { chatId: chat.id });
+      return chat;
+    }
+
     const createResult = await runCreateWorktree({
       gitRoot: project.rootPath,
       name: input.name,

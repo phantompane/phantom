@@ -3,6 +3,7 @@ import { beforeEach, describe, it, vi } from "vitest";
 
 const services = vi.hoisted(() => ({
   addProject: vi.fn(),
+  createChat: vi.fn(),
   listProjects: vi.fn(),
 }));
 
@@ -60,6 +61,42 @@ describe("rpcRoutes", () => {
     deepStrictEqual(await response.json(), {
       error: {
         message: "Invalid input: expected string, received undefined",
+      },
+    });
+  });
+
+  it("rejects partial existing-worktree chat creation bodies", async () => {
+    const response = await rpcRoutes.request("/projects/proj_1/chats", {
+      method: "POST",
+      body: JSON.stringify({ worktreeName: "feature" }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    strictEqual(response.status, 400);
+    strictEqual(services.createChat.mock.calls.length, 0);
+    deepStrictEqual(await response.json(), {
+      error: {
+        message: "Worktree path is required",
+      },
+    });
+  });
+
+  it("rejects blank existing-worktree chat paths", async () => {
+    const response = await rpcRoutes.request("/projects/proj_1/chats", {
+      method: "POST",
+      body: JSON.stringify({ worktreeName: "feature", worktreePath: " " }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    strictEqual(response.status, 400);
+    strictEqual(services.createChat.mock.calls.length, 0);
+    deepStrictEqual(await response.json(), {
+      error: {
+        message: "Worktree path is required",
       },
     });
   });

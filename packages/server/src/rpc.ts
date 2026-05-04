@@ -14,10 +14,29 @@ const createProjectSchema = z.object({
   path: z.string().min(1, "Project path is required"),
 });
 
-const createChatSchema = z.object({
-  name: z.string().optional(),
-  base: z.string().optional(),
-});
+const createChatSchema = z
+  .object({
+    name: z.string().optional(),
+    base: z.string().optional(),
+    worktreeName: z.string().optional(),
+    worktreePath: z.string().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.worktreePath !== undefined && !value.worktreePath.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Worktree path is required",
+        path: ["worktreePath"],
+      });
+    }
+    if (value.worktreeName !== undefined && value.worktreePath === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Worktree path is required",
+        path: ["worktreePath"],
+      });
+    }
+  });
 
 const worktreeSchema = z.object({
   name: z.string().min(1, "Worktree name is required"),
@@ -188,6 +207,8 @@ export const rpcRoutes = new Hono()
         {
           name: body.name,
           base: body.base,
+          worktreeName: body.worktreeName,
+          worktreePath: body.worktreePath,
         },
       );
       return c.json({ chat }, 201);

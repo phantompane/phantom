@@ -1332,6 +1332,85 @@ describe("ServeServices", () => {
     deepStrictEqual(savedState.messages, []);
   });
 
+  it("starts a new Codex thread in an existing worktree", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const store = new ServeStateStore(await createTemporaryDirectory());
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      store,
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "main",
+            path: "/repo",
+            pathToDisplay: ".",
+            branch: "main",
+            isClean: true,
+          },
+          {
+            name: "feature",
+            path: "/repo/.git/phantom/worktrees/feature",
+            pathToDisplay: ".git/phantom/worktrees/feature",
+            branch: "feature",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
+
+    const chat = await services.createChat("proj_1", {
+      worktreeName: "feature",
+      worktreePath: "/repo/.git/phantom/worktrees/feature",
+    });
+
+    strictEqual(coreMocks.runCreateWorktree.mock.calls.length, 0);
+    deepStrictEqual(coreMocks.listWorktrees.mock.calls[0], [
+      "/repo",
+      { includePrunable: false },
+    ]);
+    deepStrictEqual(codex.startThread.mock.calls[0], [
+      "/repo/.git/phantom/worktrees/feature",
+    ]);
+    strictEqual(chat.worktreeName, "feature");
+    strictEqual(chat.worktreePath, "/repo/.git/phantom/worktrees/feature");
+    strictEqual(chat.branchName, "feature");
+    strictEqual(chat.codexThreadId, "thread_new");
+    const savedState = await store.load();
+    strictEqual(savedState.selectedChatId, chat.id);
+    deepStrictEqual(
+      savedState.chats.map((candidate) => candidate.id),
+      [chat.id],
+    );
+  });
+
+  it("rejects partial existing-worktree chat creation input", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { codex, services } = await createHarness(state);
+
+    await rejects(
+      services.createChat("proj_1", {
+        worktreeName: "feature",
+      }),
+      /Worktree path is required/,
+    );
+
+    strictEqual(coreMocks.runCreateWorktree.mock.calls.length, 0);
+    strictEqual(coreMocks.listWorktrees.mock.calls.length, 0);
+    strictEqual(codex.startThread.mock.calls.length, 0);
+  });
+
   it("stores a newly created chat without importing existing history", async () => {
     const worktreePath = "/repo/.git/phantom/worktrees/feature";
     const state = {
