@@ -1,7 +1,9 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { describe, it } from "vitest";
 import {
+  getCommandEventMeta,
   getDiffEventData,
+  getFileEventMeta,
   getPlanEventData,
   getRichEventKind,
   getRichEventText,
@@ -101,6 +103,42 @@ describe("rich event helpers", () => {
         }),
       ),
       "hello\nworld\n",
+    );
+  });
+
+  it("returns lifecycle metadata for command and file events", () => {
+    deepStrictEqual(
+      getCommandEventMeta(
+        createMessage({
+          eventType: "item/commandExecution/outputDelta",
+          eventData: {
+            command: "pnpm test",
+            cwd: "/repo",
+            durationMs: 42,
+            exitCode: 0,
+            status: "completed",
+            text: "",
+          },
+        }),
+      ),
+      {
+        capReached: false,
+        command: "pnpm test",
+        cwd: "/repo",
+        durationMs: 42,
+        exitCode: 0,
+        status: "completed",
+        stream: null,
+      },
+    );
+    deepStrictEqual(
+      getFileEventMeta(
+        createMessage({
+          eventType: "item/fileChange/patchUpdated",
+          eventData: { changes: [], status: "failed" },
+        }),
+      ),
+      { status: "failed" },
     );
   });
 });

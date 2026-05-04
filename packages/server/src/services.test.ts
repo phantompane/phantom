@@ -5052,7 +5052,6 @@ describe("ServeServices", () => {
     codex.emitNotification({
       method: "turn/plan/updated",
       params: {
-        threadId: "thread_1",
         turnId: "turn_1",
         explanation: "Working through the change",
         plan: [{ step: "Inspect code", status: "completed" }],
@@ -5061,7 +5060,6 @@ describe("ServeServices", () => {
     codex.emitNotification({
       method: "turn/plan/updated",
       params: {
-        threadId: "thread_1",
         turnId: "turn_1",
         explanation: "Working through the change",
         plan: [
@@ -5089,6 +5087,46 @@ describe("ServeServices", () => {
       },
     });
     codex.emitNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        item: {
+          type: "commandExecution",
+          id: "cmd_1",
+          command: "pnpm test",
+          cwd: "/repo",
+          processId: "proc_1",
+          source: "agent",
+          status: "completed",
+          commandActions: [],
+          aggregatedOutput: null,
+          exitCode: 0,
+          durationMs: 42,
+        },
+      },
+    });
+    codex.emitNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        item: {
+          type: "commandExecution",
+          id: "cmd_empty",
+          command: "true",
+          cwd: "/repo",
+          processId: null,
+          source: "agent",
+          status: "completed",
+          commandActions: [],
+          aggregatedOutput: null,
+          exitCode: 0,
+          durationMs: 1,
+        },
+      },
+    });
+    codex.emitNotification({
       method: "item/fileChange/patchUpdated",
       params: {
         threadId: "thread_1",
@@ -5097,9 +5135,24 @@ describe("ServeServices", () => {
         changes: [{ path: "src/app.ts", kind: "modify", diff: "@@ patch" }],
       },
     });
+    codex.emitNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        item: {
+          type: "fileChange",
+          id: "patch_1",
+          changes: [
+            { path: "src/app.ts", kind: "modify", diff: "@@ final patch" },
+          ],
+          status: "completed",
+        },
+      },
+    });
 
     await vi.waitFor(async () => {
-      strictEqual((await store.load()).messages.length, 3);
+      strictEqual((await store.load()).messages.length, 4);
     });
 
     const savedState = await store.load();
@@ -5111,6 +5164,9 @@ describe("ServeServices", () => {
     );
     const patchMessage = savedState.messages.find(
       (message) => message.eventType === "item/fileChange/patchUpdated",
+    );
+    const emptyCommandMessage = savedState.messages.find(
+      (message) => message.itemId === "cmd_empty",
     );
 
     strictEqual(planMessage?.role, "event");
@@ -5128,8 +5184,38 @@ describe("ServeServices", () => {
       "first second",
     );
     deepStrictEqual(
+      {
+        command: (
+          commandMessage?.eventData as { command?: unknown } | undefined
+        )?.command,
+        durationMs: (
+          commandMessage?.eventData as { durationMs?: unknown } | undefined
+        )?.durationMs,
+        exitCode: (
+          commandMessage?.eventData as { exitCode?: unknown } | undefined
+        )?.exitCode,
+        status: (commandMessage?.eventData as { status?: unknown } | undefined)
+          ?.status,
+      },
+      {
+        command: "pnpm test",
+        durationMs: 42,
+        exitCode: 0,
+        status: "completed",
+      },
+    );
+    strictEqual(
+      emptyCommandMessage?.eventType,
+      "item/commandExecution/outputDelta",
+    );
+    strictEqual(emptyCommandMessage?.text, "");
+    deepStrictEqual(
       (patchMessage?.eventData as { changes?: unknown[] } | undefined)?.changes,
-      [{ path: "src/app.ts", kind: "modify", diff: "@@ patch" }],
+      [{ path: "src/app.ts", kind: "modify", diff: "@@ final patch" }],
+    );
+    strictEqual(
+      (patchMessage?.eventData as { status?: string } | undefined)?.status,
+      "completed",
     );
     strictEqual(
       emitSpy.mock.calls.some((call) => call[0] === "agent.plan.updated"),

@@ -1702,8 +1702,7 @@ export class ServeServices {
 
   private async processCodexNotification(message: CodexMessage): Promise<void> {
     const method = message.method ?? "unknown";
-    const threadId = extractThreadIdFromParams(message.params);
-    const chat = threadId ? await this.findChatByThreadId(threadId) : null;
+    const chat = await this.findChatByCodexParams(message.params);
     const eventType = mapCodexMethodToEvent(method);
 
     if (chat) {
@@ -2095,6 +2094,25 @@ export class ServeServices {
     return state.chats.find((chat) => chat.codexThreadId === threadId) ?? null;
   }
 
+  private async findChatByCodexParams(
+    params: unknown,
+  ): Promise<ChatRecord | null> {
+    const threadId = extractThreadIdFromParams(params);
+    if (threadId) {
+      const chat = await this.findChatByThreadId(threadId);
+      if (chat) {
+        return chat;
+      }
+    }
+
+    const turnId = extractTurnIdFromParams(params);
+    if (!turnId) {
+      return null;
+    }
+    const state = await this.store.load();
+    return state.chats.find((chat) => chat.activeTurnId === turnId) ?? null;
+  }
+
   private async applyCodexStateChange(
     chatId: string,
     method: string,
@@ -2381,6 +2399,37 @@ export class ServeServices {
       return;
     }
 
+    if (method === "item/started" || method === "item/completed") {
+      const item = getRecordObject(params, "item");
+      const itemId = getRecordString(item, "id");
+      const itemType = getRecordString(item, "type");
+      if (item && itemId && itemType === "commandExecution") {
+        await this.mergeRichEventMessage({
+          chatId,
+          eventData: createCommandLifecycleEventData(method, item),
+          eventType: "item/commandExecution/outputDelta",
+          itemId,
+          text: getRecordString(item, "aggregatedOutput"),
+        });
+        return;
+      }
+      if (item && itemId && itemType === "fileChange") {
+        const eventData = normalizeFilePatchEventData(item);
+        await this.upsertRichEventMessage({
+          chatId,
+          eventData: {
+            ...eventData,
+            lifecycleEventType: method,
+            status: getRecordString(item, "status") ?? null,
+          },
+          eventType: "item/fileChange/patchUpdated",
+          itemId,
+          text: summarizeFilePatchEvent(eventData),
+        });
+        return;
+      }
+    }
+
     if (
       method === "item/started" ||
       method === "item/completed" ||
@@ -2488,7 +2537,10 @@ export class ServeServices {
           message.itemId === itemId,
       );
       const text = `${existingMessage?.text ?? ""}${delta}`;
-      const nextEventData = { ...eventData, text };
+      const existingEventData = isRecord(existingMessage?.eventData)
+        ? existingMessage.eventData
+        : {};
+      const nextEventData = { ...existingEventData, ...eventData, text };
       if (!existingMessage) {
         return {
           ...state,
@@ -2510,6 +2562,63 @@ export class ServeServices {
         messages: state.messages.map((message) =>
           message.id === existingMessage.id
             ? { ...message, eventData: nextEventData, text }
+            : message,
+        ),
+      };
+    });
+  }
+
+  private async mergeRichEventMessage({
+    chatId,
+    eventData,
+    eventType,
+    itemId,
+    text,
+  }: {
+    chatId: string;
+    eventData: Record<string, unknown>;
+    eventType: string;
+    itemId: string;
+    text?: string;
+  }): Promise<void> {
+    await this.store.update((state) => {
+      const existingMessage = state.messages.find(
+        (message) =>
+          message.chatId === chatId &&
+          message.role === "event" &&
+          message.eventType === eventType &&
+          message.itemId === itemId,
+      );
+      const existingEventData = isRecord(existingMessage?.eventData)
+        ? existingMessage.eventData
+        : {};
+      const nextText = text ?? existingMessage?.text ?? "";
+      const nextEventData = {
+        ...existingEventData,
+        ...eventData,
+        text: nextText,
+      };
+      if (!existingMessage) {
+        return {
+          ...state,
+          messages: [
+            ...state.messages,
+            createMessage(
+              chatId,
+              "event",
+              nextText,
+              eventType,
+              itemId,
+              nextEventData,
+            ),
+          ],
+        };
+      }
+      return {
+        ...state,
+        messages: state.messages.map((message) =>
+          message.id === existingMessage.id
+            ? { ...message, eventData: nextEventData, text: nextText }
             : message,
         ),
       };
@@ -3870,6 +3979,23 @@ function createCommandOutputEventData(
     };
   }
   return { kind: "commandExecutionOutput" };
+}
+
+function createCommandLifecycleEventData(
+  method: string,
+  item: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    kind: "commandExecution",
+    lifecycleEventType: method,
+    command: getRecordString(item, "command") ?? null,
+    cwd: getRecordString(item, "cwd") ?? null,
+    processId: getRecordString(item, "processId") ?? null,
+    source: getRecordString(item, "source") ?? null,
+    status: getRecordString(item, "status") ?? null,
+    exitCode: getRecordNumber(item, "exitCode") ?? null,
+    durationMs: getRecordNumber(item, "durationMs") ?? null,
+  };
 }
 
 function getCommandOutputItemId(method: string, params: unknown): string {

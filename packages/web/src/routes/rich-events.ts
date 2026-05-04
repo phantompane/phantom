@@ -144,12 +144,31 @@ export function getWarningEventText(message: ChatMessageRecord): {
 
 export function getCommandEventMeta(message: ChatMessageRecord): {
   capReached: boolean;
+  command: string | null;
+  cwd: string | null;
+  durationMs: number | null;
+  exitCode: number | null;
   stream: string | null;
+  status: string | null;
 } {
   const eventData = getEventDataObject(message);
   return {
     capReached: eventData?.capReached === true,
+    command: getString(eventData, "command") ?? null,
+    cwd: getString(eventData, "cwd") ?? null,
+    durationMs: getNumber(eventData, "durationMs") ?? null,
+    exitCode: getNumber(eventData, "exitCode") ?? null,
     stream: getString(eventData, "stream") ?? null,
+    status: getString(eventData, "status") ?? null,
+  };
+}
+
+export function getFileEventMeta(message: ChatMessageRecord): {
+  status: string | null;
+} {
+  const eventData = getEventDataObject(message);
+  return {
+    status: getString(eventData, "status") ?? null,
   };
 }
 
@@ -173,6 +192,16 @@ function getString(
 ): string | undefined {
   const candidate = value?.[key];
   return typeof candidate === "string" ? candidate : undefined;
+}
+
+function getNumber(
+  value: Record<string, unknown> | null,
+  key: string,
+): number | undefined {
+  const candidate = value?.[key];
+  return typeof candidate === "number" && Number.isFinite(candidate)
+    ? candidate
+    : undefined;
 }
 
 function getStringArray(

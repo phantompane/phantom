@@ -134,6 +134,7 @@ import {
 import {
   getCommandEventMeta,
   getDiffEventData,
+  getFileEventMeta,
   getFilePatchEventData,
   getPlanEventData,
   getRichEventKind,
@@ -3790,9 +3791,36 @@ function CommandEventCard({ message }: { message: VisibleMessageRecord }) {
   return (
     <RichEventShell
       icon={<Terminal className="size-4" />}
-      meta={meta.stream ?? "output"}
-      title="Command output"
+      meta={meta.status ?? meta.stream ?? "output"}
+      title={meta.command ? "Command execution" : "Command output"}
     >
+      {meta.command && (
+        <p
+          className="mb-2 min-w-0 break-words font-mono text-[length:var(--font-size-xs)] text-muted-foreground"
+          title={meta.cwd ?? undefined}
+        >
+          {meta.command}
+        </p>
+      )}
+      {(meta.status || meta.exitCode !== null || meta.durationMs !== null) && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {meta.status && (
+            <Badge variant={getStatusBadgeVariant(meta.status)}>
+              {meta.status}
+            </Badge>
+          )}
+          {meta.exitCode !== null && (
+            <Badge variant={meta.exitCode === 0 ? "success" : "danger"}>
+              exit {meta.exitCode}
+            </Badge>
+          )}
+          {meta.durationMs !== null && (
+            <Badge variant="secondary">
+              {formatDurationMs(meta.durationMs)}
+            </Badge>
+          )}
+        </div>
+      )}
       <CollapsibleCode
         title={meta.capReached ? "Output truncated" : "Output"}
         value={output}
@@ -3803,6 +3831,7 @@ function CommandEventCard({ message }: { message: VisibleMessageRecord }) {
 
 function FileEventCard({ message }: { message: VisibleMessageRecord }) {
   const changes = getFilePatchEventData(message);
+  const meta = getFileEventMeta(message);
   const output = getRichEventText(message);
   if (message.eventType === "item/fileChange/outputDelta") {
     return (
@@ -3818,9 +3847,22 @@ function FileEventCard({ message }: { message: VisibleMessageRecord }) {
   return (
     <RichEventShell
       icon={<FileText className="size-4" />}
-      meta={`${changes.length} file${changes.length === 1 ? "" : "s"}`}
+      meta={
+        meta.status ??
+        `${changes.length} file${changes.length === 1 ? "" : "s"}`
+      }
       title="File patch updated"
     >
+      {meta.status && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          <Badge variant={getStatusBadgeVariant(meta.status)}>
+            {meta.status}
+          </Badge>
+          <Badge variant="secondary">
+            {changes.length} file{changes.length === 1 ? "" : "s"}
+          </Badge>
+        </div>
+      )}
       {changes.length === 0 ? (
         <p className="text-[length:var(--font-size-sm)] text-muted-foreground">
           {message.text}
@@ -3851,6 +3893,30 @@ function FileEventCard({ message }: { message: VisibleMessageRecord }) {
       )}
     </RichEventShell>
   );
+}
+
+function getStatusBadgeVariant(
+  status: string,
+): "danger" | "info" | "secondary" | "success" | "warning" {
+  if (status === "completed") {
+    return "success";
+  }
+  if (status === "failed") {
+    return "danger";
+  }
+  if (status === "declined") {
+    return "warning";
+  }
+  if (status === "inProgress") {
+    return "info";
+  }
+  return "secondary";
+}
+
+function formatDurationMs(durationMs: number): string {
+  return durationMs >= 1000
+    ? `${(durationMs / 1000).toFixed(1)}s`
+    : `${durationMs}ms`;
 }
 
 function ReasoningEventCard({ message }: { message: VisibleMessageRecord }) {
