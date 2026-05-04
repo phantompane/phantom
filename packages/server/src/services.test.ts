@@ -45,6 +45,7 @@ class FakeCodexBridge {
   readonly notificationHandlers: Array<(message: CodexMessage) => void> = [];
   readonly processExitHandlers: Array<(error: Error) => void> = [];
   readonly serverRequestHandlers: Array<(message: CodexMessage) => void> = [];
+  readonly archiveThread = vi.fn();
   readonly exec = vi.fn();
   readonly interruptTurn = vi.fn();
   readonly listThreads = vi.fn();
@@ -58,6 +59,7 @@ class FakeCodexBridge {
   readonly startThread = vi.fn();
   readonly startTurn = vi.fn();
   readonly steerTurn = vi.fn();
+  readonly unarchiveThread = vi.fn();
 
   onNotification(handler: (message: CodexMessage) => void): () => void {
     this.notificationHandlers.push(handler);
@@ -1182,6 +1184,497 @@ describe("ServeServices", () => {
     const savedState = await store.load();
     strictEqual(savedState.chats.length, 1);
     deepStrictEqual(savedState.messages, []);
+  });
+
+  it("syncs Codex archived thread state when syncing metadata", async () => {
+    const threadId = "019dc000-0000-7000-8000-000000000001";
+    const worktreePath = "/repo/.git/phantom/worktrees/feature/list";
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          codexThreadId: threadId,
+          status: "idle",
+          worktreeName: "feature/list",
+          worktreePath,
+        }),
+      ],
+    });
+    coreMocks.listWorktrees.mockResolvedValue({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature/list",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/feature/list",
+            branch: "feature/list",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    codex.listThreads.mockResolvedValueOnce({ threads: [] });
+    codex.listThreads.mockResolvedValueOnce({
+      threads: [
+        {
+          id: threadId,
+          cwd: worktreePath,
+          title: "Existing work",
+          createdAt: "2026-04-25T00:00:00.000Z",
+          updatedAt: "2026-04-25T00:03:00.000Z",
+        },
+      ],
+    });
+
+    const chats = await services.listChats("proj_1");
+
+    strictEqual(chats[0]?.status, "archived");
+    strictEqual((await store.load()).chats[0]?.status, "archived");
+    strictEqual(codex.listThreads.mock.calls[0]?.[0]?.archived, false);
+    strictEqual(codex.listThreads.mock.calls[1]?.[0]?.archived, true);
+  });
+
+  it("rejects unsafe Codex archived metadata and restores Codex", async () => {
+    const threadId = "019dc000-0000-7000-8000-000000000001";
+    const worktreePath = "/repo/.git/phantom/worktrees/feature/list";
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          activeTurnId: "turn_1",
+          codexThreadId: threadId,
+          status: "running",
+          worktreeName: "feature/list",
+          worktreePath,
+        }),
+      ],
+    });
+    markChatActiveInCurrentProcess(services, "chat_1");
+    coreMocks.listWorktrees.mockResolvedValue({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature/list",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/feature/list",
+            branch: "feature/list",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    codex.listThreads.mockResolvedValueOnce({ threads: [] });
+    codex.listThreads.mockResolvedValueOnce({
+      threads: [
+        {
+          id: threadId,
+          cwd: worktreePath,
+          title: "Existing work",
+          createdAt: "2026-04-25T00:00:00.000Z",
+          updatedAt: "2026-04-25T00:03:00.000Z",
+        },
+      ],
+    });
+
+    const chats = await services.listChats("proj_1");
+    const savedChat = (await store.load()).chats[0];
+
+    strictEqual(chats[0]?.status, "running");
+    strictEqual(chats[0]?.activeTurnId, "turn_1");
+    strictEqual(savedChat?.status, "running");
+    strictEqual(savedChat?.activeTurnId, "turn_1");
+    deepStrictEqual(codex.unarchiveThread.mock.calls, [[threadId]]);
+  });
+
+  it("rejects Codex archived metadata while local messages are queued", async () => {
+    const threadId = "019dc000-0000-7000-8000-000000000001";
+    const worktreePath = "/repo/.git/phantom/worktrees/feature/list";
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          codexThreadId: threadId,
+          worktreeName: "feature/list",
+          worktreePath,
+        }),
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued draft",
+          createdAt: timestamp,
+        },
+      ],
+    });
+    coreMocks.listWorktrees.mockResolvedValue({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature/list",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/feature/list",
+            branch: "feature/list",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    codex.listThreads.mockResolvedValueOnce({ threads: [] });
+    codex.listThreads.mockResolvedValueOnce({
+      threads: [
+        {
+          id: threadId,
+          cwd: worktreePath,
+          title: "Existing work",
+          createdAt: "2026-04-25T00:00:00.000Z",
+          updatedAt: "2026-04-25T00:03:00.000Z",
+        },
+      ],
+    });
+
+    const chats = await services.listChats("proj_1");
+    const savedState = await store.load();
+
+    strictEqual(chats[0]?.status, "idle");
+    strictEqual(savedState.chats[0]?.status, "idle");
+    strictEqual(savedState.queuedMessages.length, 1);
+    deepStrictEqual(codex.unarchiveThread.mock.calls, [[threadId]]);
+  });
+
+  it("syncs Codex unarchived thread state when syncing metadata", async () => {
+    const threadId = "019dc000-0000-7000-8000-000000000001";
+    const worktreePath = "/repo/.git/phantom/worktrees/feature/list";
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          codexThreadId: threadId,
+          status: "archived",
+          worktreeName: "feature/list",
+          worktreePath,
+        }),
+      ],
+    });
+    coreMocks.listWorktrees.mockResolvedValue({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature/list",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/feature/list",
+            branch: "feature/list",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    codex.listThreads.mockResolvedValueOnce({
+      threads: [
+        {
+          id: threadId,
+          cwd: worktreePath,
+          title: "Existing work",
+          createdAt: "2026-04-25T00:00:00.000Z",
+          updatedAt: "2026-04-25T00:03:00.000Z",
+        },
+      ],
+    });
+    codex.listThreads.mockResolvedValueOnce({ threads: [] });
+
+    const chats = await services.listChats("proj_1");
+
+    strictEqual(chats[0]?.status, "idle");
+    strictEqual((await store.load()).chats[0]?.status, "idle");
+  });
+
+  it("archives and restores idle chats", async () => {
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+    });
+
+    const archivedChat = await services.setChatArchived("chat_1", true);
+    const restoredChat = await services.setChatArchived("chat_1", false);
+
+    strictEqual(archivedChat.status, "archived");
+    strictEqual(archivedChat.activeTurnId, null);
+    strictEqual(restoredChat.status, "idle");
+    strictEqual((await store.load()).chats[0]?.status, "idle");
+    deepStrictEqual(codex.archiveThread.mock.calls, [["thread_1"]]);
+    deepStrictEqual(codex.unarchiveThread.mock.calls, [["thread_1"]]);
+  });
+
+  it("archives local chats without Codex threads locally", async () => {
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ codexThreadId: null })],
+    });
+
+    const archivedChat = await services.setChatArchived("chat_1", true);
+
+    strictEqual(archivedChat.status, "archived");
+    strictEqual((await store.load()).chats[0]?.status, "archived");
+    strictEqual(codex.archiveThread.mock.calls.length, 0);
+    strictEqual(codex.unarchiveThread.mock.calls.length, 0);
+  });
+
+  it("does not update local archive state when Codex archive fails", async () => {
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+    });
+    codex.archiveThread.mockRejectedValueOnce(new Error("archive failed"));
+
+    await rejects(services.setChatArchived("chat_1", true), /archive failed/);
+
+    strictEqual((await store.load()).chats[0]?.status, "idle");
+  });
+
+  it("blocks messages while Codex archive is in progress", async () => {
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+    });
+    let resolveArchive!: () => void;
+    const archivePromise = new Promise<void>((resolve) => {
+      resolveArchive = resolve;
+    });
+    codex.archiveThread.mockReturnValueOnce(archivePromise);
+
+    const archive = services.setChatArchived("chat_1", true);
+    await vi.waitFor(() => {
+      strictEqual(codex.archiveThread.mock.calls.length, 1);
+    });
+
+    await rejects(
+      services.sendMessage("chat_1", { text: "racing message" }),
+      /archive state is already changing/,
+    );
+
+    resolveArchive();
+    const archivedChat = await archive;
+    const savedState = await store.load();
+    strictEqual(archivedChat.status, "archived");
+    strictEqual(savedState.chats[0]?.status, "archived");
+    strictEqual(savedState.messages.length, 0);
+    strictEqual(savedState.queuedMessages.length, 0);
+  });
+
+  it("ignores turn state changes while Codex archive is in progress", async () => {
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+    });
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+    let resolveArchive!: () => void;
+    const archivePromise = new Promise<void>((resolve) => {
+      resolveArchive = resolve;
+    });
+    codex.archiveThread.mockReturnValueOnce(archivePromise);
+
+    const archive = services.setChatArchived("chat_1", true);
+    await vi.waitFor(() => {
+      strictEqual(codex.archiveThread.mock.calls.length, 1);
+    });
+
+    codex.emitNotification({
+      method: "turn/started",
+      params: {
+        threadId: "thread_1",
+        turn: { id: "turn_1" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    resolveArchive();
+    const archivedChat = await archive;
+    const savedState = await store.load();
+    strictEqual(archivedChat.status, "archived");
+    strictEqual(savedState.chats[0]?.status, "archived");
+    strictEqual(savedState.chats[0]?.activeTurnId, null);
+    strictEqual(
+      emitSpy.mock.calls.some((call) => call[0] === "agent.turn.started"),
+      false,
+    );
+  });
+
+  it("does not alter non-archived chats when restore is requested", async () => {
+    const { services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          activeTurnId: "turn_1",
+          status: "running",
+        }),
+      ],
+    });
+    markChatActiveInCurrentProcess(services, "chat_1");
+
+    const restoredChat = await services.setChatArchived("chat_1", false);
+    const savedChat = (await store.load()).chats[0];
+
+    strictEqual(restoredChat.status, "running");
+    strictEqual(restoredChat.activeTurnId, "turn_1");
+    strictEqual(savedChat?.status, "running");
+    strictEqual(savedChat?.activeTurnId, "turn_1");
+  });
+
+  it("rejects archiving active chats and sending messages to archived chats", async () => {
+    const { services } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ activeTurnId: "turn_1", status: "running" })],
+    });
+    markChatActiveInCurrentProcess(services, "chat_1");
+
+    await rejects(
+      services.setChatArchived("chat_1", true),
+      /Cannot archive a chat/,
+    );
+
+    const { services: inProcessServices } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+    });
+    markChatActiveInCurrentProcess(inProcessServices, "chat_1");
+    await rejects(
+      inProcessServices.setChatArchived("chat_1", true),
+      /Cannot archive a chat/,
+    );
+
+    const { services: queuedServices } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued draft",
+          createdAt: timestamp,
+        },
+      ],
+    });
+    await rejects(
+      queuedServices.setChatArchived("chat_1", true),
+      /Cannot archive a chat with pending messages/,
+    );
+
+    const { services: drainingServices } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+    });
+    markChatDrainingQueuedMessages(drainingServices, "chat_1");
+    await rejects(
+      drainingServices.setChatArchived("chat_1", true),
+      /Cannot archive a chat while queued messages are sending/,
+    );
+
+    const { services: archivedServices } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "archived" })],
+    });
+    await rejects(
+      archivedServices.sendMessage("chat_1", { text: "continue" }),
+      /Archived chats must be restored/,
+    );
+  });
+
+  it("ignores live Codex state changes for archived chats", async () => {
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "archived" })],
+    });
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+
+    codex.emitNotification({
+      method: "turn/started",
+      params: {
+        threadId: "thread_1",
+        turn: { id: "turn_1" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const savedState = await store.load();
+    strictEqual(savedState.chats[0]?.status, "archived");
+    strictEqual(savedState.chats[0]?.activeTurnId, null);
+    strictEqual(
+      emitSpy.mock.calls.some((call) => call[0] === "agent.turn.started"),
+      false,
+    );
+  });
+
+  it("syncs live Codex archive notifications", async () => {
+    const { codex, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+    });
+
+    codex.emitNotification({
+      method: "thread/archived",
+      params: { threadId: "thread_1" },
+    });
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).chats[0]?.status, "archived");
+    });
+
+    codex.emitNotification({
+      method: "thread/unarchived",
+      params: { threadId: "thread_1" },
+    });
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).chats[0]?.status, "idle");
+    });
+  });
+
+  it("rejects unsafe live Codex archive notifications and restores Codex", async () => {
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ activeTurnId: "turn_1", status: "running" })],
+    });
+    markChatActiveInCurrentProcess(services, "chat_1");
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+
+    codex.emitNotification({
+      method: "thread/archived",
+      params: { threadId: "thread_1" },
+    });
+
+    await vi.waitFor(() => {
+      strictEqual(codex.unarchiveThread.mock.calls.length, 1);
+    });
+    const savedChat = (await store.load()).chats[0];
+    strictEqual(savedChat?.status, "running");
+    strictEqual(savedChat?.activeTurnId, "turn_1");
+    deepStrictEqual(codex.unarchiveThread.mock.calls, [["thread_1"]]);
+    strictEqual(
+      emitSpy.mock.calls.some((call) => call[0] === "agent.event"),
+      false,
+    );
   });
 
   it("keeps duplicate local messages that have not appeared in thread history yet", async () => {
@@ -5872,6 +6365,45 @@ describe("ServeServices", () => {
       emitSpy.mock.calls.some((call) => call[0] === "chat.message.created"),
       true,
     );
+  });
+
+  it("rejects restoring deleted pending messages into archived chats", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "archived" })],
+      messages: [],
+      queuedMessages: [],
+    };
+    const { codex, services, store } = await createHarness(state);
+
+    await rejects(
+      services.restorePendingMessage("chat_1", {
+        message: {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user",
+          text: "queued draft",
+          eventType: "chat.message.queued",
+          createdAt: timestamp,
+        },
+        messageIndex: 0,
+        queuedMessage: {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued draft",
+          createdAt: timestamp,
+        },
+        queuedMessageIndex: 0,
+      }),
+      /Archived chats must be restored/,
+    );
+
+    const savedState = await store.load();
+    strictEqual(savedState.messages.length, 0);
+    strictEqual(savedState.queuedMessages.length, 0);
+    strictEqual(codex.startTurn.mock.calls.length, 0);
   });
 
   it("restarts queued drain after restoring a pending message into an idle chat", async () => {

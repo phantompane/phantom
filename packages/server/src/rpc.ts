@@ -105,6 +105,10 @@ const approvalSchema = z.object({
   decision: z.enum(["accept", "acceptForSession", "decline", "cancel"]),
 });
 
+const archiveChatSchema = z.object({
+  archived: z.boolean(),
+});
+
 const chatQuerySchema = z.object({
   context: z.string().optional(),
   fileQuery: z.string().optional(),
@@ -331,6 +335,18 @@ export const rpcRoutes = new Hono()
         return c.json({ files }, 200);
       }
       const chat = await services.getChat(chatId);
+      return c.json({ chat }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .post("/chats/:chatId/archive", jsonBody(archiveChatSchema), async (c) => {
+    try {
+      const body = c.req.valid("json");
+      const chat = await getServeServices().setChatArchived(
+        c.req.param("chatId"),
+        body.archived,
+      );
       return c.json({ chat }, 200);
     } catch (error) {
       return handleApiError(c, error);

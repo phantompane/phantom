@@ -260,6 +260,7 @@ export class ServeServices {
   private readonly drainingQueuedMessageChatIds = new Set<string>();
   private readonly pendingQueuedMessageDrainChatIds = new Set<string>();
   private readonly activeTurnChatIds = new Set<string>();
+  private readonly archiveOperationChatIds = new Set<string>();
   private readonly activeWorktreeOperationLocks = new Map<string, number>();
   private readonly reportedAgentErrors = new WeakSet<object>();
 
@@ -429,6 +430,10 @@ export class ServeServices {
       )
       .filter((chat): chat is ChatRecord => Boolean(chat));
 
+    const rejectedArchivedThreadChats: Array<{
+      chat: ChatRecord;
+      reason: string;
+    }> = [];
     await this.store.update((nextState) => {
       const existingProjectChats = nextState.chats.filter(
         (chat) => chat.projectId === projectId,
@@ -444,15 +449,39 @@ export class ServeServices {
         if (!existingChat) {
           return chat;
         }
+        const archiveBlockMessage =
+          chat.status === "archived"
+            ? this.getChatArchiveBlockMessage(nextState, existingChat, true)
+            : null;
+        if (archiveBlockMessage) {
+          rejectedArchivedThreadChats.push({
+            chat: existingChat,
+            reason: archiveBlockMessage,
+          });
+          return {
+            ...chat,
+            id: existingChat.id,
+            status: existingChat.status,
+            activeTurnId: existingChat.activeTurnId,
+            createdAt: existingChat.createdAt,
+          };
+        }
+        const shouldPreserveActiveChatState =
+          chat.status !== "archived" &&
+          (isChatActive(existingChat, this.pendingChatTurns) ||
+            this.isChatActiveInCurrentProcess(existingChat));
         return {
           ...chat,
           id: existingChat.id,
-          status: isChatActive(existingChat, this.pendingChatTurns)
+          status: shouldPreserveActiveChatState
             ? existingChat.status
             : chat.status,
-          activeTurnId: isChatActive(existingChat, this.pendingChatTurns)
-            ? existingChat.activeTurnId
-            : null,
+          activeTurnId:
+            chat.status === "archived"
+              ? null
+              : shouldPreserveActiveChatState
+                ? existingChat.activeTurnId
+                : null,
           createdAt: existingChat.createdAt,
         };
       });
@@ -505,6 +534,11 @@ export class ServeServices {
         selectedChatId,
       };
     });
+    await Promise.all(
+      rejectedArchivedThreadChats.map(({ chat, reason }) =>
+        this.restoreRejectedCodexArchive(chat, reason),
+      ),
+    );
 
     const syncedState = await this.store.load();
     return annotateTransientChatState(
@@ -597,24 +631,33 @@ export class ServeServices {
       return [];
     }
 
-    const threads: CodexThreadRecord[] = [];
-    let cursor: string | null = null;
-    do {
-      const result = await this.codex.listThreads({
-        archived: false,
-        cursor,
-        cwd,
-        limit: 100,
-        sourceKinds: ["cli", "vscode", "appServer"],
-        sortDirection: "desc",
-        sortKey: "updated_at",
-        useStateDbOnly: true,
-      });
-      threads.push(...normalizeCodexThreadList(result));
-      cursor = normalizeCodexCursor(result, "nextCursor");
-    } while (cursor);
+    const threadsById = new Map<string, CodexThreadRecord>();
+    for (const archived of [false, true]) {
+      let cursor: string | null = null;
+      do {
+        const result = await this.codex.listThreads({
+          archived,
+          cursor,
+          cwd,
+          limit: 100,
+          sourceKinds: ["cli", "vscode", "appServer"],
+          sortDirection: "desc",
+          sortKey: "updated_at",
+          useStateDbOnly: true,
+        });
+        for (const thread of normalizeCodexThreadList(result)) {
+          const nextThread: CodexThreadRecord = archived
+            ? { ...thread, status: "archived" }
+            : thread;
+          if (!archived || !threadsById.has(thread.id)) {
+            threadsById.set(thread.id, nextThread);
+          }
+        }
+        cursor = normalizeCodexCursor(result, "nextCursor");
+      } while (cursor);
+    }
 
-    return threads;
+    return Array.from(threadsById.values());
   }
 
   async listProjectGitHubCheckoutTargets(
@@ -1053,6 +1096,70 @@ export class ServeServices {
     return null;
   }
 
+  async setChatArchived(
+    chatId: string,
+    archived: boolean,
+  ): Promise<ChatRecord> {
+    await this.resetStaleTransientChatState();
+    const initialState = await this.store.load();
+    const initialChat = this.requireChat(initialState, chatId);
+    if (this.archiveOperationChatIds.has(chatId)) {
+      throw new Error("Chat archive state is already changing");
+    }
+    if (!archived && initialChat.status !== "archived") {
+      return initialChat;
+    }
+    this.assertCanSetChatArchived(initialState, initialChat, archived);
+    this.archiveOperationChatIds.add(chatId);
+    try {
+      if (initialChat.codexThreadId) {
+        if (archived) {
+          await this.codex.archiveThread(initialChat.codexThreadId);
+        } else {
+          await this.codex.unarchiveThread(initialChat.codexThreadId);
+        }
+      }
+
+      let updatedChat: ChatRecord | null = null;
+      let didUpdate = false;
+      await this.store.update((state) => {
+        const chat = this.requireChat(state, chatId);
+        if (!archived && chat.status !== "archived") {
+          updatedChat = chat;
+          return state;
+        }
+        this.assertCanSetChatArchived(state, chat, archived);
+
+        const nextChat: ChatRecord = {
+          ...chat,
+          status: archived ? "archived" : "idle",
+          activeTurnId: null,
+          updatedAt: createTimestamp(),
+        };
+        updatedChat = nextChat;
+        didUpdate = true;
+
+        return {
+          ...state,
+          chats: state.chats.map((candidate) =>
+            candidate.id === chatId ? nextChat : candidate,
+          ),
+        };
+      });
+
+      if (!updatedChat) {
+        throw new Error(`Chat '${chatId}' not found`);
+      }
+      if (!didUpdate) {
+        return updatedChat;
+      }
+      this.eventHub.emit("chat.updated", updatedChat, { chatId });
+      return updatedChat;
+    } finally {
+      this.archiveOperationChatIds.delete(chatId);
+    }
+  }
+
   async getMessages(chatId: string): Promise<ChatMessageRecord[]> {
     await this.resetStaleTransientChatState();
     const state = await this.store.load();
@@ -1121,6 +1228,7 @@ export class ServeServices {
     let queuedUserMessage: ChatMessageRecord | null = null;
     await this.store.update((nextState) => {
       const chat = this.requireChat(nextState, chatId);
+      this.assertChatCanReceiveMessage(chat);
       this.assertChatWorktreeIsAvailable(chat);
       const isDrainingQueuedMessage =
         this.drainingQueuedMessageChatIds.has(chatId);
@@ -1264,6 +1372,7 @@ export class ServeServices {
 
     await this.store.update((nextState) => {
       const chat = this.requireChat(nextState, chatId);
+      this.assertChatCanReceiveMessage(chat);
       this.assertChatWorktreeIsAvailable(chat);
       const isDrainingQueuedMessage =
         this.drainingQueuedMessageChatIds.has(chatId);
@@ -1321,6 +1430,7 @@ export class ServeServices {
 
     const state = await this.store.load();
     const chat = this.requireChat(state, chatId);
+    this.assertChatCanReceiveMessage(chat);
     if (chat.status === "waitingForApproval") {
       throw new Error("Chat is waiting for approval");
     }
@@ -1899,6 +2009,9 @@ export class ServeServices {
   private async drainQueuedMessages(chatId: string): Promise<void> {
     const state = await this.store.load();
     const chat = this.requireChat(state, chatId);
+    if (chat.status === "archived") {
+      return;
+    }
     if (isChatInActiveTurn(chat) || this.pendingChatTurns.has(chatId)) {
       return;
     }
@@ -2044,6 +2157,17 @@ export class ServeServices {
     if (this.isWorktreeOperationActive(chat.worktreePath)) {
       throw new Error(
         `Worktree '${chat.worktreeName}' is busy. Wait for the current worktree operation to finish before sending messages.`,
+      );
+    }
+  }
+
+  private assertChatCanReceiveMessage(chat: ChatRecord): void {
+    if (this.archiveOperationChatIds.has(chat.id)) {
+      throw new Error("Chat archive state is already changing");
+    }
+    if (chat.status === "archived") {
+      throw new Error(
+        "Archived chats must be restored before sending messages",
       );
     }
   }
@@ -2280,6 +2404,21 @@ export class ServeServices {
     method: string,
     params: unknown,
   ): Promise<boolean> {
+    const state = await this.store.load();
+    const chat = this.requireChat(state, chatId);
+    if (method === "thread/archived" || method === "thread/unarchived") {
+      return await this.updateChatArchiveStatusFromCodex(
+        chatId,
+        method === "thread/archived",
+      );
+    }
+    if (this.archiveOperationChatIds.has(chatId)) {
+      return false;
+    }
+    if (chat.status === "archived") {
+      return false;
+    }
+
     if (method === "turn/started") {
       this.activeTurnChatIds.add(chatId);
       await this.updateChatStatus(
@@ -2316,6 +2455,52 @@ export class ServeServices {
       await this.updateChatStatus(chatId, "running", undefined);
     }
     return true;
+  }
+
+  private async updateChatArchiveStatusFromCodex(
+    chatId: string,
+    archived: boolean,
+  ): Promise<boolean> {
+    let blockedChat: ChatRecord | null = null;
+    let blockMessage: string | null = null;
+    let didUpdate = false;
+    await this.store.update((state) => {
+      const chat = this.requireChat(state, chatId);
+      if (archived) {
+        const nextBlockMessage = this.getChatArchiveBlockMessage(
+          state,
+          chat,
+          true,
+        );
+        if (nextBlockMessage) {
+          blockedChat = chat;
+          blockMessage = nextBlockMessage;
+          return state;
+        }
+      } else if (chat.status !== "archived") {
+        return state;
+      }
+
+      const nextChat: ChatRecord = {
+        ...chat,
+        status: archived ? "archived" : "idle",
+        activeTurnId: null,
+        updatedAt: createTimestamp(),
+      };
+      didUpdate = true;
+      return {
+        ...state,
+        chats: state.chats.map((candidate) =>
+          candidate.id === chatId ? nextChat : candidate,
+        ),
+      };
+    });
+
+    if (blockedChat && blockMessage) {
+      await this.restoreRejectedCodexArchive(blockedChat, blockMessage);
+      return false;
+    }
+    return didUpdate;
   }
 
   private async resetStaleTransientChatState(): Promise<void> {
@@ -2357,6 +2542,62 @@ export class ServeServices {
     );
   }
 
+  private assertCanSetChatArchived(
+    state: ServeState,
+    chat: ChatRecord,
+    archived: boolean,
+  ): void {
+    const blockMessage = this.getChatArchiveBlockMessage(state, chat, archived);
+    if (blockMessage) {
+      throw new Error(blockMessage);
+    }
+  }
+
+  private getChatArchiveBlockMessage(
+    state: ServeState,
+    chat: ChatRecord,
+    archived: boolean,
+  ): string | null {
+    if (!archived) {
+      return null;
+    }
+    if (
+      isChatActive(chat, this.pendingChatTurns) ||
+      this.isChatActiveInCurrentProcess(chat)
+    ) {
+      return "Cannot archive a chat with an active Codex turn";
+    }
+    if (this.drainingQueuedMessageChatIds.has(chat.id)) {
+      return "Cannot archive a chat while queued messages are sending";
+    }
+    if (state.queuedMessages.some((message) => message.chatId === chat.id)) {
+      return "Cannot archive a chat with pending messages";
+    }
+    return null;
+  }
+
+  private async restoreRejectedCodexArchive(
+    chat: ChatRecord,
+    reason: string,
+  ): Promise<void> {
+    if (!chat.codexThreadId) {
+      return;
+    }
+    try {
+      await this.codex.unarchiveThread(chat.codexThreadId);
+    } catch (error) {
+      this.eventHub.emit(
+        "agent.error",
+        {
+          message: "Codex archived a chat that Phantom could not archive",
+          reason,
+          error: toErrorMessage(error),
+        },
+        { chatId: chat.id },
+      );
+    }
+  }
+
   private hasApprovalRequestForChat(chatId: string): boolean {
     for (const approvalRequest of this.approvalRequests.values()) {
       if (approvalRequest.chatId === chatId) {
@@ -2392,13 +2633,18 @@ export class ServeServices {
       ...state,
       chats: state.chats.map((chat) =>
         chat.id === chatId
-          ? {
-              ...chat,
-              status,
-              activeTurnId:
-                activeTurnId === undefined ? chat.activeTurnId : activeTurnId,
-              updatedAt: createTimestamp(),
-            }
+          ? chat.status === "archived"
+            ? {
+                ...chat,
+                activeTurnId: null,
+              }
+            : {
+                ...chat,
+                status,
+                activeTurnId:
+                  activeTurnId === undefined ? chat.activeTurnId : activeTurnId,
+                updatedAt: createTimestamp(),
+              }
           : chat,
       ),
     }));
@@ -2888,8 +3134,13 @@ function latestChatForWorktree(chats: ChatRecord[]): ChatRecord | null {
   const sortedChats = [...chats].sort((left, right) =>
     right.updatedAt.localeCompare(left.updatedAt),
   );
+  const selectableChats = sortedChats.some((chat) => chat.status !== "archived")
+    ? sortedChats.filter((chat) => chat.status !== "archived")
+    : sortedChats;
   return (
-    sortedChats.find((chat) => chat.codexThreadId) ?? sortedChats[0] ?? null
+    selectableChats.find((chat) => chat.codexThreadId) ??
+    selectableChats[0] ??
+    null
   );
 }
 

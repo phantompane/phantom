@@ -22,7 +22,7 @@ interface SkillSelectionRecord {
   path: string;
 }
 
-interface WorktreeChatMergeRecord<TStatus> {
+interface WorktreeChatMergeRecord<TStatus extends string> {
   id: string;
   status: TStatus;
   title: string;
@@ -30,7 +30,7 @@ interface WorktreeChatMergeRecord<TStatus> {
   worktreePath: string;
 }
 
-interface WorktreeMergeRecord<TStatus> {
+interface WorktreeMergeRecord<TStatus extends string> {
   chatId: string | null;
   chatStatus: TStatus | null;
   chatTitle: string;
@@ -124,14 +124,22 @@ export function retainRecordsForProjects<TRecord>(
 }
 
 export function mergeWorktreesWithChats<
-  TStatus,
+  TStatus extends string,
   TWorktree extends WorktreeMergeRecord<TStatus>,
   TChat extends WorktreeChatMergeRecord<TStatus>,
 >(worktrees: TWorktree[], chats: TChat[]): TWorktree[] {
   const latestChatsByPath = new Map<string, TChat>();
   for (const chat of chats) {
     const current = latestChatsByPath.get(chat.worktreePath);
-    if (!current || chat.updatedAt.localeCompare(current.updatedAt) > 0) {
+    if (
+      !current ||
+      (current.status === "archived" && chat.status !== "archived") ||
+      (current.status === chat.status &&
+        chat.updatedAt.localeCompare(current.updatedAt) > 0) ||
+      (current.status !== "archived" &&
+        chat.status !== "archived" &&
+        chat.updatedAt.localeCompare(current.updatedAt) > 0)
+    ) {
       latestChatsByPath.set(chat.worktreePath, chat);
     }
   }

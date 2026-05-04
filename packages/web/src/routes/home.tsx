@@ -1,5 +1,7 @@
 import {
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   Bot,
   Brain,
   CheckCircle2,
@@ -42,6 +44,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   answerApprovalMutation,
   addProjectMutation,
+  archiveChatMutation,
   createChatMutation,
   deleteProjectMutation,
   deletePendingMessageMutation,
@@ -231,6 +234,15 @@ const statusMeta: Record<
 
 type PendingApproval = PendingApprovalRecord & { chatId: string };
 type PendingApprovalEventData = PendingApprovalRecord;
+
+function canArchiveChat(chat: ChatRecord): boolean {
+  return (
+    chat.status !== "archived" &&
+    chat.status !== "running" &&
+    chat.status !== "waitingForApproval" &&
+    !chat.activeTurnId
+  );
+}
 
 interface DeleteWorktreeTarget {
   forceRequired: boolean;
@@ -586,6 +598,9 @@ export function HomeRoute() {
   const [pendingComposerMode, setPendingComposerMode] =
     useState<ComposerSubmitMode | null>(null);
   const [isInterrupting, setIsInterrupting] = useState(false);
+  const [archiveTransitionChatId, setArchiveTransitionChatId] = useState<
+    string | null
+  >(null);
   const createChatInFlightRef = useRef(false);
   const chatTimelineRef = useRef<HTMLElement | null>(null);
   const isChatTimelinePinnedToBottomRef = useRef(true);
@@ -712,6 +727,10 @@ export function HomeRoute() {
       decision: "accept" | "acceptForSession" | "decline" | "cancel";
       requestId: string;
     }) => answerApprovalMutation(chatId, requestId, decision),
+  });
+  const archiveChatRequest = useMutation({
+    mutationFn: ({ archived, chatId }: { archived: boolean; chatId: string }) =>
+      archiveChatMutation(chatId, archived),
   });
 
   function clearToastTimer(id: number) {
@@ -920,6 +939,7 @@ export function HomeRoute() {
     ),
   );
   const hasActiveTurn = Boolean(selectedChat?.activeTurnId);
+  const isSelectedChatArchived = selectedChat?.status === "archived";
   const isChatRunning = selectedChat?.status === "running" && hasActiveTurn;
 
   const selectedModel = useMemo(
@@ -949,7 +969,9 @@ export function HomeRoute() {
   const canStartNewProjectChat =
     Boolean(selectedProject) && !selectedChatId && Boolean(composerText.trim());
   const canSendMessage =
-    (hasSelectedChat && Boolean(composerText.trim() || hasSelectedContext)) ||
+    (hasSelectedChat &&
+      !isSelectedChatArchived &&
+      Boolean(composerText.trim() || hasSelectedContext)) ||
     canStartNewProjectChat;
   const primaryComposerMode: ComposerSubmitMode = hasActiveTurn
     ? isChatRunning
@@ -958,6 +980,8 @@ export function HomeRoute() {
     : "send";
   const isComposerBlocked =
     isSendingMessage ||
+    isSelectedChatArchived ||
+    Boolean(selectedChatId && archiveTransitionChatId === selectedChatId) ||
     deletePendingMessageRequest.isPending ||
     restorePendingMessageRequest.isPending ||
     Boolean(
@@ -968,7 +992,10 @@ export function HomeRoute() {
     !isComposerBlocked &&
     (primaryComposerMode !== "steer" || isChatRunning);
   const canQueueComposerMessage =
-    hasSelectedChat && canSendMessage && !isComposerBlocked;
+    hasSelectedChat &&
+    !isSelectedChatArchived &&
+    canSendMessage &&
+    !isComposerBlocked;
   const canInterruptActiveTurn =
     hasActiveTurn && !isInterrupting && Boolean(selectedChat?.activeTurnId);
   const areComposerOptionsDisabled = !hasSelectedChat || isComposerBlocked;
@@ -2303,6 +2330,70 @@ export function HomeRoute() {
     }
   }
 
+  async function setChatArchived(chat: ChatRecord, archived: boolean) {
+    if (isBusy || archiveChatRequest.isPending) {
+      return;
+    }
+    if (archived && !canArchiveChat(chat)) {
+      return;
+    }
+    const hasRestoredPendingDraftForChat =
+      selectedChatIdRef.current === chat.id &&
+      restoredPendingComposerContextRef.current?.chatId === chat.id &&
+      Boolean(composerTextRef.current.trim() || hasSelectedContextRef.current);
+    const hasSelectedComposerDraftForChat =
+      selectedChatIdRef.current === chat.id &&
+      Boolean(composerTextRef.current.trim() || hasSelectedContextRef.current);
+    if (
+      archived &&
+      (hasSelectedComposerDraftForChat || hasRestoredPendingDraftForChat)
+    ) {
+      setComposerError(
+        "Clear or send the current message before archiving this chat",
+      );
+      composerTextareaRef.current?.focus();
+      return;
+    }
+
+    setComposerError(null);
+    setIsBusy(true);
+    setArchiveTransitionChatId(chat.id);
+    try {
+      const data = await archiveChatRequest.mutateAsync({
+        chatId: chat.id,
+        archived,
+      });
+      upsertChatRecord(data.chat);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.chat(chat.id),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.projectChats(chat.projectId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.projectWorktrees(chat.projectId),
+      });
+      if (selectedChatIdRef.current === chat.id && archived) {
+        restoredPendingComposerContextRef.current = null;
+        setComposerText("");
+        setSelectedFiles([]);
+        setSelectedSkillPaths(new Set());
+      }
+      await refreshChats(chat.projectId, { updateSelection: false });
+      await refreshWorktrees(chat.projectId, { updateSelection: false });
+    } catch (err) {
+      setComposerError(
+        formatErrorMessage(
+          archived ? "Could not archive chat" : "Could not restore chat",
+          err,
+        ),
+      );
+    } finally {
+      setArchiveTransitionChatId(null);
+      setIsBusy(false);
+    }
+  }
+
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await submitComposer("send");
@@ -2720,6 +2811,7 @@ export function HomeRoute() {
   }
 
   function selectProject(projectId: string) {
+    restoredPendingComposerContextRef.current = null;
     setComposerText("");
     setSelectedFiles([]);
     setSelectedSkillPaths(new Set());
@@ -3143,6 +3235,9 @@ export function HomeRoute() {
                                             chatId,
                                           )
                                         }
+                                        onSetChatArchived={(chat, archived) =>
+                                          void setChatArchived(chat, archived)
+                                        }
                                       />
                                     )}
                                   </SidebarMenuSubItem>
@@ -3400,6 +3495,44 @@ export function HomeRoute() {
               )}
             </p>
           </div>
+          {selectedChat && (
+            <Button
+              aria-label={
+                selectedChat.status === "archived"
+                  ? "Restore chat"
+                  : "Archive chat"
+              }
+              className="size-8 text-[var(--icon-color-default)]"
+              disabled={
+                isBusy ||
+                archiveChatRequest.isPending ||
+                (selectedChat.status !== "archived" &&
+                  !canArchiveChat(selectedChat))
+              }
+              onClick={() =>
+                void setChatArchived(
+                  selectedChat,
+                  selectedChat.status !== "archived",
+                )
+              }
+              size="icon"
+              title={
+                selectedChat.status === "archived"
+                  ? "Restore chat"
+                  : "Archive chat"
+              }
+              type="button"
+              variant="ghost"
+            >
+              {archiveChatRequest.isPending ? (
+                <LoadingSpinner />
+              ) : selectedChat.status === "archived" ? (
+                <ArchiveRestore />
+              ) : (
+                <Archive />
+              )}
+            </Button>
+          )}
         </header>
 
         {visiblePendingApproval && (
@@ -3567,11 +3700,13 @@ export function HomeRoute() {
                   enterKeyHint="enter"
                   id="composer"
                   placeholder={
-                    hasSelectedChat
-                      ? "Ask Codex to work in this worktree"
-                      : selectedProject
-                        ? "Ask Codex to create a worktree and start"
-                        : "Select a project to start"
+                    isSelectedChatArchived
+                      ? "Restore this chat to continue"
+                      : hasSelectedChat
+                        ? "Ask Codex to work in this worktree"
+                        : selectedProject
+                          ? "Ask Codex to create a worktree and start"
+                          : "Select a project to start"
                   }
                   rows={2}
                   ref={composerTextareaRef}
@@ -3736,14 +3871,91 @@ export function HomeRoute() {
 function SidebarChatList({
   chats,
   isLoading,
+  onSetChatArchived,
   onSelectChat,
   selectedChatId,
 }: {
   chats: ChatRecord[];
   isLoading: boolean;
+  onSetChatArchived: (chat: ChatRecord, archived: boolean) => void;
   onSelectChat: (chatId: string) => void;
   selectedChatId: string | null;
 }) {
+  const activeChats = chats.filter((chat) => chat.status !== "archived");
+  const archivedChats = chats.filter((chat) => chat.status === "archived");
+  const renderChat = (chat: ChatRecord) => {
+    const isSelected = chat.id === selectedChatId;
+    const isArchived = chat.status === "archived";
+    const archiveLabel = isArchived ? "Restore chat" : "Archive chat";
+
+    return (
+      <li className="group/chat min-w-0" key={chat.id}>
+        <div
+          className={cn(
+            "flex min-h-7 min-w-0 items-center gap-0.5 rounded-[var(--radius-sm)] transition-colors duration-[var(--motion-duration-fast)] hover:bg-sidebar-accent",
+            isSelected && "bg-sidebar-accent text-sidebar-accent-foreground",
+          )}
+        >
+          <button
+            aria-current={isSelected ? "page" : undefined}
+            className={cn(
+              "flex min-w-0 flex-1 items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 text-left text-[length:var(--font-size-xs)] outline-none focus-visible:shadow-[var(--state-focus-ring)]",
+              isSelected
+                ? "text-sidebar-accent-foreground"
+                : "text-[var(--text-secondary)]",
+            )}
+            onClick={() => onSelectChat(chat.id)}
+            title={chat.title}
+            type="button"
+          >
+            <MessageSquare className="size-3.5 shrink-0 text-[var(--icon-color-default)]" />
+            <span className="min-w-0 flex-1 truncate">{chat.title}</span>
+            <span
+              aria-hidden="true"
+              className={cn(
+                "size-1.5 shrink-0 rounded-full",
+                statusMeta[chat.status].dot,
+              )}
+            />
+            <span className="sr-only">
+              Status: {statusMeta[chat.status].label}
+            </span>
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                aria-label={`Open actions for ${chat.title}`}
+                className={cn(
+                  "mr-0.5 size-6 text-[var(--icon-color-default)] opacity-100 data-[state=open]:opacity-100 sm:opacity-0 sm:group-focus-within/chat:opacity-100 sm:group-hover/chat:opacity-100",
+                  isSelected && "sm:opacity-100",
+                )}
+                size="icon"
+                title="Chat actions"
+                type="button"
+                variant="ghost"
+              >
+                <MoreHorizontal className="size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                disabled={!isArchived && !canArchiveChat(chat)}
+                onSelect={() => onSetChatArchived(chat, !isArchived)}
+              >
+                {isArchived ? (
+                  <ArchiveRestore className="size-4" />
+                ) : (
+                  <Archive className="size-4" />
+                )}
+                <span>{archiveLabel}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </li>
+    );
+  };
+
   return (
     <ul
       aria-label="Chat history"
@@ -3758,38 +3970,15 @@ function SidebarChatList({
           No chat history
         </li>
       ) : (
-        chats.map((chat) => {
-          const isSelected = chat.id === selectedChatId;
-          return (
-            <li className="min-w-0" key={chat.id}>
-              <button
-                aria-current={isSelected ? "page" : undefined}
-                className={cn(
-                  "flex min-h-7 w-full min-w-0 items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 text-left text-[length:var(--font-size-xs)] outline-none transition-colors duration-[var(--motion-duration-fast)] hover:bg-sidebar-accent focus-visible:shadow-[var(--state-focus-ring)]",
-                  isSelected
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-[var(--text-secondary)]",
-                )}
-                onClick={() => onSelectChat(chat.id)}
-                title={chat.title}
-                type="button"
-              >
-                <MessageSquare className="size-3.5 shrink-0 text-[var(--icon-color-default)]" />
-                <span className="min-w-0 flex-1 truncate">{chat.title}</span>
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    statusMeta[chat.status].dot,
-                  )}
-                />
-                <span className="sr-only">
-                  Status: {statusMeta[chat.status].label}
-                </span>
-              </button>
+        <>
+          {activeChats.map(renderChat)}
+          {archivedChats.length > 0 && (
+            <li className="px-2 pt-1 text-[length:var(--font-size-2xs)] font-medium uppercase text-[var(--text-tertiary)]">
+              Archived
             </li>
-          );
-        })
+          )}
+          {archivedChats.map(renderChat)}
+        </>
       )}
     </ul>
   );

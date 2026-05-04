@@ -300,6 +300,18 @@ export class CodexBridge {
     });
   }
 
+  async archiveThread(threadId: string): Promise<unknown> {
+    return this.request("thread/archive", {
+      threadId,
+    });
+  }
+
+  async unarchiveThread(threadId: string): Promise<unknown> {
+    return this.request("thread/unarchive", {
+      threadId,
+    });
+  }
+
   async startThread(
     cwd: string,
     options: CodexTurnOptions = {},
