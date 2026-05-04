@@ -3707,6 +3707,9 @@ function getLocalMessageMergeSortBucket(
   if (isQueuedMessage(message)) {
     return orderedCodexMessages.length * 2 + 3;
   }
+  if (isLocalTimelineEvent(message)) {
+    return orderedCodexMessages.length * 2 + 1;
+  }
   if (isLiveAssistantDeltaMessage(message)) {
     const boundaryInsertionIndex = findLiveAssistantDeltaBoundaryInsertionIndex(
       message,
@@ -3948,6 +3951,10 @@ function isPendingSteeredMessage(message: ChatMessageRecord): boolean {
 
 function isQueuedMessage(message: ChatMessageRecord): boolean {
   return message.role === "user" && message.eventType === "chat.message.queued";
+}
+
+function isLocalTimelineEvent(message: ChatMessageRecord): boolean {
+  return message.role === "event" || message.role === "error";
 }
 
 function isCodexLiveAssistantMessageFresh(

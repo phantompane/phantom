@@ -1762,6 +1762,52 @@ describe("ServeServices", () => {
     );
   });
 
+  it("keeps local Codex events after thread messages with fallback timestamps", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:00:01.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            input: [{ text: "fix the UI" }],
+            items: [{ type: "agentMessage", text: "working" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "fix the UI", undefined],
+        ["assistant", "working", undefined],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+      ],
+    );
+  });
+
   it("deduplicates a local message once a matching newer Codex message exists", async () => {
     const state = {
       ...createTestState(),
