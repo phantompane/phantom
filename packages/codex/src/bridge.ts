@@ -69,6 +69,16 @@ interface PendingRequest {
 
 type SpawnCodexProcess = typeof spawn;
 
+const CODEX_APPROVAL_REVIEWER_CONFIG_ARGS = [
+  "-c",
+  'approvals_reviewer="auto_review"',
+] as const;
+const CODEX_APP_SERVER_CONFIG_ARGS = [
+  "-c",
+  'sandbox_mode="workspace-write"',
+  ...CODEX_APPROVAL_REVIEWER_CONFIG_ARGS,
+] as const;
+
 export function getCodexBin(): string {
   return process.env.PHANTOM_SERVE_CODEX_BIN ?? "codex";
 }
@@ -373,9 +383,13 @@ export class CodexBridge {
 
   private async start(): Promise<void> {
     this.stderr = "";
-    this.proc = this.spawnCodexProcess(this.codexBin, ["app-server"], {
-      stdio: ["pipe", "pipe", "pipe"],
-    }) as ChildProcessWithoutNullStreams;
+    this.proc = this.spawnCodexProcess(
+      this.codexBin,
+      ["app-server", ...CODEX_APP_SERVER_CONFIG_ARGS],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    ) as ChildProcessWithoutNullStreams;
     const proc = this.proc;
 
     proc.stderr.on("data", (chunk: Buffer) => {

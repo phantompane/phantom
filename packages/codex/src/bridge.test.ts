@@ -85,7 +85,13 @@ describe("CodexBridge", () => {
 
     expect(spawnCodexProcess).toHaveBeenCalledWith(
       "fake-codex",
-      ["app-server"],
+      [
+        "app-server",
+        "-c",
+        'sandbox_mode="workspace-write"',
+        "-c",
+        'approvals_reviewer="auto_review"',
+      ],
       {
         stdio: ["pipe", "pipe", "pipe"],
       },
@@ -295,6 +301,38 @@ describe("CodexBridge", () => {
       id: "99",
       result: { decision: "decline" },
     });
+  });
+
+  it("runs codex exec with read-only sandbox", async () => {
+    const { bridge, proc, spawnCodexProcess } = createBridge();
+
+    const execPromise = bridge.exec("name this branch", {
+      cwd: "/repo",
+      model: "gpt-5.4-mini",
+    });
+    await vi.waitFor(() => expect(spawnCodexProcess).toHaveBeenCalledOnce());
+
+    const args = spawnCodexProcess.mock.calls[0]?.[1];
+    expect(args).toEqual([
+      "exec",
+      "--model",
+      "gpt-5.4-mini",
+      "--sandbox",
+      "read-only",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--output-last-message",
+      expect.stringMatching(/last-message\.txt$/),
+      "name this branch",
+    ]);
+    expect(spawnCodexProcess.mock.calls[0]?.[2]).toEqual({
+      cwd: "/repo",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    proc.stdout.write("branch-name\n");
+    proc.emit("close", 0, null);
+    await expect(execPromise).resolves.toBe("branch-name\n");
   });
 
   it("waits for codex exec processes to close after timeout before rejecting", async () => {
