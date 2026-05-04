@@ -118,6 +118,14 @@ interface SubmitMessageOptions {
 type PendingTurnEvent =
   | { kind: "notification"; message: CodexMessage }
   | { kind: "serverRequest"; message: CodexMessage };
+
+type CodexTurnItemSource = "input" | "item";
+type InternalChatMessageRecord = ChatMessageRecord & {
+  codexOrder?: number;
+  codexItemSource?: CodexTurnItemSource;
+  mergeSortBucket?: number;
+  mergeSortIndex?: number;
+};
 type ServerRequestId = number | string;
 
 interface ProjectWorktreeSnapshot {
@@ -952,7 +960,13 @@ export class ServeServices {
           ...existingUserMessage,
           eventType: undefined,
         }
-      : createMessage(chat.id, "user", text);
+      : createMessage(
+          chat.id,
+          "user",
+          text,
+          isSteeringActiveTurn ? "chat.message.steered" : undefined,
+          isSteeringActiveTurn ? (chat.activeTurnId ?? undefined) : undefined,
+        );
     let nextStatus: ChatStatus | null = null;
     let nextActiveTurnId: string | null | undefined;
     let pendingTurnThreadId: string | null = null;
@@ -2239,7 +2253,7 @@ function sortChatsByUpdatedAt(chats: ChatRecord[]): ChatRecord[] {
 function normalizeCodexThreadMessages(
   value: unknown,
   chatId: string,
-): ChatMessageRecord[] {
+): InternalChatMessageRecord[] {
   const thread =
     getRecordObject(value, "thread") ?? (isRecord(value) ? value : null);
   const turns = thread ? getRecordArray(thread, "turns") : undefined;
@@ -2247,7 +2261,8 @@ function normalizeCodexThreadMessages(
     return [];
   }
 
-  const messages: ChatMessageRecord[] = [];
+  const messages: InternalChatMessageRecord[] = [];
+  let codexOrder = 0;
   for (const [turnIndex, turn] of turns.entries()) {
     const turnId =
       getRecordString(turn, "id") ??
@@ -2272,6 +2287,8 @@ function normalizeCodexThreadMessages(
         chatId,
         role,
         text,
+        codexOrder: codexOrder++,
+        codexItemSource: item.codexItemSource,
         itemId: getRecordString(item, "id") ?? undefined,
         createdAt: normalizeCodexTimestamp(
           item.createdAt ?? item.created_at ?? item.timestamp,
@@ -2287,15 +2304,23 @@ function normalizeCodexThreadMessages(
 
 function getCodexTurnItems(
   turn: Record<string, unknown>,
-): Array<Record<string, unknown>> {
+): Array<Record<string, unknown> & { codexItemSource: CodexTurnItemSource }> {
   const inputItems = Array.isArray(turn.input)
-    ? turn.input.filter(isRecord).map((item) => ({ ...item, role: "user" }))
+    ? turn.input.filter(isRecord).map((item) => ({
+        ...item,
+        codexItemSource: "input" as const,
+        role: "user",
+      }))
     : [];
+  const turnItems = (items: unknown[]) =>
+    items
+      .filter(isRecord)
+      .map((item) => ({ ...item, codexItemSource: "item" as const }));
   if (Array.isArray(turn.items)) {
-    return [...inputItems, ...turn.items.filter(isRecord)];
+    return [...inputItems, ...turnItems(turn.items)];
   }
   if (Array.isArray(turn.output)) {
-    return [...inputItems, ...turn.output.filter(isRecord)];
+    return [...inputItems, ...turnItems(turn.output)];
   }
   return inputItems;
 }
@@ -2349,48 +2374,236 @@ function extractCodexText(value: unknown): string {
 }
 
 function mergeCodexAndLocalMessages(
-  codexMessages: ChatMessageRecord[],
+  codexMessages: InternalChatMessageRecord[],
   localMessages: ChatMessageRecord[],
 ): ChatMessageRecord[] {
   if (codexMessages.length === 0) {
     return localMessages;
   }
-  const unmatchedCodexMessages = [...codexMessages];
-  const merged = [
-    ...codexMessages,
-    ...localMessages.filter((message) => {
-      if (message.role === "event" || message.role === "error") {
-        return true;
-      }
-      const matchedCodexIndex = unmatchedCodexMessages.findIndex(
-        (codexMessage) => shouldDeduplicateLocalMessage(codexMessage, message),
+  const mergedCodexMessages = [...codexMessages];
+  const unmatchedCodexMessageIndexes = codexMessages.map((_, index) => index);
+  const steeredLocalMessageCounts = countSteeredLocalMessages(localMessages);
+  const retainedLocalMessages = localMessages.filter((message) => {
+    if (message.role === "event" || message.role === "error") {
+      return true;
+    }
+    if (message.eventType === "chat.message.queued") {
+      return true;
+    }
+    const matchedCodexIndex = findDeduplicatedCodexMessageIndex(
+      unmatchedCodexMessageIndexes,
+      mergedCodexMessages,
+      message,
+      steeredLocalMessageCounts,
+    );
+    if (matchedCodexIndex === undefined) {
+      return true;
+    }
+    const matchedCodexMessage = mergedCodexMessages[matchedCodexIndex];
+    if (message.eventType && matchedCodexMessage) {
+      mergedCodexMessages[matchedCodexIndex] = {
+        ...matchedCodexMessage,
+        createdAt:
+          message.eventType === "chat.message.steered"
+            ? message.createdAt
+            : matchedCodexMessage.createdAt,
+        eventType: message.eventType,
+      };
+    }
+    unmatchedCodexMessageIndexes.splice(
+      unmatchedCodexMessageIndexes.indexOf(matchedCodexIndex),
+      1,
+    );
+    return false;
+  });
+  return assignMergedMessageSortKeys(mergedCodexMessages, retainedLocalMessages)
+    .sort(compareMergedMessages)
+    .map(stripInternalCodexMessageMetadata);
+}
+
+function assignMergedMessageSortKeys(
+  codexMessages: InternalChatMessageRecord[],
+  localMessages: ChatMessageRecord[],
+): InternalChatMessageRecord[] {
+  const orderedCodexMessages = [...codexMessages].sort(
+    (left, right) => (left.codexOrder ?? 0) - (right.codexOrder ?? 0),
+  );
+  return [
+    ...orderedCodexMessages.map((message, index) => ({
+      ...message,
+      mergeSortBucket: (message.codexOrder ?? index) * 2,
+      mergeSortIndex: 0,
+    })),
+    ...localMessages.map((message, index) => {
+      const insertionIndex = orderedCodexMessages.findIndex(
+        (codexMessage) => codexMessage.createdAt > message.createdAt,
       );
-      if (matchedCodexIndex === -1) {
-        return true;
-      }
-      unmatchedCodexMessages.splice(matchedCodexIndex, 1);
-      return false;
+      return {
+        ...message,
+        mergeSortBucket:
+          insertionIndex === -1
+            ? orderedCodexMessages.length * 2 + 1
+            : insertionIndex * 2 - 1,
+        mergeSortIndex: index,
+      };
     }),
   ];
-  return merged.sort((left, right) =>
-    left.createdAt.localeCompare(right.createdAt),
-  );
+}
+
+function compareMergedMessages(
+  left: InternalChatMessageRecord,
+  right: InternalChatMessageRecord,
+): number {
+  if (left.mergeSortBucket !== right.mergeSortBucket) {
+    return (left.mergeSortBucket ?? 0) - (right.mergeSortBucket ?? 0);
+  }
+  const timeComparison = left.createdAt.localeCompare(right.createdAt);
+  if (timeComparison !== 0) {
+    return timeComparison;
+  }
+  return (left.mergeSortIndex ?? 0) - (right.mergeSortIndex ?? 0);
+}
+
+function findDeduplicatedCodexMessageIndex(
+  unmatchedCodexMessageIndexes: number[],
+  codexMessages: InternalChatMessageRecord[],
+  localMessage: ChatMessageRecord,
+  steeredLocalMessageCounts: ReadonlyMap<string, number>,
+): number | undefined {
+  const matchedIndexes = unmatchedCodexMessageIndexes.filter((index) => {
+    const codexMessage = codexMessages[index];
+    return codexMessage
+      ? shouldDeduplicateLocalMessage(codexMessage, localMessage)
+      : false;
+  });
+  if (localMessage.eventType === "chat.message.steered") {
+    const orderedMatchedIndexes = [...matchedIndexes].sort(
+      (left, right) =>
+        (codexMessages[left]?.codexOrder ?? left) -
+        (codexMessages[right]?.codexOrder ?? right),
+    );
+    const localGroupKey = getSteeredMessageGroupKey(localMessage);
+    if (localMessage.itemId && localGroupKey) {
+      const localSteeredCount =
+        steeredLocalMessageCounts.get(localGroupKey) ?? 0;
+      const sameTurnCandidateIndexes = codexMessages
+        .map((message, index) => ({ index, message }))
+        .filter(
+          ({ message }) =>
+            message.codexItemSource === "item" &&
+            messageFingerprint(message) === messageFingerprint(localMessage) &&
+            getCodexTurnItemIndex(message, localMessage.itemId ?? "") !== null,
+        )
+        .sort(
+          (left, right) =>
+            (left.message.codexOrder ?? left.index) -
+            (right.message.codexOrder ?? right.index),
+        )
+        .map(({ index }) => index);
+      const excludedInitialIndexes = new Set(
+        sameTurnCandidateIndexes.slice(
+          0,
+          Math.max(0, sameTurnCandidateIndexes.length - localSteeredCount),
+        ),
+      );
+      const sameTurnMatchedIndexes = orderedMatchedIndexes.filter(
+        (index) =>
+          sameTurnCandidateIndexes.includes(index) &&
+          !excludedInitialIndexes.has(index),
+      );
+      if (sameTurnMatchedIndexes.length > 0) {
+        return sameTurnMatchedIndexes[0];
+      }
+    }
+    return orderedMatchedIndexes[0];
+  }
+  return matchedIndexes[0];
+}
+
+function countSteeredLocalMessages(
+  messages: ChatMessageRecord[],
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const message of messages) {
+    const key = getSteeredMessageGroupKey(message);
+    if (!key) {
+      continue;
+    }
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function getSteeredMessageGroupKey(message: ChatMessageRecord): string | null {
+  if (message.eventType !== "chat.message.steered" || !message.itemId) {
+    return null;
+  }
+  return `${message.itemId}\0${message.text}`;
 }
 
 function shouldDeduplicateLocalMessage(
-  codexMessage: ChatMessageRecord,
+  codexMessage: InternalChatMessageRecord,
   localMessage: ChatMessageRecord,
 ): boolean {
   if (codexMessage.role !== localMessage.role) {
     return false;
   }
-  if (codexMessage.itemId && localMessage.itemId) {
+  if (
+    localMessage.eventType !== "chat.message.steered" &&
+    codexMessage.itemId &&
+    localMessage.itemId
+  ) {
     return codexMessage.itemId === localMessage.itemId;
   }
   if (messageFingerprint(codexMessage) !== messageFingerprint(localMessage)) {
     return false;
   }
-  return isCodexMessageAtOrAfterLocalMessage(codexMessage, localMessage);
+  if (isCodexMessageAtOrAfterLocalMessage(codexMessage, localMessage)) {
+    return true;
+  }
+  return isRelaxedSteeredCodexMatch(codexMessage, localMessage);
+}
+
+function isRelaxedSteeredCodexMatch(
+  codexMessage: InternalChatMessageRecord,
+  localMessage: ChatMessageRecord,
+): boolean {
+  if (
+    localMessage.eventType !== "chat.message.steered" ||
+    !localMessage.itemId ||
+    codexMessage.codexItemSource !== "item"
+  ) {
+    return false;
+  }
+  const codexItemIndex = getCodexTurnItemIndex(
+    codexMessage,
+    localMessage.itemId,
+  );
+  return codexItemIndex !== null;
+}
+
+function stripInternalCodexMessageMetadata(
+  message: InternalChatMessageRecord,
+): ChatMessageRecord {
+  const publicMessage: InternalChatMessageRecord = { ...message };
+  delete publicMessage.codexOrder;
+  delete publicMessage.codexItemSource;
+  delete publicMessage.mergeSortBucket;
+  delete publicMessage.mergeSortIndex;
+  return publicMessage;
+}
+
+function getCodexTurnItemIndex(
+  message: ChatMessageRecord,
+  turnId: string,
+): number | null {
+  const marker = `_codex_${turnId}_`;
+  const markerIndex = message.id.lastIndexOf(marker);
+  if (markerIndex === -1) {
+    return null;
+  }
+  const itemIndex = Number(message.id.slice(markerIndex + marker.length));
+  return Number.isInteger(itemIndex) && itemIndex >= 0 ? itemIndex : null;
 }
 
 function isCodexMessageAtOrAfterLocalMessage(
