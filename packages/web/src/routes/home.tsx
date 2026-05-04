@@ -1461,30 +1461,25 @@ export function HomeRoute() {
     const hasExistingChat = projectChats.some(
       (candidate) => candidate.id === chat.id,
     );
+    const nextProjectChats = hasExistingChat
+      ? projectChats.map((candidate) =>
+          candidate.id === chat.id ? chat : candidate,
+        )
+      : [chat, ...projectChats];
     const nextChatsByProject = {
       ...chatsByProjectRef.current,
-      [chat.projectId]: hasExistingChat
-        ? projectChats.map((candidate) =>
-            candidate.id === chat.id ? chat : candidate,
-          )
-        : [chat, ...projectChats],
+      [chat.projectId]: nextProjectChats,
     };
     chatsByProjectRef.current = nextChatsByProject;
     setChatsByProject(nextChatsByProject);
 
+    const projectWorktrees =
+      worktreesByProjectRef.current[chat.projectId] ?? [];
     const nextWorktreesByProject = {
       ...worktreesByProjectRef.current,
-      [chat.projectId]: (
-        worktreesByProjectRef.current[chat.projectId] ?? []
-      ).map((worktree) =>
-        worktree.path === chat.worktreePath
-          ? {
-              ...worktree,
-              chatId: chat.id,
-              chatStatus: chat.status,
-              chatTitle: chat.title,
-            }
-          : worktree,
+      [chat.projectId]: mergeWorktreesWithChats(
+        projectWorktrees,
+        nextProjectChats,
       ),
     };
     worktreesByProjectRef.current = nextWorktreesByProject;
