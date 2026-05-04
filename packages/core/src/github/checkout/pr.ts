@@ -1,4 +1,9 @@
-import { fetch, getGitRoot, setUpstreamBranch } from "@phantompane/git";
+import {
+  branchExists,
+  fetch,
+  getGitRoot,
+  setUpstreamBranch,
+} from "@phantompane/git";
 import type { GitHubPullRequest } from "@phantompane/github";
 import { err, isErr, ok, type Result } from "@phantompane/utils";
 import { createContext } from "../../context.ts";
@@ -10,6 +15,7 @@ export interface CheckoutResult {
   worktree: string;
   path: string;
   alreadyExists?: boolean;
+  createdBranch?: boolean;
 }
 
 export interface CheckoutPullRequestOptions {
@@ -49,8 +55,15 @@ export async function checkoutPullRequest(
       worktree: worktreeName,
       path: existsResult.value.path,
       alreadyExists: true,
+      createdBranch: false,
     });
   }
+
+  const branchExistsResult = await branchExists(context.gitRoot, localBranch);
+  if (isErr(branchExistsResult)) {
+    return err(branchExistsResult.error);
+  }
+  const createdBranch = !branchExistsResult.value;
 
   // Determine the upstream branch for tracking
   const upstream = pullRequest.isFromFork
@@ -108,5 +121,6 @@ export async function checkoutPullRequest(
     message,
     worktree: worktreeName,
     path: attachResult.value,
+    createdBranch,
   });
 }

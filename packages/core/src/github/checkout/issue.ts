@@ -42,6 +42,7 @@ export async function checkoutIssue(
       worktree: worktreeName,
       path: existsResult.value.path,
       alreadyExists: true,
+      createdBranch: false,
     });
   }
 
@@ -66,5 +67,6 @@ export async function checkoutIssue(
     message: result.value.message,
     worktree: worktreeName,
     path: result.value.path,
+    createdBranch: true,
   });
 }

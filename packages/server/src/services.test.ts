@@ -2784,6 +2784,150 @@ describe("ServeServices", () => {
     strictEqual(savedState.selectedChatId, chat.id);
   });
 
+  it("rolls back a newly checked out GitHub worktree when Codex thread startup fails", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { codex, services } = await createHarness(state);
+    coreMocks.githubCheckout.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        message: "Checked out PR #42",
+        worktree: "feature",
+        path: "/repo/.git/phantom/worktrees/feature",
+        createdBranch: true,
+      },
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature",
+            path: "/repo/.git/phantom/worktrees/feature",
+            pathToDisplay: ".git/phantom/worktrees/feature",
+            branch: "feature",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    codex.startThread.mockRejectedValueOnce(new Error("Codex unavailable"));
+    coreMocks.removeWorktree.mockResolvedValueOnce(undefined);
+    coreMocks.deleteBranch.mockResolvedValueOnce({
+      ok: true,
+      value: undefined,
+    });
+
+    await rejects(
+      services.createChat("proj_1", {
+        githubTargetNumber: 42,
+        initialMessage: "Implement this PR feedback",
+      }),
+      /Codex unavailable/,
+    );
+
+    deepStrictEqual(coreMocks.removeWorktree.mock.calls[0], [
+      "/repo",
+      "/repo/.git/phantom/worktrees/feature",
+      true,
+    ]);
+    deepStrictEqual(coreMocks.deleteBranch.mock.calls[0], ["/repo", "feature"]);
+  });
+
+  it("keeps existing GitHub checkout branches when rolling back chat startup", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { codex, services } = await createHarness(state);
+    coreMocks.githubCheckout.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        message: "Checked out PR #42",
+        worktree: "feature",
+        path: "/repo/.git/phantom/worktrees/feature",
+        createdBranch: false,
+      },
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature",
+            path: "/repo/.git/phantom/worktrees/feature",
+            pathToDisplay: ".git/phantom/worktrees/feature",
+            branch: "feature",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    codex.startThread.mockRejectedValueOnce(new Error("Codex unavailable"));
+    coreMocks.removeWorktree.mockResolvedValueOnce(undefined);
+
+    await rejects(
+      services.createChat("proj_1", {
+        githubTargetNumber: 42,
+        initialMessage: "Implement this PR feedback",
+      }),
+      /Codex unavailable/,
+    );
+
+    deepStrictEqual(coreMocks.removeWorktree.mock.calls[0], [
+      "/repo",
+      "/repo/.git/phantom/worktrees/feature",
+      true,
+    ]);
+    strictEqual(coreMocks.deleteBranch.mock.calls.length, 0);
+  });
+
+  it("does not roll back existing GitHub checkout worktrees when chat startup fails", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { codex, services } = await createHarness(state);
+    coreMocks.githubCheckout.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        message: "PR #42 is already checked out",
+        worktree: "feature",
+        path: "/repo/.git/phantom/worktrees/feature",
+        alreadyExists: true,
+        createdBranch: false,
+      },
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature",
+            path: "/repo/.git/phantom/worktrees/feature",
+            pathToDisplay: ".git/phantom/worktrees/feature",
+            branch: "feature",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    codex.startThread.mockRejectedValueOnce(new Error("Codex unavailable"));
+
+    await rejects(
+      services.createChat("proj_1", {
+        githubTargetNumber: 42,
+        initialMessage: "Implement this PR feedback",
+      }),
+      /Codex unavailable/,
+    );
+
+    strictEqual(coreMocks.removeWorktree.mock.calls.length, 0);
+    strictEqual(coreMocks.deleteBranch.mock.calls.length, 0);
+  });
+
   it("lists GitHub checkout targets for a project", async () => {
     const state = {
       ...createTestState(),

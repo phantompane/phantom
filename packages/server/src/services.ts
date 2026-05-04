@@ -744,10 +744,30 @@ export class ServeServices {
       if (!result.ok) {
         throw result.error;
       }
-      return this.createExistingWorktreeChat(projectId, project, {
-        worktreeName: result.value.worktree,
-        worktreePath: result.value.path,
-      });
+      try {
+        return await this.createExistingWorktreeChat(projectId, project, {
+          worktreeName: result.value.worktree,
+          worktreePath: result.value.path,
+        });
+      } catch (error) {
+        if (!result.value.alreadyExists) {
+          try {
+            await rollbackCreatedWorktree(
+              project.rootPath,
+              result.value.path,
+              result.value.worktree,
+              {
+                deleteBranch: result.value.createdBranch === true,
+              },
+            );
+          } catch (rollbackError) {
+            throw new Error(
+              `Failed to start Codex thread: ${toErrorMessage(error)}. Rollback failed: ${toErrorMessage(rollbackError)}`,
+            );
+          }
+        }
+        throw error instanceof Error ? error : new Error(String(error));
+      }
     }
     if (hasExistingWorktreeInput) {
       return this.createExistingWorktreeChat(projectId, project, {
@@ -3577,7 +3597,9 @@ async function rollbackCreatedWorktree(
   gitRoot: string,
   worktreePath: string,
   branchName: string,
+  options: { deleteBranch?: boolean } = {},
 ): Promise<void> {
+  const { deleteBranch: shouldDeleteBranch = true } = options;
   const errors: string[] = [];
 
   try {
@@ -3586,9 +3608,11 @@ async function rollbackCreatedWorktree(
     errors.push(`worktree remove failed: ${toErrorMessage(error)}`);
   }
 
-  const branchResult = await deleteBranch(gitRoot, branchName);
-  if (!branchResult.ok) {
-    errors.push(`branch delete failed: ${branchResult.error.message}`);
+  if (shouldDeleteBranch) {
+    const branchResult = await deleteBranch(gitRoot, branchName);
+    if (!branchResult.ok) {
+      errors.push(`branch delete failed: ${branchResult.error.message}`);
+    }
   }
 
   if (errors.length > 0) {
