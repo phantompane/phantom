@@ -3,6 +3,7 @@ import { describe, it, vi } from "vitest";
 import { isErr, isOk } from "@phantompane/utils";
 
 const getGitRootMock = vi.fn();
+const branchExistsMock = vi.fn();
 const fetchMock = vi.fn();
 const attachWorktreeCoreMock = vi.fn();
 const setUpstreamBranchMock = vi.fn();
@@ -10,6 +11,7 @@ const createContextMock = vi.fn();
 const validateWorktreeExistsMock = vi.fn();
 
 vi.doMock("@phantompane/git", () => ({
+  branchExists: branchExistsMock,
   getGitRoot: getGitRootMock,
   fetch: fetchMock,
   setUpstreamBranch: setUpstreamBranchMock,
@@ -31,6 +33,11 @@ const { checkoutPullRequest } = await import("./pr.ts");
 
 describe("checkoutPullRequest", () => {
   const resetMocks = () => {
+    branchExistsMock.mockClear();
+    branchExistsMock.mockImplementation(async () => ({
+      ok: true,
+      value: false,
+    }));
     getGitRootMock.mockClear();
     fetchMock.mockClear();
     attachWorktreeCoreMock.mockClear();
@@ -98,6 +105,7 @@ describe("checkoutPullRequest", () => {
         "Checked out PR #123 from branch feature-branch",
       );
       equal(result.value.alreadyExists, undefined);
+      equal(result.value.createdBranch, true);
     }
 
     // Verify mocks were called correctly
@@ -160,6 +168,7 @@ describe("checkoutPullRequest", () => {
     if (isOk(result)) {
       equal(result.value.message, "PR #456 is already checked out");
       equal(result.value.alreadyExists, true);
+      equal(result.value.createdBranch, false);
       equal(
         result.value.path,
         `${mockGitRoot}/.git/phantom/worktrees/existing-branch`,
@@ -345,6 +354,59 @@ describe("checkoutPullRequest", () => {
     equal(upstreamArgs[0], mockGitRoot);
     equal(upstreamArgs[1], "contributor/fork-feature");
     equal(upstreamArgs[2], "origin/pull/1234/head");
+  });
+
+  it("should preserve existing local branches when attaching a PR worktree", async () => {
+    resetMocks();
+    const mockGitRoot = "/path/to/repo";
+    const mockPullRequest = {
+      number: 777,
+      isFromFork: false,
+      head: {
+        ref: "existing-local-branch",
+        repo: {
+          full_name: "owner/repo",
+        },
+      },
+      base: {
+        repo: {
+          full_name: "owner/repo",
+        },
+      },
+    };
+
+    getGitRootMock.mockImplementation(async () => mockGitRoot);
+    createContextMock.mockImplementation(async () => ({
+      gitRoot: mockGitRoot,
+      worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
+    }));
+    validateWorktreeExistsMock.mockImplementation(async () => ({
+      ok: false,
+      error: new Error("Worktree not found"),
+    }));
+    branchExistsMock.mockImplementation(async () => ({
+      ok: true,
+      value: true,
+    }));
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      value: undefined,
+    }));
+    attachWorktreeCoreMock.mockImplementation(async () => ({
+      ok: true,
+      value: "/path/to/repo/.git/phantom/worktrees/existing-local-branch",
+    }));
+    setUpstreamBranchMock.mockImplementation(async () => ({
+      ok: true,
+      value: undefined,
+    }));
+
+    const result = await checkoutPullRequest(mockPullRequest);
+
+    ok(isOk(result));
+    if (isOk(result)) {
+      equal(result.value.createdBranch, false);
+    }
   });
 
   it("should handle fetch errors", async () => {

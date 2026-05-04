@@ -4,6 +4,8 @@ export const queryKeys = {
   projects: ["projects"] as const,
   projectChats: (projectId: string) =>
     ["projects", projectId, "chats"] as const,
+  projectGitHubCheckoutTargets: (projectId: string) =>
+    ["projects", projectId, "github", "checkout-targets"] as const,
   projectWorktrees: (projectId: string) =>
     ["projects", projectId, "worktrees"] as const,
   chat: (chatId: string) => ["chats", chatId] as const,

@@ -1,4 +1,9 @@
-import { fetch, getGitRoot, setUpstreamBranch } from "@phantompane/git";
+import {
+  branchExists,
+  fetch,
+  getGitRoot,
+  setUpstreamBranch,
+} from "@phantompane/git";
 import type { GitHubPullRequest } from "@phantompane/github";
 import { err, isErr, ok, type Result } from "@phantompane/utils";
 import { createContext } from "../../context.ts";
@@ -10,6 +15,11 @@ export interface CheckoutResult {
   worktree: string;
   path: string;
   alreadyExists?: boolean;
+  createdBranch?: boolean;
+}
+
+export interface CheckoutPullRequestOptions {
+  cwd?: string;
 }
 
 function getForkWorktreeName(pullRequest: GitHubPullRequest): string {
@@ -25,8 +35,9 @@ export async function checkoutPullRequest(
   worktreeName = pullRequest.isFromFork
     ? getForkWorktreeName(pullRequest)
     : pullRequest.head.ref,
+  options: CheckoutPullRequestOptions = {},
 ): Promise<Result<CheckoutResult>> {
-  const gitRoot = await getGitRoot();
+  const gitRoot = await getGitRoot({ cwd: options.cwd });
   const context = await createContext(gitRoot);
   const localBranch = worktreeName;
 
@@ -44,8 +55,15 @@ export async function checkoutPullRequest(
       worktree: worktreeName,
       path: existsResult.value.path,
       alreadyExists: true,
+      createdBranch: false,
     });
   }
+
+  const branchExistsResult = await branchExists(context.gitRoot, localBranch);
+  if (isErr(branchExistsResult)) {
+    return err(branchExistsResult.error);
+  }
+  const createdBranch = !branchExistsResult.value;
 
   // Determine the upstream branch for tracking
   const upstream = pullRequest.isFromFork
@@ -57,7 +75,7 @@ export async function checkoutPullRequest(
   const refspec = `${upstream.replace("origin/", "")}:${localBranch}`;
 
   // Fetch the PR to a local branch
-  const fetchResult = await fetch({ refspec });
+  const fetchResult = await fetch({ cwd: gitRoot, refspec });
   if (isErr(fetchResult)) {
     return err(
       new Error(
@@ -103,5 +121,6 @@ export async function checkoutPullRequest(
     message,
     worktree: worktreeName,
     path: attachResult.value,
+    createdBranch,
   });
 }

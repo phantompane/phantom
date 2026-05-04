@@ -23,6 +23,7 @@ export interface SendMessageInput {
 }
 
 export interface CreateChatInput {
+  githubTargetNumber?: number;
   initialMessage?: string;
   worktreeName?: string;
   worktreePath?: string;

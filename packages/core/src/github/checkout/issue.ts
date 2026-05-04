@@ -6,9 +6,14 @@ import { createWorktree as createWorktreeCore } from "../../worktree/create.ts";
 import { validateWorktreeExists } from "../../worktree/validate.ts";
 import type { CheckoutResult } from "./pr.ts";
 
+export interface CheckoutIssueOptions {
+  cwd?: string;
+}
+
 export async function checkoutIssue(
   issue: GitHubIssue,
   base?: string,
+  options: CheckoutIssueOptions = {},
 ): Promise<Result<CheckoutResult>> {
   if (isPullRequest(issue)) {
     return err(
@@ -18,7 +23,7 @@ export async function checkoutIssue(
     );
   }
 
-  const gitRoot = await getGitRoot();
+  const gitRoot = await getGitRoot({ cwd: options.cwd });
   const context = await createContext(gitRoot);
   const worktreeName = `issues/${issue.number}`;
   const branchName = `issues/${issue.number}`;
@@ -37,6 +42,7 @@ export async function checkoutIssue(
       worktree: worktreeName,
       path: existsResult.value.path,
       alreadyExists: true,
+      createdBranch: false,
     });
   }
 
@@ -61,5 +67,6 @@ export async function checkoutIssue(
     message: result.value.message,
     worktree: worktreeName,
     path: result.value.path,
+    createdBranch: true,
   });
 }

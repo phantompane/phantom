@@ -12,7 +12,9 @@ import {
   createContext,
   deleteBranch,
   deleteWorktree as deleteWorktreeCore,
+  githubCheckout,
   listWorktrees,
+  listGitHubCheckoutTargets,
   removeWorktree,
   runCreateWorktree,
   WorktreeAlreadyExistsError,
@@ -43,6 +45,7 @@ import type {
   ChatRecord,
   ChatStatus,
   CodexFileRecord,
+  GitHubCheckoutTargetsResult,
   CodexModelRecord,
   CodexSkillRecord,
   CodexTurnContextItem,
@@ -55,6 +58,7 @@ import type {
 export interface CreateChatInput {
   name?: string;
   base?: string;
+  githubTargetNumber?: number;
   initialMessage?: string;
   worktreeName?: string;
   worktreePath?: string;
@@ -573,6 +577,29 @@ export class ServeServices {
     return threads;
   }
 
+  async listProjectGitHubCheckoutTargets(
+    projectId: string,
+  ): Promise<GitHubCheckoutTargetsResult> {
+    await this.resetStaleTransientChatState();
+    const state = await this.store.load();
+    const project = this.requireProject(state, projectId);
+
+    try {
+      const targets = await listGitHubCheckoutTargets({
+        cwd: project.rootPath,
+      });
+      return {
+        available: true,
+        targets,
+      };
+    } catch {
+      return {
+        available: false,
+        targets: [],
+      };
+    }
+  }
+
   async syncProjectWorktreeBranch(
     projectId: string,
     input: SyncProjectWorktreeBranchInput,
@@ -635,6 +662,63 @@ export class ServeServices {
     };
   }
 
+  private async createExistingWorktreeChat(
+    projectId: string,
+    project: ProjectRecord,
+    input: {
+      worktreeName?: string;
+      worktreePath: string;
+    },
+  ): Promise<ChatRecord> {
+    const targetWorktreePath = input.worktreePath.trim();
+    const targetWorktreeName = input.worktreeName?.trim();
+    if (!targetWorktreePath) {
+      throw new Error("Worktree path is required");
+    }
+    const worktreesResult = await listWorktrees(project.rootPath, {
+      includePrunable: false,
+    });
+    if (!worktreesResult.ok) {
+      throw worktreesResult.error;
+    }
+    const targetWorktree = worktreesResult.value.worktrees.find(
+      (worktree) =>
+        worktree.path === targetWorktreePath &&
+        (!targetWorktreeName || worktree.name === targetWorktreeName),
+    );
+    if (!targetWorktree) {
+      throw new Error(`Worktree '${targetWorktreePath}' not found`);
+    }
+
+    const threadResult = await this.codex.startThread(targetWorktree.path);
+    const codexThreadId = extractThreadId(threadResult);
+    this.loadedThreadIds.add(codexThreadId);
+    const timestamp = createTimestamp();
+    const chat: ChatRecord = {
+      id: createRecordId("chat"),
+      projectId,
+      worktreeName: targetWorktree.name,
+      worktreePath: targetWorktree.path,
+      branchName: targetWorktree.branch,
+      codexThreadId,
+      title: targetWorktree.name,
+      status: "idle",
+      activeTurnId: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    await this.store.update((nextState) => ({
+      ...nextState,
+      chats: [...nextState.chats, chat],
+      selectedProjectId: projectId,
+      selectedChatId: chat.id,
+    }));
+
+    this.eventHub.emit("chat.created", chat, { chatId: chat.id });
+    return chat;
+  }
+
   async createChat(
     projectId: string,
     input: CreateChatInput,
@@ -646,52 +730,50 @@ export class ServeServices {
     const targetWorktreeName = input.worktreeName?.trim();
     const hasExistingWorktreeInput =
       input.worktreePath !== undefined || input.worktreeName !== undefined;
-    if (hasExistingWorktreeInput) {
-      if (!targetWorktreePath) {
-        throw new Error("Worktree path is required");
-      }
-      const worktreesResult = await listWorktrees(project.rootPath, {
-        includePrunable: false,
-      });
-      if (!worktreesResult.ok) {
-        throw worktreesResult.error;
-      }
-      const targetWorktree = worktreesResult.value.worktrees.find(
-        (worktree) =>
-          worktree.path === targetWorktreePath &&
-          (!targetWorktreeName || worktree.name === targetWorktreeName),
+    if (input.githubTargetNumber !== undefined && hasExistingWorktreeInput) {
+      throw new Error(
+        "GitHub checkout target cannot be combined with worktree input",
       );
-      if (!targetWorktree) {
-        throw new Error(`Worktree '${targetWorktreePath}' not found`);
+    }
+    if (input.githubTargetNumber !== undefined) {
+      const result = await githubCheckout({
+        number: String(input.githubTargetNumber),
+        base: input.base,
+        cwd: project.rootPath,
+      });
+      if (!result.ok) {
+        throw result.error;
       }
-
-      const threadResult = await this.codex.startThread(targetWorktree.path);
-      const codexThreadId = extractThreadId(threadResult);
-      this.loadedThreadIds.add(codexThreadId);
-      const timestamp = createTimestamp();
-      const chat: ChatRecord = {
-        id: createRecordId("chat"),
-        projectId,
-        worktreeName: targetWorktree.name,
-        worktreePath: targetWorktree.path,
-        branchName: targetWorktree.branch,
-        codexThreadId,
-        title: targetWorktree.name,
-        status: "idle",
-        activeTurnId: null,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-
-      await this.store.update((nextState) => ({
-        ...nextState,
-        chats: [...nextState.chats, chat],
-        selectedProjectId: projectId,
-        selectedChatId: chat.id,
-      }));
-
-      this.eventHub.emit("chat.created", chat, { chatId: chat.id });
-      return chat;
+      try {
+        return await this.createExistingWorktreeChat(projectId, project, {
+          worktreeName: result.value.worktree,
+          worktreePath: result.value.path,
+        });
+      } catch (error) {
+        if (!result.value.alreadyExists) {
+          try {
+            await rollbackCreatedWorktree(
+              project.rootPath,
+              result.value.path,
+              result.value.worktree,
+              {
+                deleteBranch: result.value.createdBranch === true,
+              },
+            );
+          } catch (rollbackError) {
+            throw new Error(
+              `Failed to start Codex thread: ${toErrorMessage(error)}. Rollback failed: ${toErrorMessage(rollbackError)}`,
+            );
+          }
+        }
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+    }
+    if (hasExistingWorktreeInput) {
+      return this.createExistingWorktreeChat(projectId, project, {
+        worktreeName: targetWorktreeName,
+        worktreePath: targetWorktreePath ?? "",
+      });
     }
 
     const explicitName = input.name?.trim();
@@ -3515,7 +3597,9 @@ async function rollbackCreatedWorktree(
   gitRoot: string,
   worktreePath: string,
   branchName: string,
+  options: { deleteBranch?: boolean } = {},
 ): Promise<void> {
+  const { deleteBranch: shouldDeleteBranch = true } = options;
   const errors: string[] = [];
 
   try {
@@ -3524,9 +3608,11 @@ async function rollbackCreatedWorktree(
     errors.push(`worktree remove failed: ${toErrorMessage(error)}`);
   }
 
-  const branchResult = await deleteBranch(gitRoot, branchName);
-  if (!branchResult.ok) {
-    errors.push(`branch delete failed: ${branchResult.error.message}`);
+  if (shouldDeleteBranch) {
+    const branchResult = await deleteBranch(gitRoot, branchName);
+    if (!branchResult.ok) {
+      errors.push(`branch delete failed: ${branchResult.error.message}`);
+    }
   }
 
   if (errors.length > 0) {

@@ -18,6 +18,7 @@ const createChatSchema = z
   .object({
     name: z.string().optional(),
     base: z.string().optional(),
+    githubTargetNumber: z.number().int().positive().optional(),
     initialMessage: z.string().optional(),
     worktreeName: z.string().optional(),
     worktreePath: z.string().optional(),
@@ -35,6 +36,17 @@ const createChatSchema = z
         code: "custom",
         message: "Worktree path is required",
         path: ["worktreePath"],
+      });
+    }
+    if (
+      value.githubTargetNumber !== undefined &&
+      (value.worktreeName !== undefined || value.worktreePath !== undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "GitHub checkout target cannot be combined with worktree input",
+        path: ["githubTargetNumber"],
       });
     }
   });
@@ -229,6 +241,16 @@ export const rpcRoutes = new Hono()
       return handleApiError(c, error);
     }
   })
+  .get("/projects/:projectId/github/checkout-targets", async (c) => {
+    try {
+      const github = await getServeServices().listProjectGitHubCheckoutTargets(
+        c.req.param("projectId"),
+      );
+      return c.json({ github }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
   .post("/projects/:projectId/chats", jsonBody(createChatSchema), async (c) => {
     try {
       const body = c.req.valid("json");
@@ -237,6 +259,7 @@ export const rpcRoutes = new Hono()
         {
           name: body.name,
           base: body.base,
+          githubTargetNumber: body.githubTargetNumber,
           initialMessage: body.initialMessage,
           worktreeName: body.worktreeName,
           worktreePath: body.worktreePath,

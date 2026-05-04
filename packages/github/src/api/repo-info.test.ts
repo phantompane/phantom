@@ -63,6 +63,24 @@ describe("getGitHubRepoInfo", () => {
     deepStrictEqual(args, ["repo", "view", "--json", "owner,name"]);
   });
 
+  it("should run gh in the provided cwd", async () => {
+    resetMocks();
+    execFileMock.mockImplementation(() =>
+      Promise.resolve({
+        stdout: JSON.stringify({
+          owner: { login: "test-owner" },
+          name: "test-repo",
+        }),
+        stderr: "",
+      }),
+    );
+
+    await getGitHubRepoInfo({ cwd: "/repo" });
+
+    const [, , options] = execFileMock.mock.calls[0];
+    deepStrictEqual(options, { cwd: "/repo" });
+  });
+
   it("should throw error when gh command fails", async () => {
     resetMocks();
     execFileMock.mockImplementation(() =>

@@ -19,6 +19,15 @@ export interface GitHubIssue {
   pullRequest?: GitHubPullRequest;
 }
 
+export interface GitHubCheckoutTarget {
+  author: string | null;
+  htmlUrl: string;
+  kind: "issue" | "pullRequest";
+  number: number;
+  title: string;
+  updatedAt: string;
+}
+
 export function isPullRequest(
   issue: GitHubIssue,
 ): issue is GitHubIssue & { pullRequest: GitHubPullRequest } {

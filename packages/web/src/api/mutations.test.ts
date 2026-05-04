@@ -76,6 +76,35 @@ describe("createChatMutation", () => {
       }),
     );
   });
+
+  it("sends a GitHub checkout target when starting a chat from an issue or PR", async () => {
+    let requestBody: string | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = init?.body?.toString();
+        return new Response('{"chat":{"id":"chat_1"}}', {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          status: 201,
+        });
+      }),
+    );
+
+    await createChatMutation("proj_1", {
+      githubTargetNumber: 42,
+      initialMessage: "Start here",
+    });
+
+    strictEqual(
+      requestBody,
+      JSON.stringify({
+        githubTargetNumber: 42,
+        initialMessage: "Start here",
+      }),
+    );
+  });
 });
 
 describe("message control mutations", () => {
