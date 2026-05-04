@@ -1,8 +1,10 @@
 import { api, readRpcJson, routeParam } from "./client";
 import type {
+  ChatMessageRecord,
   ChatRecord,
   CodexTurnContextItem,
   ProjectRecord,
+  QueuedMessageRecord,
 } from "@phantompane/server";
 
 export interface DeleteWorktreeInput {
@@ -24,6 +26,16 @@ export interface CreateChatInput {
   initialMessage?: string;
   worktreeName?: string;
   worktreePath?: string;
+}
+
+export interface PendingMessagePayload {
+  message: ChatMessageRecord & {
+    eventType: "chat.message.queued";
+    role: "user";
+  };
+  messageIndex: number;
+  queuedMessage: QueuedMessageRecord;
+  queuedMessageIndex: number;
 }
 
 export async function addProjectMutation(path: string) {
@@ -77,6 +89,35 @@ export async function sendMessageMutation(
   return readRpcJson<{ chat: ChatRecord }>(
     await api.chats[":chatId"].messages.$post({
       param: { chatId: routeParam(chatId) },
+      json: input,
+    }),
+  );
+}
+
+export async function deletePendingMessageMutation(
+  chatId: string,
+  messageId: string,
+) {
+  return readRpcJson<PendingMessagePayload>(
+    await api.chats[":chatId"].messages[":messageId"].$delete({
+      param: {
+        chatId: routeParam(chatId),
+        messageId: routeParam(messageId),
+      },
+    }),
+  );
+}
+
+export async function restorePendingMessageMutation(
+  chatId: string,
+  input: PendingMessagePayload,
+) {
+  return readRpcJson<PendingMessagePayload>(
+    await api.chats[":chatId"].messages[":messageId"].restore.$post({
+      param: {
+        chatId: routeParam(chatId),
+        messageId: routeParam(input.message.id),
+      },
       json: input,
     }),
   );

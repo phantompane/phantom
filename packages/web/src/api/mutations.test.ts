@@ -3,7 +3,9 @@ import { afterEach, describe, it, vi } from "vitest";
 import {
   answerApprovalMutation,
   createChatMutation,
+  deletePendingMessageMutation,
   queueMessageMutation,
+  restorePendingMessageMutation,
   steerMessageMutation,
 } from "./mutations";
 
@@ -125,5 +127,79 @@ describe("message control mutations", () => {
     await queueMessageMutation("chat/with#hash", { text: "later" });
 
     strictEqual(requestUrl, "/api/chats/chat%2Fwith%23hash/queue");
+  });
+
+  it("encodes pending message delete route params before calling Hono RPC", async () => {
+    let requestUrl: string | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        requestUrl =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        return new Response('{"message":{"id":"msg_1","text":"draft"}}', {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          status: 200,
+        });
+      }),
+    );
+
+    await deletePendingMessageMutation("chat/with#hash", "msg/with#hash");
+
+    strictEqual(
+      requestUrl,
+      "/api/chats/chat%2Fwith%23hash/messages/msg%2Fwith%23hash",
+    );
+  });
+
+  it("encodes pending message restore route params before calling Hono RPC", async () => {
+    let requestUrl: string | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        requestUrl =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        return new Response('{"message":{"id":"msg_1","text":"draft"}}', {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          status: 200,
+        });
+      }),
+    );
+
+    await restorePendingMessageMutation("chat/with#hash", {
+      message: {
+        id: "msg/with#hash",
+        chatId: "chat/with#hash",
+        role: "user",
+        text: "draft",
+        eventType: "chat.message.queued",
+        createdAt: "2026-05-04T00:00:00.000Z",
+      },
+      messageIndex: 0,
+      queuedMessage: {
+        id: "queue_1",
+        chatId: "chat/with#hash",
+        messageId: "msg/with#hash",
+        text: "draft",
+        createdAt: "2026-05-04T00:00:00.000Z",
+      },
+      queuedMessageIndex: 0,
+    });
+
+    strictEqual(
+      requestUrl,
+      "/api/chats/chat%2Fwith%23hash/messages/msg%2Fwith%23hash/restore",
+    );
   });
 });

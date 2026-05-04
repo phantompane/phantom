@@ -1479,13 +1479,13 @@ describe("ServeServices", () => {
           "repeat",
           "item/agentMessage/delta",
         ],
-        ["chat_1_codex_turn_1_0", "user", "adjust", "chat.message.steered"],
+        ["chat_1_codex_turn_1_0", "user", "adjust", undefined],
         ["chat_1_codex_turn_1_1", "assistant", "repeat", undefined],
       ],
     );
   });
 
-  it("preserves steered message metadata when Codex history uses the turn timestamp", async () => {
+  it("uses the local timestamp for a consumed steered message", async () => {
     const state = {
       ...createTestState(),
       projects: [createProject()],
@@ -1538,10 +1538,66 @@ describe("ServeServices", () => {
           "chat_1_codex_turn_1_1",
           "user",
           "adjust course",
-          "chat.message.steered",
+          undefined,
           "2026-04-25T00:01:00.000Z",
         ],
       ],
+    );
+  });
+
+  it("clears stale steered state when thread history cannot be read after the turn ends", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_steered",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "adjust course",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockRejectedValueOnce(new Error("read failed"));
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [message.id, message.text, message.eventType]),
+      [["msg_steered", "adjust course", undefined]],
+    );
+  });
+
+  it("clears stale steered state when thread history has no messages after the turn ends", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_steered",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "adjust course",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({ thread: { turns: [] } });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [message.id, message.text, message.eventType]),
+      [["msg_steered", "adjust course", undefined]],
     );
   });
 
@@ -1599,7 +1655,7 @@ describe("ServeServices", () => {
     );
   });
 
-  it("attaches steered metadata to the later matching Codex item", async () => {
+  it("matches a consumed steered message to the later Codex item", async () => {
     const state = {
       ...createTestState(),
       projects: [createProject()],
@@ -1652,7 +1708,7 @@ describe("ServeServices", () => {
           "chat_1_codex_turn_1_1",
           "user",
           "repeat",
-          "chat.message.steered",
+          undefined,
           "2026-04-25T00:01:00.000Z",
         ],
       ],
@@ -1724,21 +1780,21 @@ describe("ServeServices", () => {
           "chat_1_codex_turn_1_1",
           "user",
           "repeat",
-          "chat.message.steered",
+          undefined,
           "2026-04-25T00:01:00.000Z",
         ],
         [
           "chat_1_codex_turn_1_2",
           "user",
           "repeat",
-          "chat.message.steered",
+          undefined,
           "2026-04-25T00:02:00.000Z",
         ],
       ],
     );
   });
 
-  it("does not attach steered metadata to repeated initial Codex input", async () => {
+  it("does not match a steered message to repeated initial Codex input", async () => {
     const state = {
       ...createTestState(),
       projects: [createProject()],
@@ -1810,7 +1866,7 @@ describe("ServeServices", () => {
           "chat_1_codex_turn_1_2",
           "user",
           "repeat",
-          "chat.message.steered",
+          undefined,
           "2026-04-25T00:01:00.000Z",
           false,
           false,
@@ -1821,7 +1877,7 @@ describe("ServeServices", () => {
     );
   });
 
-  it("matches steered Codex item metadata when a turn has no input records", async () => {
+  it("matches a steered Codex item when a turn has no input records", async () => {
     const state = {
       ...createTestState(),
       projects: [createProject()],
@@ -1871,7 +1927,7 @@ describe("ServeServices", () => {
           "chat_1_codex_turn_1_0",
           "user",
           "repeat",
-          "chat.message.steered",
+          undefined,
           "2026-04-25T00:01:00.000Z",
         ],
         [
@@ -1885,7 +1941,7 @@ describe("ServeServices", () => {
     );
   });
 
-  it("does not attach steered metadata to the first same-text item when a turn has no input records", async () => {
+  it("does not match a steered message to the first same-text item when a turn has no input records", async () => {
     const state = {
       ...createTestState(),
       projects: [createProject()],
@@ -1940,7 +1996,7 @@ describe("ServeServices", () => {
           "chat_1_codex_turn_1_1",
           "user",
           "repeat",
-          "chat.message.steered",
+          undefined,
           "2026-04-25T00:01:00.000Z",
         ],
       ],
@@ -2004,21 +2060,21 @@ describe("ServeServices", () => {
           "chat_1_codex_turn_1_0",
           "user",
           "repeat",
-          "chat.message.steered",
+          undefined,
           "2026-04-25T00:01:00.000Z",
         ],
         [
           "chat_1_codex_turn_1_1",
           "user",
           "repeat",
-          "chat.message.steered",
+          undefined,
           "2026-04-25T00:02:00.000Z",
         ],
       ],
     );
   });
 
-  it("keeps Codex item order when steered metadata uses the local timestamp", async () => {
+  it("keeps Codex item order when a consumed steered message uses the local timestamp", async () => {
     const state = {
       ...createTestState(),
       projects: [createProject()],
@@ -2074,7 +2130,7 @@ describe("ServeServices", () => {
           "chat_1_codex_turn_1_1",
           "user",
           "adjust course",
-          "chat.message.steered",
+          undefined,
           "2026-04-25T00:01:00.000Z",
         ],
         [
@@ -4635,6 +4691,415 @@ describe("ServeServices", () => {
     strictEqual(savedState.chats[0]?.status, "idle");
     strictEqual(codex.startTurn.mock.calls.length, 0);
     strictEqual(codex.steerTurn.mock.calls.length, 0);
+  });
+
+  it("deletes queued messages before they are sent", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "queued draft",
+          eventType: "chat.message.queued",
+          createdAt: timestamp,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "queued draft",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { services, store } = await createHarness(state);
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+
+    const result = await services.deletePendingMessage("chat_1", "msg_queued");
+
+    strictEqual(result.message.text, "queued draft");
+    strictEqual(result.queuedMessage.text, "queued draft");
+    const savedState = await store.load();
+    strictEqual(savedState.messages.length, 0);
+    strictEqual(savedState.queuedMessages.length, 0);
+    strictEqual(
+      emitSpy.mock.calls.some((call) => call[0] === "chat.message.deleted"),
+      true,
+    );
+  });
+
+  it("restores deleted pending messages without submitting them while the chat is blocked", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [],
+      queuedMessages: [],
+    };
+    const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+
+    const result = await services.restorePendingMessage("chat_1", {
+      message: {
+        id: "msg_queued",
+        chatId: "chat_1",
+        role: "user",
+        text: "queued draft",
+        eventType: "chat.message.queued",
+        createdAt: timestamp,
+      },
+      messageIndex: 0,
+      queuedMessage: {
+        id: "queue_1",
+        chatId: "chat_1",
+        messageId: "msg_queued",
+        text: "queued draft",
+        model: "gpt-5.2",
+        createdAt: timestamp,
+      },
+      queuedMessageIndex: 0,
+    });
+
+    strictEqual(result.queuedMessage.model, "gpt-5.2");
+    const savedState = await store.load();
+    strictEqual(savedState.messages.length, 1);
+    strictEqual(savedState.queuedMessages.length, 1);
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+    strictEqual(
+      emitSpy.mock.calls.some((call) => call[0] === "chat.message.created"),
+      true,
+    );
+  });
+
+  it("restarts queued drain after restoring a pending message into an idle chat", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [],
+      queuedMessages: [],
+    };
+    const { codex, services, store } = await createHarness(state);
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_2" } });
+
+    await services.restorePendingMessage("chat_1", {
+      message: {
+        id: "msg_queued",
+        chatId: "chat_1",
+        role: "user",
+        text: "queued draft",
+        eventType: "chat.message.queued",
+        createdAt: timestamp,
+      },
+      messageIndex: 0,
+      queuedMessage: {
+        id: "queue_1",
+        chatId: "chat_1",
+        messageId: "msg_queued",
+        text: "queued draft",
+        createdAt: timestamp,
+      },
+      queuedMessageIndex: 0,
+    });
+
+    const savedState = await store.load();
+    strictEqual(savedState.queuedMessages.length, 0);
+    strictEqual(savedState.messages[0]?.eventType, undefined);
+    deepStrictEqual(codex.startTurn.mock.calls[0], [
+      "thread_1",
+      "queued draft",
+      "/repo/.git/phantom/worktrees/worktree",
+    ]);
+  });
+
+  it("restores deleted pending messages to their original queue order", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_later",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "later queued draft",
+          eventType: "chat.message.queued",
+          createdAt: timestamp,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_later",
+          chatId: "chat_1",
+          messageId: "msg_later",
+          text: "later queued draft",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+
+    await services.restorePendingMessage("chat_1", {
+      message: {
+        id: "msg_earlier",
+        chatId: "chat_1",
+        role: "user",
+        text: "earlier queued draft",
+        eventType: "chat.message.queued",
+        createdAt: timestamp,
+      },
+      messageIndex: 0,
+      queuedMessage: {
+        id: "queue_earlier",
+        chatId: "chat_1",
+        messageId: "msg_earlier",
+        text: "earlier queued draft",
+        createdAt: timestamp,
+      },
+      queuedMessageIndex: 0,
+    });
+
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.queuedMessages.map((message) => message.id),
+      ["queue_earlier", "queue_later"],
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => message.id),
+      ["msg_earlier", "msg_later"],
+    );
+  });
+
+  it("does not delete steered messages after they are sent to Codex", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_steered",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "steered draft",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { services, store } = await createHarness(state);
+
+    await rejects(
+      services.deletePendingMessage("chat_1", "msg_steered"),
+      /Message is not pending/,
+    );
+
+    strictEqual((await store.load()).messages.length, 1);
+  });
+
+  it("does not delete messages after pending delivery completes", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_sent",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "already sent",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { services, store } = await createHarness(state);
+
+    await rejects(
+      services.deletePendingMessage("chat_1", "msg_sent"),
+      /Message is not pending/,
+    );
+
+    strictEqual((await store.load()).messages.length, 1);
+  });
+
+  it("does not delete queued messages once promotion starts", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "promoting",
+          eventType: "chat.message.queued",
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { services, store } = await createHarness(state);
+
+    await rejects(
+      services.deletePendingMessage("chat_1", "msg_queued"),
+      /Queued message is already being sent/,
+    );
+
+    strictEqual((await store.load()).messages.length, 1);
+  });
+
+  it("does not delete queued messages after drain claims them", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "promoting with context",
+          eventType: "chat.message.queued",
+          createdAt: timestamp,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "promoting with context",
+          skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    let resolveSkills!: (value: unknown) => void;
+    codex.listSkills.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSkills = resolve;
+        }),
+    );
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_2" } });
+
+    codex.emitNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread_1",
+        turn: { id: "turn_1", status: "completed" },
+      },
+    });
+
+    await vi.waitFor(async () => {
+      strictEqual(codex.listSkills.mock.calls.length, 1);
+      const savedState = await store.load();
+      strictEqual(savedState.queuedMessages.length, 0);
+      strictEqual(savedState.messages[0]?.eventType, undefined);
+    });
+    await rejects(
+      services.deletePendingMessage("chat_1", "msg_queued"),
+      /Message is not pending/,
+    );
+    await services.sendMessage("chat_1", { text: "new during claimed drain" });
+    let savedState = await store.load();
+    strictEqual(savedState.queuedMessages.length, 1);
+    strictEqual(savedState.queuedMessages[0]?.text, "new during claimed drain");
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+
+    resolveSkills({
+      skills: [
+        {
+          enabled: true,
+          name: "review",
+          path: "/skills/review/SKILL.md",
+        },
+      ],
+    });
+    await vi.waitFor(() => {
+      strictEqual(codex.startTurn.mock.calls.length, 1);
+    });
+    savedState = await store.load();
+    strictEqual(savedState.queuedMessages.length, 1);
+  });
+
+  it("re-runs queued drain after enqueueing during an active drain that fails", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "promoting with context",
+          eventType: "chat.message.queued",
+          createdAt: timestamp,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "promoting with context",
+          skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    let rejectSkills!: (reason: unknown) => void;
+    codex.listSkills.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectSkills = reject;
+        }),
+    );
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_3" } });
+    codex.resumeThread.mockResolvedValue({});
+
+    codex.emitNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread_1",
+        turn: { id: "turn_1", status: "completed" },
+      },
+    });
+
+    await vi.waitFor(async () => {
+      strictEqual(codex.listSkills.mock.calls.length, 1);
+      const savedState = await store.load();
+      strictEqual(savedState.queuedMessages.length, 0);
+    });
+    await services.sendMessage("chat_1", { text: "new during claimed drain" });
+
+    rejectSkills(new Error("skills failed"));
+    await vi.waitFor(
+      () => {
+        strictEqual(codex.startTurn.mock.calls.length, 1);
+      },
+      { timeout: 3000 },
+    );
+    const savedState = await store.load();
+    strictEqual(savedState.queuedMessages.length, 0);
+    deepStrictEqual(
+      codex.startTurn.mock.calls.map((call) => call[1]),
+      ["new during claimed drain"],
+    );
   });
 
   it("queues a message while a chat is running and starts it after the active turn completes", async () => {

@@ -57,6 +57,35 @@ const sendMessageSchema = z.object({
   skills: z.array(contextItemSchema).optional(),
 });
 
+const chatMessageSchema = z.object({
+  id: z.string().min(1),
+  chatId: z.string().min(1),
+  role: z.enum(["user"]),
+  text: z.string(),
+  eventType: z.literal("chat.message.queued"),
+  itemId: z.string().optional(),
+  createdAt: z.string().min(1),
+});
+
+const queuedMessageSchema = z.object({
+  id: z.string().min(1),
+  chatId: z.string().min(1),
+  messageId: z.string().min(1),
+  text: z.string().min(1),
+  effort: z.string().optional(),
+  files: z.array(contextItemSchema).optional(),
+  model: z.string().optional(),
+  skills: z.array(contextItemSchema).optional(),
+  createdAt: z.string().min(1),
+});
+
+const restorePendingMessageSchema = z.object({
+  message: chatMessageSchema,
+  messageIndex: z.number().int().nonnegative(),
+  queuedMessage: queuedMessageSchema,
+  queuedMessageIndex: z.number().int().nonnegative(),
+});
+
 const steerMessageSchema = sendMessageSchema;
 const queueMessageSchema = sendMessageSchema;
 
@@ -314,6 +343,33 @@ export const rpcRoutes = new Hono()
       return handleApiError(c, error);
     }
   })
+  .delete("/chats/:chatId/messages/:messageId", async (c) => {
+    try {
+      const result = await getServeServices().deletePendingMessage(
+        c.req.param("chatId"),
+        c.req.param("messageId"),
+      );
+      return c.json(result, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .post(
+    "/chats/:chatId/messages/:messageId/restore",
+    jsonBody(restorePendingMessageSchema),
+    async (c) => {
+      try {
+        const body = c.req.valid("json");
+        const result = await getServeServices().restorePendingMessage(
+          c.req.param("chatId"),
+          body,
+        );
+        return c.json(result, 200);
+      } catch (error) {
+        return handleApiError(c, error);
+      }
+    },
+  )
   .post("/chats/:chatId/interrupt", async (c) => {
     try {
       await getServeServices().interruptChat(c.req.param("chatId"));

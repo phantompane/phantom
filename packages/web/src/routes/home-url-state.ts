@@ -16,6 +16,12 @@ interface ModelReasoningEffortRecord {
   supportedReasoningEfforts: string[];
 }
 
+interface SkillSelectionRecord {
+  enabled: boolean;
+  name: string;
+  path: string;
+}
+
 interface WorktreeChatMergeRecord<TStatus> {
   id: string;
   status: TStatus;
@@ -150,4 +156,18 @@ export function getSelectableReasoningEfforts(
   return selectedModel
     ? selectedModel.supportedReasoningEfforts
     : fallbackReasoningEfforts;
+}
+
+export function getSelectedSkillContextItems<
+  TSkill extends SkillSelectionRecord,
+>(
+  skills: TSkill[],
+  selectedSkillPaths: ReadonlySet<string>,
+): Array<{ name: string; path: string }> {
+  return skills
+    .filter((skill) => skill.enabled && selectedSkillPaths.has(skill.path))
+    .map((skill) => ({
+      name: skill.name,
+      path: skill.path,
+    }));
 }
