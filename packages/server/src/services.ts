@@ -204,9 +204,11 @@ function isValidInferredWorktreeName(name: string): boolean {
   });
 }
 
-type PendingTurnEvent =
-  | { kind: "notification"; message: CodexMessage }
-  | { kind: "serverRequest"; message: CodexMessage };
+interface PendingTurnEvent {
+  kind: "notification" | "serverRequest";
+  message: CodexMessage;
+  order: number;
+}
 
 type CodexTurnItemSource = "input" | "item";
 type InternalChatMessageRecord = ChatMessageRecord & {
@@ -245,6 +247,12 @@ export class ServeServices {
     string,
     PendingTurnEventBuffer
   >();
+  private readonly pendingTurnEventsByTurnId = new Map<
+    string,
+    PendingTurnEvent[]
+  >();
+  private readonly pendingTurnThreadsByTurnId = new Map<string, string>();
+  private pendingTurnEventOrder = 0;
   private readonly pendingChatTurns = new Set<string>();
   private readonly drainingQueuedMessageChatIds = new Set<string>();
   private readonly pendingQueuedMessageDrainChatIds = new Set<string>();
@@ -1389,6 +1397,8 @@ export class ServeServices {
             : await this.codex.startTurn(threadId, text, chat.worktreePath);
           const turnId = extractTurnId(turnResult);
           if (turnId) {
+            this.pendingTurnThreadsByTurnId.set(turnId, threadId);
+            this.attachPendingTurnEventsForTurn(threadId, turnId);
             this.activeTurnChatIds.add(chatId);
             nextStatus = "running";
             nextActiveTurnId = turnId;
@@ -1461,6 +1471,12 @@ export class ServeServices {
       }
       clearPendingChatTurn();
       if (pendingTurnThreadId) {
+        if (nextActiveTurnId) {
+          this.attachPendingTurnEventsForTurn(
+            pendingTurnThreadId,
+            nextActiveTurnId,
+          );
+        }
         await this.flushPendingTurnEvents(pendingTurnThreadId);
       }
 
@@ -1650,6 +1666,8 @@ export class ServeServices {
     this.loadedThreadIds.clear();
     this.approvalRequests.clear();
     this.pendingTurnEvents.clear();
+    this.pendingTurnEventsByTurnId.clear();
+    this.pendingTurnThreadsByTurnId.clear();
     this.pendingChatTurns.clear();
     this.activeTurnChatIds.clear();
 
@@ -1688,12 +1706,12 @@ export class ServeServices {
 
   private async handleCodexNotification(message: CodexMessage): Promise<void> {
     const threadId = extractThreadIdFromParams(message.params);
+    const pendingEvent = this.createPendingTurnEvent("notification", message);
+    if (threadId && this.bufferPendingTurnEvent(threadId, pendingEvent)) {
+      return;
+    }
     if (
-      threadId &&
-      this.bufferPendingTurnEvent(threadId, {
-        kind: "notification",
-        message,
-      })
+      await this.bufferPendingTurnEventByTurnId(message.params, pendingEvent)
     ) {
       return;
     }
@@ -1731,10 +1749,10 @@ export class ServeServices {
     const threadId = extractThreadIdFromParams(message.params);
     if (
       threadId &&
-      this.bufferPendingTurnEvent(threadId, {
-        kind: "serverRequest",
-        message,
-      })
+      this.bufferPendingTurnEvent(
+        threadId,
+        this.createPendingTurnEvent("serverRequest", message),
+      )
     ) {
       return;
     }
@@ -2021,9 +2039,11 @@ export class ServeServices {
     const pendingTurnEvents = this.pendingTurnEvents.get(threadId);
     if (!pendingTurnEvents || pendingTurnEvents.discard) {
       this.pendingTurnEvents.delete(threadId);
+      this.deletePendingTurnThreadMappings(threadId);
       return;
     }
     pendingTurnEvents.flushing = true;
+    pendingTurnEvents.events.sort((a, b) => a.order - b.order);
     while (!pendingTurnEvents.discard && pendingTurnEvents.events.length > 0) {
       const pendingEvent = pendingTurnEvents.events.shift();
       if (!pendingEvent) {
@@ -2038,7 +2058,19 @@ export class ServeServices {
     pendingTurnEvents.flushing = false;
     if (this.pendingTurnEvents.get(threadId) === pendingTurnEvents) {
       this.pendingTurnEvents.delete(threadId);
+      this.deletePendingTurnThreadMappings(threadId);
     }
+  }
+
+  private createPendingTurnEvent(
+    kind: PendingTurnEvent["kind"],
+    message: CodexMessage,
+  ): PendingTurnEvent {
+    return {
+      kind,
+      message,
+      order: this.pendingTurnEventOrder++,
+    };
   }
 
   private bufferPendingTurnEvent(
@@ -2062,6 +2094,77 @@ export class ServeServices {
     return true;
   }
 
+  private async bufferPendingTurnEventByTurnId(
+    params: unknown,
+    event: PendingTurnEvent,
+  ): Promise<boolean> {
+    const turnId = extractTurnIdFromParams(params);
+    if (!turnId) {
+      return false;
+    }
+
+    const threadId = this.pendingTurnThreadsByTurnId.get(turnId);
+    if (threadId) {
+      return this.bufferPendingTurnEvent(threadId, event);
+    }
+
+    if (!this.hasPendingTurnStartup()) {
+      return false;
+    }
+
+    const state = await this.store.load();
+    if (state.chats.some((chat) => chat.activeTurnId === turnId)) {
+      return false;
+    }
+
+    const existingEvents = this.pendingTurnEventsByTurnId.get(turnId);
+    if (existingEvents) {
+      existingEvents.push(event);
+      return true;
+    }
+
+    const events = [event];
+    this.pendingTurnEventsByTurnId.set(turnId, events);
+    const cleanup = setTimeout(() => {
+      if (this.pendingTurnEventsByTurnId.get(turnId) === events) {
+        this.pendingTurnEventsByTurnId.delete(turnId);
+      }
+    }, 30000);
+    cleanup.unref?.();
+    return true;
+  }
+
+  private hasPendingTurnStartup(): boolean {
+    for (const pendingTurnEvents of this.pendingTurnEvents.values()) {
+      if (!pendingTurnEvents.discard) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private attachPendingTurnEventsForTurn(
+    threadId: string,
+    turnId: string,
+  ): void {
+    const events = this.pendingTurnEventsByTurnId.get(turnId);
+    if (!events) {
+      return;
+    }
+    this.pendingTurnEventsByTurnId.delete(turnId);
+    for (const event of events) {
+      this.bufferPendingTurnEvent(threadId, event);
+    }
+  }
+
+  private deletePendingTurnThreadMappings(threadId: string): void {
+    for (const [turnId, mappedThreadId] of this.pendingTurnThreadsByTurnId) {
+      if (mappedThreadId === threadId) {
+        this.pendingTurnThreadsByTurnId.delete(turnId);
+      }
+    }
+  }
+
   private discardPendingTurnEvents(threadId: string): void {
     const pendingTurnEvents = this.pendingTurnEvents.get(threadId);
     if (!pendingTurnEvents) {
@@ -2078,6 +2181,7 @@ export class ServeServices {
       }
     }
     pendingTurnEvents.discard = true;
+    this.deletePendingTurnThreadMappings(threadId);
     pendingTurnEvents.events = [];
     const cleanup = setTimeout(() => {
       if (this.pendingTurnEvents.get(threadId) === pendingTurnEvents) {

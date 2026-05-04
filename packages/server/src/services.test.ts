@@ -5040,6 +5040,48 @@ describe("ServeServices", () => {
     );
   });
 
+  it("buffers threadless turn events until a new turn is committed", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+    };
+    const { codex, services, store } = await createHarness(state);
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockImplementationOnce(async () => {
+      codex.emitNotification({
+        method: "turn/plan/updated",
+        params: {
+          turnId: "turn_1",
+          explanation: "Starting quickly",
+          plan: [{ step: "Inspect code", status: "inProgress" }],
+        },
+      });
+      return { turn: { id: "turn_1" } };
+    });
+
+    await services.sendMessage("chat_1", { text: "hello" });
+
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).messages.length, 2);
+    });
+
+    const savedState = await store.load();
+    const planMessage = savedState.messages.find(
+      (message) => message.eventType === "turn/plan/updated",
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => message.role),
+      ["user", "event"],
+    );
+    strictEqual(savedState.chats[0]?.activeTurnId, "turn_1");
+    strictEqual(planMessage?.text, "plan updated: 1 step");
+    deepStrictEqual(
+      (planMessage?.eventData as { plan?: unknown[] } | undefined)?.plan,
+      [{ step: "Inspect code", status: "inProgress" }],
+    );
+  });
+
   it("stores rich Codex events as structured timeline messages", async () => {
     const state = {
       ...createTestState(),
