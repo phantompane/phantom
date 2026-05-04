@@ -315,6 +315,10 @@ export const rpcRoutes = new Hono()
       const services = getServeServices();
       const chatId = c.req.param("chatId");
       const requestQuery = c.req.valid("query");
+      if (requestQuery.context === "approval") {
+        const approval = await services.getPendingApproval(chatId);
+        return c.json({ approval }, 200);
+      }
       if (requestQuery.context === "skills") {
         const skills = await services.listSkills(chatId);
         return c.json({ skills }, 200);

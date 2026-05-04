@@ -56,6 +56,7 @@ import {
 } from "../api/mutations";
 import {
   authQueryOptions,
+  chatApprovalQueryOptions,
   chatQueryOptions,
   chatSkillsQueryOptions,
   fileSearchQueryOptions,
@@ -153,6 +154,7 @@ import type {
   CodexTurnContextItem,
   GitHubCheckoutTargetRecord,
   GitHubCheckoutTargetsResult,
+  PendingApprovalRecord,
   PhantomEvent,
   ProjectWorktreeRecord,
   ProjectRecord,
@@ -227,11 +229,8 @@ const statusMeta: Record<
   },
 };
 
-interface PendingApproval {
-  requestId: string;
-  method: string;
-  params: unknown;
-}
+type PendingApproval = PendingApprovalRecord & { chatId: string };
+type PendingApprovalEventData = PendingApprovalRecord;
 
 interface DeleteWorktreeTarget {
   forceRequired: boolean;
@@ -539,6 +538,8 @@ export function HomeRoute() {
       : "");
   const fileSearchQueryRef = useRef(fileSearchQuery);
   const fileSearchRequestIdRef = useRef(0);
+  const approvalRefreshRequestIdRef = useRef(0);
+  const approvalEventVersionRef = useRef(0);
   const [fileSearchResults, setFileSearchResults] = useState<CodexFileRecord[]>(
     [],
   );
@@ -547,6 +548,8 @@ export function HomeRoute() {
   const [sidebarError, setSidebarError] = useState<string | null>(null);
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [composerError, setComposerError] = useState<string | null>(null);
+  const [fileSearchError, setFileSearchError] = useState<string | null>(null);
+  const [modelError, setModelError] = useState<string | null>(null);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [deleteProjectError, setDeleteProjectError] = useState<string | null>(
     null,
@@ -593,6 +596,7 @@ export function HomeRoute() {
   const selectedChatIdRef = useRef<string | null>(null);
   const selectedChatVersionRef = useRef(0);
   const toastIdRef = useRef(0);
+  const toastTimeoutsRef = useRef<Map<number, number>>(new Map());
   const chatsByProjectRef = useRef(chatsByProject);
   const worktreesByProjectRef = useRef(worktreesByProject);
   const githubTargetsByProjectRef = useRef(githubTargetsByProject);
@@ -609,6 +613,8 @@ export function HomeRoute() {
   );
   const [pendingApproval, setPendingApproval] =
     useState<PendingApproval | null>(null);
+  const pendingApprovalRef = useRef<PendingApproval | null>(pendingApproval);
+  pendingApprovalRef.current = pendingApproval;
   const queryClient = useQueryClient();
   const addProjectRequest = useMutation({
     mutationFn: addProjectMutation,
@@ -708,32 +714,71 @@ export function HomeRoute() {
     }) => answerApprovalMutation(chatId, requestId, decision),
   });
 
+  function clearToastTimer(id: number) {
+    const timeout = toastTimeoutsRef.current.get(id);
+    if (timeout !== undefined) {
+      window.clearTimeout(timeout);
+      toastTimeoutsRef.current.delete(id);
+    }
+  }
+
   function dismissToast(id: number) {
+    clearToastTimer(id);
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }
 
   function showToast(message: string, tone: ToastTone = "danger") {
     const id = toastIdRef.current + 1;
     toastIdRef.current = id;
-    setToasts((current) =>
-      [...current, { id, message, tone }].slice(-maxVisibleToasts),
+    const timeout = window.setTimeout(
+      () => dismissToast(id),
+      toastDismissDelayMs,
     );
+    toastTimeoutsRef.current.set(id, timeout);
+    setToasts((current) => {
+      const next = [...current, { id, message, tone }].slice(-maxVisibleToasts);
+      const nextIds = new Set(next.map((toast) => toast.id));
+      for (const toast of current) {
+        if (!nextIds.has(toast.id)) {
+          clearToastTimer(toast.id);
+        }
+      }
+      return next;
+    });
   }
 
   useEffect(() => {
-    if (toasts.length === 0) {
-      return;
-    }
-
-    const timers = toasts.map((toast) =>
-      window.setTimeout(() => dismissToast(toast.id), toastDismissDelayMs),
-    );
     return () => {
-      for (const timer of timers) {
-        window.clearTimeout(timer);
+      for (const timeout of toastTimeoutsRef.current.values()) {
+        window.clearTimeout(timeout);
       }
+      toastTimeoutsRef.current.clear();
     };
-  }, [toasts]);
+  }, []);
+
+  function updatePendingApproval(nextApproval: PendingApproval | null) {
+    pendingApprovalRef.current = nextApproval;
+    setPendingApproval(nextApproval);
+  }
+
+  function clearPendingApprovalForChat(chatId: string) {
+    setPendingApproval((current) => {
+      const nextApproval = current?.chatId === chatId ? null : current;
+      pendingApprovalRef.current = nextApproval;
+      return nextApproval;
+    });
+  }
+
+  function clearPendingApprovalForRequest(chatId: string, requestId: string) {
+    setPendingApproval((current) => {
+      const nextApproval =
+        current?.chatId === chatId && current.requestId === requestId
+          ? null
+          : current;
+      pendingApprovalRef.current = nextApproval;
+      return nextApproval;
+    });
+  }
 
   function updateSearchParams(
     updater: (nextSearchParams: URLSearchParams) => void,
@@ -1185,7 +1230,7 @@ export function HomeRoute() {
     if (!isSelectedChatValidated) {
       setMessages([]);
       setMessagesChatId(null);
-      setPendingApproval(null);
+      updatePendingApproval(null);
       setSelectedFiles([]);
       setSelectedSkillPaths(new Set());
       setFileSearchResults([]);
@@ -1199,7 +1244,7 @@ export function HomeRoute() {
     if (!selectedChatId) {
       setMessages([]);
       setMessagesChatId(null);
-      setPendingApproval(null);
+      updatePendingApproval(null);
       setSelectedFiles([]);
       setSelectedSkillPaths(new Set());
       setFileSearchResults([]);
@@ -1216,6 +1261,8 @@ export function HomeRoute() {
     setSkills([]);
     setMessages([]);
     setMessagesChatId(null);
+    setApprovalError(null);
+    updatePendingApproval(null);
     const chatContextController = new AbortController();
     void refreshMessages(selectedChatId, { showLoading: true });
     void refreshSelectedChat(selectedChatId);
@@ -1227,11 +1274,19 @@ export function HomeRoute() {
     const handleEvent = (event: MessageEvent<string>) => {
       const phantomEvent = JSON.parse(event.data) as PhantomEvent;
       if (phantomEvent.type === "agent.approval.requested") {
-        const data = phantomEvent.data as PendingApproval;
-        setPendingApproval(data);
+        const data = phantomEvent.data as PendingApprovalEventData;
+        approvalEventVersionRef.current += 1;
+        updatePendingApproval({ ...data, chatId: selectedChatId });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.chatApproval(selectedChatId),
+        });
       }
       if (phantomEvent.type === "agent.approval.resolved") {
-        setPendingApproval(null);
+        approvalEventVersionRef.current += 1;
+        clearPendingApprovalForChat(selectedChatId);
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.chatApproval(selectedChatId),
+        });
       }
       void queryClient.invalidateQueries({
         queryKey: queryKeys.messages(selectedChatId),
@@ -1252,6 +1307,9 @@ export function HomeRoute() {
     for (const eventName of chatEventNames) {
       source.addEventListener(eventName, handleEvent);
     }
+    source.onopen = () => {
+      void refreshPendingApproval(selectedChatId, chatContextController.signal);
+    };
     source.onerror = () => setStatus("Event stream disconnected");
 
     return () => {
@@ -1343,12 +1401,14 @@ export function HomeRoute() {
 
     if (!validatedSelectedChatId || !fileSearchQuery.trim()) {
       setFileSearchResults([]);
+      setFileSearchError(null);
       setIsFileSearchLoading(false);
       return;
     }
 
     const controller = new AbortController();
     const query = fileSearchQuery.trim();
+    setFileSearchError(null);
     setIsFileSearchLoading(true);
     const timeout = setTimeout(() => {
       void queryClient
@@ -1367,10 +1427,17 @@ export function HomeRoute() {
             return;
           }
           setFileSearchResults(data.files);
+          setFileSearchError(null);
         })
         .catch((err: Error) => {
-          if (err.name !== "AbortError") {
-            setComposerError(formatErrorMessage("Could not search files", err));
+          if (
+            err.name !== "AbortError" &&
+            !controller.signal.aborted &&
+            fileSearchRequestIdRef.current === requestId
+          ) {
+            setFileSearchError(
+              formatErrorMessage("Could not search files", err),
+            );
           }
         })
         .finally(() => {
@@ -1562,8 +1629,9 @@ export function HomeRoute() {
     try {
       const data = await queryClient.fetchQuery(modelsQueryOptions());
       setModels(data.models);
+      setModelError(null);
     } catch (err) {
-      setComposerError(formatErrorMessage("Could not load models", err));
+      setModelError(formatErrorMessage("Could not load models", err));
     } finally {
       setIsModelsLoading(false);
     }
@@ -1580,7 +1648,10 @@ export function HomeRoute() {
       }
       setSkills(data.skills);
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
+      if (
+        signal?.aborted ||
+        (err instanceof Error && err.name === "AbortError")
+      ) {
         return;
       }
       setComposerError(formatErrorMessage("Could not load skills", err));
@@ -1782,6 +1853,39 @@ export function HomeRoute() {
     upsertChatRecord(data.chat);
   }
 
+  async function refreshPendingApproval(chatId: string, signal?: AbortSignal) {
+    const requestId = approvalRefreshRequestIdRef.current + 1;
+    approvalRefreshRequestIdRef.current = requestId;
+    const eventVersion = approvalEventVersionRef.current;
+    try {
+      const data = await queryClient.fetchQuery(
+        chatApprovalQueryOptions(chatId, signal),
+      );
+      if (
+        selectedChatIdRef.current === chatId &&
+        approvalRefreshRequestIdRef.current === requestId &&
+        approvalEventVersionRef.current === eventVersion
+      ) {
+        updatePendingApproval(
+          data.approval ? { ...data.approval, chatId } : null,
+        );
+      }
+    } catch (err) {
+      if (
+        signal?.aborted ||
+        (err instanceof Error && err.name === "AbortError")
+      ) {
+        return;
+      }
+      if (
+        selectedChatIdRef.current === chatId &&
+        approvalRefreshRequestIdRef.current === requestId
+      ) {
+        showToast(formatErrorMessage("Could not load approval", err));
+      }
+    }
+  }
+
   async function refreshMessages(
     chatId: string,
     options: { showLoading?: boolean } = {},
@@ -1947,7 +2051,7 @@ export function HomeRoute() {
         setTransientFileSearchQuery(null);
         setFileSearchResults([]);
         setSkills([]);
-        setPendingApproval(null);
+        updatePendingApproval(null);
         restoredPendingComposerContextRef.current = null;
       }
       closeDeleteProjectDialog();
@@ -2554,9 +2658,18 @@ export function HomeRoute() {
   }
 
   async function answerApproval(decision: string) {
-    if (!selectedChatId || !pendingApproval) {
+    if (
+      !selectedChatId ||
+      !pendingApproval ||
+      pendingApproval.chatId !== selectedChatId
+    ) {
       return;
     }
+    const requestChatId = pendingApproval.chatId;
+    const requestApproval = pendingApproval;
+    const isCurrentApproval = () =>
+      selectedChatIdRef.current === requestChatId &&
+      pendingApprovalRef.current?.requestId === requestApproval.requestId;
     setApprovalError(null);
     try {
       if (
@@ -2568,16 +2681,22 @@ export function HomeRoute() {
         throw new Error("Approval decision is invalid");
       }
       await answerApprovalRequest.mutateAsync({
-        chatId: selectedChatId,
+        chatId: requestChatId,
         decision,
-        requestId: pendingApproval.requestId,
+        requestId: requestApproval.requestId,
+      });
+      approvalEventVersionRef.current += 1;
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.chatApproval(requestChatId),
       });
       void queryClient.invalidateQueries({
-        queryKey: queryKeys.chat(selectedChatId),
+        queryKey: queryKeys.chat(requestChatId),
       });
-      setPendingApproval(null);
+      clearPendingApprovalForRequest(requestChatId, requestApproval.requestId);
     } catch (err) {
-      setApprovalError(formatErrorMessage("Could not answer approval", err));
+      if (isCurrentApproval()) {
+        setApprovalError(formatErrorMessage("Could not answer approval", err));
+      }
     }
   }
 
@@ -2665,6 +2784,9 @@ export function HomeRoute() {
   function selectSkill(path: string) {
     setSelectedSkillPaths((current) => new Set(current).add(path));
   }
+
+  const visiblePendingApproval =
+    pendingApproval?.chatId === selectedChatId ? pendingApproval : null;
 
   return (
     <SidebarProvider className="app-shell">
@@ -3280,7 +3402,7 @@ export function HomeRoute() {
           </div>
         </header>
 
-        {pendingApproval && (
+        {visiblePendingApproval && (
           <div className="border-b border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] px-4 py-3 text-[var(--semantic-warning-fg)]">
             <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
@@ -3289,7 +3411,7 @@ export function HomeRoute() {
                   Approval requested
                 </p>
                 <p className="mt-1 truncate font-mono text-[length:var(--font-size-xs)]">
-                  {pendingApproval.method}
+                  {visiblePendingApproval.method}
                 </p>
                 {approvalError && (
                   <InlineNotice
@@ -3388,6 +3510,18 @@ export function HomeRoute() {
               <InlineNotice
                 message={composerError}
                 onDismiss={() => setComposerError(null)}
+              />
+            )}
+            {fileSearchError && (
+              <InlineNotice
+                message={fileSearchError}
+                onDismiss={() => setFileSearchError(null)}
+              />
+            )}
+            {modelError && (
+              <InlineNotice
+                message={modelError}
+                onDismiss={() => setModelError(null)}
               />
             )}
             {(selectedFiles.length > 0 || selectedSkills.length > 0) && (

@@ -3508,6 +3508,43 @@ describe("ServeServices", () => {
     );
   });
 
+  it("returns only unanswered pending approvals for a chat", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, services, store } = await createHarness(state);
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+    const params = { threadId: "thread_1", turnId: "turn_1" };
+
+    codex.emitServerRequest({
+      id: 101,
+      method: "item/commandExecution/requestApproval",
+      params,
+    });
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).chats[0]?.status, "waitingForApproval");
+    });
+    const approvalRequest = emitSpy.mock.calls.find(
+      (call) => call[0] === "agent.approval.requested",
+    )?.[1] as { requestId: string } | undefined;
+    if (!approvalRequest) {
+      throw new Error("Approval request was not emitted");
+    }
+
+    deepStrictEqual(await services.getPendingApproval("chat_1"), {
+      requestId: approvalRequest.requestId,
+      method: "item/commandExecution/requestApproval",
+      params,
+    });
+
+    await services.answerApproval("chat_1", approvalRequest.requestId, {
+      decision: "accept",
+    });
+    strictEqual(await services.getPendingApproval("chat_1"), null);
+  });
+
   it("keeps numeric and string Codex approval ids separate", async () => {
     const state = {
       ...createTestState(),

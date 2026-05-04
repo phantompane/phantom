@@ -8,6 +8,7 @@ import type {
   CodexModelRecord,
   CodexSkillRecord,
   GitHubCheckoutTargetsResult,
+  PendingApprovalRecord,
   ProjectRecord,
   ProjectWorktreeRecord,
 } from "@phantompane/server";
@@ -80,6 +81,24 @@ export function chatQueryOptions(chatId: string) {
           param: { chatId: routeParam(chatId) },
           query: {},
         }),
+      ),
+  });
+}
+
+export function chatApprovalQueryOptions(chatId: string, signal?: AbortSignal) {
+  return queryOptions({
+    queryKey: queryKeys.chatApproval(chatId),
+    queryFn: async () =>
+      readRpcJson<{ approval: PendingApprovalRecord | null }>(
+        await api.chats[":chatId"].$get(
+          {
+            param: { chatId: routeParam(chatId) },
+            query: { context: "approval" },
+          },
+          {
+            init: { signal },
+          },
+        ),
       ),
   });
 }

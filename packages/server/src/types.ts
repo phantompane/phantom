@@ -64,6 +64,12 @@ export interface CodexSkillRecord {
   enabled: boolean;
 }
 
+export interface PendingApprovalRecord {
+  requestId: string;
+  method: string;
+  params: unknown;
+}
+
 export interface CodexTurnContextItem {
   name: string;
   path: string;
