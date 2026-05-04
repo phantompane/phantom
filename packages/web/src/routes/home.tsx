@@ -724,9 +724,7 @@ export function HomeRoute() {
   const hasSelectedContext =
     selectedFiles.length > 0 || selectedSkills.length > 0;
   const canStartNewProjectChat =
-    Boolean(selectedProject) &&
-    !hasSelectedChat &&
-    Boolean(composerText.trim());
+    Boolean(selectedProject) && !selectedChatId && Boolean(composerText.trim());
   const canSendMessage =
     (hasSelectedChat && Boolean(composerText.trim() || hasSelectedContext)) ||
     canStartNewProjectChat;
@@ -1603,13 +1601,13 @@ export function HomeRoute() {
       updateSelection: false,
     });
     if (!didRefreshWorktrees) {
-      return data.chat;
+      return null;
     }
     const didRefreshChats = await refreshChats(projectId, {
       updateSelection: false,
     });
     if (!didRefreshChats) {
-      return data.chat;
+      return null;
     }
     if (getCurrentUrlWorkspaceSelectionKey() !== requestWorkspaceSelectionKey) {
       return data.chat;
