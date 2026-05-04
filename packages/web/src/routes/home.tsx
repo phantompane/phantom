@@ -2394,6 +2394,26 @@ export function HomeRoute() {
     }
   }
 
+  function createSelectedWorktreeChat() {
+    if (!selectedProjectId || !selectedWorktree) {
+      return;
+    }
+
+    void createChat(selectedProjectId, selectedWorktree);
+  }
+
+  function openDeleteSelectedWorktree() {
+    if (
+      !selectedProjectId ||
+      !selectedWorktree ||
+      !selectedWorktree.isManagedByPhantom
+    ) {
+      return;
+    }
+
+    void openDeleteWorktree(selectedProjectId, selectedWorktree);
+  }
+
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await submitComposer("send");
@@ -3532,6 +3552,42 @@ export function HomeRoute() {
                 <Archive />
               )}
             </Button>
+          )}
+          {selectedWorktree && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  aria-label={`Open chat actions for ${selectedWorktree.name}`}
+                  className="size-8 shrink-0 text-[var(--icon-color-default)]"
+                  disabled={isBusy}
+                  size="icon"
+                  title="Chat actions"
+                  type="button"
+                  variant="ghost"
+                >
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  disabled={isBusy}
+                  onSelect={createSelectedWorktreeChat}
+                >
+                  <MessageSquarePlus className="size-4" />
+                  <span>New chat</span>
+                </DropdownMenuItem>
+                {selectedWorktree.isManagedByPhantom && (
+                  <DropdownMenuItem
+                    disabled={isBusy}
+                    onSelect={openDeleteSelectedWorktree}
+                    variant="destructive"
+                  >
+                    <Trash2 className="size-4" />
+                    <span>Delete worktree</span>
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </header>
 
