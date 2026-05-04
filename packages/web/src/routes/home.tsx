@@ -11,6 +11,7 @@ import {
   MessageSquare,
   MessageSquarePlus,
   MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Send,
@@ -35,9 +36,11 @@ import {
   answerApprovalMutation,
   addProjectMutation,
   createChatMutation,
+  deletePendingMessageMutation,
   deleteWorktreeMutation,
   interruptChatMutation,
   queueMessageMutation,
+  restorePendingMessageMutation,
   sendMessageMutation,
   steerMessageMutation,
   syncWorktreeMutation,
@@ -113,6 +116,7 @@ import {
   findValidatedSelectedProjectChat,
   findValidatedSelectedChat,
   getSelectableReasoningEfforts,
+  getSelectedSkillContextItems,
   isShareableFileSearchQuery,
   mergeWorktreesWithChats,
   retainRecordsForProjects,
@@ -124,6 +128,7 @@ import type {
   CodexFileRecord,
   CodexModelRecord,
   CodexSkillRecord,
+  CodexTurnContextItem,
   PhantomEvent,
   ProjectWorktreeRecord,
   ProjectRecord,
@@ -133,6 +138,7 @@ const chatEventNames = [
   "chat.created",
   "chat.updated",
   "chat.message.created",
+  "chat.message.deleted",
   "agent.thread.started",
   "agent.turn.started",
   "agent.item.updated",
@@ -200,6 +206,12 @@ interface PendingApproval {
 interface DeleteWorktreeTarget {
   projectId: string;
   worktreePath: string;
+}
+
+interface RestoredPendingComposerContext {
+  chatId: string;
+  effort: string | null;
+  model: string | null;
 }
 
 type VisibleMessageRecord = ChatMessageRecord & {
@@ -504,6 +516,11 @@ export function HomeRoute() {
   const worktreesByProjectRef = useRef(worktreesByProject);
   const messagesRefreshRequestIdRef = useRef(0);
   const sendMessageRequestIdRef = useRef(0);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerTextRef = useRef(composerText);
+  const hasSelectedContextRef = useRef(false);
+  const restoredPendingComposerContextRef =
+    useRef<RestoredPendingComposerContext | null>(null);
   const pendingSendChatIdsRef = useRef<Set<string>>(new Set());
   const pendingComposerModesByChatRef = useRef<Map<string, ComposerSubmitMode>>(
     new Map(),
@@ -554,6 +571,24 @@ export function HomeRoute() {
       chatId: string;
       input: Parameters<typeof sendMessageMutation>[1];
     }) => sendMessageMutation(chatId, input),
+  });
+  const deletePendingMessageRequest = useMutation({
+    mutationFn: ({
+      chatId,
+      messageId,
+    }: {
+      chatId: string;
+      messageId: string;
+    }) => deletePendingMessageMutation(chatId, messageId),
+  });
+  const restorePendingMessageRequest = useMutation({
+    mutationFn: ({
+      chatId,
+      input,
+    }: {
+      chatId: string;
+      input: Parameters<typeof restorePendingMessageMutation>[1];
+    }) => restorePendingMessageMutation(chatId, input),
   });
   const steerMessageRequest = useMutation({
     mutationFn: ({
@@ -719,11 +754,16 @@ export function HomeRoute() {
   );
 
   const selectedSkills = useMemo(
-    () => skills.filter((skill) => selectedSkillPaths.has(skill.path)),
+    () =>
+      skills.filter(
+        (skill) => skill.enabled && selectedSkillPaths.has(skill.path),
+      ),
     [selectedSkillPaths, skills],
   );
   const hasSelectedContext =
     selectedFiles.length > 0 || selectedSkills.length > 0;
+  composerTextRef.current = composerText;
+  hasSelectedContextRef.current = hasSelectedContext;
   const canStartNewProjectChat =
     Boolean(selectedProject) && !selectedChatId && Boolean(composerText.trim());
   const canSendMessage =
@@ -736,6 +776,8 @@ export function HomeRoute() {
     : "send";
   const isComposerBlocked =
     isSendingMessage ||
+    deletePendingMessageRequest.isPending ||
+    restorePendingMessageRequest.isPending ||
     Boolean(
       selectedChatId && pendingSendChatIdsRef.current.has(selectedChatId),
     );
@@ -747,7 +789,7 @@ export function HomeRoute() {
     hasSelectedChat && canSendMessage && !isComposerBlocked;
   const canInterruptActiveTurn =
     hasActiveTurn && !isInterrupting && Boolean(selectedChat?.activeTurnId);
-  const areComposerOptionsDisabled = !hasSelectedChat || isSendingMessage;
+  const areComposerOptionsDisabled = !hasSelectedChat || isComposerBlocked;
   const primaryComposerActionLabel =
     formatComposerModeAction(primaryComposerMode);
   const primaryComposerButtonLabel =
@@ -1781,27 +1823,29 @@ export function HomeRoute() {
     await submitComposer("send");
   }
 
-  function createComposerMessageInput(text: string): SendMessageInput {
-    const turnModel = selectedModel?.id ?? selectedModel?.model;
-    const turnEffort =
-      selectedModel &&
-      selectedEffort &&
-      selectedModelSupportedEfforts.includes(selectedEffort)
+  function createComposerMessageInput(
+    text: string,
+    restoredPendingContext: RestoredPendingComposerContext | null,
+  ): SendMessageInput {
+    const turnModel =
+      selectedModel?.id ??
+      selectedModel?.model ??
+      restoredPendingContext?.model ??
+      undefined;
+    const turnEffort = selectedModel
+      ? selectedEffort && selectedModelSupportedEfforts.includes(selectedEffort)
         ? selectedEffort
-        : null;
+        : null
+      : (restoredPendingContext?.effort ?? null);
     const files = selectedFiles.map((file) => ({
       name: file.relativePath,
       path: file.path,
-    }));
-    const selectedSkillItems = selectedSkills.map((skill) => ({
-      name: skill.name,
-      path: skill.path,
     }));
     return {
       effort: turnEffort,
       files,
       model: turnModel,
-      skills: selectedSkillItems,
+      skills: getSelectedSkillContextItems(skills, selectedSkillPaths),
       text,
     };
   }
@@ -1882,9 +1926,8 @@ export function HomeRoute() {
     if (
       (!requestChatId && (!selectedProjectId || mode !== "send")) ||
       !canSendMessage ||
-      isSendingMessage ||
+      isComposerBlocked ||
       (isStartingNewProjectChat && (isBusy || createChatInFlightRef.current)) ||
-      (requestChatId && pendingSendChatIdsRef.current.has(requestChatId)) ||
       (mode === "steer" && !selectedChat?.activeTurnId)
     ) {
       return;
@@ -1907,7 +1950,15 @@ export function HomeRoute() {
             hasSkills: selectedSkills.length > 0,
           });
     setComposerText("");
-    const messageInput = createComposerMessageInput(text);
+    const restoredPendingContext =
+      requestChatId &&
+      restoredPendingComposerContextRef.current?.chatId === requestChatId
+        ? restoredPendingComposerContextRef.current
+        : null;
+    const messageInput = createComposerMessageInput(
+      text,
+      restoredPendingContext,
+    );
     if (!requestChatId) {
       if (!selectedProjectId) {
         return;
@@ -1924,7 +1975,6 @@ export function HomeRoute() {
       setPendingComposerMode(null);
       return;
     }
-
     pendingSendChatIdsRef.current.add(requestChatId);
     pendingComposerModesByChatRef.current.set(requestChatId, mode);
     setIsSendingMessage(true);
@@ -1943,6 +1993,9 @@ export function HomeRoute() {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.messages(requestChatId),
       });
+      if (restoredPendingComposerContextRef.current?.chatId === requestChatId) {
+        restoredPendingComposerContextRef.current = null;
+      }
       if (!isCurrentSendRequest()) {
         return;
       }
@@ -1969,6 +2022,98 @@ export function HomeRoute() {
         );
       }
     }
+  }
+
+  async function deletePendingMessage(message: VisibleMessageRecord) {
+    if (!selectedChatId || message.chatId !== selectedChatId) {
+      return null;
+    }
+    const requestChatId = selectedChatId;
+    setError(null);
+    try {
+      const data = await deletePendingMessageRequest.mutateAsync({
+        chatId: requestChatId,
+        messageId: message.id,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.messages(requestChatId),
+      });
+      await refreshMessages(requestChatId);
+      return data;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  }
+
+  async function editPendingMessage(message: VisibleMessageRecord) {
+    if (composerText.trim() || hasSelectedContext) {
+      setError("Clear the current message before editing a pending message");
+      composerTextareaRef.current?.focus();
+      return;
+    }
+    const deletedPendingMessage = await deletePendingMessage(message);
+    if (!deletedPendingMessage) {
+      return;
+    }
+    const canRestoreIntoComposer =
+      selectedChatIdRef.current === deletedPendingMessage.message.chatId &&
+      !composerTextRef.current.trim() &&
+      !hasSelectedContextRef.current;
+    if (!canRestoreIntoComposer) {
+      const requeueChatId = deletedPendingMessage.message.chatId;
+      try {
+        await restorePendingMessageRequest.mutateAsync({
+          chatId: requeueChatId,
+          input: deletedPendingMessage,
+        });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.messages(requeueChatId),
+        });
+        if (selectedChatIdRef.current === requeueChatId) {
+          await refreshMessages(requeueChatId);
+        }
+        setError(
+          "Pending message was restored to the queue because the composer changed before editing completed",
+        );
+      } catch (err) {
+        setError(
+          `Pending message was deleted but could not be restored: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      return;
+    }
+    restoredPendingComposerContextRef.current = {
+      chatId: deletedPendingMessage.message.chatId,
+      effort: deletedPendingMessage.queuedMessage.effort ?? null,
+      model: deletedPendingMessage.queuedMessage.model ?? null,
+    };
+    setComposerText(deletedPendingMessage.message.text);
+    setSelectedFiles(
+      (deletedPendingMessage.queuedMessage.files ?? []).map(
+        contextItemToSelectedFile,
+      ),
+    );
+    setSelectedSkillPaths(
+      new Set(
+        (deletedPendingMessage.queuedMessage.skills ?? []).map(
+          (skill) => skill.path,
+        ),
+      ),
+    );
+    setSearchParamValue(
+      searchParamKeys.model,
+      deletedPendingMessage.queuedMessage.model ?? null,
+    );
+    setSearchParamValue(
+      searchParamKeys.effort,
+      deletedPendingMessage.queuedMessage.effort ?? null,
+    );
+    requestAnimationFrame(() => {
+      composerTextareaRef.current?.focus();
+    });
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -2687,7 +2832,17 @@ export function HomeRoute() {
           ) : (
             <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">
               {visibleMessages.map((message) => (
-                <MessageCard key={message.id} message={message} />
+                <MessageCard
+                  isPendingActionBusy={deletePendingMessageRequest.isPending}
+                  key={message.id}
+                  message={message}
+                  onDeletePendingMessage={(pendingMessage) =>
+                    void deletePendingMessage(pendingMessage)
+                  }
+                  onEditPendingMessage={(pendingMessage) =>
+                    void editPendingMessage(pendingMessage)
+                  }
+                />
               ))}
             </div>
           )}
@@ -2737,7 +2892,7 @@ export function HomeRoute() {
                 </Label>
                 <Textarea
                   className="min-h-12 border-0 bg-transparent px-2 py-2 shadow-none focus-visible:shadow-none"
-                  disabled={!selectedProject || isSendingMessage}
+                  disabled={!selectedProject || isComposerBlocked}
                   enterKeyHint="enter"
                   id="composer"
                   placeholder={
@@ -2748,6 +2903,7 @@ export function HomeRoute() {
                         : "Select a project to start"
                   }
                   rows={2}
+                  ref={composerTextareaRef}
                   value={composerText}
                   onChange={(event) => setComposerText(event.target.value)}
                   onKeyDown={handleComposerKeyDown}
@@ -2818,7 +2974,7 @@ export function HomeRoute() {
                 aria-label="Select model"
                 className="w-36 max-w-full sm:w-40"
                 disabled={
-                  isModelsLoading || models.length === 0 || isSendingMessage
+                  isModelsLoading || models.length === 0 || isComposerBlocked
                 }
                 emptyMessage={isModelsLoading ? "Loading models" : "No models"}
                 icon={<Bot className="size-3.5" />}
@@ -2836,7 +2992,7 @@ export function HomeRoute() {
               <Combobox
                 aria-label="Select reasoning effort"
                 className="w-28 max-w-full"
-                disabled={!selectedModel || isSendingMessage}
+                disabled={!selectedModel || isComposerBlocked}
                 icon={<Brain className="size-3.5" />}
                 options={effortOptions}
                 placeholder="Effort"
@@ -3161,7 +3317,17 @@ function EmptyTimeline({
   );
 }
 
-function MessageCard({ message }: { message: VisibleMessageRecord }) {
+function MessageCard({
+  isPendingActionBusy,
+  message,
+  onDeletePendingMessage,
+  onEditPendingMessage,
+}: {
+  isPendingActionBusy: boolean;
+  message: VisibleMessageRecord;
+  onDeletePendingMessage: (message: VisibleMessageRecord) => void;
+  onEditPendingMessage: (message: VisibleMessageRecord) => void;
+}) {
   const isUser = message.role === "user";
   const isError = message.role === "error";
   const deliveryState = getMessageDeliveryState(message);
@@ -3187,22 +3353,70 @@ function MessageCard({ message }: { message: VisibleMessageRecord }) {
       <pre className="whitespace-pre-wrap break-words font-sans text-[length:var(--font-size-md)] leading-[var(--line-height-relaxed)]">
         {message.text}
       </pre>
-      {deliveryState && <MessageDeliveryBadge state={deliveryState} />}
+      {deliveryState && (
+        <MessageDeliveryBadge
+          isActionBusy={isPendingActionBusy}
+          message={message}
+          state={deliveryState}
+          onDelete={onDeletePendingMessage}
+          onEdit={onEditPendingMessage}
+        />
+      )}
     </article>
   );
 }
 
-function MessageDeliveryBadge({ state }: { state: "queued" | "steered" }) {
+function MessageDeliveryBadge({
+  isActionBusy,
+  message,
+  onDelete,
+  onEdit,
+  state,
+}: {
+  isActionBusy: boolean;
+  message: VisibleMessageRecord;
+  onDelete: (message: VisibleMessageRecord) => void;
+  onEdit: (message: VisibleMessageRecord) => void;
+  state: "queued" | "steered";
+}) {
   const isQueued = state === "queued";
   const label = isQueued ? "Queued for next turn" : "Steered into active turn";
   const Icon = isQueued ? Clock3 : Send;
 
   return (
-    <div className="mt-2 flex justify-end">
+    <div className="mt-2 flex flex-wrap justify-end gap-1.5">
       <span className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-[var(--radius-sm)] border border-current/20 bg-[var(--surface-floating)] px-2 text-[length:var(--font-size-xs)] font-medium text-current">
         <Icon className="size-3.5 shrink-0" />
         <span className="truncate">{label}</span>
       </span>
+      {isQueued && (
+        <>
+          <Button
+            aria-label="Edit pending message"
+            className="size-6 border-current/20 bg-[var(--surface-floating)] text-current hover:bg-[var(--state-hover-bg)]"
+            disabled={isActionBusy}
+            size="icon"
+            title="Edit pending message"
+            type="button"
+            variant="outline"
+            onClick={() => onEdit(message)}
+          >
+            <Pencil className="size-3.5" />
+          </Button>
+          <Button
+            aria-label="Delete pending message"
+            className="size-6 border-current/20 bg-[var(--surface-floating)] text-current hover:bg-[var(--state-hover-bg)]"
+            disabled={isActionBusy}
+            size="icon"
+            title="Delete pending message"
+            type="button"
+            variant="outline"
+            onClick={() => onDelete(message)}
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        </>
+      )}
     </div>
   );
 }
@@ -3220,4 +3434,16 @@ function getMessageDeliveryState(
     return "steered";
   }
   return null;
+}
+
+function contextItemToSelectedFile(
+  item: CodexTurnContextItem,
+): CodexFileRecord {
+  return {
+    name: item.name,
+    path: item.path,
+    relativePath: item.name,
+    root: "",
+    score: 0,
+  };
 }

@@ -88,6 +88,13 @@ export interface SendMessageInput {
   text: string;
 }
 
+export interface DeletePendingMessageResult {
+  message: ChatMessageRecord;
+  messageIndex: number;
+  queuedMessage: QueuedMessageRecord;
+  queuedMessageIndex: number;
+}
+
 export interface ApprovalInput {
   decision: "accept" | "acceptForSession" | "decline" | "cancel";
 }
@@ -909,7 +916,7 @@ export class ServeServices {
       (message) => message.chatId === chatId,
     );
     if (!chat.codexThreadId) {
-      return localMessages;
+      return localMessagesWithoutStaleSteeredState(chat, localMessages);
     }
 
     try {
@@ -917,9 +924,12 @@ export class ServeServices {
         includeTurns: true,
       });
       const codexMessages = normalizeCodexThreadMessages(result, chat.id);
+      if (codexMessages.length === 0) {
+        return localMessagesWithoutStaleSteeredState(chat, localMessages);
+      }
       return mergeCodexAndLocalMessages(codexMessages, localMessages);
     } catch {
-      return localMessages;
+      return localMessagesWithoutStaleSteeredState(chat, localMessages);
     }
   }
 
@@ -930,10 +940,13 @@ export class ServeServices {
     await this.resetStaleTransientChatState();
     const state = await this.store.load();
     const chat = this.requireChat(state, chatId);
+    const isDrainingQueuedMessage =
+      this.drainingQueuedMessageChatIds.has(chatId);
     if (
       !isChatInActiveTurn(chat) &&
-      !this.pendingChatTurns.has(chatId) &&
-      state.queuedMessages.some((message) => message.chatId === chatId)
+      (isDrainingQueuedMessage ||
+        (!this.pendingChatTurns.has(chatId) &&
+          state.queuedMessages.some((message) => message.chatId === chatId)))
     ) {
       return this.queueMessage(chatId, input);
     }
@@ -959,20 +972,26 @@ export class ServeServices {
 
     let shouldSubmitImmediately = false;
     let shouldDrainQueuedMessages = false;
+    let shouldRequestPendingDrain = false;
     let queuedUserMessage: ChatMessageRecord | null = null;
     await this.store.update((nextState) => {
       const chat = this.requireChat(nextState, chatId);
       this.assertChatWorktreeIsAvailable(chat);
+      const isDrainingQueuedMessage =
+        this.drainingQueuedMessageChatIds.has(chatId);
       const hasQueuedMessages = nextState.queuedMessages.some(
         (message) => message.chatId === chatId,
       );
       const isQueueBlocked =
-        isChatInActiveTurn(chat) || this.pendingChatTurns.has(chatId);
+        isChatInActiveTurn(chat) ||
+        this.pendingChatTurns.has(chatId) ||
+        isDrainingQueuedMessage;
       if (!isQueueBlocked && !hasQueuedMessages) {
         shouldSubmitImmediately = true;
         return nextState;
       }
       shouldDrainQueuedMessages = !isQueueBlocked;
+      shouldRequestPendingDrain = isDrainingQueuedMessage;
 
       const userMessage = createMessage(
         chat.id,
@@ -996,10 +1015,152 @@ export class ServeServices {
     if (queuedUserMessage) {
       this.eventHub.emit("chat.message.created", queuedUserMessage, { chatId });
     }
+    if (shouldRequestPendingDrain) {
+      this.pendingQueuedMessageDrainChatIds.add(chatId);
+    }
     if (shouldDrainQueuedMessages) {
       await this.drainQueuedMessagesAndReport(chatId);
     }
     return await this.getChat(chatId);
+  }
+
+  async deletePendingMessage(
+    chatId: string,
+    messageId: string,
+  ): Promise<DeletePendingMessageResult> {
+    await this.resetStaleTransientChatState();
+    let deletedMessage: ChatMessageRecord | null = null;
+    let deletedMessageIndex = -1;
+    let deletedQueuedMessage: QueuedMessageRecord | null = null;
+    let deletedQueuedMessageIndex = -1;
+
+    await this.store.update((nextState) => {
+      const chat = this.requireChat(nextState, chatId);
+      this.assertChatWorktreeIsAvailable(chat);
+      const messageIndex = nextState.messages.findIndex(
+        (candidate) =>
+          candidate.id === messageId &&
+          candidate.chatId === chatId &&
+          candidate.role === "user",
+      );
+      const message =
+        messageIndex === -1 ? undefined : nextState.messages[messageIndex];
+      if (!message) {
+        throw new Error("Pending message was not found");
+      }
+      if (message.eventType !== "chat.message.queued") {
+        throw new Error("Message is not pending");
+      }
+      const queuedMessageIndex = nextState.queuedMessages.findIndex(
+        (candidate) =>
+          candidate.chatId === chatId && candidate.messageId === message.id,
+      );
+      const queuedMessage =
+        queuedMessageIndex === -1
+          ? undefined
+          : nextState.queuedMessages[queuedMessageIndex];
+      if (!queuedMessage) {
+        throw new Error("Queued message is already being sent");
+      }
+
+      deletedMessage = message;
+      deletedMessageIndex = messageIndex;
+      deletedQueuedMessage = queuedMessage;
+      deletedQueuedMessageIndex = queuedMessageIndex;
+      return {
+        ...nextState,
+        messages: nextState.messages.filter(
+          (candidate) => candidate.id !== message.id,
+        ),
+        queuedMessages: nextState.queuedMessages.filter(
+          (queuedMessage) =>
+            queuedMessage.chatId !== chatId ||
+            queuedMessage.messageId !== message.id,
+        ),
+      };
+    });
+
+    if (!deletedMessage) {
+      throw new Error("Pending message was not found");
+    }
+    if (!deletedQueuedMessage) {
+      throw new Error("Queued message was not found");
+    }
+    this.eventHub.emit("chat.message.deleted", deletedMessage, { chatId });
+    return {
+      message: deletedMessage,
+      messageIndex: deletedMessageIndex,
+      queuedMessage: deletedQueuedMessage,
+      queuedMessageIndex: deletedQueuedMessageIndex,
+    };
+  }
+
+  async restorePendingMessage(
+    chatId: string,
+    input: DeletePendingMessageResult,
+  ): Promise<DeletePendingMessageResult> {
+    await this.resetStaleTransientChatState();
+    const { message, queuedMessage } = input;
+    let shouldDrainQueuedMessages = false;
+    let shouldRequestPendingDrain = false;
+    if (
+      message.chatId !== chatId ||
+      queuedMessage.chatId !== chatId ||
+      queuedMessage.messageId !== message.id ||
+      message.role !== "user" ||
+      message.eventType !== "chat.message.queued" ||
+      !Number.isInteger(input.messageIndex) ||
+      input.messageIndex < 0 ||
+      !Number.isInteger(input.queuedMessageIndex) ||
+      input.queuedMessageIndex < 0
+    ) {
+      throw new Error("Pending message restore payload is invalid");
+    }
+
+    await this.store.update((nextState) => {
+      const chat = this.requireChat(nextState, chatId);
+      this.assertChatWorktreeIsAvailable(chat);
+      const isDrainingQueuedMessage =
+        this.drainingQueuedMessageChatIds.has(chatId);
+      const isQueueBlocked =
+        isChatInActiveTurn(chat) ||
+        this.pendingChatTurns.has(chatId) ||
+        isDrainingQueuedMessage;
+      shouldDrainQueuedMessages = !isQueueBlocked;
+      shouldRequestPendingDrain = isDrainingQueuedMessage;
+      if (
+        nextState.messages.some((candidate) => candidate.id === message.id) ||
+        nextState.queuedMessages.some(
+          (candidate) =>
+            candidate.id === queuedMessage.id ||
+            candidate.messageId === queuedMessage.messageId,
+        )
+      ) {
+        throw new Error("Pending message was already restored");
+      }
+      return {
+        ...nextState,
+        messages: insertRecordAtIndex(
+          nextState.messages,
+          message,
+          input.messageIndex,
+        ),
+        queuedMessages: insertRecordAtIndex(
+          nextState.queuedMessages,
+          queuedMessage,
+          input.queuedMessageIndex,
+        ),
+      };
+    });
+
+    this.eventHub.emit("chat.message.created", message, { chatId });
+    if (shouldRequestPendingDrain) {
+      this.pendingQueuedMessageDrainChatIds.add(chatId);
+    }
+    if (shouldDrainQueuedMessages) {
+      await this.drainQueuedMessagesAndReport(chatId);
+    }
+    return input;
   }
 
   private async submitMessage(
@@ -1591,28 +1752,65 @@ export class ServeServices {
     if (!queuedMessage) {
       return;
     }
-    const queuedUserMessage = state.messages.find(
-      (message) =>
-        message.id === queuedMessage.messageId &&
-        message.chatId === chatId &&
-        message.role === "user",
-    );
-    if (!queuedUserMessage) {
-      await this.store.update((nextState) => ({
+    const claimedQueuedMessageRef: { current: QueuedMessageRecord | null } = {
+      current: null,
+    };
+    let queuedUserMessageMissing = false;
+    await this.store.update((nextState) => {
+      const nextQueuedMessage = nextState.queuedMessages.find(
+        (message) =>
+          message.id === queuedMessage.id && message.chatId === chatId,
+      );
+      if (!nextQueuedMessage) {
+        return nextState;
+      }
+      const nextQueuedUserMessage = nextState.messages.find(
+        (message) =>
+          message.id === nextQueuedMessage.messageId &&
+          message.chatId === chatId &&
+          message.role === "user",
+      );
+      if (!nextQueuedUserMessage) {
+        queuedUserMessageMissing = true;
+        return {
+          ...nextState,
+          queuedMessages: nextState.queuedMessages.filter(
+            (message) => message.id !== nextQueuedMessage.id,
+          ),
+        };
+      }
+
+      claimedQueuedMessageRef.current = nextQueuedMessage;
+      return {
         ...nextState,
-        queuedMessages: nextState.queuedMessages.filter(
-          (message) => message.id !== queuedMessage.id,
+        messages: nextState.messages.map((message) =>
+          message.id === nextQueuedUserMessage.id
+            ? { ...message, eventType: undefined }
+            : message,
         ),
-      }));
+        queuedMessages: nextState.queuedMessages.filter(
+          (message) => message.id !== nextQueuedMessage.id,
+        ),
+      };
+    });
+    if (queuedUserMessageMissing) {
       await this.drainQueuedMessages(chatId);
       throw new Error("Queued message was not found");
     }
+    const claimedQueuedMessage = claimedQueuedMessageRef.current;
+    if (!claimedQueuedMessage) {
+      await this.drainQueuedMessages(chatId);
+      return;
+    }
 
-    await this.submitMessage(chatId, queuedMessageToSendInput(queuedMessage), {
-      existingUserMessageId: queuedMessage.messageId,
-      queuedMessageId: queuedMessage.id,
-      requireActiveTurn: false,
-    });
+    await this.submitMessage(
+      chatId,
+      queuedMessageToSendInput(claimedQueuedMessage),
+      {
+        existingUserMessageId: claimedQueuedMessage.messageId,
+        requireActiveTurn: false,
+      },
+    );
   }
 
   private async drainQueuedMessagesAndReport(chatId: string): Promise<void> {
@@ -1630,6 +1828,12 @@ export class ServeServices {
         } catch (error) {
           const wasReported = this.isAgentErrorReported(error);
           await this.addAgentErrorMessage(chatId, error);
+          const state = await this.store.load();
+          if (
+            state.queuedMessages.some((message) => message.chatId === chatId)
+          ) {
+            this.pendingQueuedMessageDrainChatIds.add(chatId);
+          }
           if (!wasReported) {
             this.emitAgentError(chatId, error);
           }
@@ -2551,7 +2755,6 @@ function mergeCodexAndLocalMessages(
       mergedCodexMessages[matchedCodexIndex] = {
         ...matchedCodexMessage,
         createdAt: message.createdAt,
-        eventType: message.eventType,
       };
     }
     unmatchedCodexMessageIndexes.splice(
@@ -2563,6 +2766,31 @@ function mergeCodexAndLocalMessages(
   return assignMergedMessageSortKeys(mergedCodexMessages, retainedLocalMessages)
     .sort(compareMergedMessages)
     .map(stripInternalCodexMessageMetadata);
+}
+
+function localMessagesWithoutStaleSteeredState(
+  chat: ChatRecord,
+  localMessages: ChatMessageRecord[],
+): ChatMessageRecord[] {
+  if (isChatInActiveTurn(chat)) {
+    return localMessages;
+  }
+  return localMessages.map((message) =>
+    message.eventType === "chat.message.steered"
+      ? { ...message, eventType: undefined }
+      : message,
+  );
+}
+
+function insertRecordAtIndex<TRecord>(
+  records: TRecord[],
+  record: TRecord,
+  index: number,
+): TRecord[] {
+  if (index >= records.length) {
+    return [...records, record];
+  }
+  return [...records.slice(0, index), record, ...records.slice(index)];
 }
 
 function assignMergedMessageSortKeys(

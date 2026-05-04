@@ -3,6 +3,7 @@ import {
   findValidatedSelectedProjectChat,
   findValidatedSelectedChat,
   getSelectableReasoningEfforts,
+  getSelectedSkillContextItems,
   isShareableFileSearchQuery,
   mergeWorktreesWithChats,
   retainRecordsForProjects,
@@ -104,6 +105,25 @@ describe("getSelectableReasoningEfforts", () => {
     expect(
       getSelectableReasoningEfforts({ supportedReasoningEfforts: [] }),
     ).toEqual([]);
+  });
+});
+
+describe("getSelectedSkillContextItems", () => {
+  it("keeps only selected skills that are currently enabled", () => {
+    expect(
+      getSelectedSkillContextItems(
+        [
+          { enabled: true, name: "review", path: "/skills/review/SKILL.md" },
+          { enabled: false, name: "stale", path: "/skills/stale/SKILL.md" },
+          { enabled: true, name: "unused", path: "/skills/unused/SKILL.md" },
+        ],
+        new Set([
+          "/skills/review/SKILL.md",
+          "/skills/stale/SKILL.md",
+          "/skills/removed/SKILL.md",
+        ]),
+      ),
+    ).toEqual([{ name: "review", path: "/skills/review/SKILL.md" }]);
   });
 });
 
