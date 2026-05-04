@@ -1094,6 +1094,609 @@ describe("ServeServices", () => {
     );
   });
 
+  it("preserves steered message metadata when Codex history uses the turn timestamp", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_steered",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "adjust course",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            input: [{ text: "start" }],
+            items: [{ type: "userMessage", text: "adjust course" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+        message.createdAt,
+      ]),
+      [
+        [
+          "chat_1_codex_turn_1_0",
+          "user",
+          "start",
+          undefined,
+          "2026-04-25T00:00:00.000Z",
+        ],
+        [
+          "chat_1_codex_turn_1_1",
+          "user",
+          "adjust course",
+          "chat.message.steered",
+          "2026-04-25T00:01:00.000Z",
+        ],
+      ],
+    );
+  });
+
+  it("keeps queued messages local while matching Codex history exists", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.queued",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "repeat",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:02:00.000Z",
+            items: [{ type: "userMessage", text: "repeat" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["msg_queued", "user", "repeat", "chat.message.queued"],
+        ["chat_1_codex_turn_1_0", "user", "repeat", undefined],
+      ],
+    );
+  });
+
+  it("attaches steered metadata to the later matching Codex item", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_steered_repeat",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            input: [{ text: "repeat" }],
+            items: [{ type: "userMessage", text: "repeat" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+        message.createdAt,
+      ]),
+      [
+        [
+          "chat_1_codex_turn_1_0",
+          "user",
+          "repeat",
+          undefined,
+          "2026-04-25T00:00:00.000Z",
+        ],
+        [
+          "chat_1_codex_turn_1_1",
+          "user",
+          "repeat",
+          "chat.message.steered",
+          "2026-04-25T00:01:00.000Z",
+        ],
+      ],
+    );
+  });
+
+  it("preserves repeated same-text steered message order", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_steered_repeat_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_steered_repeat_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            input: [{ text: "repeat" }],
+            items: [
+              { type: "userMessage", text: "repeat" },
+              { type: "userMessage", text: "repeat" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+        message.createdAt,
+      ]),
+      [
+        [
+          "chat_1_codex_turn_1_0",
+          "user",
+          "repeat",
+          undefined,
+          "2026-04-25T00:00:00.000Z",
+        ],
+        [
+          "chat_1_codex_turn_1_1",
+          "user",
+          "repeat",
+          "chat.message.steered",
+          "2026-04-25T00:01:00.000Z",
+        ],
+        [
+          "chat_1_codex_turn_1_2",
+          "user",
+          "repeat",
+          "chat.message.steered",
+          "2026-04-25T00:02:00.000Z",
+        ],
+      ],
+    );
+  });
+
+  it("does not attach steered metadata to repeated initial Codex input", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_steered_after_inputs",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            input: [{ text: "repeat" }, { text: "repeat" }],
+            items: [{ type: "userMessage", text: "repeat" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+        message.createdAt,
+        "codexItemSource" in message,
+        "codexOrder" in message,
+        "mergeSortBucket" in message,
+        "mergeSortIndex" in message,
+      ]),
+      [
+        [
+          "chat_1_codex_turn_1_0",
+          "user",
+          "repeat",
+          undefined,
+          "2026-04-25T00:00:00.000Z",
+          false,
+          false,
+          false,
+          false,
+        ],
+        [
+          "chat_1_codex_turn_1_1",
+          "user",
+          "repeat",
+          undefined,
+          "2026-04-25T00:00:00.000Z",
+          false,
+          false,
+          false,
+          false,
+        ],
+        [
+          "chat_1_codex_turn_1_2",
+          "user",
+          "repeat",
+          "chat.message.steered",
+          "2026-04-25T00:01:00.000Z",
+          false,
+          false,
+          false,
+          false,
+        ],
+      ],
+    );
+  });
+
+  it("matches steered Codex item metadata when a turn has no input records", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_steered_without_input",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            items: [{ type: "userMessage", text: "repeat" }],
+          },
+          {
+            id: "turn_2",
+            createdAt: "2026-04-25T00:03:00.000Z",
+            items: [{ type: "userMessage", text: "repeat" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+        message.createdAt,
+      ]),
+      [
+        [
+          "chat_1_codex_turn_1_0",
+          "user",
+          "repeat",
+          "chat.message.steered",
+          "2026-04-25T00:01:00.000Z",
+        ],
+        [
+          "chat_1_codex_turn_2_0",
+          "user",
+          "repeat",
+          undefined,
+          "2026-04-25T00:03:00.000Z",
+        ],
+      ],
+    );
+  });
+
+  it("does not attach steered metadata to the first same-text item when a turn has no input records", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_steered_without_input_repeat",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            items: [
+              { type: "userMessage", text: "repeat" },
+              { type: "userMessage", text: "repeat" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+        message.createdAt,
+      ]),
+      [
+        [
+          "chat_1_codex_turn_1_0",
+          "user",
+          "repeat",
+          undefined,
+          "2026-04-25T00:00:00.000Z",
+        ],
+        [
+          "chat_1_codex_turn_1_1",
+          "user",
+          "repeat",
+          "chat.message.steered",
+          "2026-04-25T00:01:00.000Z",
+        ],
+      ],
+    );
+  });
+
+  it("preserves repeated same-text steered order when a turn has no input records", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_steered_without_input_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_steered_without_input_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            items: [
+              { type: "userMessage", text: "repeat" },
+              { type: "userMessage", text: "repeat" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+        message.createdAt,
+      ]),
+      [
+        [
+          "chat_1_codex_turn_1_0",
+          "user",
+          "repeat",
+          "chat.message.steered",
+          "2026-04-25T00:01:00.000Z",
+        ],
+        [
+          "chat_1_codex_turn_1_1",
+          "user",
+          "repeat",
+          "chat.message.steered",
+          "2026-04-25T00:02:00.000Z",
+        ],
+      ],
+    );
+  });
+
+  it("keeps Codex item order when steered metadata uses the local timestamp", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_steered_before_assistant",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "adjust course",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            input: [{ text: "start" }],
+            items: [
+              { type: "userMessage", text: "adjust course" },
+              { type: "assistantMessage", text: "done" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+        message.createdAt,
+      ]),
+      [
+        [
+          "chat_1_codex_turn_1_0",
+          "user",
+          "start",
+          undefined,
+          "2026-04-25T00:00:00.000Z",
+        ],
+        [
+          "chat_1_codex_turn_1_1",
+          "user",
+          "adjust course",
+          "chat.message.steered",
+          "2026-04-25T00:01:00.000Z",
+        ],
+        [
+          "chat_1_codex_turn_1_2",
+          "assistant",
+          "done",
+          undefined,
+          "2026-04-25T00:00:00.000Z",
+        ],
+      ],
+    );
+  });
+
   it("preserves local chats that already match Codex threads", async () => {
     const threadId = "019dc000-0000-7000-8000-000000000001";
     const worktreePath = "/repo/.git/phantom/worktrees/feature/list";
@@ -3319,6 +3922,32 @@ describe("ServeServices", () => {
     strictEqual(savedState.chats[0]?.status, "waitingForApproval");
     strictEqual(codex.startTurn.mock.calls.length, 0);
     strictEqual(codex.steerTurn.mock.calls.length, 0);
+  });
+
+  it("marks messages that steer an active turn", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, services, store } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    codex.resumeThread.mockResolvedValueOnce({});
+
+    await services.steerMessage("chat_1", { text: "adjust course" });
+
+    const savedState = await store.load();
+    strictEqual(savedState.messages[0]?.text, "adjust course");
+    strictEqual(savedState.messages[0]?.eventType, "chat.message.steered");
+    strictEqual(savedState.messages[0]?.itemId, "turn_1");
+    strictEqual(savedState.chats[0]?.status, "running");
+    strictEqual(savedState.chats[0]?.activeTurnId, "turn_1");
+    deepStrictEqual(codex.steerTurn.mock.calls[0], [
+      "thread_1",
+      "turn_1",
+      "adjust course",
+    ]);
+    strictEqual(codex.startTurn.mock.calls.length, 0);
   });
 
   it("keeps a running chat active when steering fails", async () => {

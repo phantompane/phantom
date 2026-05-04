@@ -2919,12 +2919,20 @@ function EmptyTimeline({
 function MessageCard({ message }: { message: VisibleMessageRecord }) {
   const isUser = message.role === "user";
   const isError = message.role === "error";
+  const deliveryState = getMessageDeliveryState(message);
 
   return (
     <article
       className={cn(
         isUser &&
-          "ml-auto max-w-[78%] rounded-[var(--radius-lg)] border border-transparent bg-[var(--chat-user-bg)] px-4 py-3 text-[var(--chat-user-fg)] shadow-[var(--shadow-xs)]",
+          "ml-auto max-w-[78%] rounded-[var(--radius-lg)] border px-4 py-3 shadow-[var(--shadow-xs)]",
+        isUser &&
+          !deliveryState &&
+          "border-transparent bg-[var(--chat-user-bg)] text-[var(--chat-user-fg)]",
+        deliveryState === "queued" &&
+          "border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] text-[var(--semantic-warning-fg)]",
+        deliveryState === "steered" &&
+          "border-[var(--semantic-info-border)] bg-[var(--semantic-info-bg)] text-[var(--semantic-info-fg)]",
         message.role === "assistant" &&
           "mr-auto max-w-[82%] px-2 py-1 text-[var(--text-primary)]",
         isError &&
@@ -2934,6 +2942,37 @@ function MessageCard({ message }: { message: VisibleMessageRecord }) {
       <pre className="whitespace-pre-wrap break-words font-sans text-[length:var(--font-size-md)] leading-[var(--line-height-relaxed)]">
         {message.text}
       </pre>
+      {deliveryState && <MessageDeliveryBadge state={deliveryState} />}
     </article>
   );
+}
+
+function MessageDeliveryBadge({ state }: { state: "queued" | "steered" }) {
+  const isQueued = state === "queued";
+  const label = isQueued ? "Queued for next turn" : "Steered into active turn";
+  const Icon = isQueued ? Clock3 : Send;
+
+  return (
+    <div className="mt-2 flex justify-end">
+      <span className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-[var(--radius-sm)] border border-current/20 bg-[var(--surface-floating)] px-2 text-[length:var(--font-size-xs)] font-medium text-current">
+        <Icon className="size-3.5 shrink-0" />
+        <span className="truncate">{label}</span>
+      </span>
+    </div>
+  );
+}
+
+function getMessageDeliveryState(
+  message: VisibleMessageRecord,
+): "queued" | "steered" | null {
+  if (message.role !== "user") {
+    return null;
+  }
+  if (message.eventType === "chat.message.queued") {
+    return "queued";
+  }
+  if (message.eventType === "chat.message.steered") {
+    return "steered";
+  }
+  return null;
 }
