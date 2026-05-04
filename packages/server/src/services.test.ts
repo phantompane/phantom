@@ -5797,19 +5797,19 @@ describe("ServeServices", () => {
       },
     });
 
-    await vi.waitFor(() => {
+    await vi.waitFor(async () => {
       strictEqual(
         emitSpy.mock.calls.some((call) => call[0] === "agent.error"),
         true,
       );
+      const savedState = await store.load();
+      strictEqual(savedState.queuedMessages.length, 0);
+      strictEqual(savedState.messages[0]?.text, "queued failure");
+      strictEqual(savedState.messages.at(-1)?.role, "error");
+      strictEqual(savedState.messages.at(-1)?.text, "queued start failed");
+      strictEqual(savedState.chats[0]?.status, "failed");
+      strictEqual(savedState.chats[0]?.activeTurnId, null);
     });
-    const savedState = await store.load();
-    strictEqual(savedState.queuedMessages.length, 0);
-    strictEqual(savedState.messages[0]?.text, "queued failure");
-    strictEqual(savedState.messages.at(-1)?.role, "error");
-    strictEqual(savedState.messages.at(-1)?.text, "queued start failed");
-    strictEqual(savedState.chats[0]?.status, "failed");
-    strictEqual(savedState.chats[0]?.activeTurnId, null);
   });
 
   it("removes queued records when queued turn context normalization fails", async () => {
