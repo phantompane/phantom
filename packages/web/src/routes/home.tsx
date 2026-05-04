@@ -2,14 +2,18 @@ import {
   AlertTriangle,
   Bot,
   Brain,
+  CheckCircle2,
   ChevronRight,
+  Circle,
   CircleDot,
   Clock3,
+  FileDiff,
   FileText,
   FolderGit2,
   GitBranch,
   GitPullRequest,
   Inbox,
+  ListChecks,
   MessageSquare,
   MessageSquarePlus,
   MoreHorizontal,
@@ -19,6 +23,7 @@ import {
   Send,
   Sparkles,
   Square,
+  Terminal,
   Trash2,
   X,
 } from "lucide-react";
@@ -126,6 +131,16 @@ import {
   retainRecordsForProjects,
   resolveRefreshedWorktreeChatId,
 } from "./home-url-state";
+import {
+  getCommandEventMeta,
+  getDiffEventData,
+  getFilePatchEventData,
+  getPlanEventData,
+  getRichEventKind,
+  getRichEventText,
+  getWarningEventText,
+  isRichEventMessage,
+} from "./rich-events";
 import type {
   ChatMessageRecord,
   ChatRecord,
@@ -148,6 +163,12 @@ const chatEventNames = [
   "chat.message.deleted",
   "agent.thread.started",
   "agent.turn.started",
+  "agent.plan.updated",
+  "agent.diff.updated",
+  "agent.command.output",
+  "agent.file.updated",
+  "agent.reasoning.updated",
+  "agent.warning",
   "agent.item.updated",
   "agent.item.delta",
   "agent.approval.requested",
@@ -225,7 +246,7 @@ interface RestoredPendingComposerContext {
 }
 
 type VisibleMessageRecord = ChatMessageRecord & {
-  role: "assistant" | "error" | "user";
+  role: "assistant" | "error" | "event" | "user";
 };
 
 interface StoredChatScrollPosition {
@@ -975,7 +996,8 @@ export function HomeRoute() {
   const visibleMessages = useMemo(
     () =>
       messages.filter(
-        (message): message is VisibleMessageRecord => message.role !== "event",
+        (message): message is VisibleMessageRecord =>
+          message.role !== "event" || isRichEventMessage(message),
       ),
     [messages],
   );
@@ -3614,6 +3636,10 @@ function MessageCard({
   onDeletePendingMessage: (message: VisibleMessageRecord) => void;
   onEditPendingMessage: (message: VisibleMessageRecord) => void;
 }) {
+  if (message.role === "event") {
+    return <RichEventCard message={message} />;
+  }
+
   const isUser = message.role === "user";
   const isError = message.role === "error";
   const deliveryState = getMessageDeliveryState(message);
@@ -3649,6 +3675,278 @@ function MessageCard({
         />
       )}
     </article>
+  );
+}
+
+function RichEventCard({ message }: { message: VisibleMessageRecord }) {
+  const kind = getRichEventKind(message);
+  if (kind === "plan") {
+    return <PlanEventCard message={message} />;
+  }
+  if (kind === "diff") {
+    return <DiffEventCard message={message} />;
+  }
+  if (kind === "command") {
+    return <CommandEventCard message={message} />;
+  }
+  if (kind === "file") {
+    return <FileEventCard message={message} />;
+  }
+  if (kind === "reasoning") {
+    return <ReasoningEventCard message={message} />;
+  }
+  if (kind === "warning") {
+    return <WarningEventCard message={message} />;
+  }
+  return null;
+}
+
+function PlanEventCard({ message }: { message: VisibleMessageRecord }) {
+  const { explanation, plan } = getPlanEventData(message);
+  const text = getRichEventText(message);
+  return (
+    <RichEventShell
+      icon={<ListChecks className="size-4" />}
+      meta={`${plan.length} step${plan.length === 1 ? "" : "s"}`}
+      title="Plan updated"
+    >
+      {explanation && (
+        <p className="text-[length:var(--font-size-sm)] text-muted-foreground">
+          {explanation}
+        </p>
+      )}
+      {plan.length > 0 && (
+        <ol className="mt-2 space-y-1">
+          {plan.map((step, index) => {
+            const Icon =
+              step.status === "completed"
+                ? CheckCircle2
+                : step.status === "inProgress"
+                  ? Clock3
+                  : Circle;
+            return (
+              <li
+                className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-2 text-[length:var(--font-size-sm)]"
+                key={`${step.step}-${index}`}
+              >
+                <Icon
+                  className={cn(
+                    "mt-0.5 size-3.5",
+                    step.status === "completed" &&
+                      "text-[var(--semantic-success-fg)]",
+                    step.status === "inProgress" &&
+                      "text-[var(--semantic-info-fg)]",
+                    step.status === "pending" && "text-muted-foreground",
+                  )}
+                />
+                <span className="min-w-0 break-words">{step.step}</span>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {!explanation && plan.length === 0 && text && (
+        <p className="whitespace-pre-wrap break-words text-[length:var(--font-size-sm)] text-muted-foreground">
+          {text}
+        </p>
+      )}
+    </RichEventShell>
+  );
+}
+
+function DiffEventCard({ message }: { message: VisibleMessageRecord }) {
+  const { diff, files } = getDiffEventData(message);
+  return (
+    <RichEventShell
+      icon={<FileDiff className="size-4" />}
+      meta={`${files.length} file${files.length === 1 ? "" : "s"}`}
+      title="Diff updated"
+    >
+      {files.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {files.slice(0, 6).map((file) => (
+            <span
+              className="max-w-full truncate rounded-[var(--radius-sm)] border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-1.5 py-0.5 font-mono text-[length:var(--font-size-xs)] text-muted-foreground"
+              key={file}
+            >
+              {file}
+            </span>
+          ))}
+          {files.length > 6 && (
+            <span className="text-[length:var(--font-size-xs)] text-muted-foreground">
+              +{files.length - 6}
+            </span>
+          )}
+        </div>
+      )}
+      <CollapsibleCode title="Unified diff" value={diff || message.text} />
+    </RichEventShell>
+  );
+}
+
+function CommandEventCard({ message }: { message: VisibleMessageRecord }) {
+  const output = getRichEventText(message);
+  const meta = getCommandEventMeta(message);
+  return (
+    <RichEventShell
+      icon={<Terminal className="size-4" />}
+      meta={meta.stream ?? "output"}
+      title="Command output"
+    >
+      <CollapsibleCode
+        title={meta.capReached ? "Output truncated" : "Output"}
+        value={output}
+      />
+    </RichEventShell>
+  );
+}
+
+function FileEventCard({ message }: { message: VisibleMessageRecord }) {
+  const changes = getFilePatchEventData(message);
+  const output = getRichEventText(message);
+  if (message.eventType === "item/fileChange/outputDelta") {
+    return (
+      <RichEventShell
+        icon={<FileText className="size-4" />}
+        meta="output"
+        title="File change output"
+      >
+        <CollapsibleCode title="Output" value={output} />
+      </RichEventShell>
+    );
+  }
+  return (
+    <RichEventShell
+      icon={<FileText className="size-4" />}
+      meta={`${changes.length} file${changes.length === 1 ? "" : "s"}`}
+      title="File patch updated"
+    >
+      {changes.length === 0 ? (
+        <p className="text-[length:var(--font-size-sm)] text-muted-foreground">
+          {message.text}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {changes.map((change) => (
+            <div
+              className="rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--surface-panel)]"
+              key={`${change.kind}:${change.path}`}
+            >
+              <div className="flex min-w-0 items-center gap-2 px-2 py-1.5">
+                <Badge className="shrink-0" variant="secondary">
+                  {change.kind}
+                </Badge>
+                <span className="truncate font-mono text-[length:var(--font-size-xs)]">
+                  {change.path}
+                </span>
+              </div>
+              {change.diff && (
+                <div className="border-t border-[var(--border-subtle)]">
+                  <CollapsibleCode title="Patch" value={change.diff} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </RichEventShell>
+  );
+}
+
+function ReasoningEventCard({ message }: { message: VisibleMessageRecord }) {
+  const text = getRichEventText(message);
+  return (
+    <RichEventShell
+      icon={<Brain className="size-4" />}
+      meta="collapsed"
+      title="Reasoning updated"
+    >
+      <details>
+        <summary className="cursor-pointer text-[length:var(--font-size-sm)] text-muted-foreground">
+          Show reasoning
+        </summary>
+        <pre className="mt-2 whitespace-pre-wrap break-words rounded-[var(--radius-md)] bg-[var(--surface-code)] p-2 font-mono text-[length:var(--font-size-xs)] leading-[var(--line-height-relaxed)]">
+          {text}
+        </pre>
+      </details>
+    </RichEventShell>
+  );
+}
+
+function WarningEventCard({ message }: { message: VisibleMessageRecord }) {
+  const warning = getWarningEventText(message);
+  return (
+    <RichEventShell
+      icon={<AlertTriangle className="size-4" />}
+      tone="warning"
+      title="Warning"
+    >
+      <p className="text-[length:var(--font-size-sm)]">{warning.summary}</p>
+      {warning.details && (
+        <p className="mt-1 text-[length:var(--font-size-xs)] text-muted-foreground">
+          {warning.details}
+        </p>
+      )}
+    </RichEventShell>
+  );
+}
+
+function RichEventShell({
+  children,
+  icon,
+  meta,
+  title,
+  tone = "neutral",
+}: {
+  children: ReactNode;
+  icon: ReactNode;
+  meta?: string;
+  title: string;
+  tone?: "neutral" | "warning";
+}) {
+  return (
+    <article
+      className={cn(
+        "w-full rounded-[var(--radius-md)] border bg-[var(--surface-card)] px-3 py-2 text-[var(--text-primary)]",
+        tone === "neutral" && "border-[var(--border-subtle)]",
+        tone === "warning" &&
+          "border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] text-[var(--semantic-warning-fg)]",
+      )}
+    >
+      <div className="mb-2 flex min-w-0 items-center gap-2">
+        <span className="shrink-0 text-muted-foreground">{icon}</span>
+        <p className="min-w-0 flex-1 truncate text-[length:var(--font-size-sm)] font-semibold">
+          {title}
+        </p>
+        {meta && (
+          <span className="shrink-0 text-[length:var(--font-size-xs)] text-muted-foreground">
+            {meta}
+          </span>
+        )}
+      </div>
+      {children}
+    </article>
+  );
+}
+
+function CollapsibleCode({ title, value }: { title: string; value: string }) {
+  const trimmedValue = value.trimEnd();
+  if (!trimmedValue) {
+    return (
+      <p className="text-[length:var(--font-size-sm)] text-muted-foreground">
+        No output
+      </p>
+    );
+  }
+  return (
+    <details open={trimmedValue.length < 1200}>
+      <summary className="cursor-pointer text-[length:var(--font-size-sm)] text-muted-foreground">
+        {title}
+      </summary>
+      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius-md)] bg-[var(--surface-code)] p-2 font-mono text-[length:var(--font-size-xs)] leading-[var(--line-height-relaxed)]">
+        {trimmedValue}
+      </pre>
+    </details>
   );
 }
 

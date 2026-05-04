@@ -5040,6 +5040,107 @@ describe("ServeServices", () => {
     );
   });
 
+  it("stores rich Codex events as structured timeline messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, services, store } = await createHarness(state);
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
+
+    codex.emitNotification({
+      method: "turn/plan/updated",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        explanation: "Working through the change",
+        plan: [{ step: "Inspect code", status: "completed" }],
+      },
+    });
+    codex.emitNotification({
+      method: "turn/plan/updated",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        explanation: "Working through the change",
+        plan: [
+          { step: "Inspect code", status: "completed" },
+          { step: "Patch UI", status: "inProgress" },
+        ],
+      },
+    });
+    codex.emitNotification({
+      method: "item/commandExecution/outputDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "cmd_1",
+        delta: "first",
+      },
+    });
+    codex.emitNotification({
+      method: "item/commandExecution/outputDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "cmd_1",
+        delta: " second",
+      },
+    });
+    codex.emitNotification({
+      method: "item/fileChange/patchUpdated",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "patch_1",
+        changes: [{ path: "src/app.ts", kind: "modify", diff: "@@ patch" }],
+      },
+    });
+
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).messages.length, 3);
+    });
+
+    const savedState = await store.load();
+    const planMessage = savedState.messages.find(
+      (message) => message.eventType === "turn/plan/updated",
+    );
+    const commandMessage = savedState.messages.find(
+      (message) => message.eventType === "item/commandExecution/outputDelta",
+    );
+    const patchMessage = savedState.messages.find(
+      (message) => message.eventType === "item/fileChange/patchUpdated",
+    );
+
+    strictEqual(planMessage?.role, "event");
+    strictEqual(planMessage?.text, "plan updated: 2 steps");
+    deepStrictEqual(
+      (planMessage?.eventData as { plan?: unknown[] } | undefined)?.plan,
+      [
+        { step: "Inspect code", status: "completed" },
+        { step: "Patch UI", status: "inProgress" },
+      ],
+    );
+    strictEqual(commandMessage?.text, "first second");
+    strictEqual(
+      (commandMessage?.eventData as { text?: string } | undefined)?.text,
+      "first second",
+    );
+    deepStrictEqual(
+      (patchMessage?.eventData as { changes?: unknown[] } | undefined)?.changes,
+      [{ path: "src/app.ts", kind: "modify", diff: "@@ patch" }],
+    );
+    strictEqual(
+      emitSpy.mock.calls.some((call) => call[0] === "agent.plan.updated"),
+      true,
+    );
+    strictEqual(
+      emitSpy.mock.calls.some((call) => call[0] === "agent.command.output"),
+      true,
+    );
+  });
+
   it("keeps pending stream order when new notifications arrive during replay", async () => {
     const state = {
       ...createTestState(),
