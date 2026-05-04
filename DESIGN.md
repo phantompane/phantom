@@ -693,12 +693,12 @@ Dark theme, when implemented, should not be a pure inversion. Preserve the same 
 
 ## Implementation Notes
 
-Phantom's app package currently uses Tailwind CSS and local shadcn-style components under `packages/app/src/components/ui`.
+Phantom's web package uses Tailwind CSS and local shadcn-style components under `packages/web/src/components/ui`.
 
 Implementation rules:
 
 - Prefer existing local UI components before adding new ones.
-- Map design tokens into `packages/app/src/styles.css` and Tailwind theme variables.
+- Map design tokens into `packages/web/src/styles.css` and Tailwind theme variables.
 - Keep tokens centralized; do not hard-code one-off colors across components.
 - Use lucide-react icons for buttons and sidebar actions.
 - Keep UI text in English.
