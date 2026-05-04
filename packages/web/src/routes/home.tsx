@@ -491,6 +491,7 @@ export function HomeRoute() {
   const selectedChatVersionRef = useRef(0);
   const chatsByProjectRef = useRef(chatsByProject);
   const worktreesByProjectRef = useRef(worktreesByProject);
+  const messagesRefreshRequestIdRef = useRef(0);
   const sendMessageRequestIdRef = useRef(0);
   const pendingSendChatIdsRef = useRef<Set<string>>(new Set());
   const pendingComposerModesByChatRef = useRef<Map<string, ComposerSubmitMode>>(
@@ -1461,17 +1462,25 @@ export function HomeRoute() {
     chatId: string,
     options: { showLoading?: boolean } = {},
   ) {
+    const requestId = messagesRefreshRequestIdRef.current + 1;
+    messagesRefreshRequestIdRef.current = requestId;
     if (options.showLoading) {
       setIsMessagesLoading(true);
     }
     try {
       const data = await queryClient.fetchQuery(messagesQueryOptions(chatId));
-      if (selectedChatIdRef.current === chatId) {
+      if (
+        selectedChatIdRef.current === chatId &&
+        messagesRefreshRequestIdRef.current === requestId
+      ) {
         setMessages(data.messages);
         setMessagesChatId(chatId);
       }
     } catch (err) {
-      if (selectedChatIdRef.current === chatId) {
+      if (
+        selectedChatIdRef.current === chatId &&
+        messagesRefreshRequestIdRef.current === requestId
+      ) {
         setError(err instanceof Error ? err.message : String(err));
       }
     } finally {

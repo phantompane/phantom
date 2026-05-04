@@ -2383,6 +2383,8 @@ function mergeCodexAndLocalMessages(
   const mergedCodexMessages = [...codexMessages];
   const unmatchedCodexMessageIndexes = codexMessages.map((_, index) => index);
   const steeredLocalMessageCounts = countSteeredLocalMessages(localMessages);
+  const liveAssistantDeltaCodexOrderLimits =
+    findLiveAssistantDeltaCodexOrderLimits(localMessages, mergedCodexMessages);
   const retainedLocalMessages = localMessages.filter((message) => {
     if (message.role === "event" || message.role === "error") {
       return true;
@@ -2390,23 +2392,43 @@ function mergeCodexAndLocalMessages(
     if (message.eventType === "chat.message.queued") {
       return true;
     }
+    const staleLiveAssistantDeltaIndex =
+      findStaleLiveAssistantDeltaCodexMessageIndex(
+        unmatchedCodexMessageIndexes,
+        mergedCodexMessages,
+        message,
+      );
+    if (staleLiveAssistantDeltaIndex !== undefined) {
+      const staleCodexMessage =
+        mergedCodexMessages[staleLiveAssistantDeltaIndex];
+      if (staleCodexMessage) {
+        mergedCodexMessages[staleLiveAssistantDeltaIndex] = {
+          ...message,
+          codexOrder: staleCodexMessage.codexOrder,
+          codexItemSource: staleCodexMessage.codexItemSource,
+        };
+      }
+      unmatchedCodexMessageIndexes.splice(
+        unmatchedCodexMessageIndexes.indexOf(staleLiveAssistantDeltaIndex),
+        1,
+      );
+      return false;
+    }
     const matchedCodexIndex = findDeduplicatedCodexMessageIndex(
       unmatchedCodexMessageIndexes,
       mergedCodexMessages,
       message,
       steeredLocalMessageCounts,
+      liveAssistantDeltaCodexOrderLimits,
     );
     if (matchedCodexIndex === undefined) {
       return true;
     }
     const matchedCodexMessage = mergedCodexMessages[matchedCodexIndex];
-    if (message.eventType && matchedCodexMessage) {
+    if (message.eventType === "chat.message.steered" && matchedCodexMessage) {
       mergedCodexMessages[matchedCodexIndex] = {
         ...matchedCodexMessage,
-        createdAt:
-          message.eventType === "chat.message.steered"
-            ? message.createdAt
-            : matchedCodexMessage.createdAt,
+        createdAt: message.createdAt,
         eventType: message.eventType,
       };
     }
@@ -2469,11 +2491,16 @@ function findDeduplicatedCodexMessageIndex(
   codexMessages: InternalChatMessageRecord[],
   localMessage: ChatMessageRecord,
   steeredLocalMessageCounts: ReadonlyMap<string, number>,
+  liveAssistantDeltaCodexOrderLimits: ReadonlyMap<string, number>,
 ): number | undefined {
   const matchedIndexes = unmatchedCodexMessageIndexes.filter((index) => {
     const codexMessage = codexMessages[index];
     return codexMessage
-      ? shouldDeduplicateLocalMessage(codexMessage, localMessage)
+      ? shouldDeduplicateLocalMessage(
+          codexMessage,
+          localMessage,
+          liveAssistantDeltaCodexOrderLimits,
+        )
       : false;
   });
   if (localMessage.eventType === "chat.message.steered") {
@@ -2520,6 +2547,24 @@ function findDeduplicatedCodexMessageIndex(
   return matchedIndexes[0];
 }
 
+function findStaleLiveAssistantDeltaCodexMessageIndex(
+  unmatchedCodexMessageIndexes: number[],
+  codexMessages: InternalChatMessageRecord[],
+  localMessage: ChatMessageRecord,
+): number | undefined {
+  if (!isLiveAssistantDeltaMessage(localMessage) || !localMessage.itemId) {
+    return undefined;
+  }
+  return unmatchedCodexMessageIndexes.find((index) => {
+    const codexMessage = codexMessages[index];
+    return (
+      codexMessage?.role === "assistant" &&
+      codexMessage.itemId === localMessage.itemId &&
+      !isCodexLiveAssistantMessageFresh(codexMessage, localMessage)
+    );
+  });
+}
+
 function countSteeredLocalMessages(
   messages: ChatMessageRecord[],
 ): ReadonlyMap<string, number> {
@@ -2544,16 +2589,40 @@ function getSteeredMessageGroupKey(message: ChatMessageRecord): string | null {
 function shouldDeduplicateLocalMessage(
   codexMessage: InternalChatMessageRecord,
   localMessage: ChatMessageRecord,
+  liveAssistantDeltaCodexOrderLimits: ReadonlyMap<string, number>,
 ): boolean {
   if (codexMessage.role !== localMessage.role) {
     return false;
+  }
+  if (isLiveAssistantDeltaMessage(localMessage)) {
+    if (
+      codexMessage.itemId &&
+      localMessage.itemId &&
+      codexMessage.itemId === localMessage.itemId
+    ) {
+      return isCodexLiveAssistantMessageFresh(codexMessage, localMessage);
+    }
+    const codexOrderLimit = liveAssistantDeltaCodexOrderLimits.get(
+      localMessage.id,
+    );
+    if (
+      codexOrderLimit !== undefined &&
+      (codexMessage.codexOrder ?? 0) >= codexOrderLimit
+    ) {
+      return false;
+    }
   }
   if (
     localMessage.eventType !== "chat.message.steered" &&
     codexMessage.itemId &&
     localMessage.itemId
   ) {
-    return codexMessage.itemId === localMessage.itemId;
+    if (codexMessage.itemId === localMessage.itemId) {
+      return true;
+    }
+    if (!isLiveAssistantDeltaMessage(localMessage)) {
+      return false;
+    }
   }
   if (messageFingerprint(codexMessage) !== messageFingerprint(localMessage)) {
     return false;
@@ -2562,6 +2631,79 @@ function shouldDeduplicateLocalMessage(
     return true;
   }
   return isRelaxedSteeredCodexMatch(codexMessage, localMessage);
+}
+
+function isLiveAssistantDeltaMessage(message: ChatMessageRecord): boolean {
+  return (
+    message.role === "assistant" &&
+    message.eventType === "item/agentMessage/delta"
+  );
+}
+
+function isCodexLiveAssistantMessageFresh(
+  codexMessage: ChatMessageRecord,
+  localMessage: ChatMessageRecord,
+): boolean {
+  return (
+    codexMessage.text === localMessage.text ||
+    codexMessage.text.startsWith(localMessage.text)
+  );
+}
+
+function findLiveAssistantDeltaCodexOrderLimits(
+  messages: ChatMessageRecord[],
+  codexMessages: InternalChatMessageRecord[],
+): ReadonlyMap<string, number> {
+  const codexOrderLimits = new Map<string, number>();
+  for (const [index, message] of messages.entries()) {
+    if (!isLiveAssistantDeltaMessage(message)) {
+      continue;
+    }
+    const laterUserMessage = messages
+      .slice(index + 1)
+      .find(isLiveAssistantDeltaBoundaryUserMessage);
+    if (!laterUserMessage) {
+      continue;
+    }
+    const boundaryCodexMessage = codexMessages
+      .filter(
+        (codexMessage) =>
+          codexMessage.role === "user" &&
+          isCodexBoundaryUserMessage(codexMessage, laterUserMessage),
+      )
+      .sort(
+        (left, right) => (left.codexOrder ?? 0) - (right.codexOrder ?? 0),
+      )[0];
+    if (boundaryCodexMessage?.codexOrder !== undefined) {
+      codexOrderLimits.set(message.id, boundaryCodexMessage.codexOrder);
+    }
+  }
+  return codexOrderLimits;
+}
+
+function isLiveAssistantDeltaBoundaryUserMessage(
+  message: ChatMessageRecord,
+): boolean {
+  return (
+    message.role === "user" &&
+    (!message.eventType || message.eventType === "chat.message.steered")
+  );
+}
+
+function isCodexBoundaryUserMessage(
+  codexMessage: InternalChatMessageRecord,
+  localMessage: ChatMessageRecord,
+): boolean {
+  if (messageFingerprint(codexMessage) !== messageFingerprint(localMessage)) {
+    return false;
+  }
+  if (localMessage.eventType === "chat.message.steered") {
+    return (
+      isCodexMessageAtOrAfterLocalMessage(codexMessage, localMessage) ||
+      isRelaxedSteeredCodexMatch(codexMessage, localMessage)
+    );
+  }
+  return isCodexMessageAtOrAfterLocalMessage(codexMessage, localMessage);
 }
 
 function isRelaxedSteeredCodexMatch(
