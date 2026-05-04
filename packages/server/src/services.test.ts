@@ -19,6 +19,8 @@ const coreMocks = vi.hoisted(() => ({
   createContext: vi.fn(),
   deleteBranch: vi.fn(),
   deleteWorktree: vi.fn(),
+  githubCheckout: vi.fn(),
+  listGitHubCheckoutTargets: vi.fn(),
   listWorktrees: vi.fn(),
   removeWorktree: vi.fn(),
   runCreateWorktree: vi.fn(),
@@ -2728,6 +2730,113 @@ describe("ServeServices", () => {
       savedState.chats.map((candidate) => candidate.id),
       [chat.id],
     );
+  });
+
+  it("checks out a GitHub target before starting a new chat", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { codex, services, store } = await createHarness(state);
+    coreMocks.githubCheckout.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        message: "Checked out PR #42",
+        worktree: "feature",
+        path: "/repo/.git/phantom/worktrees/feature",
+      },
+    });
+    coreMocks.listWorktrees.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature",
+            path: "/repo/.git/phantom/worktrees/feature",
+            pathToDisplay: ".git/phantom/worktrees/feature",
+            branch: "feature",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
+
+    const chat = await services.createChat("proj_1", {
+      githubTargetNumber: 42,
+      initialMessage: "Implement this PR feedback",
+    });
+
+    deepStrictEqual(coreMocks.githubCheckout.mock.calls[0], [
+      {
+        number: "42",
+        base: undefined,
+        cwd: "/repo",
+      },
+    ]);
+    deepStrictEqual(codex.startThread.mock.calls[0], [
+      "/repo/.git/phantom/worktrees/feature",
+    ]);
+    strictEqual(chat.worktreeName, "feature");
+    strictEqual(chat.worktreePath, "/repo/.git/phantom/worktrees/feature");
+    strictEqual(chat.codexThreadId, "thread_new");
+    const savedState = await store.load();
+    strictEqual(savedState.selectedChatId, chat.id);
+  });
+
+  it("lists GitHub checkout targets for a project", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { services } = await createHarness(state);
+    coreMocks.listGitHubCheckoutTargets.mockResolvedValueOnce([
+      {
+        author: "alice",
+        htmlUrl: "https://github.com/owner/repo/pull/42",
+        kind: "pullRequest",
+        number: 42,
+        title: "Fix checkout",
+        updatedAt: "2026-05-04T00:00:00Z",
+      },
+    ]);
+
+    const result = await services.listProjectGitHubCheckoutTargets("proj_1");
+
+    deepStrictEqual(coreMocks.listGitHubCheckoutTargets.mock.calls[0], [
+      { cwd: "/repo" },
+    ]);
+    deepStrictEqual(result, {
+      available: true,
+      targets: [
+        {
+          author: "alice",
+          htmlUrl: "https://github.com/owner/repo/pull/42",
+          kind: "pullRequest",
+          number: 42,
+          title: "Fix checkout",
+          updatedAt: "2026-05-04T00:00:00Z",
+        },
+      ],
+    });
+  });
+
+  it("hides GitHub checkout targets when GitHub access is unavailable", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { services } = await createHarness(state);
+    coreMocks.listGitHubCheckoutTargets.mockRejectedValueOnce(
+      new Error("Failed to get GitHub auth token"),
+    );
+
+    const result = await services.listProjectGitHubCheckoutTargets("proj_1");
+
+    deepStrictEqual(result, {
+      available: false,
+      targets: [],
+    });
   });
 
   it("rejects partial existing-worktree chat creation input", async () => {

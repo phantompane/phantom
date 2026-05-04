@@ -4,6 +4,7 @@ import { beforeEach, describe, it, vi } from "vitest";
 const services = vi.hoisted(() => ({
   addProject: vi.fn(),
   createChat: vi.fn(),
+  listProjectGitHubCheckoutTargets: vi.fn(),
   listProjects: vi.fn(),
 }));
 
@@ -99,5 +100,75 @@ describe("rpcRoutes", () => {
         message: "Worktree path is required",
       },
     });
+  });
+
+  it("lists GitHub checkout targets through Hono RPC", async () => {
+    services.listProjectGitHubCheckoutTargets.mockResolvedValueOnce({
+      available: true,
+      targets: [
+        {
+          author: "alice",
+          htmlUrl: "https://github.com/owner/repo/pull/42",
+          kind: "pullRequest",
+          number: 42,
+          title: "Fix checkout",
+          updatedAt: "2026-05-04T00:00:00Z",
+        },
+      ],
+    });
+
+    const response = await rpcRoutes.request(
+      "/projects/proj_1/github/checkout-targets",
+    );
+
+    strictEqual(response.status, 200);
+    deepStrictEqual(services.listProjectGitHubCheckoutTargets.mock.calls[0], [
+      "proj_1",
+    ]);
+    deepStrictEqual(await response.json(), {
+      github: {
+        available: true,
+        targets: [
+          {
+            author: "alice",
+            htmlUrl: "https://github.com/owner/repo/pull/42",
+            kind: "pullRequest",
+            number: 42,
+            title: "Fix checkout",
+            updatedAt: "2026-05-04T00:00:00Z",
+          },
+        ],
+      },
+    });
+  });
+
+  it("accepts GitHub checkout targets in chat creation bodies", async () => {
+    services.createChat.mockResolvedValueOnce({
+      id: "chat_1",
+    });
+
+    const response = await rpcRoutes.request("/projects/proj_1/chats", {
+      method: "POST",
+      body: JSON.stringify({
+        githubTargetNumber: 42,
+        initialMessage: "Start from the selected target",
+      }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    strictEqual(response.status, 201);
+    deepStrictEqual(services.createChat.mock.calls[0], [
+      "proj_1",
+      {
+        name: undefined,
+        base: undefined,
+        githubTargetNumber: 42,
+        initialMessage: "Start from the selected target",
+        worktreeName: undefined,
+        worktreePath: undefined,
+      },
+    ]);
   });
 });

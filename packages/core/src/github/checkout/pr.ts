@@ -12,6 +12,10 @@ export interface CheckoutResult {
   alreadyExists?: boolean;
 }
 
+export interface CheckoutPullRequestOptions {
+  cwd?: string;
+}
+
 function getForkWorktreeName(pullRequest: GitHubPullRequest): string {
   const [owner] = pullRequest.head.repo.full_name.split("/");
   if (!owner) {
@@ -25,8 +29,9 @@ export async function checkoutPullRequest(
   worktreeName = pullRequest.isFromFork
     ? getForkWorktreeName(pullRequest)
     : pullRequest.head.ref,
+  options: CheckoutPullRequestOptions = {},
 ): Promise<Result<CheckoutResult>> {
-  const gitRoot = await getGitRoot();
+  const gitRoot = await getGitRoot({ cwd: options.cwd });
   const context = await createContext(gitRoot);
   const localBranch = worktreeName;
 
@@ -57,7 +62,7 @@ export async function checkoutPullRequest(
   const refspec = `${upstream.replace("origin/", "")}:${localBranch}`;
 
   // Fetch the PR to a local branch
-  const fetchResult = await fetch({ refspec });
+  const fetchResult = await fetch({ cwd: gitRoot, refspec });
   if (isErr(fetchResult)) {
     return err(
       new Error(

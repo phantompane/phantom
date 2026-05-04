@@ -3,10 +3,12 @@ import {
   Bot,
   Brain,
   ChevronRight,
+  CircleDot,
   Clock3,
   FileText,
   FolderGit2,
   GitBranch,
+  GitPullRequest,
   Inbox,
   MessageSquare,
   MessageSquarePlus,
@@ -54,6 +56,7 @@ import {
   messagesQueryOptions,
   modelsQueryOptions,
   projectChatsQueryOptions,
+  projectGitHubCheckoutTargetsQueryOptions,
   projectWorktreesQueryOptions,
   projectsQueryOptions,
 } from "../api/queries";
@@ -131,6 +134,8 @@ import type {
   CodexModelRecord,
   CodexSkillRecord,
   CodexTurnContextItem,
+  GitHubCheckoutTargetRecord,
+  GitHubCheckoutTargetsResult,
   PhantomEvent,
   ProjectWorktreeRecord,
   ProjectRecord,
@@ -449,6 +454,9 @@ export function HomeRoute() {
   const [worktreesByProject, setWorktreesByProject] = useState<
     Record<string, ProjectWorktreeRecord[]>
   >({});
+  const [githubTargetsByProject, setGithubTargetsByProject] = useState<
+    Record<string, GitHubCheckoutTargetsResult>
+  >({});
   const [expandedWorktreeKeys, setExpandedWorktreeKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -495,6 +503,11 @@ export function HomeRoute() {
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
   const [isChatContextLoading, setIsChatContextLoading] = useState(false);
   const [isFileSearchLoading, setIsFileSearchLoading] = useState(false);
+  const [loadingGitHubTargetProjectIds, setLoadingGitHubTargetProjectIds] =
+    useState<Set<string>>(() => new Set());
+  const [selectedGitHubTargetNumber, setSelectedGitHubTargetNumber] = useState<
+    number | null
+  >(null);
   const [creatingProjectId, setCreatingProjectId] = useState<string | null>(
     null,
   );
@@ -516,6 +529,7 @@ export function HomeRoute() {
   const selectedChatVersionRef = useRef(0);
   const chatsByProjectRef = useRef(chatsByProject);
   const worktreesByProjectRef = useRef(worktreesByProject);
+  const githubTargetsByProjectRef = useRef(githubTargetsByProject);
   const messagesRefreshRequestIdRef = useRef(0);
   const sendMessageRequestIdRef = useRef(0);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -729,11 +743,29 @@ export function HomeRoute() {
   selectedProjectIdRef.current = selectedProjectId;
   chatsByProjectRef.current = chatsByProject;
   worktreesByProjectRef.current = worktreesByProject;
+  githubTargetsByProjectRef.current = githubTargetsByProject;
   fileSearchQueryRef.current = fileSearchQuery;
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
+  const selectedProjectGitHubTargets =
+    selectedProjectId && !selectedChatId
+      ? (githubTargetsByProject[selectedProjectId] ?? null)
+      : null;
+  const isSelectedProjectGitHubTargetsLoading = Boolean(
+    selectedProjectId && loadingGitHubTargetProjectIds.has(selectedProjectId),
+  );
+  const selectedGitHubTarget = useMemo(() => {
+    if (!selectedProjectGitHubTargets?.available) {
+      return null;
+    }
+    return (
+      selectedProjectGitHubTargets.targets.find(
+        (target) => target.number === selectedGitHubTargetNumber,
+      ) ?? null
+    );
+  }, [selectedGitHubTargetNumber, selectedProjectGitHubTargets]);
   const hasLoadedSelectedProjectData = Boolean(
     selectedProjectId &&
     chatsByProject[selectedProjectId] !== undefined &&
@@ -976,6 +1008,27 @@ export function HomeRoute() {
       updateSelection: isSelectedChatValidated,
     });
   }, [isSelectedChatValidated, selectedProjectId]);
+
+  useEffect(() => {
+    setSelectedGitHubTargetNumber(null);
+    if (!selectedProjectId || selectedChatId) {
+      return;
+    }
+    void refreshGitHubCheckoutTargets(selectedProjectId);
+  }, [selectedProjectId, selectedChatId]);
+
+  useEffect(() => {
+    if (
+      selectedGitHubTargetNumber === null ||
+      !selectedProjectGitHubTargets?.available ||
+      selectedProjectGitHubTargets.targets.some(
+        (target) => target.number === selectedGitHubTargetNumber,
+      )
+    ) {
+      return;
+    }
+    setSelectedGitHubTargetNumber(null);
+  }, [selectedGitHubTargetNumber, selectedProjectGitHubTargets]);
 
   useEffect(() => {
     selectedChatVersionRef.current += 1;
@@ -1279,6 +1332,21 @@ export function HomeRoute() {
     });
   }
 
+  function setGitHubTargetProjectLoading(
+    projectId: string,
+    isLoading: boolean,
+  ) {
+    setLoadingGitHubTargetProjectIds((current) => {
+      const next = new Set(current);
+      if (isLoading) {
+        next.add(projectId);
+      } else {
+        next.delete(projectId);
+      }
+      return next;
+    });
+  }
+
   async function refreshProjects(): Promise<boolean> {
     const requestWorkspaceSelectionKey = workspaceSelectionKeyRef.current;
     setIsProjectsLoading(true);
@@ -1294,10 +1362,17 @@ export function HomeRoute() {
         worktreesByProjectRef.current,
         projectIds,
       );
+      const nextGitHubTargetsByProject = Object.fromEntries(
+        Object.entries(githubTargetsByProjectRef.current).filter(
+          ([projectId]) => projectIds.has(projectId),
+        ),
+      );
       chatsByProjectRef.current = nextChatsByProject;
       worktreesByProjectRef.current = nextWorktreesByProject;
+      githubTargetsByProjectRef.current = nextGitHubTargetsByProject;
       setChatsByProject(nextChatsByProject);
       setWorktreesByProject(nextWorktreesByProject);
+      setGithubTargetsByProject(nextGitHubTargetsByProject);
       if (workspaceSelectionKeyRef.current !== requestWorkspaceSelectionKey) {
         return true;
       }
@@ -1511,6 +1586,33 @@ export function HomeRoute() {
     }
   }
 
+  async function refreshGitHubCheckoutTargets(projectId: string) {
+    setGitHubTargetProjectLoading(projectId, true);
+    try {
+      const data = await queryClient.fetchQuery(
+        projectGitHubCheckoutTargetsQueryOptions(projectId),
+      );
+      const nextGitHubTargetsByProject = {
+        ...githubTargetsByProjectRef.current,
+        [projectId]: data.github,
+      };
+      githubTargetsByProjectRef.current = nextGitHubTargetsByProject;
+      setGithubTargetsByProject(nextGitHubTargetsByProject);
+    } catch {
+      const nextGitHubTargetsByProject = {
+        ...githubTargetsByProjectRef.current,
+        [projectId]: {
+          available: false,
+          targets: [],
+        },
+      };
+      githubTargetsByProjectRef.current = nextGitHubTargetsByProject;
+      setGithubTargetsByProject(nextGitHubTargetsByProject);
+    } finally {
+      setGitHubTargetProjectLoading(projectId, false);
+    }
+  }
+
   function upsertChatRecord(chat: ChatRecord) {
     const projectChats = chatsByProjectRef.current[chat.projectId] ?? [];
     const hasExistingChat = projectChats.some(
@@ -1656,6 +1758,9 @@ export function HomeRoute() {
     });
     void queryClient.invalidateQueries({
       queryKey: queryKeys.projectChats(projectId),
+    });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.projectGitHubCheckoutTargets(projectId),
     });
     setExpandedWorktreeKeys((current) =>
       new Set(current).add(
@@ -1869,6 +1974,7 @@ export function HomeRoute() {
     input: SendMessageInput,
     composerInput: string,
     requestWorkspaceSelectionKey: string,
+    githubTargetNumber: number | null,
   ) {
     let createdChatId: string | null = null;
     const isRequestWorkspaceSelected = () =>
@@ -1885,6 +1991,7 @@ export function HomeRoute() {
         projectId,
         requestWorkspaceSelectionKey,
         {
+          githubTargetNumber: githubTargetNumber ?? undefined,
           initialMessage: input.text,
         },
       );
@@ -1912,6 +2019,7 @@ export function HomeRoute() {
       if (isCreatedChatSelected()) {
         setSelectedFiles([]);
         setSelectedSkillPaths(new Set());
+        setSelectedGitHubTargetNumber(null);
         setFileSearchQuery("");
         await refreshMessages(chat.id);
       }
@@ -1984,6 +2092,7 @@ export function HomeRoute() {
         messageInput,
         composerInput,
         workspaceSelectionKeyRef.current,
+        selectedGitHubTarget?.number ?? null,
       );
       setIsSendingMessage(false);
       setPendingComposerMode(null);
@@ -2838,10 +2947,14 @@ export function HomeRoute() {
             <TimelineSkeleton />
           ) : visibleMessages.length === 0 ? (
             <EmptyTimeline
+              githubTargets={selectedProjectGitHubTargets}
               hasChat={Boolean(selectedChat)}
               hasWorktree={Boolean(selectedWorktree)}
+              isGitHubTargetsLoading={isSelectedProjectGitHubTargetsLoading}
               selectedProject={selectedProject}
+              selectedGitHubTargetNumber={selectedGitHubTargetNumber}
               onOpenProjectDialog={() => setIsAddProjectOpen(true)}
+              onSelectGitHubTarget={setSelectedGitHubTargetNumber}
             />
           ) : (
             <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">
@@ -3282,19 +3395,30 @@ function SystemBanner({
 }
 
 function EmptyTimeline({
+  githubTargets,
   hasChat,
   hasWorktree,
+  isGitHubTargetsLoading,
   onOpenProjectDialog,
+  onSelectGitHubTarget,
+  selectedGitHubTargetNumber,
   selectedProject,
 }: {
+  githubTargets: GitHubCheckoutTargetsResult | null;
   hasChat: boolean;
   hasWorktree: boolean;
+  isGitHubTargetsLoading: boolean;
   onOpenProjectDialog: () => void;
+  onSelectGitHubTarget: (number: number | null) => void;
+  selectedGitHubTargetNumber: number | null;
   selectedProject: ProjectRecord | null;
 }) {
+  const showGitHubTargets =
+    Boolean(selectedProject) && !hasChat && githubTargets?.available;
+
   return (
     <div className="mx-auto flex h-full max-w-[var(--layout-max-content-width)] items-center justify-center py-8">
-      <section className="grid w-full max-w-xl gap-4 px-5 py-6 text-center">
+      <section className="grid w-full max-w-2xl gap-4 px-5 py-6 text-center">
         <div className="mx-auto flex size-10 items-center justify-center rounded-[var(--radius-md)] bg-[var(--surface-code)] text-[var(--icon-color-default)]">
           <Inbox className="size-5" />
         </div>
@@ -3326,8 +3450,107 @@ function EmptyTimeline({
             </Button>
           </div>
         )}
+        {showGitHubTargets && githubTargets && (
+          <GitHubTargetPicker
+            isLoading={isGitHubTargetsLoading}
+            selectedNumber={selectedGitHubTargetNumber}
+            targets={githubTargets.targets}
+            onSelectTarget={onSelectGitHubTarget}
+          />
+        )}
       </section>
     </div>
+  );
+}
+
+function GitHubTargetPicker({
+  isLoading,
+  onSelectTarget,
+  selectedNumber,
+  targets,
+}: {
+  isLoading: boolean;
+  onSelectTarget: (number: number | null) => void;
+  selectedNumber: number | null;
+  targets: GitHubCheckoutTargetRecord[];
+}) {
+  return (
+    <div className="mx-auto mt-2 grid w-full gap-2 text-left">
+      <div className="flex items-center justify-between gap-3 px-1">
+        <p className="text-[length:var(--font-size-sm)] font-medium text-[var(--text-secondary)]">
+          GitHub
+        </p>
+        {isLoading && <InlineLoading label="Refreshing" />}
+      </div>
+      {targets.length === 0 ? (
+        <p className="rounded-[var(--radius-sm)] border border-dashed border-[var(--border-divider)] bg-[var(--surface-code)] px-3 py-2 text-[length:var(--font-size-sm)] text-muted-foreground">
+          No open issues or pull requests.
+        </p>
+      ) : (
+        <ul className="max-h-72 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--border-divider)] bg-[var(--surface-code)]">
+          {targets.map((target) => (
+            <GitHubTargetOption
+              isSelected={selectedNumber === target.number}
+              key={`${target.kind}-${target.number}`}
+              target={target}
+              onSelectTarget={onSelectTarget}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function GitHubTargetOption({
+  isSelected,
+  onSelectTarget,
+  target,
+}: {
+  isSelected: boolean;
+  onSelectTarget: (number: number | null) => void;
+  target: GitHubCheckoutTargetRecord;
+}) {
+  const label = `${target.kind === "pullRequest" ? "PR" : "Issue"} #${target.number}: ${target.title}`;
+
+  return (
+    <li className="border-b border-[var(--border-divider)] last:border-b-0">
+      <label
+        className={cn(
+          "grid cursor-pointer grid-cols-[auto_1fr] gap-3 px-3 py-2.5 text-[length:var(--font-size-sm)] transition-colors hover:bg-[var(--state-hover-bg)]",
+          isSelected && "bg-[var(--state-selected-bg)]",
+        )}
+      >
+        <input
+          aria-label={label}
+          checked={isSelected}
+          className="mt-0.5 size-4 accent-[var(--button-primary-bg)]"
+          type="checkbox"
+          onChange={(event) =>
+            onSelectTarget(event.target.checked ? target.number : null)
+          }
+        />
+        <span className="grid min-w-0 gap-1">
+          <span className="flex min-w-0 items-center gap-2">
+            {target.kind === "pullRequest" ? (
+              <GitPullRequest className="size-3.5 shrink-0 text-[var(--semantic-info-fg)]" />
+            ) : (
+              <CircleDot className="size-3.5 shrink-0 text-[var(--semantic-success-fg)]" />
+            )}
+            <span className="shrink-0 font-mono text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+              #{target.number}
+            </span>
+            <span className="truncate font-medium text-[var(--text-primary)]">
+              {target.title}
+            </span>
+          </span>
+          <span className="truncate text-[length:var(--font-size-xs)] text-muted-foreground">
+            {target.kind === "pullRequest" ? "Pull request" : "Issue"}
+            {target.author ? ` by ${target.author}` : ""}
+          </span>
+        </span>
+      </label>
+    </li>
   );
 }
 

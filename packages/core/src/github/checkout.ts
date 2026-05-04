@@ -3,22 +3,33 @@ import {
   fetchIssue,
   getGitHubRepoInfo,
   isPullRequest,
+  listGitHubCheckoutTargets as listGitHubCheckoutTargetsFromApi,
+  type GitHubCheckoutTarget,
 } from "@phantompane/github";
 import { checkoutIssue } from "./checkout/issue.ts";
 import { type CheckoutResult, checkoutPullRequest } from "./checkout/pr.ts";
 
 export type { CheckoutResult } from "./checkout/pr.ts";
+export type { GitHubCheckoutTarget } from "@phantompane/github";
 
 export interface GitHubCheckoutOptions {
   number: string;
   base?: string;
+  cwd?: string;
+}
+
+export interface ListGitHubCheckoutTargetsOptions {
+  cwd?: string;
+  limit?: number;
 }
 
 export async function githubCheckout(
   options: GitHubCheckoutOptions,
 ): Promise<Result<CheckoutResult>> {
-  const { number, base } = options;
-  const { owner, repo } = await getGitHubRepoInfo();
+  const { number, base, cwd } = options;
+  const { owner, repo } = cwd
+    ? await getGitHubRepoInfo({ cwd })
+    : await getGitHubRepoInfo();
 
   // Always fetch from /issues/:number endpoint first
   const issue = await fetchIssue(owner, repo, number);
@@ -40,10 +51,25 @@ export async function githubCheckout(
         ),
       );
     }
-    const result = await checkoutPullRequest(issue.pullRequest);
+    const result = cwd
+      ? await checkoutPullRequest(issue.pullRequest, undefined, { cwd })
+      : await checkoutPullRequest(issue.pullRequest);
     return result;
   }
 
-  const result = await checkoutIssue(issue, base);
+  const result = cwd
+    ? await checkoutIssue(issue, base, { cwd })
+    : await checkoutIssue(issue, base);
   return result;
+}
+
+export async function listGitHubCheckoutTargets(
+  options: ListGitHubCheckoutTargetsOptions = {},
+): Promise<GitHubCheckoutTarget[]> {
+  const { owner, repo } = options.cwd
+    ? await getGitHubRepoInfo({ cwd: options.cwd })
+    : await getGitHubRepoInfo();
+  return listGitHubCheckoutTargetsFromApi(owner, repo, {
+    limit: options.limit,
+  });
 }

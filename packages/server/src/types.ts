@@ -22,6 +22,20 @@ export interface ProjectWorktreeRecord {
   chatTitle: string;
 }
 
+export interface GitHubCheckoutTargetRecord {
+  author: string | null;
+  htmlUrl: string;
+  kind: "issue" | "pullRequest";
+  number: number;
+  title: string;
+  updatedAt: string;
+}
+
+export interface GitHubCheckoutTargetsResult {
+  available: boolean;
+  targets: GitHubCheckoutTargetRecord[];
+}
+
 export interface CodexFileRecord {
   name: string;
   path: string;

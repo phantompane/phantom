@@ -7,6 +7,7 @@ import type {
   CodexFileRecord,
   CodexModelRecord,
   CodexSkillRecord,
+  GitHubCheckoutTargetsResult,
   ProjectRecord,
   ProjectWorktreeRecord,
 } from "@phantompane/server";
@@ -52,6 +53,18 @@ export function projectChatsQueryOptions(projectId: string) {
     queryFn: async () =>
       readRpcJson<{ chats: ChatRecord[] }>(
         await api.projects[":projectId"].chats.$get({
+          param: { projectId: routeParam(projectId) },
+        }),
+      ),
+  });
+}
+
+export function projectGitHubCheckoutTargetsQueryOptions(projectId: string) {
+  return queryOptions({
+    queryKey: queryKeys.projectGitHubCheckoutTargets(projectId),
+    queryFn: async () =>
+      readRpcJson<{ github: GitHubCheckoutTargetsResult }>(
+        await api.projects[":projectId"].github["checkout-targets"].$get({
           param: { projectId: routeParam(projectId) },
         }),
       ),

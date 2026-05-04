@@ -5,6 +5,7 @@ import { isErr, isOk } from "@phantompane/utils";
 const getGitHubRepoInfoMock = vi.fn();
 const fetchIssueMock = vi.fn();
 const isPullRequestMock = vi.fn();
+const listGitHubCheckoutTargetsMock = vi.fn();
 const checkoutPullRequestMock = vi.fn();
 const checkoutIssueMock = vi.fn();
 
@@ -12,6 +13,7 @@ vi.doMock("@phantompane/github", () => ({
   getGitHubRepoInfo: getGitHubRepoInfoMock,
   fetchIssue: fetchIssueMock,
   isPullRequest: isPullRequestMock,
+  listGitHubCheckoutTargets: listGitHubCheckoutTargetsMock,
 }));
 
 vi.doMock("./checkout/pr.ts", () => ({
@@ -29,6 +31,7 @@ describe("githubCheckout", () => {
     getGitHubRepoInfoMock.mockClear();
     fetchIssueMock.mockClear();
     isPullRequestMock.mockClear();
+    listGitHubCheckoutTargetsMock.mockClear();
     checkoutPullRequestMock.mockClear();
     checkoutIssueMock.mockClear();
   };
@@ -280,5 +283,49 @@ describe("githubCheckout", () => {
     if (isErr(result)) {
       equal(result.error, expectedError);
     }
+  });
+
+  it("should pass cwd through repo lookup and checkout", async () => {
+    resetMocks();
+    const mockPR = {
+      number: 333,
+      isFromFork: false,
+      head: {
+        ref: "feature",
+        repo: {
+          full_name: "owner/repo",
+        },
+      },
+      base: {
+        repo: {
+          full_name: "owner/repo",
+        },
+      },
+    };
+    const mockIssue = {
+      number: 333,
+      pullRequest: mockPR,
+    };
+
+    getGitHubRepoInfoMock.mockImplementation(async () => ({
+      owner: "test-owner",
+      repo: "test-repo",
+    }));
+    fetchIssueMock.mockImplementation(async () => mockIssue);
+    isPullRequestMock.mockImplementation(() => true);
+    checkoutPullRequestMock.mockImplementation(async () => ({
+      ok: true,
+      value: { message: "Checked out PR #333" },
+    }));
+
+    const result = await githubCheckout({ number: "333", cwd: "/repo" });
+
+    ok(isOk(result));
+    deepEqual(getGitHubRepoInfoMock.mock.calls[0], [{ cwd: "/repo" }]);
+    deepEqual(checkoutPullRequestMock.mock.calls[0], [
+      mockPR,
+      undefined,
+      { cwd: "/repo" },
+    ]);
   });
 });
