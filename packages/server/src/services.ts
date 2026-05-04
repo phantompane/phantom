@@ -2710,7 +2710,11 @@ function mergeCodexAndLocalMessages(
   const unmatchedCodexMessageIndexes = codexMessages.map((_, index) => index);
   const steeredLocalMessageCounts = countSteeredLocalMessages(localMessages);
   const liveAssistantDeltaCodexOrderLimits =
-    findLiveAssistantDeltaCodexOrderLimits(localMessages, mergedCodexMessages);
+    findLiveAssistantDeltaCodexOrderLimits(
+      localMessages,
+      mergedCodexMessages,
+      steeredLocalMessageCounts,
+    );
   const retainedLocalMessages = localMessages.filter((message) => {
     if (message.role === "event" || message.role === "error") {
       return true;
@@ -2763,7 +2767,12 @@ function mergeCodexAndLocalMessages(
     );
     return false;
   });
-  return assignMergedMessageSortKeys(mergedCodexMessages, retainedLocalMessages)
+  return assignMergedMessageSortKeys(
+    mergedCodexMessages,
+    retainedLocalMessages,
+    liveAssistantDeltaCodexOrderLimits,
+    steeredLocalMessageCounts,
+  )
     .sort(compareMergedMessages)
     .map(stripInternalCodexMessageMetadata);
 }
@@ -2796,6 +2805,8 @@ function insertRecordAtIndex<TRecord>(
 function assignMergedMessageSortKeys(
   codexMessages: InternalChatMessageRecord[],
   localMessages: ChatMessageRecord[],
+  liveAssistantDeltaCodexOrderLimits: ReadonlyMap<string, number>,
+  steeredLocalMessageCounts: ReadonlyMap<string, number>,
 ): InternalChatMessageRecord[] {
   const orderedCodexMessages = [...codexMessages].sort(
     (left, right) => (left.codexOrder ?? 0) - (right.codexOrder ?? 0),
@@ -2807,19 +2818,100 @@ function assignMergedMessageSortKeys(
       mergeSortIndex: 0,
     })),
     ...localMessages.map((message, index) => {
-      const insertionIndex = orderedCodexMessages.findIndex(
-        (codexMessage) => codexMessage.createdAt > message.createdAt,
+      const mergeSortBucket = getLocalMessageMergeSortBucket(
+        message,
+        index,
+        localMessages,
+        orderedCodexMessages,
+        liveAssistantDeltaCodexOrderLimits,
+        steeredLocalMessageCounts,
       );
       return {
         ...message,
-        mergeSortBucket:
-          insertionIndex === -1
-            ? orderedCodexMessages.length * 2 + 1
-            : insertionIndex * 2 - 1,
+        mergeSortBucket,
         mergeSortIndex: index,
       };
     }),
   ];
+}
+
+function getLocalMessageMergeSortBucket(
+  message: ChatMessageRecord,
+  index: number,
+  localMessages: ChatMessageRecord[],
+  orderedCodexMessages: InternalChatMessageRecord[],
+  liveAssistantDeltaCodexOrderLimits: ReadonlyMap<string, number>,
+  steeredLocalMessageCounts: ReadonlyMap<string, number>,
+): number {
+  if (isPendingSteeredMessage(message)) {
+    return orderedCodexMessages.length * 2 + 2;
+  }
+  if (isQueuedMessage(message)) {
+    return orderedCodexMessages.length * 2 + 3;
+  }
+  if (isLiveAssistantDeltaMessage(message)) {
+    const boundaryInsertionIndex = findLiveAssistantDeltaBoundaryInsertionIndex(
+      message,
+      index,
+      localMessages,
+      orderedCodexMessages,
+      liveAssistantDeltaCodexOrderLimits,
+      steeredLocalMessageCounts,
+    );
+    return boundaryInsertionIndex === null
+      ? orderedCodexMessages.length * 2 + 1
+      : boundaryInsertionIndex * 2 - 1;
+  }
+  const insertionIndex = orderedCodexMessages.findIndex(
+    (codexMessage) => codexMessage.createdAt > message.createdAt,
+  );
+  return insertionIndex === -1
+    ? orderedCodexMessages.length * 2 + 1
+    : insertionIndex * 2 - 1;
+}
+
+function findLiveAssistantDeltaBoundaryInsertionIndex(
+  message: ChatMessageRecord,
+  index: number,
+  localMessages: ChatMessageRecord[],
+  orderedCodexMessages: InternalChatMessageRecord[],
+  liveAssistantDeltaCodexOrderLimits: ReadonlyMap<string, number>,
+  steeredLocalMessageCounts: ReadonlyMap<string, number>,
+): number | null {
+  if (!isLiveAssistantDeltaMessage(message)) {
+    return null;
+  }
+  const codexOrderLimit = liveAssistantDeltaCodexOrderLimits.get(message.id);
+  if (codexOrderLimit !== undefined) {
+    const insertionIndex = orderedCodexMessages.findIndex(
+      (codexMessage) => (codexMessage.codexOrder ?? 0) >= codexOrderLimit,
+    );
+    return insertionIndex === -1 ? null : insertionIndex;
+  }
+  const laterUserMessageEntry = localMessages
+    .slice(index + 1)
+    .map((message, offset) => ({ index: index + offset + 1, message }))
+    .find(({ message }) => isLiveAssistantDeltaBoundaryUserMessage(message));
+  if (!laterUserMessageEntry) {
+    return null;
+  }
+  if (getSteeredMessageGroupKey(laterUserMessageEntry.message)) {
+    return null;
+  }
+  const boundaryCodexMessage = findLiveAssistantDeltaBoundaryCodexMessage(
+    orderedCodexMessages,
+    localMessages,
+    laterUserMessageEntry.index,
+    steeredLocalMessageCounts,
+  );
+  if (boundaryCodexMessage?.codexOrder === undefined) {
+    return null;
+  }
+  const insertionIndex = orderedCodexMessages.findIndex(
+    (codexMessage) =>
+      (codexMessage.codexOrder ?? 0) >= (boundaryCodexMessage.codexOrder ?? 0),
+  );
+  return insertionIndex === -1 ? null : insertionIndex;
 }
 
 function compareMergedMessages(
@@ -2990,6 +3082,16 @@ function isLiveAssistantDeltaMessage(message: ChatMessageRecord): boolean {
   );
 }
 
+function isPendingSteeredMessage(message: ChatMessageRecord): boolean {
+  return (
+    message.role === "user" && message.eventType === "chat.message.steered"
+  );
+}
+
+function isQueuedMessage(message: ChatMessageRecord): boolean {
+  return message.role === "user" && message.eventType === "chat.message.queued";
+}
+
 function isCodexLiveAssistantMessageFresh(
   codexMessage: ChatMessageRecord,
   localMessage: ChatMessageRecord,
@@ -3003,32 +3105,110 @@ function isCodexLiveAssistantMessageFresh(
 function findLiveAssistantDeltaCodexOrderLimits(
   messages: ChatMessageRecord[],
   codexMessages: InternalChatMessageRecord[],
+  steeredLocalMessageCounts: ReadonlyMap<string, number>,
 ): ReadonlyMap<string, number> {
   const codexOrderLimits = new Map<string, number>();
   for (const [index, message] of messages.entries()) {
     if (!isLiveAssistantDeltaMessage(message)) {
       continue;
     }
-    const laterUserMessage = messages
+    const laterUserMessageEntry = messages
       .slice(index + 1)
-      .find(isLiveAssistantDeltaBoundaryUserMessage);
-    if (!laterUserMessage) {
+      .map((message, offset) => ({ index: index + offset + 1, message }))
+      .find(({ message }) => isLiveAssistantDeltaBoundaryUserMessage(message));
+    if (!laterUserMessageEntry) {
       continue;
     }
-    const boundaryCodexMessage = codexMessages
-      .filter(
-        (codexMessage) =>
-          codexMessage.role === "user" &&
-          isCodexBoundaryUserMessage(codexMessage, laterUserMessage),
-      )
-      .sort(
-        (left, right) => (left.codexOrder ?? 0) - (right.codexOrder ?? 0),
-      )[0];
+    const boundaryCodexMessage = findLiveAssistantDeltaBoundaryCodexMessage(
+      codexMessages,
+      messages,
+      laterUserMessageEntry.index,
+      steeredLocalMessageCounts,
+    );
     if (boundaryCodexMessage?.codexOrder !== undefined) {
       codexOrderLimits.set(message.id, boundaryCodexMessage.codexOrder);
     }
   }
   return codexOrderLimits;
+}
+
+function findLiveAssistantDeltaBoundaryCodexMessage(
+  codexMessages: InternalChatMessageRecord[],
+  localMessages: ChatMessageRecord[],
+  laterUserMessageIndex: number,
+  steeredLocalMessageCounts: ReadonlyMap<string, number>,
+): InternalChatMessageRecord | undefined {
+  const laterUserMessage = localMessages[laterUserMessageIndex];
+  if (!laterUserMessage) {
+    return undefined;
+  }
+  const localGroupKey = getSteeredMessageGroupKey(laterUserMessage);
+  if (localGroupKey) {
+    return findSteeredBoundaryCodexMessageForLocalOccurrence(
+      codexMessages,
+      localMessages,
+      laterUserMessageIndex,
+      laterUserMessage,
+      steeredLocalMessageCounts,
+    );
+  }
+  const matchedIndex = findDeduplicatedCodexMessageIndex(
+    codexMessages.map((_, index) => index),
+    codexMessages,
+    laterUserMessage,
+    steeredLocalMessageCounts,
+    new Map(),
+  );
+  return matchedIndex === undefined ? undefined : codexMessages[matchedIndex];
+}
+
+function findSteeredBoundaryCodexMessageForLocalOccurrence(
+  codexMessages: InternalChatMessageRecord[],
+  localMessages: ChatMessageRecord[],
+  localMessageIndex: number,
+  localMessage: ChatMessageRecord,
+  steeredLocalMessageCounts: ReadonlyMap<string, number>,
+): InternalChatMessageRecord | undefined {
+  const localGroupKey = getSteeredMessageGroupKey(localMessage);
+  if (!localGroupKey) {
+    return undefined;
+  }
+  const localOccurrenceIndex =
+    localMessages
+      .slice(0, localMessageIndex + 1)
+      .filter((message) => getSteeredMessageGroupKey(message) === localGroupKey)
+      .length - 1;
+  if (localOccurrenceIndex < 0) {
+    return undefined;
+  }
+  const localGroupCount = steeredLocalMessageCounts.get(localGroupKey) ?? 0;
+  const sameTurnCandidateIndexes = codexMessages
+    .map((message, index) => ({ index, message }))
+    .filter(
+      ({ message }) =>
+        message.codexItemSource === "item" &&
+        messageFingerprint(message) === messageFingerprint(localMessage) &&
+        getCodexTurnItemIndex(message, localMessage.itemId ?? "") !== null,
+    )
+    .sort(
+      (left, right) =>
+        (left.message.codexOrder ?? left.index) -
+        (right.message.codexOrder ?? right.index),
+    )
+    .map(({ index }) => index);
+  const firstMatchedCandidateOffset = Math.max(
+    0,
+    sameTurnCandidateIndexes.length - localGroupCount,
+  );
+  const candidateIndex =
+    sameTurnCandidateIndexes[
+      firstMatchedCandidateOffset + localOccurrenceIndex
+    ];
+  const candidate =
+    candidateIndex === undefined ? undefined : codexMessages[candidateIndex];
+  return candidate && isCodexBoundaryUserMessage(candidate, localMessage)
+    ? candidate
+    : undefined;
 }
 
 function isLiveAssistantDeltaBoundaryUserMessage(
