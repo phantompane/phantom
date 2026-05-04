@@ -294,6 +294,27 @@ describe("CodexBridge", () => {
     }
   });
 
+  it("rejects codex exec after the kill grace period when close never fires", async () => {
+    vi.useFakeTimers();
+    const { bridge, proc, spawnCodexProcess } = createBridge();
+
+    try {
+      const execPromise = bridge.exec("name this branch", {
+        model: "gpt-5.4-mini",
+        timeoutMs: 10,
+      });
+      await vi.waitFor(() => expect(spawnCodexProcess).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(proc.killedSignals).toEqual(["SIGTERM"]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(proc.killedSignals).toEqual(["SIGTERM", "SIGKILL"]);
+      await expect(execPromise).rejects.toThrow("Codex exec timed out");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("propagates app-server exits to pending requests", async () => {
     const { bridge, proc } = createBridge();
     const processExitHandler = vi.fn();

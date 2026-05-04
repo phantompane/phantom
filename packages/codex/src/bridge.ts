@@ -231,6 +231,7 @@ export class CodexBridge {
           proc.kill("SIGTERM");
           killTimeout = setTimeout(() => {
             proc.kill("SIGKILL");
+            settle(() => reject(new Error("Codex exec timed out")));
           }, 2_000);
         }, options.timeoutMs ?? 30_000);
 
