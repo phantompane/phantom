@@ -1,6 +1,7 @@
 import { realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
+  branchExists,
   getGitRoot,
   getRemoteDefaultBranch,
   getRemotes,
@@ -14,6 +15,7 @@ import {
   listWorktrees,
   removeWorktree,
   runCreateWorktree,
+  WorktreeAlreadyExistsError,
 } from "@phantompane/core";
 import {
   CodexBridge,
@@ -53,6 +55,7 @@ import type {
 export interface CreateChatInput {
   name?: string;
   base?: string;
+  initialMessage?: string;
   worktreeName?: string;
   worktreePath?: string;
 }
@@ -113,6 +116,81 @@ interface SubmitMessageOptions {
   existingUserMessageId?: string;
   queuedMessageId?: string;
   requireActiveTurn: boolean;
+}
+
+const worktreeNameInferenceModel = "gpt-5.4-mini";
+
+function createWorktreeNameInferencePrompt(message: string): string {
+  return [
+    "Infer a concise Git worktree and branch name from this user request.",
+    "Return exactly one name and nothing else.",
+    "Use lowercase ASCII letters, numbers, hyphens, dots, underscores, and optional slashes.",
+    "Prefer 2-5 words. Use a prefix like feat/, fix/, docs/, refactor/, or chore/ only when it is clearly appropriate.",
+    "Do not include quotes, Markdown, explanations, or code fences.",
+    "",
+    "User request:",
+    message,
+  ].join("\n");
+}
+
+function normalizeInferredWorktreeName(value: string): string | undefined {
+  let name = value
+    .trim()
+    .split(/\r?\n/)
+    .find((line) => line.trim())
+    ?.trim();
+  if (!name) {
+    return undefined;
+  }
+
+  name = name
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9._/-]+/g, "-")
+    .replace(/\/+/g, "/")
+    .replace(/-+/g, "-")
+    .replace(/\.{2,}/g, ".")
+    .replace(/^[./_-]+|[./_-]+$/g, "");
+
+  const segments = name
+    .split("/")
+    .map((segment) => segment.replace(/^[._-]+|[._-]+$/g, ""))
+    .filter(Boolean);
+  name = segments.join("/");
+
+  if (!name) {
+    return undefined;
+  }
+
+  const candidate =
+    name.length > 72 ? name.slice(0, 72).replace(/[./_-]+$/g, "") : name;
+  return isValidInferredWorktreeName(candidate) ? candidate : undefined;
+}
+
+function isValidInferredWorktreeName(name: string): boolean {
+  if (
+    !name ||
+    name === "@" ||
+    name.includes("..") ||
+    name.includes("@{") ||
+    name.includes("//") ||
+    name.endsWith(".") ||
+    /[\s~^:?*[\]\\]/.test(name) ||
+    [...name].some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127;
+    })
+  ) {
+    return false;
+  }
+
+  return name.split("/").every((segment) => {
+    return (
+      segment.length > 0 &&
+      !segment.startsWith(".") &&
+      !segment.endsWith(".lock")
+    );
+  });
 }
 
 type PendingTurnEvent =
@@ -609,11 +687,37 @@ export class ServeServices {
       return chat;
     }
 
-    const createResult = await runCreateWorktree({
+    const explicitName = input.name?.trim();
+    let inferredName =
+      explicitName ||
+      (input.initialMessage?.trim()
+        ? await this.inferWorktreeName(project.rootPath, input.initialMessage)
+        : undefined);
+    if (!explicitName && inferredName) {
+      const inferredBranchExists = await branchExists(
+        project.rootPath,
+        inferredName,
+      );
+      if (inferredBranchExists.ok && inferredBranchExists.value) {
+        inferredName = undefined;
+      }
+    }
+    let createResult = await runCreateWorktree({
       gitRoot: project.rootPath,
-      name: input.name,
+      name: inferredName,
       base: input.base,
     });
+    if (
+      !createResult.ok &&
+      !explicitName &&
+      inferredName &&
+      createResult.error instanceof WorktreeAlreadyExistsError
+    ) {
+      createResult = await runCreateWorktree({
+        gitRoot: project.rootPath,
+        base: input.base,
+      });
+    }
 
     if (!createResult.ok) {
       throw createResult.error;
@@ -665,6 +769,24 @@ export class ServeServices {
 
     this.eventHub.emit("chat.created", chat, { chatId: chat.id });
     return chat;
+  }
+
+  private async inferWorktreeName(
+    projectRoot: string,
+    message: string,
+  ): Promise<string | undefined> {
+    try {
+      const result = await this.codex.exec(
+        createWorktreeNameInferencePrompt(message),
+        {
+          cwd: projectRoot,
+          model: worktreeNameInferenceModel,
+        },
+      );
+      return normalizeInferredWorktreeName(result);
+    } catch {
+      return undefined;
+    }
   }
 
   async deleteProjectWorktree(

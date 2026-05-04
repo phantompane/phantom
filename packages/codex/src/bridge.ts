@@ -1,4 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import readline from "node:readline";
 
 export type JsonValue =
@@ -51,6 +54,12 @@ export interface CodexThreadListOptions {
 
 export interface CodexThreadReadOptions {
   includeTurns?: boolean;
+}
+
+export interface CodexExecOptions {
+  cwd?: string;
+  model: string;
+  timeoutMs?: number;
 }
 
 interface PendingRequest {
@@ -175,6 +184,96 @@ export class CodexBridge {
       roots,
       cancellationToken: null,
     });
+  }
+
+  async exec(prompt: string, options: CodexExecOptions): Promise<string> {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "phantom-codex-exec-"),
+    );
+    const outputPath = join(outputDirectory, "last-message.txt");
+    const args = [
+      "exec",
+      "--model",
+      options.model,
+      "--sandbox",
+      "read-only",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--output-last-message",
+      outputPath,
+      prompt,
+    ];
+    let stdout = "";
+    let stderr = "";
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const proc = this.spawnCodexProcess(this.codexBin, args, {
+          cwd: options.cwd,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let isSettled = false;
+        let didTimeout = false;
+        let killTimeout: NodeJS.Timeout | null = null;
+        const settle = (callback: () => void) => {
+          if (isSettled) {
+            return;
+          }
+          isSettled = true;
+          clearTimeout(timeout);
+          if (killTimeout) {
+            clearTimeout(killTimeout);
+          }
+          callback();
+        };
+        const timeout = setTimeout(() => {
+          didTimeout = true;
+          proc.kill("SIGTERM");
+          killTimeout = setTimeout(() => {
+            proc.kill("SIGKILL");
+            settle(() => reject(new Error("Codex exec timed out")));
+          }, 2_000);
+        }, options.timeoutMs ?? 30_000);
+
+        proc.stdout.on("data", (chunk: Buffer) => {
+          stdout += chunk.toString("utf8");
+        });
+        proc.stderr.on("data", (chunk: Buffer) => {
+          stderr += chunk.toString("utf8");
+        });
+        proc.on("error", (error) => {
+          settle(() => reject(error));
+        });
+        proc.on("close", (code, signal) => {
+          if (didTimeout) {
+            settle(() => reject(new Error("Codex exec timed out")));
+            return;
+          }
+          if (code === 0) {
+            settle(resolve);
+            return;
+          }
+          const detail = stderr.trim() || stdout.trim();
+          settle(() =>
+            reject(
+              new Error(
+                `Codex exec exited with ${
+                  signal ? `signal ${signal}` : `code ${code ?? 0}`
+                }${detail ? `: ${detail}` : ""}`,
+              ),
+            ),
+          );
+        });
+      });
+
+      try {
+        return await readFile(outputPath, "utf8");
+      } catch {
+        return stdout;
+      }
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true });
+    }
   }
 
   async listThreads(options: CodexThreadListOptions = {}): Promise<unknown> {

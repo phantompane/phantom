@@ -3,12 +3,19 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it, vi } from "vitest";
+import { WorktreeAlreadyExistsError } from "@phantompane/core";
 import type { CodexBridge, CodexMessage } from "@phantompane/codex";
 import { ServeStateStore } from "@phantompane/state";
 import type { ChatRecord, ProjectRecord, ServeState } from "@phantompane/state";
 import { ServeServices } from "./services";
 
 const coreMocks = vi.hoisted(() => ({
+  WorktreeAlreadyExistsError: class WorktreeAlreadyExistsError extends Error {
+    constructor(name: string) {
+      super(`Worktree '${name}' already exists`);
+      this.name = "WorktreeAlreadyExistsError";
+    }
+  },
   createContext: vi.fn(),
   deleteBranch: vi.fn(),
   deleteWorktree: vi.fn(),
@@ -18,6 +25,7 @@ const coreMocks = vi.hoisted(() => ({
 }));
 
 const gitMocks = vi.hoisted(() => ({
+  branchExists: vi.fn(),
   getGitRoot: vi.fn(),
   getRemoteDefaultBranch: vi.fn(),
   getRemotes: vi.fn(),
@@ -35,6 +43,7 @@ class FakeCodexBridge {
   readonly notificationHandlers: Array<(message: CodexMessage) => void> = [];
   readonly processExitHandlers: Array<(error: Error) => void> = [];
   readonly serverRequestHandlers: Array<(message: CodexMessage) => void> = [];
+  readonly exec = vi.fn();
   readonly interruptTurn = vi.fn();
   readonly listThreads = vi.fn();
   readonly listModels = vi.fn();
@@ -2394,6 +2403,175 @@ describe("ServeServices", () => {
     strictEqual(coreMocks.runCreateWorktree.mock.calls.length, 0);
     strictEqual(coreMocks.listWorktrees.mock.calls.length, 0);
     strictEqual(codex.startThread.mock.calls.length, 0);
+  });
+
+  it("infers the worktree name from an initial message with codex exec", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const store = new ServeStateStore(await createTemporaryDirectory());
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      store,
+    });
+    codex.exec.mockResolvedValueOnce("Fix/sidebar-new-chat\n");
+    gitMocks.branchExists.mockResolvedValueOnce({ ok: true, value: false });
+    coreMocks.runCreateWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: "fix/sidebar-new-chat",
+        path: "/repo/.git/phantom/worktrees/fix/sidebar-new-chat",
+      },
+    });
+    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
+
+    const chat = await services.createChat("proj_1", {
+      initialMessage: "プロジェクトクリック時に新規チャットへ切り替えて",
+    });
+
+    strictEqual(chat.worktreeName, "fix/sidebar-new-chat");
+    strictEqual(
+      coreMocks.runCreateWorktree.mock.calls[0][0].name,
+      "fix/sidebar-new-chat",
+    );
+    deepStrictEqual(codex.exec.mock.calls[0][1], {
+      cwd: "/repo",
+      model: "gpt-5.4-mini",
+    });
+  });
+
+  it("falls back to generated worktree names when the inferred branch name is invalid", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const store = new ServeStateStore(await createTemporaryDirectory());
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      store,
+    });
+    codex.exec.mockResolvedValueOnce("fix/sidebar.lock");
+    coreMocks.runCreateWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: "generated-name",
+        path: "/repo/.git/phantom/worktrees/generated-name",
+      },
+    });
+    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
+
+    const chat = await services.createChat("proj_1", {
+      initialMessage: "Fix the sidebar behavior",
+    });
+
+    strictEqual(chat.worktreeName, "generated-name");
+    strictEqual(coreMocks.runCreateWorktree.mock.calls[0][0].name, undefined);
+  });
+
+  it("falls back to generated worktree names when the inferred name already exists", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const store = new ServeStateStore(await createTemporaryDirectory());
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      store,
+    });
+    codex.exec.mockResolvedValueOnce("fix/sidebar");
+    gitMocks.branchExists.mockResolvedValueOnce({ ok: true, value: false });
+    coreMocks.runCreateWorktree
+      .mockResolvedValueOnce({
+        ok: false,
+        error: new WorktreeAlreadyExistsError("fix/sidebar"),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          name: "generated-name",
+          path: "/repo/.git/phantom/worktrees/generated-name",
+        },
+      });
+    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
+
+    const chat = await services.createChat("proj_1", {
+      initialMessage: "Fix the sidebar behavior",
+    });
+
+    strictEqual(chat.worktreeName, "generated-name");
+    strictEqual(
+      coreMocks.runCreateWorktree.mock.calls[0][0].name,
+      "fix/sidebar",
+    );
+    strictEqual(coreMocks.runCreateWorktree.mock.calls[1][0].name, undefined);
+  });
+
+  it("falls back to generated worktree names when the inferred branch already exists", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const store = new ServeStateStore(await createTemporaryDirectory());
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      store,
+    });
+    codex.exec.mockResolvedValueOnce("fix/sidebar");
+    gitMocks.branchExists.mockResolvedValueOnce({ ok: true, value: true });
+    coreMocks.runCreateWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: "generated-name",
+        path: "/repo/.git/phantom/worktrees/generated-name",
+      },
+    });
+    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
+
+    const chat = await services.createChat("proj_1", {
+      initialMessage: "Fix the sidebar behavior",
+    });
+
+    strictEqual(chat.worktreeName, "generated-name");
+    strictEqual(coreMocks.runCreateWorktree.mock.calls[0][0].name, undefined);
+  });
+
+  it("falls back to generated worktree names when name inference fails", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const store = new ServeStateStore(await createTemporaryDirectory());
+    await store.save(state);
+    const codex = new FakeCodexBridge();
+    const services = new ServeServices({
+      codex: codex as unknown as CodexBridge,
+      store,
+    });
+    codex.exec.mockRejectedValueOnce(new Error("Codex exec timed out"));
+    coreMocks.runCreateWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: "generated-name",
+        path: "/repo/.git/phantom/worktrees/generated-name",
+      },
+    });
+    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
+
+    const chat = await services.createChat("proj_1", {
+      initialMessage: "Fix the sidebar behavior",
+    });
+
+    strictEqual(chat.worktreeName, "generated-name");
+    strictEqual(coreMocks.runCreateWorktree.mock.calls[0][0].name, undefined);
   });
 
   it("stores a newly created chat without importing existing history", async () => {

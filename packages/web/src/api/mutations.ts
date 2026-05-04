@@ -21,6 +21,7 @@ export interface SendMessageInput {
 }
 
 export interface CreateChatInput {
+  initialMessage?: string;
   worktreeName?: string;
   worktreePath?: string;
 }
