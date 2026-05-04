@@ -18,6 +18,7 @@ const createChatSchema = z
   .object({
     name: z.string().optional(),
     base: z.string().optional(),
+    initialMessage: z.string().optional(),
     worktreeName: z.string().optional(),
     worktreePath: z.string().optional(),
   })
@@ -207,6 +208,7 @@ export const rpcRoutes = new Hono()
         {
           name: body.name,
           base: body.base,
+          initialMessage: body.initialMessage,
           worktreeName: body.worktreeName,
           worktreePath: body.worktreePath,
         },

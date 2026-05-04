@@ -16,6 +16,7 @@ class FakeCodexProcess extends EventEmitter {
   readonly stdin = new PassThrough();
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
+  readonly killedSignals: Array<NodeJS.Signals | number | undefined> = [];
   readonly writes: WrittenMessage[] = [];
 
   constructor() {
@@ -36,6 +37,11 @@ class FakeCodexProcess extends EventEmitter {
   failWithStderr(message: string): void {
     this.stderr.write(message);
     this.emit("exit", 1, null);
+  }
+
+  kill(signal?: NodeJS.Signals | number): boolean {
+    this.killedSignals.push(signal);
+    return true;
   }
 }
 
@@ -263,6 +269,28 @@ describe("CodexBridge", () => {
       id: "99",
       result: { decision: "decline" },
     });
+  });
+
+  it("waits for codex exec processes to close after timeout before rejecting", async () => {
+    vi.useFakeTimers();
+    const { bridge, proc } = createBridge();
+
+    try {
+      const execPromise = bridge.exec("name this branch", {
+        model: "gpt-5.4-mini",
+        timeoutMs: 10,
+      });
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(proc.killedSignals).toEqual(["SIGTERM"]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(proc.killedSignals).toEqual(["SIGTERM", "SIGKILL"]);
+
+      proc.emit("close", null, "SIGKILL");
+      await expect(execPromise).rejects.toThrow("Codex exec timed out");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("propagates app-server exits to pending requests", async () => {

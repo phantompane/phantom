@@ -41,6 +41,7 @@ import {
   sendMessageMutation,
   steerMessageMutation,
   syncWorktreeMutation,
+  type SendMessageInput,
 } from "../api/mutations";
 import {
   authQueryOptions,
@@ -254,6 +255,13 @@ function readSearchParamSet(
   return new Set(values);
 }
 
+function getWorkspaceSelectionKey(
+  projectId: string | null,
+  chatId: string | null,
+): string {
+  return `${projectId ?? ""}\u0000${chatId ?? ""}`;
+}
+
 function writeNullableSearchParam(
   searchParams: URLSearchParams,
   key: string,
@@ -397,7 +405,10 @@ export function HomeRoute() {
     searchParams,
     searchParamKeys.chat,
   );
-  const workspaceSelectionKey = `${requestedProjectId ?? ""}\u0000${selectedChatId ?? ""}`;
+  const workspaceSelectionKey = getWorkspaceSelectionKey(
+    requestedProjectId,
+    selectedChatId,
+  );
   const workspaceSelectionKeyRef = useRef(workspaceSelectionKey);
   workspaceSelectionKeyRef.current = workspaceSelectionKey;
   const selectedModelId = readNullableSearchParam(
@@ -655,6 +666,14 @@ export function HomeRoute() {
     });
   }
 
+  function getCurrentUrlWorkspaceSelectionKey(): string {
+    const currentSearchParams = searchParamsRef.current;
+    return getWorkspaceSelectionKey(
+      readNullableSearchParam(currentSearchParams, searchParamKeys.project),
+      readNullableSearchParam(currentSearchParams, searchParamKeys.chat),
+    );
+  }
+
   const selectedChat = useMemo(
     () =>
       findValidatedSelectedChat(
@@ -704,8 +723,13 @@ export function HomeRoute() {
   );
   const hasSelectedContext =
     selectedFiles.length > 0 || selectedSkills.length > 0;
+  const canStartNewProjectChat =
+    Boolean(selectedProject) &&
+    !hasSelectedChat &&
+    Boolean(composerText.trim());
   const canSendMessage =
-    hasSelectedChat && Boolean(composerText.trim() || hasSelectedContext);
+    (hasSelectedChat && Boolean(composerText.trim() || hasSelectedContext)) ||
+    canStartNewProjectChat;
   const primaryComposerMode: ComposerSubmitMode = hasActiveTurn
     ? isChatRunning
       ? "steer"
@@ -720,7 +744,8 @@ export function HomeRoute() {
     canSendMessage &&
     !isComposerBlocked &&
     (primaryComposerMode !== "steer" || isChatRunning);
-  const canQueueComposerMessage = canSendMessage && !isComposerBlocked;
+  const canQueueComposerMessage =
+    hasSelectedChat && canSendMessage && !isComposerBlocked;
   const canInterruptActiveTurn =
     hasActiveTurn && !isInterrupting && Boolean(selectedChat?.activeTurnId);
   const areComposerOptionsDisabled = !hasSelectedChat || isSendingMessage;
@@ -822,7 +847,7 @@ export function HomeRoute() {
         ) ?? null
       );
     }
-    return projectWorktrees[0] ?? null;
+    return null;
   }, [selectedChat, selectedProjectId, worktreesByProject]);
 
   const chatsByWorktreeByProject = useMemo(() => {
@@ -1340,7 +1365,9 @@ export function HomeRoute() {
       );
       const currentSelectedChatId = selectedChatIdRef.current;
       const currentFileSearchQuery = fileSearchQueryRef.current;
-      const nextChatId = fallbackWorktree?.chatId ?? currentSelectedChatId;
+      const nextChatId = currentSelectedChatId
+        ? (fallbackWorktree?.chatId ?? currentSelectedChatId)
+        : null;
       updateWorkspaceSearchParams(
         {
           projectId,
@@ -1407,7 +1434,9 @@ export function HomeRoute() {
         (chat) => chat.id === currentSelectedChatId,
       )
         ? currentSelectedChatId
-        : (fallbackWorktree?.chatId ?? data.chats[0]?.id ?? null);
+        : currentSelectedChatId
+          ? (fallbackWorktree?.chatId ?? data.chats[0]?.id ?? null)
+          : null;
       updateWorkspaceSearchParams(
         {
           projectId,
@@ -1427,34 +1456,44 @@ export function HomeRoute() {
     }
   }
 
-  async function refreshSelectedChat(chatId: string) {
-    const data = await queryClient.fetchQuery(chatQueryOptions(chatId));
-    const projectChats = chatsByProjectRef.current[data.chat.projectId] ?? [];
+  function upsertChatRecord(chat: ChatRecord) {
+    const projectChats = chatsByProjectRef.current[chat.projectId] ?? [];
+    const hasExistingChat = projectChats.some(
+      (candidate) => candidate.id === chat.id,
+    );
     const nextChatsByProject = {
       ...chatsByProjectRef.current,
-      [data.chat.projectId]: projectChats.map((chat) =>
-        chat.id === chatId ? data.chat : chat,
-      ),
+      [chat.projectId]: hasExistingChat
+        ? projectChats.map((candidate) =>
+            candidate.id === chat.id ? chat : candidate,
+          )
+        : [chat, ...projectChats],
     };
     chatsByProjectRef.current = nextChatsByProject;
     setChatsByProject(nextChatsByProject);
 
     const nextWorktreesByProject = {
       ...worktreesByProjectRef.current,
-      [data.chat.projectId]: (
-        worktreesByProjectRef.current[data.chat.projectId] ?? []
+      [chat.projectId]: (
+        worktreesByProjectRef.current[chat.projectId] ?? []
       ).map((worktree) =>
-        worktree.chatId === chatId
+        worktree.path === chat.worktreePath
           ? {
               ...worktree,
-              chatStatus: data.chat.status,
-              chatTitle: data.chat.title,
+              chatId: chat.id,
+              chatStatus: chat.status,
+              chatTitle: chat.title,
             }
           : worktree,
       ),
     };
     worktreesByProjectRef.current = nextWorktreesByProject;
     setWorktreesByProject(nextWorktreesByProject);
+  }
+
+  async function refreshSelectedChat(chatId: string) {
+    const data = await queryClient.fetchQuery(chatQueryOptions(chatId));
+    upsertChatRecord(data.chat);
   }
 
   async function refreshMessages(
@@ -1548,12 +1587,54 @@ export function HomeRoute() {
     }
   }
 
+  async function createProjectChat(
+    projectId: string,
+    requestWorkspaceSelectionKey: string,
+    input: Parameters<typeof createChatMutation>[1] = {},
+  ): Promise<ChatRecord | null> {
+    const data = await createChatRequest.mutateAsync({ projectId, input });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.projectWorktrees(projectId),
+    });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.projectChats(projectId),
+    });
+    setExpandedWorktreeKeys((current) =>
+      new Set(current).add(
+        getWorktreeExpansionKey(projectId, data.chat.worktreePath),
+      ),
+    );
+    const didRefreshWorktrees = await refreshWorktrees(projectId, {
+      updateSelection: false,
+    });
+    if (!didRefreshWorktrees) {
+      return data.chat;
+    }
+    const didRefreshChats = await refreshChats(projectId, {
+      updateSelection: false,
+    });
+    if (!didRefreshChats) {
+      return data.chat;
+    }
+    if (getCurrentUrlWorkspaceSelectionKey() !== requestWorkspaceSelectionKey) {
+      return data.chat;
+    }
+    updateWorkspaceSearchParams({
+      projectId,
+      chatId: data.chat.id,
+      clearFileQuery: true,
+    });
+    selectedProjectIdRef.current = projectId;
+    selectedChatIdRef.current = data.chat.id;
+    return data.chat;
+  }
+
   async function createChat(
     projectId: string,
     worktree?: ProjectWorktreeRecord,
-  ) {
+  ): Promise<ChatRecord | null> {
     if (isBusy || createChatInFlightRef.current) {
-      return;
+      return null;
     }
 
     setError(null);
@@ -1569,48 +1650,19 @@ export function HomeRoute() {
     }
     setIsBusy(true);
     try {
-      const data = await createChatRequest.mutateAsync({
+      return await createProjectChat(
         projectId,
-        input: worktree
+        requestWorkspaceSelectionKey,
+        worktree
           ? {
               worktreeName: worktree.name,
               worktreePath: worktree.path,
             }
           : {},
-      });
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.projectWorktrees(projectId),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.projectChats(projectId),
-      });
-      setExpandedWorktreeKeys((current) =>
-        new Set(current).add(
-          getWorktreeExpansionKey(projectId, data.chat.worktreePath),
-        ),
       );
-      const didRefreshWorktrees = await refreshWorktrees(projectId, {
-        updateSelection: false,
-      });
-      if (!didRefreshWorktrees) {
-        return;
-      }
-      const didRefreshChats = await refreshChats(projectId, {
-        updateSelection: false,
-      });
-      if (!didRefreshChats) {
-        return;
-      }
-      if (workspaceSelectionKeyRef.current !== requestWorkspaceSelectionKey) {
-        return;
-      }
-      updateWorkspaceSearchParams({
-        projectId,
-        chatId: data.chat.id,
-        clearFileQuery: true,
-      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return null;
     } finally {
       createChatInFlightRef.current = false;
       setCreatingProjectId(null);
@@ -1727,34 +1779,7 @@ export function HomeRoute() {
     await submitComposer("send");
   }
 
-  async function submitComposer(mode: ComposerSubmitMode) {
-    if (
-      !selectedChatId ||
-      !canSendMessage ||
-      isSendingMessage ||
-      pendingSendChatIdsRef.current.has(selectedChatId) ||
-      (mode === "steer" && !selectedChat?.activeTurnId)
-    ) {
-      return;
-    }
-    setError(null);
-    const requestChatId = selectedChatId;
-    const requestChatVersion = selectedChatVersionRef.current;
-    const requestId = sendMessageRequestIdRef.current + 1;
-    sendMessageRequestIdRef.current = requestId;
-    const isCurrentSendRequest = () =>
-      selectedChatIdRef.current === requestChatId &&
-      selectedChatVersionRef.current === requestChatVersion &&
-      sendMessageRequestIdRef.current === requestId;
-    const composerInput = composerText;
-    const text =
-      composerInput.trim().length > 0
-        ? composerInput
-        : getContextOnlyMessage({
-            hasFiles: selectedFiles.length > 0,
-            hasSkills: selectedSkills.length > 0,
-          });
-    setComposerText("");
+  function createComposerMessageInput(text: string): SendMessageInput {
     const turnModel = selectedModel?.id ?? selectedModel?.model;
     const turnEffort =
       selectedModel &&
@@ -1770,6 +1795,134 @@ export function HomeRoute() {
       name: skill.name,
       path: skill.path,
     }));
+    return {
+      effort: turnEffort,
+      files,
+      model: turnModel,
+      skills: selectedSkillItems,
+      text,
+    };
+  }
+
+  async function submitNewProjectChat(
+    projectId: string,
+    input: SendMessageInput,
+    composerInput: string,
+    requestWorkspaceSelectionKey: string,
+  ) {
+    let createdChatId: string | null = null;
+    const isRequestWorkspaceSelected = () =>
+      getCurrentUrlWorkspaceSelectionKey() === requestWorkspaceSelectionKey;
+    const isCreatedChatSelected = () =>
+      createdChatId !== null &&
+      getCurrentUrlWorkspaceSelectionKey() ===
+        getWorkspaceSelectionKey(projectId, createdChatId);
+    createChatInFlightRef.current = true;
+    setCreatingProjectId(projectId);
+    setIsBusy(true);
+    try {
+      const chat = await createProjectChat(
+        projectId,
+        requestWorkspaceSelectionKey,
+        {
+          initialMessage: input.text,
+        },
+      );
+      if (!chat) {
+        if (isRequestWorkspaceSelected()) {
+          setComposerText(composerInput);
+        }
+        return;
+      }
+
+      createdChatId = chat.id;
+      pendingSendChatIdsRef.current.add(chat.id);
+      pendingComposerModesByChatRef.current.set(chat.id, "send");
+      const sentData = await sendMessageRequest.mutateAsync({
+        chatId: chat.id,
+        input,
+      });
+      upsertChatRecord(sentData.chat);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.messages(chat.id),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.chat(chat.id),
+      });
+      if (isCreatedChatSelected()) {
+        setSelectedFiles([]);
+        setSelectedSkillPaths(new Set());
+        setFileSearchQuery("");
+        await refreshMessages(chat.id);
+      }
+    } catch (err) {
+      if (
+        createdChatId ? isCreatedChatSelected() : isRequestWorkspaceSelected()
+      ) {
+        setComposerText(composerInput);
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      if (createdChatId) {
+        pendingSendChatIdsRef.current.delete(createdChatId);
+        pendingComposerModesByChatRef.current.delete(createdChatId);
+      }
+      createChatInFlightRef.current = false;
+      setCreatingProjectId(null);
+      setIsBusy(false);
+    }
+  }
+
+  async function submitComposer(mode: ComposerSubmitMode) {
+    const requestChatId = validatedSelectedChatId;
+    const isStartingNewProjectChat =
+      !requestChatId && Boolean(selectedProjectId);
+    if (
+      (!requestChatId && (!selectedProjectId || mode !== "send")) ||
+      !canSendMessage ||
+      isSendingMessage ||
+      (isStartingNewProjectChat && (isBusy || createChatInFlightRef.current)) ||
+      (requestChatId && pendingSendChatIdsRef.current.has(requestChatId)) ||
+      (mode === "steer" && !selectedChat?.activeTurnId)
+    ) {
+      return;
+    }
+    setError(null);
+    const requestChatVersion = selectedChatVersionRef.current;
+    const requestId = sendMessageRequestIdRef.current + 1;
+    sendMessageRequestIdRef.current = requestId;
+    const isCurrentSendRequest = () =>
+      requestChatId !== null &&
+      selectedChatIdRef.current === requestChatId &&
+      selectedChatVersionRef.current === requestChatVersion &&
+      sendMessageRequestIdRef.current === requestId;
+    const composerInput = composerText;
+    const text =
+      composerInput.trim().length > 0
+        ? composerInput
+        : getContextOnlyMessage({
+            hasFiles: selectedFiles.length > 0,
+            hasSkills: selectedSkills.length > 0,
+          });
+    setComposerText("");
+    const messageInput = createComposerMessageInput(text);
+    if (!requestChatId) {
+      if (!selectedProjectId) {
+        return;
+      }
+      setIsSendingMessage(true);
+      setPendingComposerMode("send");
+      await submitNewProjectChat(
+        selectedProjectId,
+        messageInput,
+        composerInput,
+        workspaceSelectionKeyRef.current,
+      );
+      setIsSendingMessage(false);
+      setPendingComposerMode(null);
+      return;
+    }
+
     pendingSendChatIdsRef.current.add(requestChatId);
     pendingComposerModesByChatRef.current.set(requestChatId, mode);
     setIsSendingMessage(true);
@@ -1783,13 +1936,7 @@ export function HomeRoute() {
             : sendMessageRequest;
       await mutation.mutateAsync({
         chatId: requestChatId,
-        input: {
-          effort: turnEffort,
-          files,
-          model: turnModel,
-          skills: selectedSkillItems,
-          text,
-        },
+        input: messageInput,
       });
       void queryClient.invalidateQueries({
         queryKey: queryKeys.messages(requestChatId),
@@ -1836,11 +1983,15 @@ export function HomeRoute() {
     if (!action) {
       return;
     }
-    if (!selectedChatId || !canSendMessage || isSendingMessage) {
+    if (
+      (!validatedSelectedChatId && !selectedProjectId) ||
+      !canSendMessage ||
+      isSendingMessage
+    ) {
       return;
     }
     const submitMode = getComposerSubmitModeForEnter(action, selectedChat);
-    if (!submitMode) {
+    if (!submitMode || (!validatedSelectedChatId && submitMode !== "send")) {
       return;
     }
     event.preventDefault();
@@ -1913,6 +2064,19 @@ export function HomeRoute() {
         searchParamKeys.expandedProject,
         next,
       );
+    });
+  }
+
+  function selectProject(projectId: string) {
+    setComposerText("");
+    setSelectedFiles([]);
+    setSelectedSkillPaths(new Set());
+    setFileSearchResults([]);
+    setSkills([]);
+    updateWorkspaceSearchParams({
+      projectId,
+      chatId: null,
+      clearFileQuery: true,
     });
   }
 
@@ -2027,20 +2191,31 @@ export function HomeRoute() {
 
                     return (
                       <SidebarMenuItem key={project.id}>
-                        <div className="group/project flex items-center rounded-[var(--radius-sm)]">
-                          <SidebarMenuButton
+                        <div className="group/project flex items-center gap-0.5 rounded-[var(--radius-sm)]">
+                          <button
                             aria-expanded={isProjectExpanded}
-                            className="min-h-8 flex-1 group-data-[state=collapsed]/sidebar:flex-none"
+                            aria-label={`${isProjectExpanded ? "Collapse" : "Expand"} ${project.name}`}
+                            className="inline-flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--icon-color-default)] outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:shadow-[var(--state-focus-ring)] group-data-[state=collapsed]/sidebar:hidden"
                             onClick={() => toggleProject(project.id)}
-                            title={project.name}
+                            title={isProjectExpanded ? "Collapse" : "Expand"}
                             type="button"
                           >
                             <ChevronRight
                               className={cn(
-                                "size-4 shrink-0 text-[var(--icon-color-default)] transition-transform duration-[var(--motion-duration-fast)] group-data-[state=collapsed]/sidebar:hidden",
+                                "size-4 transition-transform duration-[var(--motion-duration-fast)]",
                                 isProjectExpanded && "rotate-90",
                               )}
                             />
+                          </button>
+                          <SidebarMenuButton
+                            className="min-h-8 flex-1 group-data-[state=collapsed]/sidebar:flex-none"
+                            isActive={
+                              selectedProjectId === project.id && !selectedChat
+                            }
+                            onClick={() => selectProject(project.id)}
+                            title={project.name}
+                            type="button"
+                          >
                             <FolderGit2 className="size-4 text-[var(--icon-color-default)]" />
                             <span className="min-w-0 flex-1 group-data-[state=collapsed]/sidebar:hidden">
                               <span className="block truncate font-medium">
@@ -2419,7 +2594,11 @@ export function HomeRoute() {
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <p className="truncate text-[length:var(--font-size-xl)] font-semibold leading-tight">
-                {selectedWorktree?.name ?? selectedProject?.name ?? "Workspace"}
+                {selectedChat
+                  ? (selectedWorktree?.name ?? selectedChat.worktreeName)
+                  : selectedProject
+                    ? "New chat"
+                    : "Workspace"}
               </p>
               {selectedChat && <StatusBadge status={selectedChat.status} />}
             </div>
@@ -2484,7 +2663,12 @@ export function HomeRoute() {
         )}
 
         <section
-          aria-busy={isMessagesLoading || isSendingMessage || hasActiveTurn}
+          aria-busy={
+            isMessagesLoading ||
+            isSendingMessage ||
+            hasActiveTurn ||
+            Boolean(creatingProjectId)
+          }
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
           ref={chatTimelineRef}
           onScroll={scheduleSelectedChatScrollPositionSave}
@@ -2551,13 +2735,15 @@ export function HomeRoute() {
                 </Label>
                 <Textarea
                   className="min-h-12 border-0 bg-transparent px-2 py-2 shadow-none focus-visible:shadow-none"
-                  disabled={!hasSelectedChat}
+                  disabled={!selectedProject || isSendingMessage}
                   enterKeyHint="enter"
                   id="composer"
                   placeholder={
                     hasSelectedChat
                       ? "Ask Codex to work in this worktree"
-                      : "Create or select a worktree to start"
+                      : selectedProject
+                        ? "Ask Codex to create a worktree and start"
+                        : "Select a project to start"
                   }
                   rows={2}
                   value={composerText}
@@ -2566,7 +2752,7 @@ export function HomeRoute() {
                 />
               </div>
               <div className="flex shrink-0 items-end gap-1.5">
-                {primaryComposerMode !== "queue" && (
+                {hasSelectedChat && primaryComposerMode !== "queue" && (
                   <Button
                     aria-label={
                       pendingComposerMode === "queue"
@@ -2944,16 +3130,20 @@ function EmptyTimeline({
           <h2 className="text-[length:var(--font-size-xl)] font-semibold">
             {hasChat
               ? "No messages yet"
-              : hasWorktree
-                ? "Select chat history"
-                : "Select a worktree"}
+              : selectedProject
+                ? "New chat"
+                : hasWorktree
+                  ? "Select chat history"
+                  : "Select a project"}
           </h2>
           <p className="mt-1 text-[length:var(--font-size-md)] text-muted-foreground">
             {hasChat
               ? "Send a message to start a focused Codex session."
-              : hasWorktree
-                ? "Choose a chat history for this worktree."
-                : "Create a worktree under a project to begin a Codex session."}
+              : selectedProject
+                ? "Send a message to create a named worktree and start Codex."
+                : hasWorktree
+                  ? "Choose a chat history for this worktree."
+                  : "Select a project to begin a Codex session."}
           </p>
         </div>
         {!selectedProject && (
