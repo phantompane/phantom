@@ -1858,6 +1858,55 @@ describe("ServeServices", () => {
     );
   });
 
+  it("does not restore stale active turns from local steered messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_stale_steered",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "retry",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    codex.readThread.mockResolvedValue({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            input: [{ text: "retry" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+    const repeatedMessages = await services.getMessages("chat_1");
+    const savedState = await store.load();
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "retry", undefined],
+        ["msg_stale_steered", "user", "retry", undefined],
+      ],
+    );
+    deepStrictEqual(repeatedMessages, messages);
+    strictEqual(savedState.messages[0]?.eventType, undefined);
+  });
+
   it("keeps live assistant deltas after fallback-timestamp Codex history when the later user is retained", async () => {
     const state = {
       ...createTestState(),

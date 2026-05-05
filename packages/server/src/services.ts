@@ -1163,14 +1163,15 @@ export class ServeServices {
   }
 
   async getMessages(chatId: string): Promise<ChatMessageRecord[]> {
-    await this.resetStaleTransientChatState();
+    const resetChatIds = await this.resetStaleTransientChatState();
     const state = await this.store.load();
     const chat = this.requireChat(state, chatId);
     const localMessages = state.messages.filter(
       (message) => message.chatId === chatId,
     );
     const activeTurnId =
-      chat.activeTurnId ?? findLocalSteeredTurnId(localMessages);
+      chat.activeTurnId ??
+      (resetChatIds.has(chatId) ? null : findLocalSteeredTurnId(localMessages));
     if (!chat.codexThreadId) {
       return localMessagesWithoutStaleSteeredState(chat, localMessages);
     }
@@ -2511,26 +2512,43 @@ export class ServeServices {
     return didUpdate;
   }
 
-  private async resetStaleTransientChatState(): Promise<void> {
+  private async resetStaleTransientChatState(): Promise<ReadonlySet<string>> {
     const state = await this.store.load();
     if (!state.chats.some((chat) => this.isStaleTransientChat(chat))) {
-      return;
+      return new Set();
     }
 
+    const resetChatIds = new Set<string>();
     const timestamp = createTimestamp();
-    await this.store.update((nextState) => ({
-      ...nextState,
-      chats: nextState.chats.map((chat) =>
-        this.isStaleTransientChat(chat)
-          ? {
-              ...chat,
-              status: "idle",
-              activeTurnId: null,
-              updatedAt: timestamp,
-            }
-          : chat,
-      ),
-    }));
+    await this.store.update((nextState) => {
+      resetChatIds.clear();
+      const chats = nextState.chats.map((chat) => {
+        if (!this.isStaleTransientChat(chat)) {
+          return chat;
+        }
+        resetChatIds.add(chat.id);
+        return {
+          ...chat,
+          status: "idle" as const,
+          activeTurnId: null,
+          updatedAt: timestamp,
+        };
+      });
+      if (resetChatIds.size === 0) {
+        return nextState;
+      }
+      return {
+        ...nextState,
+        chats,
+        messages: nextState.messages.map((message) =>
+          resetChatIds.has(message.chatId) &&
+          message.eventType === "chat.message.steered"
+            ? { ...message, eventType: undefined }
+            : message,
+        ),
+      };
+    });
+    return resetChatIds;
   }
 
   private isStaleTransientChat(chat: ChatRecord): boolean {
