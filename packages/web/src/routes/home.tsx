@@ -147,6 +147,7 @@ import {
   getWarningEventText,
   isRichEventMessage,
 } from "./rich-events";
+import { mergeStreamingMessagesForDisplay } from "./chat-message-stream-order";
 import type {
   ChatMessageRecord,
   ChatRecord,
@@ -185,6 +186,15 @@ const chatEventNames = [
   "agent.event",
   "auth.updated",
 ];
+const streamOrderPreservingChatEventNames = new Set([
+  "agent.plan.updated",
+  "agent.diff.updated",
+  "agent.command.output",
+  "agent.file.updated",
+  "agent.reasoning.updated",
+  "agent.item.updated",
+  "agent.item.delta",
+]);
 
 const chatScrollStorageKeyPrefix = "phantom.chatScroll:v1:";
 const chatScrollBottomThreshold = 4;
@@ -525,6 +535,8 @@ export function HomeRoute() {
   );
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
   const [messagesChatId, setMessagesChatId] = useState<string | null>(null);
+  const messagesChatIdRef = useRef(messagesChatId);
+  messagesChatIdRef.current = messagesChatId;
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
   const [projectPath, setProjectPath] = useState("");
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<string | null>(
@@ -1321,7 +1333,11 @@ export function HomeRoute() {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.chat(selectedChatId),
       });
-      void refreshMessages(selectedChatId);
+      void refreshMessages(selectedChatId, {
+        preserveStreamOrder: streamOrderPreservingChatEventNames.has(
+          phantomEvent.type,
+        ),
+      });
       void refreshSelectedChat(selectedChatId);
       if (selectedProjectId) {
         void queryClient.invalidateQueries({
@@ -1915,7 +1931,7 @@ export function HomeRoute() {
 
   async function refreshMessages(
     chatId: string,
-    options: { showLoading?: boolean } = {},
+    options: { preserveStreamOrder?: boolean; showLoading?: boolean } = {},
   ) {
     const requestId = messagesRefreshRequestIdRef.current + 1;
     messagesRefreshRequestIdRef.current = requestId;
@@ -1928,7 +1944,14 @@ export function HomeRoute() {
         selectedChatIdRef.current === chatId &&
         messagesRefreshRequestIdRef.current === requestId
       ) {
-        setMessages(data.messages);
+        const shouldPreserveStreamOrder =
+          options.preserveStreamOrder === true &&
+          messagesChatIdRef.current === chatId;
+        setMessages((currentMessages) =>
+          shouldPreserveStreamOrder
+            ? mergeStreamingMessagesForDisplay(currentMessages, data.messages)
+            : data.messages,
+        );
         setMessagesChatId(chatId);
         setTimelineError(null);
       }
