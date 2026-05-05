@@ -22,6 +22,20 @@ describe("renderMarkdownToHtml", () => {
     ok(!html.includes("javascript:"));
     ok(!html.includes("<script>"));
   });
+
+  it("renders safe links with external navigation attributes", () => {
+    const html = renderMarkdownToHtml(
+      "[safe](https://example.com) [bad](javascript:alert(1))",
+    );
+
+    ok(
+      html.includes(
+        '<a href="https://example.com" rel="noopener noreferrer" target="_blank">safe</a>',
+      ),
+    );
+    ok(html.includes("bad"));
+    ok(!html.includes("javascript:"));
+  });
 });
 
 describe("renderChatMessage", () => {
@@ -39,5 +53,17 @@ describe("renderChatMessage", () => {
       renderChatMessage(message).textHtml,
       "<p><strong>hello</strong></p>\n",
     );
+  });
+
+  it("does not render HTML for non-assistant messages", () => {
+    const message: ChatMessageRecord = {
+      chatId: "chat_1",
+      createdAt: "2026-05-05T00:00:00.000Z",
+      id: "msg_1",
+      role: "event",
+      text: "**event output**",
+    };
+
+    strictEqual("textHtml" in renderChatMessage(message), false);
   });
 });

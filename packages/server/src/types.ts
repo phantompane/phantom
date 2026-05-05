@@ -10,7 +10,7 @@ export type {
 } from "@phantompane/state";
 
 export type RenderedChatMessageRecord = ChatMessageRecord & {
-  textHtml: string;
+  textHtml?: string;
 };
 
 export interface ProjectWorktreeRecord {

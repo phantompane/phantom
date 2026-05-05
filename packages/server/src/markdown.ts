@@ -51,7 +51,7 @@ export function renderMarkdownToHtml(markdown: string): string {
       a: (_tagName, attribs) => ({
         attribs: {
           ...attribs,
-          rel: "noreferrer",
+          rel: "noopener noreferrer",
           target: "_blank",
         },
         tagName: "a",
@@ -63,6 +63,9 @@ export function renderMarkdownToHtml(markdown: string): string {
 export function renderChatMessage(
   message: ChatMessageRecord,
 ): RenderedChatMessageRecord {
+  if (message.role !== "assistant") {
+    return message;
+  }
   return {
     ...message,
     textHtml: renderMarkdownToHtml(message.text),

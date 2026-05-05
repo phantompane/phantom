@@ -4462,7 +4462,7 @@ function MessageCard({
       {message.role === "assistant" ? (
         <div
           className="markdown-message"
-          dangerouslySetInnerHTML={{ __html: message.textHtml }}
+          dangerouslySetInnerHTML={{ __html: message.textHtml ?? "" }}
         />
       ) : (
         <pre className="whitespace-pre-wrap break-words font-sans text-[length:var(--font-size-md)] leading-[var(--line-height-relaxed)]">

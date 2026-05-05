@@ -58,6 +58,14 @@ describe("rpcRoutes", () => {
         role: "assistant",
         text: "**hello**",
       },
+      {
+        chatId: "chat_1",
+        createdAt: "2026-05-05T00:00:01.000Z",
+        eventType: "item/commandExecution/outputDelta",
+        id: "msg_2",
+        role: "event",
+        text: "**raw output**",
+      },
     ]);
 
     const response = await rpcRoutes.request("/chats/chat_1/messages");
@@ -73,6 +81,14 @@ describe("rpcRoutes", () => {
           role: "assistant",
           text: "**hello**",
           textHtml: "<p><strong>hello</strong></p>\n",
+        },
+        {
+          chatId: "chat_1",
+          createdAt: "2026-05-05T00:00:01.000Z",
+          eventType: "item/commandExecution/outputDelta",
+          id: "msg_2",
+          role: "event",
+          text: "**raw output**",
         },
       ],
     });
