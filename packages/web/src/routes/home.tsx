@@ -4459,10 +4459,10 @@ function MessageCard({
           "rounded-[var(--radius-lg)] border border-[var(--semantic-danger-border)] bg-[var(--semantic-danger-bg)] px-4 py-3 text-[var(--semantic-danger-fg)] shadow-[var(--shadow-xs)]",
       )}
     >
-      {message.role === "assistant" ? (
+      {message.role === "assistant" && message.textHtml !== undefined ? (
         <div
           className="markdown-message"
-          dangerouslySetInnerHTML={{ __html: message.textHtml ?? "" }}
+          dangerouslySetInnerHTML={{ __html: message.textHtml }}
         />
       ) : (
         <pre className="whitespace-pre-wrap break-words font-sans text-[length:var(--font-size-md)] leading-[var(--line-height-relaxed)]">
