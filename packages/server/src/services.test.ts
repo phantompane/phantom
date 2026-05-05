@@ -1762,6 +1762,231 @@ describe("ServeServices", () => {
     );
   });
 
+  it("keeps a repeated pending message when only fallback-timestamp Codex history matches", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_current" })],
+      messages: [
+        {
+          id: "msg_pending_retry",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "retry",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [{ type: "userMessage", text: "retry" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_old_0", "user", "retry", undefined],
+        ["msg_pending_retry", "user", "retry", undefined],
+        [
+          "msg_command_event",
+          "event",
+          "pnpm test",
+          "item/commandExecution/outputDelta",
+        ],
+      ],
+    );
+  });
+
+  it("does not trust fallback-timestamp Codex history after stale active turn reset", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_pending_retry",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "retry",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [{ type: "userMessage", text: "retry" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [message.id, message.role, message.text]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "retry"],
+        ["msg_pending_retry", "user", "retry"],
+      ],
+    );
+  });
+
+  it("keeps live assistant deltas after fallback-timestamp Codex history when the later user is retained", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_live_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "still working",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_1",
+          createdAt: "2026-04-25T00:00:01.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:00:02.000Z",
+        },
+        {
+          id: "msg_pending_retry",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "retry",
+          createdAt: "2026-04-25T00:00:03.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [{ type: "userMessage", text: "retry" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "retry", undefined],
+        ["assistant", "still working", "item/agentMessage/delta"],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["user", "retry", undefined],
+      ],
+    );
+  });
+
+  it("keeps live assistant deltas before a repeated user boundary after fallback-timestamp history", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_live_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "still working",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_1",
+          createdAt: "2026-04-25T00:00:01.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:00:02.000Z",
+        },
+        {
+          id: "msg_pending_retry",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "retry",
+          createdAt: "2026-04-25T00:00:03.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [{ type: "userMessage", text: "retry" }],
+          },
+          {
+            id: "turn_new",
+            createdAt: "2026-04-25T00:00:03.000Z",
+            items: [{ type: "userMessage", text: "retry" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "retry", undefined],
+        ["assistant", "still working", "item/agentMessage/delta"],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["user", "retry", undefined],
+      ],
+    );
+  });
+
   it("keeps local Codex events after thread messages with fallback timestamps", async () => {
     const state = {
       ...createTestState(),
@@ -1804,6 +2029,759 @@ describe("ServeServices", () => {
         ["user", "fix the UI", undefined],
         ["assistant", "working", undefined],
         ["event", "pnpm test", "item/commandExecution/outputDelta"],
+      ],
+    );
+  });
+
+  it("keeps local Codex events before later live assistant deltas", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:00:01.000Z",
+        },
+        {
+          id: "msg_live_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "still working",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_1",
+          createdAt: "2026-04-25T00:00:02.000Z",
+        },
+        {
+          id: "msg_next_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "next request",
+          createdAt: "2026-04-25T00:00:03.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:03.000Z",
+            input: [{ text: "fix the UI" }],
+            items: [
+              { type: "agentMessage", text: "done" },
+              { type: "userMessage", text: "next request" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "fix the UI", undefined],
+        ["assistant", "done", undefined],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["assistant", "still working", "item/agentMessage/delta"],
+        ["user", "next request", undefined],
+      ],
+    );
+  });
+
+  it("keeps local Codex events before live assistant deltas merged into Codex history", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "fix the UI",
+          createdAt: "2026-04-25T00:00:01.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:00:02.000Z",
+        },
+        {
+          id: "msg_live_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "still working",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_1",
+          createdAt: "2026-04-25T00:00:03.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:01.000Z",
+            input: [{ text: "fix the UI" }],
+            items: [
+              {
+                id: "assistant_1",
+                type: "agentMessage",
+                text: "still",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "fix the UI", undefined],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["assistant", "still working", "item/agentMessage/delta"],
+      ],
+    );
+  });
+
+  it("keeps local Codex events before live assistant deltas deduplicated by text", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "fix the UI",
+          createdAt: "2026-04-25T00:00:01.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:00:02.000Z",
+        },
+        {
+          id: "msg_live_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "done",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_assistant",
+          createdAt: "2026-04-25T00:00:03.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:01.000Z",
+            input: [{ text: "fix the UI" }],
+            items: [
+              {
+                id: "codex_assistant",
+                type: "agentMessage",
+                text: "done",
+                createdAt: "2026-04-25T00:00:04.000Z",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "fix the UI", undefined],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["assistant", "done", undefined],
+      ],
+    );
+  });
+
+  it("keeps local Codex events between live assistant deltas and later user messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_live_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "still working",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_1",
+          createdAt: "2026-04-25T00:00:01.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:00:02.000Z",
+        },
+        {
+          id: "msg_next_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "next request",
+          createdAt: "2026-04-25T00:00:03.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:03.000Z",
+            input: [{ text: "fix the UI" }],
+            items: [
+              { type: "agentMessage", text: "done" },
+              { type: "userMessage", text: "next request" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "fix the UI", undefined],
+        ["assistant", "done", undefined],
+        ["assistant", "still working", "item/agentMessage/delta"],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["user", "next request", undefined],
+      ],
+    );
+  });
+
+  it("keeps local Codex events after deduplicated local user messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "fix the UI",
+          createdAt: "2026-04-25T00:00:01.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:00:02.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:01.000Z",
+            input: [{ text: "fix the UI" }],
+            items: [{ type: "agentMessage", text: "done" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "fix the UI", undefined],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["assistant", "done", undefined],
+      ],
+    );
+  });
+
+  it("keeps local Codex events after retained local user messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "new request",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+        {
+          id: "msg_live_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "still working",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_1",
+          createdAt: "2026-04-25T00:03:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "not-a-date",
+            input: [{ text: "previous request" }],
+            items: [{ type: "agentMessage", text: "previous response" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "previous request", undefined],
+        ["assistant", "previous response", undefined],
+        ["user", "new request", undefined],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["assistant", "still working", "item/agentMessage/delta"],
+      ],
+    );
+  });
+
+  it("keeps retained local messages before later trusted Codex history after fallback timestamps", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "middle request",
+          createdAt: "2026-04-25T00:05:00.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:06:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [{ type: "userMessage", text: "previous request" }],
+          },
+          {
+            id: "turn_new",
+            createdAt: "2026-04-25T00:10:00.000Z",
+            items: [{ type: "agentMessage", text: "later response" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "previous request", undefined],
+        ["user", "middle request", undefined],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["assistant", "later response", undefined],
+      ],
+    );
+  });
+
+  it("keeps local Codex events after repeated deduplicated local user messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          createdAt: "2026-04-25T00:00:01.000Z",
+        },
+        {
+          id: "msg_user_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          createdAt: "2026-04-25T00:00:02.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:00:03.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              {
+                type: "userMessage",
+                text: "repeat",
+                createdAt: "2026-04-25T00:00:01.000Z",
+              },
+              {
+                type: "userMessage",
+                text: "repeat",
+                createdAt: "2026-04-25T00:00:02.000Z",
+              },
+              {
+                type: "agentMessage",
+                text: "done",
+                createdAt: "2026-04-25T00:00:04.000Z",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "repeat", undefined],
+        ["user", "repeat", undefined],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["assistant", "done", undefined],
+      ],
+    );
+  });
+
+  it("keeps local Codex events between a deduplicated and retained repeated user message", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          createdAt: "2026-04-25T00:00:01.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:00:02.000Z",
+        },
+        {
+          id: "msg_live_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "still working",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_1",
+          createdAt: "2026-04-25T00:00:03.000Z",
+        },
+        {
+          id: "msg_user_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          createdAt: "2026-04-25T00:00:04.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              {
+                type: "userMessage",
+                text: "repeat",
+                createdAt: "2026-04-25T00:00:01.000Z",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "repeat", undefined],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["assistant", "still working", "item/agentMessage/delta"],
+        ["user", "repeat", undefined],
+      ],
+    );
+  });
+
+  it("keeps retained repeated user messages after earlier deduplicated matches", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "retry",
+          createdAt: "2026-04-25T00:00:01.000Z",
+        },
+        {
+          id: "msg_live_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "still working",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_1",
+          createdAt: "2026-04-25T00:00:02.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:00:03.000Z",
+        },
+        {
+          id: "msg_user_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "retry",
+          createdAt: "2026-04-25T00:00:04.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:05.000Z",
+            items: [{ type: "userMessage", text: "retry" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "retry", undefined],
+        ["assistant", "still working", "item/agentMessage/delta"],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["user", "retry", undefined],
+      ],
+    );
+  });
+
+  it("keeps local Codex events before a later repeated user boundary", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          createdAt: "2026-04-25T00:00:01.000Z",
+        },
+        {
+          id: "msg_live_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "still working",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_1",
+          createdAt: "2026-04-25T00:00:02.000Z",
+        },
+        {
+          id: "msg_command_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "pnpm test",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_1",
+          createdAt: "2026-04-25T00:00:03.000Z",
+        },
+        {
+          id: "msg_user_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat",
+          createdAt: "2026-04-25T00:00:04.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              {
+                type: "userMessage",
+                text: "repeat",
+                createdAt: "2026-04-25T00:00:01.000Z",
+              },
+              {
+                type: "userMessage",
+                text: "repeat",
+                createdAt: "2026-04-25T00:00:04.000Z",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "repeat", undefined],
+        ["assistant", "still working", "item/agentMessage/delta"],
+        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["user", "repeat", undefined],
       ],
     );
   });
