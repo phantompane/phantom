@@ -474,6 +474,129 @@ body {
   padding-inline: var(--space-3);
 }
 
+.markdown-message {
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-relaxed);
+}
+
+.markdown-message > :first-child {
+  margin-block-start: 0;
+}
+
+.markdown-message > :last-child {
+  margin-block-end: 0;
+}
+
+.markdown-message p,
+.markdown-message blockquote,
+.markdown-message ul,
+.markdown-message ol,
+.markdown-message pre,
+.markdown-message table {
+  margin-block: 0 0.75em;
+}
+
+.markdown-message h1,
+.markdown-message h2,
+.markdown-message h3,
+.markdown-message h4,
+.markdown-message h5,
+.markdown-message h6 {
+  margin-block: 1em 0.45em;
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+}
+
+.markdown-message h1 {
+  font-size: var(--font-size-2xl);
+}
+
+.markdown-message h2 {
+  font-size: var(--font-size-xl);
+}
+
+.markdown-message h3,
+.markdown-message h4,
+.markdown-message h5,
+.markdown-message h6 {
+  font-size: var(--font-size-lg);
+}
+
+.markdown-message a {
+  color: var(--text-link);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.markdown-message blockquote {
+  border-inline-start: 2px solid var(--border-strong);
+  color: var(--text-secondary);
+  padding-inline-start: var(--space-3);
+}
+
+.markdown-message ul,
+.markdown-message ol {
+  padding-inline-start: 1.35rem;
+}
+
+.markdown-message li + li {
+  margin-block-start: 0.25em;
+}
+
+.markdown-message code {
+  border-radius: var(--radius-xs);
+  background: var(--surface-code);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  padding: 0.08em 0.28em;
+}
+
+.markdown-message pre {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-code);
+  padding: var(--space-3);
+}
+
+.markdown-message pre code {
+  display: block;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  white-space: pre;
+}
+
+.markdown-message table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.markdown-message th,
+.markdown-message td {
+  border: 1px solid var(--border-subtle);
+  padding: var(--space-1_5) var(--space-2);
+  text-align: start;
+  vertical-align: top;
+}
+
+.markdown-message th {
+  background: var(--surface-panel);
+  font-weight: var(--font-weight-semibold);
+}
+
+.markdown-message hr {
+  border: 0;
+  border-block-start: 1px solid var(--border-divider);
+  margin-block: var(--space-4);
+}
+
 @media (max-width: 767px) {
   aside[data-variant] {
     top: var(--safe-area-inset-top);

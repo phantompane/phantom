@@ -1,4 +1,4 @@
-import type { ChatStatus } from "@phantompane/state";
+import type { ChatMessageRecord, ChatStatus } from "@phantompane/state";
 
 export type {
   ChatMessageRecord,
@@ -8,6 +8,10 @@ export type {
   QueuedMessageRecord,
   ServeState,
 } from "@phantompane/state";
+
+export type RenderedChatMessageRecord = ChatMessageRecord & {
+  textHtml?: string;
+};
 
 export interface ProjectWorktreeRecord {
   name: string;
