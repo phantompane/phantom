@@ -14,13 +14,25 @@ describe("renderMarkdownToHtml", () => {
     ok(html.includes('<pre><code class="language-ts">'));
   });
 
-  it("removes unsafe HTML and URL schemes", () => {
+  it("escapes unsafe HTML and removes unsafe URL schemes", () => {
     const html = renderMarkdownToHtml(
       "[bad](javascript:alert(1))\n\n<script>alert(1)</script>",
     );
 
     ok(!html.includes("javascript:"));
     ok(!html.includes("<script>"));
+    ok(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;"));
+  });
+
+  it("preserves raw HTML and JSX snippets as escaped text", () => {
+    const html = renderMarkdownToHtml(
+      'Use <Button disabled>Save</Button> or <div data-id="1">content</div>.',
+    );
+
+    ok(html.includes("&lt;Button disabled&gt;Save&lt;/Button&gt;"));
+    ok(html.includes('&lt;div data-id="1"&gt;content&lt;/div&gt;'));
+    ok(!html.includes("<Button"));
+    ok(!html.includes("<div"));
   });
 
   it("renders safe links with external navigation attributes", () => {

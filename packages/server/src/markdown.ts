@@ -31,11 +31,23 @@ const allowedTags = [
   "ul",
 ];
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+const markdownRenderer = new marked.Renderer();
+markdownRenderer.html = ({ text }) => escapeHtml(text);
+
 export function renderMarkdownToHtml(markdown: string): string {
   const html = marked.parse(markdown, {
     async: false,
     breaks: true,
     gfm: true,
+    renderer: markdownRenderer,
   }) as string;
   return sanitizeHtml(html, {
     allowedAttributes: {
