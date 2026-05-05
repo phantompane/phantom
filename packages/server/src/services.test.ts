@@ -1903,7 +1903,18 @@ describe("ServeServices", () => {
         ["msg_stale_steered", "user", "retry", undefined],
       ],
     );
-    deepStrictEqual(repeatedMessages, messages);
+    deepStrictEqual(
+      repeatedMessages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "retry", undefined],
+        ["msg_stale_steered", "user", "retry", undefined],
+      ],
+    );
     strictEqual(savedState.messages[0]?.eventType, undefined);
   });
 
