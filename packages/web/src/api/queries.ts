@@ -2,7 +2,6 @@ import { queryOptions } from "@tanstack/react-query";
 import { api, readRpcJson, routeParam } from "./client";
 import { queryKeys } from "./query-keys";
 import type {
-  ChatMessageRecord,
   ChatRecord,
   CodexFileRecord,
   CodexModelRecord,
@@ -11,6 +10,7 @@ import type {
   PendingApprovalRecord,
   ProjectRecord,
   ProjectWorktreeRecord,
+  RenderedChatMessageRecord,
 } from "@phantompane/server";
 
 export function authQueryOptions() {
@@ -107,7 +107,7 @@ export function messagesQueryOptions(chatId: string) {
   return queryOptions({
     queryKey: queryKeys.messages(chatId),
     queryFn: async () =>
-      readRpcJson<{ messages: ChatMessageRecord[] }>(
+      readRpcJson<{ messages: RenderedChatMessageRecord[] }>(
         await api.chats[":chatId"].messages.$get({
           param: { chatId: routeParam(chatId) },
         }),

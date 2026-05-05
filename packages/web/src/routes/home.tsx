@@ -149,7 +149,6 @@ import {
 } from "./rich-events";
 import { mergeStreamingMessagesForDisplay } from "./chat-message-stream-order";
 import type {
-  ChatMessageRecord,
   ChatRecord,
   ChatStatus,
   CodexFileRecord,
@@ -162,6 +161,7 @@ import type {
   PhantomEvent,
   ProjectWorktreeRecord,
   ProjectRecord,
+  RenderedChatMessageRecord,
 } from "@phantompane/server";
 
 const chatEventNames = [
@@ -276,7 +276,7 @@ interface RestoredPendingComposerContext {
   model: string | null;
 }
 
-type VisibleMessageRecord = ChatMessageRecord & {
+type VisibleMessageRecord = RenderedChatMessageRecord & {
   role: "assistant" | "error" | "event" | "user";
 };
 
@@ -533,7 +533,7 @@ export function HomeRoute() {
   const [expandedWorktreeKeys, setExpandedWorktreeKeys] = useState<Set<string>>(
     () => new Set(),
   );
-  const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
+  const [messages, setMessages] = useState<RenderedChatMessageRecord[]>([]);
   const [messagesChatId, setMessagesChatId] = useState<string | null>(null);
   const messagesChatIdRef = useRef(messagesChatId);
   messagesChatIdRef.current = messagesChatId;
@@ -4459,9 +4459,16 @@ function MessageCard({
           "rounded-[var(--radius-lg)] border border-[var(--semantic-danger-border)] bg-[var(--semantic-danger-bg)] px-4 py-3 text-[var(--semantic-danger-fg)] shadow-[var(--shadow-xs)]",
       )}
     >
-      <pre className="whitespace-pre-wrap break-words font-sans text-[length:var(--font-size-md)] leading-[var(--line-height-relaxed)]">
-        {message.text}
-      </pre>
+      {message.role === "assistant" ? (
+        <div
+          className="markdown-message"
+          dangerouslySetInnerHTML={{ __html: message.textHtml }}
+        />
+      ) : (
+        <pre className="whitespace-pre-wrap break-words font-sans text-[length:var(--font-size-md)] leading-[var(--line-height-relaxed)]">
+          {message.text}
+        </pre>
+      )}
       {deliveryState && (
         <MessageDeliveryBadge
           isActionBusy={isPendingActionBusy}

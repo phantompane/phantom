@@ -4,6 +4,7 @@ import { beforeEach, describe, it, vi } from "vitest";
 const services = vi.hoisted(() => ({
   addProject: vi.fn(),
   createChat: vi.fn(),
+  getMessages: vi.fn(),
   listProjectGitHubCheckoutTargets: vi.fn(),
   listProjects: vi.fn(),
 }));
@@ -43,6 +44,35 @@ describe("rpcRoutes", () => {
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
           lastOpenedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("renders message Markdown in chat message responses", async () => {
+    services.getMessages.mockResolvedValueOnce([
+      {
+        chatId: "chat_1",
+        createdAt: "2026-05-05T00:00:00.000Z",
+        id: "msg_1",
+        role: "assistant",
+        text: "**hello**",
+      },
+    ]);
+
+    const response = await rpcRoutes.request("/chats/chat_1/messages");
+
+    strictEqual(response.status, 200);
+    deepStrictEqual(services.getMessages.mock.calls[0], ["chat_1"]);
+    deepStrictEqual(await response.json(), {
+      messages: [
+        {
+          chatId: "chat_1",
+          createdAt: "2026-05-05T00:00:00.000Z",
+          id: "msg_1",
+          role: "assistant",
+          text: "**hello**",
+          textHtml: "<p><strong>hello</strong></p>\n",
         },
       ],
     });

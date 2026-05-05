@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { validator } from "hono/validator";
 import { z } from "zod";
 import { createSseResponse, parseLastEventId } from "./event-hub.ts";
+import { renderChatMessages } from "./markdown.ts";
 import { getServeServices } from "./services.ts";
 import type { ApiErrorBody, CodexTurnContextItem } from "./types.ts";
 
@@ -366,7 +367,7 @@ export const rpcRoutes = new Hono()
       const messages = await getServeServices().getMessages(
         c.req.param("chatId"),
       );
-      return c.json({ messages }, 200);
+      return c.json({ messages: renderChatMessages(messages) }, 200);
     } catch (error) {
       return handleApiError(c, error);
     }
