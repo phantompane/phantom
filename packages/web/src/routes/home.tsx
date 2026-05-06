@@ -126,6 +126,7 @@ import {
 } from "../lib/composer-keyboard";
 import { cn } from "../lib/utils";
 import {
+  dedupeChatThreads,
   findValidatedSelectedProjectChat,
   findValidatedSelectedChat,
   getSelectableReasoningEfforts,
@@ -409,24 +410,6 @@ function formatLeadingEllipsisPath(path: string, maxLength = 44): string {
   const suffix = path.slice(-suffixLength);
   const slashIndex = suffix.indexOf("/");
   return `...${slashIndex > 0 ? suffix.slice(slashIndex) : suffix}`;
-}
-
-function dedupeChatThreads(chats: ChatRecord[]): ChatRecord[] {
-  const chatsWithThreads = chats.filter((chat) => chat.codexThreadId);
-  const source = chatsWithThreads.length > 0 ? chatsWithThreads : chats;
-  const chatsByThread = new Map<string, ChatRecord>();
-
-  for (const chat of source) {
-    const key = chat.codexThreadId ?? chat.id;
-    const current = chatsByThread.get(key);
-    if (!current || chat.updatedAt.localeCompare(current.updatedAt) > 0) {
-      chatsByThread.set(key, chat);
-    }
-  }
-
-  return [...chatsByThread.values()].sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt),
-  );
 }
 
 function getChatScrollStorageKey(chatId: string): string {
@@ -3966,11 +3949,8 @@ function SidebarChatList({
   selectedChatId: string | null;
 }) {
   const activeChats = chats.filter((chat) => chat.status !== "archived");
-  const archivedChats = chats.filter((chat) => chat.status === "archived");
   const renderChat = (chat: ChatRecord) => {
     const isSelected = chat.id === selectedChatId;
-    const isArchived = chat.status === "archived";
-    const archiveLabel = isArchived ? "Restore chat" : "Archive chat";
 
     return (
       <li className="group/chat min-w-0" key={chat.id}>
@@ -4023,15 +4003,11 @@ function SidebarChatList({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem
-                disabled={!isArchived && !canArchiveChat(chat)}
-                onSelect={() => onSetChatArchived(chat, !isArchived)}
+                disabled={!canArchiveChat(chat)}
+                onSelect={() => onSetChatArchived(chat, true)}
               >
-                {isArchived ? (
-                  <ArchiveRestore className="size-4" />
-                ) : (
-                  <Archive className="size-4" />
-                )}
-                <span>{archiveLabel}</span>
+                <Archive className="size-4" />
+                <span>Archive chat</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -4049,20 +4025,12 @@ function SidebarChatList({
         <li className="px-2 py-1.5">
           <InlineLoading label="Loading chats" />
         </li>
-      ) : chats.length === 0 ? (
+      ) : activeChats.length === 0 ? (
         <li className="px-2 py-1.5 text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
           No chat history
         </li>
       ) : (
-        <>
-          {activeChats.map(renderChat)}
-          {archivedChats.length > 0 && (
-            <li className="px-2 pt-1 text-[length:var(--font-size-2xs)] font-medium uppercase text-[var(--text-tertiary)]">
-              Archived
-            </li>
-          )}
-          {archivedChats.map(renderChat)}
-        </>
+        activeChats.map(renderChat)
       )}
     </ul>
   );
