@@ -172,6 +172,57 @@ export function getFileEventMeta(message: ChatMessageRecord): {
   };
 }
 
+export function getTextLineCount(value: string): number {
+  const trimmedValue = value.trimEnd();
+  return trimmedValue ? trimmedValue.split(/\r?\n/).length : 0;
+}
+
+export function getDiffLineDelta(diff: string): {
+  added: number;
+  removed: number;
+} {
+  let added = 0;
+  let removed = 0;
+  let inHunk = false;
+  for (const line of diff.split(/\r?\n/)) {
+    if (line.startsWith("diff --git ")) {
+      inHunk = false;
+      continue;
+    }
+    if (line.startsWith("@@")) {
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk && (line.startsWith("+++") || line.startsWith("---"))) {
+      continue;
+    }
+    if (line.startsWith("+")) {
+      added += 1;
+      continue;
+    }
+    if (line.startsWith("-")) {
+      removed += 1;
+    }
+  }
+  return { added, removed };
+}
+
+export function getFileChangesLineDelta(changes: RichFileChange[]): {
+  added: number;
+  removed: number;
+} {
+  return changes.reduce(
+    (total, change) => {
+      const changeDelta = getDiffLineDelta(change.diff);
+      return {
+        added: total.added + changeDelta.added,
+        removed: total.removed + changeDelta.removed,
+      };
+    },
+    { added: 0, removed: 0 },
+  );
+}
+
 function getEventDataObject(
   message: ChatMessageRecord,
 ): Record<string, unknown> | null {

@@ -139,11 +139,14 @@ import {
 import {
   getCommandEventMeta,
   getDiffEventData,
+  getDiffLineDelta,
+  getFileChangesLineDelta,
   getFileEventMeta,
   getFilePatchEventData,
   getPlanEventData,
   getRichEventKind,
   getRichEventText,
+  getTextLineCount,
   getWarningEventText,
   isRichEventMessage,
 } from "./rich-events";
@@ -4560,29 +4563,24 @@ function PlanEventCard({ message }: { message: VisibleMessageRecord }) {
 
 function DiffEventCard({ message }: { message: VisibleMessageRecord }) {
   const { diff, files } = getDiffEventData(message);
+  const lineDelta = getDiffLineDelta(diff || message.text);
   return (
     <RichEventShell
+      defaultOpen={false}
       icon={<FileDiff className="size-4" />}
-      meta={`${files.length} file${files.length === 1 ? "" : "s"}`}
-      title="Diff updated"
+      meta={formatEventMeta([
+        formatCount(files.length, "file"),
+        formatLineDelta(lineDelta),
+      ])}
+      summary={
+        files.length > 0 ? (
+          <CompactPathList paths={files} />
+        ) : (
+          <span className="truncate text-muted-foreground">No files</span>
+        )
+      }
+      title="Diff"
     >
-      {files.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {files.slice(0, 6).map((file) => (
-            <span
-              className="max-w-full truncate rounded-[var(--radius-sm)] border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-1.5 py-0.5 font-mono text-[length:var(--font-size-xs)] text-muted-foreground"
-              key={file}
-            >
-              {file}
-            </span>
-          ))}
-          {files.length > 6 && (
-            <span className="text-[length:var(--font-size-xs)] text-muted-foreground">
-              +{files.length - 6}
-            </span>
-          )}
-        </div>
-      )}
       <CollapsibleCode title="Unified diff" value={diff || message.text} />
     </RichEventShell>
   );
@@ -4591,11 +4589,27 @@ function DiffEventCard({ message }: { message: VisibleMessageRecord }) {
 function CommandEventCard({ message }: { message: VisibleMessageRecord }) {
   const output = getRichEventText(message);
   const meta = getCommandEventMeta(message);
+  const outputLineCount = getTextLineCount(output);
   return (
     <RichEventShell
+      defaultOpen={false}
       icon={<Terminal className="size-4" />}
-      meta={meta.status ?? meta.stream ?? "output"}
-      title={meta.command ? "Command execution" : "Command output"}
+      meta={formatEventMeta([
+        meta.status,
+        meta.exitCode !== null ? `exit ${meta.exitCode}` : null,
+        meta.durationMs !== null ? formatDurationMs(meta.durationMs) : null,
+        outputLineCount > 0 ? formatCount(outputLineCount, "line") : null,
+        meta.capReached ? "truncated" : null,
+      ])}
+      summary={
+        <span
+          className="block min-w-0 max-w-full truncate font-mono text-[length:var(--font-size-xs)] text-[var(--text-secondary)]"
+          title={meta.command ?? meta.cwd ?? undefined}
+        >
+          {meta.command ?? meta.stream ?? "output"}
+        </span>
+      }
+      title="Command"
     >
       {meta.command && (
         <p
@@ -4637,24 +4651,46 @@ function FileEventCard({ message }: { message: VisibleMessageRecord }) {
   const meta = getFileEventMeta(message);
   const output = getRichEventText(message);
   if (message.eventType === "item/fileChange/outputDelta") {
+    const outputLineCount = getTextLineCount(output);
     return (
       <RichEventShell
+        defaultOpen={false}
         icon={<FileText className="size-4" />}
-        meta="output"
-        title="File change output"
+        meta={formatEventMeta([
+          "output",
+          outputLineCount > 0 ? formatCount(outputLineCount, "line") : null,
+        ])}
+        summary={
+          <span className="block min-w-0 max-w-full truncate text-muted-foreground">
+            File change output
+          </span>
+        }
+        title="File"
       >
         <CollapsibleCode title="Output" value={output} />
       </RichEventShell>
     );
   }
+  const lineDelta = getFileChangesLineDelta(changes);
   return (
     <RichEventShell
+      defaultOpen={false}
       icon={<FileText className="size-4" />}
-      meta={
-        meta.status ??
-        `${changes.length} file${changes.length === 1 ? "" : "s"}`
+      meta={formatEventMeta([
+        meta.status,
+        formatCount(changes.length, "file"),
+        formatLineDelta(lineDelta),
+      ])}
+      summary={
+        changes.length > 0 ? (
+          <CompactPathList paths={changes.map((change) => change.path)} />
+        ) : (
+          <span className="truncate text-muted-foreground">
+            {message.text || "No files"}
+          </span>
+        )
       }
-      title="File patch updated"
+      title="File edit"
     >
       {meta.status && (
         <div className="mb-2 flex flex-wrap gap-1.5">
@@ -4671,10 +4707,10 @@ function FileEventCard({ message }: { message: VisibleMessageRecord }) {
           {message.text}
         </p>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           {changes.map((change) => (
             <div
-              className="rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--surface-panel)]"
+              className="rounded-[var(--radius-sm)] border border-[var(--border-subtle)] bg-[var(--surface-panel)]"
               key={`${change.kind}:${change.path}`}
             >
               <div className="flex min-w-0 items-center gap-2 px-2 py-1.5">
@@ -4683,6 +4719,9 @@ function FileEventCard({ message }: { message: VisibleMessageRecord }) {
                 </Badge>
                 <span className="truncate font-mono text-[length:var(--font-size-xs)]">
                   {change.path}
+                </span>
+                <span className="ml-auto shrink-0 font-mono text-[length:var(--font-size-xs)] text-muted-foreground">
+                  {formatLineDelta(getDiffLineDelta(change.diff))}
                 </span>
               </div>
               {change.diff && (
@@ -4722,22 +4761,65 @@ function formatDurationMs(durationMs: number): string {
     : `${durationMs}ms`;
 }
 
+function formatCount(count: number, label: string): string {
+  return `${count} ${label}${count === 1 ? "" : "s"}`;
+}
+
+function formatEventMeta(
+  parts: Array<null | string | undefined>,
+): string | undefined {
+  const visibleParts = parts.filter((part): part is string =>
+    Boolean(part && part.trim()),
+  );
+  return visibleParts.length > 0 ? visibleParts.join(" · ") : undefined;
+}
+
+function formatLineDelta(delta: { added: number; removed: number }): string {
+  if (delta.added === 0 && delta.removed === 0) {
+    return "0 lines";
+  }
+  return `+${delta.added} -${delta.removed}`;
+}
+
+function CompactPathList({ paths }: { paths: string[] }) {
+  const visiblePaths = paths.slice(0, 3);
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+      {visiblePaths.map((path) => (
+        <span
+          className="min-w-0 max-w-48 truncate rounded-[var(--radius-xs)] border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-1.5 py-0.5 font-mono text-[length:var(--font-size-xs)] text-[var(--text-secondary)]"
+          key={path}
+          title={path}
+        >
+          {path}
+        </span>
+      ))}
+      {paths.length > visiblePaths.length && (
+        <span className="shrink-0 text-[length:var(--font-size-xs)] text-muted-foreground">
+          +{paths.length - visiblePaths.length}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function ReasoningEventCard({ message }: { message: VisibleMessageRecord }) {
   const text = getRichEventText(message);
   return (
     <RichEventShell
+      defaultOpen={false}
       icon={<Brain className="size-4" />}
-      meta="collapsed"
+      meta={formatCount(getTextLineCount(text), "line")}
+      summary={
+        <span className="block min-w-0 max-w-full truncate text-muted-foreground">
+          Reasoning details
+        </span>
+      }
       title="Reasoning updated"
     >
-      <details>
-        <summary className="cursor-pointer text-[length:var(--font-size-sm)] text-muted-foreground">
-          Show reasoning
-        </summary>
-        <pre className="mt-2 whitespace-pre-wrap break-words rounded-[var(--radius-md)] bg-[var(--surface-code)] p-2 font-mono text-[length:var(--font-size-xs)] leading-[var(--line-height-relaxed)]">
-          {text}
-        </pre>
-      </details>
+      <pre className="whitespace-pre-wrap break-words rounded-[var(--radius-md)] bg-[var(--surface-code)] p-2 font-mono text-[length:var(--font-size-xs)] leading-[var(--line-height-relaxed)]">
+        {text}
+      </pre>
     </RichEventShell>
   );
 }
@@ -4747,6 +4829,11 @@ function WarningEventCard({ message }: { message: VisibleMessageRecord }) {
   return (
     <RichEventShell
       icon={<AlertTriangle className="size-4" />}
+      summary={
+        <span className="block min-w-0 max-w-full truncate">
+          {warning.summary}
+        </span>
+      }
       tone="warning"
       title="Warning"
     >
@@ -4762,39 +4849,59 @@ function WarningEventCard({ message }: { message: VisibleMessageRecord }) {
 
 function RichEventShell({
   children,
+  defaultOpen = true,
   icon,
   meta,
+  summary,
   title,
   tone = "neutral",
 }: {
   children: ReactNode;
+  defaultOpen?: boolean;
   icon: ReactNode;
   meta?: string;
+  summary?: ReactNode;
   title: string;
   tone?: "neutral" | "warning";
 }) {
   return (
-    <article
+    <details
       className={cn(
-        "w-full rounded-[var(--radius-md)] border bg-[var(--surface-card)] px-3 py-2 text-[var(--text-primary)]",
+        "group w-full rounded-[var(--radius-md)] border bg-[var(--surface-card)] text-[var(--text-primary)]",
         tone === "neutral" && "border-[var(--border-subtle)]",
         tone === "warning" &&
           "border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] text-[var(--semantic-warning-fg)]",
       )}
+      open={defaultOpen || undefined}
     >
-      <div className="mb-2 flex min-w-0 items-center gap-2">
+      <summary
+        className="grid min-h-9 cursor-pointer list-none grid-cols-[auto_auto_minmax(0,auto)_minmax(0,1fr)_auto] items-center gap-2 px-2.5 py-1.5 outline-none transition-colors hover:bg-[var(--state-hover-bg)] focus-visible:shadow-[var(--state-focus-ring)] [&::-webkit-details-marker]:hidden"
+        title={meta}
+      >
+        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
         <span className="shrink-0 text-muted-foreground">{icon}</span>
-        <p className="min-w-0 flex-1 truncate text-[length:var(--font-size-sm)] font-semibold">
+        <span className="truncate text-[length:var(--font-size-sm)] font-semibold">
           {title}
-        </p>
+        </span>
+        {summary && (
+          <span className="min-w-0 max-w-full overflow-hidden">{summary}</span>
+        )}
         {meta && (
-          <span className="shrink-0 text-[length:var(--font-size-xs)] text-muted-foreground">
+          <span className="shrink-0 truncate text-[length:var(--font-size-xs)] text-muted-foreground">
             {meta}
           </span>
         )}
+      </summary>
+      <div
+        className={cn(
+          "border-t px-3 py-2",
+          tone === "neutral" && "border-[var(--border-subtle)]",
+          tone === "warning" && "border-[var(--semantic-warning-border)]",
+        )}
+      >
+        {children}
       </div>
-      {children}
-    </article>
+    </details>
   );
 }
 
@@ -4808,14 +4915,14 @@ function CollapsibleCode({ title, value }: { title: string; value: string }) {
     );
   }
   return (
-    <details open={trimmedValue.length < 1200}>
-      <summary className="cursor-pointer text-[length:var(--font-size-sm)] text-muted-foreground">
+    <div>
+      <p className="mb-1 text-[length:var(--font-size-sm)] text-muted-foreground">
         {title}
-      </summary>
-      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius-md)] bg-[var(--surface-code)] p-2 font-mono text-[length:var(--font-size-xs)] leading-[var(--line-height-relaxed)]">
+      </p>
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius-md)] bg-[var(--surface-code)] p-2 font-mono text-[length:var(--font-size-xs)] leading-[var(--line-height-relaxed)]">
         {trimmedValue}
       </pre>
-    </details>
+    </div>
   );
 }
 

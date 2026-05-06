@@ -3,10 +3,13 @@ import { describe, it } from "vitest";
 import {
   getCommandEventMeta,
   getDiffEventData,
+  getDiffLineDelta,
+  getFileChangesLineDelta,
   getFileEventMeta,
   getPlanEventData,
   getRichEventKind,
   getRichEventText,
+  getTextLineCount,
   isRichEventMessage,
 } from "./rich-events";
 import type { ChatMessageRecord } from "@phantompane/server";
@@ -139,6 +142,40 @@ describe("rich event helpers", () => {
         }),
       ),
       { status: "failed" },
+    );
+  });
+
+  it("summarizes compact event line counts without dropping hunk content", () => {
+    strictEqual(getTextLineCount("one\ntwo\n"), 2);
+    deepStrictEqual(
+      getDiffLineDelta(
+        [
+          "diff --git a/a.ts b/a.ts",
+          "--- a/a.ts",
+          "+++ b/a.ts",
+          "@@ -1,2 +1,2 @@",
+          "+++ valid added content",
+          "--- valid removed content",
+          "+normal add",
+          "-normal remove",
+        ].join("\n"),
+      ),
+      { added: 2, removed: 2 },
+    );
+    deepStrictEqual(
+      getFileChangesLineDelta([
+        {
+          diff: "@@ -1 +1 @@\n-old\n+new",
+          kind: "modify",
+          path: "a.ts",
+        },
+        {
+          diff: "@@ -1 +1 @@\n--- removed heading\n+++ added heading",
+          kind: "modify",
+          path: "b.ts",
+        },
+      ]),
+      { added: 2, removed: 2 },
     );
   });
 });
