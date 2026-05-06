@@ -1820,6 +1820,532 @@ describe("ServeServices", () => {
     );
   });
 
+  it("deduplicates local messages when fallback-timestamp Codex history has the completed transcript", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "fix archive state",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_started",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "item/started: agentMessage",
+          eventType: "item/started",
+          createdAt: "2026-04-25T00:01:01.000Z",
+        },
+        {
+          id: "msg_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "Archive state is synchronized.",
+          eventType: "item/agentMessage/delta",
+          itemId: "agent_msg_1",
+          createdAt: "2026-04-25T00:01:02.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              { type: "userMessage", text: "fix archive state" },
+              { type: "agentMessage", text: "Archive state is synchronized." },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "fix archive state", undefined],
+        ["msg_started", "event", "item/started: agentMessage", "item/started"],
+        [
+          "chat_1_codex_turn_1_1",
+          "assistant",
+          "Archive state is synchronized.",
+          undefined,
+        ],
+      ],
+    );
+  });
+
+  it("treats missing active turn id as inactive for fallback transcript deduplication", async () => {
+    const chatWithoutActiveTurnId = createChat({ status: "idle" });
+    delete (chatWithoutActiveTurnId as Partial<typeof chatWithoutActiveTurnId>)
+      .activeTurnId;
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [chatWithoutActiveTurnId],
+      messages: [
+        {
+          id: "msg_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "legacy request",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "legacy response",
+          eventType: "item/agentMessage/delta",
+          itemId: "agent_msg_1",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              { type: "userMessage", text: "legacy request" },
+              { type: "agentMessage", text: "legacy response" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "legacy request", undefined],
+        ["chat_1_codex_turn_1_1", "assistant", "legacy response", undefined],
+      ],
+    );
+  });
+
+  it("deduplicates later fallback transcript after older fallback turns without local copies", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "recent request",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "recent response",
+          eventType: "item/agentMessage/delta",
+          itemId: "agent_msg_1",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_missing",
+            items: [
+              { type: "userMessage", text: "missing request" },
+              { type: "agentMessage", text: "missing response" },
+            ],
+          },
+          {
+            id: "turn_recent",
+            items: [
+              { type: "userMessage", text: "recent request" },
+              { type: "agentMessage", text: "recent response" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_missing_0", "user", "missing request", undefined],
+        [
+          "chat_1_codex_turn_missing_1",
+          "assistant",
+          "missing response",
+          undefined,
+        ],
+        ["chat_1_codex_turn_recent_0", "user", "recent request", undefined],
+        [
+          "chat_1_codex_turn_recent_1",
+          "assistant",
+          "recent response",
+          undefined,
+        ],
+      ],
+    );
+  });
+
+  it("matches repeated fallback transcripts to the latest matching Codex turn", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat request",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "item/started: agentMessage",
+          eventType: "item/started",
+          createdAt: "2026-04-25T00:01:01.000Z",
+        },
+        {
+          id: "msg_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "repeat response",
+          eventType: "item/agentMessage/delta",
+          itemId: "agent_msg_1",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [
+              { type: "userMessage", text: "repeat request" },
+              { type: "agentMessage", text: "repeat response" },
+            ],
+          },
+          {
+            id: "turn_new",
+            items: [
+              { type: "userMessage", text: "repeat request" },
+              { type: "agentMessage", text: "repeat response" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_old_0", "user", "repeat request", undefined],
+        ["chat_1_codex_turn_old_1", "assistant", "repeat response", undefined],
+        ["chat_1_codex_turn_new_0", "user", "repeat request", undefined],
+        ["msg_event", "event", "item/started: agentMessage", "item/started"],
+        ["chat_1_codex_turn_new_1", "assistant", "repeat response", undefined],
+      ],
+    );
+  });
+
+  it("deduplicates older fallback-timestamp transcripts while a newer turn is running", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_2" })],
+      messages: [
+        {
+          id: "msg_old_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "old request",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_old_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "old response",
+          eventType: "item/agentMessage/delta",
+          itemId: "old_agent_msg",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+        {
+          id: "msg_current_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "new request",
+          createdAt: "2026-04-25T00:03:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              { type: "userMessage", text: "old request" },
+              { type: "agentMessage", text: "old response" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "old request", undefined],
+        ["chat_1_codex_turn_1_1", "assistant", "old response", undefined],
+        ["msg_current_user", "user", "new request", undefined],
+      ],
+    );
+  });
+
+  it("keeps repeated active local turn when older fallback history has the same transcript", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_current" })],
+      messages: [
+        {
+          id: "msg_current_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat request",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_current_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "repeat response",
+          eventType: "item/agentMessage/delta",
+          itemId: "current_agent_msg",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [
+              { type: "userMessage", text: "repeat request" },
+              { type: "agentMessage", text: "repeat response" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_old_0", "user", "repeat request", undefined],
+        ["chat_1_codex_turn_old_1", "assistant", "repeat response", undefined],
+        ["msg_current_user", "user", "repeat request", undefined],
+        [
+          "msg_current_assistant",
+          "assistant",
+          "repeat response",
+          "item/agentMessage/delta",
+        ],
+      ],
+    );
+  });
+
+  it("deduplicates active local turn when Codex history includes the active turn", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_current" })],
+      messages: [
+        {
+          id: "msg_current_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "active request",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_current_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "active response",
+          eventType: "item/agentMessage/delta",
+          itemId: "current_agent_msg",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_current",
+            items: [
+              { type: "userMessage", text: "active request" },
+              { type: "agentMessage", text: "active response" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_current_0", "user", "active request", undefined],
+        [
+          "chat_1_codex_turn_current_1",
+          "assistant",
+          "active response",
+          undefined,
+        ],
+      ],
+    );
+  });
+
+  it("does not deduplicate a fallback transcript across intervening local user messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "request A",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_user_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "request B",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+        {
+          id: "msg_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "done",
+          eventType: "item/agentMessage/delta",
+          itemId: "agent_msg_1",
+          createdAt: "2026-04-25T00:03:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              { type: "userMessage", text: "request A" },
+              { type: "agentMessage", text: "done" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "request A", undefined],
+        ["chat_1_codex_turn_1_1", "assistant", "done", undefined],
+        ["msg_user_1", "user", "request A", undefined],
+        ["msg_user_2", "user", "request B", undefined],
+        ["msg_assistant", "assistant", "done", "item/agentMessage/delta"],
+      ],
+    );
+  });
+
   it("does not trust fallback-timestamp Codex history after stale active turn reset", async () => {
     const state = {
       ...createTestState(),
