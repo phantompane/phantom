@@ -28,6 +28,7 @@ import {
   Terminal,
   Trash2,
   X,
+  Zap,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import {
@@ -130,10 +131,12 @@ import {
   findValidatedSelectedProjectChat,
   findValidatedSelectedChat,
   getSelectableReasoningEfforts,
+  getSelectedServiceTierForTurn,
   getSelectedSkillContextItems,
   isKnownWorktreeChat,
   isShareableFileSearchQuery,
   mergeWorktreesWithChats,
+  modelSupportsFastMode,
   retainRecordsForProjects,
   resolveRefreshedWorktreeChatId,
 } from "./home-url-state";
@@ -209,6 +212,7 @@ const searchParamKeys = {
   fileQuery: "fileQuery",
   model: "model",
   project: "project",
+  serviceTier: "serviceTier",
 } as const;
 
 const statusMeta: Record<
@@ -278,6 +282,7 @@ interface RestoredPendingComposerContext {
   chatId: string;
   effort: string | null;
   model: string | null;
+  serviceTier: "fast" | "flex" | null;
 }
 
 type VisibleMessageRecord = RenderedChatMessageRecord & {
@@ -496,6 +501,10 @@ export function HomeRoute() {
   const selectedEffort = readNullableSearchParam(
     searchParams,
     searchParamKeys.effort,
+  );
+  const selectedServiceTier = readNullableSearchParam(
+    searchParams,
+    searchParamKeys.serviceTier,
   );
   const rawUrlFileSearchQuery =
     searchParams.get(searchParamKeys.fileQuery) ?? "";
@@ -952,6 +961,9 @@ export function HomeRoute() {
     () => getSelectableReasoningEfforts(selectedModel),
     [selectedModel],
   );
+  const selectedModelSupportsFastMode = modelSupportsFastMode(selectedModel);
+  const isFastModeEnabled =
+    selectedServiceTier === "fast" && selectedModelSupportsFastMode;
 
   const selectedSkills = useMemo(
     () =>
@@ -1423,6 +1435,20 @@ export function HomeRoute() {
     selectedModel,
     selectedModelSupportedEfforts,
   ]);
+
+  useEffect(() => {
+    if (!selectedServiceTier) {
+      return;
+    }
+    if (
+      selectedServiceTier !== "fast" ||
+      (selectedModel && !selectedModelSupportsFastMode)
+    ) {
+      setSearchParamValue(searchParamKeys.serviceTier, null, {
+        replace: true,
+      });
+    }
+  }, [selectedModel, selectedModelSupportsFastMode, selectedServiceTier]);
 
   useEffect(() => {
     const requestId = fileSearchRequestIdRef.current + 1;
@@ -2441,6 +2467,11 @@ export function HomeRoute() {
         ? selectedEffort
         : null
       : (restoredPendingContext?.effort ?? null);
+    const turnServiceTier = getSelectedServiceTierForTurn(
+      selectedModel,
+      selectedServiceTier,
+      restoredPendingContext?.serviceTier ?? null,
+    );
     const files = selectedFiles.map((file) => ({
       name: file.relativePath,
       path: file.path,
@@ -2449,6 +2480,7 @@ export function HomeRoute() {
       effort: turnEffort,
       files,
       model: turnModel,
+      serviceTier: turnServiceTier,
       skills: getSelectedSkillContextItems(skills, selectedSkillPaths),
       text,
     };
@@ -2478,6 +2510,7 @@ export function HomeRoute() {
         {
           githubTargetNumber: githubTargetNumber ?? undefined,
           initialMessage: input.text,
+          serviceTier: input.serviceTier,
         },
       );
       if (!chat) {
@@ -2699,6 +2732,7 @@ export function HomeRoute() {
       chatId: deletedPendingMessage.message.chatId,
       effort: deletedPendingMessage.queuedMessage.effort ?? null,
       model: deletedPendingMessage.queuedMessage.model ?? null,
+      serviceTier: deletedPendingMessage.queuedMessage.serviceTier ?? null,
     };
     setComposerText(deletedPendingMessage.message.text);
     setSelectedFiles(
@@ -2720,6 +2754,10 @@ export function HomeRoute() {
     setSearchParamValue(
       searchParamKeys.effort,
       deletedPendingMessage.queuedMessage.effort ?? null,
+    );
+    setSearchParamValue(
+      searchParamKeys.serviceTier,
+      deletedPendingMessage.queuedMessage.serviceTier ?? null,
     );
     requestAnimationFrame(() => {
       composerTextareaRef.current?.focus();
@@ -3885,6 +3923,36 @@ export function HomeRoute() {
                   )
                 }
               />
+              <Button
+                aria-label={
+                  isFastModeEnabled ? "Disable fast mode" : "Enable fast mode"
+                }
+                aria-pressed={isFastModeEnabled}
+                className="h-9 px-3"
+                disabled={
+                  !selectedModel ||
+                  !selectedModelSupportsFastMode ||
+                  isComposerBlocked
+                }
+                onClick={() =>
+                  setSearchParamValue(
+                    searchParamKeys.serviceTier,
+                    isFastModeEnabled ? null : "fast",
+                  )
+                }
+                title={
+                  selectedModelSupportsFastMode
+                    ? isFastModeEnabled
+                      ? "Disable fast mode"
+                      : "Enable fast mode"
+                    : "Fast mode unavailable for selected model"
+                }
+                type="button"
+                variant={isFastModeEnabled ? "secondary" : "outline"}
+              >
+                <Zap className="size-3.5" />
+                Fast
+              </Button>
               <Combobox
                 aria-label="Attach file"
                 className="w-32 max-w-full"

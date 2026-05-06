@@ -4,10 +4,12 @@ import {
   findValidatedSelectedProjectChat,
   findValidatedSelectedChat,
   getSelectableReasoningEfforts,
+  getSelectedServiceTierForTurn,
   getSelectedSkillContextItems,
   isKnownWorktreeChat,
   isShareableFileSearchQuery,
   mergeWorktreesWithChats,
+  modelSupportsFastMode,
   retainRecordsForProjects,
   resolveRefreshedWorktreeChatId,
 } from "./home-url-state";
@@ -108,6 +110,41 @@ describe("getSelectableReasoningEfforts", () => {
     expect(
       getSelectableReasoningEfforts({ supportedReasoningEfforts: [] }),
     ).toEqual([]);
+  });
+});
+
+describe("modelSupportsFastMode", () => {
+  it("uses model-advertised speed tiers", () => {
+    expect(modelSupportsFastMode({ additionalSpeedTiers: ["fast"] })).toBe(
+      true,
+    );
+    expect(modelSupportsFastMode({ additionalSpeedTiers: ["flex"] })).toBe(
+      false,
+    );
+    expect(modelSupportsFastMode(null)).toBe(false);
+  });
+});
+
+describe("getSelectedServiceTierForTurn", () => {
+  it("selects fast only for fast-capable models and fast URL state", () => {
+    expect(
+      getSelectedServiceTierForTurn(
+        { additionalSpeedTiers: ["fast"] },
+        "fast",
+        null,
+      ),
+    ).toBe("fast");
+  });
+
+  it("clears fast mode for models that do not advertise fast support", () => {
+    expect(
+      getSelectedServiceTierForTurn({ additionalSpeedTiers: [] }, "fast", null),
+    ).toBeNull();
+  });
+
+  it("preserves restored fast pending context before model metadata loads", () => {
+    expect(getSelectedServiceTierForTurn(null, null, "fast")).toBe("fast");
+    expect(getSelectedServiceTierForTurn(null, null, "flex")).toBeNull();
   });
 });
 

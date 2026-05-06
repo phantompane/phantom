@@ -198,6 +198,7 @@ describe("rpcRoutes", () => {
       body: JSON.stringify({
         githubTargetNumber: 42,
         initialMessage: "Start from the selected target",
+        serviceTier: "fast",
       }),
       headers: {
         "Content-Type": "application/json",
@@ -212,6 +213,7 @@ describe("rpcRoutes", () => {
         base: undefined,
         githubTargetNumber: 42,
         initialMessage: "Start from the selected target",
+        serviceTier: "fast",
         worktreeName: undefined,
         worktreePath: undefined,
       },

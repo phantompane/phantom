@@ -37,6 +37,7 @@ export interface CodexTurnOptions {
   effort?: string;
   files?: CodexTurnContextItem[];
   model?: string;
+  serviceTier?: "fast" | "flex";
   skills?: CodexTurnContextItem[];
 }
 
@@ -329,6 +330,7 @@ export class CodexBridge {
     return this.request("thread/start", {
       cwd,
       model: options.model,
+      serviceTier: options.serviceTier,
       serviceName: "phantom_serve",
       experimentalRawEvents: false,
       persistExtendedHistory: true,
@@ -356,6 +358,7 @@ export class CodexBridge {
       input: createUserInput(text, options),
       model: options.model,
       effort: options.effort,
+      serviceTier: options.serviceTier,
     });
   }
 

@@ -53,11 +53,14 @@ export interface CodexModelRecord {
   model: string;
   displayName: string;
   description: string;
+  additionalSpeedTiers: string[];
   defaultReasoningEffort: string | null;
   inputModalities: string[];
   isDefault: boolean;
   supportedReasoningEfforts: string[];
 }
+
+export type CodexServiceTier = "fast" | "flex";
 
 export interface CodexSkillRecord {
   name: string;

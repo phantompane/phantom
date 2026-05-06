@@ -2,6 +2,7 @@ import { api, readRpcJson, routeParam } from "./client";
 import type {
   ChatMessageRecord,
   ChatRecord,
+  CodexServiceTier,
   CodexTurnContextItem,
   ProjectRecord,
   QueuedMessageRecord,
@@ -18,6 +19,7 @@ export interface SendMessageInput {
   effort?: string | null;
   files?: CodexTurnContextItem[];
   model?: string | null;
+  serviceTier?: CodexServiceTier | null;
   skills?: CodexTurnContextItem[];
   text: string;
 }
@@ -25,6 +27,7 @@ export interface SendMessageInput {
 export interface CreateChatInput {
   githubTargetNumber?: number;
   initialMessage?: string;
+  serviceTier?: CodexServiceTier | null;
   worktreeName?: string;
   worktreePath?: string;
 }

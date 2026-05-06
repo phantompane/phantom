@@ -4963,12 +4963,16 @@ describe("ServeServices", () => {
     });
     codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
 
-    const chat = await services.createChat("proj_1", { name: "feature" });
+    const chat = await services.createChat("proj_1", {
+      name: "feature",
+      serviceTier: "fast",
+    });
 
     strictEqual(chat.title, "feature");
     strictEqual(chat.codexThreadId, "thread_new");
     deepStrictEqual(codex.startThread.mock.calls[0], [
       "/repo/.git/phantom/worktrees/feature",
+      { serviceTier: "fast" },
     ]);
     const savedState = await store.load();
     strictEqual(savedState.selectedChatId, chat.id);
@@ -5011,6 +5015,7 @@ describe("ServeServices", () => {
     codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
 
     const chat = await services.createChat("proj_1", {
+      serviceTier: "fast",
       worktreeName: "feature",
       worktreePath: "/repo/.git/phantom/worktrees/feature",
     });
@@ -5022,6 +5027,7 @@ describe("ServeServices", () => {
     ]);
     deepStrictEqual(codex.startThread.mock.calls[0], [
       "/repo/.git/phantom/worktrees/feature",
+      { serviceTier: "fast" },
     ]);
     strictEqual(chat.worktreeName, "feature");
     strictEqual(chat.worktreePath, "/repo/.git/phantom/worktrees/feature");
@@ -5068,6 +5074,7 @@ describe("ServeServices", () => {
     const chat = await services.createChat("proj_1", {
       githubTargetNumber: 42,
       initialMessage: "Implement this PR feedback",
+      serviceTier: "fast",
     });
 
     deepStrictEqual(coreMocks.githubCheckout.mock.calls[0], [
@@ -5079,6 +5086,7 @@ describe("ServeServices", () => {
     ]);
     deepStrictEqual(codex.startThread.mock.calls[0], [
       "/repo/.git/phantom/worktrees/feature",
+      { serviceTier: "fast" },
     ]);
     strictEqual(chat.worktreeName, "feature");
     strictEqual(chat.worktreePath, "/repo/.git/phantom/worktrees/feature");
@@ -6817,7 +6825,7 @@ describe("ServeServices", () => {
     strictEqual(codex.startTurn.mock.calls.length, 1);
   });
 
-  it("passes selected model, effort, files, and skills to Codex turns", async () => {
+  it("passes selected model, effort, service tier, files, and skills to Codex turns", async () => {
     const worktreePath = await createTemporaryDirectory();
     await mkdir(join(worktreePath, "src"));
     const filePath = join(worktreePath, "src/index.ts");
@@ -6843,6 +6851,7 @@ describe("ServeServices", () => {
         },
       ],
       model: "gpt-5.2",
+      serviceTier: "fast",
       skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
       text: "please edit",
     });
@@ -6860,6 +6869,7 @@ describe("ServeServices", () => {
           },
         ],
         model: "gpt-5.2",
+        serviceTier: "fast",
         skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
       },
     ]);
@@ -7961,15 +7971,18 @@ describe("ServeServices", () => {
         messageId: "msg_queued",
         text: "queued draft",
         model: "gpt-5.2",
+        serviceTier: "fast",
         createdAt: timestamp,
       },
       queuedMessageIndex: 0,
     });
 
     strictEqual(result.queuedMessage.model, "gpt-5.2");
+    strictEqual(result.queuedMessage.serviceTier, "fast");
     const savedState = await store.load();
     strictEqual(savedState.messages.length, 1);
     strictEqual(savedState.queuedMessages.length, 1);
+    strictEqual(savedState.queuedMessages[0]?.serviceTier, "fast");
     strictEqual(codex.startTurn.mock.calls.length, 0);
     strictEqual(
       emitSpy.mock.calls.some((call) => call[0] === "chat.message.created"),
@@ -8351,11 +8364,15 @@ describe("ServeServices", () => {
     codex.resumeThread.mockResolvedValueOnce({});
     codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_2" } });
 
-    await services.queueMessage("chat_1", { text: "follow up next" });
+    await services.queueMessage("chat_1", {
+      serviceTier: "fast",
+      text: "follow up next",
+    });
 
     let savedState = await store.load();
     strictEqual(savedState.messages[0]?.text, "follow up next");
     strictEqual(savedState.queuedMessages[0]?.text, "follow up next");
+    strictEqual(savedState.queuedMessages[0]?.serviceTier, "fast");
     strictEqual(savedState.chats[0]?.status, "running");
     strictEqual(savedState.chats[0]?.activeTurnId, "turn_1");
     strictEqual(codex.startTurn.mock.calls.length, 0);
@@ -8376,6 +8393,7 @@ describe("ServeServices", () => {
       "thread_1",
       "follow up next",
       "/repo/.git/phantom/worktrees/worktree",
+      { serviceTier: "fast" },
     ]);
     savedState = await store.load();
     strictEqual(savedState.queuedMessages.length, 0);

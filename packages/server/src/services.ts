@@ -47,6 +47,7 @@ import type {
   CodexFileRecord,
   GitHubCheckoutTargetsResult,
   CodexModelRecord,
+  CodexServiceTier,
   CodexSkillRecord,
   CodexTurnContextItem,
   PendingApprovalRecord,
@@ -61,6 +62,7 @@ export interface CreateChatInput {
   base?: string;
   githubTargetNumber?: number;
   initialMessage?: string;
+  serviceTier?: CodexServiceTier;
   worktreeName?: string;
   worktreePath?: string;
 }
@@ -89,6 +91,7 @@ export interface SendMessageInput {
   effort?: string;
   files?: CodexTurnContextItem[];
   model?: string;
+  serviceTier?: CodexServiceTier;
   skills?: CodexTurnContextItem[];
   text: string;
 }
@@ -751,6 +754,7 @@ export class ServeServices {
     projectId: string,
     project: ProjectRecord,
     input: {
+      serviceTier?: CodexServiceTier;
       worktreeName?: string;
       worktreePath: string;
     },
@@ -775,7 +779,11 @@ export class ServeServices {
       throw new Error(`Worktree '${targetWorktreePath}' not found`);
     }
 
-    const threadResult = await this.codex.startThread(targetWorktree.path);
+    const threadResult = input.serviceTier
+      ? await this.codex.startThread(targetWorktree.path, {
+          serviceTier: input.serviceTier,
+        })
+      : await this.codex.startThread(targetWorktree.path);
     const codexThreadId = extractThreadId(threadResult);
     this.loadedThreadIds.add(codexThreadId);
     const timestamp = createTimestamp();
@@ -831,6 +839,7 @@ export class ServeServices {
       }
       try {
         return await this.createExistingWorktreeChat(projectId, project, {
+          serviceTier: input.serviceTier,
           worktreeName: result.value.worktree,
           worktreePath: result.value.path,
         });
@@ -856,6 +865,7 @@ export class ServeServices {
     }
     if (hasExistingWorktreeInput) {
       return this.createExistingWorktreeChat(projectId, project, {
+        serviceTier: input.serviceTier,
         worktreeName: targetWorktreeName,
         worktreePath: targetWorktreePath ?? "",
       });
@@ -899,9 +909,11 @@ export class ServeServices {
 
     let codexThreadId: string;
     try {
-      const threadResult = await this.codex.startThread(
-        createResult.value.path,
-      );
+      const threadResult = input.serviceTier
+        ? await this.codex.startThread(createResult.value.path, {
+            serviceTier: input.serviceTier,
+          })
+        : await this.codex.startThread(createResult.value.path);
       codexThreadId = extractThreadId(threadResult);
     } catch (error) {
       try {
@@ -1753,6 +1765,7 @@ export class ServeServices {
         effort?: string;
         files?: CodexTurnContextItem[];
         model?: string;
+        serviceTier?: CodexServiceTier;
         skills?: CodexTurnContextItem[];
       }
     | undefined
@@ -1768,17 +1781,35 @@ export class ServeServices {
     if (
       !input.effort &&
       !input.model &&
+      !input.serviceTier &&
       files.length === 0 &&
       skills.length === 0
     ) {
       return undefined;
     }
-    return {
-      effort: input.effort,
-      files: files.length > 0 ? files : undefined,
-      model: input.model,
-      skills: skills.length > 0 ? skills : undefined,
-    };
+    const options: {
+      effort?: string;
+      files?: CodexTurnContextItem[];
+      model?: string;
+      serviceTier?: CodexServiceTier;
+      skills?: CodexTurnContextItem[];
+    } = {};
+    if (input.effort) {
+      options.effort = input.effort;
+    }
+    if (files.length > 0) {
+      options.files = files;
+    }
+    if (input.model) {
+      options.model = input.model;
+    }
+    if (input.serviceTier) {
+      options.serviceTier = input.serviceTier;
+    }
+    if (skills.length > 0) {
+      options.skills = skills;
+    }
+    return options;
   }
 
   private async normalizeSkillContextItems(
@@ -3121,6 +3152,7 @@ function createQueuedMessage(
     effort: input.effort,
     files: cloneContextItems(input.files),
     model: input.model,
+    serviceTier: input.serviceTier,
     skills: cloneContextItems(input.skills),
     createdAt: createTimestamp(),
   };
@@ -3133,6 +3165,7 @@ function queuedMessageToSendInput(
     effort: message.effort,
     files: cloneContextItems(message.files),
     model: message.model,
+    serviceTier: message.serviceTier,
     skills: cloneContextItems(message.skills),
     text: message.text,
   };
@@ -4837,6 +4870,7 @@ function normalizeModelRecords(value: unknown): CodexModelRecord[] {
         model: modelName,
         displayName: getRecordString(model, "displayName") ?? id,
         description: getRecordString(model, "description") ?? "",
+        additionalSpeedTiers: getStringArray(model.additionalSpeedTiers),
         defaultReasoningEffort:
           getRecordString(model, "defaultReasoningEffort") ?? null,
         inputModalities: getStringArray(model.inputModalities),
