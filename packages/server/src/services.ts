@@ -1188,6 +1188,7 @@ export class ServeServices {
         codexMessages,
         localMessages,
         activeTurnId,
+        chat.activeTurnId != null,
       );
     } catch {
       return localMessagesWithoutStaleSteeredState(chat, localMessages);
@@ -3600,6 +3601,7 @@ function mergeCodexAndLocalMessages(
   codexMessages: InternalChatMessageRecord[],
   localMessages: ChatMessageRecord[],
   activeTurnId: string | null,
+  protectActiveLocalTurn: boolean,
 ): ChatMessageRecord[] {
   if (codexMessages.length === 0) {
     return localMessages;
@@ -3608,6 +3610,16 @@ function mergeCodexAndLocalMessages(
   const unmatchedCodexMessageIndexes = codexMessages.map((_, index) => index);
   const localMessageCodexOrderMatches = new Map<string, number>();
   const steeredLocalMessageCounts = countSteeredLocalMessages(localMessages);
+  const activeLocalTurnStartIndex = protectActiveLocalTurn
+    ? findActiveLocalTurnStartIndex(localMessages)
+    : localMessages.length;
+  const fallbackTranscriptLocalMessageMatches =
+    findFallbackTranscriptLocalMessageMatches(
+      mergedCodexMessages,
+      localMessages,
+      activeTurnId,
+      activeLocalTurnStartIndex,
+    );
   const liveAssistantDeltaCodexOrderLimits =
     findLiveAssistantDeltaCodexOrderLimits(
       localMessages,
@@ -3621,6 +3633,26 @@ function mergeCodexAndLocalMessages(
     }
     if (message.eventType === "chat.message.queued") {
       return true;
+    }
+    const fallbackTranscriptCodexIndex =
+      fallbackTranscriptLocalMessageMatches.get(message.id);
+    if (
+      fallbackTranscriptCodexIndex !== undefined &&
+      unmatchedCodexMessageIndexes.includes(fallbackTranscriptCodexIndex)
+    ) {
+      const fallbackCodexMessage =
+        mergedCodexMessages[fallbackTranscriptCodexIndex];
+      if (fallbackCodexMessage) {
+        localMessageCodexOrderMatches.set(
+          message.id,
+          fallbackCodexMessage.codexOrder ?? fallbackTranscriptCodexIndex,
+        );
+      }
+      unmatchedCodexMessageIndexes.splice(
+        unmatchedCodexMessageIndexes.indexOf(fallbackTranscriptCodexIndex),
+        1,
+      );
+      return false;
     }
     const staleLiveAssistantDeltaIndex =
       findStaleLiveAssistantDeltaCodexMessageIndex(
@@ -4333,6 +4365,136 @@ function isPendingSteeredMessage(message: ChatMessageRecord): boolean {
 
 function isQueuedMessage(message: ChatMessageRecord): boolean {
   return message.role === "user" && message.eventType === "chat.message.queued";
+}
+
+function findFallbackTranscriptLocalMessageMatches(
+  codexMessages: InternalChatMessageRecord[],
+  localMessages: ChatMessageRecord[],
+  activeTurnId: string | null,
+  activeLocalTurnStartIndex: number,
+): ReadonlyMap<string, number> {
+  const localEntries = localMessages
+    .map((message, index) => ({ index, message }))
+    .filter(({ message }) => isFallbackTranscriptMatchableLocalMessage(message))
+    .filter(
+      ({ index }) => activeTurnId === null || index < activeLocalTurnStartIndex,
+    );
+  if (localEntries.length === 0) {
+    return new Map();
+  }
+
+  const codexEntriesByTurnId = new Map<
+    string,
+    Array<{ index: number; message: InternalChatMessageRecord }>
+  >();
+  for (const [index, message] of codexMessages.entries()) {
+    if (
+      !message.hasFallbackTimestamp ||
+      !message.codexTurnId ||
+      message.codexTurnId === activeTurnId
+    ) {
+      continue;
+    }
+    const entries = codexEntriesByTurnId.get(message.codexTurnId) ?? [];
+    entries.push({ index, message });
+    codexEntriesByTurnId.set(message.codexTurnId, entries);
+  }
+
+  const matches = new Map<string, number>();
+  const usedLocalMessageIds = new Set<string>();
+  let nextSearchLocalEntryIndex = localEntries.length;
+  const codexTurnEntries = [...codexEntriesByTurnId.values()];
+  for (
+    let turnEntryIndex = codexTurnEntries.length - 1;
+    turnEntryIndex >= 0;
+    turnEntryIndex -= 1
+  ) {
+    const entries = codexTurnEntries[turnEntryIndex]!;
+    const orderedEntries = [...entries].sort(
+      (left, right) =>
+        (left.message.codexOrder ?? left.index) -
+        (right.message.codexOrder ?? right.index),
+    );
+    if (
+      orderedEntries.length === 0 ||
+      !orderedEntries.some(({ message }) => message.role === "assistant")
+    ) {
+      continue;
+    }
+
+    let turnMatches: Array<{
+      codexIndex: number;
+      localEntryIndex: number;
+      localMessageId: string;
+    }> = [];
+    let candidateStartIndex = nextSearchLocalEntryIndex - orderedEntries.length;
+    while (candidateStartIndex >= 0) {
+      const candidateMatches: Array<{
+        codexIndex: number;
+        localEntryIndex: number;
+        localMessageId: string;
+      }> = [];
+      let nextLocalEntryIndex = candidateStartIndex;
+      for (const { index, message } of orderedEntries) {
+        const localEntry = localEntries[nextLocalEntryIndex];
+        if (
+          !localEntry ||
+          usedLocalMessageIds.has(localEntry.message.id) ||
+          messageFingerprint(localEntry.message) !== messageFingerprint(message)
+        ) {
+          candidateMatches.length = 0;
+          break;
+        }
+        candidateMatches.push({
+          codexIndex: index,
+          localEntryIndex: nextLocalEntryIndex,
+          localMessageId: localEntry.message.id,
+        });
+        nextLocalEntryIndex += 1;
+      }
+
+      if (candidateMatches.length > 0) {
+        turnMatches = candidateMatches;
+        break;
+      }
+      candidateStartIndex -= 1;
+    }
+
+    if (turnMatches.length === 0) {
+      continue;
+    }
+    for (const match of turnMatches) {
+      matches.set(match.localMessageId, match.codexIndex);
+      usedLocalMessageIds.add(match.localMessageId);
+    }
+    nextSearchLocalEntryIndex =
+      turnMatches[0]?.localEntryIndex ?? nextSearchLocalEntryIndex;
+  }
+  return matches;
+}
+
+function findActiveLocalTurnStartIndex(messages: ChatMessageRecord[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (
+      message.role === "user" &&
+      !isQueuedMessage(message) &&
+      !isPendingSteeredMessage(message)
+    ) {
+      return index;
+    }
+  }
+  return messages.length;
+}
+
+function isFallbackTranscriptMatchableLocalMessage(
+  message: ChatMessageRecord,
+): boolean {
+  return (
+    (message.role === "assistant" || message.role === "user") &&
+    !isQueuedMessage(message) &&
+    !isPendingSteeredMessage(message)
+  );
 }
 
 function isLocalTimelineEvent(message: ChatMessageRecord): boolean {
