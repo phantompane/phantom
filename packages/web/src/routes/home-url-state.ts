@@ -30,6 +30,13 @@ interface WorktreeChatMergeRecord<TStatus extends string> {
   worktreePath: string;
 }
 
+interface ChatThreadDedupeRecord<TStatus extends string> {
+  codexThreadId: string | null;
+  id: string;
+  status: TStatus;
+  updatedAt: string;
+}
+
 interface WorktreeMergeRecord<TStatus extends string> {
   chatId: string | null;
   chatStatus: TStatus | null;
@@ -130,16 +137,12 @@ export function mergeWorktreesWithChats<
 >(worktrees: TWorktree[], chats: TChat[]): TWorktree[] {
   const latestChatsByPath = new Map<string, TChat>();
   for (const chat of chats) {
+    if (chat.status === "archived") {
+      continue;
+    }
+
     const current = latestChatsByPath.get(chat.worktreePath);
-    if (
-      !current ||
-      (current.status === "archived" && chat.status !== "archived") ||
-      (current.status === chat.status &&
-        chat.updatedAt.localeCompare(current.updatedAt) > 0) ||
-      (current.status !== "archived" &&
-        chat.status !== "archived" &&
-        chat.updatedAt.localeCompare(current.updatedAt) > 0)
-    ) {
+    if (!current || chat.updatedAt.localeCompare(current.updatedAt) > 0) {
       latestChatsByPath.set(chat.worktreePath, chat);
     }
   }
@@ -160,6 +163,35 @@ export function mergeWorktreesWithChats<
       chatTitle: chat.title,
     };
   });
+}
+
+export function dedupeChatThreads<
+  TStatus extends string,
+  TChat extends ChatThreadDedupeRecord<TStatus>,
+>(chats: TChat[]): TChat[] {
+  const chatsWithThreads = chats.filter((chat) => chat.codexThreadId);
+  const source = chatsWithThreads.length > 0 ? chatsWithThreads : chats;
+  const chatsByThread = new Map<string, TChat>();
+
+  for (const chat of source) {
+    const key = chat.codexThreadId ?? chat.id;
+    const current = chatsByThread.get(key);
+    if (
+      !current ||
+      (current.status === "archived" && chat.status !== "archived") ||
+      (current.status === chat.status &&
+        chat.updatedAt.localeCompare(current.updatedAt) > 0) ||
+      (current.status !== "archived" &&
+        chat.status !== "archived" &&
+        chat.updatedAt.localeCompare(current.updatedAt) > 0)
+    ) {
+      chatsByThread.set(key, chat);
+    }
+  }
+
+  return [...chatsByThread.values()].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  );
 }
 
 export function isKnownWorktreeChat<TWorktree extends WorktreeSelectionRecord>(

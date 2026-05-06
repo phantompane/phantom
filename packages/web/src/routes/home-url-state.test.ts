@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  dedupeChatThreads,
   findValidatedSelectedProjectChat,
   findValidatedSelectedChat,
   getSelectableReasoningEfforts,
@@ -216,6 +217,91 @@ describe("mergeWorktreesWithChats", () => {
         chatId: "chat-current",
         chatStatus: "idle",
         chatTitle: "current",
+      },
+    ]);
+  });
+
+  it("clears worktree chat selection when only archived chats remain", () => {
+    const worktrees = [
+      {
+        name: "feature",
+        path: "/repo/feature",
+        chatId: "chat-stale",
+        chatStatus: "archived",
+        chatTitle: "archived",
+      },
+    ];
+    const chats = [
+      {
+        id: "chat-archived",
+        worktreePath: "/repo/feature",
+        title: "archived",
+        status: "archived",
+        updatedAt: "2026-04-25T00:01:00.000Z",
+      },
+    ];
+
+    expect(mergeWorktreesWithChats(worktrees, chats)).toEqual([
+      {
+        name: "feature",
+        path: "/repo/feature",
+        chatId: null,
+        chatStatus: null,
+        chatTitle: "feature",
+      },
+    ]);
+  });
+});
+
+describe("dedupeChatThreads", () => {
+  it("prefers a non-archived chat over a newer archived duplicate thread", () => {
+    expect(
+      dedupeChatThreads([
+        {
+          codexThreadId: "thread-1",
+          id: "chat-active",
+          status: "idle",
+          updatedAt: "2026-04-25T00:00:00.000Z",
+        },
+        {
+          codexThreadId: "thread-1",
+          id: "chat-archived",
+          status: "archived",
+          updatedAt: "2026-04-25T00:01:00.000Z",
+        },
+      ]),
+    ).toEqual([
+      {
+        codexThreadId: "thread-1",
+        id: "chat-active",
+        status: "idle",
+        updatedAt: "2026-04-25T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("keeps the latest archived chat when a thread has no active duplicate", () => {
+    expect(
+      dedupeChatThreads([
+        {
+          codexThreadId: "thread-1",
+          id: "chat-archived-old",
+          status: "archived",
+          updatedAt: "2026-04-25T00:00:00.000Z",
+        },
+        {
+          codexThreadId: "thread-1",
+          id: "chat-archived-new",
+          status: "archived",
+          updatedAt: "2026-04-25T00:01:00.000Z",
+        },
+      ]),
+    ).toEqual([
+      {
+        codexThreadId: "thread-1",
+        id: "chat-archived-new",
+        status: "archived",
+        updatedAt: "2026-04-25T00:01:00.000Z",
       },
     ]);
   });
