@@ -139,15 +139,17 @@ import {
 import {
   getCommandEventMeta,
   getDiffEventData,
+  getDiffLineDelta,
+  getFileChangesLineDelta,
   getFileEventMeta,
   getFilePatchEventData,
   getPlanEventData,
   getRichEventKind,
   getRichEventText,
+  getTextLineCount,
   getWarningEventText,
   isRichEventMessage,
 } from "./rich-events";
-import type { RichFileChange } from "./rich-events";
 import { mergeStreamingMessagesForDisplay } from "./chat-message-stream-order";
 import type {
   ChatRecord,
@@ -4601,14 +4603,22 @@ function CommandEventCard({ message }: { message: VisibleMessageRecord }) {
       ])}
       summary={
         <span
-          className="truncate font-mono text-[length:var(--font-size-xs)] text-[var(--text-secondary)]"
-          title={meta.cwd ?? undefined}
+          className="block min-w-0 max-w-full truncate font-mono text-[length:var(--font-size-xs)] text-[var(--text-secondary)]"
+          title={meta.command ?? meta.cwd ?? undefined}
         >
           {meta.command ?? meta.stream ?? "output"}
         </span>
       }
       title="Command"
     >
+      {meta.command && (
+        <p
+          className="mb-2 min-w-0 break-words font-mono text-[length:var(--font-size-xs)] text-muted-foreground"
+          title={meta.cwd ?? undefined}
+        >
+          {meta.command}
+        </p>
+      )}
       {(meta.status || meta.exitCode !== null || meta.durationMs !== null) && (
         <div className="mb-2 flex flex-wrap gap-1.5">
           {meta.status && (
@@ -4651,7 +4661,7 @@ function FileEventCard({ message }: { message: VisibleMessageRecord }) {
           outputLineCount > 0 ? formatCount(outputLineCount, "line") : null,
         ])}
         summary={
-          <span className="truncate text-muted-foreground">
+          <span className="block min-w-0 max-w-full truncate text-muted-foreground">
             File change output
           </span>
         }
@@ -4764,45 +4774,6 @@ function formatEventMeta(
   return visibleParts.length > 0 ? visibleParts.join(" · ") : undefined;
 }
 
-function getTextLineCount(value: string): number {
-  const trimmedValue = value.trimEnd();
-  return trimmedValue ? trimmedValue.split(/\r?\n/).length : 0;
-}
-
-function getDiffLineDelta(diff: string): { added: number; removed: number } {
-  let added = 0;
-  let removed = 0;
-  for (const line of diff.split(/\r?\n/)) {
-    if (line.startsWith("+++") || line.startsWith("---")) {
-      continue;
-    }
-    if (line.startsWith("+")) {
-      added += 1;
-      continue;
-    }
-    if (line.startsWith("-")) {
-      removed += 1;
-    }
-  }
-  return { added, removed };
-}
-
-function getFileChangesLineDelta(changes: RichFileChange[]): {
-  added: number;
-  removed: number;
-} {
-  return changes.reduce(
-    (total, change) => {
-      const changeDelta = getDiffLineDelta(change.diff);
-      return {
-        added: total.added + changeDelta.added,
-        removed: total.removed + changeDelta.removed,
-      };
-    },
-    { added: 0, removed: 0 },
-  );
-}
-
 function formatLineDelta(delta: { added: number; removed: number }): string {
   if (delta.added === 0 && delta.removed === 0) {
     return "0 lines";
@@ -4840,7 +4811,7 @@ function ReasoningEventCard({ message }: { message: VisibleMessageRecord }) {
       icon={<Brain className="size-4" />}
       meta={formatCount(getTextLineCount(text), "line")}
       summary={
-        <span className="truncate text-muted-foreground">
+        <span className="block min-w-0 max-w-full truncate text-muted-foreground">
           Reasoning details
         </span>
       }
@@ -4858,6 +4829,11 @@ function WarningEventCard({ message }: { message: VisibleMessageRecord }) {
   return (
     <RichEventShell
       icon={<AlertTriangle className="size-4" />}
+      summary={
+        <span className="block min-w-0 max-w-full truncate">
+          {warning.summary}
+        </span>
+      }
       tone="warning"
       title="Warning"
     >
@@ -4907,7 +4883,9 @@ function RichEventShell({
         <span className="truncate text-[length:var(--font-size-sm)] font-semibold">
           {title}
         </span>
-        {summary && <span className="min-w-0">{summary}</span>}
+        {summary && (
+          <span className="min-w-0 max-w-full overflow-hidden">{summary}</span>
+        )}
         {meta && (
           <span className="shrink-0 truncate text-[length:var(--font-size-xs)] text-muted-foreground">
             {meta}
