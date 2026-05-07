@@ -48,6 +48,28 @@ brew install phantom
 npm install -g @phantompane/cli
 ```
 
+## 🛠️ ローカル開発
+
+依存関係をインストールして、開発用のWeb/APIサーバーを起動します。
+
+```bash
+pnpm install
+pnpm dev
+```
+
+`pnpm dev` はPhantomのWebアプリとAPIをPortless経由で起動します。Git worktreeごとに安定したローカルURLが割り当てられるため、固定ポートの競合を避けられます。
+
+| チェックアウト | Web URL | API URL |
+| --- | --- | --- |
+| メインのチェックアウト | `https://phantom.localhost` | `https://api.phantom.localhost` |
+| linked worktree | `https://<worktree-prefix>.phantom.localhost` | `https://<worktree-prefix>.api.phantom.localhost` |
+
+`<worktree-prefix>` はPortlessがlinked worktreeのブランチ名またはディレクトリ名から決定します。たとえばprefixが `portless-worktree-ports` の場合、Webは `https://portless-worktree-ports.phantom.localhost` で開けます。
+
+ローカルのPortless proxyをTLSなしの1355番ポートで起動している場合は、同じホスト名を `http://...:1355` で開きます。例: `http://portless-worktree-ports.phantom.localhost:1355`
+
+Portlessを使わずにデバッグしたい場合だけ、`PORTLESS=0 pnpm dev` を使ってください。この場合は固定のfallback port（Webは3000、APIは9640）を使うため、複数worktreeの同時起動には向きません。
+
 ## 🤔 なぜPhantom？
 
 Git worktreeは強力ですが、パスとブランチの手動管理が必要です。また、複数のワークツリーを移動するのも大変です。Phantomはこの問題を解消します：

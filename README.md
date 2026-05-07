@@ -48,6 +48,28 @@ brew install phantom
 npm install -g @phantompane/cli
 ```
 
+## 🛠️ Local Development
+
+Install dependencies and start the development web/API servers:
+
+```bash
+pnpm install
+pnpm dev
+```
+
+`pnpm dev` runs the Phantom web app and API through Portless, so each Git worktree gets stable, conflict-free local URLs.
+
+| Checkout | Web URL | API URL |
+| --- | --- | --- |
+| Main checkout | `https://phantom.localhost` | `https://api.phantom.localhost` |
+| Linked worktree | `https://<worktree-prefix>.phantom.localhost` | `https://<worktree-prefix>.api.phantom.localhost` |
+
+The worktree prefix is derived by Portless from the linked worktree branch or directory. For example, a worktree prefix of `portless-worktree-ports` is served at `https://portless-worktree-ports.phantom.localhost`.
+
+If your local Portless proxy is configured without TLS on port 1355, use the same hostnames with `http://...:1355`, for example `http://portless-worktree-ports.phantom.localhost:1355`.
+
+To bypass Portless for debugging, run `PORTLESS=0 pnpm dev`. This uses the fixed fallback ports (`web` on 3000 and API on 9640), so it is not suitable for running multiple worktrees at once.
+
 ## 🤔 Why Phantom?
 
 Git worktrees are powerful but require manual management of paths and branches. Also, navigating between multiple worktrees is cumbersome. Phantom eliminates these problems:
