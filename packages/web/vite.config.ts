@@ -6,10 +6,6 @@ import viteReact from "@vitejs/plugin-react";
 const fallbackApiTarget = "http://127.0.0.1:9640";
 
 function getApiTarget(): string {
-  if (process.env.PHANTOM_API_DEV_ORIGIN) {
-    return process.env.PHANTOM_API_DEV_ORIGIN;
-  }
-
   if (process.env.PORTLESS === "0") {
     return fallbackApiTarget;
   }
