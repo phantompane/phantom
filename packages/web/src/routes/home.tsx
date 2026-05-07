@@ -100,6 +100,11 @@ import {
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "../components/ui/resizable";
+import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
@@ -116,7 +121,6 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarProvider,
-  SidebarRail,
   SidebarTrigger,
   useSidebar,
 } from "../components/ui/sidebar";
@@ -2950,1060 +2954,1093 @@ export function HomeRoute() {
   const visiblePendingApproval =
     pendingApproval?.chatId === selectedChatId ? pendingApproval : null;
 
-  return (
-    <SidebarProvider className="app-shell">
-      <Sidebar collapsible="offcanvas" variant="inset">
-        <SidebarHeader>
-          <SidebarTrigger
-            aria-label="Close sidebar"
-            className="text-[var(--icon-color-default)] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            title="Close sidebar"
-          />
-          <div className="min-w-0 flex-1 group-data-[state=collapsed]/sidebar:hidden">
-            <h1 className="truncate text-[length:var(--font-size-lg)] font-semibold leading-tight">
-              Phantom
-            </h1>
-          </div>
-          <Badge
-            className="max-w-28 truncate group-data-[state=collapsed]/sidebar:hidden"
-            variant={status === "Ready" ? "success" : "warning"}
-          >
-            {status !== "Ready" && <LoadingSpinner className="size-3" />}
-            {status}
-          </Badge>
-        </SidebarHeader>
+  const renderSidebar = (className?: string) => (
+    <Sidebar className={className} collapsible="offcanvas" variant="inset">
+      <SidebarHeader>
+        <SidebarTrigger
+          aria-label="Close sidebar"
+          className="text-[var(--icon-color-default)] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          title="Close sidebar"
+        />
+        <div className="min-w-0 flex-1 group-data-[state=collapsed]/sidebar:hidden">
+          <h1 className="truncate text-[length:var(--font-size-lg)] font-semibold leading-tight">
+            Phantom
+          </h1>
+        </div>
+        <Badge
+          className="max-w-28 truncate group-data-[state=collapsed]/sidebar:hidden"
+          variant={status === "Ready" ? "success" : "warning"}
+        >
+          {status !== "Ready" && <LoadingSpinner className="size-3" />}
+          {status}
+        </Badge>
+      </SidebarHeader>
 
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupHeader>
-              <SidebarGroupLabel>Projects</SidebarGroupLabel>
-              <SidebarGroupAction
-                aria-label="Add project"
-                onClick={openAddProjectDialog}
-                title="Add project"
-              >
-                <Plus className="size-4" />
-              </SidebarGroupAction>
-            </SidebarGroupHeader>
-            <SidebarGroupContent>
-              {sidebarError && (
-                <InlineNotice
-                  className="mx-2 mb-2 group-data-[state=collapsed]/sidebar:hidden"
-                  message={sidebarError}
-                  onDismiss={() => setSidebarError(null)}
-                />
-              )}
-              <SidebarMenu>
-                {showProjectListSkeleton ? (
-                  <li className="px-2 py-1 group-data-[state=collapsed]/sidebar:hidden">
-                    <ProjectListSkeleton />
-                  </li>
-                ) : projects.length === 0 ? (
-                  <li className="px-2 py-4 group-data-[state=collapsed]/sidebar:hidden">
-                    <div className="rounded-[var(--radius-md)] border border-dashed border-sidebar-border bg-[var(--surface-card)] px-3 py-3 text-[length:var(--font-size-sm)] text-muted-foreground">
-                      Add a Git project to begin.
-                    </div>
-                  </li>
-                ) : (
-                  projects.map((project) => {
-                    const isProjectExpanded = expandedProjectIds.has(
-                      project.id,
-                    );
-                    const projectWorktrees =
-                      worktreesByProject[project.id] ?? [];
-                    const isProjectDataLoading =
-                      loadingProjectIds.has(project.id) &&
-                      worktreesByProject[project.id] === undefined;
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupHeader>
+            <SidebarGroupLabel>Projects</SidebarGroupLabel>
+            <SidebarGroupAction
+              aria-label="Add project"
+              onClick={openAddProjectDialog}
+              title="Add project"
+            >
+              <Plus className="size-4" />
+            </SidebarGroupAction>
+          </SidebarGroupHeader>
+          <SidebarGroupContent>
+            {sidebarError && (
+              <InlineNotice
+                className="mx-2 mb-2 group-data-[state=collapsed]/sidebar:hidden"
+                message={sidebarError}
+                onDismiss={() => setSidebarError(null)}
+              />
+            )}
+            <SidebarMenu>
+              {showProjectListSkeleton ? (
+                <li className="px-2 py-1 group-data-[state=collapsed]/sidebar:hidden">
+                  <ProjectListSkeleton />
+                </li>
+              ) : projects.length === 0 ? (
+                <li className="px-2 py-4 group-data-[state=collapsed]/sidebar:hidden">
+                  <div className="rounded-[var(--radius-md)] border border-dashed border-sidebar-border bg-[var(--surface-card)] px-3 py-3 text-[length:var(--font-size-sm)] text-muted-foreground">
+                    Add a Git project to begin.
+                  </div>
+                </li>
+              ) : (
+                projects.map((project) => {
+                  const isProjectExpanded = expandedProjectIds.has(project.id);
+                  const projectWorktrees = worktreesByProject[project.id] ?? [];
+                  const isProjectDataLoading =
+                    loadingProjectIds.has(project.id) &&
+                    worktreesByProject[project.id] === undefined;
 
-                    return (
-                      <SidebarMenuItem key={project.id}>
-                        <div className="group/project flex items-center gap-0.5 rounded-[var(--radius-sm)]">
-                          <button
-                            aria-expanded={isProjectExpanded}
-                            aria-label={`${isProjectExpanded ? "Collapse" : "Expand"} ${project.name}`}
-                            className="inline-flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--icon-color-default)] outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:shadow-[var(--state-focus-ring)] group-data-[state=collapsed]/sidebar:hidden"
-                            onClick={() => toggleProject(project.id)}
-                            title={isProjectExpanded ? "Collapse" : "Expand"}
-                            type="button"
-                          >
-                            <ChevronRight
-                              className={cn(
-                                "size-4 transition-transform duration-[var(--motion-duration-fast)]",
-                                isProjectExpanded && "rotate-90",
-                              )}
-                            />
-                          </button>
-                          <SidebarMenuButton
-                            className="min-h-8 flex-1 group-data-[state=collapsed]/sidebar:flex-none"
-                            isActive={
-                              selectedProjectId === project.id && !selectedChat
-                            }
-                            onClick={() => selectProject(project.id)}
-                            title={project.name}
-                            type="button"
-                          >
-                            <FolderGit2 className="size-4 text-[var(--icon-color-default)]" />
-                            <span className="min-w-0 flex-1 group-data-[state=collapsed]/sidebar:hidden">
-                              <span className="block truncate font-medium">
-                                {project.name}
-                              </span>
-                            </span>
-                          </SidebarMenuButton>
-                          <Button
-                            aria-label={`Create worktree in ${project.name}`}
-                            className="size-7 text-[var(--icon-color-default)] group-data-[state=collapsed]/sidebar:hidden"
-                            disabled={isBusy}
-                            onClick={() => void createChat(project.id)}
-                            size="icon"
-                            title="Create worktree"
-                            type="button"
-                            variant="ghost"
-                          >
-                            {creatingProjectId === project.id ? (
-                              <LoadingSpinner className="size-4" />
-                            ) : (
-                              <MessageSquarePlus className="size-4" />
+                  return (
+                    <SidebarMenuItem key={project.id}>
+                      <div className="group/project flex items-center gap-0.5 rounded-[var(--radius-sm)]">
+                        <button
+                          aria-expanded={isProjectExpanded}
+                          aria-label={`${isProjectExpanded ? "Collapse" : "Expand"} ${project.name}`}
+                          className="inline-flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--icon-color-default)] outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:shadow-[var(--state-focus-ring)] group-data-[state=collapsed]/sidebar:hidden"
+                          onClick={() => toggleProject(project.id)}
+                          title={isProjectExpanded ? "Collapse" : "Expand"}
+                          type="button"
+                        >
+                          <ChevronRight
+                            className={cn(
+                              "size-4 transition-transform duration-[var(--motion-duration-fast)]",
+                              isProjectExpanded && "rotate-90",
                             )}
-                          </Button>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                aria-label={`Open actions for ${project.name}`}
-                                className={cn(
-                                  "mr-1 size-7 text-[var(--icon-color-default)] opacity-100 data-[state=open]:opacity-100 group-data-[state=collapsed]/sidebar:hidden sm:opacity-0 sm:group-focus-within/project:opacity-100 sm:group-hover/project:opacity-100",
-                                  selectedProjectId === project.id &&
-                                    "sm:opacity-100",
-                                )}
-                                disabled={isBusy}
-                                size="icon"
-                                title="Project actions"
-                                type="button"
-                                variant="ghost"
-                              >
-                                <MoreHorizontal className="size-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                disabled={isBusy}
-                                onSelect={() => openDeleteProject(project)}
-                                variant="destructive"
-                              >
-                                <Trash2 className="size-4" />
-                                <span>Delete project</span>
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                        {isProjectExpanded && (
-                          <SidebarMenuSub>
-                            {isProjectDataLoading ? (
-                              <li className="px-2 py-1.5">
-                                <WorktreeListSkeleton />
-                              </li>
-                            ) : projectWorktrees.length === 0 ? (
-                              <li className="px-2 py-1.5 text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
-                                No worktrees
-                              </li>
-                            ) : (
-                              projectWorktrees.map((worktree) => {
-                                const isSelectedWorktree =
-                                  selectedProjectId === project.id &&
-                                  selectedWorktree?.path === worktree.path;
-                                const worktreeChats =
-                                  chatsByWorktreeByProject[project.id]?.get(
-                                    worktree.path,
-                                  ) ?? [];
-                                const activeWorktreeChat =
-                                  worktreeChats.find(
-                                    (chat) =>
-                                      chat.status === "running" ||
-                                      chat.status === "waitingForApproval" ||
-                                      Boolean(chat.activeTurnId),
-                                  ) ?? null;
-                                const isWorktreeSending =
-                                  isSendingMessage &&
-                                  selectedChat?.projectId === project.id &&
-                                  selectedChat.worktreePath === worktree.path;
-                                const worktreeActivityLabel = isWorktreeSending
-                                  ? "Sending message"
-                                  : activeWorktreeChat
-                                    ? statusMeta[activeWorktreeChat.status]
-                                        .label
-                                    : null;
-                                const worktreeKey = getWorktreeExpansionKey(
-                                  project.id,
+                          />
+                        </button>
+                        <SidebarMenuButton
+                          className="min-h-8 flex-1 group-data-[state=collapsed]/sidebar:flex-none"
+                          isActive={
+                            selectedProjectId === project.id && !selectedChat
+                          }
+                          onClick={() => selectProject(project.id)}
+                          title={project.name}
+                          type="button"
+                        >
+                          <FolderGit2 className="size-4 text-[var(--icon-color-default)]" />
+                          <span className="min-w-0 flex-1 group-data-[state=collapsed]/sidebar:hidden">
+                            <span className="block truncate font-medium">
+                              {project.name}
+                            </span>
+                          </span>
+                        </SidebarMenuButton>
+                        <Button
+                          aria-label={`Create worktree in ${project.name}`}
+                          className="size-7 text-[var(--icon-color-default)] group-data-[state=collapsed]/sidebar:hidden"
+                          disabled={isBusy}
+                          onClick={() => void createChat(project.id)}
+                          size="icon"
+                          title="Create worktree"
+                          type="button"
+                          variant="ghost"
+                        >
+                          {creatingProjectId === project.id ? (
+                            <LoadingSpinner className="size-4" />
+                          ) : (
+                            <MessageSquarePlus className="size-4" />
+                          )}
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              aria-label={`Open actions for ${project.name}`}
+                              className={cn(
+                                "mr-1 size-7 text-[var(--icon-color-default)] opacity-100 data-[state=open]:opacity-100 group-data-[state=collapsed]/sidebar:hidden sm:opacity-0 sm:group-focus-within/project:opacity-100 sm:group-hover/project:opacity-100",
+                                selectedProjectId === project.id &&
+                                  "sm:opacity-100",
+                              )}
+                              disabled={isBusy}
+                              size="icon"
+                              title="Project actions"
+                              type="button"
+                              variant="ghost"
+                            >
+                              <MoreHorizontal className="size-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              disabled={isBusy}
+                              onSelect={() => openDeleteProject(project)}
+                              variant="destructive"
+                            >
+                              <Trash2 className="size-4" />
+                              <span>Delete project</span>
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                      {isProjectExpanded && (
+                        <SidebarMenuSub>
+                          {isProjectDataLoading ? (
+                            <li className="px-2 py-1.5">
+                              <WorktreeListSkeleton />
+                            </li>
+                          ) : projectWorktrees.length === 0 ? (
+                            <li className="px-2 py-1.5 text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+                              No worktrees
+                            </li>
+                          ) : (
+                            projectWorktrees.map((worktree) => {
+                              const isSelectedWorktree =
+                                selectedProjectId === project.id &&
+                                selectedWorktree?.path === worktree.path;
+                              const worktreeChats =
+                                chatsByWorktreeByProject[project.id]?.get(
                                   worktree.path,
-                                );
-                                const isCreatingWorktreeChat =
-                                  creatingWorktreeKey === worktreeKey;
-                                const isWorktreeExpanded =
-                                  expandedWorktreeKeys.has(worktreeKey);
-                                const isChatListLoading =
-                                  loadingChatProjectIds.has(project.id) &&
-                                  worktreeChats.length === 0;
-                                const title = `${worktree.name} (${worktree.path})${
-                                  worktree.isClean ? "" : " [dirty]"
-                                }${
-                                  worktree.isMainWorktree
-                                    ? " [main worktree]"
-                                    : ""
-                                }${
-                                  worktreeActivityLabel
-                                    ? ` [${worktreeActivityLabel}]`
-                                    : ""
-                                }`;
-                                const canDeleteWorktree =
-                                  worktree.isManagedByPhantom;
-                                const canShowActions =
-                                  canDeleteWorktree || Boolean(worktree.path);
-                                return (
-                                  <SidebarMenuSubItem key={worktree.path}>
-                                    <div className="group/worktree flex items-center gap-0.5 rounded-[var(--radius-sm)]">
-                                      <button
-                                        aria-expanded={isWorktreeExpanded}
-                                        aria-label={`${isWorktreeExpanded ? "Collapse" : "Expand"} chats for ${worktree.name}`}
-                                        className="inline-flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--icon-color-default)] outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:shadow-[var(--state-focus-ring)]"
-                                        onClick={() =>
-                                          toggleWorktreeChats(
-                                            project.id,
-                                            worktree.path,
-                                          )
-                                        }
-                                        title={
-                                          isWorktreeExpanded
-                                            ? "Collapse chats"
-                                            : "Expand chats"
-                                        }
-                                        type="button"
-                                      >
-                                        <ChevronRight
-                                          className={cn(
-                                            "size-3.5 transition-transform duration-[var(--motion-duration-fast)]",
-                                            isWorktreeExpanded && "rotate-90",
-                                          )}
-                                        />
-                                      </button>
-                                      <SidebarMenuSubButton
-                                        className="flex-1"
-                                        disabled={!worktree.chatId && isBusy}
-                                        isActive={isSelectedWorktree}
-                                        onClick={() =>
-                                          selectWorktree(project.id, worktree)
-                                        }
-                                        title={title}
-                                        type="button"
-                                      >
-                                        {worktree.isMainWorktree ? (
-                                          <FolderGit2 className="size-3.5 text-[var(--icon-color-default)]" />
-                                        ) : (
-                                          <GitBranch className="size-3.5 text-[var(--icon-color-default)]" />
+                                ) ?? [];
+                              const activeWorktreeChat =
+                                worktreeChats.find(
+                                  (chat) =>
+                                    chat.status === "running" ||
+                                    chat.status === "waitingForApproval" ||
+                                    Boolean(chat.activeTurnId),
+                                ) ?? null;
+                              const isWorktreeSending =
+                                isSendingMessage &&
+                                selectedChat?.projectId === project.id &&
+                                selectedChat.worktreePath === worktree.path;
+                              const worktreeActivityLabel = isWorktreeSending
+                                ? "Sending message"
+                                : activeWorktreeChat
+                                  ? statusMeta[activeWorktreeChat.status].label
+                                  : null;
+                              const worktreeKey = getWorktreeExpansionKey(
+                                project.id,
+                                worktree.path,
+                              );
+                              const isCreatingWorktreeChat =
+                                creatingWorktreeKey === worktreeKey;
+                              const isWorktreeExpanded =
+                                expandedWorktreeKeys.has(worktreeKey);
+                              const isChatListLoading =
+                                loadingChatProjectIds.has(project.id) &&
+                                worktreeChats.length === 0;
+                              const title = `${worktree.name} (${worktree.path})${
+                                worktree.isClean ? "" : " [dirty]"
+                              }${
+                                worktree.isMainWorktree
+                                  ? " [main worktree]"
+                                  : ""
+                              }${
+                                worktreeActivityLabel
+                                  ? ` [${worktreeActivityLabel}]`
+                                  : ""
+                              }`;
+                              const canDeleteWorktree =
+                                worktree.isManagedByPhantom;
+                              const canShowActions =
+                                canDeleteWorktree || Boolean(worktree.path);
+                              return (
+                                <SidebarMenuSubItem key={worktree.path}>
+                                  <div className="group/worktree flex items-center gap-0.5 rounded-[var(--radius-sm)]">
+                                    <button
+                                      aria-expanded={isWorktreeExpanded}
+                                      aria-label={`${isWorktreeExpanded ? "Collapse" : "Expand"} chats for ${worktree.name}`}
+                                      className="inline-flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--icon-color-default)] outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:shadow-[var(--state-focus-ring)]"
+                                      onClick={() =>
+                                        toggleWorktreeChats(
+                                          project.id,
+                                          worktree.path,
+                                        )
+                                      }
+                                      title={
+                                        isWorktreeExpanded
+                                          ? "Collapse chats"
+                                          : "Expand chats"
+                                      }
+                                      type="button"
+                                    >
+                                      <ChevronRight
+                                        className={cn(
+                                          "size-3.5 transition-transform duration-[var(--motion-duration-fast)]",
+                                          isWorktreeExpanded && "rotate-90",
                                         )}
-                                        <span className="min-w-0 flex-1">
-                                          <span className="flex min-w-0 items-center gap-1.5">
-                                            <span className="block min-w-0 truncate font-medium">
-                                              {worktree.name}
-                                            </span>
+                                      />
+                                    </button>
+                                    <SidebarMenuSubButton
+                                      className="flex-1"
+                                      disabled={!worktree.chatId && isBusy}
+                                      isActive={isSelectedWorktree}
+                                      onClick={() =>
+                                        selectWorktree(project.id, worktree)
+                                      }
+                                      title={title}
+                                      type="button"
+                                    >
+                                      {worktree.isMainWorktree ? (
+                                        <FolderGit2 className="size-3.5 text-[var(--icon-color-default)]" />
+                                      ) : (
+                                        <GitBranch className="size-3.5 text-[var(--icon-color-default)]" />
+                                      )}
+                                      <span className="min-w-0 flex-1">
+                                        <span className="flex min-w-0 items-center gap-1.5">
+                                          <span className="block min-w-0 truncate font-medium">
+                                            {worktree.name}
                                           </span>
                                         </span>
-                                        {!worktree.isClean && (
-                                          <span className="size-1.5 shrink-0 rounded-full bg-[var(--semantic-warning-fg)]" />
-                                        )}
-                                        {worktreeActivityLabel && (
-                                          <WorktreeActivityIndicator
-                                            label={worktreeActivityLabel}
-                                            status={
-                                              isWorktreeSending
-                                                ? "running"
-                                                : (activeWorktreeChat?.status ??
-                                                  "running")
+                                      </span>
+                                      {!worktree.isClean && (
+                                        <span className="size-1.5 shrink-0 rounded-full bg-[var(--semantic-warning-fg)]" />
+                                      )}
+                                      {worktreeActivityLabel && (
+                                        <WorktreeActivityIndicator
+                                          label={worktreeActivityLabel}
+                                          status={
+                                            isWorktreeSending
+                                              ? "running"
+                                              : (activeWorktreeChat?.status ??
+                                                "running")
+                                          }
+                                        />
+                                      )}
+                                    </SidebarMenuSubButton>
+                                    <Button
+                                      aria-label={`Start new chat in ${worktree.name}`}
+                                      className={cn(
+                                        "size-7 text-[var(--icon-color-default)] opacity-100 sm:opacity-0 sm:group-focus-within/worktree:opacity-100 sm:group-hover/worktree:opacity-100",
+                                        (isSelectedWorktree ||
+                                          isCreatingWorktreeChat) &&
+                                          "sm:opacity-100",
+                                      )}
+                                      disabled={isBusy}
+                                      onClick={() =>
+                                        void createChat(project.id, worktree)
+                                      }
+                                      size="icon"
+                                      title="New chat"
+                                      type="button"
+                                      variant="ghost"
+                                    >
+                                      {isCreatingWorktreeChat ? (
+                                        <LoadingSpinner className="size-4" />
+                                      ) : (
+                                        <MessageSquarePlus className="size-4" />
+                                      )}
+                                    </Button>
+                                    {canShowActions && (
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                          <Button
+                                            aria-label={`Open actions for ${worktree.name}`}
+                                            className={cn(
+                                              "mr-1 size-7 text-[var(--icon-color-default)] opacity-100 data-[state=open]:opacity-100 sm:opacity-0 sm:group-focus-within/worktree:opacity-100 sm:group-hover/worktree:opacity-100",
+                                              isSelectedWorktree &&
+                                                "sm:opacity-100",
+                                            )}
+                                            disabled={isBusy}
+                                            size="icon"
+                                            title="Worktree actions"
+                                            type="button"
+                                            variant="ghost"
+                                          >
+                                            <MoreHorizontal className="size-4" />
+                                          </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end">
+                                          <DropdownMenuItem
+                                            disabled={isBusy}
+                                            onSelect={() =>
+                                              void syncWorktreeBranch(
+                                                project.id,
+                                                worktree,
+                                              )
                                             }
-                                          />
-                                        )}
-                                      </SidebarMenuSubButton>
-                                      <Button
-                                        aria-label={`Start new chat in ${worktree.name}`}
-                                        className={cn(
-                                          "size-7 text-[var(--icon-color-default)] opacity-100 sm:opacity-0 sm:group-focus-within/worktree:opacity-100 sm:group-hover/worktree:opacity-100",
-                                          (isSelectedWorktree ||
-                                            isCreatingWorktreeChat) &&
-                                            "sm:opacity-100",
-                                        )}
-                                        disabled={isBusy}
-                                        onClick={() =>
-                                          void createChat(project.id, worktree)
-                                        }
-                                        size="icon"
-                                        title="New chat"
-                                        type="button"
-                                        variant="ghost"
-                                      >
-                                        {isCreatingWorktreeChat ? (
-                                          <LoadingSpinner className="size-4" />
-                                        ) : (
-                                          <MessageSquarePlus className="size-4" />
-                                        )}
-                                      </Button>
-                                      {canShowActions && (
-                                        <DropdownMenu>
-                                          <DropdownMenuTrigger asChild>
-                                            <Button
-                                              aria-label={`Open actions for ${worktree.name}`}
-                                              className={cn(
-                                                "mr-1 size-7 text-[var(--icon-color-default)] opacity-100 data-[state=open]:opacity-100 sm:opacity-0 sm:group-focus-within/worktree:opacity-100 sm:group-hover/worktree:opacity-100",
-                                                isSelectedWorktree &&
-                                                  "sm:opacity-100",
-                                              )}
-                                              disabled={isBusy}
-                                              size="icon"
-                                              title="Worktree actions"
-                                              type="button"
-                                              variant="ghost"
-                                            >
-                                              <MoreHorizontal className="size-4" />
-                                            </Button>
-                                          </DropdownMenuTrigger>
-                                          <DropdownMenuContent align="end">
+                                          >
+                                            <RefreshCw className="size-4" />
+                                            <span>Sync branch</span>
+                                          </DropdownMenuItem>
+                                          {canDeleteWorktree && (
                                             <DropdownMenuItem
                                               disabled={isBusy}
                                               onSelect={() =>
-                                                void syncWorktreeBranch(
+                                                void openDeleteWorktree(
                                                   project.id,
                                                   worktree,
                                                 )
                                               }
+                                              variant="destructive"
                                             >
-                                              <RefreshCw className="size-4" />
-                                              <span>Sync branch</span>
+                                              <Trash2 className="size-4" />
+                                              <span>Delete worktree</span>
                                             </DropdownMenuItem>
-                                            {canDeleteWorktree && (
-                                              <DropdownMenuItem
-                                                disabled={isBusy}
-                                                onSelect={() =>
-                                                  void openDeleteWorktree(
-                                                    project.id,
-                                                    worktree,
-                                                  )
-                                                }
-                                                variant="destructive"
-                                              >
-                                                <Trash2 className="size-4" />
-                                                <span>Delete worktree</span>
-                                              </DropdownMenuItem>
-                                            )}
-                                          </DropdownMenuContent>
-                                        </DropdownMenu>
-                                      )}
-                                    </div>
-                                    {isWorktreeExpanded && (
-                                      <SidebarChatList
-                                        chats={worktreeChats}
-                                        isLoading={isChatListLoading}
-                                        selectedChatId={selectedChatId}
-                                        onSelectChat={(chatId) =>
-                                          selectChat(
-                                            project.id,
-                                            worktree,
-                                            chatId,
-                                          )
-                                        }
-                                        onSetChatArchived={(chat, archived) =>
-                                          void setChatArchived(chat, archived)
-                                        }
-                                      />
+                                          )}
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
                                     )}
-                                  </SidebarMenuSubItem>
-                                );
-                              })
-                            )}
-                          </SidebarMenuSub>
-                        )}
-                      </SidebarMenuItem>
-                    );
-                  })
-                )}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-
-        <SidebarRail />
-      </Sidebar>
-
-      <Dialog
-        open={isAddProjectOpen}
-        onOpenChange={(open) => {
-          if (open) {
-            openAddProjectDialog();
-          } else {
-            closeAddProjectDialog();
-          }
-        }}
-      >
-        <DialogContent aria-labelledby="add-project-title">
-          <DialogHeader>
-            <DialogTitle id="add-project-title">Add project</DialogTitle>
-            <DialogDescription>
-              Add a local Git project to the Phantom sidebar.
-            </DialogDescription>
-          </DialogHeader>
-          <form className="grid gap-4" onSubmit={addProject}>
-            <div className="grid gap-2">
-              <Label htmlFor="project-path">Project path</Label>
-              <Input
-                id="project-path"
-                placeholder="/Users/me/project"
-                value={projectPath}
-                onChange={(event) => setProjectPath(event.target.value)}
-              />
-            </div>
-            {addProjectError && (
-              <InlineNotice
-                message={addProjectError}
-                onDismiss={() => setAddProjectError(null)}
-              />
-            )}
-            <DialogFooter>
-              <Button
-                onClick={closeAddProjectDialog}
-                type="button"
-                variant="outline"
-              >
-                Cancel
-              </Button>
-              <Button disabled={isBusy || !projectPath.trim()} type="submit">
-                {isBusy && <LoadingSpinner />}
-                Add project
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={Boolean(deleteProjectTarget)}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeDeleteProjectDialog();
-          }
-        }}
-      >
-        <DialogContent aria-labelledby="delete-project-title">
-          <DialogHeader>
-            <DialogTitle id="delete-project-title">Delete project</DialogTitle>
-            <DialogDescription>
-              Remove this project from the Phantom sidebar and delete its
-              Phantom chat history and messages. Local repository files and
-              worktrees are not deleted.
-            </DialogDescription>
-          </DialogHeader>
-          <form className="grid gap-4" onSubmit={deleteSelectedProject}>
-            <div className="grid gap-2 rounded-[var(--radius-sm)] bg-[var(--surface-code)] px-3 py-2">
-              <p className="truncate text-[length:var(--font-size-sm)] font-medium">
-                {pendingDeleteProject?.name ?? "Unknown project"}
-              </p>
-              {pendingDeleteProject && (
-                <p className="truncate font-mono text-[length:var(--font-size-xs)] text-muted-foreground">
-                  {pendingDeleteProject.rootPath}
-                </p>
+                                  </div>
+                                  {isWorktreeExpanded && (
+                                    <SidebarChatList
+                                      chats={worktreeChats}
+                                      isLoading={isChatListLoading}
+                                      selectedChatId={selectedChatId}
+                                      onSelectChat={(chatId) =>
+                                        selectChat(project.id, worktree, chatId)
+                                      }
+                                      onSetChatArchived={(chat, archived) =>
+                                        void setChatArchived(chat, archived)
+                                      }
+                                    />
+                                  )}
+                                </SidebarMenuSubItem>
+                              );
+                            })
+                          )}
+                        </SidebarMenuSub>
+                      )}
+                    </SidebarMenuItem>
+                  );
+                })
               )}
-            </div>
-            <p className="text-[length:var(--font-size-sm)] text-muted-foreground">
-              Projects with running, approval-blocked, or queued chats cannot be
-              deleted.
-            </p>
-            {pendingDeleteProjectBlockingChat && (
-              <div className="rounded-[var(--radius-sm)] border border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] px-3 py-2 text-[length:var(--font-size-sm)] text-[var(--semantic-warning-fg)]">
-                Stop running, approval-blocked, or queued chats before deleting
-                this project.
-              </div>
-            )}
-            {deleteProjectError && (
-              <InlineNotice
-                message={deleteProjectError}
-                onDismiss={() => setDeleteProjectError(null)}
-              />
-            )}
-            <DialogFooter>
-              <Button
-                onClick={closeDeleteProjectDialog}
-                type="button"
-                variant="outline"
-              >
-                Cancel
-              </Button>
-              <Button
-                disabled={
-                  isBusy ||
-                  !pendingDeleteProject ||
-                  Boolean(pendingDeleteProjectBlockingChat)
-                }
-                type="submit"
-                variant="destructive"
-              >
-                {isBusy && <LoadingSpinner />}
-                Delete project
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+    </Sidebar>
+  );
 
-      <Dialog
-        open={Boolean(deleteWorktreeTarget)}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeDeleteWorktreeDialog();
-          }
-        }}
-      >
-        <DialogContent aria-labelledby="delete-worktree-title">
-          <DialogHeader>
-            <DialogTitle id="delete-worktree-title">
-              Delete worktree
-            </DialogTitle>
-            <DialogDescription>
-              {isDeleteWorktreeForceRequired
-                ? "This worktree has uncommitted changes. Force deletion is required to remove it from "
-                : "This will remove the worktree and its chat history from "}
-              {pendingDeleteWorktreeProject?.name ?? "the project"}.
-            </DialogDescription>
-          </DialogHeader>
-          <form className="grid gap-4" onSubmit={deleteSelectedWorktree}>
-            <div className="grid gap-2 rounded-[var(--radius-sm)] bg-[var(--surface-code)] px-3 py-2">
-              <p className="truncate text-[length:var(--font-size-sm)] font-medium">
-                {pendingDeleteWorktree?.name ?? "Unknown worktree"}
-              </p>
-              {pendingDeleteWorktree && (
-                <p className="truncate font-mono text-[length:var(--font-size-xs)] text-muted-foreground">
-                  {pendingDeleteWorktree.path}
-                </p>
-              )}
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="delete-worktree-branch-mode">
-                Branch handling
-              </Label>
-              <select
-                className="h-9 rounded-[var(--radius-sm)] border border-input bg-[var(--surface-input)] px-3 text-[length:var(--font-size-sm)] shadow-[var(--shadow-xs)] outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:shadow-[var(--state-focus-ring)] disabled:cursor-not-allowed disabled:opacity-[var(--opacity-disabled)]"
-                id="delete-worktree-branch-mode"
-                onChange={(event) =>
-                  setDeleteWorktreeBranchMode(
-                    event.target.value as DeleteWorktreeBranchMode,
-                  )
-                }
-                value={deleteWorktreeBranchMode}
-              >
-                <option value="default">Use project preference</option>
-                <option value="keep">Keep branch</option>
-                <option value="delete">Delete branch</option>
-              </select>
-            </div>
-            {isDeleteWorktreeForceRequired && (
-              <label className="flex items-start gap-2 text-[length:var(--font-size-sm)] text-[var(--semantic-danger-fg)]">
-                <input
-                  checked={deleteWorktreeForce}
-                  className="mt-0.5 size-4 accent-[var(--semantic-danger-fg)]"
-                  onChange={(event) =>
-                    setDeleteWorktreeForce(event.target.checked)
-                  }
-                  type="checkbox"
-                />
-                <span>Force delete uncommitted changes</span>
-              </label>
-            )}
-            {deleteWorktreeError && (
-              <InlineNotice
-                message={deleteWorktreeError}
-                onDismiss={() => setDeleteWorktreeError(null)}
-              />
-            )}
-            <DialogFooter>
-              <Button
-                onClick={closeDeleteWorktreeDialog}
-                type="button"
-                variant="outline"
-              >
-                Cancel
-              </Button>
-              <Button
-                disabled={
-                  isBusy ||
-                  !pendingDeleteWorktree ||
-                  (isDeleteWorktreeForceRequired && !deleteWorktreeForce)
-                }
-                type="submit"
-                variant="destructive"
-              >
-                {isBusy && <LoadingSpinner />}
-                Delete
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+  return (
+    <SidebarProvider className="app-shell">
+      <div className="contents md:hidden">{renderSidebar()}</div>
 
-      <ToastViewport toasts={toasts} onDismiss={dismissToast} />
-
-      <SidebarInset>
-        <header className="flex min-h-[var(--layout-topbar-height)] items-center gap-3 border-b border-border bg-[var(--surface-panel)] px-4">
-          <TopbarSidebarTrigger />
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <p className="truncate text-[length:var(--font-size-xl)] font-semibold leading-tight">
-                {selectedChat
-                  ? (selectedWorktree?.name ?? selectedChat.worktreeName)
-                  : selectedProject
-                    ? "New chat"
-                    : "Workspace"}
-              </p>
-              {selectedChat && <StatusBadge status={selectedChat.status} />}
-            </div>
-            <p className="flex min-w-0 text-[length:var(--font-size-xs)] text-muted-foreground">
-              <span className="shrink-0">
-                {selectedProject?.name ?? "No project selected"}
-                {selectedWorktree ? " / " : ""}
-              </span>
-              {selectedWorktree && (
-                <LeadingEllipsisText text={selectedWorktree.path} />
-              )}
-            </p>
-          </div>
-          {selectedChat && (
-            <Button
-              aria-label={
-                selectedChat.status === "archived"
-                  ? "Restore chat"
-                  : "Archive chat"
+      <ResizablePanelGroup className="min-h-0 flex-1" orientation="horizontal">
+        <ResizablePanel
+          className="flex min-h-0"
+          defaultSize="320px"
+          id="workspace-sidebar-panel"
+          maxSize="520px"
+          minSize="240px"
+          style={{ overflow: "hidden" }}
+        >
+          {renderSidebar("md:w-full")}
+        </ResizablePanel>
+        <ResizableHandle
+          aria-label="Resize sidebar"
+          id="workspace-sidebar-resize-handle"
+        />
+        <ResizablePanel
+          className="flex min-h-0 min-w-0"
+          minSize="320px"
+          style={{ overflow: "hidden" }}
+        >
+          <Dialog
+            open={isAddProjectOpen}
+            onOpenChange={(open) => {
+              if (open) {
+                openAddProjectDialog();
+              } else {
+                closeAddProjectDialog();
               }
-              className="size-8 text-[var(--icon-color-default)]"
-              disabled={
-                isBusy ||
-                archiveChatRequest.isPending ||
-                (selectedChat.status !== "archived" &&
-                  !canArchiveChat(selectedChat))
-              }
-              onClick={() =>
-                void setChatArchived(
-                  selectedChat,
-                  selectedChat.status !== "archived",
-                )
-              }
-              size="icon"
-              title={
-                selectedChat.status === "archived"
-                  ? "Restore chat"
-                  : "Archive chat"
-              }
-              type="button"
-              variant="ghost"
-            >
-              {archiveChatRequest.isPending ? (
-                <LoadingSpinner />
-              ) : selectedChat.status === "archived" ? (
-                <ArchiveRestore />
-              ) : (
-                <Archive />
-              )}
-            </Button>
-          )}
-          {selectedWorktree && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  aria-label={`Open worktree actions for ${selectedWorktree.name}`}
-                  className="size-8 shrink-0 text-[var(--icon-color-default)]"
-                  disabled={isBusy}
-                  size="icon"
-                  title="Worktree actions"
-                  type="button"
-                  variant="ghost"
-                >
-                  <MoreHorizontal className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  disabled={isBusy}
-                  onSelect={createSelectedWorktreeChat}
-                >
-                  <MessageSquarePlus className="size-4" />
-                  <span>New chat</span>
-                </DropdownMenuItem>
-                {selectedWorktree.isManagedByPhantom && (
-                  <DropdownMenuItem
-                    disabled={isBusy}
-                    onSelect={openDeleteSelectedWorktree}
-                    variant="destructive"
-                  >
-                    <Trash2 className="size-4" />
-                    <span>Delete worktree</span>
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </header>
-
-        {visiblePendingApproval && (
-          <div className="border-b border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] px-4 py-3 text-[var(--semantic-warning-fg)]">
-            <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <p className="flex items-center gap-2 text-[length:var(--font-size-md)] font-semibold">
-                  <Clock3 className="size-4" />
-                  Approval requested
-                </p>
-                <p className="mt-1 truncate font-mono text-[length:var(--font-size-xs)]">
-                  {visiblePendingApproval.method}
-                </p>
-                {approvalError && (
+            }}
+          >
+            <DialogContent aria-labelledby="add-project-title">
+              <DialogHeader>
+                <DialogTitle id="add-project-title">Add project</DialogTitle>
+                <DialogDescription>
+                  Add a local Git project to the Phantom sidebar.
+                </DialogDescription>
+              </DialogHeader>
+              <form className="grid gap-4" onSubmit={addProject}>
+                <div className="grid gap-2">
+                  <Label htmlFor="project-path">Project path</Label>
+                  <Input
+                    id="project-path"
+                    placeholder="/Users/me/project"
+                    value={projectPath}
+                    onChange={(event) => setProjectPath(event.target.value)}
+                  />
+                </div>
+                {addProjectError && (
                   <InlineNotice
-                    className="mt-2"
-                    message={approvalError}
-                    onDismiss={() => setApprovalError(null)}
+                    message={addProjectError}
+                    onDismiss={() => setAddProjectError(null)}
                   />
                 )}
-              </div>
-              <div className="flex shrink-0 flex-wrap gap-2">
-                <Button
-                  onClick={() => void answerApproval("accept")}
-                  size="sm"
-                  type="button"
-                >
-                  Accept
-                </Button>
-                <Button
-                  onClick={() => void answerApproval("acceptForSession")}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  Accept for session
-                </Button>
-                <Button
-                  onClick={() => void answerApproval("decline")}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  Decline
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <section
-          aria-busy={
-            isMessagesLoading ||
-            isSendingMessage ||
-            hasActiveTurn ||
-            Boolean(creatingProjectId)
-          }
-          className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
-          ref={chatTimelineRef}
-          onScroll={scheduleSelectedChatScrollPositionSave}
-        >
-          {timelineError && (
-            <div className="mx-auto mb-3 max-w-[var(--layout-max-content-width)]">
-              <InlineNotice
-                message={timelineError}
-                onDismiss={() => setTimelineError(null)}
-              />
-            </div>
-          )}
-          {showTimelineSkeleton ? (
-            <TimelineSkeleton />
-          ) : visibleMessages.length === 0 ? (
-            <EmptyTimeline
-              githubTargets={selectedProjectGitHubTargets}
-              hasChat={Boolean(selectedChat)}
-              hasWorktree={Boolean(selectedWorktree)}
-              isGitHubTargetsLoading={isSelectedProjectGitHubTargetsLoading}
-              selectedProject={selectedProject}
-              selectedGitHubTargetNumber={selectedGitHubTargetNumber}
-              onOpenProjectDialog={openAddProjectDialog}
-              onSelectGitHubTarget={setSelectedGitHubTargetNumber}
-            />
-          ) : (
-            <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">
-              {visibleMessages.map((message) => (
-                <MessageCard
-                  isPendingActionBusy={deletePendingMessageRequest.isPending}
-                  key={message.id}
-                  message={message}
-                  onDeletePendingMessage={(pendingMessage) =>
-                    void deletePendingMessage(pendingMessage)
-                  }
-                  onEditPendingMessage={(pendingMessage) =>
-                    void editPendingMessage(pendingMessage)
-                  }
-                />
-              ))}
-            </div>
-          )}
-        </section>
-
-        <form
-          className="chat-composer border-t border-border bg-[var(--surface-floating)] backdrop-blur"
-          onSubmit={sendMessage}
-        >
-          <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">
-            {composerError && (
-              <InlineNotice
-                message={composerError}
-                onDismiss={() => setComposerError(null)}
-              />
-            )}
-            {fileSearchError && (
-              <InlineNotice
-                message={fileSearchError}
-                onDismiss={() => setFileSearchError(null)}
-              />
-            )}
-            {modelError && (
-              <InlineNotice
-                message={modelError}
-                onDismiss={() => setModelError(null)}
-              />
-            )}
-            {(selectedFiles.length > 0 || selectedSkills.length > 0) && (
-              <div className="flex min-h-8 flex-wrap items-center gap-2 px-1">
-                {selectedFiles.map((file) => (
-                  <ContextChip
-                    icon={<FileText className="size-3.5" />}
-                    key={file.path}
-                    label={file.relativePath}
-                    onRemove={() =>
-                      setSelectedFiles((current) =>
-                        current.filter(
-                          (selectedFile) => selectedFile.path !== file.path,
-                        ),
-                      )
-                    }
-                  />
-                ))}
-                {selectedSkills.map((skill) => (
-                  <ContextChip
-                    icon={<Sparkles className="size-3.5" />}
-                    key={skill.path}
-                    label={skill.displayName}
-                    onRemove={() =>
-                      setSelectedSkillPaths((current) => {
-                        const next = new Set(current);
-                        next.delete(skill.path);
-                        return next;
-                      })
-                    }
-                  />
-                ))}
-              </div>
-            )}
-            <div className="flex items-end gap-2">
-              <div className="min-w-0 flex-1">
-                <Label className="sr-only" htmlFor="composer">
-                  Message
-                </Label>
-                <Textarea
-                  className="min-h-12 border-0 bg-transparent px-2 py-2 shadow-none focus-visible:shadow-none"
-                  disabled={!selectedProject || isComposerBlocked}
-                  enterKeyHint="enter"
-                  id="composer"
-                  placeholder={
-                    isSelectedChatArchived
-                      ? "Restore this chat to continue"
-                      : hasSelectedChat
-                        ? "Ask Codex to work in this worktree"
-                        : selectedProject
-                          ? "Ask Codex to create a worktree and start"
-                          : "Select a project to start"
-                  }
-                  rows={2}
-                  ref={composerTextareaRef}
-                  value={composerText}
-                  onChange={(event) => {
-                    setComposerText(event.target.value);
-                    if (composerError) {
-                      setComposerError(null);
-                    }
-                  }}
-                  onKeyDown={handleComposerKeyDown}
-                />
-              </div>
-              <div className="flex shrink-0 items-end gap-1.5">
-                {hasSelectedChat && primaryComposerMode !== "queue" && (
+                <DialogFooter>
                   <Button
-                    aria-label={
-                      pendingComposerMode === "queue"
-                        ? "Queueing message"
-                        : "Queue message"
-                    }
-                    className="size-10"
-                    disabled={!canQueueComposerMessage}
-                    onClick={() => void submitComposer("queue")}
-                    size="icon"
-                    title="Queue message"
+                    onClick={closeAddProjectDialog}
                     type="button"
                     variant="outline"
                   >
-                    {pendingComposerMode === "queue" ? (
-                      <LoadingSpinner />
-                    ) : (
-                      <Clock3 />
-                    )}
+                    Cancel
                   </Button>
-                )}
-                <Button
-                  aria-label={primaryComposerButtonLabel}
-                  className="size-10"
-                  disabled={!canSubmitPrimaryComposerAction}
-                  onClick={
-                    hasActiveTurn
-                      ? () => void submitComposer(primaryComposerMode)
-                      : undefined
-                  }
-                  size="icon"
-                  title={primaryComposerActionLabel}
-                  type={hasActiveTurn ? "button" : "submit"}
-                >
-                  {pendingComposerMode === primaryComposerMode ? (
-                    <LoadingSpinner />
-                  ) : primaryComposerMode === "queue" ? (
-                    <Clock3 />
-                  ) : (
-                    <Send />
-                  )}
-                </Button>
-                {hasActiveTurn && (
                   <Button
-                    aria-label={isInterrupting ? "Stopping turn" : "Stop turn"}
-                    className="size-10"
-                    disabled={!canInterruptActiveTurn}
-                    onClick={interruptChat}
-                    size="icon"
-                    title="Stop turn"
+                    disabled={isBusy || !projectPath.trim()}
+                    type="submit"
+                  >
+                    {isBusy && <LoadingSpinner />}
+                    Add project
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog
+            open={Boolean(deleteProjectTarget)}
+            onOpenChange={(open) => {
+              if (!open) {
+                closeDeleteProjectDialog();
+              }
+            }}
+          >
+            <DialogContent aria-labelledby="delete-project-title">
+              <DialogHeader>
+                <DialogTitle id="delete-project-title">
+                  Delete project
+                </DialogTitle>
+                <DialogDescription>
+                  Remove this project from the Phantom sidebar and delete its
+                  Phantom chat history and messages. Local repository files and
+                  worktrees are not deleted.
+                </DialogDescription>
+              </DialogHeader>
+              <form className="grid gap-4" onSubmit={deleteSelectedProject}>
+                <div className="grid gap-2 rounded-[var(--radius-sm)] bg-[var(--surface-code)] px-3 py-2">
+                  <p className="truncate text-[length:var(--font-size-sm)] font-medium">
+                    {pendingDeleteProject?.name ?? "Unknown project"}
+                  </p>
+                  {pendingDeleteProject && (
+                    <p className="truncate font-mono text-[length:var(--font-size-xs)] text-muted-foreground">
+                      {pendingDeleteProject.rootPath}
+                    </p>
+                  )}
+                </div>
+                <p className="text-[length:var(--font-size-sm)] text-muted-foreground">
+                  Projects with running, approval-blocked, or queued chats
+                  cannot be deleted.
+                </p>
+                {pendingDeleteProjectBlockingChat && (
+                  <div className="rounded-[var(--radius-sm)] border border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] px-3 py-2 text-[length:var(--font-size-sm)] text-[var(--semantic-warning-fg)]">
+                    Stop running, approval-blocked, or queued chats before
+                    deleting this project.
+                  </div>
+                )}
+                {deleteProjectError && (
+                  <InlineNotice
+                    message={deleteProjectError}
+                    onDismiss={() => setDeleteProjectError(null)}
+                  />
+                )}
+                <DialogFooter>
+                  <Button
+                    onClick={closeDeleteProjectDialog}
                     type="button"
+                    variant="outline"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    disabled={
+                      isBusy ||
+                      !pendingDeleteProject ||
+                      Boolean(pendingDeleteProjectBlockingChat)
+                    }
+                    type="submit"
                     variant="destructive"
                   >
-                    {isInterrupting ? <LoadingSpinner /> : <Square />}
+                    {isBusy && <LoadingSpinner />}
+                    Delete project
                   </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog
+            open={Boolean(deleteWorktreeTarget)}
+            onOpenChange={(open) => {
+              if (!open) {
+                closeDeleteWorktreeDialog();
+              }
+            }}
+          >
+            <DialogContent aria-labelledby="delete-worktree-title">
+              <DialogHeader>
+                <DialogTitle id="delete-worktree-title">
+                  Delete worktree
+                </DialogTitle>
+                <DialogDescription>
+                  {isDeleteWorktreeForceRequired
+                    ? "This worktree has uncommitted changes. Force deletion is required to remove it from "
+                    : "This will remove the worktree and its chat history from "}
+                  {pendingDeleteWorktreeProject?.name ?? "the project"}.
+                </DialogDescription>
+              </DialogHeader>
+              <form className="grid gap-4" onSubmit={deleteSelectedWorktree}>
+                <div className="grid gap-2 rounded-[var(--radius-sm)] bg-[var(--surface-code)] px-3 py-2">
+                  <p className="truncate text-[length:var(--font-size-sm)] font-medium">
+                    {pendingDeleteWorktree?.name ?? "Unknown worktree"}
+                  </p>
+                  {pendingDeleteWorktree && (
+                    <p className="truncate font-mono text-[length:var(--font-size-xs)] text-muted-foreground">
+                      {pendingDeleteWorktree.path}
+                    </p>
+                  )}
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="delete-worktree-branch-mode">
+                    Branch handling
+                  </Label>
+                  <select
+                    className="h-9 rounded-[var(--radius-sm)] border border-input bg-[var(--surface-input)] px-3 text-[length:var(--font-size-sm)] shadow-[var(--shadow-xs)] outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:shadow-[var(--state-focus-ring)] disabled:cursor-not-allowed disabled:opacity-[var(--opacity-disabled)]"
+                    id="delete-worktree-branch-mode"
+                    onChange={(event) =>
+                      setDeleteWorktreeBranchMode(
+                        event.target.value as DeleteWorktreeBranchMode,
+                      )
+                    }
+                    value={deleteWorktreeBranchMode}
+                  >
+                    <option value="default">Use project preference</option>
+                    <option value="keep">Keep branch</option>
+                    <option value="delete">Delete branch</option>
+                  </select>
+                </div>
+                {isDeleteWorktreeForceRequired && (
+                  <label className="flex items-start gap-2 text-[length:var(--font-size-sm)] text-[var(--semantic-danger-fg)]">
+                    <input
+                      checked={deleteWorktreeForce}
+                      className="mt-0.5 size-4 accent-[var(--semantic-danger-fg)]"
+                      onChange={(event) =>
+                        setDeleteWorktreeForce(event.target.checked)
+                      }
+                      type="checkbox"
+                    />
+                    <span>Force delete uncommitted changes</span>
+                  </label>
                 )}
+                {deleteWorktreeError && (
+                  <InlineNotice
+                    message={deleteWorktreeError}
+                    onDismiss={() => setDeleteWorktreeError(null)}
+                  />
+                )}
+                <DialogFooter>
+                  <Button
+                    onClick={closeDeleteWorktreeDialog}
+                    type="button"
+                    variant="outline"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    disabled={
+                      isBusy ||
+                      !pendingDeleteWorktree ||
+                      (isDeleteWorktreeForceRequired && !deleteWorktreeForce)
+                    }
+                    type="submit"
+                    variant="destructive"
+                  >
+                    {isBusy && <LoadingSpinner />}
+                    Delete
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+          <ToastViewport toasts={toasts} onDismiss={dismissToast} />
+
+          <SidebarInset>
+            <header className="flex min-h-[var(--layout-topbar-height)] items-center gap-3 border-b border-border bg-[var(--surface-panel)] px-4">
+              <TopbarSidebarTrigger />
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-center gap-2">
+                  <p className="truncate text-[length:var(--font-size-xl)] font-semibold leading-tight">
+                    {selectedChat
+                      ? (selectedWorktree?.name ?? selectedChat.worktreeName)
+                      : selectedProject
+                        ? "New chat"
+                        : "Workspace"}
+                  </p>
+                  {selectedChat && <StatusBadge status={selectedChat.status} />}
+                </div>
+                <p className="flex min-w-0 text-[length:var(--font-size-xs)] text-muted-foreground">
+                  <span className="shrink-0">
+                    {selectedProject?.name ?? "No project selected"}
+                    {selectedWorktree ? " / " : ""}
+                  </span>
+                  {selectedWorktree && (
+                    <LeadingEllipsisText text={selectedWorktree.path} />
+                  )}
+                </p>
               </div>
-            </div>
-            <div className="flex min-h-8 flex-wrap items-center gap-2 border-t border-[var(--border-divider)] px-1 pt-2">
-              <Combobox
-                aria-label="Select model"
-                className="w-36 max-w-full sm:w-40"
-                disabled={
-                  isModelsLoading || models.length === 0 || isComposerBlocked
-                }
-                emptyMessage={isModelsLoading ? "Loading models" : "No models"}
-                icon={<Bot className="size-3.5" />}
-                isLoading={isModelsLoading}
-                options={modelOptions}
-                placeholder={isModelsLoading ? "Loading" : "Model"}
-                searchPlaceholder="Search models"
-                side="top"
-                triggerClassName="w-full justify-between"
-                value={selectedModel?.id ?? null}
-                onValueChange={(value) =>
-                  setSearchParamValue(searchParamKeys.model, value)
-                }
-              />
-              <Combobox
-                aria-label="Select reasoning effort"
-                className="w-28 max-w-full"
-                disabled={!selectedModel || isComposerBlocked}
-                icon={<Brain className="size-3.5" />}
-                options={effortOptions}
-                placeholder="Effort"
-                searchPlaceholder="Search effort"
-                side="top"
-                triggerClassName="w-full justify-between"
-                value={selectedEffort ?? "auto"}
-                onValueChange={(value) =>
-                  setSearchParamValue(
-                    searchParamKeys.effort,
-                    value === "auto" ? null : value,
-                  )
-                }
-              />
-              <Button
-                aria-label={
-                  isFastModeEnabled ? "Disable fast mode" : "Enable fast mode"
-                }
-                aria-pressed={isFastModeEnabled}
-                className="h-9 px-3"
-                disabled={
-                  !selectedModel ||
-                  !selectedModelSupportsFastMode ||
-                  isComposerBlocked
-                }
-                onClick={() =>
-                  setSearchParamValue(
-                    searchParamKeys.serviceTier,
-                    isFastModeEnabled ? null : "fast",
-                  )
-                }
-                title={
-                  selectedModelSupportsFastMode
-                    ? isFastModeEnabled
-                      ? "Disable fast mode"
-                      : "Enable fast mode"
-                    : "Fast mode unavailable for selected model"
-                }
-                type="button"
-                variant={isFastModeEnabled ? "secondary" : "outline"}
-              >
-                <Zap className="size-3.5" />
-                Fast
-              </Button>
-              <Combobox
-                aria-label="Attach file"
-                className="w-32 max-w-full"
-                disabled={areComposerOptionsDisabled}
-                emptyMessage={
-                  isFileSearchLoading
-                    ? "Searching files"
-                    : fileSearchQuery.trim()
-                      ? "No files"
-                      : "Type to search"
-                }
-                icon={<FileText className="size-3.5" />}
-                isLoading={isFileSearchLoading}
-                options={fileOptions}
-                placeholder="Files"
-                query={fileSearchQuery}
-                searchPlaceholder="Search files"
-                shouldFilter={false}
-                side="top"
-                triggerClassName="w-full justify-between"
-                value={null}
-                onQueryChange={setFileSearchQuery}
-                onValueChange={selectFile}
-              />
-              <Combobox
-                aria-label="Select skill"
-                align="end"
-                className="w-32 max-w-full"
-                disabled={areComposerOptionsDisabled || isChatContextLoading}
-                emptyMessage={
-                  isChatContextLoading ? "Loading skills" : "No skills"
-                }
-                icon={<Sparkles className="size-3.5" />}
-                isLoading={isChatContextLoading}
-                options={skillOptions}
-                placeholder={isChatContextLoading ? "Loading" : "Skills"}
-                searchPlaceholder="Search skills"
-                side="top"
-                triggerClassName="w-full justify-between"
-                value={null}
-                onValueChange={selectSkill}
-              />
-            </div>
-          </div>
-        </form>
-      </SidebarInset>
+              {selectedChat && (
+                <Button
+                  aria-label={
+                    selectedChat.status === "archived"
+                      ? "Restore chat"
+                      : "Archive chat"
+                  }
+                  className="size-8 text-[var(--icon-color-default)]"
+                  disabled={
+                    isBusy ||
+                    archiveChatRequest.isPending ||
+                    (selectedChat.status !== "archived" &&
+                      !canArchiveChat(selectedChat))
+                  }
+                  onClick={() =>
+                    void setChatArchived(
+                      selectedChat,
+                      selectedChat.status !== "archived",
+                    )
+                  }
+                  size="icon"
+                  title={
+                    selectedChat.status === "archived"
+                      ? "Restore chat"
+                      : "Archive chat"
+                  }
+                  type="button"
+                  variant="ghost"
+                >
+                  {archiveChatRequest.isPending ? (
+                    <LoadingSpinner />
+                  ) : selectedChat.status === "archived" ? (
+                    <ArchiveRestore />
+                  ) : (
+                    <Archive />
+                  )}
+                </Button>
+              )}
+              {selectedWorktree && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      aria-label={`Open worktree actions for ${selectedWorktree.name}`}
+                      className="size-8 shrink-0 text-[var(--icon-color-default)]"
+                      disabled={isBusy}
+                      size="icon"
+                      title="Worktree actions"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <MoreHorizontal className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      disabled={isBusy}
+                      onSelect={createSelectedWorktreeChat}
+                    >
+                      <MessageSquarePlus className="size-4" />
+                      <span>New chat</span>
+                    </DropdownMenuItem>
+                    {selectedWorktree.isManagedByPhantom && (
+                      <DropdownMenuItem
+                        disabled={isBusy}
+                        onSelect={openDeleteSelectedWorktree}
+                        variant="destructive"
+                      >
+                        <Trash2 className="size-4" />
+                        <span>Delete worktree</span>
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </header>
+
+            {visiblePendingApproval && (
+              <div className="border-b border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] px-4 py-3 text-[var(--semantic-warning-fg)]">
+                <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-2 text-[length:var(--font-size-md)] font-semibold">
+                      <Clock3 className="size-4" />
+                      Approval requested
+                    </p>
+                    <p className="mt-1 truncate font-mono text-[length:var(--font-size-xs)]">
+                      {visiblePendingApproval.method}
+                    </p>
+                    {approvalError && (
+                      <InlineNotice
+                        className="mt-2"
+                        message={approvalError}
+                        onDismiss={() => setApprovalError(null)}
+                      />
+                    )}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <Button
+                      onClick={() => void answerApproval("accept")}
+                      size="sm"
+                      type="button"
+                    >
+                      Accept
+                    </Button>
+                    <Button
+                      onClick={() => void answerApproval("acceptForSession")}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      Accept for session
+                    </Button>
+                    <Button
+                      onClick={() => void answerApproval("decline")}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      Decline
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <section
+              aria-busy={
+                isMessagesLoading ||
+                isSendingMessage ||
+                hasActiveTurn ||
+                Boolean(creatingProjectId)
+              }
+              className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
+              ref={chatTimelineRef}
+              onScroll={scheduleSelectedChatScrollPositionSave}
+            >
+              {timelineError && (
+                <div className="mx-auto mb-3 max-w-[var(--layout-max-content-width)]">
+                  <InlineNotice
+                    message={timelineError}
+                    onDismiss={() => setTimelineError(null)}
+                  />
+                </div>
+              )}
+              {showTimelineSkeleton ? (
+                <TimelineSkeleton />
+              ) : visibleMessages.length === 0 ? (
+                <EmptyTimeline
+                  githubTargets={selectedProjectGitHubTargets}
+                  hasChat={Boolean(selectedChat)}
+                  hasWorktree={Boolean(selectedWorktree)}
+                  isGitHubTargetsLoading={isSelectedProjectGitHubTargetsLoading}
+                  selectedProject={selectedProject}
+                  selectedGitHubTargetNumber={selectedGitHubTargetNumber}
+                  onOpenProjectDialog={openAddProjectDialog}
+                  onSelectGitHubTarget={setSelectedGitHubTargetNumber}
+                />
+              ) : (
+                <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">
+                  {visibleMessages.map((message) => (
+                    <MessageCard
+                      isPendingActionBusy={
+                        deletePendingMessageRequest.isPending
+                      }
+                      key={message.id}
+                      message={message}
+                      onDeletePendingMessage={(pendingMessage) =>
+                        void deletePendingMessage(pendingMessage)
+                      }
+                      onEditPendingMessage={(pendingMessage) =>
+                        void editPendingMessage(pendingMessage)
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <form
+              className="chat-composer border-t border-border bg-[var(--surface-floating)] backdrop-blur"
+              onSubmit={sendMessage}
+            >
+              <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">
+                {composerError && (
+                  <InlineNotice
+                    message={composerError}
+                    onDismiss={() => setComposerError(null)}
+                  />
+                )}
+                {fileSearchError && (
+                  <InlineNotice
+                    message={fileSearchError}
+                    onDismiss={() => setFileSearchError(null)}
+                  />
+                )}
+                {modelError && (
+                  <InlineNotice
+                    message={modelError}
+                    onDismiss={() => setModelError(null)}
+                  />
+                )}
+                {(selectedFiles.length > 0 || selectedSkills.length > 0) && (
+                  <div className="flex min-h-8 flex-wrap items-center gap-2 px-1">
+                    {selectedFiles.map((file) => (
+                      <ContextChip
+                        icon={<FileText className="size-3.5" />}
+                        key={file.path}
+                        label={file.relativePath}
+                        onRemove={() =>
+                          setSelectedFiles((current) =>
+                            current.filter(
+                              (selectedFile) => selectedFile.path !== file.path,
+                            ),
+                          )
+                        }
+                      />
+                    ))}
+                    {selectedSkills.map((skill) => (
+                      <ContextChip
+                        icon={<Sparkles className="size-3.5" />}
+                        key={skill.path}
+                        label={skill.displayName}
+                        onRemove={() =>
+                          setSelectedSkillPaths((current) => {
+                            const next = new Set(current);
+                            next.delete(skill.path);
+                            return next;
+                          })
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-end gap-2">
+                  <div className="min-w-0 flex-1">
+                    <Label className="sr-only" htmlFor="composer">
+                      Message
+                    </Label>
+                    <Textarea
+                      className="min-h-12 border-0 bg-transparent px-2 py-2 shadow-none focus-visible:shadow-none"
+                      disabled={!selectedProject || isComposerBlocked}
+                      enterKeyHint="enter"
+                      id="composer"
+                      placeholder={
+                        isSelectedChatArchived
+                          ? "Restore this chat to continue"
+                          : hasSelectedChat
+                            ? "Ask Codex to work in this worktree"
+                            : selectedProject
+                              ? "Ask Codex to create a worktree and start"
+                              : "Select a project to start"
+                      }
+                      rows={2}
+                      ref={composerTextareaRef}
+                      value={composerText}
+                      onChange={(event) => {
+                        setComposerText(event.target.value);
+                        if (composerError) {
+                          setComposerError(null);
+                        }
+                      }}
+                      onKeyDown={handleComposerKeyDown}
+                    />
+                  </div>
+                  <div className="flex shrink-0 items-end gap-1.5">
+                    {hasSelectedChat && primaryComposerMode !== "queue" && (
+                      <Button
+                        aria-label={
+                          pendingComposerMode === "queue"
+                            ? "Queueing message"
+                            : "Queue message"
+                        }
+                        className="size-10"
+                        disabled={!canQueueComposerMessage}
+                        onClick={() => void submitComposer("queue")}
+                        size="icon"
+                        title="Queue message"
+                        type="button"
+                        variant="outline"
+                      >
+                        {pendingComposerMode === "queue" ? (
+                          <LoadingSpinner />
+                        ) : (
+                          <Clock3 />
+                        )}
+                      </Button>
+                    )}
+                    <Button
+                      aria-label={primaryComposerButtonLabel}
+                      className="size-10"
+                      disabled={!canSubmitPrimaryComposerAction}
+                      onClick={
+                        hasActiveTurn
+                          ? () => void submitComposer(primaryComposerMode)
+                          : undefined
+                      }
+                      size="icon"
+                      title={primaryComposerActionLabel}
+                      type={hasActiveTurn ? "button" : "submit"}
+                    >
+                      {pendingComposerMode === primaryComposerMode ? (
+                        <LoadingSpinner />
+                      ) : primaryComposerMode === "queue" ? (
+                        <Clock3 />
+                      ) : (
+                        <Send />
+                      )}
+                    </Button>
+                    {hasActiveTurn && (
+                      <Button
+                        aria-label={
+                          isInterrupting ? "Stopping turn" : "Stop turn"
+                        }
+                        className="size-10"
+                        disabled={!canInterruptActiveTurn}
+                        onClick={interruptChat}
+                        size="icon"
+                        title="Stop turn"
+                        type="button"
+                        variant="destructive"
+                      >
+                        {isInterrupting ? <LoadingSpinner /> : <Square />}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex min-h-8 flex-wrap items-center gap-2 border-t border-[var(--border-divider)] px-1 pt-2">
+                  <Combobox
+                    aria-label="Select model"
+                    className="w-36 max-w-full sm:w-40"
+                    disabled={
+                      isModelsLoading ||
+                      models.length === 0 ||
+                      isComposerBlocked
+                    }
+                    emptyMessage={
+                      isModelsLoading ? "Loading models" : "No models"
+                    }
+                    icon={<Bot className="size-3.5" />}
+                    isLoading={isModelsLoading}
+                    options={modelOptions}
+                    placeholder={isModelsLoading ? "Loading" : "Model"}
+                    searchPlaceholder="Search models"
+                    side="top"
+                    triggerClassName="w-full justify-between"
+                    value={selectedModel?.id ?? null}
+                    onValueChange={(value) =>
+                      setSearchParamValue(searchParamKeys.model, value)
+                    }
+                  />
+                  <Combobox
+                    aria-label="Select reasoning effort"
+                    className="w-28 max-w-full"
+                    disabled={!selectedModel || isComposerBlocked}
+                    icon={<Brain className="size-3.5" />}
+                    options={effortOptions}
+                    placeholder="Effort"
+                    searchPlaceholder="Search effort"
+                    side="top"
+                    triggerClassName="w-full justify-between"
+                    value={selectedEffort ?? "auto"}
+                    onValueChange={(value) =>
+                      setSearchParamValue(
+                        searchParamKeys.effort,
+                        value === "auto" ? null : value,
+                      )
+                    }
+                  />
+                  <Button
+                    aria-label={
+                      isFastModeEnabled
+                        ? "Disable fast mode"
+                        : "Enable fast mode"
+                    }
+                    aria-pressed={isFastModeEnabled}
+                    className="h-9 px-3"
+                    disabled={
+                      !selectedModel ||
+                      !selectedModelSupportsFastMode ||
+                      isComposerBlocked
+                    }
+                    onClick={() =>
+                      setSearchParamValue(
+                        searchParamKeys.serviceTier,
+                        isFastModeEnabled ? null : "fast",
+                      )
+                    }
+                    title={
+                      selectedModelSupportsFastMode
+                        ? isFastModeEnabled
+                          ? "Disable fast mode"
+                          : "Enable fast mode"
+                        : "Fast mode unavailable for selected model"
+                    }
+                    type="button"
+                    variant={isFastModeEnabled ? "secondary" : "outline"}
+                  >
+                    <Zap className="size-3.5" />
+                    Fast
+                  </Button>
+                  <Combobox
+                    aria-label="Attach file"
+                    className="w-32 max-w-full"
+                    disabled={areComposerOptionsDisabled}
+                    emptyMessage={
+                      isFileSearchLoading
+                        ? "Searching files"
+                        : fileSearchQuery.trim()
+                          ? "No files"
+                          : "Type to search"
+                    }
+                    icon={<FileText className="size-3.5" />}
+                    isLoading={isFileSearchLoading}
+                    options={fileOptions}
+                    placeholder="Files"
+                    query={fileSearchQuery}
+                    searchPlaceholder="Search files"
+                    shouldFilter={false}
+                    side="top"
+                    triggerClassName="w-full justify-between"
+                    value={null}
+                    onQueryChange={setFileSearchQuery}
+                    onValueChange={selectFile}
+                  />
+                  <Combobox
+                    aria-label="Select skill"
+                    align="end"
+                    className="w-32 max-w-full"
+                    disabled={
+                      areComposerOptionsDisabled || isChatContextLoading
+                    }
+                    emptyMessage={
+                      isChatContextLoading ? "Loading skills" : "No skills"
+                    }
+                    icon={<Sparkles className="size-3.5" />}
+                    isLoading={isChatContextLoading}
+                    options={skillOptions}
+                    placeholder={isChatContextLoading ? "Loading" : "Skills"}
+                    searchPlaceholder="Search skills"
+                    side="top"
+                    triggerClassName="w-full justify-between"
+                    value={null}
+                    onValueChange={selectSkill}
+                  />
+                </div>
+              </div>
+            </form>
+          </SidebarInset>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </SidebarProvider>
   );
 }
