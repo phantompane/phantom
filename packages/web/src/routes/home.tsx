@@ -159,7 +159,6 @@ import {
   getWarningEventText,
   isRichEventMessage,
 } from "./rich-events";
-import { mergeStreamingMessagesForDisplay } from "./chat-message-stream-order";
 import type {
   ChatAttachmentRecord,
   ChatRecord,
@@ -199,16 +198,6 @@ const chatEventNames = [
   "agent.event",
   "auth.updated",
 ];
-const streamOrderPreservingChatEventNames = new Set([
-  "agent.plan.updated",
-  "agent.diff.updated",
-  "agent.command.output",
-  "agent.file.updated",
-  "agent.reasoning.updated",
-  "agent.item.updated",
-  "agent.item.delta",
-]);
-
 const chatScrollStorageKeyPrefix = "phantom.chatScroll:v1:";
 const chatScrollBottomThreshold = 4;
 const searchParamKeys = {
@@ -1362,11 +1351,7 @@ export function HomeRoute() {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.chat(selectedChatId),
       });
-      void refreshMessages(selectedChatId, {
-        preserveStreamOrder: streamOrderPreservingChatEventNames.has(
-          phantomEvent.type,
-        ),
-      });
+      void refreshMessages(selectedChatId);
       void refreshSelectedChat(selectedChatId);
       if (selectedProjectId) {
         void queryClient.invalidateQueries({
@@ -1974,7 +1959,7 @@ export function HomeRoute() {
 
   async function refreshMessages(
     chatId: string,
-    options: { preserveStreamOrder?: boolean; showLoading?: boolean } = {},
+    options: { showLoading?: boolean } = {},
   ) {
     const requestId = messagesRefreshRequestIdRef.current + 1;
     messagesRefreshRequestIdRef.current = requestId;
@@ -1987,14 +1972,7 @@ export function HomeRoute() {
         selectedChatIdRef.current === chatId &&
         messagesRefreshRequestIdRef.current === requestId
       ) {
-        const shouldPreserveStreamOrder =
-          options.preserveStreamOrder === true &&
-          messagesChatIdRef.current === chatId;
-        setMessages((currentMessages) =>
-          shouldPreserveStreamOrder
-            ? mergeStreamingMessagesForDisplay(currentMessages, data.messages)
-            : data.messages,
-        );
+        setMessages(data.messages);
         setMessagesChatId(chatId);
         setTimelineError(null);
       }
