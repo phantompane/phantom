@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
+    "dev": "portless run --name phantom pnpm run dev:app",
+    "dev:app": "vite dev",
     "build": "vite build && tsc --noEmit",
     "preview": "vite preview",
     "lint": "oxfmt --check . && oxlint .",
