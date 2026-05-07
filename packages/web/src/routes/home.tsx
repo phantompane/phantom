@@ -118,6 +118,7 @@ import {
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
+  useSidebar,
 } from "../components/ui/sidebar";
 import { Textarea } from "../components/ui/textarea";
 import {
@@ -2953,9 +2954,11 @@ export function HomeRoute() {
     <SidebarProvider className="app-shell">
       <Sidebar collapsible="offcanvas" variant="inset">
         <SidebarHeader>
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--brand-mark-bg)] text-[var(--brand-mark-fg)]">
-            <FolderGit2 className="size-4" />
-          </div>
+          <SidebarTrigger
+            aria-label="Close sidebar"
+            className="text-[var(--icon-color-default)] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            title="Close sidebar"
+          />
           <div className="min-w-0 flex-1 group-data-[state=collapsed]/sidebar:hidden">
             <h1 className="truncate text-[length:var(--font-size-lg)] font-semibold leading-tight">
               Phantom
@@ -3544,8 +3547,7 @@ export function HomeRoute() {
 
       <SidebarInset>
         <header className="flex min-h-[var(--layout-topbar-height)] items-center gap-3 border-b border-border bg-[var(--surface-panel)] px-4">
-          <SidebarTrigger className="-ml-1" />
-          <div className="h-5 w-px bg-[var(--border-divider)]" />
+          <TopbarSidebarTrigger />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <p className="truncate text-[length:var(--font-size-xl)] font-semibold leading-tight">
@@ -4003,6 +4005,25 @@ export function HomeRoute() {
         </form>
       </SidebarInset>
     </SidebarProvider>
+  );
+}
+
+function TopbarSidebarTrigger() {
+  const { open } = useSidebar();
+
+  if (open) {
+    return null;
+  }
+
+  return (
+    <>
+      <SidebarTrigger
+        aria-label="Open sidebar"
+        className="-ml-1"
+        title="Open sidebar"
+      />
+      <div className="h-5 w-px bg-[var(--border-divider)]" />
+    </>
   );
 }
 

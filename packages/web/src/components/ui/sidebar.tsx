@@ -183,22 +183,28 @@ export function SidebarInset({ className, ...props }: ComponentProps<"main">) {
 
 export function SidebarTrigger({
   className,
+  "aria-label": ariaLabel,
+  title = "Toggle sidebar",
   ...props
 }: ComponentProps<"button">) {
   const { toggleSidebar } = useSidebar();
+  const accessibleLabel =
+    ariaLabel ?? (typeof title === "string" ? title : "Toggle sidebar");
+
   return (
     <button
+      aria-label={accessibleLabel}
       className={cn(
         "inline-flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:shadow-[var(--state-focus-ring)] disabled:pointer-events-none disabled:opacity-[var(--opacity-disabled)]",
         className,
       )}
       onClick={toggleSidebar}
-      title="Toggle sidebar"
+      title={title}
       type="button"
       {...props}
     >
       <PanelLeft className="size-4" />
-      <span className="sr-only">Toggle sidebar</span>
+      <span className="sr-only">{accessibleLabel}</span>
     </button>
   );
 }
