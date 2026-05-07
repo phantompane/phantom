@@ -3,7 +3,7 @@ import { validator } from "hono/validator";
 import { z } from "zod";
 import { createSseResponse, parseLastEventId } from "./event-hub.ts";
 import { renderChatMessages } from "./markdown.ts";
-import { getServeServices } from "./services.ts";
+import { getServeServices, maxAttachmentBytes } from "./services.ts";
 import type {
   ApiErrorBody,
   CodexServiceTier,
@@ -132,6 +132,8 @@ const chatQuerySchema = z.object({
   fileQuery: z.string().optional(),
 });
 
+const maxAttachmentMultipartBytes = maxAttachmentBytes + 64 * 1024;
+
 function jsonError(c: Context, message: string, status: 400 | 404 = 400) {
   return c.json(
     {
@@ -196,8 +198,11 @@ function contextItems(
 }
 
 async function parseAttachmentUpload(c: Context) {
-  const body = await c.req.parseBody();
-  const file = body.file;
+  const formData = await parseLimitedFormData(
+    c.req.raw,
+    maxAttachmentMultipartBytes,
+  );
+  const file = formData.get("file");
   if (!(file instanceof File)) {
     throw new Error("Attachment file is required");
   }
@@ -207,6 +212,59 @@ async function parseAttachmentUpload(c: Context) {
     name: file.name,
     size: file.size,
   };
+}
+
+async function parseLimitedFormData(
+  request: Request,
+  maxBytes: number,
+): Promise<FormData> {
+  const bytes = await readRequestBodyWithLimit(request, maxBytes);
+  const body = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(body).set(bytes);
+  return await new Request(request.url, {
+    body,
+    headers: request.headers,
+    method: request.method,
+  }).formData();
+}
+
+async function readRequestBodyWithLimit(
+  request: Request,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  const contentLength = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error("Attachment file is too large");
+  }
+
+  const body = request.body;
+  if (!body) {
+    return new Uint8Array();
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      await reader.cancel();
+      throw new Error("Attachment file is too large");
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 export const rpcRoutes = new Hono()

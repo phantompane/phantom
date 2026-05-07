@@ -7,10 +7,12 @@ const services = vi.hoisted(() => ({
   getMessages: vi.fn(),
   listProjectGitHubCheckoutTargets: vi.fn(),
   listProjects: vi.fn(),
+  uploadAttachment: vi.fn(),
 }));
 
 vi.mock("./services", () => ({
   getServeServices: () => services,
+  maxAttachmentBytes: 10 * 1024 * 1024,
 }));
 
 const { rpcRoutes } = await import("./rpc");
@@ -108,6 +110,25 @@ describe("rpcRoutes", () => {
     deepStrictEqual(await response.json(), {
       error: {
         message: "Invalid input: expected string, received undefined",
+      },
+    });
+  });
+
+  it("rejects oversized attachment uploads before calling services", async () => {
+    const response = await rpcRoutes.request("/chats/chat_1/attachments", {
+      body: "x",
+      headers: {
+        "Content-Length": String(11 * 1024 * 1024),
+        "Content-Type": "multipart/form-data; boundary=phantom",
+      },
+      method: "POST",
+    });
+
+    strictEqual(response.status, 400);
+    strictEqual(services.uploadAttachment.mock.calls.length, 0);
+    deepStrictEqual(await response.json(), {
+      error: {
+        message: "Attachment file is too large",
       },
     });
   });

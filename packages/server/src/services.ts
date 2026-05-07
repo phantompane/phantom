@@ -1,4 +1,4 @@
-import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import {
   basename,
   extname,
@@ -8,6 +8,7 @@ import {
   resolve,
   sep,
 } from "node:path";
+import { inflateSync } from "node:zlib";
 import {
   branchExists,
   getGitRoot,
@@ -40,6 +41,7 @@ import {
   mapCodexMethodToEvent,
   summarizeCodexEvent,
   type CodexMessage,
+  type CodexTurnOptions,
 } from "@phantompane/codex";
 import {
   createRecordId,
@@ -150,12 +152,28 @@ interface PendingTurnEventBuffer {
 
 interface SubmitMessageOptions {
   existingUserMessageId?: string;
+  prevalidatedTurnOptions?: CodexTurnOptions | undefined;
   queuedMessageId?: string;
   requireActiveTurn: boolean;
 }
 
 const worktreeNameInferenceModel = "gpt-5.4-mini";
-const maxAttachmentBytes = 10 * 1024 * 1024;
+export const maxAttachmentBytes = 10 * 1024 * 1024;
+const maxDecodedImageBytes = 64 * 1024 * 1024;
+
+class QueuedAttachmentValidationError extends Error {
+  constructor(error: unknown) {
+    super(toErrorMessage(error));
+    this.name = "QueuedAttachmentValidationError";
+  }
+}
+
+interface PngHeader {
+  bitDepth: number;
+  colorType: number;
+  height: number;
+  width: number;
+}
 
 function createWorktreeNameInferencePrompt(message: string): string {
   return [
@@ -1257,8 +1275,8 @@ export class ServeServices {
     const state = await this.store.load();
     this.requireChat(state, chatId);
 
-    const mimeType = input.mimeType.trim().toLowerCase();
-    if (!mimeType.startsWith("image/")) {
+    const requestedMimeType = input.mimeType.trim().toLowerCase();
+    if (!requestedMimeType.startsWith("image/")) {
       throw new Error("Only image attachments are supported");
     }
     if (input.size <= 0 || input.bytes.byteLength <= 0) {
@@ -1269,6 +1287,10 @@ export class ServeServices {
       input.bytes.byteLength > maxAttachmentBytes
     ) {
       throw new Error("Attachment file is too large");
+    }
+    const mimeType = detectSupportedImageMimeType(input.bytes);
+    if (!mimeType) {
+      throw new Error("Attachment file is not a supported image");
     }
 
     const safeName = sanitizeAttachmentName(input.name);
@@ -1556,8 +1578,9 @@ export class ServeServices {
       this.pendingChatTurns.add(chatId);
     }
 
-    const turnOptions = await this.createCodexTurnOptions(input, chat).catch(
-      async (error) => {
+    const turnOptions =
+      options.prevalidatedTurnOptions ??
+      (await this.createCodexTurnOptions(input, chat).catch(async (error) => {
         clearPendingChatTurn();
         if (options.queuedMessageId) {
           await this.store.update((nextState) => ({
@@ -1576,8 +1599,7 @@ export class ServeServices {
         }
         await this.drainQueuedMessagesAndReport(chatId);
         throw error;
-      },
-    );
+      }));
 
     const userMessage = existingUserMessage
       ? {
@@ -1838,7 +1860,10 @@ export class ServeServices {
       }
     | undefined
   > {
-    const attachments = await this.normalizeAttachmentItems(input.attachments);
+    const attachments = await this.normalizeAttachmentItems(
+      input.attachments,
+      chat.id,
+    );
     const files = await normalizeFileContextItems(
       input.files,
       chat.worktreePath,
@@ -1888,22 +1913,31 @@ export class ServeServices {
 
   private async normalizeAttachmentItems(
     items: ChatAttachmentRecord[] | undefined,
+    chatId: string,
   ): Promise<ChatAttachmentRecord[]> {
     const normalized = normalizeAttachmentRecords(items);
     if (normalized.length === 0) {
       return [];
     }
 
-    const realAttachmentDir = await realpath(this.attachmentDir);
+    const chatAttachmentDir = join(this.attachmentDir, chatId);
     return await Promise.all(
       normalized.map(async (item) => {
         const resolvedPath = resolve(item.path);
-        if (!isPathInside(this.attachmentDir, resolvedPath)) {
+        if (!isPathInside(chatAttachmentDir, resolvedPath)) {
           throw new Error(
-            `Attachment path must be within Phantom attachment storage: ${item.path}`,
+            `Attachment path must be within this chat's attachment storage: ${item.path}`,
           );
         }
 
+        let realChatAttachmentDir: string;
+        try {
+          realChatAttachmentDir = await realpath(chatAttachmentDir);
+        } catch {
+          throw new Error(
+            `Attachment path is not an existing file: ${item.path}`,
+          );
+        }
         let realAttachmentPath: string;
         try {
           realAttachmentPath = await realpath(resolvedPath);
@@ -1912,20 +1946,32 @@ export class ServeServices {
             `Attachment path is not an existing file: ${item.path}`,
           );
         }
-        if (!isPathInside(realAttachmentDir, realAttachmentPath)) {
+        if (!isPathInside(realChatAttachmentDir, realAttachmentPath)) {
           throw new Error(
-            `Attachment path must resolve within Phantom attachment storage: ${item.path}`,
+            `Attachment path must resolve within this chat's attachment storage: ${item.path}`,
           );
         }
-        if (!(await stat(realAttachmentPath)).isFile()) {
+        const attachmentStat = await stat(realAttachmentPath);
+        if (!attachmentStat.isFile()) {
           throw new Error(`Attachment path is not a file: ${item.path}`);
+        }
+        if (
+          attachmentStat.size <= 0 ||
+          attachmentStat.size > maxAttachmentBytes
+        ) {
+          throw new Error("Attachment file is too large");
+        }
+        const bytes = await readFile(realAttachmentPath);
+        const mimeType = detectSupportedImageMimeType(bytes);
+        if (!mimeType) {
+          throw new Error("Attachment file is not a supported image");
         }
 
         return {
           name: item.name,
-          path: resolvedPath,
-          mimeType: item.mimeType,
-          size: item.size,
+          path: realAttachmentPath,
+          mimeType,
+          size: attachmentStat.size,
         };
       }),
     );
@@ -2188,6 +2234,17 @@ export class ServeServices {
     if (!queuedMessage) {
       return;
     }
+    let prevalidatedTurnOptions: CodexTurnOptions | undefined;
+    if ((queuedMessage.attachments ?? []).length > 0) {
+      try {
+        prevalidatedTurnOptions = await this.createCodexTurnOptions(
+          queuedMessageToSendInput(queuedMessage),
+          chat,
+        );
+      } catch (error) {
+        throw new QueuedAttachmentValidationError(error);
+      }
+    }
     const claimedQueuedMessageRef: { current: QueuedMessageRecord | null } = {
       current: null,
     };
@@ -2244,6 +2301,7 @@ export class ServeServices {
       queuedMessageToSendInput(claimedQueuedMessage),
       {
         existingUserMessageId: claimedQueuedMessage.messageId,
+        prevalidatedTurnOptions,
         requireActiveTurn: false,
       },
     );
@@ -2266,6 +2324,7 @@ export class ServeServices {
           await this.addAgentErrorMessage(chatId, error);
           const state = await this.store.load();
           if (
+            !(error instanceof QueuedAttachmentValidationError) &&
             state.queuedMessages.some((message) => message.chatId === chatId)
           ) {
             this.pendingQueuedMessageDrainChatIds.add(chatId);
@@ -5035,21 +5094,302 @@ function sanitizeAttachmentName(name: string): string {
 
 function sanitizeAttachmentExtension(name: string, mimeType: string): string {
   const currentExtension = extname(name).toLowerCase();
-  if (/^\.[a-z0-9]{1,8}$/.test(currentExtension)) {
+  if (mimeType === "image/png" && currentExtension === ".png") {
     return currentExtension;
   }
-  switch (mimeType) {
-    case "image/jpeg":
-      return ".jpg";
-    case "image/png":
-      return ".png";
-    case "image/gif":
-      return ".gif";
-    case "image/webp":
-      return ".webp";
-    default:
-      return ".img";
+  return ".png";
+}
+
+function detectSupportedImageMimeType(bytes: Uint8Array): string | null {
+  if (isValidPng(bytes)) {
+    return "image/png";
   }
+  return null;
+}
+
+function isValidPng(bytes: Uint8Array): boolean {
+  if (
+    bytes.length < 33 ||
+    bytes[0] !== 0x89 ||
+    bytes[1] !== 0x50 ||
+    bytes[2] !== 0x4e ||
+    bytes[3] !== 0x47 ||
+    bytes[4] !== 0x0d ||
+    bytes[5] !== 0x0a ||
+    bytes[6] !== 0x1a ||
+    bytes[7] !== 0x0a
+  ) {
+    return false;
+  }
+
+  let offset = 8;
+  let sawIhdr = false;
+  const idatChunks: Uint8Array[] = [];
+  let pngHeader: PngHeader | null = null;
+  let finishedIdat = false;
+  let sawIdat = false;
+  let sawPlte = false;
+  while (offset + 12 <= bytes.length) {
+    const chunkLength = readUint32(bytes, offset);
+    const chunkTypeOffset = offset + 4;
+    const chunkDataOffset = offset + 8;
+    const nextOffset = chunkDataOffset + chunkLength + 4;
+    if (nextOffset > bytes.length) {
+      return false;
+    }
+
+    const chunkType = readAscii(bytes, chunkTypeOffset, 4);
+    if (!sawIhdr) {
+      const header = parsePngHeader(
+        bytes.subarray(chunkDataOffset, chunkDataOffset + 13),
+      );
+      if (chunkType !== "IHDR" || chunkLength !== 13 || !header) {
+        return false;
+      }
+      pngHeader = header;
+      sawIhdr = true;
+    } else if (chunkType === "IHDR") {
+      return false;
+    }
+    if (
+      crc32(bytes.subarray(chunkTypeOffset, chunkDataOffset + chunkLength)) !==
+      readUint32(bytes, chunkDataOffset + chunkLength)
+    ) {
+      return false;
+    }
+    if (chunkType === "IEND") {
+      return (
+        chunkLength === 0 &&
+        sawIdat &&
+        isValidPngPaletteState(pngHeader, sawPlte) &&
+        pngHeader != null &&
+        nextOffset === bytes.length &&
+        isValidPngImageData(idatChunks, pngHeader)
+      );
+    }
+    if (sawIdat && chunkType !== "IDAT") {
+      finishedIdat = true;
+    }
+    if (chunkType === "PLTE") {
+      if (
+        !pngHeader ||
+        sawIdat ||
+        sawPlte ||
+        !isValidPngPaletteChunk(chunkLength, pngHeader)
+      ) {
+        return false;
+      }
+      sawPlte = true;
+    }
+    if (chunkType === "IDAT") {
+      if (
+        chunkLength === 0 ||
+        finishedIdat ||
+        !isValidPngPaletteState(pngHeader, sawPlte)
+      ) {
+        return false;
+      }
+      idatChunks.push(
+        bytes.subarray(chunkDataOffset, chunkDataOffset + chunkLength),
+      );
+      sawIdat = true;
+    }
+    offset = nextOffset;
+  }
+
+  return false;
+}
+
+function isValidPngPaletteState(
+  header: PngHeader | null,
+  sawPlte: boolean,
+): boolean {
+  if (!header) {
+    return false;
+  }
+  if (header.colorType === 3) {
+    return sawPlte;
+  }
+  return header.colorType === 2 || header.colorType === 6 ? true : !sawPlte;
+}
+
+function isValidPngPaletteChunk(
+  chunkLength: number,
+  header: PngHeader,
+): boolean {
+  if (
+    header.colorType !== 3 &&
+    header.colorType !== 2 &&
+    header.colorType !== 6
+  ) {
+    return false;
+  }
+  const paletteEntries = chunkLength / 3;
+  return (
+    Number.isInteger(paletteEntries) &&
+    paletteEntries >= 1 &&
+    paletteEntries <= 256 &&
+    (header.colorType !== 3 || paletteEntries <= 2 ** header.bitDepth)
+  );
+}
+
+function isValidPngImageData(chunks: Uint8Array[], header: PngHeader): boolean {
+  const expectedByteLength = getExpectedPngImageDataByteLength(header);
+  if (
+    expectedByteLength == null ||
+    expectedByteLength <= 0 ||
+    expectedByteLength > maxDecodedImageBytes
+  ) {
+    return false;
+  }
+
+  const totalLength = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const bytes = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  try {
+    const inflated = inflateSync(bytes, {
+      maxOutputLength: expectedByteLength + 1,
+    });
+    return (
+      inflated.byteLength === expectedByteLength &&
+      hasValidPngScanlineFilters(inflated, header)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hasValidPngScanlineFilters(
+  bytes: Uint8Array,
+  header: PngHeader,
+): boolean {
+  const bytesPerScanline = getPngBytesPerScanline(header);
+  if (bytesPerScanline == null) {
+    return false;
+  }
+
+  const rowLength = bytesPerScanline + 1;
+  for (let offset = 0; offset < bytes.length; offset += rowLength) {
+    const filterType = bytes[offset];
+    if (filterType == null || filterType > 4) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function parsePngHeader(bytes: Uint8Array): PngHeader | null {
+  const width = readUint32(bytes, 0);
+  const height = readUint32(bytes, 4);
+  const bitDepth = bytes[8];
+  const colorType = bytes[9];
+  const compressionMethod = bytes[10];
+  const filterMethod = bytes[11];
+  const interlaceMethod = bytes[12];
+  if (
+    bytes.length === 13 &&
+    width > 0 &&
+    height > 0 &&
+    isValidPngColorTypeAndBitDepth(colorType, bitDepth) &&
+    compressionMethod === 0 &&
+    filterMethod === 0 &&
+    interlaceMethod === 0
+  ) {
+    return {
+      bitDepth: bitDepth ?? 0,
+      colorType: colorType ?? 0,
+      height,
+      width,
+    };
+  }
+  return null;
+}
+
+function getExpectedPngImageDataByteLength(header: PngHeader): number | null {
+  const bytesPerScanline = getPngBytesPerScanline(header);
+  if (bytesPerScanline == null) {
+    return null;
+  }
+  const totalByteLength = header.height * (bytesPerScanline + 1);
+  return Number.isSafeInteger(totalByteLength) ? totalByteLength : null;
+}
+
+function getPngBytesPerScanline(header: PngHeader): number | null {
+  const samplesPerPixel = getPngSamplesPerPixel(header.colorType);
+  if (samplesPerPixel == null) {
+    return null;
+  }
+  const bitsPerScanline = header.width * samplesPerPixel * header.bitDepth;
+  const bytesPerScanline = Math.ceil(bitsPerScanline / 8);
+  return Number.isSafeInteger(bytesPerScanline) ? bytesPerScanline : null;
+}
+
+function getPngSamplesPerPixel(colorType: number): number | null {
+  switch (colorType) {
+    case 0:
+    case 3:
+      return 1;
+    case 2:
+      return 3;
+    case 4:
+      return 2;
+    case 6:
+      return 4;
+    default:
+      return null;
+  }
+}
+
+function isValidPngColorTypeAndBitDepth(
+  colorType: number | undefined,
+  bitDepth: number | undefined,
+): boolean {
+  switch (colorType) {
+    case 0:
+      return [1, 2, 4, 8, 16].includes(bitDepth ?? 0);
+    case 2:
+    case 4:
+    case 6:
+      return bitDepth === 8 || bitDepth === 16;
+    case 3:
+      return [1, 2, 4, 8].includes(bitDepth ?? 0);
+    default:
+      return false;
+  }
+}
+
+function readUint32(bytes: Uint8Array, offset: number): number {
+  return (
+    ((bytes[offset] ?? 0) * 0x1000000 +
+      ((bytes[offset + 1] ?? 0) << 16) +
+      ((bytes[offset + 2] ?? 0) << 8) +
+      (bytes[offset + 3] ?? 0)) >>>
+    0
+  );
+}
+
+function readAscii(bytes: Uint8Array, offset: number, length: number): string {
+  let value = "";
+  for (let index = 0; index < length; index += 1) {
+    value += String.fromCharCode(bytes[offset + index] ?? 0);
+  }
+  return value;
+}
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 async function normalizeFileContextItems(
