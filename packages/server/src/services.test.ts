@@ -7113,6 +7113,30 @@ describe("ServeServices", () => {
     ]);
   });
 
+  it("uses image bytes instead of client MIME type when uploading attachments", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const attachmentDir = await createTemporaryDirectory();
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { services } = await createHarness(state, {
+      attachmentDir,
+    });
+
+    const attachment = await services.uploadAttachment("chat_1", {
+      bytes: validPngBytes,
+      mimeType: "application/octet-stream",
+      name: "screenshot",
+      size: validPngBytes.byteLength,
+    });
+
+    strictEqual(attachment.mimeType, "image/png");
+    strictEqual(attachment.name, "screenshot");
+    strictEqual(attachment.size, validPngBytes.byteLength);
+  });
+
   it("uses stored attachment bytes as the source of truth when sending", async () => {
     const worktreePath = await createTemporaryDirectory();
     const attachmentDir = await createTemporaryDirectory();

@@ -1276,10 +1276,6 @@ export class ServeServices {
     const state = await this.store.load();
     this.requireChat(state, chatId);
 
-    const requestedMimeType = input.mimeType.trim().toLowerCase();
-    if (!requestedMimeType.startsWith("image/")) {
-      throw new Error("Only image attachments are supported");
-    }
     if (input.size <= 0 || input.bytes.byteLength <= 0) {
       throw new Error("Attachment file is empty");
     }
