@@ -106,12 +106,18 @@ export function chatApprovalQueryOptions(chatId: string, signal?: AbortSignal) {
 export function messagesQueryOptions(chatId: string) {
   return queryOptions({
     queryKey: queryKeys.messages(chatId),
-    queryFn: async () =>
-      readRpcJson<{ messages: RenderedChatMessageRecord[] }>(
+    queryFn: async () => {
+      const data = await readRpcJson<{
+        messages: RenderedChatMessageRecord[];
+      }>(
         await api.chats[":chatId"].messages.$get({
           param: { chatId: routeParam(chatId) },
         }),
-      ),
+      );
+      return {
+        messages: stripHiddenRichEventContentFromMessages(data.messages),
+      };
+    },
   });
 }
 
@@ -153,4 +159,122 @@ export function fileSearchQueryOptions(
         ),
       ),
   });
+}
+
+export function stripHiddenRichEventContentFromMessages(
+  messages: RenderedChatMessageRecord[],
+): RenderedChatMessageRecord[] {
+  return messages.map(stripHiddenRichEventContent);
+}
+
+function stripHiddenRichEventContent(
+  message: RenderedChatMessageRecord,
+): RenderedChatMessageRecord {
+  if (message.role !== "event") {
+    return message;
+  }
+
+  if (
+    message.eventType === "item/commandExecution/outputDelta" ||
+    message.eventType === "command/exec/outputDelta" ||
+    message.eventType === "item/fileChange/outputDelta"
+  ) {
+    const hiddenText = getHiddenOutputText(message);
+    return {
+      ...message,
+      eventData: withHiddenContentLength(
+        stripRecordKey(message.eventData, "text"),
+        hiddenText,
+      ),
+      text: "",
+      textHtml: "",
+    };
+  }
+
+  if (message.eventType === "turn/diff/updated") {
+    return {
+      ...message,
+      eventData: stripDiffEventData(message.eventData),
+    };
+  }
+
+  if (message.eventType === "item/fileChange/patchUpdated") {
+    return {
+      ...message,
+      eventData: stripFilePatchDiffs(message.eventData),
+    };
+  }
+
+  return message;
+}
+
+function stripRecordKey(value: unknown, key: string): unknown {
+  if (!isRecord(value)) {
+    return value;
+  }
+  const nextValue = { ...value };
+  delete nextValue[key];
+  return nextValue;
+}
+
+function getHiddenOutputText(message: RenderedChatMessageRecord): string {
+  if (
+    isRecord(message.eventData) &&
+    typeof message.eventData.text === "string"
+  ) {
+    return message.eventData.text;
+  }
+  return message.text;
+}
+
+function withHiddenContentLength(value: unknown, hiddenText: string): unknown {
+  if (!hiddenText) {
+    return value;
+  }
+  if (!isRecord(value)) {
+    return {
+      hiddenContentLength: hiddenText.length,
+    };
+  }
+  if (
+    typeof value.hiddenContentDeltaCount === "number" ||
+    typeof value.hiddenContentLength === "number"
+  ) {
+    return value;
+  }
+  return {
+    ...value,
+    hiddenContentLength: hiddenText.length,
+  };
+}
+
+function stripDiffEventData(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value;
+  }
+  const diff = typeof value.diff === "string" ? value.diff : "";
+  const nextValue = { ...value };
+  delete nextValue.diff;
+  if (diff && typeof nextValue.hasDiff !== "boolean") {
+    nextValue.hasDiff = true;
+  }
+  return nextValue;
+}
+
+function stripFilePatchDiffs(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value;
+  }
+  const changes = value.changes;
+  if (!Array.isArray(changes)) {
+    return value;
+  }
+  return {
+    ...value,
+    changes: changes.map((change) => stripRecordKey(change, "diff")),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

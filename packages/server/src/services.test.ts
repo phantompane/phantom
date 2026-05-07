@@ -170,6 +170,28 @@ async function createHarness(state: ServeState): Promise<{
   return { codex, codexHome, services, store };
 }
 
+function getEmittedCodexParams(
+  calls: Array<[string, unknown, ...unknown[]]>,
+  eventType: string,
+  method: string,
+  itemType?: string,
+): Record<string, unknown> | undefined {
+  const call = calls.find(([type, data]) => {
+    const message = data as CodexMessage;
+    if (type !== eventType || message.method !== method) {
+      return false;
+    }
+    if (!itemType) {
+      return true;
+    }
+    const params = message.params as { item?: { type?: unknown } } | undefined;
+    return params?.item?.type === itemType;
+  });
+  return (call?.[1] as CodexMessage | undefined)?.params as
+    | Record<string, unknown>
+    | undefined;
+}
+
 function markChatActiveInCurrentProcess(
   services: ServeServices,
   chatId: string,
@@ -210,6 +232,95 @@ class ImportRaceStore extends ServeStateStore {
 }
 
 describe("ServeServices", () => {
+  it("strips hidden rich event bodies from existing state on service access", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_command",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "large command output",
+          eventType: "item/commandExecution/outputDelta",
+          eventData: {
+            command: "pnpm test",
+            text: "large command output",
+          },
+          createdAt: timestamp,
+        },
+        {
+          id: "msg_diff",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "Diff updated: 1 file",
+          eventType: "turn/diff/updated",
+          eventData: {
+            diff: "large diff",
+            files: ["src/app.ts"],
+            hasDiff: true,
+          },
+          createdAt: timestamp,
+        },
+        {
+          id: "msg_patch",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "File patch updated: 1 file",
+          eventType: "item/fileChange/patchUpdated",
+          eventData: {
+            changes: [
+              {
+                diff: "large patch",
+                kind: "modify",
+                path: "src/app.ts",
+              },
+            ],
+          },
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { services, store } = await createHarness(state);
+
+    await services.listProjects();
+
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.messages.map((message) => ({
+        eventData: message.eventData,
+        text: message.text,
+      })),
+      [
+        {
+          eventData: {
+            command: "pnpm test",
+          },
+          text: "",
+        },
+        {
+          eventData: {
+            files: ["src/app.ts"],
+            hasDiff: true,
+          },
+          text: "Diff updated: 1 file",
+        },
+        {
+          eventData: {
+            changes: [
+              {
+                kind: "modify",
+                path: "src/app.ts",
+              },
+            ],
+          },
+          text: "File patch updated: 1 file",
+        },
+      ],
+    );
+  });
+
   it("lists project worktrees with phantom list data without creating chat records", async () => {
     const state = {
       ...createTestState(),
@@ -1810,12 +1921,7 @@ describe("ServeServices", () => {
       [
         ["chat_1_codex_turn_old_0", "user", "retry", undefined],
         ["msg_pending_retry", "user", "retry", undefined],
-        [
-          "msg_command_event",
-          "event",
-          "pnpm test",
-          "item/commandExecution/outputDelta",
-        ],
+        ["msg_command_event", "event", "", "item/commandExecution/outputDelta"],
       ],
     );
   });
@@ -2500,7 +2606,7 @@ describe("ServeServices", () => {
       [
         ["user", "retry", undefined],
         ["assistant", "still working", "item/agentMessage/delta"],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["user", "retry", undefined],
       ],
     );
@@ -2567,7 +2673,7 @@ describe("ServeServices", () => {
       [
         ["user", "retry", undefined],
         ["assistant", "still working", "item/agentMessage/delta"],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["user", "retry", undefined],
       ],
     );
@@ -2614,7 +2720,7 @@ describe("ServeServices", () => {
       [
         ["user", "fix the UI", undefined],
         ["assistant", "working", undefined],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
       ],
     );
   });
@@ -2680,7 +2786,7 @@ describe("ServeServices", () => {
       [
         ["user", "fix the UI", undefined],
         ["assistant", "done", undefined],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["assistant", "still working", "item/agentMessage/delta"],
         ["user", "next request", undefined],
       ],
@@ -2750,7 +2856,7 @@ describe("ServeServices", () => {
       ]),
       [
         ["user", "fix the UI", undefined],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["assistant", "still working", "item/agentMessage/delta"],
       ],
     );
@@ -2820,7 +2926,7 @@ describe("ServeServices", () => {
       ]),
       [
         ["user", "fix the UI", undefined],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["assistant", "done", undefined],
       ],
     );
@@ -2888,7 +2994,7 @@ describe("ServeServices", () => {
         ["user", "fix the UI", undefined],
         ["assistant", "done", undefined],
         ["assistant", "still working", "item/agentMessage/delta"],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["user", "next request", undefined],
       ],
     );
@@ -2942,7 +3048,7 @@ describe("ServeServices", () => {
       ]),
       [
         ["user", "fix the UI", undefined],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["assistant", "done", undefined],
       ],
     );
@@ -3007,7 +3113,7 @@ describe("ServeServices", () => {
         ["user", "previous request", undefined],
         ["assistant", "previous response", undefined],
         ["user", "new request", undefined],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["assistant", "still working", "item/agentMessage/delta"],
       ],
     );
@@ -3065,7 +3171,7 @@ describe("ServeServices", () => {
       [
         ["user", "previous request", undefined],
         ["user", "middle request", undefined],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["assistant", "later response", undefined],
       ],
     );
@@ -3141,7 +3247,7 @@ describe("ServeServices", () => {
       [
         ["user", "repeat", undefined],
         ["user", "repeat", undefined],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["assistant", "done", undefined],
       ],
     );
@@ -3215,7 +3321,7 @@ describe("ServeServices", () => {
       ]),
       [
         ["user", "repeat", undefined],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["assistant", "still working", "item/agentMessage/delta"],
         ["user", "repeat", undefined],
       ],
@@ -3286,7 +3392,7 @@ describe("ServeServices", () => {
       [
         ["user", "retry", undefined],
         ["assistant", "still working", "item/agentMessage/delta"],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["user", "retry", undefined],
       ],
     );
@@ -3366,7 +3472,7 @@ describe("ServeServices", () => {
       [
         ["user", "repeat", undefined],
         ["assistant", "still working", "item/agentMessage/delta"],
-        ["event", "pnpm test", "item/commandExecution/outputDelta"],
+        ["event", "", "item/commandExecution/outputDelta"],
         ["user", "repeat", undefined],
       ],
     );
@@ -5561,7 +5667,7 @@ describe("ServeServices", () => {
     });
     const approvalRequest = emitSpy.mock.calls.find(
       (call) => call[0] === "agent.approval.requested",
-    )?.[1] as { requestId: string } | undefined;
+    )?.[1] as { params: unknown; requestId: string } | undefined;
     const approvalRequestId = approvalRequest?.requestId;
     strictEqual(typeof approvalRequestId, "string");
     if (!approvalRequestId) {
@@ -5627,11 +5733,19 @@ describe("ServeServices", () => {
     };
     const { codex, services, store } = await createHarness(state);
     const emitSpy = vi.spyOn(services.eventHub, "emit");
-    const params = { threadId: "thread_1", turnId: "turn_1" };
+    const params = {
+      threadId: "thread_1",
+      turnId: "turn_1",
+      changes: [{ path: "src/app.ts", kind: "modify", diff: "@@ patch" }],
+      item: {
+        type: "commandExecution",
+        aggregatedOutput: "large output",
+      },
+    };
 
     codex.emitServerRequest({
       id: 101,
-      method: "item/commandExecution/requestApproval",
+      method: "item/fileChange/requestApproval",
       params,
     });
     await vi.waitFor(async () => {
@@ -5639,15 +5753,30 @@ describe("ServeServices", () => {
     });
     const approvalRequest = emitSpy.mock.calls.find(
       (call) => call[0] === "agent.approval.requested",
-    )?.[1] as { requestId: string } | undefined;
+    )?.[1] as { params: unknown; requestId: string } | undefined;
     if (!approvalRequest) {
       throw new Error("Approval request was not emitted");
     }
 
     deepStrictEqual(await services.getPendingApproval("chat_1"), {
       requestId: approvalRequest.requestId,
-      method: "item/commandExecution/requestApproval",
-      params,
+      method: "item/fileChange/requestApproval",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        changes: [{ path: "src/app.ts", kind: "modify" }],
+        item: {
+          type: "commandExecution",
+        },
+      },
+    });
+    deepStrictEqual(approvalRequest.params, {
+      threadId: "thread_1",
+      turnId: "turn_1",
+      changes: [{ path: "src/app.ts", kind: "modify" }],
+      item: {
+        type: "commandExecution",
+      },
     });
 
     await services.answerApproval("chat_1", approvalRequest.requestId, {
@@ -7461,6 +7590,13 @@ describe("ServeServices", () => {
       },
     });
     codex.emitNotification({
+      method: "turn/diff/updated",
+      params: {
+        turnId: "turn_1",
+        diff: "diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-old\n+new",
+      },
+    });
+    codex.emitNotification({
       method: "item/commandExecution/outputDelta",
       params: {
         threadId: "thread_1",
@@ -7565,7 +7701,7 @@ describe("ServeServices", () => {
     });
 
     await vi.waitFor(async () => {
-      strictEqual((await store.load()).messages.length, 5);
+      strictEqual((await store.load()).messages.length, 6);
     });
 
     const savedState = await store.load();
@@ -7574,6 +7710,9 @@ describe("ServeServices", () => {
     );
     const commandMessage = savedState.messages.find(
       (message) => message.eventType === "item/commandExecution/outputDelta",
+    );
+    const diffMessage = savedState.messages.find(
+      (message) => message.eventType === "turn/diff/updated",
     );
     const patchMessage = savedState.messages.find(
       (message) => message.eventType === "item/fileChange/patchUpdated",
@@ -7594,10 +7733,16 @@ describe("ServeServices", () => {
         { step: "Patch UI", status: "inProgress" },
       ],
     );
-    strictEqual(commandMessage?.text, "first second");
+    strictEqual(diffMessage?.text, "Diff updated: 1 file");
+    deepStrictEqual(diffMessage?.eventData, {
+      files: ["src/app.ts"],
+      hasDiff: true,
+      hiddenContentUpdateCount: 1,
+    });
+    strictEqual(commandMessage?.text, "");
     strictEqual(
       (commandMessage?.eventData as { text?: string } | undefined)?.text,
-      "first second",
+      undefined,
     );
     deepStrictEqual(
       {
@@ -7610,6 +7755,11 @@ describe("ServeServices", () => {
         exitCode: (
           commandMessage?.eventData as { exitCode?: unknown } | undefined
         )?.exitCode,
+        hiddenContentDeltaCount: (
+          commandMessage?.eventData as
+            | { hiddenContentDeltaCount?: unknown }
+            | undefined
+        )?.hiddenContentDeltaCount,
         status: (commandMessage?.eventData as { status?: unknown } | undefined)
           ?.status,
       },
@@ -7617,6 +7767,7 @@ describe("ServeServices", () => {
         command: "pnpm test",
         durationMs: 42,
         exitCode: 0,
+        hiddenContentDeltaCount: 2,
         status: "completed",
       },
     );
@@ -7625,19 +7776,35 @@ describe("ServeServices", () => {
       "item/commandExecution/outputDelta",
     );
     strictEqual(emptyCommandMessage?.text, "");
-    strictEqual(shellCommandMessage?.text, "log");
+    strictEqual(shellCommandMessage?.text, "");
     strictEqual(
       (shellCommandMessage?.eventData as { capReached?: boolean } | undefined)
         ?.capReached,
       true,
     );
+    strictEqual(
+      (
+        shellCommandMessage?.eventData as
+          | { hiddenContentDeltaCount?: unknown }
+          | undefined
+      )?.hiddenContentDeltaCount,
+      1,
+    );
     deepStrictEqual(
       (patchMessage?.eventData as { changes?: unknown[] } | undefined)?.changes,
-      [{ path: "src/app.ts", kind: "modify", diff: "@@ final patch" }],
+      [{ path: "src/app.ts", kind: "modify" }],
     );
     strictEqual(
       (patchMessage?.eventData as { status?: string } | undefined)?.status,
       "completed",
+    );
+    strictEqual(
+      (
+        patchMessage?.eventData as
+          | { hiddenContentUpdateCount?: unknown }
+          | undefined
+      )?.hiddenContentUpdateCount,
+      2,
     );
     strictEqual(
       emitSpy.mock.calls.some((call) => call[0] === "agent.plan.updated"),
@@ -7647,6 +7814,216 @@ describe("ServeServices", () => {
       emitSpy.mock.calls.some((call) => call[0] === "agent.command.output"),
       true,
     );
+    const emittedCommandParams = getEmittedCodexParams(
+      emitSpy.mock.calls,
+      "agent.command.output",
+      "item/commandExecution/outputDelta",
+    );
+    const emittedShellCommandParams = getEmittedCodexParams(
+      emitSpy.mock.calls,
+      "agent.command.output",
+      "command/exec/outputDelta",
+    );
+    const emittedDiffParams = getEmittedCodexParams(
+      emitSpy.mock.calls,
+      "agent.diff.updated",
+      "turn/diff/updated",
+    );
+    const emittedPatchParams = getEmittedCodexParams(
+      emitSpy.mock.calls,
+      "agent.file.updated",
+      "item/fileChange/patchUpdated",
+    );
+    const emittedCommandCompletedParams = getEmittedCodexParams(
+      emitSpy.mock.calls,
+      "agent.item.updated",
+      "item/completed",
+      "commandExecution",
+    );
+    const emittedFileCompletedParams = getEmittedCodexParams(
+      emitSpy.mock.calls,
+      "agent.item.updated",
+      "item/completed",
+      "fileChange",
+    );
+    const emittedPatchChanges = emittedPatchParams?.changes as
+      | Array<Record<string, unknown>>
+      | undefined;
+    const emittedFileCompletedItem = emittedFileCompletedParams?.item as
+      | Record<string, unknown>
+      | undefined;
+    const emittedFileCompletedChanges = emittedFileCompletedItem?.changes as
+      | Array<Record<string, unknown>>
+      | undefined;
+    strictEqual(emittedCommandParams?.delta, undefined);
+    strictEqual(emittedShellCommandParams?.deltaBase64, undefined);
+    strictEqual(emittedDiffParams?.diff, undefined);
+    strictEqual(emittedPatchChanges?.[0]?.diff, undefined);
+    strictEqual(
+      (
+        emittedCommandCompletedParams?.item as
+          | Record<string, unknown>
+          | undefined
+      )?.aggregatedOutput,
+      undefined,
+    );
+    strictEqual(emittedFileCompletedChanges?.[0]?.diff, undefined);
+  });
+
+  it("preserves lightweight markers for repeated hidden diff and patch updates", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, store } = await createHarness(state);
+
+    codex.emitNotification({
+      method: "turn/diff/updated",
+      params: {
+        turnId: "turn_1",
+        diff: "diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-old\n+new",
+      },
+    });
+    codex.emitNotification({
+      method: "turn/diff/updated",
+      params: {
+        turnId: "turn_1",
+        diff: "diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-new\n+newer",
+      },
+    });
+    codex.emitNotification({
+      method: "item/fileChange/patchUpdated",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "patch_1",
+        changes: [{ path: "src/app.ts", kind: "modify", diff: "@@ patch 1" }],
+      },
+    });
+    codex.emitNotification({
+      method: "item/fileChange/patchUpdated",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "patch_1",
+        changes: [{ path: "src/app.ts", kind: "modify", diff: "@@ patch 2" }],
+      },
+    });
+
+    let savedState = await store.load();
+    await vi.waitFor(async () => {
+      savedState = await store.load();
+      const diffMessage = savedState.messages.find(
+        (message) => message.eventType === "turn/diff/updated",
+      );
+      const patchMessage = savedState.messages.find(
+        (message) => message.eventType === "item/fileChange/patchUpdated",
+      );
+      strictEqual(
+        (
+          diffMessage?.eventData as
+            | { hiddenContentUpdateCount?: unknown }
+            | undefined
+        )?.hiddenContentUpdateCount,
+        2,
+      );
+      strictEqual(
+        (
+          patchMessage?.eventData as
+            | { hiddenContentUpdateCount?: unknown }
+            | undefined
+        )?.hiddenContentUpdateCount,
+        2,
+      );
+    });
+
+    const diffMessage = savedState.messages.find(
+      (message) => message.eventType === "turn/diff/updated",
+    );
+    const patchMessage = savedState.messages.find(
+      (message) => message.eventType === "item/fileChange/patchUpdated",
+    );
+
+    deepStrictEqual(diffMessage?.eventData, {
+      files: ["src/app.ts"],
+      hasDiff: true,
+      hiddenContentUpdateCount: 2,
+    });
+    deepStrictEqual(patchMessage?.eventData, {
+      changes: [{ path: "src/app.ts", kind: "modify" }],
+      hiddenContentUpdateCount: 2,
+    });
+  });
+
+  it("flushes sanitized hidden events buffered during turn startup", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+    };
+    const { codex, services, store } = await createHarness(state);
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockImplementationOnce(async () => {
+      codex.emitNotification({
+        method: "item/commandExecution/outputDelta",
+        params: {
+          threadId: "thread_1",
+          turnId: "turn_1",
+          itemId: "cmd_1",
+          delta: "large output",
+        },
+      });
+      codex.emitNotification({
+        method: "turn/diff/updated",
+        params: {
+          turnId: "turn_1",
+          diff: "diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      });
+      codex.emitNotification({
+        method: "item/fileChange/patchUpdated",
+        params: {
+          threadId: "thread_1",
+          turnId: "turn_1",
+          itemId: "patch_1",
+          changes: [{ path: "src/app.ts", kind: "modify", diff: "@@ patch" }],
+        },
+      });
+      return { turn: { id: "turn_1" } };
+    });
+
+    await services.sendMessage("chat_1", { text: "hello" });
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).messages.length, 4);
+    });
+
+    const savedState = await store.load();
+    const commandMessage = savedState.messages.find(
+      (message) => message.eventType === "item/commandExecution/outputDelta",
+    );
+    const diffMessage = savedState.messages.find(
+      (message) => message.eventType === "turn/diff/updated",
+    );
+    const patchMessage = savedState.messages.find(
+      (message) => message.eventType === "item/fileChange/patchUpdated",
+    );
+
+    strictEqual(commandMessage?.text, "");
+    deepStrictEqual(commandMessage?.eventData, {
+      hiddenContentDeltaCount: 1,
+      hiddenContentLength: 12,
+      kind: "commandExecutionOutput",
+    });
+    deepStrictEqual(diffMessage?.eventData, {
+      files: ["src/app.ts"],
+      hasDiff: true,
+      hiddenContentUpdateCount: 1,
+    });
+    deepStrictEqual(patchMessage?.eventData, {
+      changes: [{ path: "src/app.ts", kind: "modify" }],
+      hiddenContentUpdateCount: 1,
+    });
   });
 
   it("ignores empty reasoning summary parts before summary text arrives", async () => {

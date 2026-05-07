@@ -80,6 +80,102 @@ describe("mergeStreamingMessagesForDisplay", () => {
     );
   });
 
+  it("moves hidden output stream events when only lightweight metadata changes", () => {
+    const currentMessages = [
+      createMessage("msg_user", "user", "fix chat"),
+      createMessage("msg_event", "event", "", {
+        eventData: {
+          hiddenContentDeltaCount: 1,
+          kind: "commandExecutionOutput",
+        },
+        eventType: "item/commandExecution/outputDelta",
+        itemId: "cmd_1",
+      }),
+      createMessage("msg_assistant", "assistant", "working"),
+    ];
+    const incomingMessages = [
+      currentMessages[0]!,
+      createMessage("msg_event", "event", "", {
+        eventData: {
+          hiddenContentDeltaCount: 2,
+          kind: "commandExecutionOutput",
+        },
+        eventType: "item/commandExecution/outputDelta",
+        itemId: "cmd_1",
+      }),
+      currentMessages[2]!,
+    ];
+
+    const mergedMessages = mergeStreamingMessagesForDisplay(
+      currentMessages,
+      incomingMessages,
+    );
+
+    deepStrictEqual(
+      mergedMessages.map((message) => [message.id, message.text]),
+      [
+        ["msg_user", "fix chat"],
+        ["msg_assistant", "working"],
+        ["msg_event", ""],
+      ],
+    );
+  });
+
+  it("moves hidden diff and patch events when only lightweight metadata changes", () => {
+    const currentMessages = [
+      createMessage("msg_user", "user", "fix chat"),
+      createMessage("msg_diff", "event", "Diff updated: 1 file", {
+        eventData: {
+          files: ["src/app.ts"],
+          hasDiff: true,
+          hiddenContentUpdateCount: 1,
+        },
+        eventType: "turn/diff/updated",
+        itemId: "turn_1",
+      }),
+      createMessage("msg_patch", "event", "File patch updated: 1 file", {
+        eventData: {
+          changes: [{ kind: "modify", path: "src/app.ts" }],
+          hiddenContentUpdateCount: 1,
+        },
+        eventType: "item/fileChange/patchUpdated",
+        itemId: "patch_1",
+      }),
+      createMessage("msg_assistant", "assistant", "working"),
+    ];
+    const incomingMessages = [
+      currentMessages[0]!,
+      createMessage("msg_diff", "event", "Diff updated: 1 file", {
+        eventData: {
+          files: ["src/app.ts"],
+          hasDiff: true,
+          hiddenContentUpdateCount: 2,
+        },
+        eventType: "turn/diff/updated",
+        itemId: "turn_1",
+      }),
+      createMessage("msg_patch", "event", "File patch updated: 1 file", {
+        eventData: {
+          changes: [{ kind: "modify", path: "src/app.ts" }],
+          hiddenContentUpdateCount: 2,
+        },
+        eventType: "item/fileChange/patchUpdated",
+        itemId: "patch_1",
+      }),
+      currentMessages[3]!,
+    ];
+
+    const mergedMessages = mergeStreamingMessagesForDisplay(
+      currentMessages,
+      incomingMessages,
+    );
+
+    deepStrictEqual(
+      mergedMessages.map((message) => message.id),
+      ["msg_user", "msg_assistant", "msg_diff", "msg_patch"],
+    );
+  });
+
   it("keeps updated stream events below new assistant messages from the same refresh", () => {
     const currentMessages = [
       createMessage("msg_user", "user", "fix chat"),

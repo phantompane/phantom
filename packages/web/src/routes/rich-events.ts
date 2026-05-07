@@ -95,12 +95,14 @@ export function getPlanEventData(message: ChatMessageRecord): {
 export function getDiffEventData(message: ChatMessageRecord): {
   diff: string;
   files: string[];
+  hasDiff: boolean;
 } {
   const eventData = getEventDataObject(message);
-  const diff = getString(eventData, "diff") ?? message.text;
+  const diff = getString(eventData, "diff") ?? "";
   return {
     diff,
     files: getStringArray(eventData, "files").filter(Boolean),
+    hasDiff: getBoolean(eventData, "hasDiff") ?? Boolean(diff),
   };
 }
 
@@ -253,6 +255,14 @@ function getNumber(
   return typeof candidate === "number" && Number.isFinite(candidate)
     ? candidate
     : undefined;
+}
+
+function getBoolean(
+  value: Record<string, unknown> | null,
+  key: string,
+): boolean | undefined {
+  const candidate = value?.[key];
+  return typeof candidate === "boolean" ? candidate : undefined;
 }
 
 function getStringArray(
