@@ -7519,6 +7519,112 @@ describe("ServeServices", () => {
     );
   });
 
+  it("does not merge assistant deltas into rich events with the same item id", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, store } = await createHarness(state);
+
+    codex.emitNotification({
+      method: "item/commandExecution/outputDelta",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        itemId: "shared_item",
+        delta: "command output",
+      },
+    });
+    codex.emitNotification({
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: "thread_1",
+        itemId: "shared_item",
+        delta: "assistant response",
+      },
+    });
+
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).messages.length, 2);
+    });
+
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+        message.itemId,
+      ]),
+      [
+        ["event", "", "item/commandExecution/outputDelta", "shared_item"],
+        [
+          "assistant",
+          "assistant response",
+          "item/agentMessage/delta",
+          "shared_item",
+        ],
+      ],
+    );
+  });
+
+  it("keeps updated rich events at their original local timeline position", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, services, store } = await createHarness(state);
+
+    codex.emitNotification({
+      method: "turn/plan/updated",
+      params: {
+        turnId: "turn_1",
+        explanation: "Starting",
+        plan: [{ step: "Inspect code", status: "inProgress" }],
+      },
+    });
+    codex.emitNotification({
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: "thread_1",
+        itemId: "assistant_1",
+        delta: "working",
+      },
+    });
+    codex.emitNotification({
+      method: "turn/plan/updated",
+      params: {
+        turnId: "turn_1",
+        explanation: "Continuing",
+        plan: [
+          { step: "Inspect code", status: "completed" },
+          { step: "Patch UI", status: "inProgress" },
+        ],
+      },
+    });
+
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).messages.length, 2);
+    });
+
+    codex.readThread.mockResolvedValueOnce({ thread: { turns: [] } });
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["event", "plan updated: 2 steps", "turn/plan/updated"],
+        ["assistant", "working", "item/agentMessage/delta"],
+      ],
+    );
+  });
+
   it("buffers threadless turn events until a new turn is committed", async () => {
     const state = {
       ...createTestState(),

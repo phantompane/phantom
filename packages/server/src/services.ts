@@ -2742,7 +2742,11 @@ export class ServeServices {
       }
       await this.store.update((state) => {
         const existingMessage = state.messages.find(
-          (message) => message.chatId === chatId && message.itemId === itemId,
+          (message) =>
+            message.chatId === chatId &&
+            message.role === "assistant" &&
+            message.eventType === method &&
+            message.itemId === itemId,
         );
         if (!existingMessage) {
           return {
