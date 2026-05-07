@@ -24,6 +24,9 @@ importers:
       oxlint:
         specifier: ^1.61.0
         version: 1.61.0
+      portless:
+        specifier: 0.10.3
+        version: 0.10.3
       tsdown:
         specifier: ^0.21.8
         version: 0.21.8(@typescript/native-preview@7.0.0-dev.20260417.1)(typescript@5.9.3)
@@ -2545,6 +2548,12 @@ packages:
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
+
+  portless@0.10.3:
+    resolution: {integrity: sha512-lXbVUsNiwWMKJGMi49HhTMW0lS7u0EzawonDZQ+yglSnHioiQK18Y4Fe0Ilk+TuXej71E/nTOHIFIBjUGvTm9w==}
+    engines: {node: '>=20'}
+    os: [darwin, linux, win32]
+    hasBin: true
 
   postcss@8.5.9:
     resolution: {integrity: sha512-7a70Nsot+EMX9fFU3064K/kdHWZqGVY+BADLyXc8Dfv+mTLLVl6JzJpPaCZ2kQL9gIJvKXSLMHhqdRRjwQeFtw==}
@@ -5313,6 +5322,8 @@ snapshots:
   pkce-challenge@4.1.0: {}
 
   pkce-challenge@5.0.1: {}
+
+  portless@0.10.3: {}
 
   postcss@8.5.9:
     dependencies:

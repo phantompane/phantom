@@ -6,7 +6,8 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "dev": "node --no-warnings --experimental-transform-types src/start.ts",
+    "dev": "portless run --name api.phantom pnpm run dev:app",
+    "dev:app": "node --no-warnings --experimental-transform-types src/start.ts",
     "build": "tsdown",
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",

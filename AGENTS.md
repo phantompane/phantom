@@ -11,6 +11,8 @@
 
 - Prereqs: Node 22+ and pnpm 10+; install deps via `pnpm install`.
 - Run CLI locally: `pnpm phantom`.
+- Run the development web/API servers with `pnpm dev`. The dev scripts use Portless, so the main checkout is served at `https://phantom.localhost` and `https://api.phantom.localhost`; linked Git worktrees get a worktree prefix such as `https://<worktree-prefix>.phantom.localhost` and `https://<worktree-prefix>.api.phantom.localhost`. If your Portless proxy is configured for HTTP on port 1355, use the same hostnames with `http://...:1355`.
+- Use `PORTLESS=0 pnpm dev` only to bypass Portless for debugging; it falls back to the fixed local ports (`web` on 3000, API on 9640) and can conflict across worktrees.
 - Build: `pnpm build`; type check: `pnpm typecheck`.
 - Lint/format: `pnpm lint` (check with `oxfmt` + `oxlint`) or `pnpm fix` (apply formatter and auto-fixes).
 - Tests: `pnpm test` (Vitest across packages).
