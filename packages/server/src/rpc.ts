@@ -3,7 +3,7 @@ import { validator } from "hono/validator";
 import { z } from "zod";
 import { createSseResponse, parseLastEventId } from "./event-hub.ts";
 import { renderChatMessages } from "./markdown.ts";
-import { getServeServices } from "./services.ts";
+import { getServeServices, maxAttachmentBytes } from "./services.ts";
 import type {
   ApiErrorBody,
   CodexServiceTier,
@@ -13,6 +13,13 @@ import type {
 const contextItemSchema = z.object({
   name: z.string().min(1),
   path: z.string().min(1),
+});
+
+const attachmentSchema = z.object({
+  name: z.string().min(1),
+  path: z.string().min(1),
+  mimeType: z.string().min(1),
+  size: z.number().int().nonnegative(),
 });
 
 const createProjectSchema = z.object({
@@ -69,6 +76,7 @@ const deleteWorktreeSchema = worktreeSchema.extend({
 
 const sendMessageSchema = z.object({
   text: z.string().min(1, "Message text is required"),
+  attachments: z.array(attachmentSchema).optional(),
   effort: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   serviceTier: z.enum(["fast", "flex"]).nullable().optional(),
@@ -81,6 +89,7 @@ const chatMessageSchema = z.object({
   chatId: z.string().min(1),
   role: z.enum(["user"]),
   text: z.string(),
+  attachments: z.array(attachmentSchema).optional(),
   eventType: z.literal("chat.message.queued"),
   itemId: z.string().optional(),
   createdAt: z.string().min(1),
@@ -91,6 +100,7 @@ const queuedMessageSchema = z.object({
   chatId: z.string().min(1),
   messageId: z.string().min(1),
   text: z.string().min(1),
+  attachments: z.array(attachmentSchema).optional(),
   effort: z.string().optional(),
   files: z.array(contextItemSchema).optional(),
   model: z.string().optional(),
@@ -121,6 +131,8 @@ const chatQuerySchema = z.object({
   context: z.string().optional(),
   fileQuery: z.string().optional(),
 });
+
+const maxAttachmentMultipartBytes = maxAttachmentBytes + 64 * 1024;
 
 function jsonError(c: Context, message: string, status: 400 | 404 = 400) {
   return c.json(
@@ -183,6 +195,76 @@ function contextItems(
     name: item.name,
     path: item.path,
   }));
+}
+
+async function parseAttachmentUpload(c: Context) {
+  const formData = await parseLimitedFormData(
+    c.req.raw,
+    maxAttachmentMultipartBytes,
+  );
+  const file = formData.get("file");
+  if (!(file instanceof File)) {
+    throw new Error("Attachment file is required");
+  }
+  return {
+    bytes: new Uint8Array(await file.arrayBuffer()),
+    mimeType: file.type,
+    name: file.name,
+    size: file.size,
+  };
+}
+
+async function parseLimitedFormData(
+  request: Request,
+  maxBytes: number,
+): Promise<FormData> {
+  const bytes = await readRequestBodyWithLimit(request, maxBytes);
+  const body = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(body).set(bytes);
+  return await new Request(request.url, {
+    body,
+    headers: request.headers,
+    method: request.method,
+  }).formData();
+}
+
+async function readRequestBodyWithLimit(
+  request: Request,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  const contentLength = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error("Attachment file is too large");
+  }
+
+  const body = request.body;
+  if (!body) {
+    return new Uint8Array();
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      await reader.cancel();
+      throw new Error("Attachment file is too large");
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 export const rpcRoutes = new Hono()
@@ -386,10 +468,22 @@ export const rpcRoutes = new Hono()
       return handleApiError(c, error);
     }
   })
+  .post("/chats/:chatId/attachments", async (c) => {
+    try {
+      const attachment = await getServeServices().uploadAttachment(
+        c.req.param("chatId"),
+        await parseAttachmentUpload(c),
+      );
+      return c.json({ attachment }, 201);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
   .post("/chats/:chatId/messages", jsonBody(sendMessageSchema), async (c) => {
     try {
       const body = c.req.valid("json");
       const chat = await getServeServices().sendMessage(c.req.param("chatId"), {
+        attachments: body.attachments,
         effort: optionalString(body.effort),
         files: contextItems(body.files),
         model: optionalString(body.model),
@@ -443,6 +537,7 @@ export const rpcRoutes = new Hono()
       const chat = await getServeServices().steerMessage(
         c.req.param("chatId"),
         {
+          attachments: body.attachments,
           effort: optionalString(body.effort),
           files: contextItems(body.files),
           model: optionalString(body.model),
@@ -462,6 +557,7 @@ export const rpcRoutes = new Hono()
       const chat = await getServeServices().queueMessage(
         c.req.param("chatId"),
         {
+          attachments: body.attachments,
           effort: optionalString(body.effort),
           files: contextItems(body.files),
           model: optionalString(body.model),

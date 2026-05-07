@@ -1,6 +1,7 @@
 import type { ChatMessageRecord, ChatStatus } from "@phantompane/state";
 
 export type {
+  ChatAttachmentRecord,
   ChatMessageRecord,
   ChatRecord,
   ChatStatus,

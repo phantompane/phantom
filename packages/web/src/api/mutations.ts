@@ -1,5 +1,6 @@
-import { api, readRpcJson, routeParam } from "./client";
+import { api, apiUrl, readRpcJson, routeParam } from "./client";
 import type {
+  ChatAttachmentRecord,
   ChatMessageRecord,
   ChatRecord,
   CodexServiceTier,
@@ -16,12 +17,24 @@ export interface DeleteWorktreeInput {
 }
 
 export interface SendMessageInput {
+  attachments?: ChatAttachmentRecord[];
   effort?: string | null;
   files?: CodexTurnContextItem[];
   model?: string | null;
   serviceTier?: CodexServiceTier | null;
   skills?: CodexTurnContextItem[];
   text: string;
+}
+
+export async function uploadChatAttachmentMutation(chatId: string, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return readRpcJson<{ attachment: ChatAttachmentRecord }>(
+    await fetch(apiUrl(`/chats/${routeParam(chatId)}/attachments`), {
+      body: formData,
+      method: "POST",
+    }),
+  );
 }
 
 export interface CreateChatInput {

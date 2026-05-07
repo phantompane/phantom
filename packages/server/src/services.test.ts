@@ -40,6 +40,18 @@ vi.mock("@phantompane/git", () => gitMocks);
 
 const temporaryDirectories: string[] = [];
 const timestamp = "2026-04-25T00:00:00.000Z";
+const validPngBytes = new Uint8Array([
+  137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0,
+  0, 0, 1, 8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218,
+  99, 252, 255, 31, 0, 3, 3, 2, 0, 239, 162, 167, 91, 0, 0, 0, 0, 73, 69, 78,
+  68, 174, 66, 96, 130,
+]);
+const validInterlacedPngBytes = new Uint8Array([
+  137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0,
+  0, 0, 1, 8, 2, 0, 0, 1, 231, 112, 99, 72, 0, 0, 0, 12, 73, 68, 65, 84, 120,
+  156, 99, 96, 96, 96, 0, 0, 0, 4, 0, 1, 246, 23, 56, 85, 0, 0, 0, 0, 73, 69,
+  78, 68, 174, 66, 96, 130,
+]);
 
 class FakeCodexBridge {
   readonly notificationHandlers: Array<(message: CodexMessage) => void> = [];
@@ -152,7 +164,10 @@ function createTestState(overrides: Partial<ServeState> = {}): ServeState {
   };
 }
 
-async function createHarness(state: ServeState): Promise<{
+async function createHarness(
+  state: ServeState,
+  options: { attachmentDir?: string } = {},
+): Promise<{
   codex: FakeCodexBridge;
   codexHome: string;
   services: ServeServices;
@@ -163,6 +178,7 @@ async function createHarness(state: ServeState): Promise<{
   const codex = new FakeCodexBridge();
   const codexHome = await createTemporaryDirectory();
   const services = new ServeServices({
+    attachmentDir: options.attachmentDir,
     codex: codex as unknown as CodexBridge,
     codexHome,
     store,
@@ -1830,6 +1846,61 @@ describe("ServeServices", () => {
       [
         ["chat_1_codex_turn_1_0", "user", "repeat"],
         ["msg_pending_duplicate", "user", "repeat"],
+      ],
+    );
+  });
+
+  it("preserves local attachment metadata when Codex thread history matches a sent user message", async () => {
+    const attachment = {
+      name: "screenshot.png",
+      path: "/tmp/phantom-attachments/chat_1/screenshot.png",
+      mimeType: "image/png",
+      size: 68,
+    };
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_with_attachment",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "inspect this",
+          attachments: [attachment],
+          createdAt: "2026-04-25T00:00:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            items: [{ type: "userMessage", text: "inspect this" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => ({
+        attachments: message.attachments,
+        id: message.id,
+        role: message.role,
+        text: message.text,
+      })),
+      [
+        {
+          attachments: [attachment],
+          id: "chat_1_codex_turn_1_0",
+          role: "user",
+          text: "inspect this",
+        },
       ],
     );
   });
@@ -7002,6 +7073,438 @@ describe("ServeServices", () => {
         skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
       },
     ]);
+  });
+
+  it("uploads image attachments and passes them to Codex turns", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const attachmentDir = await createTemporaryDirectory();
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { codex, services, store } = await createHarness(state, {
+      attachmentDir,
+    });
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_1" } });
+
+    const attachment = await services.uploadAttachment("chat_1", {
+      bytes: validPngBytes,
+      mimeType: "image/png",
+      name: "screenshot.png",
+      size: validPngBytes.byteLength,
+    });
+    await services.sendMessage("chat_1", {
+      attachments: [attachment],
+      text: "please inspect",
+    });
+
+    deepStrictEqual(codex.startTurn.mock.calls[0], [
+      "thread_1",
+      "please inspect",
+      worktreePath,
+      {
+        attachments: [attachment],
+      },
+    ]);
+    deepStrictEqual((await store.load()).messages[0]?.attachments, [
+      attachment,
+    ]);
+  });
+
+  it("uses image bytes instead of client MIME type when uploading attachments", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const attachmentDir = await createTemporaryDirectory();
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { services } = await createHarness(state, {
+      attachmentDir,
+    });
+
+    const attachment = await services.uploadAttachment("chat_1", {
+      bytes: validPngBytes,
+      mimeType: "application/octet-stream",
+      name: "screenshot",
+      size: validPngBytes.byteLength,
+    });
+
+    strictEqual(attachment.mimeType, "image/png");
+    strictEqual(attachment.name, "screenshot");
+    strictEqual(attachment.size, validPngBytes.byteLength);
+  });
+
+  it("uses stored attachment bytes as the source of truth when sending", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const attachmentDir = await createTemporaryDirectory();
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { codex, services } = await createHarness(state, {
+      attachmentDir,
+    });
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_1" } });
+
+    const attachment = await services.uploadAttachment("chat_1", {
+      bytes: validPngBytes,
+      mimeType: "image/png",
+      name: "screenshot.png",
+      size: validPngBytes.byteLength,
+    });
+    await services.sendMessage("chat_1", {
+      attachments: [
+        {
+          name: "spoof.webp",
+          path: attachment.path,
+          mimeType: "image/webp",
+          size: 1,
+        },
+      ],
+      text: "please inspect",
+    });
+
+    deepStrictEqual(codex.startTurn.mock.calls[0]?.[3], {
+      attachments: [
+        {
+          name: "spoof.webp",
+          path: attachment.path,
+          mimeType: "image/png",
+          size: validPngBytes.byteLength,
+        },
+      ],
+    });
+  });
+
+  it("accepts interlaced PNG image attachments", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const attachmentDir = await createTemporaryDirectory();
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { services } = await createHarness(state, {
+      attachmentDir,
+    });
+
+    const attachment = await services.uploadAttachment("chat_1", {
+      bytes: validInterlacedPngBytes,
+      mimeType: "image/png",
+      name: "interlaced.png",
+      size: validInterlacedPngBytes.byteLength,
+    });
+
+    strictEqual(attachment.mimeType, "image/png");
+    strictEqual(attachment.size, validInterlacedPngBytes.byteLength);
+  });
+
+  it("rejects attachments with spoofed image MIME types", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const attachmentDir = await createTemporaryDirectory();
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { services } = await createHarness(state, {
+      attachmentDir,
+    });
+
+    await rejects(
+      services.uploadAttachment("chat_1", {
+        bytes: new TextEncoder().encode("not an image"),
+        mimeType: "image/png",
+        name: "not-image.png",
+        size: 12,
+      }),
+      /Attachment file is not a supported image/,
+    );
+  });
+
+  it("rejects attachments with truncated image bodies", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const attachmentDir = await createTemporaryDirectory();
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { services } = await createHarness(state, {
+      attachmentDir,
+    });
+
+    await rejects(
+      services.uploadAttachment("chat_1", {
+        bytes: validPngBytes.slice(0, 8),
+        mimeType: "image/png",
+        name: "truncated.png",
+        size: 8,
+      }),
+      /Attachment file is not a supported image/,
+    );
+  });
+
+  it("rejects structurally invalid PNG, JPEG, GIF, and WebP attachments", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const attachmentDir = await createTemporaryDirectory();
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { services } = await createHarness(state, {
+      attachmentDir,
+    });
+
+    const invalidImages = [
+      {
+        bytes: new Uint8Array([
+          137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0,
+          1, 0, 0, 0, 1, 8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 0, 73, 69, 78,
+          68, 174, 66, 96, 130,
+        ]),
+        mimeType: "image/png",
+        name: "no-idat.png",
+      },
+      {
+        bytes: new Uint8Array([
+          137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0,
+          0, 0, 0, 0, 1, 8, 4, 0, 0, 0, 90, 222, 103, 60, 0, 0, 0, 11, 73, 68,
+          65, 84, 120, 218, 99, 252, 255, 31, 0, 3, 3, 2, 0, 239, 162, 167, 91,
+          0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ]),
+        mimeType: "image/png",
+        name: "zero-width.png",
+      },
+      {
+        bytes: new Uint8Array([
+          137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0,
+          1, 0, 0, 0, 1, 1, 2, 0, 0, 0, 157, 103, 49, 175, 0, 0, 0, 11, 73, 68,
+          65, 84, 120, 218, 99, 252, 255, 31, 0, 3, 3, 2, 0, 239, 162, 167, 91,
+          0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ]),
+        mimeType: "image/png",
+        name: "invalid-ihdr.png",
+      },
+      {
+        bytes: new Uint8Array([
+          137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0,
+          1, 0, 0, 0, 1, 8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 12, 73, 68, 65,
+          84, 120, 156, 99, 96, 96, 96, 0, 0, 0, 4, 0, 1, 246, 23, 56, 85, 0, 0,
+          0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ]),
+        mimeType: "image/png",
+        name: "oversized-scanline.png",
+      },
+      {
+        bytes: new Uint8Array([
+          137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0,
+          1, 0, 0, 0, 1, 8, 2, 0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 11, 73, 68,
+          65, 84, 120, 156, 99, 101, 96, 0, 0, 0, 18, 0, 6, 115, 205, 104, 227,
+          0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ]),
+        mimeType: "image/png",
+        name: "unsupported-filter.png",
+      },
+      {
+        bytes: new Uint8Array([
+          137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0,
+          1, 0, 0, 0, 1, 1, 3, 0, 0, 0, 37, 219, 86, 202, 0, 0, 0, 10, 73, 68,
+          65, 84, 120, 156, 99, 96, 0, 0, 0, 2, 0, 1, 72, 175, 164, 113, 0, 0,
+          0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ]),
+        mimeType: "image/png",
+        name: "indexed-without-plte.png",
+      },
+      {
+        bytes: new Uint8Array([
+          137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0,
+          1, 0, 0, 0, 1, 8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 13, 73, 72, 68,
+          82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0,
+          11, 73, 68, 65, 84, 120, 156, 99, 252, 255, 31, 0, 3, 3, 2, 0, 124, 6,
+          208, 188, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ]),
+        mimeType: "image/png",
+        name: "duplicate-ihdr.png",
+      },
+      {
+        bytes: new Uint8Array([
+          137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0,
+          1, 0, 0, 0, 1, 1, 3, 0, 0, 0, 37, 219, 86, 202, 0, 0, 0, 6, 80, 76,
+          84, 69, 0, 0, 0, 255, 255, 255, 165, 217, 159, 221, 0, 0, 0, 6, 80,
+          76, 84, 69, 0, 0, 0, 255, 255, 255, 165, 217, 159, 221, 0, 0, 0, 10,
+          73, 68, 65, 84, 120, 156, 99, 96, 0, 0, 0, 2, 0, 1, 72, 175, 164, 113,
+          0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ]),
+        mimeType: "image/png",
+        name: "duplicate-plte.png",
+      },
+      {
+        bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+        mimeType: "image/jpeg",
+        name: "fake.jpg",
+      },
+      {
+        bytes: new Uint8Array([
+          0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0xff, 0xff, 0xff, 0xff,
+          0x01, 0x01, 0x11, 0x00, 0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00,
+          0x00, 0x3f, 0x00, 0x00, 0xff, 0xd9,
+        ]),
+        mimeType: "image/jpeg",
+        name: "huge-dimensions.jpg",
+      },
+      {
+        bytes: new Uint8Array([
+          0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00,
+          0x00, 0x00, 0x3b,
+        ]),
+        mimeType: "image/gif",
+        name: "fake.gif",
+      },
+      {
+        bytes: new Uint8Array([
+          0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00,
+          0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+          0x00, 0x02, 0x01, 0x00, 0x00, 0x3b,
+        ]),
+        mimeType: "image/gif",
+        name: "no-color-table.gif",
+      },
+      {
+        bytes: new Uint8Array([
+          0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0xff, 0xff, 0xff, 0xff, 0x80,
+          0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x2c, 0x00, 0x00,
+          0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x01, 0x00, 0x00,
+          0x3b,
+        ]),
+        mimeType: "image/gif",
+        name: "huge-logical-screen.gif",
+      },
+      {
+        bytes: new Uint8Array([
+          0x52, 0x49, 0x46, 0x46, 0x0c, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42,
+          0x50, 0x46, 0x41, 0x4b, 0x45, 0x00, 0x00, 0x00, 0x00,
+        ]),
+        mimeType: "image/webp",
+        name: "fake.webp",
+      },
+    ];
+
+    for (const image of invalidImages) {
+      await rejects(
+        services.uploadAttachment("chat_1", {
+          bytes: image.bytes,
+          mimeType: image.mimeType,
+          name: image.name,
+          size: image.bytes.byteLength,
+        }),
+        /Attachment file is not a supported image/,
+      );
+    }
+  });
+
+  it("rejects attachment paths from another chat", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const attachmentDir = await createTemporaryDirectory();
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [
+        createChat({ id: "chat_1", worktreePath }),
+        createChat({ id: "chat_2", worktreePath }),
+      ],
+    };
+    const { codex, services } = await createHarness(state, {
+      attachmentDir,
+    });
+
+    const attachment = await services.uploadAttachment("chat_2", {
+      bytes: validPngBytes,
+      mimeType: "image/png",
+      name: "screenshot.png",
+      size: validPngBytes.byteLength,
+    });
+
+    await rejects(
+      services.sendMessage("chat_1", {
+        attachments: [attachment],
+        text: "please inspect",
+      }),
+      /Attachment path must be within this chat's attachment storage/,
+    );
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+  });
+
+  it("keeps queued messages editable when attachment validation fails during drain", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const attachmentDir = await createTemporaryDirectory();
+    const missingAttachmentPath = join(attachmentDir, "chat_1", "missing.png");
+    const state: ServeState = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+      messages: [
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user",
+          text: "please inspect",
+          attachments: [
+            {
+              name: "missing.png",
+              path: missingAttachmentPath,
+              mimeType: "image/png",
+              size: 4,
+            },
+          ],
+          eventType: "chat.message.queued",
+          createdAt: timestamp,
+        },
+      ],
+      queuedMessages: [
+        {
+          id: "queue_1",
+          chatId: "chat_1",
+          messageId: "msg_queued",
+          text: "please inspect",
+          attachments: [
+            {
+              name: "missing.png",
+              path: missingAttachmentPath,
+              mimeType: "image/png",
+              size: 4,
+            },
+          ],
+          createdAt: timestamp,
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state, {
+      attachmentDir,
+    });
+
+    await services.queueMessage("chat_1", { text: "next queued" });
+
+    const nextState = await store.load();
+    strictEqual(nextState.messages[0]?.eventType, "chat.message.queued");
+    strictEqual(
+      nextState.queuedMessages.some((message) => message.id === "queue_1"),
+      true,
+    );
+    strictEqual(
+      nextState.messages.some(
+        (message) =>
+          message.role === "error" &&
+          message.text.includes("Attachment path is not an existing file"),
+      ),
+      true,
+    );
+    strictEqual(codex.startTurn.mock.calls.length, 0);
   });
 
   it("rejects file context paths outside the chat worktree", async () => {

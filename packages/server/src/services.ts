@@ -1,5 +1,14 @@
-import { realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  basename,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
+import { inflateSync } from "node:zlib";
 import {
   branchExists,
   getGitRoot,
@@ -32,15 +41,18 @@ import {
   mapCodexMethodToEvent,
   summarizeCodexEvent,
   type CodexMessage,
+  type CodexTurnOptions,
 } from "@phantompane/codex";
 import {
   createRecordId,
   createTimestamp,
+  getServeDataDir,
   ServeStateStore,
   touchProject,
 } from "@phantompane/state";
 import { EventHub } from "./event-hub.ts";
 import type {
+  ChatAttachmentRecord,
   ChatMessageRecord,
   ChatRecord,
   ChatStatus,
@@ -88,12 +100,20 @@ export interface SyncProjectWorktreeBranchResult {
 }
 
 export interface SendMessageInput {
+  attachments?: ChatAttachmentRecord[];
   effort?: string;
   files?: CodexTurnContextItem[];
   model?: string;
   serviceTier?: CodexServiceTier;
   skills?: CodexTurnContextItem[];
   text: string;
+}
+
+export interface UploadAttachmentInput {
+  bytes: Uint8Array;
+  mimeType: string;
+  name: string;
+  size: number;
 }
 
 export interface DeletePendingMessageResult {
@@ -108,6 +128,7 @@ export interface ApprovalInput {
 }
 
 export interface ServeServicesOptions {
+  attachmentDir?: string;
   eventHub?: EventHub;
   store?: ServeStateStore;
   codex?: CodexBridge;
@@ -131,11 +152,29 @@ interface PendingTurnEventBuffer {
 
 interface SubmitMessageOptions {
   existingUserMessageId?: string;
+  prevalidatedTurnOptions?: CodexTurnOptions | undefined;
   queuedMessageId?: string;
   requireActiveTurn: boolean;
 }
 
 const worktreeNameInferenceModel = "gpt-5.4-mini";
+export const maxAttachmentBytes = 10 * 1024 * 1024;
+const maxDecodedImageBytes = 64 * 1024 * 1024;
+
+class QueuedAttachmentValidationError extends Error {
+  constructor(error: unknown) {
+    super(toErrorMessage(error));
+    this.name = "QueuedAttachmentValidationError";
+  }
+}
+
+interface PngHeader {
+  bitDepth: number;
+  colorType: number;
+  height: number;
+  interlaceMethod: number;
+  width: number;
+}
 
 function createWorktreeNameInferencePrompt(message: string): string {
   return [
@@ -249,6 +288,7 @@ export class ServeServices {
   readonly eventHub: EventHub;
   readonly store: ServeStateStore;
   readonly codex: CodexBridge;
+  private readonly attachmentDir: string;
   private readonly loadedThreadIds = new Set<string>();
   private readonly approvalRequests = new Map<string, PendingApprovalRequest>();
   private readonly pendingTurnEvents = new Map<
@@ -273,6 +313,8 @@ export class ServeServices {
     this.eventHub = options.eventHub ?? new EventHub();
     this.store = options.store ?? new ServeStateStore();
     this.codex = options.codex ?? new CodexBridge();
+    this.attachmentDir =
+      options.attachmentDir ?? join(getServeDataDir(), "attachments");
     this.codex.onNotification((message) => {
       void this.handleCodexNotification(message);
     });
@@ -1227,6 +1269,46 @@ export class ServeServices {
     return this.submitMessage(chatId, input, { requireActiveTurn: false });
   }
 
+  async uploadAttachment(
+    chatId: string,
+    input: UploadAttachmentInput,
+  ): Promise<ChatAttachmentRecord> {
+    const state = await this.store.load();
+    this.requireChat(state, chatId);
+
+    if (input.size <= 0 || input.bytes.byteLength <= 0) {
+      throw new Error("Attachment file is empty");
+    }
+    if (
+      input.size > maxAttachmentBytes ||
+      input.bytes.byteLength > maxAttachmentBytes
+    ) {
+      throw new Error("Attachment file is too large");
+    }
+    const mimeType = detectSupportedImageMimeType(input.bytes);
+    if (!mimeType) {
+      throw new Error("Attachment file is not a supported image");
+    }
+
+    const safeName = sanitizeAttachmentName(input.name);
+    const extension = sanitizeAttachmentExtension(safeName, mimeType);
+    const attachmentId = createRecordId("att");
+    const chatAttachmentDir = join(this.attachmentDir, chatId);
+    const attachmentPath = join(
+      chatAttachmentDir,
+      `${attachmentId}${extension}`,
+    );
+    await mkdir(chatAttachmentDir, { recursive: true });
+    await writeFile(attachmentPath, input.bytes);
+
+    return {
+      name: safeName,
+      path: attachmentPath,
+      mimeType,
+      size: input.size,
+    };
+  }
+
   async steerMessage(
     chatId: string,
     input: SendMessageInput,
@@ -1274,6 +1356,7 @@ export class ServeServices {
         text,
         "chat.message.queued",
       );
+      userMessage.attachments = cloneAttachmentRecords(input.attachments);
       const queuedMessage = createQueuedMessage(chat.id, userMessage.id, input);
       queuedUserMessage = userMessage;
       return {
@@ -1492,8 +1575,9 @@ export class ServeServices {
       this.pendingChatTurns.add(chatId);
     }
 
-    const turnOptions = await this.createCodexTurnOptions(input, chat).catch(
-      async (error) => {
+    const turnOptions =
+      options.prevalidatedTurnOptions ??
+      (await this.createCodexTurnOptions(input, chat).catch(async (error) => {
         clearPendingChatTurn();
         if (options.queuedMessageId) {
           await this.store.update((nextState) => ({
@@ -1512,21 +1596,23 @@ export class ServeServices {
         }
         await this.drainQueuedMessagesAndReport(chatId);
         throw error;
-      },
-    );
+      }));
 
     const userMessage = existingUserMessage
       ? {
           ...existingUserMessage,
           eventType: undefined,
         }
-      : createMessage(
-          chat.id,
-          "user",
-          text,
-          isSteeringActiveTurn ? "chat.message.steered" : undefined,
-          isSteeringActiveTurn ? (chat.activeTurnId ?? undefined) : undefined,
-        );
+      : {
+          ...createMessage(
+            chat.id,
+            "user",
+            text,
+            isSteeringActiveTurn ? "chat.message.steered" : undefined,
+            isSteeringActiveTurn ? (chat.activeTurnId ?? undefined) : undefined,
+          ),
+          attachments: cloneAttachmentRecords(input.attachments),
+        };
     let nextStatus: ChatStatus | null = null;
     let nextActiveTurnId: string | null | undefined;
     let pendingTurnThreadId: string | null = null;
@@ -1762,6 +1848,7 @@ export class ServeServices {
     chat: ChatRecord,
   ): Promise<
     | {
+        attachments?: ChatAttachmentRecord[];
         effort?: string;
         files?: CodexTurnContextItem[];
         model?: string;
@@ -1770,6 +1857,10 @@ export class ServeServices {
       }
     | undefined
   > {
+    const attachments = await this.normalizeAttachmentItems(
+      input.attachments,
+      chat.id,
+    );
     const files = await normalizeFileContextItems(
       input.files,
       chat.worktreePath,
@@ -1782,18 +1873,23 @@ export class ServeServices {
       !input.effort &&
       !input.model &&
       !input.serviceTier &&
+      attachments.length === 0 &&
       files.length === 0 &&
       skills.length === 0
     ) {
       return undefined;
     }
     const options: {
+      attachments?: ChatAttachmentRecord[];
       effort?: string;
       files?: CodexTurnContextItem[];
       model?: string;
       serviceTier?: CodexServiceTier;
       skills?: CodexTurnContextItem[];
     } = {};
+    if (attachments.length > 0) {
+      options.attachments = attachments;
+    }
     if (input.effort) {
       options.effort = input.effort;
     }
@@ -1810,6 +1906,72 @@ export class ServeServices {
       options.skills = skills;
     }
     return options;
+  }
+
+  private async normalizeAttachmentItems(
+    items: ChatAttachmentRecord[] | undefined,
+    chatId: string,
+  ): Promise<ChatAttachmentRecord[]> {
+    const normalized = normalizeAttachmentRecords(items);
+    if (normalized.length === 0) {
+      return [];
+    }
+
+    const chatAttachmentDir = join(this.attachmentDir, chatId);
+    return await Promise.all(
+      normalized.map(async (item) => {
+        const resolvedPath = resolve(item.path);
+        if (!isPathInside(chatAttachmentDir, resolvedPath)) {
+          throw new Error(
+            `Attachment path must be within this chat's attachment storage: ${item.path}`,
+          );
+        }
+
+        let realChatAttachmentDir: string;
+        try {
+          realChatAttachmentDir = await realpath(chatAttachmentDir);
+        } catch {
+          throw new Error(
+            `Attachment path is not an existing file: ${item.path}`,
+          );
+        }
+        let realAttachmentPath: string;
+        try {
+          realAttachmentPath = await realpath(resolvedPath);
+        } catch {
+          throw new Error(
+            `Attachment path is not an existing file: ${item.path}`,
+          );
+        }
+        if (!isPathInside(realChatAttachmentDir, realAttachmentPath)) {
+          throw new Error(
+            `Attachment path must resolve within this chat's attachment storage: ${item.path}`,
+          );
+        }
+        const attachmentStat = await stat(realAttachmentPath);
+        if (!attachmentStat.isFile()) {
+          throw new Error(`Attachment path is not a file: ${item.path}`);
+        }
+        if (
+          attachmentStat.size <= 0 ||
+          attachmentStat.size > maxAttachmentBytes
+        ) {
+          throw new Error("Attachment file is too large");
+        }
+        const bytes = await readFile(realAttachmentPath);
+        const mimeType = detectSupportedImageMimeType(bytes);
+        if (!mimeType) {
+          throw new Error("Attachment file is not a supported image");
+        }
+
+        return {
+          name: item.name,
+          path: realAttachmentPath,
+          mimeType,
+          size: attachmentStat.size,
+        };
+      }),
+    );
   }
 
   private async normalizeSkillContextItems(
@@ -2069,6 +2231,17 @@ export class ServeServices {
     if (!queuedMessage) {
       return;
     }
+    let prevalidatedTurnOptions: CodexTurnOptions | undefined;
+    if ((queuedMessage.attachments ?? []).length > 0) {
+      try {
+        prevalidatedTurnOptions = await this.createCodexTurnOptions(
+          queuedMessageToSendInput(queuedMessage),
+          chat,
+        );
+      } catch (error) {
+        throw new QueuedAttachmentValidationError(error);
+      }
+    }
     const claimedQueuedMessageRef: { current: QueuedMessageRecord | null } = {
       current: null,
     };
@@ -2125,6 +2298,7 @@ export class ServeServices {
       queuedMessageToSendInput(claimedQueuedMessage),
       {
         existingUserMessageId: claimedQueuedMessage.messageId,
+        prevalidatedTurnOptions,
         requireActiveTurn: false,
       },
     );
@@ -2147,6 +2321,7 @@ export class ServeServices {
           await this.addAgentErrorMessage(chatId, error);
           const state = await this.store.load();
           if (
+            !(error instanceof QueuedAttachmentValidationError) &&
             state.queuedMessages.some((message) => message.chatId === chatId)
           ) {
             this.pendingQueuedMessageDrainChatIds.add(chatId);
@@ -3229,6 +3404,7 @@ function createQueuedMessage(
     chatId,
     messageId,
     text: input.text.trim(),
+    attachments: cloneAttachmentRecords(input.attachments),
     effort: input.effort,
     files: cloneContextItems(input.files),
     model: input.model,
@@ -3242,6 +3418,7 @@ function queuedMessageToSendInput(
   message: QueuedMessageRecord,
 ): SendMessageInput {
   return {
+    attachments: cloneAttachmentRecords(message.attachments),
     effort: message.effort,
     files: cloneContextItems(message.files),
     model: message.model,
@@ -3261,6 +3438,13 @@ function cloneContextItems(
     name: item.name,
     path: item.path,
   }));
+}
+
+function cloneAttachmentRecords(
+  items: ChatAttachmentRecord[] | undefined,
+): ChatAttachmentRecord[] | undefined {
+  const normalized = normalizeAttachmentRecords(items);
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function isChatInActiveTurn(chat: ChatRecord): boolean {
@@ -3760,6 +3944,11 @@ function mergeCodexAndLocalMessages(
           message.id,
           fallbackCodexMessage.codexOrder ?? fallbackTranscriptCodexIndex,
         );
+        mergedCodexMessages[fallbackTranscriptCodexIndex] =
+          mergeLocalMessageMetadataIntoCodexMessage(
+            fallbackCodexMessage,
+            message,
+          );
       }
       unmatchedCodexMessageIndexes.splice(
         unmatchedCodexMessageIndexes.indexOf(fallbackTranscriptCodexIndex),
@@ -3810,10 +3999,12 @@ function mergeCodexAndLocalMessages(
         message.id,
         matchedCodexMessage.codexOrder ?? matchedCodexIndex,
       );
+      mergedCodexMessages[matchedCodexIndex] =
+        mergeLocalMessageMetadataIntoCodexMessage(matchedCodexMessage, message);
     }
     if (message.eventType === "chat.message.steered" && matchedCodexMessage) {
       mergedCodexMessages[matchedCodexIndex] = {
-        ...matchedCodexMessage,
+        ...mergedCodexMessages[matchedCodexIndex],
         createdAt: message.createdAt,
       };
     }
@@ -3834,6 +4025,14 @@ function mergeCodexAndLocalMessages(
   )
     .sort(compareMergedMessages)
     .map(stripInternalCodexMessageMetadata);
+}
+
+function mergeLocalMessageMetadataIntoCodexMessage(
+  codexMessage: InternalChatMessageRecord,
+  localMessage: ChatMessageRecord,
+): InternalChatMessageRecord {
+  const attachments = cloneAttachmentRecords(localMessage.attachments);
+  return attachments ? { ...codexMessage, attachments } : codexMessage;
 }
 
 function localMessagesWithoutStaleSteeredState(
@@ -4876,6 +5075,388 @@ function normalizeTurnContextItems(
       path: item.path.trim(),
     }))
     .filter((item) => item.name && item.path);
+}
+
+function normalizeAttachmentRecords(
+  items: ChatAttachmentRecord[] | undefined,
+): ChatAttachmentRecord[] {
+  return (items ?? [])
+    .map((item) => ({
+      name: item.name.trim(),
+      path: item.path.trim(),
+      mimeType: item.mimeType.trim().toLowerCase(),
+      size: item.size,
+    }))
+    .filter(
+      (item) =>
+        item.name &&
+        item.path &&
+        item.mimeType.startsWith("image/") &&
+        Number.isInteger(item.size) &&
+        item.size > 0 &&
+        item.size <= maxAttachmentBytes,
+    );
+}
+
+function sanitizeAttachmentName(name: string): string {
+  const trimmedName = basename(name.trim());
+  const safeName = trimmedName.replace(/[^\w .-]+/g, "_").trim();
+  return safeName || "attachment";
+}
+
+function sanitizeAttachmentExtension(name: string, mimeType: string): string {
+  const currentExtension = extname(name).toLowerCase();
+  if (mimeType === "image/png" && currentExtension === ".png") {
+    return currentExtension;
+  }
+  return ".png";
+}
+
+function detectSupportedImageMimeType(bytes: Uint8Array): string | null {
+  if (isValidPng(bytes)) {
+    return "image/png";
+  }
+  return null;
+}
+
+function isValidPng(bytes: Uint8Array): boolean {
+  if (
+    bytes.length < 33 ||
+    bytes[0] !== 0x89 ||
+    bytes[1] !== 0x50 ||
+    bytes[2] !== 0x4e ||
+    bytes[3] !== 0x47 ||
+    bytes[4] !== 0x0d ||
+    bytes[5] !== 0x0a ||
+    bytes[6] !== 0x1a ||
+    bytes[7] !== 0x0a
+  ) {
+    return false;
+  }
+
+  let offset = 8;
+  let sawIhdr = false;
+  const idatChunks: Uint8Array[] = [];
+  let pngHeader: PngHeader | null = null;
+  let finishedIdat = false;
+  let sawIdat = false;
+  let sawPlte = false;
+  while (offset + 12 <= bytes.length) {
+    const chunkLength = readUint32(bytes, offset);
+    const chunkTypeOffset = offset + 4;
+    const chunkDataOffset = offset + 8;
+    const nextOffset = chunkDataOffset + chunkLength + 4;
+    if (nextOffset > bytes.length) {
+      return false;
+    }
+
+    const chunkType = readAscii(bytes, chunkTypeOffset, 4);
+    if (!sawIhdr) {
+      const header = parsePngHeader(
+        bytes.subarray(chunkDataOffset, chunkDataOffset + 13),
+      );
+      if (chunkType !== "IHDR" || chunkLength !== 13 || !header) {
+        return false;
+      }
+      pngHeader = header;
+      sawIhdr = true;
+    } else if (chunkType === "IHDR") {
+      return false;
+    }
+    if (
+      crc32(bytes.subarray(chunkTypeOffset, chunkDataOffset + chunkLength)) !==
+      readUint32(bytes, chunkDataOffset + chunkLength)
+    ) {
+      return false;
+    }
+    if (chunkType === "IEND") {
+      return (
+        chunkLength === 0 &&
+        sawIdat &&
+        isValidPngPaletteState(pngHeader, sawPlte) &&
+        pngHeader != null &&
+        nextOffset === bytes.length &&
+        isValidPngImageData(idatChunks, pngHeader)
+      );
+    }
+    if (sawIdat && chunkType !== "IDAT") {
+      finishedIdat = true;
+    }
+    if (chunkType === "PLTE") {
+      if (
+        !pngHeader ||
+        sawIdat ||
+        sawPlte ||
+        !isValidPngPaletteChunk(chunkLength, pngHeader)
+      ) {
+        return false;
+      }
+      sawPlte = true;
+    }
+    if (chunkType === "IDAT") {
+      if (
+        chunkLength === 0 ||
+        finishedIdat ||
+        !isValidPngPaletteState(pngHeader, sawPlte)
+      ) {
+        return false;
+      }
+      idatChunks.push(
+        bytes.subarray(chunkDataOffset, chunkDataOffset + chunkLength),
+      );
+      sawIdat = true;
+    }
+    offset = nextOffset;
+  }
+
+  return false;
+}
+
+function isValidPngPaletteState(
+  header: PngHeader | null,
+  sawPlte: boolean,
+): boolean {
+  if (!header) {
+    return false;
+  }
+  if (header.colorType === 3) {
+    return sawPlte;
+  }
+  return header.colorType === 2 || header.colorType === 6 ? true : !sawPlte;
+}
+
+function isValidPngPaletteChunk(
+  chunkLength: number,
+  header: PngHeader,
+): boolean {
+  if (
+    header.colorType !== 3 &&
+    header.colorType !== 2 &&
+    header.colorType !== 6
+  ) {
+    return false;
+  }
+  const paletteEntries = chunkLength / 3;
+  return (
+    Number.isInteger(paletteEntries) &&
+    paletteEntries >= 1 &&
+    paletteEntries <= 256 &&
+    (header.colorType !== 3 || paletteEntries <= 2 ** header.bitDepth)
+  );
+}
+
+function isValidPngImageData(chunks: Uint8Array[], header: PngHeader): boolean {
+  const expectedByteLength = getExpectedPngImageDataByteLength(header);
+  if (
+    expectedByteLength == null ||
+    expectedByteLength <= 0 ||
+    expectedByteLength > maxDecodedImageBytes
+  ) {
+    return false;
+  }
+
+  const totalLength = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const bytes = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  try {
+    const inflated = inflateSync(bytes, {
+      maxOutputLength: expectedByteLength + 1,
+    });
+    return (
+      inflated.byteLength === expectedByteLength &&
+      hasValidPngScanlineFilters(inflated, header)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hasValidPngScanlineFilters(
+  bytes: Uint8Array,
+  header: PngHeader,
+): boolean {
+  const rowLengths = getPngImageDataRowLengths(header);
+  if (!rowLengths) {
+    return false;
+  }
+
+  let offset = 0;
+  for (const rowLength of rowLengths) {
+    const filterType = bytes[offset];
+    if (filterType == null || filterType > 4) {
+      return false;
+    }
+    offset += rowLength;
+  }
+  return offset === bytes.length;
+}
+
+function parsePngHeader(bytes: Uint8Array): PngHeader | null {
+  const width = readUint32(bytes, 0);
+  const height = readUint32(bytes, 4);
+  const bitDepth = bytes[8];
+  const colorType = bytes[9];
+  const compressionMethod = bytes[10];
+  const filterMethod = bytes[11];
+  const interlaceMethod = bytes[12];
+  if (
+    bytes.length === 13 &&
+    width > 0 &&
+    height > 0 &&
+    isValidPngColorTypeAndBitDepth(colorType, bitDepth) &&
+    compressionMethod === 0 &&
+    filterMethod === 0 &&
+    (interlaceMethod === 0 || interlaceMethod === 1)
+  ) {
+    return {
+      bitDepth: bitDepth ?? 0,
+      colorType: colorType ?? 0,
+      height,
+      interlaceMethod,
+      width,
+    };
+  }
+  return null;
+}
+
+function getExpectedPngImageDataByteLength(header: PngHeader): number | null {
+  const rowLengths = getPngImageDataRowLengths(header);
+  if (!rowLengths) {
+    return null;
+  }
+  const totalByteLength = rowLengths.reduce(
+    (total, rowLength) => total + rowLength,
+    0,
+  );
+  return Number.isSafeInteger(totalByteLength) ? totalByteLength : null;
+}
+
+function getPngImageDataRowLengths(header: PngHeader): number[] | null {
+  const samplesPerPixel = getPngSamplesPerPixel(header.colorType);
+  if (samplesPerPixel == null) {
+    return null;
+  }
+  if (header.interlaceMethod === 0) {
+    const rowLength = getPngRowLength(header.width, samplesPerPixel, header);
+    return rowLength == null ? null : Array(header.height).fill(rowLength);
+  }
+  if (header.interlaceMethod !== 1) {
+    return null;
+  }
+
+  const rowLengths: number[] = [];
+  for (const pass of adam7Passes) {
+    const passWidth = getAdam7PassSize(header.width, pass.xStart, pass.xStep);
+    const passHeight = getAdam7PassSize(header.height, pass.yStart, pass.yStep);
+    if (passWidth === 0 || passHeight === 0) {
+      continue;
+    }
+    const rowLength = getPngRowLength(passWidth, samplesPerPixel, header);
+    if (rowLength == null) {
+      return null;
+    }
+    rowLengths.push(...Array(passHeight).fill(rowLength));
+  }
+  return rowLengths.length > 0 ? rowLengths : null;
+}
+
+const adam7Passes = [
+  { xStart: 0, xStep: 8, yStart: 0, yStep: 8 },
+  { xStart: 4, xStep: 8, yStart: 0, yStep: 8 },
+  { xStart: 0, xStep: 4, yStart: 4, yStep: 8 },
+  { xStart: 2, xStep: 4, yStart: 0, yStep: 4 },
+  { xStart: 0, xStep: 2, yStart: 2, yStep: 4 },
+  { xStart: 1, xStep: 2, yStart: 0, yStep: 2 },
+  { xStart: 0, xStep: 1, yStart: 1, yStep: 2 },
+] as const;
+
+function getAdam7PassSize(
+  imageSize: number,
+  passStart: number,
+  passStep: number,
+): number {
+  return imageSize > passStart
+    ? Math.floor((imageSize - passStart + passStep - 1) / passStep)
+    : 0;
+}
+
+function getPngRowLength(
+  width: number,
+  samplesPerPixel: number,
+  header: PngHeader,
+): number | null {
+  const bitsPerScanline = width * samplesPerPixel * header.bitDepth;
+  const bytesPerScanline = Math.ceil(bitsPerScanline / 8);
+  const rowLength = bytesPerScanline + 1;
+  return Number.isSafeInteger(rowLength) ? rowLength : null;
+}
+
+function getPngSamplesPerPixel(colorType: number): number | null {
+  switch (colorType) {
+    case 0:
+    case 3:
+      return 1;
+    case 2:
+      return 3;
+    case 4:
+      return 2;
+    case 6:
+      return 4;
+    default:
+      return null;
+  }
+}
+
+function isValidPngColorTypeAndBitDepth(
+  colorType: number | undefined,
+  bitDepth: number | undefined,
+): boolean {
+  switch (colorType) {
+    case 0:
+      return [1, 2, 4, 8, 16].includes(bitDepth ?? 0);
+    case 2:
+    case 4:
+    case 6:
+      return bitDepth === 8 || bitDepth === 16;
+    case 3:
+      return [1, 2, 4, 8].includes(bitDepth ?? 0);
+    default:
+      return false;
+  }
+}
+
+function readUint32(bytes: Uint8Array, offset: number): number {
+  return (
+    ((bytes[offset] ?? 0) * 0x1000000 +
+      ((bytes[offset + 1] ?? 0) << 16) +
+      ((bytes[offset + 2] ?? 0) << 8) +
+      (bytes[offset + 3] ?? 0)) >>>
+    0
+  );
+}
+
+function readAscii(bytes: Uint8Array, offset: number, length: number): string {
+  let value = "";
+  for (let index = 0; index < length; index += 1) {
+    value += String.fromCharCode(bytes[offset + index] ?? 0);
+  }
+  return value;
+}
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 async function normalizeFileContextItems(

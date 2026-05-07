@@ -19,6 +19,7 @@ import {
   MessageSquare,
   MessageSquarePlus,
   MoreHorizontal,
+  Paperclip,
   Pencil,
   Plus,
   RefreshCw,
@@ -56,6 +57,7 @@ import {
   sendMessageMutation,
   steerMessageMutation,
   syncWorktreeMutation,
+  uploadChatAttachmentMutation,
   type SendMessageInput,
 } from "../api/mutations";
 import {
@@ -159,6 +161,7 @@ import {
 } from "./rich-events";
 import { mergeStreamingMessagesForDisplay } from "./chat-message-stream-order";
 import type {
+  ChatAttachmentRecord,
   ChatRecord,
   ChatStatus,
   CodexFileRecord,
@@ -288,6 +291,15 @@ interface RestoredPendingComposerContext {
   serviceTier: "fast" | "flex" | null;
 }
 
+interface SelectedAttachment {
+  file?: File;
+  id: string;
+  record?: ChatAttachmentRecord;
+  mimeType: string;
+  name: string;
+  size: number;
+}
+
 type VisibleMessageRecord = RenderedChatMessageRecord & {
   role: "assistant" | "error" | "event" | "user";
 };
@@ -309,6 +321,11 @@ interface TransientFileSearchQuery {
 
 const toastDismissDelayMs = 6000;
 const maxVisibleToasts = 3;
+const maxComposerAttachmentBytes = 10 * 1024 * 1024;
+const pngSignature = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
+const supportedComposerAttachmentAccept = ".png,image/png";
 
 function firstProjectWorktree(
   projectId: string | null,
@@ -566,6 +583,9 @@ export function HomeRoute() {
     [],
   );
   const [selectedFiles, setSelectedFiles] = useState<CodexFileRecord[]>([]);
+  const [selectedAttachments, setSelectedAttachments] = useState<
+    SelectedAttachment[]
+  >([]);
   const [status, setStatus] = useState("Starting");
   const [sidebarError, setSidebarError] = useState<string | null>(null);
   const [timelineError, setTimelineError] = useState<string | null>(null);
@@ -627,6 +647,7 @@ export function HomeRoute() {
   const githubTargetsByProjectRef = useRef(githubTargetsByProject);
   const messagesRefreshRequestIdRef = useRef(0);
   const sendMessageRequestIdRef = useRef(0);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerTextRef = useRef(composerText);
   const hasSelectedContextRef = useRef(false);
@@ -976,11 +997,15 @@ export function HomeRoute() {
     [selectedSkillPaths, skills],
   );
   const hasSelectedContext =
-    selectedFiles.length > 0 || selectedSkills.length > 0;
+    selectedAttachments.length > 0 ||
+    selectedFiles.length > 0 ||
+    selectedSkills.length > 0;
   composerTextRef.current = composerText;
   hasSelectedContextRef.current = hasSelectedContext;
   const canStartNewProjectChat =
-    Boolean(selectedProject) && !selectedChatId && Boolean(composerText.trim());
+    Boolean(selectedProject) &&
+    !selectedChatId &&
+    Boolean(composerText.trim() || hasSelectedContext);
   const canSendMessage =
     (hasSelectedChat &&
       !isSelectedChatArchived &&
@@ -1272,6 +1297,7 @@ export function HomeRoute() {
       setMessagesChatId(null);
       updatePendingApproval(null);
       setSelectedFiles([]);
+      setSelectedAttachments([]);
       setSelectedSkillPaths(new Set());
       setFileSearchResults([]);
       setSkills([]);
@@ -1286,6 +1312,7 @@ export function HomeRoute() {
       setMessagesChatId(null);
       updatePendingApproval(null);
       setSelectedFiles([]);
+      setSelectedAttachments([]);
       setSelectedSkillPaths(new Set());
       setFileSearchResults([]);
       setSkills([]);
@@ -1296,6 +1323,7 @@ export function HomeRoute() {
     }
 
     setSelectedFiles([]);
+    setSelectedAttachments([]);
     setSelectedSkillPaths(new Set());
     setFileSearchResults([]);
     setSkills([]);
@@ -2112,6 +2140,7 @@ export function HomeRoute() {
       if (shouldClearComposerContext) {
         setComposerText("");
         setSelectedFiles([]);
+        setSelectedAttachments([]);
         setSelectedSkillPaths(new Set());
         setTransientFileSearchQuery(null);
         setFileSearchResults([]);
@@ -2414,6 +2443,7 @@ export function HomeRoute() {
         restoredPendingComposerContextRef.current = null;
         setComposerText("");
         setSelectedFiles([]);
+        setSelectedAttachments([]);
         setSelectedSkillPaths(new Set());
       }
       await refreshChats(chat.projectId, { updateSelection: false });
@@ -2459,6 +2489,7 @@ export function HomeRoute() {
   function createComposerMessageInput(
     text: string,
     restoredPendingContext: RestoredPendingComposerContext | null,
+    attachments: ChatAttachmentRecord[] = [],
   ): SendMessageInput {
     const turnModel =
       selectedModel?.id ??
@@ -2480,6 +2511,7 @@ export function HomeRoute() {
       path: file.path,
     }));
     return {
+      attachments,
       effort: turnEffort,
       files,
       model: turnModel,
@@ -2489,10 +2521,31 @@ export function HomeRoute() {
     };
   }
 
+  async function uploadSelectedAttachments(
+    chatId: string,
+    attachments: SelectedAttachment[],
+  ): Promise<ChatAttachmentRecord[]> {
+    const uploadedAttachments: ChatAttachmentRecord[] = [];
+    for (const attachment of attachments) {
+      if (attachment.record) {
+        uploadedAttachments.push(attachment.record);
+        continue;
+      }
+      if (!attachment.file) {
+        continue;
+      }
+      const { attachment: uploadedAttachment } =
+        await uploadChatAttachmentMutation(chatId, attachment.file);
+      uploadedAttachments.push(uploadedAttachment);
+    }
+    return uploadedAttachments;
+  }
+
   async function submitNewProjectChat(
     projectId: string,
     input: SendMessageInput,
     composerInput: string,
+    composerAttachments: SelectedAttachment[],
     requestWorkspaceSelectionKey: string,
     githubTargetNumber: number | null,
   ) {
@@ -2519,16 +2572,22 @@ export function HomeRoute() {
       if (!chat) {
         if (isRequestWorkspaceSelected()) {
           setComposerText(composerInput);
+          setSelectedAttachments(composerAttachments);
         }
         return;
       }
 
       createdChatId = chat.id;
+      const attachments = await uploadSelectedAttachments(
+        chat.id,
+        composerAttachments,
+      );
+      const sendInput = { ...input, attachments };
       pendingSendChatIdsRef.current.add(chat.id);
       pendingComposerModesByChatRef.current.set(chat.id, "send");
       const sentData = await sendMessageRequest.mutateAsync({
         chatId: chat.id,
-        input,
+        input: sendInput,
       });
       upsertChatRecord(sentData.chat);
       void queryClient.invalidateQueries({
@@ -2539,6 +2598,7 @@ export function HomeRoute() {
       });
       if (isCreatedChatSelected()) {
         setSelectedFiles([]);
+        setSelectedAttachments([]);
         setSelectedSkillPaths(new Set());
         setSelectedGitHubTargetNumber(null);
         setFileSearchQuery("");
@@ -2549,6 +2609,7 @@ export function HomeRoute() {
         createdChatId ? isCreatedChatSelected() : isRequestWorkspaceSelected()
       ) {
         setComposerText(composerInput);
+        setSelectedAttachments(composerAttachments);
         setComposerError(formatErrorMessage("Could not send message", err));
       }
     } finally {
@@ -2585,10 +2646,12 @@ export function HomeRoute() {
       selectedChatVersionRef.current === requestChatVersion &&
       sendMessageRequestIdRef.current === requestId;
     const composerInput = composerText;
+    const composerAttachments = selectedAttachments;
     const text =
       composerInput.trim().length > 0
         ? composerInput
         : getContextOnlyMessage({
+            hasAttachments: selectedAttachments.length > 0,
             hasFiles: selectedFiles.length > 0,
             hasSkills: selectedSkills.length > 0,
           });
@@ -2598,20 +2661,21 @@ export function HomeRoute() {
       restoredPendingComposerContextRef.current?.chatId === requestChatId
         ? restoredPendingComposerContextRef.current
         : null;
-    const messageInput = createComposerMessageInput(
-      text,
-      restoredPendingContext,
-    );
     if (!requestChatId) {
       if (!selectedProjectId) {
         return;
       }
+      const messageInput = createComposerMessageInput(
+        text,
+        restoredPendingContext,
+      );
       setIsSendingMessage(true);
       setPendingComposerMode("send");
       await submitNewProjectChat(
         selectedProjectId,
         messageInput,
         composerInput,
+        composerAttachments,
         workspaceSelectionKeyRef.current,
         selectedGitHubTarget?.number ?? null,
       );
@@ -2624,6 +2688,15 @@ export function HomeRoute() {
     setIsSendingMessage(true);
     setPendingComposerMode(mode);
     try {
+      const attachments = await uploadSelectedAttachments(
+        requestChatId,
+        composerAttachments,
+      );
+      const messageInput = createComposerMessageInput(
+        text,
+        restoredPendingContext,
+        attachments,
+      );
       const mutation =
         mode === "steer"
           ? steerMessageRequest
@@ -2644,6 +2717,7 @@ export function HomeRoute() {
         return;
       }
       setSelectedFiles([]);
+      setSelectedAttachments([]);
       setSelectedSkillPaths(new Set());
       setFileSearchQuery("");
       await refreshMessages(requestChatId);
@@ -2741,6 +2815,11 @@ export function HomeRoute() {
     setSelectedFiles(
       (deletedPendingMessage.queuedMessage.files ?? []).map(
         contextItemToSelectedFile,
+      ),
+    );
+    setSelectedAttachments(
+      (deletedPendingMessage.queuedMessage.attachments ?? []).map(
+        attachmentRecordToSelectedAttachment,
       ),
     );
     setSelectedSkillPaths(
@@ -2883,6 +2962,7 @@ export function HomeRoute() {
     restoredPendingComposerContextRef.current = null;
     setComposerText("");
     setSelectedFiles([]);
+    setSelectedAttachments([]);
     setSelectedSkillPaths(new Set());
     setFileSearchResults([]);
     setSkills([]);
@@ -2945,6 +3025,52 @@ export function HomeRoute() {
         : [...current, file],
     );
     setFileSearchQuery("");
+  }
+
+  async function selectAttachments(files: FileList | null) {
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    const nextAttachments: SelectedAttachment[] = [];
+    const rejectedNames: string[] = [];
+    for (const file of Array.from(files)) {
+      if (file.size <= 0 || file.size > maxComposerAttachmentBytes) {
+        rejectedNames.push(file.name);
+        continue;
+      }
+      if (!(await fileHasPngSignature(file))) {
+        rejectedNames.push(file.name);
+        continue;
+      }
+      nextAttachments.push({
+        file,
+        id: `${file.name}:${file.size}:${file.lastModified}:${crypto.randomUUID()}`,
+        mimeType: "image/png",
+        name: file.name,
+        size: file.size,
+      });
+    }
+
+    if (nextAttachments.length > 0) {
+      setSelectedAttachments((current) => [
+        ...current,
+        ...nextAttachments.filter(
+          (attachment) =>
+            !current.some(
+              (selectedAttachment) =>
+                selectedAttachment.name === attachment.name &&
+                selectedAttachment.size === attachment.size,
+            ),
+        ),
+      ]);
+      setComposerError(null);
+    }
+    if (rejectedNames.length > 0) {
+      setComposerError(
+        `Only PNG images up to ${formatFileSize(maxComposerAttachmentBytes)} can be attached: ${rejectedNames.join(", ")}`,
+      );
+    }
   }
 
   function selectSkill(path: string) {
@@ -3792,8 +3918,25 @@ export function HomeRoute() {
                     onDismiss={() => setModelError(null)}
                   />
                 )}
-                {(selectedFiles.length > 0 || selectedSkills.length > 0) && (
+                {(selectedAttachments.length > 0 ||
+                  selectedFiles.length > 0 ||
+                  selectedSkills.length > 0) && (
                   <div className="flex min-h-8 flex-wrap items-center gap-2 px-1">
+                    {selectedAttachments.map((attachment) => (
+                      <ContextChip
+                        icon={<Paperclip className="size-3.5" />}
+                        key={attachment.id}
+                        label={`${attachment.name} (${formatFileSize(attachment.size)})`}
+                        onRemove={() =>
+                          setSelectedAttachments((current) =>
+                            current.filter(
+                              (selectedAttachment) =>
+                                selectedAttachment.id !== attachment.id,
+                            ),
+                          )
+                        }
+                      />
+                    ))}
                     {selectedFiles.map((file) => (
                       <ContextChip
                         icon={<FileText className="size-3.5" />}
@@ -3856,6 +3999,29 @@ export function HomeRoute() {
                     />
                   </div>
                   <div className="flex shrink-0 items-end gap-1.5">
+                    <input
+                      accept={supportedComposerAttachmentAccept}
+                      className="sr-only"
+                      multiple
+                      ref={attachmentInputRef}
+                      type="file"
+                      onChange={(event) => {
+                        void selectAttachments(event.target.files);
+                        event.target.value = "";
+                      }}
+                    />
+                    <Button
+                      aria-label="Attach image"
+                      className="size-10"
+                      disabled={!selectedProject || isComposerBlocked}
+                      onClick={() => attachmentInputRef.current?.click()}
+                      size="icon"
+                      title="Attach image"
+                      type="button"
+                      variant="outline"
+                    >
+                      <Paperclip />
+                    </Button>
                     {hasSelectedChat && primaryComposerMode !== "queue" && (
                       <Button
                         aria-label={
@@ -4271,14 +4437,28 @@ function formatComposerModeBusy(mode: ComposerSubmitMode): string {
 }
 
 function getContextOnlyMessage({
+  hasAttachments,
   hasFiles,
   hasSkills,
 }: {
+  hasAttachments: boolean;
   hasFiles: boolean;
   hasSkills: boolean;
 }): string {
+  if (hasAttachments && hasFiles && hasSkills) {
+    return "Use the attached images, selected files, and selected skills as context.";
+  }
+  if (hasAttachments && hasFiles) {
+    return "Use the attached images and selected files as context.";
+  }
+  if (hasAttachments && hasSkills) {
+    return "Use the attached images and selected skills as context.";
+  }
   if (hasFiles && hasSkills) {
     return "Use the selected files and skills as context.";
+  }
+  if (hasAttachments) {
+    return "Use the attached images as context.";
   }
   if (hasFiles) {
     return "Use the selected files as context.";
@@ -4540,6 +4720,7 @@ function MessageCard({
   const isUser = message.role === "user";
   const isError = message.role === "error";
   const deliveryState = getMessageDeliveryState(message);
+  const attachments = message.attachments ?? [];
 
   return (
     <article
@@ -4568,6 +4749,25 @@ function MessageCard({
         <pre className="whitespace-pre-wrap break-words font-sans text-[length:var(--font-size-md)] leading-[var(--line-height-relaxed)]">
           {message.text}
         </pre>
+      )}
+      {attachments.length > 0 && (
+        <div
+          className={cn(
+            "mt-2 flex flex-wrap gap-1.5",
+            isUser ? "justify-end" : "justify-start",
+          )}
+        >
+          {attachments.map((attachment) => (
+            <span
+              className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-[var(--radius-sm)] border border-current/20 bg-[var(--surface-floating)] px-2 text-[length:var(--font-size-xs)] font-medium text-current"
+              key={`${attachment.path}:${attachment.name}`}
+              title={`${attachment.name} (${formatFileSize(attachment.size)})`}
+            >
+              <Paperclip className="size-3.5 shrink-0" />
+              <span className="truncate">{attachment.name}</span>
+            </span>
+          ))}
+        </div>
       )}
       {deliveryState && (
         <MessageDeliveryBadge
@@ -5072,4 +5272,37 @@ function contextItemToSelectedFile(
     root: "",
     score: 0,
   };
+}
+
+function attachmentRecordToSelectedAttachment(
+  record: ChatAttachmentRecord,
+): SelectedAttachment {
+  return {
+    id: `${record.path}:${record.name}`,
+    mimeType: record.mimeType,
+    name: record.name,
+    record,
+    size: record.size,
+  };
+}
+
+async function fileHasPngSignature(file: File): Promise<boolean> {
+  try {
+    const bytes = new Uint8Array(
+      await file.slice(0, pngSignature.length).arrayBuffer(),
+    );
+    return pngSignature.every((byte, index) => bytes[index] === byte);
+  } catch {
+    return false;
+  }
+}
+
+function formatFileSize(size: number): string {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  if (size < 1024 * 1024) {
+    return `${Math.ceil(size / 1024)} KB`;
+  }
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }

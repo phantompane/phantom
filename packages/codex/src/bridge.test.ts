@@ -241,11 +241,19 @@ describe("CodexBridge", () => {
     await expect(thread).resolves.toEqual({ thread: { id: "thread_1" } });
   });
 
-  it("passes model, effort, service tier, file mentions, and skills to new turns", async () => {
+  it("passes model, effort, service tier, file mentions, skills, and attachments to new turns", async () => {
     const { bridge, proc } = createBridge();
     await initializeBridge(bridge, proc);
 
     const turn = bridge.startTurn("thread_1", "please edit", "/repo", {
+      attachments: [
+        {
+          name: "screenshot.png",
+          path: "/tmp/phantom/attachments/screenshot.png",
+          mimeType: "image/png",
+          size: 123,
+        },
+      ],
       effort: "high",
       files: [{ name: "src/index.ts", path: "/repo/src/index.ts" }],
       model: "gpt-5.2",
@@ -273,6 +281,10 @@ describe("CodexBridge", () => {
           type: "mention",
           name: "src/index.ts",
           path: "/repo/src/index.ts",
+        },
+        {
+          type: "localImage",
+          path: "/tmp/phantom/attachments/screenshot.png",
         },
       ],
       model: "gpt-5.2",
