@@ -1850,6 +1850,61 @@ describe("ServeServices", () => {
     );
   });
 
+  it("preserves local attachment metadata when Codex thread history matches a sent user message", async () => {
+    const attachment = {
+      name: "screenshot.png",
+      path: "/tmp/phantom-attachments/chat_1/screenshot.png",
+      mimeType: "image/png",
+      size: 68,
+    };
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat()],
+      messages: [
+        {
+          id: "msg_with_attachment",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "inspect this",
+          attachments: [attachment],
+          createdAt: "2026-04-25T00:00:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            items: [{ type: "userMessage", text: "inspect this" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => ({
+        attachments: message.attachments,
+        id: message.id,
+        role: message.role,
+        text: message.text,
+      })),
+      [
+        {
+          attachments: [attachment],
+          id: "chat_1_codex_turn_1_0",
+          role: "user",
+          text: "inspect this",
+        },
+      ],
+    );
+  });
+
   it("keeps a repeated pending message when only an older Codex message matches", async () => {
     const state = {
       ...createTestState(),

@@ -3948,6 +3948,11 @@ function mergeCodexAndLocalMessages(
           message.id,
           fallbackCodexMessage.codexOrder ?? fallbackTranscriptCodexIndex,
         );
+        mergedCodexMessages[fallbackTranscriptCodexIndex] =
+          mergeLocalMessageMetadataIntoCodexMessage(
+            fallbackCodexMessage,
+            message,
+          );
       }
       unmatchedCodexMessageIndexes.splice(
         unmatchedCodexMessageIndexes.indexOf(fallbackTranscriptCodexIndex),
@@ -3998,10 +4003,12 @@ function mergeCodexAndLocalMessages(
         message.id,
         matchedCodexMessage.codexOrder ?? matchedCodexIndex,
       );
+      mergedCodexMessages[matchedCodexIndex] =
+        mergeLocalMessageMetadataIntoCodexMessage(matchedCodexMessage, message);
     }
     if (message.eventType === "chat.message.steered" && matchedCodexMessage) {
       mergedCodexMessages[matchedCodexIndex] = {
-        ...matchedCodexMessage,
+        ...mergedCodexMessages[matchedCodexIndex],
         createdAt: message.createdAt,
       };
     }
@@ -4022,6 +4029,14 @@ function mergeCodexAndLocalMessages(
   )
     .sort(compareMergedMessages)
     .map(stripInternalCodexMessageMetadata);
+}
+
+function mergeLocalMessageMetadataIntoCodexMessage(
+  codexMessage: InternalChatMessageRecord,
+  localMessage: ChatMessageRecord,
+): InternalChatMessageRecord {
+  const attachments = cloneAttachmentRecords(localMessage.attachments);
+  return attachments ? { ...codexMessage, attachments } : codexMessage;
 }
 
 function localMessagesWithoutStaleSteeredState(
