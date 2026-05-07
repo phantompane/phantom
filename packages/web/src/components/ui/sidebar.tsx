@@ -88,6 +88,8 @@ export function SidebarProvider({
   return (
     <SidebarContext.Provider value={contextValue}>
       <div
+        data-sidebar-wrapper=""
+        data-state={open ? "expanded" : "collapsed"}
         className={cn(
           "group/sidebar-wrapper flex min-h-svh w-full bg-background text-foreground has-[[data-variant=inset]]:bg-background",
           className,

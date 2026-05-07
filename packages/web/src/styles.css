@@ -467,6 +467,12 @@ body {
   padding-inline-start: var(--safe-area-inset-left);
 }
 
+[data-sidebar-wrapper][data-state="collapsed"] #workspace-sidebar-panel,
+[data-sidebar-wrapper][data-state="collapsed"]
+  #workspace-sidebar-resize-handle {
+  display: none !important;
+}
+
 .chat-composer {
   flex-shrink: 0;
   padding-block-start: var(--space-3);
@@ -598,6 +604,11 @@ body {
 }
 
 @media (max-width: 767px) {
+  #workspace-sidebar-panel,
+  #workspace-sidebar-resize-handle {
+    display: none !important;
+  }
+
   aside[data-variant] {
     top: var(--safe-area-inset-top);
     bottom: var(--safe-area-inset-bottom);
