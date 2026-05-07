@@ -1939,7 +1939,9 @@ export class ServeServices {
         return;
       }
       await this.addMessageFromCodexEvent(chat.id, method, message.params);
-      this.eventHub.emit(eventType, message, { chatId: chat.id });
+      this.eventHub.emit(eventType, sanitizeCodexMessageForEventHub(message), {
+        chatId: chat.id,
+      });
       if (method === "turn/completed") {
         await this.drainQueuedMessagesAndReport(chat.id);
       }
@@ -1947,7 +1949,7 @@ export class ServeServices {
       if (method === "serverRequest/resolved") {
         return;
       }
-      this.eventHub.emit(eventType, message);
+      this.eventHub.emit(eventType, sanitizeCodexMessageForEventHub(message));
     }
   }
 
@@ -2024,10 +2026,14 @@ export class ServeServices {
 
     const approvalMethod = message.method ?? "unknown";
     const approvalRequestId = createRecordId("approval");
+    const approvalParams = sanitizeCodexEventParams(
+      approvalMethod,
+      message.params,
+    );
     this.approvalRequests.set(approvalRequestId, {
       chatId: chat.id,
       method: approvalMethod,
-      params: message.params,
+      params: approvalParams,
       serverRequestId,
       responded: false,
     });
@@ -2041,7 +2047,7 @@ export class ServeServices {
       {
         requestId: approvalRequestId,
         method: approvalMethod,
-        params: message.params,
+        params: approvalParams,
       },
       { chatId: chat.id },
     );
@@ -2291,7 +2297,7 @@ export class ServeServices {
   ): PendingTurnEvent {
     return {
       kind,
-      message,
+      message: sanitizeCodexMessageForEventHub(message),
       order: this.pendingTurnEventOrder++,
     };
   }
@@ -2546,7 +2552,13 @@ export class ServeServices {
 
   private async resetStaleTransientChatState(): Promise<ReadonlySet<string>> {
     const state = await this.store.load();
-    if (!state.chats.some((chat) => this.isStaleTransientChat(chat))) {
+    const hasStaleTransientChat = state.chats.some((chat) =>
+      this.isStaleTransientChat(chat),
+    );
+    const hasStoredHiddenRichEventContent = state.messages.some(
+      hasHiddenRichEventContent,
+    );
+    if (!hasStaleTransientChat && !hasStoredHiddenRichEventContent) {
       return new Set();
     }
 
@@ -2566,18 +2578,20 @@ export class ServeServices {
           updatedAt: timestamp,
         };
       });
-      if (resetChatIds.size === 0) {
+      if (resetChatIds.size === 0 && !hasStoredHiddenRichEventContent) {
         return nextState;
       }
       return {
         ...nextState,
         chats,
-        messages: nextState.messages.map((message) =>
-          resetChatIds.has(message.chatId) &&
-          message.eventType === "chat.message.steered"
-            ? { ...message, eventType: undefined }
-            : message,
-        ),
+        messages: nextState.messages.map((message) => {
+          const nextMessage =
+            resetChatIds.has(message.chatId) &&
+            message.eventType === "chat.message.steered"
+              ? { ...message, eventType: undefined }
+              : message;
+          return stripHiddenRichEventContent(nextMessage);
+        }),
       };
     });
     return resetChatIds;
@@ -2797,6 +2811,16 @@ export class ServeServices {
       const delta = extractCommandOutputDelta(method, params);
       const eventData = createCommandOutputEventData(method, params);
       if (!delta) {
+        if (hasHiddenOutputDelta(params)) {
+          await this.appendRichEventMessage({
+            chatId,
+            delta: "",
+            eventData,
+            eventType: method,
+            itemId: getCommandOutputItemId(method, params),
+          });
+          return;
+        }
         if (hasCommandOutputMetadataUpdate(method, params)) {
           await this.mergeRichEventMessage({
             chatId,
@@ -2832,12 +2856,21 @@ export class ServeServices {
     if (method === "item/fileChange/outputDelta") {
       const delta = getRecordString(params, "delta") ?? "";
       if (!delta) {
+        if (hasHiddenOutputDelta(params)) {
+          await this.appendRichEventMessage({
+            chatId,
+            delta: "",
+            eventData: createFileChangeOutputEventData(params),
+            eventType: method,
+            itemId: getRecordString(params, "itemId") ?? method,
+          });
+        }
         return;
       }
       await this.appendRichEventMessage({
         chatId,
         delta,
-        eventData: { kind: "fileChangeOutput" },
+        eventData: createFileChangeOutputEventData(params),
         eventType: method,
         itemId: getRecordString(params, "itemId") ?? method,
       });
@@ -2970,12 +3003,29 @@ export class ServeServices {
           message.eventType === eventType &&
           message.itemId === itemId,
       );
+      const existingEventData = isRecord(existingMessage?.eventData)
+        ? existingMessage.eventData
+        : {};
+      const nextEventData = withHiddenContentUpdateCount(
+        eventType,
+        existingEventData,
+        eventData,
+      );
       if (!existingMessage) {
         return {
           ...state,
           messages: [
             ...state.messages,
-            createMessage(chatId, "event", text, eventType, itemId, eventData),
+            stripHiddenRichEventContent(
+              createMessage(
+                chatId,
+                "event",
+                text,
+                eventType,
+                itemId,
+                nextEventData,
+              ),
+            ),
           ],
         };
       }
@@ -2983,7 +3033,11 @@ export class ServeServices {
         ...state,
         messages: state.messages.map((message) =>
           message.id === existingMessage.id
-            ? { ...message, eventData, text }
+            ? stripHiddenRichEventContent({
+                ...message,
+                eventData: nextEventData,
+                text,
+              })
             : message,
         ),
       };
@@ -3011,23 +3065,35 @@ export class ServeServices {
           message.eventType === eventType &&
           message.itemId === itemId,
       );
-      const text = `${existingMessage?.text ?? ""}${delta}`;
+      const text = shouldStripHiddenRichEventContent(eventType)
+        ? ""
+        : `${existingMessage?.text ?? ""}${delta}`;
       const existingEventData = isRecord(existingMessage?.eventData)
         ? existingMessage.eventData
         : {};
-      const nextEventData = { ...existingEventData, ...eventData, text };
+      const nextEventData = shouldStripHiddenRichEventContent(eventType)
+        ? {
+            ...existingEventData,
+            ...eventData,
+            hiddenContentDeltaCount:
+              (getRecordNumber(existingEventData, "hiddenContentDeltaCount") ??
+                0) + 1,
+          }
+        : { ...existingEventData, ...eventData, text };
       if (!existingMessage) {
         return {
           ...state,
           messages: [
             ...state.messages,
-            createMessage(
-              chatId,
-              "event",
-              text,
-              eventType,
-              itemId,
-              nextEventData,
+            stripHiddenRichEventContent(
+              createMessage(
+                chatId,
+                "event",
+                text,
+                eventType,
+                itemId,
+                nextEventData,
+              ),
             ),
           ],
         };
@@ -3036,7 +3102,11 @@ export class ServeServices {
         ...state,
         messages: state.messages.map((message) =>
           message.id === existingMessage.id
-            ? { ...message, eventData: nextEventData, text }
+            ? stripHiddenRichEventContent({
+                ...message,
+                eventData: nextEventData,
+                text,
+              })
             : message,
         ),
       };
@@ -3067,24 +3137,30 @@ export class ServeServices {
       const existingEventData = isRecord(existingMessage?.eventData)
         ? existingMessage.eventData
         : {};
-      const nextText = text ?? existingMessage?.text ?? "";
+      const nextText = shouldStripHiddenRichEventContent(eventType)
+        ? ""
+        : (text ?? existingMessage?.text ?? "");
       const nextEventData = {
         ...existingEventData,
         ...eventData,
-        text: nextText,
+        ...(shouldStripHiddenRichEventContent(eventType)
+          ? {}
+          : { text: nextText }),
       };
       if (!existingMessage) {
         return {
           ...state,
           messages: [
             ...state.messages,
-            createMessage(
-              chatId,
-              "event",
-              nextText,
-              eventType,
-              itemId,
-              nextEventData,
+            stripHiddenRichEventContent(
+              createMessage(
+                chatId,
+                "event",
+                nextText,
+                eventType,
+                itemId,
+                nextEventData,
+              ),
             ),
           ],
         };
@@ -3093,7 +3169,11 @@ export class ServeServices {
         ...state,
         messages: state.messages.map((message) =>
           message.id === existingMessage.id
-            ? { ...message, eventData: nextEventData, text: nextText }
+            ? stripHiddenRichEventContent({
+                ...message,
+                eventData: nextEventData,
+                text: nextText,
+              })
             : message,
         ),
       };
@@ -4955,16 +5035,17 @@ interface PlanEventData {
 }
 
 interface DiffEventData {
-  diff: string;
   files: string[];
+  hasDiff: boolean;
+  hiddenContentUpdateCount?: number;
 }
 
 interface FilePatchEventData {
   changes: Array<{
-    diff: string;
     kind: string;
     path: string;
   }>;
+  hiddenContentUpdateCount?: number;
 }
 
 function normalizePlanEventData(params: unknown): PlanEventData {
@@ -4989,9 +5070,11 @@ function normalizePlanEventData(params: unknown): PlanEventData {
 
 function normalizeDiffEventData(params: unknown): DiffEventData {
   const diff = getRecordString(params, "diff") ?? "";
+  const files =
+    diff === "" ? (getRecordStringArray(params, "files") ?? []) : [];
   return {
-    diff,
-    files: extractDiffFilePaths(diff),
+    files: diff === "" ? files : extractDiffFilePaths(diff),
+    hasDiff: getRecordBoolean(params, "hasDiff") ?? Boolean(diff),
   };
 }
 
@@ -5005,7 +5088,6 @@ function normalizeFilePatchEventData(params: unknown): FilePatchEventData {
       return {
         path,
         kind: getRecordString(change, "kind") ?? "update",
-        diff: getRecordString(change, "diff") ?? "",
       };
     })
     .filter((change): change is FilePatchEventData["changes"][number] =>
@@ -5016,7 +5098,7 @@ function normalizeFilePatchEventData(params: unknown): FilePatchEventData {
 
 function summarizeDiffEvent(eventData: DiffEventData): string {
   if (eventData.files.length === 0) {
-    return eventData.diff ? "Diff updated" : "Diff cleared";
+    return eventData.hasDiff ? "Diff updated" : "Diff cleared";
   }
   return `Diff updated: ${eventData.files.length} file${
     eventData.files.length === 1 ? "" : "s"
@@ -5044,15 +5126,34 @@ function createCommandOutputEventData(
   method: string,
   params: unknown,
 ): Record<string, unknown> {
+  const hiddenContentLength = getRecordNumber(params, "hiddenContentLength");
   if (method === "command/exec/outputDelta") {
     return {
       kind: "commandExecOutput",
       processId: getRecordString(params, "processId") ?? null,
       stream: getRecordString(params, "stream") ?? "stdout",
       capReached: Boolean(isRecord(params) && params.capReached === true),
+      ...(hiddenContentLength === undefined ? {} : { hiddenContentLength }),
     };
   }
-  return { kind: "commandExecutionOutput" };
+  return {
+    kind: "commandExecutionOutput",
+    ...(hiddenContentLength === undefined ? {} : { hiddenContentLength }),
+  };
+}
+
+function createFileChangeOutputEventData(
+  params: unknown,
+): Record<string, unknown> {
+  const hiddenContentLength = getRecordNumber(params, "hiddenContentLength");
+  return {
+    kind: "fileChangeOutput",
+    ...(hiddenContentLength === undefined ? {} : { hiddenContentLength }),
+  };
+}
+
+function hasHiddenOutputDelta(params: unknown): boolean {
+  return (getRecordNumber(params, "hiddenContentDeltaCount") ?? 0) > 0;
 }
 
 function hasCommandOutputMetadataUpdate(
@@ -5127,6 +5228,233 @@ function getReasoningEventItemId(method: string, params: unknown): string {
   return `${itemId}:text:${getRecordNumber(params, "contentIndex") ?? 0}`;
 }
 
+function sanitizeCodexMessageForEventHub(message: CodexMessage): CodexMessage {
+  const method = message.method ?? "";
+  const params = sanitizeCodexEventParams(method, message.params);
+  return params === message.params ? message : { ...message, params };
+}
+
+function sanitizeCodexEventParams(method: string, params: unknown): unknown {
+  if (!isRecord(params)) {
+    return params;
+  }
+
+  if (
+    method === "item/commandExecution/outputDelta" ||
+    method === "command/exec/outputDelta" ||
+    method === "item/fileChange/outputDelta"
+  ) {
+    const delta =
+      method === "command/exec/outputDelta"
+        ? getRecordString(params, "deltaBase64")
+        : getRecordString(params, "delta");
+    const nextParams = { ...params };
+    delete nextParams.delta;
+    delete nextParams.deltaBase64;
+    if (delta) {
+      nextParams.hiddenContentDeltaCount = 1;
+      nextParams.hiddenContentLength =
+        method === "command/exec/outputDelta"
+          ? Buffer.from(delta, "base64").byteLength
+          : delta.length;
+    }
+    return nextParams;
+  }
+
+  if (method === "turn/diff/updated") {
+    return stripDiffEventData(params);
+  }
+
+  if (method === "item/fileChange/patchUpdated") {
+    return stripFilePatchDiffs(params);
+  }
+
+  if (method.endsWith("/requestApproval")) {
+    return stripHiddenCodexPayloadContent(params);
+  }
+
+  if (method === "item/started" || method === "item/completed") {
+    const item = getRecordObject(params, "item");
+    if (!item) {
+      return params;
+    }
+    const nextItem = sanitizeCodexEventItem(item);
+    return nextItem === item ? params : { ...params, item: nextItem };
+  }
+
+  return params;
+}
+
+function sanitizeCodexEventItem(item: Record<string, unknown>): unknown {
+  const itemType = getRecordString(item, "type");
+  if (itemType === "commandExecution") {
+    return stripRecordKey(item, "aggregatedOutput");
+  }
+  if (itemType === "fileChange") {
+    return stripFilePatchDiffs(item);
+  }
+  return item;
+}
+
+function stripHiddenRichEventContent(
+  message: ChatMessageRecord,
+): ChatMessageRecord {
+  if (!hasHiddenRichEventContent(message)) {
+    return message;
+  }
+
+  if (
+    message.eventType === "item/commandExecution/outputDelta" ||
+    message.eventType === "command/exec/outputDelta" ||
+    message.eventType === "item/fileChange/outputDelta"
+  ) {
+    return {
+      ...message,
+      eventData: stripRecordKey(message.eventData, "text"),
+      text: "",
+    };
+  }
+
+  if (message.eventType === "turn/diff/updated") {
+    return {
+      ...message,
+      eventData: stripDiffEventData(message.eventData),
+    };
+  }
+
+  if (message.eventType === "item/fileChange/patchUpdated") {
+    return {
+      ...message,
+      eventData: stripFilePatchDiffs(message.eventData),
+    };
+  }
+
+  return message;
+}
+
+function hasHiddenRichEventContent(message: ChatMessageRecord): boolean {
+  if (message.role !== "event") {
+    return false;
+  }
+
+  if (
+    message.eventType === "item/commandExecution/outputDelta" ||
+    message.eventType === "command/exec/outputDelta" ||
+    message.eventType === "item/fileChange/outputDelta"
+  ) {
+    return (
+      message.text !== "" ||
+      getRecordString(message.eventData, "text") !== undefined
+    );
+  }
+
+  if (message.eventType === "turn/diff/updated") {
+    return getRecordString(message.eventData, "diff") !== undefined;
+  }
+
+  if (message.eventType === "item/fileChange/patchUpdated") {
+    const changes = getRecordArray(message.eventData, "changes") ?? [];
+    return changes.some(
+      (change) => getRecordString(change, "diff") !== undefined,
+    );
+  }
+
+  return false;
+}
+
+function shouldStripHiddenRichEventContent(eventType: string): boolean {
+  return (
+    eventType === "item/commandExecution/outputDelta" ||
+    eventType === "command/exec/outputDelta" ||
+    eventType === "item/fileChange/outputDelta"
+  );
+}
+
+function stripRecordKey(value: unknown, key: string): unknown {
+  if (!isRecord(value)) {
+    return value;
+  }
+  const nextValue = { ...value };
+  delete nextValue[key];
+  return nextValue;
+}
+
+function withHiddenContentUpdateCount(
+  eventType: string,
+  existingEventData: Record<string, unknown>,
+  eventData: unknown,
+): unknown {
+  if (!shouldTrackHiddenContentUpdate(eventType) || !isRecord(eventData)) {
+    return eventData;
+  }
+  return {
+    ...eventData,
+    hiddenContentUpdateCount:
+      (getRecordNumber(existingEventData, "hiddenContentUpdateCount") ?? 0) + 1,
+  };
+}
+
+function shouldTrackHiddenContentUpdate(eventType: string): boolean {
+  return (
+    eventType === "turn/diff/updated" ||
+    eventType === "item/fileChange/patchUpdated"
+  );
+}
+
+function stripDiffEventData(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value;
+  }
+  const diff = getRecordString(value, "diff");
+  const nextValue = { ...value };
+  delete nextValue.diff;
+  if (diff) {
+    if (!Array.isArray(nextValue.files)) {
+      nextValue.files = extractDiffFilePaths(diff);
+    }
+    if (typeof nextValue.hasDiff !== "boolean") {
+      nextValue.hasDiff = true;
+    }
+  }
+  return nextValue;
+}
+
+function stripFilePatchDiffs(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value;
+  }
+  const changes = value.changes;
+  if (!Array.isArray(changes)) {
+    return value;
+  }
+  return {
+    ...value,
+    changes: changes.map((change) => stripRecordKey(change, "diff")),
+  };
+}
+
+function stripHiddenCodexPayloadContent(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stripHiddenCodexPayloadContent);
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  const nextValue: Record<string, unknown> = {};
+  for (const [key, childValue] of Object.entries(value)) {
+    if (
+      key === "aggregatedOutput" ||
+      key === "delta" ||
+      key === "deltaBase64" ||
+      key === "diff"
+    ) {
+      continue;
+    }
+    nextValue[key] = stripHiddenCodexPayloadContent(childValue);
+  }
+  return nextValue;
+}
+
 function extractDiffFilePaths(diff: string): string[] {
   const files = new Set<string>();
   for (const line of diff.split(/\r?\n/)) {
@@ -5198,6 +5526,30 @@ function getRecordNumber(value: unknown, key: string): number | undefined {
   return typeof candidate === "number" && Number.isFinite(candidate)
     ? candidate
     : undefined;
+}
+
+function getRecordBoolean(value: unknown, key: string): boolean | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const candidate = value[key];
+  return typeof candidate === "boolean" ? candidate : undefined;
+}
+
+function getRecordStringArray(
+  value: unknown,
+  key: string,
+): string[] | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const candidate = value[key];
+  if (!Array.isArray(candidate)) {
+    return undefined;
+  }
+  return candidate.filter(
+    (entry): entry is string => typeof entry === "string",
+  );
 }
 
 function getStringArray(value: unknown): string[] {

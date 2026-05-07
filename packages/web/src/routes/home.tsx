@@ -143,8 +143,6 @@ import {
 import {
   getCommandEventMeta,
   getDiffEventData,
-  getDiffLineDelta,
-  getFileChangesLineDelta,
   getFileEventMeta,
   getFilePatchEventData,
   getPlanEventData,
@@ -4598,34 +4596,33 @@ function PlanEventCard({ message }: { message: VisibleMessageRecord }) {
 }
 
 function DiffEventCard({ message }: { message: VisibleMessageRecord }) {
-  const { diff, files } = getDiffEventData(message);
-  const lineDelta = getDiffLineDelta(diff || message.text);
+  const { files, hasDiff } = getDiffEventData(message);
   return (
     <RichEventShell
       defaultOpen={false}
       icon={<FileDiff className="size-4" />}
       meta={formatEventMeta([
         formatCount(files.length, "file"),
-        formatLineDelta(lineDelta),
+        hasDiff ? "diff hidden" : "cleared",
       ])}
       summary={
         files.length > 0 ? (
           <CompactPathList paths={files} />
         ) : (
-          <span className="truncate text-muted-foreground">No files</span>
+          <span className="truncate text-muted-foreground">
+            {message.text || (hasDiff ? "Diff hidden" : "Diff cleared")}
+          </span>
         )
       }
       title="Diff"
     >
-      <CollapsibleCode title="Unified diff" value={diff || message.text} />
+      <HiddenEventContent label={hasDiff ? "Unified diff hidden" : "No diff"} />
     </RichEventShell>
   );
 }
 
 function CommandEventCard({ message }: { message: VisibleMessageRecord }) {
-  const output = getRichEventText(message);
   const meta = getCommandEventMeta(message);
-  const outputLineCount = getTextLineCount(output);
   return (
     <RichEventShell
       defaultOpen={false}
@@ -4634,8 +4631,8 @@ function CommandEventCard({ message }: { message: VisibleMessageRecord }) {
         meta.status,
         meta.exitCode !== null ? `exit ${meta.exitCode}` : null,
         meta.durationMs !== null ? formatDurationMs(meta.durationMs) : null,
-        outputLineCount > 0 ? formatCount(outputLineCount, "line") : null,
         meta.capReached ? "truncated" : null,
+        "output hidden",
       ])}
       summary={
         <span
@@ -4674,9 +4671,10 @@ function CommandEventCard({ message }: { message: VisibleMessageRecord }) {
           )}
         </div>
       )}
-      <CollapsibleCode
-        title={meta.capReached ? "Output truncated" : "Output"}
-        value={output}
+      <HiddenEventContent
+        label={
+          meta.capReached ? "Output hidden after truncation" : "Output hidden"
+        }
       />
     </RichEventShell>
   );
@@ -4685,17 +4683,12 @@ function CommandEventCard({ message }: { message: VisibleMessageRecord }) {
 function FileEventCard({ message }: { message: VisibleMessageRecord }) {
   const changes = getFilePatchEventData(message);
   const meta = getFileEventMeta(message);
-  const output = getRichEventText(message);
   if (message.eventType === "item/fileChange/outputDelta") {
-    const outputLineCount = getTextLineCount(output);
     return (
       <RichEventShell
         defaultOpen={false}
         icon={<FileText className="size-4" />}
-        meta={formatEventMeta([
-          "output",
-          outputLineCount > 0 ? formatCount(outputLineCount, "line") : null,
-        ])}
+        meta="output hidden"
         summary={
           <span className="block min-w-0 max-w-full truncate text-muted-foreground">
             File change output
@@ -4703,11 +4696,10 @@ function FileEventCard({ message }: { message: VisibleMessageRecord }) {
         }
         title="File"
       >
-        <CollapsibleCode title="Output" value={output} />
+        <HiddenEventContent label="Output hidden" />
       </RichEventShell>
     );
   }
-  const lineDelta = getFileChangesLineDelta(changes);
   return (
     <RichEventShell
       defaultOpen={false}
@@ -4715,7 +4707,7 @@ function FileEventCard({ message }: { message: VisibleMessageRecord }) {
       meta={formatEventMeta([
         meta.status,
         formatCount(changes.length, "file"),
-        formatLineDelta(lineDelta),
+        "patch hidden",
       ])}
       summary={
         changes.length > 0 ? (
@@ -4757,14 +4749,9 @@ function FileEventCard({ message }: { message: VisibleMessageRecord }) {
                   {change.path}
                 </span>
                 <span className="ml-auto shrink-0 font-mono text-[length:var(--font-size-xs)] text-muted-foreground">
-                  {formatLineDelta(getDiffLineDelta(change.diff))}
+                  patch hidden
                 </span>
               </div>
-              {change.diff && (
-                <div className="border-t border-[var(--border-subtle)]">
-                  <CollapsibleCode title="Patch" value={change.diff} />
-                </div>
-              )}
             </div>
           ))}
         </div>
@@ -4808,13 +4795,6 @@ function formatEventMeta(
     Boolean(part && part.trim()),
   );
   return visibleParts.length > 0 ? visibleParts.join(" · ") : undefined;
-}
-
-function formatLineDelta(delta: { added: number; removed: number }): string {
-  if (delta.added === 0 && delta.removed === 0) {
-    return "0 lines";
-  }
-  return `+${delta.added} -${delta.removed}`;
 }
 
 function CompactPathList({ paths }: { paths: string[] }) {
@@ -4941,24 +4921,11 @@ function RichEventShell({
   );
 }
 
-function CollapsibleCode({ title, value }: { title: string; value: string }) {
-  const trimmedValue = value.trimEnd();
-  if (!trimmedValue) {
-    return (
-      <p className="text-[length:var(--font-size-sm)] text-muted-foreground">
-        No output
-      </p>
-    );
-  }
+function HiddenEventContent({ label }: { label: string }) {
   return (
-    <div>
-      <p className="mb-1 text-[length:var(--font-size-sm)] text-muted-foreground">
-        {title}
-      </p>
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius-md)] bg-[var(--surface-code)] p-2 font-mono text-[length:var(--font-size-xs)] leading-[var(--line-height-relaxed)]">
-        {trimmedValue}
-      </pre>
-    </div>
+    <p className="text-[length:var(--font-size-sm)] text-muted-foreground">
+      {label}
+    </p>
   );
 }
 

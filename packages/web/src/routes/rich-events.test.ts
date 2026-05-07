@@ -95,6 +95,24 @@ describe("rich event helpers", () => {
       {
         diff: "diff --git a/a.ts b/a.ts",
         files: ["a.ts"],
+        hasDiff: true,
+      },
+    );
+    deepStrictEqual(
+      getDiffEventData(
+        createMessage({
+          eventType: "turn/diff/updated",
+          eventData: {
+            files: [],
+            hasDiff: false,
+          },
+          text: "Diff cleared",
+        }),
+      ),
+      {
+        diff: "",
+        files: [],
+        hasDiff: false,
       },
     );
     strictEqual(
