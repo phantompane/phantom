@@ -46,6 +46,12 @@ const validPngBytes = new Uint8Array([
   99, 252, 255, 31, 0, 3, 3, 2, 0, 239, 162, 167, 91, 0, 0, 0, 0, 73, 69, 78,
   68, 174, 66, 96, 130,
 ]);
+const validInterlacedPngBytes = new Uint8Array([
+  137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0,
+  0, 0, 1, 8, 2, 0, 0, 1, 231, 112, 99, 72, 0, 0, 0, 12, 73, 68, 65, 84, 120,
+  156, 99, 96, 96, 96, 0, 0, 0, 4, 0, 1, 246, 23, 56, 85, 0, 0, 0, 0, 73, 69,
+  78, 68, 174, 66, 96, 130,
+]);
 
 class FakeCodexBridge {
   readonly notificationHandlers: Array<(message: CodexMessage) => void> = [];
@@ -7093,6 +7099,29 @@ describe("ServeServices", () => {
         },
       ],
     });
+  });
+
+  it("accepts interlaced PNG image attachments", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const attachmentDir = await createTemporaryDirectory();
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { services } = await createHarness(state, {
+      attachmentDir,
+    });
+
+    const attachment = await services.uploadAttachment("chat_1", {
+      bytes: validInterlacedPngBytes,
+      mimeType: "image/png",
+      name: "interlaced.png",
+      size: validInterlacedPngBytes.byteLength,
+    });
+
+    strictEqual(attachment.mimeType, "image/png");
+    strictEqual(attachment.size, validInterlacedPngBytes.byteLength);
   });
 
   it("rejects attachments with spoofed image MIME types", async () => {

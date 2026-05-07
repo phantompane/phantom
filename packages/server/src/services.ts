@@ -172,6 +172,7 @@ interface PngHeader {
   bitDepth: number;
   colorType: number;
   height: number;
+  interlaceMethod: number;
   width: number;
 }
 
@@ -5268,19 +5269,20 @@ function hasValidPngScanlineFilters(
   bytes: Uint8Array,
   header: PngHeader,
 ): boolean {
-  const bytesPerScanline = getPngBytesPerScanline(header);
-  if (bytesPerScanline == null) {
+  const rowLengths = getPngImageDataRowLengths(header);
+  if (!rowLengths) {
     return false;
   }
 
-  const rowLength = bytesPerScanline + 1;
-  for (let offset = 0; offset < bytes.length; offset += rowLength) {
+  let offset = 0;
+  for (const rowLength of rowLengths) {
     const filterType = bytes[offset];
     if (filterType == null || filterType > 4) {
       return false;
     }
+    offset += rowLength;
   }
-  return true;
+  return offset === bytes.length;
 }
 
 function parsePngHeader(bytes: Uint8Array): PngHeader | null {
@@ -5298,12 +5300,13 @@ function parsePngHeader(bytes: Uint8Array): PngHeader | null {
     isValidPngColorTypeAndBitDepth(colorType, bitDepth) &&
     compressionMethod === 0 &&
     filterMethod === 0 &&
-    interlaceMethod === 0
+    (interlaceMethod === 0 || interlaceMethod === 1)
   ) {
     return {
       bitDepth: bitDepth ?? 0,
       colorType: colorType ?? 0,
       height,
+      interlaceMethod,
       width,
     };
   }
@@ -5311,22 +5314,75 @@ function parsePngHeader(bytes: Uint8Array): PngHeader | null {
 }
 
 function getExpectedPngImageDataByteLength(header: PngHeader): number | null {
-  const bytesPerScanline = getPngBytesPerScanline(header);
-  if (bytesPerScanline == null) {
+  const rowLengths = getPngImageDataRowLengths(header);
+  if (!rowLengths) {
     return null;
   }
-  const totalByteLength = header.height * (bytesPerScanline + 1);
+  const totalByteLength = rowLengths.reduce(
+    (total, rowLength) => total + rowLength,
+    0,
+  );
   return Number.isSafeInteger(totalByteLength) ? totalByteLength : null;
 }
 
-function getPngBytesPerScanline(header: PngHeader): number | null {
+function getPngImageDataRowLengths(header: PngHeader): number[] | null {
   const samplesPerPixel = getPngSamplesPerPixel(header.colorType);
   if (samplesPerPixel == null) {
     return null;
   }
-  const bitsPerScanline = header.width * samplesPerPixel * header.bitDepth;
+  if (header.interlaceMethod === 0) {
+    const rowLength = getPngRowLength(header.width, samplesPerPixel, header);
+    return rowLength == null ? null : Array(header.height).fill(rowLength);
+  }
+  if (header.interlaceMethod !== 1) {
+    return null;
+  }
+
+  const rowLengths: number[] = [];
+  for (const pass of adam7Passes) {
+    const passWidth = getAdam7PassSize(header.width, pass.xStart, pass.xStep);
+    const passHeight = getAdam7PassSize(header.height, pass.yStart, pass.yStep);
+    if (passWidth === 0 || passHeight === 0) {
+      continue;
+    }
+    const rowLength = getPngRowLength(passWidth, samplesPerPixel, header);
+    if (rowLength == null) {
+      return null;
+    }
+    rowLengths.push(...Array(passHeight).fill(rowLength));
+  }
+  return rowLengths.length > 0 ? rowLengths : null;
+}
+
+const adam7Passes = [
+  { xStart: 0, xStep: 8, yStart: 0, yStep: 8 },
+  { xStart: 4, xStep: 8, yStart: 0, yStep: 8 },
+  { xStart: 0, xStep: 4, yStart: 4, yStep: 8 },
+  { xStart: 2, xStep: 4, yStart: 0, yStep: 4 },
+  { xStart: 0, xStep: 2, yStart: 2, yStep: 4 },
+  { xStart: 1, xStep: 2, yStart: 0, yStep: 2 },
+  { xStart: 0, xStep: 1, yStart: 1, yStep: 2 },
+] as const;
+
+function getAdam7PassSize(
+  imageSize: number,
+  passStart: number,
+  passStep: number,
+): number {
+  return imageSize > passStart
+    ? Math.floor((imageSize - passStart + passStep - 1) / passStep)
+    : 0;
+}
+
+function getPngRowLength(
+  width: number,
+  samplesPerPixel: number,
+  header: PngHeader,
+): number | null {
+  const bitsPerScanline = width * samplesPerPixel * header.bitDepth;
   const bytesPerScanline = Math.ceil(bitsPerScanline / 8);
-  return Number.isSafeInteger(bytesPerScanline) ? bytesPerScanline : null;
+  const rowLength = bytesPerScanline + 1;
+  return Number.isSafeInteger(rowLength) ? rowLength : null;
 }
 
 function getPngSamplesPerPixel(colorType: number): number | null {
