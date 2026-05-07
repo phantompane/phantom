@@ -6,11 +6,11 @@
   "scripts": {
     "dev": "portless run --name phantom pnpm run dev:app",
     "dev:app": "vite dev",
-    "build": "vite build && tsc --noEmit",
+    "build": "vite build && tsgo --noEmit",
     "preview": "vite preview",
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "test": "vitest run --root ../.. packages/web/src"
   },
   "dependencies": {
@@ -31,7 +31,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "tailwindcss": "4.2.4",
-    "typescript": "^5.9.3",
+    "typescript": "npm:@typescript/typescript6@^6.0.0",
     "vite": "^8.0.8",
     "vitest": "^4.1.5"
   }
