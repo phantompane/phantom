@@ -215,7 +215,33 @@ describe("CodexBridge", () => {
     await expect(unarchive).resolves.toEqual({ thread: { id: "thread_1" } });
   });
 
-  it("passes model, effort, file mentions, and skills to new turns", async () => {
+  it("passes model and service tier to new threads", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    const thread = bridge.startThread("/repo", {
+      model: "gpt-5.2",
+      serviceTier: "fast",
+    });
+
+    await vi.waitFor(() =>
+      expect(findWrite(proc, "thread/start")).toBeDefined(),
+    );
+    const request = findWrite(proc, "thread/start");
+    expect(request?.params).toEqual({
+      cwd: "/repo",
+      model: "gpt-5.2",
+      serviceTier: "fast",
+      serviceName: "phantom_serve",
+      experimentalRawEvents: false,
+      persistExtendedHistory: true,
+    });
+
+    proc.send({ id: request?.id, result: { thread: { id: "thread_1" } } });
+    await expect(thread).resolves.toEqual({ thread: { id: "thread_1" } });
+  });
+
+  it("passes model, effort, service tier, file mentions, and skills to new turns", async () => {
     const { bridge, proc } = createBridge();
     await initializeBridge(bridge, proc);
 
@@ -223,6 +249,7 @@ describe("CodexBridge", () => {
       effort: "high",
       files: [{ name: "src/index.ts", path: "/repo/src/index.ts" }],
       model: "gpt-5.2",
+      serviceTier: "fast",
       skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
     });
 
@@ -250,6 +277,7 @@ describe("CodexBridge", () => {
       ],
       model: "gpt-5.2",
       effort: "high",
+      serviceTier: "fast",
     });
 
     proc.send({ id: request?.id, result: { turn: { id: "turn_1" } } });
@@ -263,6 +291,7 @@ describe("CodexBridge", () => {
     const turn = bridge.steerTurn("thread_1", "turn_1", "continue", {
       effort: "high",
       model: "gpt-5.2",
+      serviceTier: "fast",
     });
 
     await vi.waitFor(() => expect(findWrite(proc, "turn/steer")).toBeDefined());

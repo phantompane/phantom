@@ -4,7 +4,11 @@ import { z } from "zod";
 import { createSseResponse, parseLastEventId } from "./event-hub.ts";
 import { renderChatMessages } from "./markdown.ts";
 import { getServeServices } from "./services.ts";
-import type { ApiErrorBody, CodexTurnContextItem } from "./types.ts";
+import type {
+  ApiErrorBody,
+  CodexServiceTier,
+  CodexTurnContextItem,
+} from "./types.ts";
 
 const contextItemSchema = z.object({
   name: z.string().min(1),
@@ -21,6 +25,7 @@ const createChatSchema = z
     base: z.string().optional(),
     githubTargetNumber: z.number().int().positive().optional(),
     initialMessage: z.string().optional(),
+    serviceTier: z.enum(["fast", "flex"]).nullable().optional(),
     worktreeName: z.string().optional(),
     worktreePath: z.string().optional(),
   })
@@ -66,6 +71,7 @@ const sendMessageSchema = z.object({
   text: z.string().min(1, "Message text is required"),
   effort: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
+  serviceTier: z.enum(["fast", "flex"]).nullable().optional(),
   files: z.array(contextItemSchema).optional(),
   skills: z.array(contextItemSchema).optional(),
 });
@@ -88,6 +94,7 @@ const queuedMessageSchema = z.object({
   effort: z.string().optional(),
   files: z.array(contextItemSchema).optional(),
   model: z.string().optional(),
+  serviceTier: z.enum(["fast", "flex"]).optional(),
   skills: z.array(contextItemSchema).optional(),
   createdAt: z.string().min(1),
 });
@@ -160,6 +167,12 @@ function query<TSchema extends z.ZodType>(schema: TSchema) {
 }
 
 function optionalString(value: string | null | undefined): string | undefined {
+  return value ?? undefined;
+}
+
+function optionalServiceTier(
+  value: CodexServiceTier | null | undefined,
+): CodexServiceTier | undefined {
   return value ?? undefined;
 }
 
@@ -266,6 +279,7 @@ export const rpcRoutes = new Hono()
           base: body.base,
           githubTargetNumber: body.githubTargetNumber,
           initialMessage: body.initialMessage,
+          serviceTier: optionalServiceTier(body.serviceTier),
           worktreeName: body.worktreeName,
           worktreePath: body.worktreePath,
         },
@@ -379,6 +393,7 @@ export const rpcRoutes = new Hono()
         effort: optionalString(body.effort),
         files: contextItems(body.files),
         model: optionalString(body.model),
+        serviceTier: optionalServiceTier(body.serviceTier),
         skills: contextItems(body.skills),
         text: body.text,
       });
@@ -431,6 +446,7 @@ export const rpcRoutes = new Hono()
           effort: optionalString(body.effort),
           files: contextItems(body.files),
           model: optionalString(body.model),
+          serviceTier: optionalServiceTier(body.serviceTier),
           skills: contextItems(body.skills),
           text: body.text,
         },
@@ -449,6 +465,7 @@ export const rpcRoutes = new Hono()
           effort: optionalString(body.effort),
           files: contextItems(body.files),
           model: optionalString(body.model),
+          serviceTier: optionalServiceTier(body.serviceTier),
           skills: contextItems(body.skills),
           text: body.text,
         },

@@ -97,6 +97,7 @@ describe("createChatMutation", () => {
     await createChatMutation("proj_1", {
       githubTargetNumber: 42,
       initialMessage: "Start here",
+      serviceTier: "fast",
     });
 
     strictEqual(
@@ -104,6 +105,7 @@ describe("createChatMutation", () => {
       JSON.stringify({
         githubTargetNumber: 42,
         initialMessage: "Start here",
+        serviceTier: "fast",
       }),
     );
   });

@@ -16,6 +16,10 @@ interface ModelReasoningEffortRecord {
   supportedReasoningEfforts: string[];
 }
 
+interface ModelSpeedTierRecord {
+  additionalSpeedTiers: string[];
+}
+
 interface SkillSelectionRecord {
   enabled: boolean;
   name: string;
@@ -237,6 +241,25 @@ export function getSelectableReasoningEfforts(
   return selectedModel
     ? selectedModel.supportedReasoningEfforts
     : fallbackReasoningEfforts;
+}
+
+export function modelSupportsFastMode(
+  selectedModel: ModelSpeedTierRecord | null,
+): boolean {
+  return Boolean(selectedModel?.additionalSpeedTiers.includes("fast"));
+}
+
+export function getSelectedServiceTierForTurn(
+  selectedModel: ModelSpeedTierRecord | null,
+  selectedServiceTier: string | null,
+  restoredPendingServiceTier: "fast" | "flex" | null,
+): "fast" | null {
+  if (!selectedModel) {
+    return restoredPendingServiceTier === "fast" ? "fast" : null;
+  }
+  return selectedServiceTier === "fast" && modelSupportsFastMode(selectedModel)
+    ? "fast"
+    : null;
 }
 
 export function getSelectedSkillContextItems<

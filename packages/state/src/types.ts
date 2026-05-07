@@ -41,6 +41,7 @@ const queuedMessageRecordBaseSchema = z.object({
   effort: z.string().optional(),
   files: z.array(turnContextItemBaseSchema).optional(),
   model: z.string().optional(),
+  serviceTier: z.enum(["fast", "flex"]).optional(),
   skills: z.array(turnContextItemBaseSchema).optional(),
   createdAt: z.string(),
 });
