@@ -1,0 +1,25 @@
+{
+  "id": "/",
+  "name": "Phantom Serve",
+  "short_name": "Phantom",
+  "description": "Phantom worktree and agent workspace.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f0f1f5",
+  "theme_color": "#f0f1f5",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
