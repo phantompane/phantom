@@ -2904,6 +2904,11 @@ export function HomeRoute() {
   }
 
   function selectWorktree(projectId: string, worktree: ProjectWorktreeRecord) {
+    if (!worktree.chatId) {
+      void createChat(projectId, worktree);
+      return;
+    }
+
     updateWorkspaceSearchParams({
       projectId,
       chatId: worktree.chatId,
@@ -3180,7 +3185,7 @@ export function HomeRoute() {
                                       </button>
                                       <SidebarMenuSubButton
                                         className="flex-1"
-                                        disabled={!worktree.chatId}
+                                        disabled={!worktree.chatId && isBusy}
                                         isActive={isSelectedWorktree}
                                         onClick={() =>
                                           selectWorktree(project.id, worktree)
