@@ -1,6 +1,6 @@
 {
   "name": "@phantompane/server",
-  "version": "6.3.0-0",
+  "version": "6.3.0-1",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
