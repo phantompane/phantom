@@ -1,5 +1,13 @@
-import { realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  basename,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import {
   branchExists,
   getGitRoot,
@@ -36,11 +44,13 @@ import {
 import {
   createRecordId,
   createTimestamp,
+  getServeDataDir,
   ServeStateStore,
   touchProject,
 } from "@phantompane/state";
 import { EventHub } from "./event-hub.ts";
 import type {
+  ChatAttachmentRecord,
   ChatMessageRecord,
   ChatRecord,
   ChatStatus,
@@ -88,12 +98,20 @@ export interface SyncProjectWorktreeBranchResult {
 }
 
 export interface SendMessageInput {
+  attachments?: ChatAttachmentRecord[];
   effort?: string;
   files?: CodexTurnContextItem[];
   model?: string;
   serviceTier?: CodexServiceTier;
   skills?: CodexTurnContextItem[];
   text: string;
+}
+
+export interface UploadAttachmentInput {
+  bytes: Uint8Array;
+  mimeType: string;
+  name: string;
+  size: number;
 }
 
 export interface DeletePendingMessageResult {
@@ -108,6 +126,7 @@ export interface ApprovalInput {
 }
 
 export interface ServeServicesOptions {
+  attachmentDir?: string;
   eventHub?: EventHub;
   store?: ServeStateStore;
   codex?: CodexBridge;
@@ -136,6 +155,7 @@ interface SubmitMessageOptions {
 }
 
 const worktreeNameInferenceModel = "gpt-5.4-mini";
+const maxAttachmentBytes = 10 * 1024 * 1024;
 
 function createWorktreeNameInferencePrompt(message: string): string {
   return [
@@ -249,6 +269,7 @@ export class ServeServices {
   readonly eventHub: EventHub;
   readonly store: ServeStateStore;
   readonly codex: CodexBridge;
+  private readonly attachmentDir: string;
   private readonly loadedThreadIds = new Set<string>();
   private readonly approvalRequests = new Map<string, PendingApprovalRequest>();
   private readonly pendingTurnEvents = new Map<
@@ -273,6 +294,8 @@ export class ServeServices {
     this.eventHub = options.eventHub ?? new EventHub();
     this.store = options.store ?? new ServeStateStore();
     this.codex = options.codex ?? new CodexBridge();
+    this.attachmentDir =
+      options.attachmentDir ?? join(getServeDataDir(), "attachments");
     this.codex.onNotification((message) => {
       void this.handleCodexNotification(message);
     });
@@ -1227,6 +1250,46 @@ export class ServeServices {
     return this.submitMessage(chatId, input, { requireActiveTurn: false });
   }
 
+  async uploadAttachment(
+    chatId: string,
+    input: UploadAttachmentInput,
+  ): Promise<ChatAttachmentRecord> {
+    const state = await this.store.load();
+    this.requireChat(state, chatId);
+
+    const mimeType = input.mimeType.trim().toLowerCase();
+    if (!mimeType.startsWith("image/")) {
+      throw new Error("Only image attachments are supported");
+    }
+    if (input.size <= 0 || input.bytes.byteLength <= 0) {
+      throw new Error("Attachment file is empty");
+    }
+    if (
+      input.size > maxAttachmentBytes ||
+      input.bytes.byteLength > maxAttachmentBytes
+    ) {
+      throw new Error("Attachment file is too large");
+    }
+
+    const safeName = sanitizeAttachmentName(input.name);
+    const extension = sanitizeAttachmentExtension(safeName, mimeType);
+    const attachmentId = createRecordId("att");
+    const chatAttachmentDir = join(this.attachmentDir, chatId);
+    const attachmentPath = join(
+      chatAttachmentDir,
+      `${attachmentId}${extension}`,
+    );
+    await mkdir(chatAttachmentDir, { recursive: true });
+    await writeFile(attachmentPath, input.bytes);
+
+    return {
+      name: safeName,
+      path: attachmentPath,
+      mimeType,
+      size: input.size,
+    };
+  }
+
   async steerMessage(
     chatId: string,
     input: SendMessageInput,
@@ -1274,6 +1337,7 @@ export class ServeServices {
         text,
         "chat.message.queued",
       );
+      userMessage.attachments = cloneAttachmentRecords(input.attachments);
       const queuedMessage = createQueuedMessage(chat.id, userMessage.id, input);
       queuedUserMessage = userMessage;
       return {
@@ -1520,13 +1584,16 @@ export class ServeServices {
           ...existingUserMessage,
           eventType: undefined,
         }
-      : createMessage(
-          chat.id,
-          "user",
-          text,
-          isSteeringActiveTurn ? "chat.message.steered" : undefined,
-          isSteeringActiveTurn ? (chat.activeTurnId ?? undefined) : undefined,
-        );
+      : {
+          ...createMessage(
+            chat.id,
+            "user",
+            text,
+            isSteeringActiveTurn ? "chat.message.steered" : undefined,
+            isSteeringActiveTurn ? (chat.activeTurnId ?? undefined) : undefined,
+          ),
+          attachments: cloneAttachmentRecords(input.attachments),
+        };
     let nextStatus: ChatStatus | null = null;
     let nextActiveTurnId: string | null | undefined;
     let pendingTurnThreadId: string | null = null;
@@ -1762,6 +1829,7 @@ export class ServeServices {
     chat: ChatRecord,
   ): Promise<
     | {
+        attachments?: ChatAttachmentRecord[];
         effort?: string;
         files?: CodexTurnContextItem[];
         model?: string;
@@ -1770,6 +1838,7 @@ export class ServeServices {
       }
     | undefined
   > {
+    const attachments = await this.normalizeAttachmentItems(input.attachments);
     const files = await normalizeFileContextItems(
       input.files,
       chat.worktreePath,
@@ -1782,18 +1851,23 @@ export class ServeServices {
       !input.effort &&
       !input.model &&
       !input.serviceTier &&
+      attachments.length === 0 &&
       files.length === 0 &&
       skills.length === 0
     ) {
       return undefined;
     }
     const options: {
+      attachments?: ChatAttachmentRecord[];
       effort?: string;
       files?: CodexTurnContextItem[];
       model?: string;
       serviceTier?: CodexServiceTier;
       skills?: CodexTurnContextItem[];
     } = {};
+    if (attachments.length > 0) {
+      options.attachments = attachments;
+    }
     if (input.effort) {
       options.effort = input.effort;
     }
@@ -1810,6 +1884,51 @@ export class ServeServices {
       options.skills = skills;
     }
     return options;
+  }
+
+  private async normalizeAttachmentItems(
+    items: ChatAttachmentRecord[] | undefined,
+  ): Promise<ChatAttachmentRecord[]> {
+    const normalized = normalizeAttachmentRecords(items);
+    if (normalized.length === 0) {
+      return [];
+    }
+
+    const realAttachmentDir = await realpath(this.attachmentDir);
+    return await Promise.all(
+      normalized.map(async (item) => {
+        const resolvedPath = resolve(item.path);
+        if (!isPathInside(this.attachmentDir, resolvedPath)) {
+          throw new Error(
+            `Attachment path must be within Phantom attachment storage: ${item.path}`,
+          );
+        }
+
+        let realAttachmentPath: string;
+        try {
+          realAttachmentPath = await realpath(resolvedPath);
+        } catch {
+          throw new Error(
+            `Attachment path is not an existing file: ${item.path}`,
+          );
+        }
+        if (!isPathInside(realAttachmentDir, realAttachmentPath)) {
+          throw new Error(
+            `Attachment path must resolve within Phantom attachment storage: ${item.path}`,
+          );
+        }
+        if (!(await stat(realAttachmentPath)).isFile()) {
+          throw new Error(`Attachment path is not a file: ${item.path}`);
+        }
+
+        return {
+          name: item.name,
+          path: resolvedPath,
+          mimeType: item.mimeType,
+          size: item.size,
+        };
+      }),
+    );
   }
 
   private async normalizeSkillContextItems(
@@ -3229,6 +3348,7 @@ function createQueuedMessage(
     chatId,
     messageId,
     text: input.text.trim(),
+    attachments: cloneAttachmentRecords(input.attachments),
     effort: input.effort,
     files: cloneContextItems(input.files),
     model: input.model,
@@ -3242,6 +3362,7 @@ function queuedMessageToSendInput(
   message: QueuedMessageRecord,
 ): SendMessageInput {
   return {
+    attachments: cloneAttachmentRecords(message.attachments),
     effort: message.effort,
     files: cloneContextItems(message.files),
     model: message.model,
@@ -3261,6 +3382,13 @@ function cloneContextItems(
     name: item.name,
     path: item.path,
   }));
+}
+
+function cloneAttachmentRecords(
+  items: ChatAttachmentRecord[] | undefined,
+): ChatAttachmentRecord[] | undefined {
+  const normalized = normalizeAttachmentRecords(items);
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function isChatInActiveTurn(chat: ChatRecord): boolean {
@@ -4876,6 +5004,52 @@ function normalizeTurnContextItems(
       path: item.path.trim(),
     }))
     .filter((item) => item.name && item.path);
+}
+
+function normalizeAttachmentRecords(
+  items: ChatAttachmentRecord[] | undefined,
+): ChatAttachmentRecord[] {
+  return (items ?? [])
+    .map((item) => ({
+      name: item.name.trim(),
+      path: item.path.trim(),
+      mimeType: item.mimeType.trim().toLowerCase(),
+      size: item.size,
+    }))
+    .filter(
+      (item) =>
+        item.name &&
+        item.path &&
+        item.mimeType.startsWith("image/") &&
+        Number.isInteger(item.size) &&
+        item.size > 0 &&
+        item.size <= maxAttachmentBytes,
+    );
+}
+
+function sanitizeAttachmentName(name: string): string {
+  const trimmedName = basename(name.trim());
+  const safeName = trimmedName.replace(/[^\w .-]+/g, "_").trim();
+  return safeName || "attachment";
+}
+
+function sanitizeAttachmentExtension(name: string, mimeType: string): string {
+  const currentExtension = extname(name).toLowerCase();
+  if (/^\.[a-z0-9]{1,8}$/.test(currentExtension)) {
+    return currentExtension;
+  }
+  switch (mimeType) {
+    case "image/jpeg":
+      return ".jpg";
+    case "image/png":
+      return ".png";
+    case "image/gif":
+      return ".gif";
+    case "image/webp":
+      return ".webp";
+    default:
+      return ".img";
+  }
 }
 
 async function normalizeFileContextItems(

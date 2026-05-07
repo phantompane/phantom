@@ -17,11 +17,19 @@ const projectRecordBaseSchema = z.object({
   lastOpenedAt: z.string(),
 });
 
+const chatAttachmentRecordBaseSchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  mimeType: z.string(),
+  size: z.number().int().nonnegative(),
+});
+
 const chatMessageRecordBaseSchema = z.object({
   id: z.string(),
   chatId: z.string(),
   role: z.enum(["user", "assistant", "event", "error"]),
   text: z.string(),
+  attachments: z.array(chatAttachmentRecordBaseSchema).optional(),
   eventType: z.string().optional(),
   eventData: z.unknown().optional(),
   itemId: z.string().optional(),
@@ -38,6 +46,7 @@ const queuedMessageRecordBaseSchema = z.object({
   chatId: z.string(),
   messageId: z.string(),
   text: z.string(),
+  attachments: z.array(chatAttachmentRecordBaseSchema).optional(),
   effort: z.string().optional(),
   files: z.array(turnContextItemBaseSchema).optional(),
   model: z.string().optional(),
@@ -78,6 +87,9 @@ const serveStateBaseSchema = z.object({
 });
 
 export type ChatStatus = z.infer<typeof chatStatusSchema>;
+export type ChatAttachmentRecord = z.infer<
+  typeof chatAttachmentRecordBaseSchema
+>;
 export type ProjectRecord = z.infer<typeof projectRecordBaseSchema>;
 export type ChatMessageRecord = z.infer<typeof chatMessageRecordBaseSchema>;
 export type QueuedMessageRecord = z.infer<typeof queuedMessageRecordBaseSchema>;

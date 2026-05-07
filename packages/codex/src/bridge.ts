@@ -33,7 +33,15 @@ export interface CodexTurnContextItem {
   path: string;
 }
 
+export interface CodexTurnAttachment {
+  name: string;
+  path: string;
+  mimeType?: string;
+  size?: number;
+}
+
 export interface CodexTurnOptions {
+  attachments?: CodexTurnAttachment[];
   effort?: string;
   files?: CodexTurnContextItem[];
   model?: string;
@@ -107,6 +115,12 @@ function createUserInput(
       type: "mention",
       name: file.name,
       path: file.path,
+    });
+  }
+  for (const attachment of options.attachments ?? []) {
+    input.push({
+      type: "localImage",
+      path: attachment.path,
     });
   }
   return input;

@@ -152,7 +152,10 @@ function createTestState(overrides: Partial<ServeState> = {}): ServeState {
   };
 }
 
-async function createHarness(state: ServeState): Promise<{
+async function createHarness(
+  state: ServeState,
+  options: { attachmentDir?: string } = {},
+): Promise<{
   codex: FakeCodexBridge;
   codexHome: string;
   services: ServeServices;
@@ -163,6 +166,7 @@ async function createHarness(state: ServeState): Promise<{
   const codex = new FakeCodexBridge();
   const codexHome = await createTemporaryDirectory();
   const services = new ServeServices({
+    attachmentDir: options.attachmentDir,
     codex: codex as unknown as CodexBridge,
     codexHome,
     store,
@@ -7001,6 +7005,44 @@ describe("ServeServices", () => {
         serviceTier: "fast",
         skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
       },
+    ]);
+  });
+
+  it("uploads image attachments and passes them to Codex turns", async () => {
+    const worktreePath = await createTemporaryDirectory();
+    const attachmentDir = await createTemporaryDirectory();
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: worktreePath })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { codex, services, store } = await createHarness(state, {
+      attachmentDir,
+    });
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_1" } });
+
+    const attachment = await services.uploadAttachment("chat_1", {
+      bytes: new Uint8Array([137, 80, 78, 71]),
+      mimeType: "image/png",
+      name: "screenshot.png",
+      size: 4,
+    });
+    await services.sendMessage("chat_1", {
+      attachments: [attachment],
+      text: "please inspect",
+    });
+
+    deepStrictEqual(codex.startTurn.mock.calls[0], [
+      "thread_1",
+      "please inspect",
+      worktreePath,
+      {
+        attachments: [attachment],
+      },
+    ]);
+    deepStrictEqual((await store.load()).messages[0]?.attachments, [
+      attachment,
     ]);
   });
 
