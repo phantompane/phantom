@@ -59,10 +59,10 @@ pnpm dev
 
 `pnpm dev` はPhantomのWebアプリとAPIをPortless経由で起動します。Git worktreeごとに安定したローカルURLが割り当てられるため、固定ポートの競合を避けられます。
 
-| チェックアウト | Web URL | API URL |
-| --- | --- | --- |
-| メインのチェックアウト | `https://phantom.localhost` | `https://api.phantom.localhost` |
-| linked worktree | `https://<worktree-prefix>.phantom.localhost` | `https://<worktree-prefix>.api.phantom.localhost` |
+| チェックアウト         | Web URL                                       | API URL                                           |
+| ---------------------- | --------------------------------------------- | ------------------------------------------------- |
+| メインのチェックアウト | `https://phantom.localhost`                   | `https://api.phantom.localhost`                   |
+| linked worktree        | `https://<worktree-prefix>.phantom.localhost` | `https://<worktree-prefix>.api.phantom.localhost` |
 
 `<worktree-prefix>` はPortlessがlinked worktreeのブランチ名またはディレクトリ名から決定します。たとえばprefixが `portless-worktree-ports` の場合、Webは `https://portless-worktree-ports.phantom.localhost` で開けます。
 
