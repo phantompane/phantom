@@ -8,7 +8,7 @@
   "scripts": {
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "test": "vitest run --root ../.. packages/preferences/src"
   },
   "dependencies": {

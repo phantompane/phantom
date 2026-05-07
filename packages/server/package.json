@@ -11,7 +11,7 @@
     "build": "tsdown",
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "test": "vitest run --root ../.. packages/server/src"
   },
   "dependencies": {
@@ -29,7 +29,7 @@
     "@types/node": "^25.5.0",
     "@types/sanitize-html": "^2.16.1",
     "tsdown": "^0.21.8",
-    "typescript": "^5.9.3",
+    "typescript": "npm:@typescript/typescript6@^6.0.0",
     "vitest": "^4.1.5"
   }
 }
