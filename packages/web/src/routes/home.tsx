@@ -31,7 +31,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import {
   FormEvent,
   KeyboardEvent,
@@ -315,6 +315,7 @@ const pngSignature = new Uint8Array([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 ]);
 const supportedComposerAttachmentAccept = ".png,image/png";
+const pendingMessageIdSeparator = "\u0000";
 
 function firstProjectWorktree(
   projectId: string | null,
@@ -622,6 +623,8 @@ export function HomeRoute() {
   >(null);
   const createChatInFlightRef = useRef(false);
   const chatTimelineRef = useRef<HTMLElement | null>(null);
+  const pendingMessagesDockRef = useRef<HTMLDivElement | null>(null);
+  const pendingDeliveryMessageIdsRef = useRef<Set<string>>(new Set());
   const isChatTimelinePinnedToBottomRef = useRef(true);
   const shouldIgnoreNextChatTimelineScrollRef = useRef(false);
   const scrollSaveAnimationFrameRef = useRef<number | null>(null);
@@ -1202,11 +1205,28 @@ export function HomeRoute() {
       ),
     [messages],
   );
+  const pendingDeliveryMessages = useMemo(
+    () => visibleMessages.filter((message) => getMessageDeliveryState(message)),
+    [visibleMessages],
+  );
+  const pendingDeliveryMessageIdsKey = useMemo(
+    () =>
+      pendingDeliveryMessages
+        .map((message) => message.id)
+        .join(pendingMessageIdSeparator),
+    [pendingDeliveryMessages],
+  );
+  const timelineMessages = useMemo(
+    () =>
+      visibleMessages.filter((message) => !getMessageDeliveryState(message)),
+    [visibleMessages],
+  );
   const showProjectListSkeleton = isProjectsLoading && projects.length === 0;
   const showTimelineSkeleton =
     Boolean(selectedChatId) &&
     isMessagesLoading &&
-    visibleMessages.length === 0;
+    timelineMessages.length === 0 &&
+    pendingDeliveryMessages.length === 0;
 
   useEffect(() => {
     void refreshProjects();
@@ -1407,7 +1427,33 @@ export function HomeRoute() {
       shouldIgnoreNextChatTimelineScrollRef.current = true;
       timeline.scrollTop = timeline.scrollHeight;
     }
-  }, [messagesChatId, selectedChatId, visibleMessages]);
+  }, [
+    messagesChatId,
+    pendingDeliveryMessageIdsKey,
+    selectedChatId,
+    timelineMessages,
+  ]);
+
+  useLayoutEffect(() => {
+    const nextPendingDeliveryMessageIds = new Set(
+      pendingDeliveryMessageIdsKey
+        ? pendingDeliveryMessageIdsKey.split(pendingMessageIdSeparator)
+        : [],
+    );
+    const hasNewPendingMessage = [...nextPendingDeliveryMessageIds].some(
+      (messageId) => !pendingDeliveryMessageIdsRef.current.has(messageId),
+    );
+    pendingDeliveryMessageIdsRef.current = nextPendingDeliveryMessageIds;
+    if (!hasNewPendingMessage) {
+      return;
+    }
+
+    const dock = pendingMessagesDockRef.current;
+    if (!dock) {
+      return;
+    }
+    dock.scrollTop = dock.scrollHeight;
+  }, [pendingDeliveryMessageIdsKey]);
 
   useEffect(() => {
     return () => {
@@ -3841,20 +3887,24 @@ export function HomeRoute() {
               )}
               {showTimelineSkeleton ? (
                 <TimelineSkeleton />
-              ) : visibleMessages.length === 0 ? (
-                <EmptyTimeline
-                  githubTargets={selectedProjectGitHubTargets}
-                  hasChat={Boolean(selectedChat)}
-                  hasWorktree={Boolean(selectedWorktree)}
-                  isGitHubTargetsLoading={isSelectedProjectGitHubTargetsLoading}
-                  selectedProject={selectedProject}
-                  selectedGitHubTargetNumber={selectedGitHubTargetNumber}
-                  onOpenProjectDialog={openAddProjectDialog}
-                  onSelectGitHubTarget={setSelectedGitHubTargetNumber}
-                />
+              ) : timelineMessages.length === 0 ? (
+                pendingDeliveryMessages.length === 0 ? (
+                  <EmptyTimeline
+                    githubTargets={selectedProjectGitHubTargets}
+                    hasChat={Boolean(selectedChat)}
+                    hasWorktree={Boolean(selectedWorktree)}
+                    isGitHubTargetsLoading={
+                      isSelectedProjectGitHubTargetsLoading
+                    }
+                    selectedProject={selectedProject}
+                    selectedGitHubTargetNumber={selectedGitHubTargetNumber}
+                    onOpenProjectDialog={openAddProjectDialog}
+                    onSelectGitHubTarget={setSelectedGitHubTargetNumber}
+                  />
+                ) : null
               ) : (
                 <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">
-                  {visibleMessages.map((message) => (
+                  {timelineMessages.map((message) => (
                     <MessageCard
                       isPendingActionBusy={
                         deletePendingMessageRequest.isPending
@@ -3877,6 +3927,19 @@ export function HomeRoute() {
               className="chat-composer border-t border-border bg-[var(--surface-floating)] backdrop-blur"
               onSubmit={sendMessage}
             >
+              {pendingDeliveryMessages.length > 0 && (
+                <PendingMessagesDock
+                  isPendingActionBusy={deletePendingMessageRequest.isPending}
+                  messages={pendingDeliveryMessages}
+                  scrollContainerRef={pendingMessagesDockRef}
+                  onDeletePendingMessage={(pendingMessage) =>
+                    void deletePendingMessage(pendingMessage)
+                  }
+                  onEditPendingMessage={(pendingMessage) =>
+                    void editPendingMessage(pendingMessage)
+                  }
+                />
+              )}
               <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">
                 {composerError && (
                   <InlineNotice
@@ -4680,6 +4743,111 @@ function GitHubTargetOption({
   );
 }
 
+function PendingMessagesDock({
+  isPendingActionBusy,
+  messages,
+  onDeletePendingMessage,
+  onEditPendingMessage,
+  scrollContainerRef,
+}: {
+  isPendingActionBusy: boolean;
+  messages: VisibleMessageRecord[];
+  onDeletePendingMessage: (message: VisibleMessageRecord) => void;
+  onEditPendingMessage: (message: VisibleMessageRecord) => void;
+  scrollContainerRef: RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <div
+      aria-live="polite"
+      className="mb-2 border-b border-[var(--border-divider)]"
+    >
+      <div
+        className="mx-auto flex max-h-56 max-w-[var(--layout-max-content-width)] flex-col gap-2 overflow-y-auto px-0 py-2"
+        ref={scrollContainerRef}
+      >
+        <div className="flex items-center justify-between gap-3 px-1 text-[length:var(--font-size-xs)] font-medium uppercase text-[var(--text-tertiary)]">
+          <span>Pending messages</span>
+          <span>{messages.length}</span>
+        </div>
+        <div className="flex flex-col gap-2">
+          {messages.map((message) => {
+            const deliveryState = getMessageDeliveryState(message);
+            if (!deliveryState) {
+              return null;
+            }
+            return (
+              <PendingMessageCard
+                isPendingActionBusy={isPendingActionBusy}
+                key={message.id}
+                message={message}
+                state={deliveryState}
+                onDeletePendingMessage={onDeletePendingMessage}
+                onEditPendingMessage={onEditPendingMessage}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PendingMessageCard({
+  isPendingActionBusy,
+  message,
+  onDeletePendingMessage,
+  onEditPendingMessage,
+  state,
+}: {
+  isPendingActionBusy: boolean;
+  message: VisibleMessageRecord;
+  onDeletePendingMessage: (message: VisibleMessageRecord) => void;
+  onEditPendingMessage: (message: VisibleMessageRecord) => void;
+  state: "queued" | "steered";
+}) {
+  const isQueued = state === "queued";
+  const attachments = message.attachments ?? [];
+
+  return (
+    <article
+      className={cn(
+        "rounded-[var(--radius-sm)] border px-3 py-2 shadow-[var(--shadow-xs)]",
+        isQueued
+          ? "border-[var(--semantic-warning-border)] bg-[var(--semantic-warning-bg)] text-[var(--semantic-warning-fg)]"
+          : "border-[var(--semantic-info-border)] bg-[var(--semantic-info-bg)] text-[var(--semantic-info-fg)]",
+      )}
+    >
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+        <pre className="min-w-0 flex-1 whitespace-pre-wrap break-words font-sans text-[length:var(--font-size-sm)] leading-[var(--line-height-relaxed)]">
+          {message.text}
+        </pre>
+        <MessageDeliveryBadge
+          className="mt-0 shrink-0 self-end"
+          isActionBusy={isPendingActionBusy}
+          message={message}
+          state={state}
+          onDelete={onDeletePendingMessage}
+          onEdit={onEditPendingMessage}
+        />
+      </div>
+      {attachments.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {attachments.map((attachment) => (
+            <span
+              className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-[var(--radius-sm)] border border-current/20 bg-[var(--surface-floating)] px-2 text-[length:var(--font-size-xs)] font-medium text-current"
+              key={`${attachment.path}:${attachment.name}`}
+              title={`${attachment.name} (${formatFileSize(attachment.size)})`}
+            >
+              <Paperclip className="size-3.5 shrink-0" />
+              <span className="truncate">{attachment.name}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
 function MessageCard({
   isPendingActionBusy,
   message,
@@ -5171,12 +5339,14 @@ function HiddenEventContent({ label }: { label: string }) {
 }
 
 function MessageDeliveryBadge({
+  className,
   isActionBusy,
   message,
   onDelete,
   onEdit,
   state,
 }: {
+  className?: string;
   isActionBusy: boolean;
   message: VisibleMessageRecord;
   onDelete: (message: VisibleMessageRecord) => void;
@@ -5188,7 +5358,7 @@ function MessageDeliveryBadge({
   const Icon = isQueued ? Clock3 : Send;
 
   return (
-    <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+    <div className={cn("mt-2 flex flex-wrap justify-end gap-1.5", className)}>
       <span className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-[var(--radius-sm)] border border-current/20 bg-[var(--surface-floating)] px-2 text-[length:var(--font-size-xs)] font-medium text-current">
         <Icon className="size-3.5 shrink-0" />
         <span className="truncate">{label}</span>
