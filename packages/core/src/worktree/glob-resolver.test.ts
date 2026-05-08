@@ -304,16 +304,19 @@ describe("resolveGlobPatterns", () => {
 
   test("should treat metacharacter paths as glob patterns", async () => {
     // Create a file with literal square brackets in the name
-    await writeFile(path.join(gitRoot, "file[1].txt"), "");
+    await writeFile(path.join(gitRoot, "file[12].txt"), "");
     await writeFile(path.join(gitRoot, "file1.txt"), "");
+    await writeFile(path.join(gitRoot, "file2.txt"), "");
 
-    const result = await resolveGlobPatterns(gitRoot, ["file[1].txt"]);
+    const result = await resolveGlobPatterns(gitRoot, ["file[12].txt"]);
 
     assert.strictEqual(isOk(result), true);
     if (isOk(result)) {
       const { resolvedFiles } = result.value;
-      assert.strictEqual(resolvedFiles.length, 1);
-      assert.deepStrictEqual(resolvedFiles, ["file1.txt"]);
+      assert.strictEqual(resolvedFiles.length, 2);
+      assert.ok(resolvedFiles.includes("file1.txt"));
+      assert.ok(resolvedFiles.includes("file2.txt"));
+      assert.ok(!resolvedFiles.includes("file[12].txt"));
     }
   });
 

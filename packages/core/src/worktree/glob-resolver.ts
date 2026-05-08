@@ -1,4 +1,4 @@
-import { glob } from "glob";
+import { glob, hasMagic } from "glob";
 import { err, ok, type Result } from "@phantompane/utils";
 
 export interface ResolvedPattern {
@@ -21,40 +21,8 @@ export class GlobResolutionError extends Error {
   }
 }
 
-/**
- * Check if a string contains glob pattern characters
- */
-function isGlobPattern(pattern: string): boolean {
-  return /[*?[\]{}]/.test(pattern);
-}
-
-function normalizeRelativePath(filePath: string): string {
+function normalizePatternPath(filePath: string): string {
   return filePath.replace(/\\/g, "/");
-}
-
-/**
- * Expand a single pattern to matching file paths
- */
-async function expandPattern(
-  gitRoot: string,
-  pattern: string,
-): Promise<string[]> {
-  const normalizedPattern = normalizeRelativePath(pattern);
-
-  // Check if pattern contains glob metacharacters
-  if (!isGlobPattern(pattern)) {
-    // Not a glob pattern and doesn't exist, return as exact path
-    // (will be handled by file-copier as non-existent file)
-    return [normalizedPattern];
-  }
-
-  return glob(normalizedPattern, {
-    cwd: gitRoot,
-    dot: true,
-    ignore: ".git/**",
-    nodir: true,
-    posix: true,
-  });
 }
 
 /**
@@ -72,8 +40,18 @@ export async function resolveGlobPatterns(
   const resolutionDetails: ResolvedPattern[] = [];
 
   for (const pattern of patterns) {
+    const normalizedPattern = normalizePatternPath(pattern);
+
     try {
-      const resolvedFiles = await expandPattern(gitRoot, pattern);
+      const resolvedFiles = hasMagic(normalizedPattern, { magicalBraces: true })
+        ? await glob(normalizedPattern, {
+            cwd: gitRoot,
+            dot: true,
+            ignore: ".git/**",
+            nodir: true,
+            posix: true,
+          })
+        : [normalizedPattern];
 
       // Add to deduplication set
       for (const file of resolvedFiles) {
