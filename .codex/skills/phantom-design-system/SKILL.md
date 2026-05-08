@@ -24,7 +24,7 @@ If `DESIGN.md` is missing, stop and tell the user that the required design syste
 - Prefer existing Phantom UI patterns and shadcn/ui-based components before adding new primitives.
 - Keep UI changes consistent with the sidebar, project/worktree hierarchy, agent chat, command input, and diff/code surfaces described in `DESIGN.md`.
 - Remove or revise UI text, spacing, color, and component choices that conflict with `DESIGN.md`.
-- For visual changes, verify in the app when a dev server or browser context is available.
+- For visual changes, verify in the app when a dev server or browser context is available. Use the repository's default Portless development flow (`pnpm dev`) unless the user explicitly asks to bypass it or Portless itself is the issue being debugged.
 - Mention in the final response that `DESIGN.md` was consulted for UI/frontend decisions.
 
 ## Scope

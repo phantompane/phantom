@@ -293,6 +293,17 @@ type VisibleMessageRecord = RenderedChatMessageRecord & {
   role: "assistant" | "error" | "event" | "user";
 };
 
+type TimelineItem =
+  | {
+      kind: "commandGroup";
+      id: string;
+      messages: VisibleMessageRecord[];
+    }
+  | {
+      kind: "message";
+      message: VisibleMessageRecord;
+    };
+
 interface StoredChatScrollPosition {
   pinnedToBottom: boolean;
   top: number;
@@ -1220,6 +1231,10 @@ export function HomeRoute() {
     () =>
       visibleMessages.filter((message) => !getMessageDeliveryState(message)),
     [visibleMessages],
+  );
+  const timelineItems = useMemo(
+    () => groupTimelineMessages(timelineMessages),
+    [timelineMessages],
   );
   const showProjectListSkeleton = isProjectsLoading && projects.length === 0;
   const showTimelineSkeleton =
@@ -3887,7 +3902,7 @@ export function HomeRoute() {
               )}
               {showTimelineSkeleton ? (
                 <TimelineSkeleton />
-              ) : timelineMessages.length === 0 ? (
+              ) : timelineItems.length === 0 ? (
                 pendingDeliveryMessages.length === 0 ? (
                   <EmptyTimeline
                     githubTargets={selectedProjectGitHubTargets}
@@ -3904,21 +3919,28 @@ export function HomeRoute() {
                 ) : null
               ) : (
                 <div className="mx-auto flex max-w-[var(--layout-max-content-width)] flex-col gap-2">
-                  {timelineMessages.map((message) => (
-                    <MessageCard
-                      isPendingActionBusy={
-                        deletePendingMessageRequest.isPending
-                      }
-                      key={message.id}
-                      message={message}
-                      onDeletePendingMessage={(pendingMessage) =>
-                        void deletePendingMessage(pendingMessage)
-                      }
-                      onEditPendingMessage={(pendingMessage) =>
-                        void editPendingMessage(pendingMessage)
-                      }
-                    />
-                  ))}
+                  {timelineItems.map((item) =>
+                    item.kind === "commandGroup" ? (
+                      <CommandEventGroupCard
+                        key={item.id}
+                        messages={item.messages}
+                      />
+                    ) : (
+                      <MessageCard
+                        isPendingActionBusy={
+                          deletePendingMessageRequest.isPending
+                        }
+                        key={item.message.id}
+                        message={item.message}
+                        onDeletePendingMessage={(pendingMessage) =>
+                          void deletePendingMessage(pendingMessage)
+                        }
+                        onEditPendingMessage={(pendingMessage) =>
+                          void editPendingMessage(pendingMessage)
+                        }
+                      />
+                    ),
+                  )}
                 </div>
               )}
             </section>
@@ -4848,6 +4870,41 @@ function PendingMessageCard({
   );
 }
 
+function groupTimelineMessages(
+  messages: VisibleMessageRecord[],
+): TimelineItem[] {
+  const items: TimelineItem[] = [];
+  let commandRun: VisibleMessageRecord[] = [];
+
+  function flushCommandRun() {
+    if (commandRun.length === 0) {
+      return;
+    }
+    if (commandRun.length === 1) {
+      items.push({ kind: "message", message: commandRun[0]! });
+    } else {
+      items.push({
+        kind: "commandGroup",
+        id: `${commandRun[0]!.id}:commands`,
+        messages: commandRun,
+      });
+    }
+    commandRun = [];
+  }
+
+  for (const message of messages) {
+    if (getRichEventKind(message) === "command") {
+      commandRun.push(message);
+      continue;
+    }
+    flushCommandRun();
+    items.push({ kind: "message", message });
+  }
+
+  flushCommandRun();
+  return items;
+}
+
 function MessageCard({
   isPendingActionBusy,
   message,
@@ -5031,61 +5088,181 @@ function DiffEventCard({ message }: { message: VisibleMessageRecord }) {
 }
 
 function CommandEventCard({ message }: { message: VisibleMessageRecord }) {
-  const meta = getCommandEventMeta(message);
-  return (
-    <RichEventShell
-      defaultOpen={false}
-      icon={<Terminal className="size-4" />}
-      meta={formatEventMeta([
-        meta.status,
-        meta.exitCode !== null ? `exit ${meta.exitCode}` : null,
-        meta.durationMs !== null ? formatDurationMs(meta.durationMs) : null,
-        meta.capReached ? "truncated" : null,
+  return <CommandEventLog messages={[message]} />;
+}
+
+function CommandEventGroupCard({
+  messages,
+}: {
+  messages: VisibleMessageRecord[];
+}) {
+  return <CommandEventLog messages={messages} />;
+}
+
+function CommandEventLog({ messages }: { messages: VisibleMessageRecord[] }) {
+  const metas = messages.map(getCommandEventMeta);
+  const failedCount = metas.filter(isFailedCommandMeta).length;
+  const completedCount = metas.filter(
+    (meta) => meta.status === "completed",
+  ).length;
+  const totalDurationMs = metas.reduce(
+    (total, meta) => total + (meta.durationMs ?? 0),
+    0,
+  );
+  const hasDuration = metas.some((meta) => meta.durationMs !== null);
+  const hasTruncatedOutput = metas.some((meta) => meta.capReached);
+  const firstMeta = metas[0];
+  const isGroup = messages.length > 1;
+  const summaryMeta = isGroup
+    ? formatEventMeta([
+        failedCount > 0 ? `${failedCount} failed` : null,
+        completedCount > 0 ? `${completedCount} completed` : null,
+        hasDuration ? formatDurationMs(totalDurationMs) : null,
+        hasTruncatedOutput ? "truncated" : null,
         "output hidden",
-      ])}
-      summary={
-        <span
-          className="block min-w-0 max-w-full truncate font-mono text-[length:var(--font-size-xs)] text-[var(--text-secondary)]"
-          title={meta.command ?? meta.cwd ?? undefined}
-        >
-          {meta.command ?? meta.stream ?? "output"}
-        </span>
-      }
-      title="Command"
+      ])
+    : formatCommandMeta(firstMeta);
+
+  return (
+    <details
+      className={cn(
+        "group/command-log w-full border-l pl-2 text-[var(--text-tertiary)]",
+        failedCount > 0
+          ? "border-[var(--semantic-danger-border)]"
+          : "border-[var(--border-divider)]",
+      )}
     >
-      {meta.command && (
-        <p
-          className="mb-2 min-w-0 break-words font-mono text-[length:var(--font-size-xs)] text-muted-foreground"
-          title={meta.cwd ?? undefined}
+      <summary
+        className="grid min-h-6 cursor-pointer list-none grid-cols-[auto_auto_minmax(0,auto)_minmax(0,1fr)_auto] items-center gap-1.5 rounded-[var(--radius-xs)] px-1 py-0.5 outline-none transition-colors hover:bg-[var(--state-hover-bg)] focus-visible:shadow-[var(--state-focus-ring)] [&::-webkit-details-marker]:hidden"
+        title={firstMeta?.command ?? firstMeta?.cwd ?? undefined}
+      >
+        <ChevronRight className="size-3 shrink-0 transition-transform group-open/command-log:rotate-90" />
+        <Terminal className="size-3.5 shrink-0" />
+        <span
+          className={cn(
+            "truncate text-[length:var(--font-size-xs)] font-medium",
+            failedCount > 0
+              ? "text-[var(--semantic-danger-fg)]"
+              : "text-[var(--text-tertiary)]",
+          )}
         >
-          {meta.command}
-        </p>
+          {isGroup ? `${messages.length} log entries` : "Command"}
+        </span>
+        <span className="min-w-0 truncate font-mono text-[length:var(--font-size-xs)]">
+          {formatCommandLabel(firstMeta)}
+          {isGroup && messages.length > 1 ? " ..." : ""}
+        </span>
+        {summaryMeta && (
+          <span className="max-w-[45%] shrink-0 truncate text-[length:var(--font-size-2xs)] text-muted-foreground">
+            {summaryMeta}
+          </span>
+        )}
+      </summary>
+      <div className="ml-5 mt-1 space-y-1 border-l border-[var(--border-divider)] pl-2">
+        {messages.map((message) => (
+          <CommandEventLine key={message.id} message={message} />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function CommandEventLine({ message }: { message: VisibleMessageRecord }) {
+  const meta = getCommandEventMeta(message);
+  const rowMeta = formatCommandMeta(meta);
+
+  return (
+    <div
+      className={cn(
+        "grid min-h-6 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 rounded-[var(--radius-xs)] px-1 py-0.5",
+        isFailedCommandMeta(meta) && "bg-[var(--semantic-danger-bg)]",
       )}
-      {(meta.status || meta.exitCode !== null || meta.durationMs !== null) && (
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {meta.status && (
-            <Badge variant={getStatusBadgeVariant(meta.status)}>
-              {meta.status}
-            </Badge>
+    >
+      <span
+        className={cn(
+          "min-w-0 truncate font-mono text-[length:var(--font-size-xs)]",
+          isFailedCommandMeta(meta)
+            ? "text-[var(--semantic-danger-fg)]"
+            : "text-[var(--text-secondary)]",
+        )}
+        title={meta.command ?? meta.cwd ?? undefined}
+      >
+        {formatCommandLabel(meta)}
+      </span>
+      {rowMeta && (
+        <span
+          className={cn(
+            "max-w-[45%] shrink-0 truncate text-[length:var(--font-size-2xs)]",
+            isFailedCommandMeta(meta)
+              ? "text-[var(--semantic-danger-fg)]"
+              : "text-muted-foreground",
           )}
-          {meta.exitCode !== null && (
-            <Badge variant={meta.exitCode === 0 ? "success" : "danger"}>
-              exit {meta.exitCode}
-            </Badge>
-          )}
-          {meta.durationMs !== null && (
-            <Badge variant="secondary">
-              {formatDurationMs(meta.durationMs)}
-            </Badge>
-          )}
-        </div>
+        >
+          {rowMeta}
+        </span>
       )}
-      <HiddenEventContent
-        label={
-          meta.capReached ? "Output hidden after truncation" : "Output hidden"
-        }
-      />
-    </RichEventShell>
+      <p
+        className="col-span-2 min-w-0 max-w-full whitespace-pre-wrap break-words font-mono text-[length:var(--font-size-xs)] leading-[var(--line-height-relaxed)] text-muted-foreground"
+        title={meta.cwd ?? undefined}
+      >
+        {formatCommandFullText(meta)}
+      </p>
+    </div>
+  );
+}
+
+function formatCommandLabel(
+  meta: ReturnType<typeof getCommandEventMeta> | undefined,
+): string {
+  const value = meta?.command ?? meta?.stream ?? "output";
+  const singleQuotedLoginShellMarker = " -lc '";
+  const singleQuotedMarkerIndex = value.indexOf(singleQuotedLoginShellMarker);
+  if (singleQuotedMarkerIndex >= 0 && value.endsWith("'")) {
+    return value.slice(
+      singleQuotedMarkerIndex + singleQuotedLoginShellMarker.length,
+      -1,
+    );
+  }
+
+  const doubleQuotedLoginShellMarker = ' -lc "';
+  const doubleQuotedMarkerIndex = value.indexOf(doubleQuotedLoginShellMarker);
+  if (doubleQuotedMarkerIndex >= 0 && value.endsWith('"')) {
+    return value.slice(
+      doubleQuotedMarkerIndex + doubleQuotedLoginShellMarker.length,
+      -1,
+    );
+  }
+
+  return value;
+}
+
+function formatCommandFullText(
+  meta: ReturnType<typeof getCommandEventMeta>,
+): string {
+  return meta.command ?? meta.stream ?? "output";
+}
+
+function formatCommandMeta(
+  meta: ReturnType<typeof getCommandEventMeta> | undefined,
+): string | undefined {
+  if (!meta) {
+    return undefined;
+  }
+
+  return formatEventMeta([
+    meta.status,
+    meta.exitCode !== null ? `exit ${meta.exitCode}` : null,
+    meta.durationMs !== null ? formatDurationMs(meta.durationMs) : null,
+    meta.capReached ? "truncated" : null,
+    "output hidden",
+  ]);
+}
+
+function isFailedCommandMeta(
+  meta: ReturnType<typeof getCommandEventMeta>,
+): boolean {
+  return (
+    meta.status === "failed" || (meta.exitCode !== null && meta.exitCode !== 0)
   );
 }
 
