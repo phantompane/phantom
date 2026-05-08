@@ -131,12 +131,12 @@ This maps `release/2026/q1` to `release_2026_q1`.
 
 ### postCreate.copyFiles
 
-An array of file paths to automatically copy from the current worktree to newly created worktrees.
+An array of file paths or glob patterns to automatically copy from the current worktree to newly created worktrees.
 
 **Use Cases:**
 
 - Environment configuration files (`.env`, `.env.local`)
-- Local development settings
+- Local development settings across subdirectories
 - Secret files that are gitignored
 - Database configuration files
 - API keys and certificates
@@ -146,17 +146,43 @@ An array of file paths to automatically copy from the current worktree to newly 
 ```json
 {
   "postCreate": {
-    "copyFiles": [".env", ".env.local", "config/database.local.yml"]
+    "copyFiles": [
+      ".env",
+      ".env*",
+      "config/database.local.yml",
+      "config/**/*.local.yml",
+      "secrets/[ab]*.json"
+    ]
   }
 }
 ```
 
+**Glob Pattern Support:**
+
+Glob patterns allow you to match multiple files with a single pattern. Phantom uses the [`glob`](https://github.com/isaacs/node-glob#glob-primer) package for pattern matching, so refer to its documentation for the full pattern syntax.
+
+Phantom resolves `copyFiles` patterns with these options:
+
+- Dotfiles are included (equivalent to `dot: true`), so `*.env` can match `.env`
+- Directories are excluded; only files are copied
+- `.git/**` is ignored
+- Returned paths use `/` separators, including on Windows
+
+**Common Patterns:**
+
+- `.env*` - All files starting with `.env` (`.env`, `.env.local`, `.env.production`, etc.)
+- `*.local` - All files ending with `.local` in the root directory
+- `config/**/*.local.yml` - All `.local.yml` files anywhere under `config/` directory
+- `secrets/[ab]*.json` - All `.json` files in `secrets/` starting with `a` or `b`
+- `*.{env,json}` - All `.env` and `.json` files in the root directory
+
 **Notes:**
 
-- Paths are relative to the repository root
-- Currently, glob patterns are not supported
-- Files must exist in the source worktree
-- Non-existent files are silently skipped
+- Paths and patterns are relative to the repository root
+- Exact file paths and glob patterns can be mixed in the same array
+- Patterns matching no files are silently skipped (no error)
+- Directories are excluded from copying (only files are copied)
+- Overlapping patterns are automatically deduplicated
 - Can be overridden with `--copy-file` command line options
 
 ### postCreate.commands
