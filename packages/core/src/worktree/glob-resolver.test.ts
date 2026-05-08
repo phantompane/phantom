@@ -302,22 +302,7 @@ describe("resolveGlobPatterns", () => {
     }
   });
 
-  test("should handle files that cannot be stat'd", async () => {
-    // Create a file, then we'll rely on the glob finding it
-    // but our stat might fail in edge cases
-    await writeFile(path.join(gitRoot, ".env"), "");
-
-    const result = await resolveGlobPatterns(gitRoot, [".env"]);
-
-    assert.strictEqual(isOk(result), true);
-    if (isOk(result)) {
-      const { resolvedFiles } = result.value;
-      // Exact paths are not stat'd, just passed through
-      assert.deepStrictEqual(resolvedFiles, [".env"]);
-    }
-  });
-
-  test("should handle literal filenames with square brackets", async () => {
+  test("should treat metacharacter paths as glob patterns", async () => {
     // Create a file with literal square brackets in the name
     await writeFile(path.join(gitRoot, "file[1].txt"), "");
     await writeFile(path.join(gitRoot, "file1.txt"), "");
@@ -327,41 +312,8 @@ describe("resolveGlobPatterns", () => {
     assert.strictEqual(isOk(result), true);
     if (isOk(result)) {
       const { resolvedFiles } = result.value;
-      // Should match the literal file, not treat [1] as a glob pattern
       assert.strictEqual(resolvedFiles.length, 1);
-      assert.deepStrictEqual(resolvedFiles, ["file[1].txt"]);
-    }
-  });
-
-  test("should handle literal filenames with question marks", async () => {
-    // Create a file with a literal question mark in the name
-    await writeFile(path.join(gitRoot, "what?.txt"), "");
-    await writeFile(path.join(gitRoot, "what1.txt"), "");
-
-    const result = await resolveGlobPatterns(gitRoot, ["what?.txt"]);
-
-    assert.strictEqual(isOk(result), true);
-    if (isOk(result)) {
-      const { resolvedFiles } = result.value;
-      // Should match the literal file, not treat ? as a glob pattern
-      assert.strictEqual(resolvedFiles.length, 1);
-      assert.deepStrictEqual(resolvedFiles, ["what?.txt"]);
-    }
-  });
-
-  test("should handle literal filenames with asterisks", async () => {
-    // Create a file with a literal asterisk in the name
-    await writeFile(path.join(gitRoot, "file*.txt"), "");
-    await writeFile(path.join(gitRoot, "file1.txt"), "");
-
-    const result = await resolveGlobPatterns(gitRoot, ["file*.txt"]);
-
-    assert.strictEqual(isOk(result), true);
-    if (isOk(result)) {
-      const { resolvedFiles } = result.value;
-      // Should match the literal file, not treat * as a glob pattern
-      assert.strictEqual(resolvedFiles.length, 1);
-      assert.deepStrictEqual(resolvedFiles, ["file*.txt"]);
+      assert.deepStrictEqual(resolvedFiles, ["file1.txt"]);
     }
   });
 

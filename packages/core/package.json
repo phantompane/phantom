@@ -17,8 +17,9 @@
     "@phantompane/github": "workspace:*",
     "@phantompane/preferences": "workspace:*",
     "@phantompane/process": "workspace:*",
-    "@phantompane/utils": "workspace:*",
     "@phantompane/tmux": "workspace:*",
+    "@phantompane/utils": "workspace:*",
+    "glob": "^13.0.6",
     "human-id": "^4.1.3"
   }
 }
