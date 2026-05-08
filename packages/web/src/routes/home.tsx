@@ -3199,41 +3199,50 @@ export function HomeRoute() {
                             </span>
                           </span>
                         </SidebarMenuButton>
-                        <Button
-                          aria-label={`Create worktree in ${project.name}`}
-                          className="size-7 text-[var(--icon-color-default)] group-data-[state=collapsed]/sidebar:hidden"
-                          disabled={isBusy}
-                          onClick={() => void createChat(project.id)}
-                          size="icon"
-                          title="Create worktree"
-                          type="button"
-                          variant="ghost"
-                        >
-                          {creatingProjectId === project.id ? (
-                            <LoadingSpinner className="size-4" />
-                          ) : (
-                            <MessageSquarePlus className="size-4" />
-                          )}
-                        </Button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
-                              aria-label={`Open actions for ${project.name}`}
+                              aria-label={
+                                creatingProjectId === project.id
+                                  ? `Creating worktree in ${project.name}`
+                                  : `Open actions for ${project.name}`
+                              }
                               className={cn(
                                 "mr-1 size-7 text-[var(--icon-color-default)] opacity-100 data-[state=open]:opacity-100 group-data-[state=collapsed]/sidebar:hidden sm:opacity-0 sm:group-focus-within/project:opacity-100 sm:group-hover/project:opacity-100",
                                 selectedProjectId === project.id &&
                                   "sm:opacity-100",
+                                creatingProjectId === project.id &&
+                                  "sm:opacity-100",
                               )}
                               disabled={isBusy}
                               size="icon"
-                              title="Project actions"
+                              title={
+                                creatingProjectId === project.id
+                                  ? "Creating worktree"
+                                  : "Project actions"
+                              }
                               type="button"
                               variant="ghost"
                             >
-                              <MoreHorizontal className="size-4" />
+                              {creatingProjectId === project.id ? (
+                                <LoadingSpinner className="size-4" />
+                              ) : (
+                                <MoreHorizontal className="size-4" />
+                              )}
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              disabled={isBusy}
+                              onSelect={() => void createChat(project.id)}
+                            >
+                              {creatingProjectId === project.id ? (
+                                <LoadingSpinner className="size-4" />
+                              ) : (
+                                <MessageSquarePlus className="size-4" />
+                              )}
+                              <span>Create worktree</span>
+                            </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={isBusy}
                               onSelect={() => openDeleteProject(project)}
