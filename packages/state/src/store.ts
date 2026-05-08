@@ -2,7 +2,11 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { serveStateSchema } from "./types.ts";
-import type { ProjectRecord, ServeState } from "./types.ts";
+import type {
+  ProjectRecord,
+  RecentProjectSkillsByProject,
+  ServeState,
+} from "./types.ts";
 
 const STATE_FILE_NAME = "state.json";
 
@@ -17,6 +21,7 @@ function createEmptyState(): ServeState {
     chats: [],
     messages: [],
     queuedMessages: [],
+    recentProjectSkills: {},
     selectedProjectId: null,
     selectedChatId: null,
   };
@@ -119,6 +124,9 @@ export class ServeStateStore {
         chats: [...state.chats],
         messages: [...state.messages],
         queuedMessages: [...state.queuedMessages],
+        recentProjectSkills: cloneRecentProjectSkills(
+          state.recentProjectSkills,
+        ),
       });
       await this.save(nextState);
       return nextState;
@@ -126,6 +134,17 @@ export class ServeStateStore {
     this.updateChain = nextUpdate.catch(() => undefined);
     return nextUpdate;
   }
+}
+
+function cloneRecentProjectSkills(
+  recordsByProject: RecentProjectSkillsByProject,
+): RecentProjectSkillsByProject {
+  return Object.fromEntries(
+    Object.entries(recordsByProject).map(([projectId, records]) => [
+      projectId,
+      [...records],
+    ]),
+  );
 }
 
 export function touchProject(project: ProjectRecord): ProjectRecord {

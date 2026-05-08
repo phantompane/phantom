@@ -10,6 +10,7 @@ import type {
   PendingApprovalRecord,
   ProjectRecord,
   ProjectWorktreeRecord,
+  RecentProjectSkillRecord,
   RenderedChatMessageRecord,
 } from "@phantompane/server";
 
@@ -68,6 +69,46 @@ export function projectGitHubCheckoutTargetsQueryOptions(projectId: string) {
         await api.projects[":projectId"].github["checkout-targets"].$get({
           param: { projectId: routeParam(projectId) },
         }),
+      ),
+  });
+}
+
+export function projectRecentSkillsQueryOptions(
+  projectId: string,
+  signal?: AbortSignal,
+) {
+  return queryOptions({
+    queryKey: queryKeys.projectRecentSkills(projectId),
+    queryFn: async () =>
+      readRpcJson<{ recentSkills: RecentProjectSkillRecord[] }>(
+        await api.projects[":projectId"]["recent-skills"].$get(
+          {
+            param: { projectId: routeParam(projectId) },
+          },
+          {
+            init: { signal },
+          },
+        ),
+      ),
+  });
+}
+
+export function projectSkillsQueryOptions(
+  projectId: string,
+  signal?: AbortSignal,
+) {
+  return queryOptions({
+    queryKey: queryKeys.projectSkills(projectId),
+    queryFn: async () =>
+      readRpcJson<{ skills: CodexSkillRecord[] }>(
+        await api.projects[":projectId"].skills.$get(
+          {
+            param: { projectId: routeParam(projectId) },
+          },
+          {
+            init: { signal },
+          },
+        ),
       ),
   });
 }

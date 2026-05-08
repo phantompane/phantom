@@ -7,6 +7,7 @@ import {
   deleteProjectMutation,
   deletePendingMessageMutation,
   queueMessageMutation,
+  rememberProjectSkillMutation,
   restorePendingMessageMutation,
   steerMessageMutation,
 } from "./mutations";
@@ -138,6 +139,42 @@ describe("deleteProjectMutation", () => {
 
     strictEqual(requestMethod, "DELETE");
     strictEqual(requestUrl, "/api/projects/proj%2Fwith%23hash");
+  });
+});
+
+describe("rememberProjectSkillMutation", () => {
+  it("encodes project route params and sends the skill path", async () => {
+    let requestBody: string | undefined;
+    let requestUrl: string | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = init?.body?.toString();
+        requestUrl =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        return new Response('{"recentSkills":[]}', {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          status: 200,
+        });
+      }),
+    );
+
+    await rememberProjectSkillMutation(
+      "proj/with#hash",
+      "/skills/review/SKILL.md",
+    );
+
+    strictEqual(requestUrl, "/api/projects/proj%2Fwith%23hash/recent-skills");
+    strictEqual(
+      requestBody,
+      JSON.stringify({ path: "/skills/review/SKILL.md" }),
+    );
   });
 });
 

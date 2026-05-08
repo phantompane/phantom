@@ -74,6 +74,10 @@ const deleteWorktreeSchema = worktreeSchema.extend({
   keepBranch: z.boolean().optional(),
 });
 
+const recentProjectSkillSchema = z.object({
+  path: z.string().min(1, "Skill path is required"),
+});
+
 const sendMessageSchema = z.object({
   text: z.string().min(1, "Message text is required"),
   attachments: z.array(attachmentSchema).optional(),
@@ -341,6 +345,43 @@ export const rpcRoutes = new Hono()
       return handleApiError(c, error);
     }
   })
+  .get("/projects/:projectId/skills", async (c) => {
+    try {
+      const skills = await getServeServices().listProjectSkills(
+        c.req.param("projectId"),
+      );
+      return c.json({ skills }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .get("/projects/:projectId/recent-skills", async (c) => {
+    try {
+      const recentSkills = await getServeServices().listRecentProjectSkills(
+        c.req.param("projectId"),
+      );
+      return c.json({ recentSkills }, 200);
+    } catch (error) {
+      return handleApiError(c, error);
+    }
+  })
+  .post(
+    "/projects/:projectId/recent-skills",
+    jsonBody(recentProjectSkillSchema),
+    async (c) => {
+      try {
+        const body = c.req.valid("json");
+        const recentSkills =
+          await getServeServices().rememberRecentProjectSkill(
+            c.req.param("projectId"),
+            body.path,
+          );
+        return c.json({ recentSkills }, 200);
+      } catch (error) {
+        return handleApiError(c, error);
+      }
+    },
+  )
   .get("/projects/:projectId/github/checkout-targets", async (c) => {
     try {
       const github = await getServeServices().listProjectGitHubCheckoutTargets(

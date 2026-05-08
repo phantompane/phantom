@@ -29,6 +29,7 @@ function createTestState(overrides: Partial<ServeState> = {}): ServeState {
     chats: [],
     messages: [],
     queuedMessages: [],
+    recentProjectSkills: {},
     selectedProjectId: null,
     selectedChatId: null,
     ...overrides,
@@ -231,6 +232,7 @@ describe("ServeStateStore", () => {
     strictEqual(savedState.projects[0]?.customProjectField, "project metadata");
     strictEqual(savedState.chats[0]?.customChatField, "chat metadata");
     strictEqual(savedState.messages[0]?.customMessageField, "message metadata");
+    deepStrictEqual(savedState.recentProjectSkills, {});
     strictEqual(savedState.customTopLevelField, "state metadata");
   });
 
