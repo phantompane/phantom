@@ -21,14 +21,16 @@ export async function listGitHubCheckoutTargets(
       direction: "desc",
       per_page: perPage,
     }),
-    github.pulls.list({
-      owner,
-      repo,
-      state: "open",
-      sort: "updated",
-      direction: "desc",
-      per_page: perPage,
-    }),
+    github.pulls
+      .list({
+        owner,
+        repo,
+        state: "open",
+        sort: "updated",
+        direction: "desc",
+        per_page: perPage,
+      })
+      .catch(() => ({ data: [] })),
   ]);
   const pullRequestByNumber = new Map(
     pullRequests.map((pullRequest) => [pullRequest.number, pullRequest]),

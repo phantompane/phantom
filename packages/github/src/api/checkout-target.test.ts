@@ -135,4 +135,58 @@ describe("listGitHubCheckoutTargets", () => {
       30,
     );
   });
+
+  it("keeps checkout targets when pull request metadata is unavailable", async () => {
+    resetMocks();
+    mockOctokit = {
+      issues: {
+        listForRepo: vi.fn(async () => ({
+          data: [
+            {
+              number: 42,
+              title: "Fix checkout",
+              html_url: "https://github.com/owner/repo/pull/42",
+              updated_at: "2026-05-04T00:00:00Z",
+              user: { login: "alice" },
+              pull_request: {},
+            },
+            {
+              number: 7,
+              title: "Support issue checkout",
+              html_url: "https://github.com/owner/repo/issues/7",
+              updated_at: "2026-05-03T00:00:00Z",
+              user: null,
+            },
+          ],
+        })),
+      },
+      pulls: {
+        list: vi.fn(async () => {
+          throw new Error("pull request metadata unavailable");
+        }),
+      },
+    };
+    createGitHubClientMock.mockImplementation(async () => mockOctokit!);
+
+    const targets = await listGitHubCheckoutTargets("owner", "repo");
+
+    deepStrictEqual(targets, [
+      {
+        author: "alice",
+        htmlUrl: "https://github.com/owner/repo/pull/42",
+        kind: "pullRequest",
+        number: 42,
+        title: "Fix checkout",
+        updatedAt: "2026-05-04T00:00:00Z",
+      },
+      {
+        author: null,
+        htmlUrl: "https://github.com/owner/repo/issues/7",
+        kind: "issue",
+        number: 7,
+        title: "Support issue checkout",
+        updatedAt: "2026-05-03T00:00:00Z",
+      },
+    ]);
+  });
 });
