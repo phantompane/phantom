@@ -1,7 +1,20 @@
-import { exitCodes } from "@phantompane/shared";
+import { exitCodes } from "./constants/exit-codes.ts";
 import { output } from "./output.ts";
 
 export { exitCodes };
+
+export function getProcessExitCode(error: unknown): number | undefined {
+  if (
+    !error ||
+    typeof error !== "object" ||
+    !("exitCode" in error) ||
+    typeof error.exitCode !== "number"
+  ) {
+    return undefined;
+  }
+
+  return error.exitCode;
+}
 
 export function handleError(
   error: unknown,

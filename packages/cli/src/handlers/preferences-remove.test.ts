@@ -4,7 +4,7 @@ import { afterAll, describe, it, vi } from "vitest";
 const exitMock = vi.fn();
 const consoleLogMock = vi.fn();
 const consoleErrorMock = vi.fn();
-const executeGitCommandMock = vi.fn();
+const configUnsetMock = vi.fn();
 
 const originalProcessExit = process.exit;
 const originalProcessEnv = process.env;
@@ -20,8 +20,16 @@ afterAll(() => {
 });
 
 vi.doMock("@phantompane/git", () => ({
-  executeGitCommand: executeGitCommandMock,
+  configUnset: configUnsetMock,
 }));
+
+vi.doMock(
+  "@phantompane/preferences",
+  async () =>
+    await vi.importActual<typeof import("@phantompane/preferences")>(
+      "@phantompane/preferences",
+    ),
+);
 
 vi.doMock("../output.ts", () => ({
   output: {
@@ -54,7 +62,7 @@ function resetMocks() {
   exitMock.mockClear();
   consoleLogMock.mockClear();
   consoleErrorMock.mockClear();
-  executeGitCommandMock.mockClear();
+  configUnsetMock.mockClear();
 }
 
 describe("preferencesRemoveHandler", () => {
@@ -74,7 +82,7 @@ describe("preferencesRemoveHandler", () => {
 
     await rejects(
       async () => await preferencesRemoveHandler(["unknown"]),
-      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator/,
+      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch/,
     );
 
     strictEqual(exitMock.mock.calls[0][0], 3);
@@ -82,19 +90,16 @@ describe("preferencesRemoveHandler", () => {
 
   it("unsets editor preference via git config --global", async () => {
     resetMocks();
-    executeGitCommandMock.mockImplementation(async () => ({
-      stdout: "",
-      stderr: "",
-    }));
+    configUnsetMock.mockImplementation(async () => undefined);
 
     await rejects(
       async () => await preferencesRemoveHandler(["editor"]),
       /Process exit with code 0/,
     );
 
-    strictEqual(executeGitCommandMock.mock.calls.length, 1);
-    strictEqual(executeGitCommandMock.mock.calls[0][0][0], "config");
-    strictEqual(executeGitCommandMock.mock.calls[0][0][3], "phantom.editor");
+    strictEqual(configUnsetMock.mock.calls.length, 1);
+    strictEqual(configUnsetMock.mock.calls[0][0].key, "phantom.editor");
+    strictEqual(configUnsetMock.mock.calls[0][0].global, true);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Removed phantom.editor from global git config",
@@ -104,17 +109,14 @@ describe("preferencesRemoveHandler", () => {
 
   it("unsets ai preference via git config --global", async () => {
     resetMocks();
-    executeGitCommandMock.mockImplementation(async () => ({
-      stdout: "",
-      stderr: "",
-    }));
+    configUnsetMock.mockImplementation(async () => undefined);
 
     await rejects(
       async () => await preferencesRemoveHandler(["ai"]),
       /Process exit with code 0/,
     );
 
-    strictEqual(executeGitCommandMock.mock.calls[0][0][3], "phantom.ai");
+    strictEqual(configUnsetMock.mock.calls[0][0].key, "phantom.ai");
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Removed phantom.ai from global git config",
@@ -124,10 +126,7 @@ describe("preferencesRemoveHandler", () => {
 
   it("unsets worktreesDirectory preference via git config --global", async () => {
     resetMocks();
-    executeGitCommandMock.mockImplementation(async () => ({
-      stdout: "",
-      stderr: "",
-    }));
+    configUnsetMock.mockImplementation(async () => undefined);
 
     await rejects(
       async () => await preferencesRemoveHandler(["worktreesDirectory"]),
@@ -135,7 +134,7 @@ describe("preferencesRemoveHandler", () => {
     );
 
     strictEqual(
-      executeGitCommandMock.mock.calls[0][0][3],
+      configUnsetMock.mock.calls[0][0].key,
       "phantom.worktreesDirectory",
     );
     strictEqual(
@@ -147,10 +146,7 @@ describe("preferencesRemoveHandler", () => {
 
   it("unsets directoryNameSeparator preference via git config --global", async () => {
     resetMocks();
-    executeGitCommandMock.mockImplementation(async () => ({
-      stdout: "",
-      stderr: "",
-    }));
+    configUnsetMock.mockImplementation(async () => undefined);
 
     await rejects(
       async () => await preferencesRemoveHandler(["directoryNameSeparator"]),
@@ -158,12 +154,29 @@ describe("preferencesRemoveHandler", () => {
     );
 
     strictEqual(
-      executeGitCommandMock.mock.calls[0][0][3],
+      configUnsetMock.mock.calls[0][0].key,
       "phantom.directoryNameSeparator",
     );
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Removed phantom.directoryNameSeparator from global git config",
+    );
+    strictEqual(exitMock.mock.calls[0][0], 0);
+  });
+
+  it("unsets keepBranch preference via git config --global", async () => {
+    resetMocks();
+    configUnsetMock.mockImplementation(async () => undefined);
+
+    await rejects(
+      async () => await preferencesRemoveHandler(["keepBranch"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(configUnsetMock.mock.calls[0][0].key, "phantom.keepBranch");
+    strictEqual(
+      consoleLogMock.mock.calls[0][0],
+      "Removed phantom.keepBranch from global git config",
     );
     strictEqual(exitMock.mock.calls[0][0], 0);
   });

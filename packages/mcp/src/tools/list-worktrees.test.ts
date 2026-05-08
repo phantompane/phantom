@@ -18,7 +18,7 @@ vi.doMock("@phantompane/git", () => ({
   getGitRoot: getGitRootMock,
 }));
 
-vi.doMock("@phantompane/shared", () => ({
+vi.doMock("@phantompane/utils", () => ({
   isOk: isOkMock,
   ok: okMock,
   err: errMock,
@@ -98,7 +98,10 @@ describe("listWorktreesTool", () => {
 
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(listWorktreesMock.mock.calls.length, 1);
-    deepStrictEqual(listWorktreesMock.mock.calls[0], [gitRoot]);
+    deepStrictEqual(listWorktreesMock.mock.calls[0], [
+      gitRoot,
+      { includePrunable: false },
+    ]);
 
     strictEqual(result.content.length, 1);
     strictEqual(result.content[0].type, "text");

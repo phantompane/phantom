@@ -22,4 +22,18 @@ describe("phantom.zsh completion", () => {
       `Expected version to be offered, got: ${completions.join(", ")}`,
     );
   });
+
+  it("completes serve when typing phantom s", () => {
+    const { completions, result } = runZshCompletion(completionScriptPath, [
+      "phantom",
+      "s",
+    ]);
+
+    strictEqual(result.status, 0, result.stderr);
+
+    ok(
+      completions.includes("serve"),
+      `Expected serve to be offered, got: ${completions.join(", ")}`,
+    );
+  });
 });

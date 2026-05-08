@@ -1,6 +1,6 @@
 import { copyFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
-import {err, isErr, ok, type Result} from "@phantompane/shared";
+import { err, isErr, ok, type Result } from "@phantompane/utils";
 
 import {
   type GlobResolutionError,

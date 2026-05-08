@@ -1,7 +1,7 @@
 import { rejects, strictEqual } from "node:assert";
 import { afterAll, describe, it, vi } from "vitest";
 import { WorktreeNotFoundError } from "@phantompane/core";
-import { err, ok } from "@phantompane/shared";
+import { err, ok } from "@phantompane/utils";
 
 const exitMock = vi.fn();
 const consoleLogMock = vi.fn();
@@ -48,13 +48,16 @@ vi.doMock("@phantompane/git", () => ({
 }));
 
 vi.doMock("@phantompane/process", () => ({
-  isInsideTmux: isInsideTmuxMock,
-  executeTmuxCommand: executeTmuxCommandMock,
   getPhantomEnv: vi.fn((name, path) => ({
     PHANTOM: "1",
     PHANTOM_NAME: name,
     PHANTOM_PATH: path,
   })),
+}));
+
+vi.doMock("@phantompane/tmux", () => ({
+  isInsideTmux: isInsideTmuxMock,
+  executeTmuxCommand: executeTmuxCommandMock,
 }));
 
 vi.doMock("@phantompane/core", () => ({

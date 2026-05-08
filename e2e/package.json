@@ -1,0 +1,12 @@
+{
+  "name": "@phantompane/e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "oxfmt --check . && oxlint .",
+    "fix": "oxfmt --write . && oxlint --fix .",
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run"
+  },
+  "version": "6.3.0-4"
+}

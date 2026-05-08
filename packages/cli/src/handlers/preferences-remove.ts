@@ -1,14 +1,12 @@
 import { parseArgs } from "node:util";
-import { executeGitCommand } from "@phantompane/git";
+import { configUnset } from "@phantompane/git";
+import {
+  getPreferenceConfigKey,
+  isPreferenceKey,
+  supportedPreferenceKeys,
+} from "@phantompane/preferences";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
-
-const supportedKeys = [
-  "editor",
-  "ai",
-  "worktreesDirectory",
-  "directoryNameSeparator",
-] as const;
 
 export async function preferencesRemoveHandler(args: string[]): Promise<void> {
   const { positionals } = parseArgs({
@@ -27,22 +25,22 @@ export async function preferencesRemoveHandler(args: string[]): Promise<void> {
 
   const inputKey = positionals[0];
 
-  if (!supportedKeys.includes(inputKey as (typeof supportedKeys)[number])) {
+  if (!isPreferenceKey(inputKey)) {
     exitWithError(
-      `Unknown preference '${inputKey}'. Supported keys: ${supportedKeys.join(", ")}`,
+      `Unknown preference '${inputKey}'. Supported keys: ${supportedPreferenceKeys.join(", ")}`,
       exitCodes.validationError,
     );
   }
 
   try {
-    await executeGitCommand([
-      "config",
-      "--global",
-      "--unset",
-      `phantom.${inputKey}`,
-    ]);
+    const configKey = getPreferenceConfigKey(inputKey);
 
-    output.log(`Removed phantom.${inputKey} from global git config`);
+    await configUnset({
+      key: configKey,
+      global: true,
+    });
+
+    output.log(`Removed ${configKey} from global git config`);
     exitWithSuccess();
   } catch (error) {
     exitWithError(

@@ -15,6 +15,7 @@ _phantom() {
         'edit:Open a worktree in your configured editor'
         'ai:Launch your configured AI coding assistant in a worktree'
         'shell:Open an interactive shell in a worktree directory'
+        'serve:Start the bundled Phantom web server'
         'preferences:Manage editor/ai/worktreesDirectory/directoryNameSeparator preferences (git config --global)'
         'github:GitHub integration commands'
         'gh:GitHub integration commands (alias)'
@@ -82,6 +83,7 @@ _phantom() {
                         worktrees=(${(f)"$(phantom list --names --no-default 2>/dev/null)"})
                         _arguments \
                             '--force[Force deletion even if worktree has uncommitted changes (-f)]' \
+                            '--keep-branch[Delete the worktree but keep its branch]' \
                             '--current[Delete the current worktree]' \
                             '--fzf[Use fzf for interactive selection]' \
                             '*:worktree:(${(q)worktrees[@]})'
@@ -114,11 +116,16 @@ _phantom() {
                 preferences)
                     _arguments \
                         '1:subcommand:(get set remove)' \
-                        '2:key:(editor ai worktreesDirectory directoryNameSeparator)'
+                        '2:key:(editor ai worktreesDirectory directoryNameSeparator keepBranch)'
                     ;;
                 completion)
                     _arguments \
                         '1:shell:(fish zsh bash)'
+                    ;;
+                serve)
+                    _arguments \
+                        '--host[Host interface to bind the server to]:host:' \
+                        '--port[Port to bind the server to]:port:'
                     ;;
                 github|gh)
                     if [[ ${#line} -eq 1 ]]; then

@@ -1,16 +1,18 @@
 {
   "name": "@phantompane/cli-private",
-  "version": "6.1.1-1",
+  "version": "6.3.0-4",
   "private": true,
   "type": "module",
   "scripts": {
     "phantom": "node --no-warnings --experimental-strip-types src/bin/phantom.ts",
-    "build": "tsdown",
+    "build": "pnpm run build-app && tsdown && pnpm run copy-app",
+    "build-app": "pnpm --filter @phantompane/server build && pnpm --filter @phantompane/web build",
+    "copy-app": "node --no-warnings --experimental-strip-types copy-app-assets.ts",
     "precompile": "rm -f output/*",
-    "compile": "node --no-warnings --experimental-strip-types build-executable.ts",
+    "compile": "pnpm run build-app && pnpm run copy-app && node --no-warnings --experimental-strip-types build-executable.ts",
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "test:shell": "pnpm run test:shell:bash && pnpm run test:shell:zsh && pnpm run test:shell:fish",
     "test:shell:bash": "vitest run --root ../.. packages/cli/src/completions/phantom.bash.test.shell.ts",
     "test:shell:fish": "vitest run --root ../.. packages/cli/src/completions/phantom.fish.test.shell.ts",
@@ -21,9 +23,10 @@
   "dependencies": {
     "@phantompane/core": "workspace:*",
     "@phantompane/git": "workspace:*",
-    "@phantompane/github": "workspace:*",
     "@phantompane/mcp": "workspace:*",
+    "@phantompane/preferences": "workspace:*",
     "@phantompane/process": "workspace:*",
-    "@phantompane/shared": "workspace:*"
+    "@phantompane/utils": "workspace:*",
+    "@phantompane/tmux": "workspace:*"
   }
 }

@@ -72,7 +72,7 @@ _phantom_completion() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="create attach list where delete exec edit ai shell preferences github gh version completion mcp"
+    local commands="create attach list where delete exec edit ai shell serve preferences github gh version completion mcp"
     local global_opts="--help --version"
 
     if [[ \${cword} -eq 1 ]]; then
@@ -146,7 +146,7 @@ _phantom_completion() {
             ;;
         delete)
             if [[ "\${cur}" == -* ]]; then
-                local opts="--force --current --fzf"
+                local opts="--force --keep-branch --current --fzf"
                 COMPREPLY=( $(compgen -W "\${opts}" -- "\${cur}") )
             else
                 local worktrees=$(_phantom_list_worktrees_no_default)
@@ -260,6 +260,11 @@ _phantom_completion() {
                     ;;
             esac
             ;;
+        serve)
+            local opts="--host --port"
+            COMPREPLY=( $(compgen -W "\${opts}" -- "\${cur}") )
+            return 0
+            ;;
         completion)
             local shells="fish zsh bash"
             COMPREPLY=( $(compgen -W "\${shells}" -- "\${cur}") )
@@ -272,19 +277,19 @@ _phantom_completion() {
                 return 0
             elif [[ \${words[2]} == "get" ]]; then
                 if [[ \${cword} -eq 3 ]]; then
-                    local keys="editor ai worktreesDirectory directoryNameSeparator"
+                    local keys="editor ai worktreesDirectory directoryNameSeparator keepBranch"
                     COMPREPLY=( $(compgen -W "\${keys}" -- "\${cur}") )
                     return 0
                 fi
             elif [[ \${words[2]} == "set" ]]; then
                 if [[ \${cword} -eq 3 ]]; then
-                    local keys="editor ai worktreesDirectory directoryNameSeparator"
+                    local keys="editor ai worktreesDirectory directoryNameSeparator keepBranch"
                     COMPREPLY=( $(compgen -W "\${keys}" -- "\${cur}") )
                     return 0
                 fi
             elif [[ \${words[2]} == "remove" ]]; then
                 if [[ \${cword} -eq 3 ]]; then
-                    local keys="editor ai worktreesDirectory directoryNameSeparator"
+                    local keys="editor ai worktreesDirectory directoryNameSeparator keepBranch"
                     COMPREPLY=( $(compgen -W "\${keys}" -- "\${cur}") )
                     return 0
                 fi

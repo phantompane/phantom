@@ -1,7 +1,7 @@
 import { strictEqual } from "node:assert";
 import { join } from "node:path";
 import { describe, it, vi } from "vitest";
-import { err, isErr, isOk, ok } from "@phantompane/shared";
+import { err, isErr, isOk, ok } from "@phantompane/utils";
 
 const branchExistsMock = vi.fn();
 const validateWorktreeDirectoryExistsMock = vi.fn();

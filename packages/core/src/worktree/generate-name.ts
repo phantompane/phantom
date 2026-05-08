@@ -1,5 +1,5 @@
 import { branchExists } from "@phantompane/git";
-import { err, isErr, ok, type Result } from "@phantompane/shared";
+import { err, isErr, ok, type Result } from "@phantompane/utils";
 import { humanId } from "human-id";
 import { getWorktreePathFromDirectory } from "../paths.ts";
 import {

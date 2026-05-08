@@ -4,6 +4,7 @@ Thumbs.db
 
 # Dependencies
 node_modules
+.output
 .turbo
 .worktrees
 .devenv*

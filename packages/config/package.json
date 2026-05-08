@@ -1,0 +1,18 @@
+{
+  "name": "@phantompane/config",
+  "version": "6.3.0-4",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "oxfmt --check . && oxlint .",
+    "fix": "oxfmt --write . && oxlint --fix .",
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run --root ../.. packages/config/src"
+  },
+  "dependencies": {
+    "@phantompane/utils": "workspace:*",
+    "zod": "^4.3.6"
+  }
+}

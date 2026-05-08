@@ -4,7 +4,7 @@ import {
   selectWorktreeWithFzf,
 } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
-import { isErr } from "@phantompane/shared";
+import { isErr } from "@phantompane/utils";
 import { exitCodes, exitWithError } from "../errors.ts";
 import { output } from "../output.ts";
 
@@ -46,7 +46,10 @@ export async function listHandler(args: string[] = []): Promise<void> {
         output.log(selectResult.value.name);
       }
     } else {
-      const result = await listWorktreesCore(gitRoot, { excludeDefault });
+      const result = await listWorktreesCore(gitRoot, {
+        excludeDefault,
+        includePrunable: false,
+      });
 
       if (isErr(result)) {
         exitWithError("Failed to list worktrees", exitCodes.generalError);

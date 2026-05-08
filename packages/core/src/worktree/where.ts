@@ -1,4 +1,4 @@
-import { err, isErr, ok, type Result } from "@phantompane/shared";
+import { err, isErr, ok, type Result } from "@phantompane/utils";
 import type { WorktreeNotFoundError } from "./errors.ts";
 import { validateWorktreeExists } from "./validate.ts";
 

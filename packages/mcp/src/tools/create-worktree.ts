@@ -1,6 +1,6 @@
 import { createContext, createWorktree } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
-import { isOk } from "@phantompane/shared";
+import { isOk } from "@phantompane/utils";
 import { z } from "zod";
 import type { Tool } from "./types.ts";
 
@@ -28,8 +28,9 @@ export const createWorktreeTool: Tool<typeof schema> = {
       {
         branch: name,
         base: baseBranch,
+        copyFiles: context.config?.postCreate?.copyFiles,
       },
-      context.config?.postCreate?.copyFiles,
+      undefined,
       context.config?.postCreate?.commands,
       context.directoryNameSeparator,
     );

@@ -111,6 +111,9 @@ Deletes a Git worktree (phantom).
 
 - `name` (required): Name of the worktree to delete
 - `force` (optional): Force deletion even if there are uncommitted changes
+- `keepBranch` (optional): Keep the branch after deleting the worktree
+
+If `keepBranch` is omitted, Phantom falls back to the user's `phantom.keepBranch` preference when it is set.
 
 **Example:**
 
@@ -119,7 +122,8 @@ Deletes a Git worktree (phantom).
   "tool": "phantom_delete_worktree",
   "arguments": {
     "name": "feature-awesome",
-    "force": false
+    "force": false,
+    "keepBranch": true
   }
 }
 ```

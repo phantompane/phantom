@@ -1,14 +1,18 @@
+import { isAbsolute, relative } from "node:path";
 import {
-  executeGitCommand,
-  executeGitCommandInDirectory,
+  deleteBranch as gitDeleteBranch,
+  getStatus,
+  removeWorktree as gitRemoveWorktree,
 } from "@phantompane/git";
-import { err, isErr, isOk, ok, type Result } from "@phantompane/shared";
+import { err, isErr, isOk, ok, type Result } from "@phantompane/utils";
 import { WorktreeError, type WorktreeNotFoundError } from "./errors.ts";
 import { executePreDeleteCommands } from "./pre-delete.ts";
 import { validateWorktreeExists } from "./validate.ts";
 
 export interface DeleteWorktreeOptions {
   force?: boolean;
+  keepBranch?: boolean;
+  path?: string;
 }
 
 export interface DeleteWorktreeSuccess {
@@ -26,14 +30,11 @@ export async function getWorktreeChangesStatus(
   worktreePath: string,
 ): Promise<WorktreeStatus> {
   try {
-    const { stdout } = await executeGitCommandInDirectory(worktreePath, [
-      "status",
-      "--porcelain",
-    ]);
-    if (stdout) {
+    const status = await getStatus({ cwd: worktreePath });
+    if (!status.isClean) {
       return {
         hasUncommittedChanges: true,
-        changedFiles: stdout.split("\n").length,
+        changedFiles: status.entries.length,
       };
     }
   } catch {
@@ -50,14 +51,10 @@ export async function removeWorktree(
   worktreePath: string,
   force = false,
 ): Promise<void> {
-  const args = ["worktree", "remove"];
-  if (force) {
-    args.push("--force");
-  }
-  args.push(worktreePath);
-
-  await executeGitCommand(args, {
-    cwd: gitRoot,
+  await gitRemoveWorktree({
+    gitRoot,
+    path: worktreePath,
+    force,
   });
 }
 
@@ -66,7 +63,10 @@ export async function deleteBranch(
   branchName: string,
 ): Promise<Result<boolean, WorktreeError>> {
   try {
-    await executeGitCommand(["branch", "-D", branchName], { cwd: gitRoot });
+    await gitDeleteBranch({
+      gitRoot,
+      branch: branchName,
+    });
     return ok(true);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -84,18 +84,32 @@ export async function deleteWorktree(
   Result<DeleteWorktreeSuccess, WorktreeNotFoundError | WorktreeError>
 > {
   const { force = false } = options || {};
+  const keepBranch = options?.keepBranch ?? false;
+  const validateOptions: { excludeDefault: true; expectedPath?: string } = {
+    excludeDefault: true,
+  };
+  if (options?.path) {
+    validateOptions.expectedPath = options.path;
+  }
 
   const validation = await validateWorktreeExists(
     gitRoot,
     worktreeDirectory,
     name,
-    { excludeDefault: true },
+    validateOptions,
   );
   if (isErr(validation)) {
     return err(validation.error);
   }
 
   const worktreePath = validation.value.path;
+  if (!isPathInsideDirectory(worktreePath, worktreeDirectory)) {
+    return err(
+      new WorktreeError(
+        `Worktree '${name}' is not managed by Phantom and cannot be deleted.`,
+      ),
+    );
+  }
 
   const status = await getWorktreeChangesStatus(worktreePath);
 
@@ -126,14 +140,17 @@ export async function deleteWorktree(
     await removeWorktree(gitRoot, worktreePath, force);
 
     const branchName = name;
-    const branchResult = await deleteBranch(gitRoot, branchName);
-
     let message: string;
-    if (isOk(branchResult)) {
-      message = `Deleted worktree '${name}' and its branch '${branchName}'`;
+    if (keepBranch) {
+      message = `Deleted worktree '${name}' and kept its branch '${branchName}'`;
     } else {
-      message = `Deleted worktree '${name}'`;
-      message += `\nNote: Branch '${branchName}' could not be deleted: ${branchResult.error.message}`;
+      const branchResult = await deleteBranch(gitRoot, branchName);
+      if (isOk(branchResult)) {
+        message = `Deleted worktree '${name}' and its branch '${branchName}'`;
+      } else {
+        message = `Deleted worktree '${name}'`;
+        message += `\nNote: Branch '${branchName}' could not be deleted: ${branchResult.error.message}`;
+      }
     }
 
     if (status.hasUncommittedChanges) {
@@ -151,4 +168,11 @@ export async function deleteWorktree(
     const errorMessage = error instanceof Error ? error.message : String(error);
     return err(new WorktreeError(`worktree remove failed: ${errorMessage}`));
   }
+}
+
+function isPathInsideDirectory(path: string, directory: string): boolean {
+  const relativePath = relative(directory, path);
+  return Boolean(
+    relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath),
+  );
 }

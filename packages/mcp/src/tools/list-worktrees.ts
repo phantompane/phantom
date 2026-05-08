@@ -1,6 +1,6 @@
 import { listWorktrees } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
-import { isOk } from "@phantompane/shared";
+import { isOk } from "@phantompane/utils";
 import { z } from "zod";
 import type { Tool } from "./types.ts";
 
@@ -12,7 +12,7 @@ export const listWorktreesTool: Tool<typeof schema> = {
   inputSchema: schema,
   handler: async () => {
     const gitRoot = await getGitRoot();
-    const result = await listWorktrees(gitRoot);
+    const result = await listWorktrees(gitRoot, { includePrunable: false });
 
     if (!isOk(result)) {
       throw new Error("Failed to list worktrees");

@@ -1,6 +1,6 @@
 {
   "name": "@phantompane/mcp",
-  "version": "6.1.1-1",
+  "version": "6.3.0-4",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -8,20 +8,19 @@
   "scripts": {
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "test": "vitest run --root ../.. packages/mcp/src",
     "inspect": "npx @modelcontextprotocol/inspector node --no-warnings --experimental-strip-types src/dev.ts"
   },
   "dependencies": {
     "@phantompane/core": "workspace:*",
     "@phantompane/git": "workspace:*",
-    "@phantompane/github": "workspace:*",
     "@phantompane/process": "workspace:*",
-    "@phantompane/shared": "workspace:*",
+    "@phantompane/utils": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@modelcontextprotocol/inspector": "^0.21.1"
+    "@modelcontextprotocol/inspector": "^0.21.2"
   }
 }

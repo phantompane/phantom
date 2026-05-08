@@ -32,3 +32,17 @@ export class BranchNotFoundError extends WorktreeError {
     this.name = "BranchNotFoundError";
   }
 }
+
+export class WorktreeActionConflictError extends WorktreeError {
+  constructor() {
+    super("Cannot use --shell, --exec, and --tmux options together");
+    this.name = "WorktreeActionConflictError";
+  }
+}
+
+export class TmuxSessionRequiredError extends WorktreeError {
+  constructor() {
+    super("The --tmux option can only be used inside a tmux session");
+    this.name = "TmuxSessionRequiredError";
+  }
+}

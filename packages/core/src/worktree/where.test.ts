@@ -9,7 +9,7 @@ vi.doMock("./validate.ts", () => ({
 
 const { whereWorktree } = await import("./where.ts");
 const { WorktreeNotFoundError } = await import("./errors.ts");
-const { ok, err } = await import("@phantompane/shared");
+const { ok, err } = await import("@phantompane/utils");
 
 describe("whereWorktree", () => {
   it("should return path when worktree exists", async () => {

@@ -4,7 +4,7 @@ import { afterAll, describe, it, vi } from "vitest";
 const exitMock = vi.fn();
 const consoleLogMock = vi.fn();
 const consoleErrorMock = vi.fn();
-const executeGitCommandMock = vi.fn();
+const configSetMock = vi.fn();
 
 const originalProcessExit = process.exit;
 const originalProcessEnv = process.env;
@@ -20,8 +20,16 @@ afterAll(() => {
 });
 
 vi.doMock("@phantompane/git", () => ({
-  executeGitCommand: executeGitCommandMock,
+  configSet: configSetMock,
 }));
+
+vi.doMock(
+  "@phantompane/preferences",
+  async () =>
+    await vi.importActual<typeof import("@phantompane/preferences")>(
+      "@phantompane/preferences",
+    ),
+);
 
 vi.doMock("../output.ts", () => ({
   output: {
@@ -54,7 +62,7 @@ function resetMocks() {
   exitMock.mockClear();
   consoleLogMock.mockClear();
   consoleErrorMock.mockClear();
-  executeGitCommandMock.mockClear();
+  configSetMock.mockClear();
 }
 
 describe("preferencesSetHandler", () => {
@@ -74,7 +82,7 @@ describe("preferencesSetHandler", () => {
 
     await rejects(
       async () => await preferencesSetHandler(["unknown", "value"]),
-      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator/,
+      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch/,
     );
 
     strictEqual(exitMock.mock.calls[0][0], 3);
@@ -93,20 +101,17 @@ describe("preferencesSetHandler", () => {
 
   it("sets editor preference via git config --global", async () => {
     resetMocks();
-    executeGitCommandMock.mockImplementation(async () => ({
-      stdout: "",
-      stderr: "",
-    }));
+    configSetMock.mockImplementation(async () => undefined);
 
     await rejects(
       async () => await preferencesSetHandler(["editor", "code"]),
       /Process exit with code 0/,
     );
 
-    strictEqual(executeGitCommandMock.mock.calls.length, 1);
-    strictEqual(executeGitCommandMock.mock.calls[0][0][0], "config");
-    strictEqual(executeGitCommandMock.mock.calls[0][0][2], "phantom.editor");
-    strictEqual(executeGitCommandMock.mock.calls[0][0][3], "code");
+    strictEqual(configSetMock.mock.calls.length, 1);
+    strictEqual(configSetMock.mock.calls[0][0].key, "phantom.editor");
+    strictEqual(configSetMock.mock.calls[0][0].value, "code");
+    strictEqual(configSetMock.mock.calls[0][0].global, true);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Set phantom.editor (global) to 'code'",
@@ -116,33 +121,27 @@ describe("preferencesSetHandler", () => {
 
   it("joins multi-word value", async () => {
     resetMocks();
-    executeGitCommandMock.mockImplementation(async () => ({
-      stdout: "",
-      stderr: "",
-    }));
+    configSetMock.mockImplementation(async () => undefined);
 
     await rejects(
       async () => await preferencesSetHandler(["editor", "code", "--wait"]),
       /Process exit with code 0/,
     );
 
-    strictEqual(executeGitCommandMock.mock.calls[0][0][3], "code --wait");
+    strictEqual(configSetMock.mock.calls[0][0].value, "code --wait");
   });
 
   it("sets ai preference via git config --global", async () => {
     resetMocks();
-    executeGitCommandMock.mockImplementation(async () => ({
-      stdout: "",
-      stderr: "",
-    }));
+    configSetMock.mockImplementation(async () => undefined);
 
     await rejects(
       async () => await preferencesSetHandler(["ai", "claude"]),
       /Process exit with code 0/,
     );
 
-    strictEqual(executeGitCommandMock.mock.calls[0][0][2], "phantom.ai");
-    strictEqual(executeGitCommandMock.mock.calls[0][0][3], "claude");
+    strictEqual(configSetMock.mock.calls[0][0].key, "phantom.ai");
+    strictEqual(configSetMock.mock.calls[0][0].value, "claude");
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Set phantom.ai (global) to 'claude'",
@@ -152,10 +151,7 @@ describe("preferencesSetHandler", () => {
 
   it("sets worktreesDirectory preference via git config --global", async () => {
     resetMocks();
-    executeGitCommandMock.mockImplementation(async () => ({
-      stdout: "",
-      stderr: "",
-    }));
+    configSetMock.mockImplementation(async () => undefined);
 
     await rejects(
       async () =>
@@ -167,13 +163,10 @@ describe("preferencesSetHandler", () => {
     );
 
     strictEqual(
-      executeGitCommandMock.mock.calls[0][0][2],
+      configSetMock.mock.calls[0][0].key,
       "phantom.worktreesDirectory",
     );
-    strictEqual(
-      executeGitCommandMock.mock.calls[0][0][3],
-      "../phantom/worktrees",
-    );
+    strictEqual(configSetMock.mock.calls[0][0].value, "../phantom/worktrees");
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Set phantom.worktreesDirectory (global) to '../phantom/worktrees'",
@@ -183,10 +176,7 @@ describe("preferencesSetHandler", () => {
 
   it("sets directoryNameSeparator preference via git config --global", async () => {
     resetMocks();
-    executeGitCommandMock.mockImplementation(async () => ({
-      stdout: "",
-      stderr: "",
-    }));
+    configSetMock.mockImplementation(async () => undefined);
 
     await rejects(
       async () => await preferencesSetHandler(["directoryNameSeparator", "-"]),
@@ -194,14 +184,40 @@ describe("preferencesSetHandler", () => {
     );
 
     strictEqual(
-      executeGitCommandMock.mock.calls[0][0][2],
+      configSetMock.mock.calls[0][0].key,
       "phantom.directoryNameSeparator",
     );
-    strictEqual(executeGitCommandMock.mock.calls[0][0][3], "-");
+    strictEqual(configSetMock.mock.calls[0][0].value, "-");
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Set phantom.directoryNameSeparator (global) to '-'",
     );
     strictEqual(exitMock.mock.calls[0][0], 0);
+  });
+
+  it("sets keepBranch preference via git config --global", async () => {
+    resetMocks();
+    configSetMock.mockImplementation(async () => undefined);
+
+    await rejects(
+      async () => await preferencesSetHandler(["keepBranch", "true"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(configSetMock.mock.calls[0][0].key, "phantom.keepBranch");
+    strictEqual(configSetMock.mock.calls[0][0].value, "true");
+    strictEqual(
+      consoleLogMock.mock.calls[0][0],
+      "Set phantom.keepBranch (global) to 'true'",
+    );
+  });
+
+  it("rejects invalid keepBranch preference values", async () => {
+    resetMocks();
+
+    await rejects(
+      async () => await preferencesSetHandler(["keepBranch", "yes"]),
+      /Exit with code 3: Preference 'keepBranch' must be 'true' or 'false'/,
+    );
   });
 });

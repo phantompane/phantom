@@ -19,6 +19,17 @@ afterAll(() => {
   process.env = originalProcessEnv;
 });
 
+vi.doMock("@phantompane/preferences", async () => {
+  const actual = await vi.importActual<
+    typeof import("@phantompane/preferences")
+  >("@phantompane/preferences");
+
+  return {
+    ...actual,
+    loadPreferences: loadPreferencesMock,
+  };
+});
+
 vi.doMock("@phantompane/core", () => ({
   loadPreferences: loadPreferencesMock,
 }));
@@ -78,7 +89,7 @@ describe("preferencesGetHandler", () => {
 
     await rejects(
       async () => await preferencesGetHandler(["unknown"]),
-      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator/,
+      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch/,
     );
 
     strictEqual(exitMock.mock.calls[0][0], 3);
@@ -144,6 +155,21 @@ describe("preferencesGetHandler", () => {
     strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
+  it("prints keepBranch preference when set", async () => {
+    resetMocks();
+    loadPreferencesMock.mockImplementation(async () => ({
+      keepBranch: true,
+    }));
+
+    await rejects(
+      async () => await preferencesGetHandler(["keepBranch"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(consoleLogMock.mock.calls[0][0], "true");
+    strictEqual(exitMock.mock.calls[0][0], 0);
+  });
+
   it("warns when preference is unset", async () => {
     resetMocks();
     loadPreferencesMock.mockImplementation(async () => ({}));
@@ -201,6 +227,21 @@ describe("preferencesGetHandler", () => {
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Preference 'directoryNameSeparator' is not set (git config --global phantom.directoryNameSeparator)",
+    );
+  });
+
+  it("warns when keepBranch preference is unset", async () => {
+    resetMocks();
+    loadPreferencesMock.mockImplementation(async () => ({}));
+
+    await rejects(
+      async () => await preferencesGetHandler(["keepBranch"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(
+      consoleLogMock.mock.calls[0][0],
+      "Preference 'keepBranch' is not set (git config --global phantom.keepBranch)",
     );
   });
 });

@@ -8,7 +8,7 @@ vi.doMock("../executor.ts", () => ({
 }));
 
 const { setUpstreamBranch } = await import("./set-upstream-branch.ts");
-const { isOk, isErr } = await import("@phantompane/shared");
+const { isOk, isErr } = await import("@phantompane/utils");
 
 describe("setUpstreamBranch", () => {
   const resetMocks = () => {

@@ -26,14 +26,17 @@ vi.doMock("../output.ts", () => ({
   output: { log: outputLogMock, error: outputErrorMock },
 }));
 
-vi.doMock("@phantompane/github", () => ({
+vi.doMock("@phantompane/core", () => ({
   githubCheckout: githubCheckoutMock,
 }));
 
 vi.doMock("@phantompane/process", () => ({
+  getPhantomEnv: getPhantomEnvMock,
+}));
+
+vi.doMock("@phantompane/tmux", () => ({
   isInsideTmux: isInsideTmuxMock,
   executeTmuxCommand: executeTmuxCommandMock,
-  getPhantomEnv: getPhantomEnvMock,
 }));
 
 const { githubCheckoutHandler } = await import("./github-checkout.ts");

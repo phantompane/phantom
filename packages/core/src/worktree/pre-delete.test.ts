@@ -1,6 +1,6 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { describe, it, vi } from "vitest";
-import { isErr, isOk } from "@phantompane/shared";
+import { isErr, isOk } from "@phantompane/utils";
 
 const execInWorktreeMock = vi.fn();
 
@@ -9,7 +9,7 @@ vi.doMock("../exec.ts", () => ({
 }));
 
 const { executePreDeleteCommands } = await import("./pre-delete.ts");
-const { ok, err } = await import("@phantompane/shared");
+const { ok, err } = await import("@phantompane/utils");
 
 describe("executePreDeleteCommands", () => {
   const resetPreDeleteMocks = () => {

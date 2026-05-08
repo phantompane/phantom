@@ -1,6 +1,6 @@
 {
   "name": "@phantompane/github",
-  "version": "6.1.1-1",
+  "version": "6.3.0-4",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -8,14 +8,10 @@
   "scripts": {
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "test": "vitest run --root ../.. packages/github/src"
   },
   "dependencies": {
-    "@phantompane/core": "workspace:*",
-    "@phantompane/git": "workspace:*",
-    "@phantompane/process": "workspace:*",
-    "@phantompane/shared": "workspace:*",
     "@octokit/rest": "^22.0.1",
     "zod": "^4.3.6"
   }

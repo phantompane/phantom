@@ -2,12 +2,13 @@ import { parseArgs } from "node:util";
 import {
   createContext,
   deleteWorktree as deleteWorktreeCore,
+  getCurrentWorktreeName,
   selectWorktreeWithFzf,
   WorktreeError,
   WorktreeNotFoundError,
 } from "@phantompane/core";
-import { getCurrentWorktree, getGitRoot } from "@phantompane/git";
-import { isErr } from "@phantompane/shared";
+import { getGitRoot } from "@phantompane/git";
+import { isErr } from "@phantompane/utils";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 
@@ -18,6 +19,9 @@ export async function deleteHandler(args: string[]): Promise<void> {
       force: {
         type: "boolean",
         short: "f",
+      },
+      "keep-branch": {
+        type: "boolean",
       },
       current: {
         type: "boolean",
@@ -60,10 +64,12 @@ export async function deleteHandler(args: string[]): Promise<void> {
   try {
     const gitRoot = await getGitRoot();
     const context = await createContext(gitRoot);
+    const keepBranch =
+      values["keep-branch"] ?? context.preferences.keepBranch ?? false;
 
     const worktreeNames: string[] = [];
     if (deleteCurrent) {
-      const currentWorktree = await getCurrentWorktree(gitRoot);
+      const currentWorktree = await getCurrentWorktreeName(gitRoot);
       if (!currentWorktree) {
         exitWithError(
           "Not in a worktree directory. The --current option can only be used from within a worktree.",
@@ -91,6 +97,7 @@ export async function deleteHandler(args: string[]): Promise<void> {
         worktreeName,
         {
           force: forceDelete,
+          keepBranch,
         },
         context.config?.preDelete?.commands,
       );

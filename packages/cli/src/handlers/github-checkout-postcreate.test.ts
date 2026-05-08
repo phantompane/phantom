@@ -1,6 +1,6 @@
 import { deepStrictEqual, rejects } from "node:assert";
 import { describe, it, vi } from "vitest";
-import { err, ok } from "@phantompane/shared";
+import { err, ok } from "@phantompane/utils";
 
 const exitWithErrorMock = vi.fn((message, code) => {
   throw new Error(`Exit with code ${code}: ${message}`);
@@ -21,7 +21,7 @@ vi.doMock("../output.ts", () => ({
   output: { log: outputLogMock, error: outputErrorMock },
 }));
 
-vi.doMock("@phantompane/github", () => ({
+vi.doMock("@phantompane/core", () => ({
   githubCheckout: githubCheckoutMock,
 }));
 

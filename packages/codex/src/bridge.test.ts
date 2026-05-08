@@ -1,0 +1,482 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import { describe, expect, it, vi } from "vitest";
+
+import { CodexBridge, type CodexMessage } from "./bridge.ts";
+
+type WrittenMessage = {
+  id?: number | string;
+  method?: string;
+  params?: unknown;
+  result?: unknown;
+};
+
+class FakeCodexProcess extends EventEmitter {
+  readonly stdin = new PassThrough();
+  readonly stdout = new PassThrough();
+  readonly stderr = new PassThrough();
+  readonly killedSignals: Array<NodeJS.Signals | number | undefined> = [];
+  readonly writes: WrittenMessage[] = [];
+
+  constructor() {
+    super();
+    this.stdin.on("data", (chunk: Buffer) => {
+      for (const line of chunk.toString("utf8").trim().split("\n")) {
+        if (line) {
+          this.writes.push(JSON.parse(line) as WrittenMessage);
+        }
+      }
+    });
+  }
+
+  send(message: CodexMessage): void {
+    this.stdout.write(`${JSON.stringify(message)}\n`);
+  }
+
+  failWithStderr(message: string): void {
+    this.stderr.write(message);
+    this.emit("exit", 1, null);
+  }
+
+  kill(signal?: NodeJS.Signals | number): boolean {
+    this.killedSignals.push(signal);
+    return true;
+  }
+}
+
+function createBridge(): {
+  bridge: CodexBridge;
+  proc: FakeCodexProcess;
+  spawnCodexProcess: ReturnType<typeof vi.fn>;
+} {
+  const proc = new FakeCodexProcess();
+  const spawnCodexProcess = vi.fn(
+    () => proc as unknown as ChildProcessWithoutNullStreams,
+  );
+  const bridge = new CodexBridge(
+    "fake-codex",
+    spawnCodexProcess as unknown as typeof import("node:child_process").spawn,
+  );
+
+  return { bridge, proc, spawnCodexProcess };
+}
+
+function findWrite(
+  proc: FakeCodexProcess,
+  method: string,
+): WrittenMessage | undefined {
+  return proc.writes.find((message) => message.method === method);
+}
+
+async function initializeBridge(bridge: CodexBridge, proc: FakeCodexProcess) {
+  const started = bridge.ensureStarted();
+  await vi.waitFor(() => expect(findWrite(proc, "initialize")).toBeDefined());
+  proc.send({ id: 1, result: { protocolVersion: 2 } });
+  await started;
+}
+
+describe("CodexBridge", () => {
+  it("starts one app-server process and correlates JSON-RPC responses", async () => {
+    const { bridge, proc, spawnCodexProcess } = createBridge();
+
+    const models = bridge.listModels();
+    await vi.waitFor(() => expect(findWrite(proc, "initialize")).toBeDefined());
+
+    expect(spawnCodexProcess).toHaveBeenCalledWith(
+      "fake-codex",
+      [
+        "app-server",
+        "-c",
+        'sandbox_mode="workspace-write"',
+        "-c",
+        'approvals_reviewer="auto_review"',
+      ],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    proc.send({ id: 1, result: { protocolVersion: 2 } });
+    await vi.waitFor(() => expect(findWrite(proc, "model/list")).toBeDefined());
+
+    const request = findWrite(proc, "model/list");
+    proc.send({ id: request?.id, result: { models: [{ id: "gpt-5.2" }] } });
+
+    await expect(models).resolves.toEqual({ models: [{ id: "gpt-5.2" }] });
+    expect(findWrite(proc, "initialized")).toEqual({
+      method: "initialized",
+      params: {},
+    });
+  });
+
+  it("fans out notifications and server approval requests", async () => {
+    const { bridge, proc } = createBridge();
+    const notifications: CodexMessage[] = [];
+    const serverRequests: CodexMessage[] = [];
+
+    bridge.onNotification((message) => notifications.push(message));
+    bridge.onServerRequest((message) => serverRequests.push(message));
+
+    await initializeBridge(bridge, proc);
+
+    proc.send({
+      method: "thread/updated",
+      params: { threadId: "thread_1" },
+    });
+    proc.send({
+      id: 99,
+      method: "item/commandExecution/requestApproval",
+      params: { threadId: "thread_1" },
+    });
+
+    await vi.waitFor(() => expect(notifications).toHaveLength(1));
+    await vi.waitFor(() => expect(serverRequests).toHaveLength(1));
+
+    bridge.respondToServerRequest("99", { decision: "accept" });
+
+    expect(notifications[0]?.method).toBe("thread/updated");
+    expect(serverRequests[0]?.method).toBe(
+      "item/commandExecution/requestApproval",
+    );
+    expect(proc.writes).toContainEqual({
+      id: 99,
+      result: { decision: "accept" },
+    });
+  });
+
+  it("requests thread metadata and thread contents", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    const threads = bridge.listThreads({
+      archived: false,
+      cwd: ["/repo", "/repo/.git/phantom/worktrees/feature"],
+      limit: 100,
+      sortDirection: "desc",
+      sortKey: "updated_at",
+      useStateDbOnly: true,
+    });
+
+    await vi.waitFor(() =>
+      expect(findWrite(proc, "thread/list")).toBeDefined(),
+    );
+    const listRequest = findWrite(proc, "thread/list");
+    expect(listRequest?.params).toEqual({
+      archived: false,
+      cursor: null,
+      cwd: ["/repo", "/repo/.git/phantom/worktrees/feature"],
+      limit: 100,
+      searchTerm: undefined,
+      sortDirection: "desc",
+      sortKey: "updated_at",
+      sourceKinds: undefined,
+      useStateDbOnly: true,
+    });
+    proc.send({ id: listRequest?.id, result: { threads: [] } });
+    await expect(threads).resolves.toEqual({ threads: [] });
+
+    const thread = bridge.readThread("thread_1", { includeTurns: true });
+    await vi.waitFor(() =>
+      expect(findWrite(proc, "thread/read")).toBeDefined(),
+    );
+    const readRequest = findWrite(proc, "thread/read");
+    expect(readRequest?.params).toEqual({
+      threadId: "thread_1",
+      includeTurns: true,
+    });
+    proc.send({ id: readRequest?.id, result: { thread: { id: "thread_1" } } });
+    await expect(thread).resolves.toEqual({ thread: { id: "thread_1" } });
+  });
+
+  it("archives and unarchives threads", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    const archive = bridge.archiveThread("thread_1");
+    await vi.waitFor(() =>
+      expect(findWrite(proc, "thread/archive")).toBeDefined(),
+    );
+    const archiveRequest = findWrite(proc, "thread/archive");
+    expect(archiveRequest?.params).toEqual({ threadId: "thread_1" });
+    proc.send({ id: archiveRequest?.id, result: {} });
+    await expect(archive).resolves.toEqual({});
+
+    const unarchive = bridge.unarchiveThread("thread_1");
+    await vi.waitFor(() =>
+      expect(findWrite(proc, "thread/unarchive")).toBeDefined(),
+    );
+    const unarchiveRequest = findWrite(proc, "thread/unarchive");
+    expect(unarchiveRequest?.params).toEqual({ threadId: "thread_1" });
+    proc.send({
+      id: unarchiveRequest?.id,
+      result: { thread: { id: "thread_1" } },
+    });
+    await expect(unarchive).resolves.toEqual({ thread: { id: "thread_1" } });
+  });
+
+  it("passes model and service tier to new threads", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    const thread = bridge.startThread("/repo", {
+      model: "gpt-5.2",
+      serviceTier: "fast",
+    });
+
+    await vi.waitFor(() =>
+      expect(findWrite(proc, "thread/start")).toBeDefined(),
+    );
+    const request = findWrite(proc, "thread/start");
+    expect(request?.params).toEqual({
+      cwd: "/repo",
+      model: "gpt-5.2",
+      serviceTier: "fast",
+      serviceName: "phantom_serve",
+      experimentalRawEvents: false,
+      persistExtendedHistory: true,
+    });
+
+    proc.send({ id: request?.id, result: { thread: { id: "thread_1" } } });
+    await expect(thread).resolves.toEqual({ thread: { id: "thread_1" } });
+  });
+
+  it("passes model, effort, service tier, file mentions, skills, and attachments to new turns", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    const turn = bridge.startTurn("thread_1", "please edit", "/repo", {
+      attachments: [
+        {
+          name: "screenshot.png",
+          path: "/tmp/phantom/attachments/screenshot.png",
+          mimeType: "image/png",
+          size: 123,
+        },
+      ],
+      effort: "high",
+      files: [{ name: "src/index.ts", path: "/repo/src/index.ts" }],
+      model: "gpt-5.2",
+      serviceTier: "fast",
+      skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
+    });
+
+    await vi.waitFor(() => expect(findWrite(proc, "turn/start")).toBeDefined());
+    const request = findWrite(proc, "turn/start");
+    expect(request?.params).toEqual({
+      threadId: "thread_1",
+      cwd: "/repo",
+      input: [
+        {
+          type: "text",
+          text: "please edit",
+          text_elements: [],
+        },
+        {
+          type: "skill",
+          name: "review",
+          path: "/skills/review/SKILL.md",
+        },
+        {
+          type: "mention",
+          name: "src/index.ts",
+          path: "/repo/src/index.ts",
+        },
+        {
+          type: "localImage",
+          path: "/tmp/phantom/attachments/screenshot.png",
+        },
+      ],
+      model: "gpt-5.2",
+      effort: "high",
+      serviceTier: "fast",
+    });
+
+    proc.send({ id: request?.id, result: { turn: { id: "turn_1" } } });
+    await expect(turn).resolves.toEqual({ turn: { id: "turn_1" } });
+  });
+
+  it("passes model and effort to steer turns", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    const turn = bridge.steerTurn("thread_1", "turn_1", "continue", {
+      effort: "high",
+      model: "gpt-5.2",
+      serviceTier: "fast",
+    });
+
+    await vi.waitFor(() => expect(findWrite(proc, "turn/steer")).toBeDefined());
+    const request = findWrite(proc, "turn/steer");
+    expect(request?.params).toEqual({
+      threadId: "thread_1",
+      expectedTurnId: "turn_1",
+      input: [
+        {
+          type: "text",
+          text: "continue",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.2",
+      effort: "high",
+    });
+
+    proc.send({ id: request?.id, result: { turn: { id: "turn_1" } } });
+    await expect(turn).resolves.toEqual({ turn: { id: "turn_1" } });
+  });
+
+  it("responds to string server request ids without coercing them", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    proc.send({
+      id: "99",
+      method: "item/commandExecution/requestApproval",
+      params: { threadId: "thread_1" },
+    });
+
+    bridge.respondToServerRequest("99", { decision: "decline" });
+
+    expect(proc.writes).toContainEqual({
+      id: "99",
+      result: { decision: "decline" },
+    });
+  });
+
+  it("runs codex exec with read-only sandbox", async () => {
+    const { bridge, proc, spawnCodexProcess } = createBridge();
+
+    const execPromise = bridge.exec("name this branch", {
+      cwd: "/repo",
+      model: "gpt-5.4-mini",
+    });
+    await vi.waitFor(() => expect(spawnCodexProcess).toHaveBeenCalledOnce());
+
+    const args = spawnCodexProcess.mock.calls[0]?.[1];
+    expect(args).toEqual([
+      "exec",
+      "--model",
+      "gpt-5.4-mini",
+      "--sandbox",
+      "read-only",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--output-last-message",
+      expect.stringMatching(/last-message\.txt$/),
+      "name this branch",
+    ]);
+    expect(spawnCodexProcess.mock.calls[0]?.[2]).toEqual({
+      cwd: "/repo",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    proc.stdout.write("branch-name\n");
+    proc.emit("close", 0, null);
+    await expect(execPromise).resolves.toBe("branch-name\n");
+  });
+
+  it("waits for codex exec processes to close after timeout before rejecting", async () => {
+    vi.useFakeTimers();
+    const { bridge, proc, spawnCodexProcess } = createBridge();
+
+    try {
+      const execPromise = bridge.exec("name this branch", {
+        model: "gpt-5.4-mini",
+        timeoutMs: 10,
+      });
+      await vi.waitFor(() => expect(spawnCodexProcess).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(proc.killedSignals).toEqual(["SIGTERM"]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(proc.killedSignals).toEqual(["SIGTERM", "SIGKILL"]);
+
+      proc.emit("close", null, "SIGKILL");
+      await expect(execPromise).rejects.toThrow("Codex exec timed out");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects codex exec after the kill grace period when close never fires", async () => {
+    vi.useFakeTimers();
+    const { bridge, proc, spawnCodexProcess } = createBridge();
+
+    try {
+      const execPromise = bridge.exec("name this branch", {
+        model: "gpt-5.4-mini",
+        timeoutMs: 10,
+      });
+      await vi.waitFor(() => expect(spawnCodexProcess).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(proc.killedSignals).toEqual(["SIGTERM"]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(proc.killedSignals).toEqual(["SIGTERM", "SIGKILL"]);
+      await expect(execPromise).rejects.toThrow("Codex exec timed out");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("propagates app-server exits to pending requests", async () => {
+    const { bridge, proc } = createBridge();
+    const processExitHandler = vi.fn();
+    bridge.onProcessExit(processExitHandler);
+
+    const models = bridge.listModels();
+    await vi.waitFor(() => expect(findWrite(proc, "initialize")).toBeDefined());
+    proc.failWithStderr("boom");
+
+    await expect(models).rejects.toThrow(
+      "Codex App Server exited with code 1: boom",
+    );
+    expect(processExitHandler).toHaveBeenCalledOnce();
+  });
+
+  it("clears server requests when the app-server exits", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    proc.send({
+      id: 99,
+      method: "item/commandExecution/requestApproval",
+      params: { threadId: "thread_1" },
+    });
+    proc.failWithStderr("boom");
+
+    expect(() =>
+      bridge.respondToServerRequest(99, { decision: "accept" }),
+    ).toThrow("Codex server request '99' was not found");
+  });
+
+  it("does not serialize active turns across different threads", async () => {
+    const { bridge, proc } = createBridge();
+    await initializeBridge(bridge, proc);
+
+    const first = bridge.startTurn("thread_a", "hello a", "/repo/a");
+    const second = bridge.startTurn("thread_b", "hello b", "/repo/b");
+
+    await vi.waitFor(() => {
+      expect(
+        proc.writes.filter((message) => message.method === "turn/start"),
+      ).toHaveLength(2);
+    });
+
+    const turns = proc.writes.filter(
+      (message) => message.method === "turn/start",
+    );
+    expect(
+      turns.map((message) => (message.params as { threadId: string }).threadId),
+    ).toEqual(["thread_a", "thread_b"]);
+
+    proc.send({ id: turns[0]?.id, result: { turn: { id: "turn_a" } } });
+    proc.send({ id: turns[1]?.id, result: { turn: { id: "turn_b" } } });
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { turn: { id: "turn_a" } },
+      { turn: { id: "turn_b" } },
+    ]);
+  });
+});

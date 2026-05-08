@@ -1,12 +1,14 @@
 {
   "name": "@phantompane/monorepo",
-  "version": "6.1.1-1",
-  "packageManager": "pnpm@10.8.1",
+  "version": "6.3.0-4",
+  "packageManager": "pnpm@10.33.2",
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "turbo run dev",
     "build": "turbo run build",
-    "test": "turbo run test",
+    "test": "turbo run test --filter=!@phantompane/e2e",
+    "test:e2e": "pnpm --filter @phantompane/e2e test",
     "test:shell": "pnpm --filter @phantompane/cli-private run test:shell",
     "test:shell:bash": "pnpm --filter @phantompane/cli-private run test:shell:bash",
     "test:shell:fish": "pnpm --filter @phantompane/cli-private run test:shell:fish",
@@ -25,14 +27,15 @@
     "node": ">=22.0.0"
   },
   "devDependencies": {
-    "@types/node": "^25.3.5",
-    "@typescript/native-preview": "7.0.0-dev.20260309.1",
-    "oxfmt": "^0.40.0",
-    "oxlint": "^1.55.0",
-    "tsdown": "^0.21.3",
-    "turbo": "^2.8.17",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.0"
+    "@types/node": "^25.5.0",
+    "@typescript/native-preview": "7.0.0-dev.20260421.2",
+    "oxfmt": "^0.46.0",
+    "oxlint": "^1.61.0",
+    "portless": "0.10.3",
+    "tsdown": "^0.21.8",
+    "turbo": "^2.8.20",
+    "typescript": "npm:@typescript/typescript6@^6.0.0",
+    "vitest": "^4.1.5"
   },
   "dependencies": {
     "zod": "^4.3.6"

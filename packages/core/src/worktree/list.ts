@@ -1,9 +1,10 @@
 import { relative } from "node:path";
 import {
-  executeGitCommandInDirectory,
+  getCurrentBranch,
+  getStatus,
   listWorktrees as gitListWorktrees,
 } from "@phantompane/git";
-import { ok, type Result } from "@phantompane/shared";
+import { ok, type Result } from "@phantompane/utils";
 import { getWorktreePathFromDirectory } from "../paths.ts";
 
 export interface WorktreeInfo {
@@ -21,15 +22,12 @@ export interface ListWorktreesSuccess {
 
 export interface ListWorktreesOptions {
   excludeDefault?: boolean;
+  includePrunable?: boolean;
 }
 
 export async function getWorktreeBranch(worktreePath: string): Promise<string> {
   try {
-    const { stdout } = await executeGitCommandInDirectory(worktreePath, [
-      "branch",
-      "--show-current",
-    ]);
-    return stdout || "(detached HEAD)";
+    return (await getCurrentBranch({ cwd: worktreePath })) || "(detached HEAD)";
   } catch {
     return "unknown";
   }
@@ -39,11 +37,8 @@ export async function getWorktreeStatus(
   worktreePath: string,
 ): Promise<boolean> {
   try {
-    const { stdout } = await executeGitCommandInDirectory(worktreePath, [
-      "status",
-      "--porcelain",
-    ]);
-    return !stdout; // Clean if no output
+    const status = await getStatus({ cwd: worktreePath });
+    return status.isClean;
   } catch {
     // If git status fails, assume clean
     return true;
@@ -81,14 +76,18 @@ export async function listWorktrees(
 ): Promise<Result<ListWorktreesSuccess, never>> {
   try {
     const gitWorktrees = await gitListWorktrees(gitRoot);
+    const includePrunable = options.includePrunable ?? true;
+    const availableGitWorktrees = includePrunable
+      ? gitWorktrees
+      : gitWorktrees.filter((worktree) => !worktree.isPrunable);
     const excludeDefault = options.excludeDefault ?? false;
     const filteredWorktrees = excludeDefault
-      ? gitWorktrees.filter((worktree) => worktree.path !== gitRoot)
-      : gitWorktrees;
+      ? availableGitWorktrees.filter((worktree) => worktree.path !== gitRoot)
+      : availableGitWorktrees;
 
     if (filteredWorktrees.length === 0) {
       const message =
-        excludeDefault && gitWorktrees.length > 0
+        excludeDefault && availableGitWorktrees.length > 0
           ? "No sub worktrees found"
           : "No worktrees found";
       return ok({

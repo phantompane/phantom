@@ -1,6 +1,6 @@
 {
   "name": "@phantompane/cli",
-  "version": "6.1.1-1",
+  "version": "6.3.0-4",
   "description": "A powerful CLI tool for managing Git worktrees for parallel development",
   "keywords": [
     "git",
@@ -28,8 +28,13 @@
   },
   "files": [
     "phantom.js",
+    "app",
     "README.md",
     "LICENSE"
+  ],
+  "os": [
+    "darwin",
+    "linux"
   ],
   "engines": {
     "node": ">=22.0.0"

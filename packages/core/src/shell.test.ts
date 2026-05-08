@@ -1,7 +1,7 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { describe, it, vi } from "vitest";
 import { ProcessSpawnError } from "@phantompane/process";
-import { err, isErr, isOk, ok } from "@phantompane/shared";
+import { err, isErr, isOk, ok } from "@phantompane/utils";
 import { WorktreeNotFoundError } from "./worktree/errors.ts";
 
 const validateMock = vi.fn();

@@ -8,12 +8,11 @@ export interface GitWorktree {
   isPrunable: boolean;
 }
 
-export async function listWorktrees(_gitRoot: string): Promise<GitWorktree[]> {
-  const { stdout } = await executeGitCommand([
-    "worktree",
-    "list",
-    "--porcelain",
-  ]);
+export async function listWorktrees(gitRoot: string): Promise<GitWorktree[]> {
+  const { stdout } = await executeGitCommand(
+    ["worktree", "list", "--porcelain"],
+    { cwd: gitRoot },
+  );
 
   const worktrees: GitWorktree[] = [];
   let currentWorktree: Partial<GitWorktree> = {};
@@ -39,9 +38,9 @@ export async function listWorktrees(_gitRoot: string): Promise<GitWorktree[]> {
         : fullBranch;
     } else if (line === "detached") {
       currentWorktree.branch = "(detached HEAD)";
-    } else if (line === "locked") {
+    } else if (line.startsWith("locked")) {
       currentWorktree.isLocked = true;
-    } else if (line === "prunable") {
+    } else if (line.startsWith("prunable")) {
       currentWorktree.isPrunable = true;
     }
   }

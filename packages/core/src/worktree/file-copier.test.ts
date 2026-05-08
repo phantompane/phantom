@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, test } from "vitest";
-import { isOk } from "@phantompane/shared";
+import { isOk } from "@phantompane/utils";
 import { copyFiles } from "./file-copier.ts";
 
 describe("copyFiles", () => {

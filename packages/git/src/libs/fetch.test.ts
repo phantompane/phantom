@@ -1,6 +1,6 @@
 import { deepEqual, equal, ok } from "node:assert/strict";
 import { describe, it, vi } from "vitest";
-import { isErr } from "@phantompane/shared";
+import { isErr } from "@phantompane/utils";
 
 const executeGitCommandMock = vi.fn();
 

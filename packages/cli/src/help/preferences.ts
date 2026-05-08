@@ -31,6 +31,11 @@ export const preferencesHelp: CommandHelp = {
         "Store a separator for flattening worktree directory names while keeping branch names unchanged",
     },
     {
+      command: "phantom preferences set keepBranch true",
+      description:
+        "Keep branches by default when deleting worktrees with phantom delete or MCP",
+    },
+    {
       command: "phantom preferences remove editor",
       description: "Remove the editor preference (fallback to env/default)",
     },
@@ -47,6 +52,7 @@ export const preferencesHelp: CommandHelp = {
     "  ai - used by 'phantom ai'",
     "  worktreesDirectory - path relative to the Git repo root for storing worktrees (defaults to .git/phantom/worktrees)",
     "  directoryNameSeparator - replaces '/' in worktree directory names only (defaults to / for nested directories)",
+    "  keepBranch - keeps the branch when deleting a worktree (defaults to false)",
   ],
 };
 
@@ -73,9 +79,13 @@ export const preferencesGetHelp: CommandHelp = {
       command: "phantom preferences get directoryNameSeparator",
       description: "Show the preferred worktree directory name separator",
     },
+    {
+      command: "phantom preferences get keepBranch",
+      description: "Show whether delete keeps branches by default",
+    },
   ],
   notes: [
-    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator",
+    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch",
   ],
 };
 
@@ -104,11 +114,16 @@ export const preferencesSetHelp: CommandHelp = {
       description:
         "Flatten worktree directory names such as feature/test to feature-test",
     },
+    {
+      command: "phantom preferences set keepBranch true",
+      description: "Keep branches when deleting worktrees by default",
+    },
   ],
   notes: [
-    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator",
+    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch",
     "For worktreesDirectory, provide a path relative to the Git repository root; defaults to .git/phantom/worktrees when unset",
     "For directoryNameSeparator, '/' keeps nested directories; any other string replaces '/' only in the directory path",
+    "For keepBranch, use true to preserve branches on delete or false to keep the default branch deletion behavior",
   ],
 };
 
@@ -135,8 +150,13 @@ export const preferencesRemoveHelp: CommandHelp = {
       description:
         "Restore nested worktree directories that follow branch slashes",
     },
+    {
+      command: "phantom preferences remove keepBranch",
+      description:
+        "Restore the default behavior of deleting branches with worktrees",
+    },
   ],
   notes: [
-    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator",
+    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch",
   ],
 };

@@ -1,5 +1,5 @@
 import { selectWithFzf } from "@phantompane/process";
-import { isErr, type Result } from "@phantompane/shared";
+import { isErr, type Result } from "@phantompane/utils";
 import { listWorktrees } from "./list.ts";
 
 export interface SelectWorktreeResult {
@@ -18,6 +18,7 @@ export async function selectWorktreeWithFzf(
 ): Promise<Result<SelectWorktreeResult | null, Error>> {
   const listResult = await listWorktrees(gitRoot, {
     excludeDefault: options.excludeDefault,
+    includePrunable: false,
   });
 
   if (isErr(listResult)) {

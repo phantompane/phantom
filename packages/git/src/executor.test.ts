@@ -136,6 +136,22 @@ describe("executeGitCommand", () => {
     strictEqual(result.stdout, "output with spaces");
   });
 
+  it("should preserve stdout when trimStdout is disabled", async () => {
+    resetMocks();
+    execFileMock.mockImplementation((_cmd, _args, _options) =>
+      Promise.resolve({
+        stdout: " M file.txt\n D other.txt\n",
+        stderr: "",
+      }),
+    );
+
+    const result = await executeGitCommand(["status", "--porcelain"], {
+      trimStdout: false,
+    });
+
+    strictEqual(result.stdout, " M file.txt\n D other.txt\n");
+  });
+
   it("should trim stderr output", async () => {
     resetMocks();
     execFileMock.mockImplementation((_cmd, _args, _options) =>

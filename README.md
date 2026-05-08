@@ -271,8 +271,7 @@ phantom delete feature-a feature-b  # delete multiple at once
 ### Platform support
 
 - Officially supported: Linux and macOS
-- Windows: not yet verified. It should run reliably when used from a Linux environment on WSL, but native Windows behavior is not guaranteed. The maintainers do not regularly test on Windows.
-- Pull requests to improve Windows compatibility are welcome.
+- Native Windows is not supported. Use Phantom from a Linux environment such as WSL instead.
 
 ## 🤝 Contributing
 

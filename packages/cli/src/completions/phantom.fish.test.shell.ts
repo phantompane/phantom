@@ -23,6 +23,20 @@ describe("phantom.fish completion", () => {
     );
   });
 
+  it("completes serve when typing phantom s", () => {
+    const { completions, result } = runFishCompletion(completionScriptPath, [
+      "phantom",
+      "s",
+    ]);
+
+    strictEqual(result.status, 0, result.stderr);
+
+    ok(
+      completions.includes("serve"),
+      `Expected serve to be offered, got: ${completions.join(", ")}`,
+    );
+  });
+
   it("passes exec completions through to the invoked command", () => {
     const setupScript = `
 complete -c dummycmd -l from-dummy -d "Dummy option"

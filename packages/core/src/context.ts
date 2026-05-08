@@ -1,7 +1,7 @@
-import { isOk } from "@phantompane/shared";
-import { loadConfig, type PhantomConfig } from "./config/loader.ts";
+import { loadConfig, type PhantomConfig } from "@phantompane/config";
+import { loadPreferences, type Preferences } from "@phantompane/preferences";
+import { isOk } from "@phantompane/utils";
 import { getWorktreesDirectory } from "./paths.ts";
-import { loadPreferences, type Preferences } from "./preferences/loader.ts";
 
 export interface Context {
   gitRoot: string;

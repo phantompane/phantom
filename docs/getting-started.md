@@ -107,8 +107,11 @@ phantom exec feature-name npm test
 
 ```bash
 phantom delete feature-name
+phantom delete feature-name --keep-branch
 phantom delete feature-a feature-b  # delete multiple at once
 ```
+
+Use `--keep-branch` when you want to remove the worktree directory but continue using the branch elsewhere, such as in your main workspace.
 
 For more commands and options, see the [Commands Reference](./commands.md).
 
