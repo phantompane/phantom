@@ -1,4 +1,3 @@
-import { globSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { err, ok, type Result } from "@phantompane/utils";
@@ -30,9 +29,12 @@ function isGlobPattern(pattern: string): boolean {
   return /[*?[\]{}]/.test(pattern);
 }
 
+function normalizeRelativePath(filePath: string): string {
+  return filePath.replace(/\\/g, "/");
+}
+
 /**
  * Recursively find all files in a directory
- * This is a workaround for Node.js glob's limitation with dotfiles in ** patterns
  */
 async function recursiveReaddir(dir: string, prefix = ""): Promise<string[]> {
   const files: string[] = [];
@@ -65,43 +67,96 @@ async function recursiveReaddir(dir: string, prefix = ""): Promise<string[]> {
   return files;
 }
 
-/**
- * Filter out directories from glob matches, keeping only files
- */
-async function filterOnlyFiles(
-  gitRoot: string,
-  matches: string[],
-): Promise<string[]> {
-  const files: string[] = [];
-
-  for (const match of matches) {
-    const fullPath = path.join(gitRoot, match);
-    try {
-      const stats = await stat(fullPath);
-      if (stats.isFile()) {
-        files.push(match);
-      }
-    } catch {
-      // Skip files that can't be stat'd
-    }
-  }
-
-  return files;
+function escapeRegexChar(char: string): string {
+  return /[\\^$.*+?()[\]{}|]/.test(char) ? `\\${char}` : char;
 }
 
-/**
- * Simple glob pattern matcher for filenames
- * Supports *, ?, and [abc] patterns
- */
-function matchesPattern(filename: string, pattern: string): boolean {
-  // Convert glob pattern to regex
-  const regexPattern = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&") // Escape regex special chars except glob chars
-    .replace(/\*/g, ".*") // * matches any characters
-    .replace(/\?/g, "."); // ? matches single character
+function escapeCharacterClass(content: string): string {
+  return content.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
+}
 
-  const regex = new RegExp(`^${regexPattern}$`);
-  return regex.test(filename);
+function escapeBraceAlternative(content: string): string {
+  return [...content].map(escapeRegexChar).join("");
+}
+
+function globPatternToRegex(pattern: string): RegExp {
+  const normalizedPattern = normalizeRelativePath(pattern);
+  let regexPattern = "";
+
+  for (let index = 0; index < normalizedPattern.length; ) {
+    const char = normalizedPattern[index];
+
+    if (char === "*") {
+      if (normalizedPattern[index + 1] === "*") {
+        if (normalizedPattern[index + 2] === "/") {
+          regexPattern += "(?:.*/)?";
+          index += 3;
+        } else {
+          regexPattern += ".*";
+          index += 2;
+        }
+      } else {
+        regexPattern += "[^/]*";
+        index += 1;
+      }
+      continue;
+    }
+
+    if (char === "?") {
+      regexPattern += "[^/]";
+      index += 1;
+      continue;
+    }
+
+    if (char === "[") {
+      const closingIndex = normalizedPattern.indexOf("]", index + 1);
+      if (closingIndex === -1) {
+        regexPattern += "\\[";
+        index += 1;
+        continue;
+      }
+
+      const classContent = normalizedPattern.slice(index + 1, closingIndex);
+      if (classContent.length === 0) {
+        regexPattern += "\\[\\]";
+      } else if (classContent.startsWith("!")) {
+        regexPattern += `[^${escapeCharacterClass(classContent.slice(1))}]`;
+      } else {
+        regexPattern += `[${escapeCharacterClass(classContent)}]`;
+      }
+
+      index = closingIndex + 1;
+      continue;
+    }
+
+    if (char === "{") {
+      const closingIndex = normalizedPattern.indexOf("}", index + 1);
+      if (closingIndex === -1) {
+        regexPattern += "\\{";
+        index += 1;
+        continue;
+      }
+
+      const braceContent = normalizedPattern.slice(index + 1, closingIndex);
+      if (braceContent.includes(",")) {
+        const alternatives = braceContent
+          .split(",")
+          .map(escapeBraceAlternative)
+          .join("|");
+        regexPattern += `(?:${alternatives})`;
+      } else {
+        regexPattern += `\\{${escapeBraceAlternative(braceContent)}\\}`;
+      }
+
+      index = closingIndex + 1;
+      continue;
+    }
+
+    regexPattern += escapeRegexChar(char);
+    index += 1;
+  }
+
+  return new RegExp(`^${regexPattern}$`);
 }
 
 /**
@@ -111,6 +166,8 @@ async function expandPattern(
   gitRoot: string,
   pattern: string,
 ): Promise<string[]> {
+  const normalizedPattern = normalizeRelativePath(pattern);
+
   // First check if pattern exists as a literal file path
   // This handles files with glob metacharacters in their names (e.g., "file[1].txt")
   const literalPath = path.join(gitRoot, pattern);
@@ -118,7 +175,7 @@ async function expandPattern(
     const stats = await stat(literalPath);
     if (stats.isFile()) {
       // File exists literally, return it as exact match
-      return [pattern];
+      return [normalizedPattern];
     }
   } catch {
     // File doesn't exist literally, continue to pattern matching
@@ -128,41 +185,12 @@ async function expandPattern(
   if (!isGlobPattern(pattern)) {
     // Not a glob pattern and doesn't exist, return as exact path
     // (will be handled by file-copier as non-existent file)
-    return [pattern];
+    return [normalizedPattern];
   }
 
-  // Workaround for Node.js glob limitation with **/dotfile patterns
-  // If pattern contains **/ and might match dotfiles, use recursive readdir
-  if (pattern.includes("**/")) {
-    const parts = pattern.split("**/");
-    const prefix = parts[0]; // e.g., "oa-application/" or ""
-    const suffix = parts.slice(1).join("**/"); // e.g., ".env" or "*.local.yml"
-
-    // Get all files recursively
-    const baseDir = prefix ? path.join(gitRoot, prefix) : gitRoot;
-    const allFiles = await recursiveReaddir(baseDir);
-
-    // Match files against the suffix pattern
-    const matchedFiles = allFiles.filter((file) => {
-      const basename = path.basename(file);
-      return matchesPattern(basename, suffix);
-    });
-
-    // Prepend the prefix back to the matched files
-    if (prefix) {
-      return matchedFiles.map((file) => path.join(prefix, file));
-    }
-
-    return matchedFiles;
-  }
-
-  // Use glob to expand pattern
-  const matches = globSync(pattern, {
-    cwd: gitRoot,
-  });
-
-  // Filter out directories
-  return filterOnlyFiles(gitRoot, matches);
+  const regex = globPatternToRegex(normalizedPattern);
+  const allFiles = await recursiveReaddir(gitRoot);
+  return allFiles.filter((file) => regex.test(file));
 }
 
 /**

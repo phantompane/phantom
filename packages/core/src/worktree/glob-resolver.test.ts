@@ -2,13 +2,13 @@ import assert from "node:assert";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, test } from "node:test";
-import { isOk } from "@phantompane/phantom-shared";
+import { afterEach, beforeEach, describe, test } from "vitest";
+import { isOk } from "@phantompane/utils";
 import { resolveGlobPatterns } from "./glob-resolver.ts";
 
 describe("resolveGlobPatterns", () => {
-  let tempDir;
-  let gitRoot;
+  let tempDir = "";
+  let gitRoot = "";
 
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(tmpdir(), "phantom-glob-test-"));
@@ -21,6 +21,7 @@ describe("resolveGlobPatterns", () => {
 
   test("should expand simple wildcard patterns", async () => {
     // Create test files
+    await writeFile(path.join(gitRoot, ".env"), "");
     await writeFile(path.join(gitRoot, "test.env"), "");
     await writeFile(path.join(gitRoot, "app.env"), "");
     await writeFile(path.join(gitRoot, "config.json"), "");
@@ -31,7 +32,8 @@ describe("resolveGlobPatterns", () => {
     if (isOk(result)) {
       const { resolvedFiles } = result.value;
       // Should match files ending with .env
-      assert.strictEqual(resolvedFiles.length, 2);
+      assert.strictEqual(resolvedFiles.length, 3);
+      assert.ok(resolvedFiles.includes(".env"));
       assert.ok(resolvedFiles.includes("test.env"));
       assert.ok(resolvedFiles.includes("app.env"));
     }
@@ -97,12 +99,76 @@ describe("resolveGlobPatterns", () => {
     if (isOk(result)) {
       const { resolvedFiles } = result.value;
       assert.strictEqual(resolvedFiles.length, 2);
+      assert.ok(resolvedFiles.includes("config/db/database.local.yml"));
+      assert.ok(resolvedFiles.includes("config/api/api.local.yml"));
+    }
+  });
+
+  test("should preserve path structure after recursive globstar", async () => {
+    await mkdir(path.join(gitRoot, "config", "app", "db"), {
+      recursive: true,
+    });
+    await mkdir(path.join(gitRoot, "config", "app", "api"), {
+      recursive: true,
+    });
+
+    await writeFile(path.join(gitRoot, "config", "app", "db", "local.yml"), "");
+    await writeFile(
+      path.join(gitRoot, "config", "app", "api", "local.yml"),
+      "",
+    );
+
+    const result = await resolveGlobPatterns(gitRoot, ["config/**/db/*.yml"]);
+
+    assert.strictEqual(isOk(result), true);
+    if (isOk(result)) {
+      assert.deepStrictEqual(result.value.resolvedFiles, [
+        "config/app/db/local.yml",
+      ]);
+    }
+  });
+
+  test("should handle bracket patterns after recursive globstar", async () => {
+    await mkdir(path.join(gitRoot, "secrets", "nested"), {
+      recursive: true,
+    });
+
+    await writeFile(path.join(gitRoot, "secrets", "nested", "alpha.json"), "");
+    await writeFile(path.join(gitRoot, "secrets", "nested", "beta.json"), "");
+    await writeFile(path.join(gitRoot, "secrets", "nested", "gamma.json"), "");
+
+    const result = await resolveGlobPatterns(gitRoot, [
+      "secrets/**/[ab]*.json",
+    ]);
+
+    assert.strictEqual(isOk(result), true);
+    if (isOk(result)) {
+      assert.strictEqual(result.value.resolvedFiles.length, 2);
       assert.ok(
-        resolvedFiles.includes(path.join("config", "db", "database.local.yml")),
+        result.value.resolvedFiles.includes("secrets/nested/alpha.json"),
       );
       assert.ok(
-        resolvedFiles.includes(path.join("config", "api", "api.local.yml")),
+        result.value.resolvedFiles.includes("secrets/nested/beta.json"),
       );
+      assert.ok(
+        !result.value.resolvedFiles.includes("secrets/nested/gamma.json"),
+      );
+    }
+  });
+
+  test("should handle brace alternatives", async () => {
+    await writeFile(path.join(gitRoot, "local.env"), "");
+    await writeFile(path.join(gitRoot, "config.json"), "");
+    await writeFile(path.join(gitRoot, "readme.md"), "");
+
+    const result = await resolveGlobPatterns(gitRoot, ["*.{env,json}"]);
+
+    assert.strictEqual(isOk(result), true);
+    if (isOk(result)) {
+      assert.strictEqual(result.value.resolvedFiles.length, 2);
+      assert.ok(result.value.resolvedFiles.includes("local.env"));
+      assert.ok(result.value.resolvedFiles.includes("config.json"));
+      assert.ok(!result.value.resolvedFiles.includes("readme.md"));
     }
   });
 
@@ -195,8 +261,10 @@ describe("resolveGlobPatterns", () => {
     if (isOk(result)) {
       const { patterns } = result.value;
       assert.strictEqual(patterns.length, 1);
-      assert.strictEqual(patterns[0].pattern, ".env*");
-      assert.strictEqual(patterns[0].resolvedFiles.length, 2);
+      const [pattern] = patterns;
+      assert.ok(pattern);
+      assert.strictEqual(pattern.pattern, ".env*");
+      assert.strictEqual(pattern.resolvedFiles.length, 2);
     }
   });
 
@@ -338,9 +406,7 @@ describe("resolveGlobPatterns", () => {
       assert.strictEqual(resolvedFiles.length, 2);
       assert.ok(resolvedFiles.includes(".env"));
       assert.ok(
-        resolvedFiles.includes(
-          path.join("oa-application", "src", "test", "resources", ".env"),
-        ),
+        resolvedFiles.includes("oa-application/src/test/resources/.env"),
       );
     }
   });
@@ -361,10 +427,8 @@ describe("resolveGlobPatterns", () => {
       assert.strictEqual(resolvedFiles.length, 4);
       assert.ok(resolvedFiles.includes(".env"));
       assert.ok(resolvedFiles.includes(".env.local"));
-      assert.ok(resolvedFiles.includes(path.join("app", ".env.production")));
-      assert.ok(
-        resolvedFiles.includes(path.join("app", "config", ".env.test")),
-      );
+      assert.ok(resolvedFiles.includes("app/.env.production"));
+      assert.ok(resolvedFiles.includes("app/config/.env.test"));
     }
   });
 
@@ -389,7 +453,7 @@ describe("resolveGlobPatterns", () => {
       // Should find .env files but NOT the one in .git directory
       assert.strictEqual(resolvedFiles.length, 2);
       assert.ok(resolvedFiles.includes(".env"));
-      assert.ok(resolvedFiles.includes(path.join("src", ".env")));
+      assert.ok(resolvedFiles.includes("src/.env"));
       // Should NOT include files from .git directory
       assert.ok(
         !resolvedFiles.some((f) => f.includes(".git")),
@@ -422,15 +486,13 @@ describe("resolveGlobPatterns", () => {
       const { resolvedFiles } = result.value;
       // Should only find .env files under oa-application/
       assert.strictEqual(resolvedFiles.length, 2);
-      assert.ok(resolvedFiles.includes(path.join("oa-application", ".env")));
+      assert.ok(resolvedFiles.includes("oa-application/.env"));
       assert.ok(
-        resolvedFiles.includes(
-          path.join("oa-application", "src", "test", "resources", ".env"),
-        ),
+        resolvedFiles.includes("oa-application/src/test/resources/.env"),
       );
       // Should NOT include root .env or other-app/.env
       assert.ok(!resolvedFiles.includes(".env"));
-      assert.ok(!resolvedFiles.includes(path.join("other-app", ".env")));
+      assert.ok(!resolvedFiles.includes("other-app/.env"));
     }
   });
 });

@@ -176,15 +176,9 @@ describe("copyFiles", () => {
     if (isOk(result)) {
       assert.strictEqual(result.value.copiedFiles.length, 2);
       assert.ok(
-        result.value.copiedFiles.includes(
-          path.join("config", "db", "database.local.yml"),
-        ),
+        result.value.copiedFiles.includes("config/db/database.local.yml"),
       );
-      assert.ok(
-        result.value.copiedFiles.includes(
-          path.join("config", "api", "api.local.yml"),
-        ),
-      );
+      assert.ok(result.value.copiedFiles.includes("config/api/api.local.yml"));
     }
 
     const copiedDb = await readFile(
@@ -252,12 +246,8 @@ describe("copyFiles", () => {
     assert.strictEqual(isOk(result), true);
     if (isOk(result)) {
       assert.strictEqual(result.value.copiedFiles.length, 2);
-      assert.ok(
-        result.value.copiedFiles.includes(path.join("nested", "file1.txt")),
-      );
-      assert.ok(
-        result.value.copiedFiles.includes(path.join("nested", "file2.txt")),
-      );
+      assert.ok(result.value.copiedFiles.includes("nested/file1.txt"));
+      assert.ok(result.value.copiedFiles.includes("nested/file2.txt"));
     }
 
     const copiedFile1 = await readFile(
