@@ -46,7 +46,9 @@ import {
 import {
   createRecordId,
   createTimestamp,
+  getRecentProjectSkillRecords,
   getServeDataDir,
+  rememberRecentProjectSkillSelection,
   ServeStateStore,
   touchProject,
 } from "@phantompane/state";
@@ -66,6 +68,7 @@ import type {
   ProjectWorktreeRecord,
   ProjectRecord,
   QueuedMessageRecord,
+  RecentProjectSkillRecord,
   ServeState,
 } from "./types.ts";
 
@@ -420,6 +423,11 @@ export class ServeServices {
         queuedMessages: state.queuedMessages.filter(
           (message) => !removedChatIds.has(message.chatId),
         ),
+        recentProjectSkills: Object.fromEntries(
+          Object.entries(state.recentProjectSkills).filter(
+            ([storedProjectId]) => storedProjectId !== projectId,
+          ),
+        ),
         selectedProjectId:
           state.selectedProjectId === projectId
             ? null
@@ -430,6 +438,60 @@ export class ServeServices {
       };
     });
     this.eventHub.emit("project.removed", { projectId });
+  }
+
+  async listRecentProjectSkills(
+    projectId: string,
+  ): Promise<RecentProjectSkillRecord[]> {
+    const state = await this.store.load();
+    const project = this.requireProject(state, projectId);
+    return normalizeRecentProjectSkillRecordPaths(
+      getRecentProjectSkillRecords(state.recentProjectSkills, projectId),
+      getProjectSkillRoots(state, project),
+    );
+  }
+
+  async rememberRecentProjectSkill(
+    projectId: string,
+    skillPath: string,
+  ): Promise<RecentProjectSkillRecord[]> {
+    if (!skillPath.trim()) {
+      throw new Error("Skill path is required");
+    }
+
+    let recentSkills: RecentProjectSkillRecord[] = [];
+    const lastUsedAt = createTimestamp();
+    await this.store.update((state) => {
+      const project = this.requireProject(state, projectId);
+      const projectSkillRoots = getProjectSkillRoots(state, project);
+      const normalizedSkillPath = normalizeProjectSkillPath(
+        skillPath,
+        projectSkillRoots,
+      );
+      const normalizedRecordsByProject = {
+        ...state.recentProjectSkills,
+        [projectId]: normalizeRecentProjectSkillRecordPaths(
+          getRecentProjectSkillRecords(state.recentProjectSkills, projectId),
+          projectSkillRoots,
+        ),
+      };
+      const recentProjectSkills = rememberRecentProjectSkillSelection(
+        normalizedRecordsByProject,
+        projectId,
+        normalizedSkillPath,
+        lastUsedAt,
+      );
+      recentSkills = getRecentProjectSkillRecords(
+        recentProjectSkills,
+        projectId,
+      );
+      return {
+        ...state,
+        recentProjectSkills,
+      };
+    });
+
+    return recentSkills;
   }
 
   async listChats(projectId: string): Promise<ChatRecord[]> {
@@ -1824,6 +1886,14 @@ export class ServeServices {
     return normalizeModelRecords(await this.codex.listModels());
   }
 
+  async listProjectSkills(projectId: string): Promise<CodexSkillRecord[]> {
+    const state = await this.store.load();
+    const project = this.requireProject(state, projectId);
+    return normalizeSkillRecords(
+      await this.codex.listSkills([project.rootPath]),
+    );
+  }
+
   async listSkills(chatId: string): Promise<CodexSkillRecord[]> {
     const chat = await this.getChat(chatId);
     return normalizeSkillRecords(
@@ -1865,10 +1935,7 @@ export class ServeServices {
       input.files,
       chat.worktreePath,
     );
-    const skills = await this.normalizeSkillContextItems(
-      input.skills,
-      chat.worktreePath,
-    );
+    const skills = await this.normalizeSkillContextItems(input.skills, chat);
     if (
       !input.effort &&
       !input.model &&
@@ -1976,23 +2043,39 @@ export class ServeServices {
 
   private async normalizeSkillContextItems(
     items: CodexTurnContextItem[] | undefined,
-    worktreePath: string,
+    chat: ChatRecord,
   ): Promise<CodexTurnContextItem[]> {
     const normalized = normalizeTurnContextItems(items);
     if (normalized.length === 0) {
       return [];
     }
 
+    const state = await this.store.load();
+    const project = this.requireProject(state, chat.projectId);
+    const projectSkillRoots = getProjectSkillRoots(state, project);
+    const skillListRoots = getSkillListRoots(chat, project);
     const availableSkills = normalizeSkillRecords(
-      await this.codex.listSkills([worktreePath]),
+      await this.codex.listSkills(skillListRoots),
     );
-    const skillsByPath = new Map(
-      availableSkills
-        .filter((skill) => skill.enabled)
-        .map((skill) => [skill.path, skill]),
-    );
+    const skillsByPath = new Map<string, CodexSkillRecord>();
+    for (const skill of sortSkillsByRootPreference(
+      availableSkills.filter((candidate) => candidate.enabled),
+      skillListRoots,
+    )) {
+      skillsByPath.set(skill.path, skill);
+      const skillIdentity = normalizeProjectSkillPath(
+        skill.path,
+        projectSkillRoots,
+      );
+      if (!skillsByPath.has(skillIdentity)) {
+        skillsByPath.set(skillIdentity, skill);
+      }
+    }
     return normalized.map((item) => {
-      const skill = skillsByPath.get(item.path);
+      const skill =
+        skillsByPath.get(
+          normalizeProjectSkillPath(item.path, projectSkillRoots),
+        ) ?? skillsByPath.get(item.path);
       if (!skill) {
         throw new Error(`Skill context path is not available: ${item.path}`);
       }
@@ -5577,6 +5660,85 @@ function normalizeSkillRecords(value: unknown): CodexSkillRecord[] {
       } satisfies CodexSkillRecord;
     })
     .filter((skill): skill is CodexSkillRecord => Boolean(skill));
+}
+
+function getProjectSkillRoots(
+  state: ServeState,
+  project: ProjectRecord,
+): string[] {
+  return Array.from(
+    new Set([
+      project.rootPath,
+      ...state.chats
+        .filter((chat) => chat.projectId === project.id)
+        .map((chat) => chat.worktreePath),
+    ]),
+  ).sort((left, right) => right.length - left.length);
+}
+
+function getSkillListRoots(chat: ChatRecord, project: ProjectRecord): string[] {
+  return Array.from(new Set([chat.worktreePath, project.rootPath]));
+}
+
+function sortSkillsByRootPreference(
+  skills: CodexSkillRecord[],
+  roots: string[],
+): CodexSkillRecord[] {
+  return [...skills].sort(
+    (left, right) =>
+      getPathRootIndex(left.path, roots) - getPathRootIndex(right.path, roots),
+  );
+}
+
+function getPathRootIndex(path: string, roots: string[]): number {
+  if (!isAbsolute(path)) {
+    return roots.length;
+  }
+  const rootIndex = roots.findIndex((root) => isPathInside(root, path));
+  return rootIndex === -1 ? roots.length : rootIndex;
+}
+
+function normalizeRecentProjectSkillRecordPaths(
+  records: RecentProjectSkillRecord[],
+  projectSkillRoots: string[],
+): RecentProjectSkillRecord[] {
+  const seenSkillPaths = new Set<string>();
+  return records
+    .map((record) => ({
+      ...record,
+      path: normalizeProjectSkillPath(record.path, projectSkillRoots),
+    }))
+    .filter((record) => {
+      if (seenSkillPaths.has(record.path)) {
+        return false;
+      }
+      seenSkillPaths.add(record.path);
+      return true;
+    });
+}
+
+function normalizeProjectSkillPath(
+  skillPath: string,
+  projectSkillRoots: string[],
+): string {
+  const trimmedSkillPath = skillPath.trim();
+  if (!isAbsolute(trimmedSkillPath)) {
+    return trimmedSkillPath;
+  }
+
+  for (const root of projectSkillRoots) {
+    const relativeSkillPath = relative(root, trimmedSkillPath);
+    if (
+      relativeSkillPath &&
+      !relativeSkillPath.startsWith(`..${sep}`) &&
+      relativeSkillPath !== ".." &&
+      !isAbsolute(relativeSkillPath)
+    ) {
+      return relativeSkillPath.split(sep).join("/");
+    }
+  }
+
+  return trimmedSkillPath;
 }
 
 function normalizeFileRecords(value: unknown): CodexFileRecord[] {

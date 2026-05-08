@@ -53,6 +53,7 @@ import {
   deleteWorktreeMutation,
   interruptChatMutation,
   queueMessageMutation,
+  rememberProjectSkillMutation,
   restorePendingMessageMutation,
   sendMessageMutation,
   steerMessageMutation,
@@ -70,6 +71,8 @@ import {
   modelsQueryOptions,
   projectChatsQueryOptions,
   projectGitHubCheckoutTargetsQueryOptions,
+  projectRecentSkillsQueryOptions,
+  projectSkillsQueryOptions,
   projectWorktreesQueryOptions,
   projectsQueryOptions,
 } from "../api/queries";
@@ -132,6 +135,7 @@ import {
   getComposerSubmitModeForEnter,
   type ComposerSubmitMode,
 } from "../lib/composer-keyboard";
+import { getProjectSkillPathIdentity } from "../lib/project-skill-path";
 import { cn } from "../lib/utils";
 import {
   dedupeChatThreads,
@@ -173,6 +177,7 @@ import type {
   PhantomEvent,
   ProjectWorktreeRecord,
   ProjectRecord,
+  RecentProjectSkillRecord,
   RenderedChatMessageRecord,
 } from "@phantompane/server";
 
@@ -200,6 +205,7 @@ const chatEventNames = [
 ];
 const chatScrollStorageKeyPrefix = "phantom.chatScroll:v1:";
 const chatScrollBottomThreshold = 4;
+const maxVisibleRecentSkillSuggestions = 5;
 const searchParamKeys = {
   chat: "chat",
   effort: "effort",
@@ -620,6 +626,9 @@ export function HomeRoute() {
   const [selectedSkillPaths, setSelectedSkillPaths] = useState<Set<string>>(
     () => new Set(),
   );
+  const [recentProjectSkills, setRecentProjectSkills] = useState<
+    RecentProjectSkillRecord[]
+  >([]);
   const [transientFileSearchQuery, setTransientFileSearchQuery] =
     useState<TransientFileSearchQuery | null>(null);
   const fileSearchQuery =
@@ -629,6 +638,12 @@ export function HomeRoute() {
       : "");
   const fileSearchQueryRef = useRef(fileSearchQuery);
   const fileSearchRequestIdRef = useRef(0);
+  const recentProjectSkillsRequestIdsRef = useRef<Map<string, number>>(
+    new Map(),
+  );
+  const recentProjectSkillRememberChainsRef = useRef<
+    Map<string, Promise<void>>
+  >(new Map());
   const approvalRefreshRequestIdRef = useRef(0);
   const approvalEventVersionRef = useRef(0);
   const [fileSearchResults, setFileSearchResults] = useState<CodexFileRecord[]>(
@@ -963,6 +978,23 @@ export function HomeRoute() {
     });
   }
 
+  function createRecentProjectSkillsRequestId(projectId: string): number {
+    const requestId =
+      (recentProjectSkillsRequestIdsRef.current.get(projectId) ?? 0) + 1;
+    recentProjectSkillsRequestIdsRef.current.set(projectId, requestId);
+    return requestId;
+  }
+
+  function isCurrentRecentProjectSkillsRequest(
+    projectId: string,
+    requestId: number,
+  ): boolean {
+    return (
+      selectedProjectIdRef.current === projectId &&
+      recentProjectSkillsRequestIdsRef.current.get(projectId) === requestId
+    );
+  }
+
   function getCurrentUrlWorkspaceSelectionKey(): string {
     const currentSearchParams = searchParamsRef.current;
     return getWorkspaceSelectionKey(
@@ -1090,6 +1122,8 @@ export function HomeRoute() {
   const canInterruptActiveTurn =
     hasActiveTurn && !isInterrupting && Boolean(selectedChat?.activeTurnId);
   const areComposerOptionsDisabled = !hasSelectedChat || isComposerBlocked;
+  const canSelectProjectComposerContext =
+    Boolean(selectedProject) && !isComposerBlocked;
   const primaryComposerActionLabel =
     formatComposerModeAction(primaryComposerMode);
   const primaryComposerButtonLabel =
@@ -1136,6 +1170,37 @@ export function HomeRoute() {
         })),
     [selectedSkillPaths, skills],
   );
+  const projectSkillRoots = useMemo(
+    () =>
+      [selectedProject?.rootPath ?? null, selectedChat?.worktreePath ?? null]
+        .filter((root): root is string => Boolean(root))
+        .sort((left, right) => right.length - left.length),
+    [selectedChat?.worktreePath, selectedProject?.rootPath],
+  );
+  const recentSkillSuggestions = useMemo(() => {
+    const enabledSkillsByPath = new Map<string, CodexSkillRecord>();
+    for (const skill of skills.filter(
+      (candidate) =>
+        candidate.enabled && !selectedSkillPaths.has(candidate.path),
+    )) {
+      enabledSkillsByPath.set(skill.path, skill);
+      enabledSkillsByPath.set(
+        getProjectSkillPathIdentity(skill.path, projectSkillRoots),
+        skill,
+      );
+    }
+    return recentProjectSkills
+      .map(
+        (recentSkill) =>
+          enabledSkillsByPath.get(recentSkill.path) ??
+          enabledSkillsByPath.get(
+            getProjectSkillPathIdentity(recentSkill.path, projectSkillRoots),
+          ) ??
+          null,
+      )
+      .filter((skill): skill is CodexSkillRecord => Boolean(skill))
+      .slice(0, maxVisibleRecentSkillSuggestions);
+  }, [projectSkillRoots, recentProjectSkills, selectedSkillPaths, skills]);
 
   const fileOptions = useMemo<ComboboxOption[]>(
     () =>
@@ -1325,14 +1390,24 @@ export function HomeRoute() {
 
   useEffect(() => {
     if (!selectedProjectId) {
+      setRecentProjectSkills([]);
       return;
     }
+    const recentSkillsController = new AbortController();
+    void refreshRecentProjectSkills(
+      selectedProjectId,
+      recentSkillsController.signal,
+    );
     void refreshWorktrees(selectedProjectId, {
       updateSelection: isSelectedChatValidated,
     });
     void refreshChats(selectedProjectId, {
       updateSelection: isSelectedChatValidated,
     });
+
+    return () => {
+      recentSkillsController.abort();
+    };
   }, [isSelectedChatValidated, selectedProjectId]);
 
   useEffect(() => {
@@ -1403,9 +1478,19 @@ export function HomeRoute() {
       setFileSearchResults([]);
       setSkills([]);
       setIsMessagesLoading(false);
-      setIsChatContextLoading(false);
       setIsFileSearchLoading(false);
-      return;
+      if (!selectedProjectId) {
+        setIsChatContextLoading(false);
+        return;
+      }
+      const projectSkillsController = new AbortController();
+      void refreshProjectSkills(
+        selectedProjectId,
+        projectSkillsController.signal,
+      );
+      return () => {
+        projectSkillsController.abort();
+      };
     }
 
     setSelectedFiles([]);
@@ -1831,6 +1916,75 @@ export function HomeRoute() {
     }
   }
 
+  async function refreshRecentProjectSkills(
+    projectId: string,
+    signal?: AbortSignal,
+  ) {
+    const requestId = createRecentProjectSkillsRequestId(projectId);
+    try {
+      const data = await queryClient.fetchQuery(
+        projectRecentSkillsQueryOptions(projectId, signal),
+      );
+      if (
+        signal?.aborted ||
+        !isCurrentRecentProjectSkillsRequest(projectId, requestId)
+      ) {
+        return;
+      }
+      setRecentProjectSkills(data.recentSkills);
+    } catch (err) {
+      if (
+        signal?.aborted ||
+        (err instanceof Error && err.name === "AbortError")
+      ) {
+        return;
+      }
+      if (!isCurrentRecentProjectSkillsRequest(projectId, requestId)) {
+        return;
+      }
+      setComposerError(formatErrorMessage("Could not load recent skills", err));
+    }
+  }
+
+  async function refreshProjectSkills(projectId: string, signal?: AbortSignal) {
+    setIsChatContextLoading(true);
+    try {
+      const data = await queryClient.fetchQuery(
+        projectSkillsQueryOptions(projectId, signal),
+      );
+      if (
+        signal?.aborted ||
+        selectedProjectIdRef.current !== projectId ||
+        selectedChatIdRef.current
+      ) {
+        return;
+      }
+      setSkills(data.skills);
+    } catch (err) {
+      if (
+        signal?.aborted ||
+        (err instanceof Error && err.name === "AbortError")
+      ) {
+        return;
+      }
+      if (
+        selectedProjectIdRef.current !== projectId ||
+        selectedChatIdRef.current
+      ) {
+        return;
+      }
+      setComposerError(formatErrorMessage("Could not load skills", err));
+    } finally {
+      if (
+        !signal?.aborted &&
+        selectedProjectIdRef.current === projectId &&
+        !selectedChatIdRef.current
+      ) {
+        setIsChatContextLoading(false);
+      }
+    }
+  }
+
   async function refreshChatContext(chatId: string, signal?: AbortSignal) {
     setIsChatContextLoading(true);
     try {
@@ -2246,6 +2400,8 @@ export function HomeRoute() {
         setTransientFileSearchQuery(null);
         setFileSearchResults([]);
         setSkills([]);
+        createRecentProjectSkillsRequestId(projectId);
+        setRecentProjectSkills([]);
         updatePendingApproval(null);
         restoredPendingComposerContextRef.current = null;
       }
@@ -2647,6 +2803,7 @@ export function HomeRoute() {
     input: SendMessageInput,
     composerInput: string,
     composerAttachments: SelectedAttachment[],
+    composerSkillPaths: Set<string>,
     requestWorkspaceSelectionKey: string,
     githubTargetNumber: number | null,
   ) {
@@ -2674,6 +2831,7 @@ export function HomeRoute() {
         if (isRequestWorkspaceSelected()) {
           setComposerText(composerInput);
           setSelectedAttachments(composerAttachments);
+          setSelectedSkillPaths(new Set(composerSkillPaths));
         }
         return;
       }
@@ -2711,6 +2869,7 @@ export function HomeRoute() {
       ) {
         setComposerText(composerInput);
         setSelectedAttachments(composerAttachments);
+        setSelectedSkillPaths(new Set(composerSkillPaths));
         setComposerError(formatErrorMessage("Could not send message", err));
       }
     } finally {
@@ -2748,6 +2907,7 @@ export function HomeRoute() {
       sendMessageRequestIdRef.current === requestId;
     const composerInput = composerText;
     const composerAttachments = selectedAttachments;
+    const composerSkillPaths = new Set(selectedSkillPaths);
     const text =
       composerInput.trim().length > 0
         ? composerInput
@@ -2777,6 +2937,7 @@ export function HomeRoute() {
         messageInput,
         composerInput,
         composerAttachments,
+        composerSkillPaths,
         workspaceSelectionKeyRef.current,
         selectedGitHubTarget?.number ?? null,
       );
@@ -3175,7 +3336,56 @@ export function HomeRoute() {
   }
 
   function selectSkill(path: string) {
+    const selectedSkill = skills.find(
+      (skill) => skill.enabled && skill.path === path,
+    );
+    if (!selectedSkill) {
+      return;
+    }
+
     setSelectedSkillPaths((current) => new Set(current).add(path));
+    if (!selectedProjectId) {
+      return;
+    }
+    void rememberSelectedProjectSkill(selectedProjectId, path);
+  }
+
+  function rememberSelectedProjectSkill(projectId: string, path: string) {
+    const previousRemember =
+      recentProjectSkillRememberChainsRef.current.get(projectId) ??
+      Promise.resolve();
+    const nextRemember = previousRemember
+      .catch(() => undefined)
+      .then(async () => {
+        createRecentProjectSkillsRequestId(projectId);
+        try {
+          const data = await rememberProjectSkillMutation(projectId, path);
+          queryClient.setQueryData(
+            queryKeys.projectRecentSkills(projectId),
+            data,
+          );
+          if (selectedProjectIdRef.current === projectId) {
+            createRecentProjectSkillsRequestId(projectId);
+            setRecentProjectSkills(data.recentSkills);
+          }
+        } catch (err) {
+          if (selectedProjectIdRef.current === projectId) {
+            setComposerError(
+              formatErrorMessage("Could not remember skill", err),
+            );
+          }
+        }
+      });
+
+    recentProjectSkillRememberChainsRef.current.set(projectId, nextRemember);
+    void nextRemember.finally(() => {
+      if (
+        recentProjectSkillRememberChainsRef.current.get(projectId) ===
+        nextRemember
+      ) {
+        recentProjectSkillRememberChainsRef.current.delete(projectId);
+      }
+    });
   }
 
   const visiblePendingApproval =
@@ -4082,6 +4292,30 @@ export function HomeRoute() {
                     onDismiss={() => setModelError(null)}
                   />
                 )}
+                {canSelectProjectComposerContext &&
+                  !isChatContextLoading &&
+                  recentSkillSuggestions.length > 0 && (
+                    <div className="flex min-h-8 flex-wrap items-center gap-2 px-1">
+                      <span className="text-[length:var(--font-size-xs)] font-medium text-[var(--text-tertiary)]">
+                        Recent skills
+                      </span>
+                      {recentSkillSuggestions.map((skill) => (
+                        <button
+                          aria-label={`Select ${skill.displayName}`}
+                          className="inline-flex h-8 max-w-48 items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border-divider)] bg-[var(--surface-input)] px-2 text-[length:var(--font-size-sm)] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--state-hover-bg)] hover:text-[var(--text-primary)] focus-visible:shadow-[var(--state-focus-ring)]"
+                          key={skill.path}
+                          onClick={() => selectSkill(skill.path)}
+                          title={skill.displayName}
+                          type="button"
+                        >
+                          <Sparkles className="size-3.5 shrink-0" />
+                          <span className="min-w-0 truncate">
+                            {skill.displayName}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 {(selectedAttachments.length > 0 ||
                   selectedFiles.length > 0 ||
                   selectedSkills.length > 0) && (

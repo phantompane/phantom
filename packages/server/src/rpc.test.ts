@@ -6,7 +6,10 @@ const services = vi.hoisted(() => ({
   createChat: vi.fn(),
   getMessages: vi.fn(),
   listProjectGitHubCheckoutTargets: vi.fn(),
+  listProjectSkills: vi.fn(),
   listProjects: vi.fn(),
+  listRecentProjectSkills: vi.fn(),
+  rememberRecentProjectSkill: vi.fn(),
   uploadAttachment: vi.fn(),
 }));
 
@@ -206,6 +209,89 @@ describe("rpcRoutes", () => {
           },
         ],
       },
+    });
+  });
+
+  it("lists recent project skills through Hono RPC", async () => {
+    services.listRecentProjectSkills.mockResolvedValueOnce([
+      {
+        path: "/skills/review/SKILL.md",
+        lastUsedAt: "2026-05-08T00:00:00.000Z",
+      },
+    ]);
+
+    const response = await rpcRoutes.request("/projects/proj_1/recent-skills");
+
+    strictEqual(response.status, 200);
+    deepStrictEqual(services.listRecentProjectSkills.mock.calls[0], ["proj_1"]);
+    deepStrictEqual(await response.json(), {
+      recentSkills: [
+        {
+          path: "/skills/review/SKILL.md",
+          lastUsedAt: "2026-05-08T00:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("lists project skills through Hono RPC", async () => {
+    services.listProjectSkills.mockResolvedValueOnce([
+      {
+        name: "review",
+        path: "/skills/review/SKILL.md",
+        displayName: "Review",
+        description: "Review code",
+        shortDescription: null,
+        enabled: true,
+      },
+    ]);
+
+    const response = await rpcRoutes.request("/projects/proj_1/skills");
+
+    strictEqual(response.status, 200);
+    deepStrictEqual(services.listProjectSkills.mock.calls[0], ["proj_1"]);
+    deepStrictEqual(await response.json(), {
+      skills: [
+        {
+          name: "review",
+          path: "/skills/review/SKILL.md",
+          displayName: "Review",
+          description: "Review code",
+          shortDescription: null,
+          enabled: true,
+        },
+      ],
+    });
+  });
+
+  it("remembers recent project skills through Hono RPC", async () => {
+    services.rememberRecentProjectSkill.mockResolvedValueOnce([
+      {
+        path: "/skills/review/SKILL.md",
+        lastUsedAt: "2026-05-08T00:00:00.000Z",
+      },
+    ]);
+
+    const response = await rpcRoutes.request("/projects/proj_1/recent-skills", {
+      body: JSON.stringify({ path: "/skills/review/SKILL.md" }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    });
+
+    strictEqual(response.status, 200);
+    deepStrictEqual(services.rememberRecentProjectSkill.mock.calls[0], [
+      "proj_1",
+      "/skills/review/SKILL.md",
+    ]);
+    deepStrictEqual(await response.json(), {
+      recentSkills: [
+        {
+          path: "/skills/review/SKILL.md",
+          lastUsedAt: "2026-05-08T00:00:00.000Z",
+        },
+      ],
     });
   });
 

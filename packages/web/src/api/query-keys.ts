@@ -6,6 +6,10 @@ export const queryKeys = {
     ["projects", projectId, "chats"] as const,
   projectGitHubCheckoutTargets: (projectId: string) =>
     ["projects", projectId, "github", "checkout-targets"] as const,
+  projectRecentSkills: (projectId: string) =>
+    ["projects", projectId, "recent-skills"] as const,
+  projectSkills: (projectId: string) =>
+    ["projects", projectId, "skills"] as const,
   projectWorktrees: (projectId: string) =>
     ["projects", projectId, "worktrees"] as const,
   chat: (chatId: string) => ["chats", chatId] as const,

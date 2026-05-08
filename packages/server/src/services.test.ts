@@ -158,6 +158,7 @@ function createTestState(overrides: Partial<ServeState> = {}): ServeState {
     chats: [],
     messages: [],
     queuedMessages: [],
+    recentProjectSkills: {},
     selectedProjectId: null,
     selectedChatId: null,
     ...overrides,
@@ -576,6 +577,171 @@ describe("ServeServices", () => {
     deepStrictEqual(savedState.messages, []);
     strictEqual(savedState.selectedProjectId, null);
     strictEqual(savedState.selectedChatId, null);
+  });
+
+  it("removes recent skill suggestions when removing a project", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      recentProjectSkills: {
+        proj_1: [
+          {
+            path: "/skills/review/SKILL.md",
+            lastUsedAt: "2026-05-08T00:00:00.000Z",
+          },
+        ],
+        proj_2: [
+          {
+            path: "/skills/other/SKILL.md",
+            lastUsedAt: "2026-05-08T00:00:00.000Z",
+          },
+        ],
+      },
+    };
+    const { services, store } = await createHarness(state);
+
+    await services.removeProject("proj_1");
+
+    const savedState = await store.load();
+    deepStrictEqual(savedState.recentProjectSkills, {
+      proj_2: [
+        {
+          path: "/skills/other/SKILL.md",
+          lastUsedAt: "2026-05-08T00:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("lists skills from the project root", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: "/repo" })],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.listSkills.mockResolvedValueOnce({
+      skills: [
+        {
+          name: "review",
+          path: "/repo/.codex/skills/review/SKILL.md",
+          description: "Review code",
+          interface: {
+            displayName: "Review",
+          },
+        },
+      ],
+    });
+
+    const skills = await services.listProjectSkills("proj_1");
+
+    deepStrictEqual(codex.listSkills.mock.calls[0], [["/repo"]]);
+    deepStrictEqual(skills, [
+      {
+        name: "review",
+        path: "/repo/.codex/skills/review/SKILL.md",
+        displayName: "Review",
+        description: "Review code",
+        shortDescription: null,
+        enabled: true,
+      },
+    ]);
+  });
+
+  it("normalizes recent project-local skill paths across project roots and worktrees", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: "/repo" })],
+      chats: [
+        createChat({
+          worktreePath: "/repo/.git/phantom/worktrees/feature",
+        }),
+      ],
+      recentProjectSkills: {
+        proj_1: [
+          {
+            path: "/repo/.codex/skills/review/SKILL.md",
+            lastUsedAt: "2026-05-08T00:00:00.000Z",
+          },
+        ],
+      },
+    };
+    const { services, store } = await createHarness(state);
+
+    const recentSkills = await services.rememberRecentProjectSkill(
+      "proj_1",
+      "/repo/.git/phantom/worktrees/feature/.codex/skills/review/SKILL.md",
+    );
+
+    deepStrictEqual(
+      recentSkills.map((skill) => skill.path),
+      [".codex/skills/review/SKILL.md"],
+    );
+    deepStrictEqual(
+      (await store.load()).recentProjectSkills.proj_1?.map(
+        (skill) => skill.path,
+      ),
+      [".codex/skills/review/SKILL.md"],
+    );
+  });
+
+  it("remembers recent skill selections per project", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      recentProjectSkills: {
+        proj_1: [
+          {
+            path: "/skills/review/SKILL.md",
+            lastUsedAt: "2026-05-08T00:00:00.000Z",
+          },
+        ],
+      },
+    };
+    const { services, store } = await createHarness(state);
+
+    const recentSkills = await services.rememberRecentProjectSkill(
+      "proj_1",
+      "/skills/test/SKILL.md",
+    );
+
+    strictEqual(recentSkills[0]?.path, "/skills/test/SKILL.md");
+    strictEqual(recentSkills[1]?.path, "/skills/review/SKILL.md");
+    deepStrictEqual(await services.listRecentProjectSkills("proj_1"), [
+      ...recentSkills,
+    ]);
+    deepStrictEqual((await store.load()).recentProjectSkills.proj_1, [
+      ...recentSkills,
+    ]);
+  });
+
+  it("updates an existing recent skill selection instead of duplicating it", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      recentProjectSkills: {
+        proj_1: [
+          {
+            path: "/skills/review/SKILL.md",
+            lastUsedAt: "2026-05-08T00:00:00.000Z",
+          },
+          {
+            path: "/skills/test/SKILL.md",
+            lastUsedAt: "2026-05-08T00:30:00.000Z",
+          },
+        ],
+      },
+    };
+    const { services } = await createHarness(state);
+
+    const recentSkills = await services.rememberRecentProjectSkill(
+      "proj_1",
+      "/skills/review/SKILL.md",
+    );
+
+    deepStrictEqual(
+      recentSkills.map((skill) => skill.path),
+      ["/skills/review/SKILL.md", "/skills/test/SKILL.md"],
+    );
   });
 
   it("removes persisted chats for worktrees missing from a live sync", async () => {
@@ -7073,6 +7239,68 @@ describe("ServeServices", () => {
         skills: [{ name: "review", path: "/skills/review/SKILL.md" }],
       },
     ]);
+  });
+
+  it("remaps project-root skill context to the selected chat worktree", async () => {
+    const projectRoot = await createTemporaryDirectory();
+    const worktreePath = join(projectRoot, ".git/phantom/worktrees/feature");
+    const projectSkillPath = join(projectRoot, ".codex/skills/review/SKILL.md");
+    const worktreeSkillPath = join(
+      worktreePath,
+      ".codex/skills/review/SKILL.md",
+    );
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: projectRoot })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.listSkills.mockResolvedValueOnce({
+      skills: [
+        { name: "review", path: projectSkillPath },
+        { name: "review", path: worktreeSkillPath },
+      ],
+    });
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_1" } });
+
+    await services.sendMessage("chat_1", {
+      skills: [{ name: "review", path: projectSkillPath }],
+      text: "please review",
+    });
+
+    deepStrictEqual(codex.startTurn.mock.calls[0]?.[3], {
+      skills: [{ name: "review", path: worktreeSkillPath }],
+    });
+  });
+
+  it("allows root-only project skill context for a new worktree chat", async () => {
+    const projectRoot = await createTemporaryDirectory();
+    const worktreePath = join(projectRoot, ".git/phantom/worktrees/feature");
+    const projectSkillPath = join(projectRoot, ".codex/skills/review/SKILL.md");
+    const state = {
+      ...createTestState(),
+      projects: [createProject({ rootPath: projectRoot })],
+      chats: [createChat({ worktreePath })],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.resumeThread.mockResolvedValueOnce({});
+    codex.listSkills.mockResolvedValueOnce({
+      skills: [{ name: "review", path: projectSkillPath }],
+    });
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_1" } });
+
+    await services.sendMessage("chat_1", {
+      skills: [{ name: "review", path: projectSkillPath }],
+      text: "please review",
+    });
+
+    deepStrictEqual(codex.listSkills.mock.calls[0], [
+      [worktreePath, projectRoot],
+    ]);
+    deepStrictEqual(codex.startTurn.mock.calls[0]?.[3], {
+      skills: [{ name: "review", path: projectSkillPath }],
+    });
   });
 
   it("uploads image attachments and passes them to Codex turns", async () => {

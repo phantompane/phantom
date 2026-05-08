@@ -7,6 +7,7 @@ import type {
   CodexTurnContextItem,
   ProjectRecord,
   QueuedMessageRecord,
+  RecentProjectSkillRecord,
 } from "@phantompane/server";
 
 export interface DeleteWorktreeInput {
@@ -112,6 +113,18 @@ export async function syncWorktreeMutation(
     await api.projects[":projectId"].worktrees.sync.$post({
       param: { projectId: routeParam(projectId) },
       json: input,
+    }),
+  );
+}
+
+export async function rememberProjectSkillMutation(
+  projectId: string,
+  path: string,
+) {
+  return readRpcJson<{ recentSkills: RecentProjectSkillRecord[] }>(
+    await api.projects[":projectId"]["recent-skills"].$post({
+      param: { projectId: routeParam(projectId) },
+      json: { path },
     }),
   );
 }
