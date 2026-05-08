@@ -3077,6 +3077,9 @@ export class ServeServices {
       method === "guardianWarning" ||
       method === "configWarning"
     ) {
+      if (isHiddenCodexWarning(method, params)) {
+        return;
+      }
       await this.addRichEventMessage({
         chatId,
         eventData: params,
@@ -5868,6 +5871,32 @@ function sanitizeCodexEventParams(method: string, params: unknown): unknown {
   }
 
   return params;
+}
+
+const hiddenCodexWarningMessages = new Set([
+  "Automatic approval review approved",
+]);
+
+function isHiddenCodexWarning(method: string, params: unknown): boolean {
+  if (
+    method !== "warning" &&
+    method !== "guardianWarning" &&
+    method !== "configWarning"
+  ) {
+    return false;
+  }
+
+  const object = getParamObject(params);
+  const candidates = [
+    summarizeCodexEvent(method, params),
+    typeof object?.message === "string" ? object.message : null,
+    typeof object?.summary === "string" ? object.summary : null,
+  ];
+  return candidates.some(
+    (candidate) =>
+      typeof candidate === "string" &&
+      hiddenCodexWarningMessages.has(candidate.trim()),
+  );
 }
 
 function sanitizeCodexEventItem(item: Record<string, unknown>): unknown {

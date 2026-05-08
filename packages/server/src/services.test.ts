@@ -8479,6 +8479,46 @@ describe("ServeServices", () => {
     strictEqual(emittedFileCompletedChanges?.[0]?.diff, undefined);
   });
 
+  it("does not store automatic approval review warnings as chat messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
+    };
+    const { codex, store } = await createHarness(state);
+
+    codex.emitNotification({
+      method: "warning",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        message: "Automatic approval review approved",
+      },
+    });
+    codex.emitNotification({
+      method: "warning",
+      params: {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        message: "Review this warning",
+      },
+    });
+
+    await vi.waitFor(async () => {
+      strictEqual((await store.load()).messages.length, 1);
+    });
+
+    const savedState = await store.load();
+    deepStrictEqual(
+      savedState.messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [["event", "Review this warning", "warning"]],
+    );
+  });
+
   it("preserves lightweight markers for repeated hidden diff and patch updates", async () => {
     const state = {
       ...createTestState(),
