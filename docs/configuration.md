@@ -146,7 +146,13 @@ An array of file paths or glob patterns to automatically copy from the current w
 ```json
 {
   "postCreate": {
-    "copyFiles": [".env", ".env*", "config/database.local.yml", "config/**/*.local.yml", "secrets/[ab]*.json"]
+    "copyFiles": [
+      ".env",
+      ".env*",
+      "config/database.local.yml",
+      "config/**/*.local.yml",
+      "secrets/[ab]*.json"
+    ]
   }
 }
 ```
