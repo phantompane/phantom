@@ -438,7 +438,7 @@ export class CodexBridge {
     await this.sendRequest("initialize", {
       clientInfo: {
         name: "phantom_serve",
-        title: "Phantom Serve",
+        title: "Phantom",
         version: "0.1.0",
       },
       capabilities: {
