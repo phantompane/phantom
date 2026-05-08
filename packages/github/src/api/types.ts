@@ -21,6 +21,9 @@ export interface GitHubIssue {
 
 export interface GitHubCheckoutTarget {
   author: string | null;
+  baseRepoFullName?: string;
+  headRef?: string;
+  headRepoFullName?: string;
   htmlUrl: string;
   kind: "issue" | "pullRequest";
   number: number;

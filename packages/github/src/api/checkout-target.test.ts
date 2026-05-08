@@ -7,6 +7,9 @@ interface MockCheckoutTargetOctokit {
   issues: {
     listForRepo: ReturnType<typeof vi.fn>;
   };
+  pulls: {
+    list: ReturnType<typeof vi.fn>;
+  };
 }
 
 let mockOctokit: MockCheckoutTargetOctokit | undefined;
@@ -47,6 +50,22 @@ describe("listGitHubCheckoutTargets", () => {
           ],
         })),
       },
+      pulls: {
+        list: vi.fn(async () => ({
+          data: [
+            {
+              number: 42,
+              head: {
+                ref: "fix/checkout",
+                repo: { full_name: "owner/repo" },
+              },
+              base: {
+                repo: { full_name: "owner/repo" },
+              },
+            },
+          ],
+        })),
+      },
     };
     createGitHubClientMock.mockImplementation(async () => mockOctokit!);
 
@@ -62,9 +81,20 @@ describe("listGitHubCheckoutTargets", () => {
       direction: "desc",
       per_page: 10,
     });
+    deepStrictEqual(mockOctokit!.pulls.list.mock.calls[0]?.[0], {
+      owner: "owner",
+      repo: "repo",
+      state: "open",
+      sort: "updated",
+      direction: "desc",
+      per_page: 10,
+    });
     deepStrictEqual(targets, [
       {
         author: "alice",
+        baseRepoFullName: "owner/repo",
+        headRef: "fix/checkout",
+        headRepoFullName: "owner/repo",
         htmlUrl: "https://github.com/owner/repo/pull/42",
         kind: "pullRequest",
         number: 42,
@@ -87,6 +117,11 @@ describe("listGitHubCheckoutTargets", () => {
     mockOctokit = {
       issues: {
         listForRepo: vi.fn(async () => ({
+          data: [],
+        })),
+      },
+      pulls: {
+        list: vi.fn(async () => ({
           data: [],
         })),
       },
