@@ -153,12 +153,14 @@ An array of file paths or glob patterns to automatically copy from the current w
 
 **Glob Pattern Support:**
 
-Glob patterns allow you to match multiple files with a single pattern. Supported patterns:
+Glob patterns allow you to match multiple files with a single pattern. Phantom uses the [`glob`](https://github.com/isaacs/node-glob#glob-primer) package for pattern matching, so refer to its documentation for the full pattern syntax.
 
-- `*` - Matches any characters except `/` (e.g., `*.env` matches `.env` but not `config/.env`)
-- `**` - Matches any characters including `/` (recursive, e.g., `**/*.yml` matches all `.yml` files in any subdirectory)
-- `?` - Matches any single character (e.g., `file?.txt` matches `file1.txt` but not `file10.txt`)
-- `[abc]` - Matches any character in the brackets (e.g., `file-[ab].txt` matches `file-a.txt` and `file-b.txt`)
+Phantom resolves `copyFiles` patterns with these options:
+
+- Dotfiles are included (equivalent to `dot: true`), so `*.env` can match `.env`
+- Directories are excluded; only files are copied
+- `.git/**` is ignored
+- Returned paths use `/` separators, including on Windows
 
 **Common Patterns:**
 
@@ -166,6 +168,7 @@ Glob patterns allow you to match multiple files with a single pattern. Supported
 - `*.local` - All files ending with `.local` in the root directory
 - `config/**/*.local.yml` - All `.local.yml` files anywhere under `config/` directory
 - `secrets/[ab]*.json` - All `.json` files in `secrets/` starting with `a` or `b`
+- `*.{env,json}` - All `.env` and `.json` files in the root directory
 
 **Notes:**
 
