@@ -1850,6 +1850,766 @@ describe("ServeServices", () => {
     );
   });
 
+  it("uses the persisted local timeline when Codex history repeats it", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "initial request",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_event",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "item/started: agentMessage",
+          eventType: "item/started",
+          createdAt: "2026-05-08T00:45:01.000Z",
+        },
+        {
+          id: "msg_assistant_1",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "first update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_1",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+        {
+          id: "msg_user_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "follow up",
+          itemId: "turn_1",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+        {
+          id: "msg_assistant_2",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "second update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_2",
+          createdAt: "2026-05-08T00:46:02.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              { id: "item-1", type: "userMessage", text: "initial request" },
+              { id: "item-2", type: "agentMessage", text: "first update" },
+              { id: "item-3", type: "userMessage", text: "follow up" },
+              { id: "item-4", type: "agentMessage", text: "second update" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["msg_user_1", "user", "initial request", undefined],
+        ["msg_event", "event", "item/started: agentMessage", "item/started"],
+        [
+          "msg_assistant_1",
+          "assistant",
+          "first update",
+          "item/agentMessage/delta",
+        ],
+        ["msg_user_2", "user", "follow up", undefined],
+        [
+          "msg_assistant_2",
+          "assistant",
+          "second update",
+          "item/agentMessage/delta",
+        ],
+      ],
+    );
+  });
+
+  it("drops repeated Codex history before merging newer Codex messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "initial request",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_assistant_1",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "first update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_1",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+        {
+          id: "msg_user_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "follow up",
+          itemId: "turn_1",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+        {
+          id: "msg_assistant_2",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "second update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_2",
+          createdAt: "2026-05-08T00:46:02.000Z",
+        },
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "queued next",
+          eventType: "chat.message.queued",
+          createdAt: "2026-05-08T00:47:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              { id: "item-1", type: "userMessage", text: "initial request" },
+              { id: "item-2", type: "agentMessage", text: "first update" },
+              { id: "item-3", type: "userMessage", text: "follow up" },
+              { id: "item-4", type: "agentMessage", text: "second update" },
+              { id: "item-5", type: "agentMessage", text: "newer update" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["user", "initial request", undefined],
+        ["assistant", "first update", "item/agentMessage/delta"],
+        ["user", "follow up", undefined],
+        ["assistant", "second update", "item/agentMessage/delta"],
+        ["assistant", "newer update", undefined],
+        ["user", "queued next", "chat.message.queued"],
+      ],
+    );
+  });
+
+  it("drops a single completed exchange before a newer fallback Codex message", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "initial request",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_assistant_1",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "first update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_1",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              { id: "item-1", type: "userMessage", text: "initial request" },
+              { id: "item-2", type: "agentMessage", text: "first update" },
+              { id: "item-3", type: "agentMessage", text: "newer update" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["msg_user_1", "user", "initial request", undefined],
+        [
+          "msg_assistant_1",
+          "assistant",
+          "first update",
+          "item/agentMessage/delta",
+        ],
+        ["chat_1_codex_turn_1_2", "assistant", "newer update", undefined],
+      ],
+    );
+  });
+
+  it("does not skip intervening local transcript messages when dropping fallback prefixes", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "initial request",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_local_only",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "local-only follow up",
+          createdAt: "2026-05-08T00:45:01.000Z",
+        },
+        {
+          id: "msg_assistant_1",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "first update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_1",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              { id: "item-1", type: "userMessage", text: "initial request" },
+              { id: "item-2", type: "agentMessage", text: "first update" },
+              { id: "item-3", type: "agentMessage", text: "newer update" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [message.id, message.role, message.text]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "initial request"],
+        ["chat_1_codex_turn_1_1", "assistant", "first update"],
+        ["chat_1_codex_turn_1_2", "assistant", "newer update"],
+        ["msg_user_1", "user", "initial request"],
+        ["msg_local_only", "user", "local-only follow up"],
+        ["msg_assistant_1", "assistant", "first update"],
+      ],
+    );
+  });
+
+  it("drops shorter repeated Codex prefixes before newer fallback Codex messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "initial request",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_assistant_1",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "first update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_1",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+        {
+          id: "msg_user_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "follow up",
+          itemId: "turn_1",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "queued next",
+          eventType: "chat.message.queued",
+          createdAt: "2026-05-08T00:47:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              { id: "item-1", type: "userMessage", text: "initial request" },
+              { id: "item-2", type: "agentMessage", text: "first update" },
+            ],
+          },
+          {
+            id: "turn_2",
+            items: [
+              { id: "item-3", type: "userMessage", text: "follow up" },
+              { id: "item-4", type: "agentMessage", text: "newer update" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["msg_user_1", "user", "initial request", undefined],
+        [
+          "msg_assistant_1",
+          "assistant",
+          "first update",
+          "item/agentMessage/delta",
+        ],
+        ["msg_user_2", "user", "follow up", undefined],
+        ["chat_1_codex_turn_2_1", "assistant", "newer update", undefined],
+        ["msg_queued", "user", "queued next", "chat.message.queued"],
+      ],
+    );
+  });
+
+  it("drops repeated Codex prefixes across stale steered local users", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "initial request",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_assistant_1",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "first update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_1",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+        {
+          id: "msg_steered",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "adjust course",
+          eventType: "chat.message.steered",
+          itemId: "turn_1",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+        {
+          id: "msg_assistant_2",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "adjusted update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_2",
+          createdAt: "2026-05-08T00:46:02.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              { id: "item-1", type: "userMessage", text: "initial request" },
+              { id: "item-2", type: "agentMessage", text: "first update" },
+              { id: "item-3", type: "userMessage", text: "adjust course" },
+              { id: "item-4", type: "agentMessage", text: "adjusted update" },
+              { id: "item-5", type: "agentMessage", text: "newer update" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["msg_user_1", "user", "initial request", undefined],
+        [
+          "msg_assistant_1",
+          "assistant",
+          "first update",
+          "item/agentMessage/delta",
+        ],
+        ["msg_steered", "user", "adjust course", undefined],
+        [
+          "msg_assistant_2",
+          "assistant",
+          "adjusted update",
+          "item/agentMessage/delta",
+        ],
+        ["chat_1_codex_turn_1_4", "assistant", "newer update", undefined],
+      ],
+    );
+  });
+
+  it("keeps local repeated transcript messages before newer same-text Codex messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "initial request",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_assistant_1",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "repeated update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_1",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+        {
+          id: "msg_user_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "follow up",
+          itemId: "turn_1",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+        {
+          id: "msg_assistant_2",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "second update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_2",
+          createdAt: "2026-05-08T00:46:02.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              { id: "item-1", type: "userMessage", text: "initial request" },
+              { id: "item-2", type: "agentMessage", text: "repeated update" },
+              { id: "item-3", type: "userMessage", text: "follow up" },
+              { id: "item-4", type: "agentMessage", text: "second update" },
+              { id: "item-5", type: "agentMessage", text: "repeated update" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [message.id, message.role, message.text]),
+      [
+        ["msg_user_1", "user", "initial request"],
+        ["msg_assistant_1", "assistant", "repeated update"],
+        ["msg_user_2", "user", "follow up"],
+        ["msg_assistant_2", "assistant", "second update"],
+        ["chat_1_codex_turn_1_4", "assistant", "repeated update"],
+      ],
+    );
+  });
+
+  it("places retained local messages between remaining Codex messages after dropping repeated history", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "initial request",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_assistant_1",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "first update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_1",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+        {
+          id: "msg_user_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "follow up",
+          itemId: "turn_1",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+        {
+          id: "msg_assistant_2",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "second update",
+          eventType: "item/agentMessage/delta",
+          itemId: "local_agent_2",
+          createdAt: "2026-05-08T00:46:02.000Z",
+        },
+        {
+          id: "msg_local_between_codex",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "local note",
+          createdAt: "2026-05-08T00:47:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              {
+                createdAt: "2026-05-08T00:45:10.000Z",
+                type: "userMessage",
+                text: "initial request",
+              },
+              {
+                createdAt: "2026-05-08T00:45:20.000Z",
+                type: "agentMessage",
+                text: "first update",
+              },
+              {
+                createdAt: "2026-05-08T00:46:10.000Z",
+                type: "userMessage",
+                text: "follow up",
+              },
+              {
+                createdAt: "2026-05-08T00:46:20.000Z",
+                type: "agentMessage",
+                text: "second update",
+              },
+              {
+                createdAt: "2026-05-08T00:46:50.000Z",
+                type: "agentMessage",
+                text: "newer update before local",
+              },
+              {
+                createdAt: "2026-05-08T00:47:10.000Z",
+                type: "agentMessage",
+                text: "newer update after local",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [message.role, message.text]),
+      [
+        ["user", "initial request"],
+        ["assistant", "first update"],
+        ["user", "follow up"],
+        ["assistant", "second update"],
+        ["assistant", "newer update before local"],
+        ["user", "local note"],
+        ["assistant", "newer update after local"],
+      ],
+    );
+  });
+
+  it("keeps repeated active local turns separate from older Codex history", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_current" })],
+      messages: [
+        {
+          id: "msg_current_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat request",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_current_assistant_1",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "first repeat response",
+          eventType: "item/agentMessage/delta",
+          itemId: "current_agent_1",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+        {
+          id: "msg_current_user_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "repeat follow up",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+        {
+          id: "msg_current_assistant_2",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "second repeat response",
+          eventType: "item/agentMessage/delta",
+          itemId: "current_agent_2",
+          createdAt: "2026-05-08T00:46:02.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    markChatActiveInCurrentProcess(services, "chat_1");
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [
+              { type: "userMessage", text: "repeat request" },
+              { type: "agentMessage", text: "first repeat response" },
+              { type: "userMessage", text: "repeat follow up" },
+              { type: "agentMessage", text: "second repeat response" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_old_0", "user", "repeat request", undefined],
+        [
+          "chat_1_codex_turn_old_1",
+          "assistant",
+          "first repeat response",
+          undefined,
+        ],
+        ["chat_1_codex_turn_old_2", "user", "repeat follow up", undefined],
+        [
+          "chat_1_codex_turn_old_3",
+          "assistant",
+          "second repeat response",
+          undefined,
+        ],
+        ["msg_current_user_1", "user", "repeat request", undefined],
+        [
+          "msg_current_assistant_1",
+          "assistant",
+          "first repeat response",
+          "item/agentMessage/delta",
+        ],
+        ["msg_current_user_2", "user", "repeat follow up", undefined],
+        [
+          "msg_current_assistant_2",
+          "assistant",
+          "second repeat response",
+          "item/agentMessage/delta",
+        ],
+      ],
+    );
+  });
+
   it("preserves local attachment metadata when Codex thread history matches a sent user message", async () => {
     const attachment = {
       name: "screenshot.png",

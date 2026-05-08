@@ -1235,15 +1235,12 @@ export class ServeServices {
         includeTurns: true,
       });
       const codexMessages = normalizeCodexThreadMessages(result, chat.id);
-      if (codexMessages.length === 0) {
-        return localMessagesWithoutStaleSteeredState(chat, localMessages);
-      }
-      return mergeCodexAndLocalMessages(
+      return resolveChatMessageTimeline({
+        activeTurnId,
+        chat,
         codexMessages,
         localMessages,
-        activeTurnId,
-        chat.activeTurnId != null,
-      );
+      });
     } catch {
       return localMessagesWithoutStaleSteeredState(chat, localMessages);
     }
@@ -3898,18 +3895,72 @@ function extractCodexText(value: unknown): string {
   return extractCodexText(value.content);
 }
 
+interface ResolveChatMessageTimelineInput {
+  activeTurnId: string | null;
+  chat: ChatRecord;
+  codexMessages: InternalChatMessageRecord[];
+  localMessages: ChatMessageRecord[];
+}
+
+function resolveChatMessageTimeline({
+  activeTurnId,
+  chat,
+  codexMessages,
+  localMessages,
+}: ResolveChatMessageTimelineInput): ChatMessageRecord[] {
+  if (codexMessages.length === 0) {
+    return localMessagesWithoutStaleSteeredState(chat, localMessages);
+  }
+  const localMessagesForCanonicalTranscript = isChatInActiveTurn(chat)
+    ? localMessages
+    : localMessagesWithoutStaleSteeredState(chat, localMessages);
+  const canonicalLocalTranscriptMatch = isChatInActiveTurn(chat)
+    ? emptyCanonicalLocalTranscriptMatch()
+    : findCanonicalLocalTranscriptMatch(
+        codexMessages,
+        localMessagesForCanonicalTranscript,
+      );
+  const deduplicatedCodexMessages =
+    codexMessagesWithoutCanonicalLocalTranscript(
+      codexMessages,
+      canonicalLocalTranscriptMatch.codexMessageIndexes,
+    );
+  if (deduplicatedCodexMessages.length === 0) {
+    return localMessagesWithoutStaleSteeredState(chat, localMessages);
+  }
+  const localMessagesForMerge =
+    localMessagesWithCanonicalStaleSteeredStateCleared(
+      chat,
+      localMessages,
+      canonicalLocalTranscriptMatch,
+    );
+  return mergeCodexAndLocalMessages(
+    deduplicatedCodexMessages,
+    localMessagesForMerge,
+    activeTurnId,
+    chat.activeTurnId != null,
+    canonicalLocalTranscriptMatch.localMessageCodexOrderMatches,
+  );
+}
+
 function mergeCodexAndLocalMessages(
   codexMessages: InternalChatMessageRecord[],
   localMessages: ChatMessageRecord[],
   activeTurnId: string | null,
   protectActiveLocalTurn: boolean,
+  protectedLocalMessageCodexOrderMatches: ReadonlyMap<
+    string,
+    number
+  > = new Map(),
 ): ChatMessageRecord[] {
   if (codexMessages.length === 0) {
     return localMessages;
   }
   const mergedCodexMessages = [...codexMessages];
   const unmatchedCodexMessageIndexes = codexMessages.map((_, index) => index);
-  const localMessageCodexOrderMatches = new Map<string, number>();
+  const localMessageCodexOrderMatches = new Map(
+    protectedLocalMessageCodexOrderMatches,
+  );
   const steeredLocalMessageCounts = countSteeredLocalMessages(localMessages);
   const activeLocalTurnStartIndex = protectActiveLocalTurn
     ? findActiveLocalTurnStartIndex(localMessages)
@@ -3933,6 +3984,9 @@ function mergeCodexAndLocalMessages(
       return true;
     }
     if (message.eventType === "chat.message.queued") {
+      return true;
+    }
+    if (protectedLocalMessageCodexOrderMatches.has(message.id)) {
       return true;
     }
     const fallbackTranscriptCodexIndex =
@@ -4047,10 +4101,256 @@ function localMessagesWithoutStaleSteeredState(
     return localMessages;
   }
   return localMessages.map((message) =>
-    message.eventType === "chat.message.steered"
-      ? { ...message, eventType: undefined }
+    localMessageWithoutStaleSteeredState(chat, message),
+  );
+}
+
+function localMessagesWithCanonicalStaleSteeredStateCleared(
+  chat: ChatRecord,
+  localMessages: ChatMessageRecord[],
+  canonicalLocalTranscriptMatch: CanonicalLocalTranscriptMatch,
+): ChatMessageRecord[] {
+  if (
+    isChatInActiveTurn(chat) ||
+    canonicalLocalTranscriptMatch.localMessageCodexOrderMatches.size === 0
+  ) {
+    return localMessages;
+  }
+  return localMessages.map((message) =>
+    canonicalLocalTranscriptMatch.localMessageCodexOrderMatches.has(message.id)
+      ? localMessageWithoutStaleSteeredState(chat, message)
       : message,
   );
+}
+
+function localMessageWithoutStaleSteeredState(
+  chat: ChatRecord,
+  message: ChatMessageRecord,
+): ChatMessageRecord {
+  if (
+    isChatInActiveTurn(chat) ||
+    message.eventType !== "chat.message.steered"
+  ) {
+    return message;
+  }
+  return { ...message, eventType: undefined };
+}
+
+interface CanonicalLocalTranscriptMatch {
+  codexMessageIndexes: ReadonlySet<number>;
+  localMessageCodexOrderMatches: ReadonlyMap<string, number>;
+}
+
+function emptyCanonicalLocalTranscriptMatch(): CanonicalLocalTranscriptMatch {
+  return {
+    codexMessageIndexes: new Set(),
+    localMessageCodexOrderMatches: new Map(),
+  };
+}
+
+function codexMessagesWithoutCanonicalLocalTranscript(
+  codexMessages: InternalChatMessageRecord[],
+  duplicateCodexMessageIndexes: ReadonlySet<number>,
+): InternalChatMessageRecord[] {
+  if (duplicateCodexMessageIndexes.size === 0) {
+    return codexMessages;
+  }
+  const filteredMessages = codexMessages.filter(
+    (_, index) => !duplicateCodexMessageIndexes.has(index),
+  );
+  return filteredMessages;
+}
+
+function findCanonicalLocalTranscriptMatch(
+  codexMessages: InternalChatMessageRecord[],
+  localMessages: ChatMessageRecord[],
+): CanonicalLocalTranscriptMatch {
+  const matchedEntries = findCanonicalLocalTranscriptEntries(
+    codexMessages,
+    localMessages,
+  );
+  if (matchedEntries.length === 0) {
+    return emptyCanonicalLocalTranscriptMatch();
+  }
+  return {
+    codexMessageIndexes: new Set(
+      matchedEntries.map((entry) => entry.codexIndex),
+    ),
+    localMessageCodexOrderMatches: new Map(
+      matchedEntries.map((entry) => [
+        entry.localId,
+        entry.message.codexOrder ?? entry.codexIndex,
+      ]),
+    ),
+  };
+}
+
+function findCanonicalLocalTranscriptEntries(
+  codexMessages: InternalChatMessageRecord[],
+  localMessages: ChatMessageRecord[],
+): Array<{
+  codexIndex: number;
+  localId: string;
+  message: InternalChatMessageRecord;
+}> {
+  const minimumCanonicalTranscriptLength = 4;
+  const matchedCodexEntries: Array<{
+    codexIndex: number;
+    localId: string;
+    message: InternalChatMessageRecord;
+  }> = [];
+  let nextLocalIndex = 0;
+  for (const [codexIndex, codexMessage] of codexMessages.entries()) {
+    if (!isTranscriptMessage(codexMessage)) {
+      continue;
+    }
+    const matchedLocalIndex = findNextCanonicalLocalTranscriptIndex(
+      localMessages,
+      nextLocalIndex,
+      codexMessage,
+    );
+    if (matchedLocalIndex === -1) {
+      break;
+    }
+    const matchedLocalMessage = localMessages[matchedLocalIndex];
+    if (!matchedLocalMessage) {
+      break;
+    }
+    matchedCodexEntries.push({
+      codexIndex,
+      localId: matchedLocalMessage.id,
+      message: codexMessage,
+    });
+    nextLocalIndex = matchedLocalIndex + 1;
+  }
+  const matchedMessages = matchedCodexEntries.map((entry) => entry.message);
+  const hasNewerCodexTranscriptMessage =
+    hasCodexTranscriptMessageAfterMatchedPrefix(
+      codexMessages,
+      matchedCodexEntries,
+    );
+  const hasSubstantialCanonicalTranscript =
+    matchedMessages.length >= minimumCanonicalTranscriptLength &&
+    matchedMessages.some((message) => message.role === "user") &&
+    matchedMessages.filter((message) => message.role === "assistant").length >=
+      2;
+  const hasOpenUserBoundaryBeforeNewerCodexTranscript =
+    hasNewerCodexTranscriptMessage &&
+    matchedMessages[0]?.role === "user" &&
+    matchedMessages.some((message) => message.role === "assistant") &&
+    matchedMessages[matchedMessages.length - 1]?.role === "user";
+  const hasCompletedExchangeBeforeSameTurnCodexAssistant =
+    matchedMessages[0]?.role === "user" &&
+    matchedMessages.some((message) => message.role === "assistant") &&
+    matchedMessages[matchedMessages.length - 1]?.role === "assistant" &&
+    hasSameTurnAssistantMessageAfterMatchedPrefix(
+      codexMessages,
+      matchedCodexEntries,
+    );
+  if (
+    !hasSubstantialCanonicalTranscript &&
+    !hasOpenUserBoundaryBeforeNewerCodexTranscript &&
+    !hasCompletedExchangeBeforeSameTurnCodexAssistant
+  ) {
+    return [];
+  }
+  const codexTurnIds = new Set(
+    matchedMessages.map((message) => message.codexTurnId).filter(Boolean),
+  );
+  if (codexTurnIds.size > 1 && !hasOpenUserBoundaryBeforeNewerCodexTranscript) {
+    return [];
+  }
+  return matchedCodexEntries;
+}
+
+function findNextCanonicalLocalTranscriptIndex(
+  localMessages: ChatMessageRecord[],
+  startIndex: number,
+  codexMessage: InternalChatMessageRecord,
+): number {
+  for (
+    let localIndex = startIndex;
+    localIndex < localMessages.length;
+    localIndex += 1
+  ) {
+    const localMessage = localMessages[localIndex]!;
+    if (!isTranscriptMessage(localMessage)) {
+      if (isSkippableCanonicalLocalTimelineMessage(localMessage)) {
+        continue;
+      }
+      return -1;
+    }
+    return messageFingerprint(localMessage) ===
+      messageFingerprint(codexMessage) &&
+      isLocalMessageAtOrBeforeCodexMessage(localMessage, codexMessage)
+      ? localIndex
+      : -1;
+  }
+  return -1;
+}
+
+function isSkippableCanonicalLocalTimelineMessage(
+  message: ChatMessageRecord,
+): boolean {
+  return message.role === "event" || message.role === "error";
+}
+
+function hasCodexTranscriptMessageAfterMatchedPrefix(
+  codexMessages: InternalChatMessageRecord[],
+  matchedEntries: Array<{ codexIndex: number }>,
+): boolean {
+  const lastMatchedEntry = matchedEntries[matchedEntries.length - 1];
+  if (!lastMatchedEntry) {
+    return false;
+  }
+  return codexMessages.some(
+    (message, index) =>
+      index > lastMatchedEntry.codexIndex && isTranscriptMessage(message),
+  );
+}
+
+function hasSameTurnAssistantMessageAfterMatchedPrefix(
+  codexMessages: InternalChatMessageRecord[],
+  matchedEntries: Array<{ codexIndex: number }>,
+): boolean {
+  const lastMatchedEntry = matchedEntries[matchedEntries.length - 1];
+  if (!lastMatchedEntry) {
+    return false;
+  }
+  const lastMatchedMessage = codexMessages[lastMatchedEntry.codexIndex];
+  if (!lastMatchedMessage?.codexTurnId) {
+    return false;
+  }
+  return codexMessages.some(
+    (message, index) =>
+      index > lastMatchedEntry.codexIndex &&
+      message.codexTurnId === lastMatchedMessage.codexTurnId &&
+      message.role === "assistant" &&
+      isTranscriptMessage(message),
+  );
+}
+
+function isTranscriptMessage(message: ChatMessageRecord): boolean {
+  return (
+    (message.role === "assistant" || message.role === "user") &&
+    !isQueuedMessage(message) &&
+    !isPendingSteeredMessage(message)
+  );
+}
+
+function isLocalMessageAtOrBeforeCodexMessage(
+  localMessage: ChatMessageRecord,
+  codexMessage: InternalChatMessageRecord,
+): boolean {
+  if (codexMessage.hasFallbackTimestamp) {
+    return true;
+  }
+  const codexTime = Date.parse(codexMessage.createdAt);
+  const localTime = Date.parse(localMessage.createdAt);
+  if (Number.isFinite(codexTime) && Number.isFinite(localTime)) {
+    return localTime <= codexTime;
+  }
+  return localMessage.createdAt <= codexMessage.createdAt;
 }
 
 function insertRecordAtIndex<TRecord>(
@@ -4117,10 +4417,14 @@ function getLocalMessageMergeSortBucket(
   activeTurnId: string | null,
 ): number {
   if (isPendingSteeredMessage(message)) {
-    return orderedCodexMessages.length * 2 + 2;
+    return getAfterCodexMessagesMergeSortBucket(orderedCodexMessages, 2);
   }
   if (isQueuedMessage(message)) {
-    return orderedCodexMessages.length * 2 + 3;
+    return getAfterCodexMessagesMergeSortBucket(orderedCodexMessages, 3);
+  }
+  const matchedCodexOrder = localMessageCodexOrderMatches.get(message.id);
+  if (matchedCodexOrder !== undefined && isTranscriptMessage(message)) {
+    return matchedCodexOrder * 2;
   }
   if (isLocalTimelineEvent(message)) {
     return getLocalTimelineEventMergeSortBucket(
@@ -4152,6 +4456,29 @@ function getLocalMessageMergeSortBucket(
     localMessages,
     localMessageCodexOrderMatches,
   );
+}
+
+function getAfterCodexMessagesMergeSortBucket(
+  orderedCodexMessages: InternalChatMessageRecord[],
+  offset: number,
+): number {
+  const maxCodexOrder = orderedCodexMessages.reduce(
+    (maxOrder, message, index) =>
+      Math.max(maxOrder, message.codexOrder ?? index),
+    -1,
+  );
+  return (maxCodexOrder + 1) * 2 + offset;
+}
+
+function getBeforeCodexMessageMergeSortBucket(
+  orderedCodexMessages: InternalChatMessageRecord[],
+  insertionIndex: number,
+): number {
+  const codexMessage = orderedCodexMessages[insertionIndex];
+  if (!codexMessage) {
+    return getAfterCodexMessagesMergeSortBucket(orderedCodexMessages, 1);
+  }
+  return (codexMessage.codexOrder ?? insertionIndex) * 2 - 1;
 }
 
 function getLocalTimelineEventMergeSortBucket(
@@ -4216,7 +4543,7 @@ function getLocalTimelineEventMergeSortBucket(
     return earlierLocalBoundaryBucket + 0.5;
   }
   if (laterLocalBoundaryBucket === undefined) {
-    return orderedCodexMessages.length * 2 + 1;
+    return getAfterCodexMessagesMergeSortBucket(orderedCodexMessages, 1);
   }
   return laterLocalBoundaryBucket - 0.5;
 }
@@ -4247,10 +4574,10 @@ function getLocalTimelineEventBoundaryMergeSortBucket(
     }
   }
   if (isPendingSteeredMessage(message)) {
-    return orderedCodexMessages.length * 2 + 2;
+    return getAfterCodexMessagesMergeSortBucket(orderedCodexMessages, 2);
   }
   if (isQueuedMessage(message)) {
-    return orderedCodexMessages.length * 2 + 3;
+    return getAfterCodexMessagesMergeSortBucket(orderedCodexMessages, 3);
   }
   if (!isLiveAssistantDeltaMessage(message)) {
     return null;
@@ -4296,8 +4623,11 @@ function getStandardLocalMessageMergeSortBucket(
     );
     return applyEarlierLocalCodexBoundary(
       nextTrustedInsertionIndex === -1
-        ? orderedCodexMessages.length * 2 + 1
-        : nextTrustedInsertionIndex * 2 - 1,
+        ? getAfterCodexMessagesMergeSortBucket(orderedCodexMessages, 1)
+        : getBeforeCodexMessageMergeSortBucket(
+            orderedCodexMessages,
+            nextTrustedInsertionIndex,
+          ),
       index,
       localMessages,
       localMessageCodexOrderMatches,
@@ -4305,8 +4635,11 @@ function getStandardLocalMessageMergeSortBucket(
   }
   const bucket =
     insertionIndex === -1
-      ? orderedCodexMessages.length * 2 + 1
-      : insertionIndex * 2 - 1;
+      ? getAfterCodexMessagesMergeSortBucket(orderedCodexMessages, 1)
+      : getBeforeCodexMessageMergeSortBucket(
+          orderedCodexMessages,
+          insertionIndex,
+        );
   return applyEarlierLocalCodexBoundary(
     bucket,
     index,
@@ -4424,10 +4757,13 @@ function getLiveAssistantDeltaMergeSortBucket(
       localMessageCodexOrderMatches,
     );
     return earlierMatchedCodexOrder === undefined
-      ? orderedCodexMessages.length * 2 + 1
+      ? getAfterCodexMessagesMergeSortBucket(orderedCodexMessages, 1)
       : earlierMatchedCodexOrder * 2 + 0.5;
   }
-  const bucket = boundaryInsertionIndex * 2 - 1;
+  const bucket = getBeforeCodexMessageMergeSortBucket(
+    orderedCodexMessages,
+    boundaryInsertionIndex,
+  );
   return applyEarlierLocalCodexBoundary(
     bucket,
     index,
