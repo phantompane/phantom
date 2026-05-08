@@ -29,6 +29,9 @@ export interface ProjectWorktreeRecord {
 
 export interface GitHubCheckoutTargetRecord {
   author: string | null;
+  baseRepoFullName?: string;
+  headRef?: string;
+  headRepoFullName?: string;
   htmlUrl: string;
   kind: "issue" | "pullRequest";
   number: number;

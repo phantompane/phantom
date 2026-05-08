@@ -245,6 +245,57 @@ const statusMeta: Record<
   },
 };
 
+function getPullRequestBranchName(
+  target: GitHubCheckoutTargetRecord,
+): string | null {
+  if (target.kind !== "pullRequest" || !target.headRef) {
+    return null;
+  }
+  if (
+    target.headRepoFullName &&
+    target.baseRepoFullName &&
+    target.headRepoFullName !== target.baseRepoFullName
+  ) {
+    const [headOwner] = target.headRepoFullName.split("/");
+    return headOwner ? `${headOwner}/${target.headRef}` : target.headRef;
+  }
+  return target.headRef;
+}
+
+function getPullRequestTargetForWorktree(
+  worktree: ProjectWorktreeRecord | null,
+  githubTargets: GitHubCheckoutTargetsResult | null,
+): GitHubCheckoutTargetRecord | null {
+  if (!worktree || !githubTargets?.available) {
+    return null;
+  }
+  return (
+    githubTargets.targets.find(
+      (target) => getPullRequestBranchName(target) === worktree.branch,
+    ) ?? null
+  );
+}
+
+function getWorktreeDisplayName(
+  worktree: ProjectWorktreeRecord,
+  pullRequestTarget: GitHubCheckoutTargetRecord | null,
+): string {
+  return pullRequestTarget?.title ?? worktree.name;
+}
+
+function GitHubMark({ className }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path d="M12 0.5C5.65 0.5 0.5 5.65 0.5 12c0 5.09 3.29 9.39 7.86 10.92 0.58 0.1 0.79-0.25 0.79-0.56 0-0.27-0.01-1.18-0.02-2.14-3.2 0.7-3.88-1.36-3.88-1.36-0.52-1.33-1.28-1.68-1.28-1.68-1.05-0.72 0.08-0.7 0.08-0.7 1.16 0.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36 0.96 0.1-0.75 0.4-1.25 0.73-1.54-2.55-0.29-5.24-1.28-5.24-5.68 0-1.25 0.45-2.28 1.19-3.08-0.12-0.29-0.52-1.46 0.11-3.04 0 0 0.97-0.31 3.17 1.18a11.02 11.02 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18 0.63 1.58 0.23 2.75 0.11 3.04 0.74 0.8 1.19 1.83 1.19 3.08 0 4.42-2.69 5.39-5.25 5.68 0.41 0.35 0.78 1.05 0.78 2.12 0 1.53-0.01 2.76-0.01 3.14 0 0.31 0.21 0.67 0.79 0.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35 0.5 12 0.5Z" />
+    </svg>
+  );
+}
+
 type PendingApproval = PendingApprovalRecord & { chatId: string };
 type PendingApprovalEventData = PendingApprovalRecord;
 
@@ -932,10 +983,9 @@ export function HomeRoute() {
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
-  const selectedProjectGitHubTargets =
-    selectedProjectId && !selectedChatId
-      ? (githubTargetsByProject[selectedProjectId] ?? null)
-      : null;
+  const selectedProjectGitHubTargets = selectedProjectId
+    ? (githubTargetsByProject[selectedProjectId] ?? null)
+    : null;
   const isSelectedProjectGitHubTargetsLoading = Boolean(
     selectedProjectId && loadingGitHubTargetProjectIds.has(selectedProjectId),
   );
@@ -1162,6 +1212,18 @@ export function HomeRoute() {
     }
     return null;
   }, [selectedChat, selectedProjectId, worktreesByProject]);
+  const selectedPullRequestTarget = useMemo(
+    () =>
+      getPullRequestTargetForWorktree(
+        selectedWorktree,
+        selectedProjectGitHubTargets,
+      ),
+    [selectedProjectGitHubTargets, selectedWorktree],
+  );
+  const selectedWorktreeDisplayName =
+    selectedWorktree && selectedPullRequestTarget
+      ? getWorktreeDisplayName(selectedWorktree, selectedPullRequestTarget)
+      : null;
 
   const chatsByWorktreeByProject = useMemo(() => {
     const nextChatsByWorktreeByProject: Record<
@@ -1260,7 +1322,7 @@ export function HomeRoute() {
 
   useEffect(() => {
     setSelectedGitHubTargetNumber(null);
-    if (!selectedProjectId || selectedChatId) {
+    if (!selectedProjectId) {
       return;
     }
     void refreshGitHubCheckoutTargets(selectedProjectId);
@@ -3161,6 +3223,8 @@ export function HomeRoute() {
                 projects.map((project) => {
                   const isProjectExpanded = expandedProjectIds.has(project.id);
                   const projectWorktrees = worktreesByProject[project.id] ?? [];
+                  const projectGitHubTargets =
+                    githubTargetsByProject[project.id] ?? null;
                   const isProjectDataLoading =
                     loadingProjectIds.has(project.id) &&
                     worktreesByProject[project.id] === undefined;
@@ -3269,6 +3333,16 @@ export function HomeRoute() {
                               const isSelectedWorktree =
                                 selectedProjectId === project.id &&
                                 selectedWorktree?.path === worktree.path;
+                              const pullRequestTarget =
+                                getPullRequestTargetForWorktree(
+                                  worktree,
+                                  projectGitHubTargets,
+                                );
+                              const worktreeDisplayName =
+                                getWorktreeDisplayName(
+                                  worktree,
+                                  pullRequestTarget,
+                                );
                               const worktreeChats =
                                 chatsByWorktreeByProject[project.id]?.get(
                                   worktree.path,
@@ -3301,8 +3375,10 @@ export function HomeRoute() {
                                 loadingChatProjectIds.has(project.id) &&
                                 worktreeChats.length === 0;
                               const title = `${worktree.name} (${worktree.path})${
-                                worktree.isClean ? "" : " [dirty]"
-                              }${
+                                pullRequestTarget
+                                  ? ` [PR #${pullRequestTarget.number}: ${pullRequestTarget.title}]`
+                                  : ""
+                              }${worktree.isClean ? "" : " [dirty]"}${
                                 worktree.isMainWorktree
                                   ? " [main worktree]"
                                   : ""
@@ -3320,7 +3396,7 @@ export function HomeRoute() {
                                   <div className="group/worktree flex items-center gap-0.5 rounded-[var(--radius-sm)]">
                                     <button
                                       aria-expanded={isWorktreeExpanded}
-                                      aria-label={`${isWorktreeExpanded ? "Collapse" : "Expand"} chats for ${worktree.name}`}
+                                      aria-label={`${isWorktreeExpanded ? "Collapse" : "Expand"} chats for ${worktreeDisplayName}`}
                                       className="inline-flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--icon-color-default)] outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:shadow-[var(--state-focus-ring)]"
                                       onClick={() =>
                                         toggleWorktreeChats(
@@ -3354,13 +3430,15 @@ export function HomeRoute() {
                                     >
                                       {worktree.isMainWorktree ? (
                                         <FolderGit2 className="size-3.5 text-[var(--icon-color-default)]" />
+                                      ) : pullRequestTarget ? (
+                                        <GitHubMark className="size-3.5 text-[var(--icon-color-default)]" />
                                       ) : (
                                         <GitBranch className="size-3.5 text-[var(--icon-color-default)]" />
                                       )}
                                       <span className="min-w-0 flex-1">
                                         <span className="flex min-w-0 items-center gap-1.5">
                                           <span className="block min-w-0 truncate font-medium">
-                                            {worktree.name}
+                                            {worktreeDisplayName}
                                           </span>
                                         </span>
                                       </span>
@@ -3734,7 +3812,9 @@ export function HomeRoute() {
                 <div className="flex min-w-0 items-center gap-2">
                   <p className="truncate text-[length:var(--font-size-xl)] font-semibold leading-tight">
                     {selectedChat
-                      ? (selectedWorktree?.name ?? selectedChat.worktreeName)
+                      ? (selectedWorktreeDisplayName ??
+                        selectedWorktree?.name ??
+                        selectedChat.worktreeName)
                       : selectedProject
                         ? "New chat"
                         : "Workspace"}
@@ -3751,6 +3831,18 @@ export function HomeRoute() {
                   )}
                 </p>
               </div>
+              {selectedPullRequestTarget && (
+                <a
+                  aria-label={`Open PR #${selectedPullRequestTarget.number}`}
+                  className="inline-flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--icon-color-default)] outline-none transition-colors duration-[var(--motion-duration-fast)] hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:shadow-[var(--state-focus-ring)]"
+                  href={selectedPullRequestTarget.htmlUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                  title={`Open PR #${selectedPullRequestTarget.number}`}
+                >
+                  <GitHubMark className="size-4" />
+                </a>
+              )}
               {selectedChat && (
                 <Button
                   aria-label={
