@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   completeSlashCommand,
   filterSlashCommands,
+  filterSlashCommandsForState,
   getSlashCommandKeyAction,
   getSlashCommandQuery,
   shouldOpenSlashCommandMenu,
@@ -46,6 +47,29 @@ describe("filterSlashCommands", () => {
     expect(slashCommandOptions.map((command) => command.command)).not.toContain(
       "/clear",
     );
+  });
+
+  it("keeps only active-turn-safe commands while a chat is running", () => {
+    expect(
+      filterSlashCommandsForState(slashCommandOptions, {
+        isChatRunning: true,
+      }).map((command) => command.command),
+    ).toEqual([
+      "/status",
+      "/diff",
+      "/skills",
+      "/rename",
+      "/statusline",
+      "/feedback",
+    ]);
+  });
+
+  it("keeps the full command list while a chat is idle", () => {
+    expect(
+      filterSlashCommandsForState(slashCommandOptions, {
+        isChatRunning: false,
+      }),
+    ).toEqual(slashCommandOptions);
   });
 });
 

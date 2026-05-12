@@ -140,6 +140,7 @@ import { getProjectSkillPathIdentity } from "../lib/project-skill-path";
 import {
   completeSlashCommand,
   filterSlashCommands,
+  filterSlashCommandsForState,
   getSlashCommandKeyAction,
   getSlashCommandQuery,
   shouldOpenSlashCommandMenu,
@@ -1144,15 +1145,22 @@ export function HomeRoute() {
       ? formatComposerModeBusy(pendingComposerMode)
       : primaryComposerActionLabel;
   const slashCommandQuery = getSlashCommandQuery(composerText);
+  const availableSlashCommandOptions = useMemo(
+    () =>
+      filterSlashCommandsForState(slashCommandOptions, {
+        isChatRunning,
+      }),
+    [isChatRunning],
+  );
   const filteredSlashCommandOptions = useMemo(
     () =>
       slashCommandQuery === null
         ? []
-        : filterSlashCommands(slashCommandOptions, slashCommandQuery).slice(
-            0,
-            maxVisibleSlashCommands,
-          ),
-    [slashCommandQuery],
+        : filterSlashCommands(
+            availableSlashCommandOptions,
+            slashCommandQuery,
+          ).slice(0, maxVisibleSlashCommands),
+    [availableSlashCommandOptions, slashCommandQuery],
   );
   const isSlashCommandMenuOpen = shouldOpenSlashCommandMenu({
     composerText,

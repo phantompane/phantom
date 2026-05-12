@@ -1,4 +1,5 @@
 export interface SlashCommandOption {
+  availableDuringActiveTurn?: boolean;
   command: `/${string}`;
   description: string;
   keywords?: string[];
@@ -50,6 +51,7 @@ export const slashCommandOptions: SlashCommandOption[] = [
     label: "Status",
     description: "Show the current session, model, and usage state.",
     keywords: ["usage", "tokens", "limits"],
+    availableDuringActiveTurn: true,
   },
   {
     command: "/permissions",
@@ -80,12 +82,14 @@ export const slashCommandOptions: SlashCommandOption[] = [
     label: "Diff",
     description: "View current file changes.",
     keywords: ["changes", "patch"],
+    availableDuringActiveTurn: true,
   },
   {
     command: "/skills",
     label: "Skills",
     description: "List available Codex skills.",
     keywords: ["skill"],
+    availableDuringActiveTurn: true,
   },
   {
     command: "/fast",
@@ -98,6 +102,7 @@ export const slashCommandOptions: SlashCommandOption[] = [
     label: "Rename",
     description: "Rename the current thread.",
     keywords: ["thread", "title"],
+    availableDuringActiveTurn: true,
   },
   {
     command: "/approvals",
@@ -110,6 +115,7 @@ export const slashCommandOptions: SlashCommandOption[] = [
     label: "Status Line",
     description: "Configure status line items.",
     keywords: ["status", "display"],
+    availableDuringActiveTurn: true,
   },
   {
     command: "/sandbox-add-read-dir",
@@ -122,6 +128,7 @@ export const slashCommandOptions: SlashCommandOption[] = [
     label: "Feedback",
     description: "Report a problem with Codex.",
     keywords: ["issue", "bug"],
+    availableDuringActiveTurn: true,
   },
 ];
 
@@ -158,6 +165,19 @@ export function filterSlashCommands(
       .toLowerCase();
     return searchableText.includes(normalizedQuery);
   });
+}
+
+export function filterSlashCommandsForState(
+  commands: SlashCommandOption[],
+  options: {
+    isChatRunning: boolean;
+  },
+): SlashCommandOption[] {
+  if (!options.isChatRunning) {
+    return commands;
+  }
+
+  return commands.filter((command) => command.availableDuringActiveTurn);
 }
 
 export function completeSlashCommand(command: SlashCommandOption): string {
