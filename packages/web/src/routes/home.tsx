@@ -140,6 +140,7 @@ import { getProjectSkillPathIdentity } from "../lib/project-skill-path";
 import {
   completeSlashCommand,
   filterSlashCommands,
+  getSlashCommandKeyAction,
   getSlashCommandQuery,
   slashCommandOptions,
   type SlashCommandOption,
@@ -3197,36 +3198,45 @@ export function HomeRoute() {
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (isSlashCommandMenuOpen) {
-      if (event.key === "ArrowDown") {
+      const slashCommandKeyAction = getSlashCommandKeyAction(
+        {
+          altKey: event.altKey,
+          ctrlKey: event.ctrlKey,
+          isComposing: event.nativeEvent.isComposing,
+          key: event.key,
+          keyCode: event.keyCode,
+          metaKey: event.metaKey,
+          shiftKey: event.shiftKey,
+        },
+        filteredSlashCommandOptions.length > 0,
+      );
+
+      if (slashCommandKeyAction) {
         event.preventDefault();
-        moveActiveSlashCommand(1);
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        moveActiveSlashCommand(-1);
-        return;
-      }
-      if (event.key === "Home") {
-        event.preventDefault();
-        setActiveSlashCommandIndex(0);
-        return;
-      }
-      if (event.key === "End") {
-        event.preventDefault();
-        setActiveSlashCommandIndex(
-          Math.max(0, filteredSlashCommandOptions.length - 1),
-        );
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setDismissedSlashCommandText(composerText);
-        return;
-      }
-      if (event.key === "Enter" || event.key === "Tab") {
-        if (selectActiveSlashCommand()) {
-          event.preventDefault();
+        if (slashCommandKeyAction === "next") {
+          moveActiveSlashCommand(1);
+          return;
+        }
+        if (slashCommandKeyAction === "previous") {
+          moveActiveSlashCommand(-1);
+          return;
+        }
+        if (slashCommandKeyAction === "first") {
+          setActiveSlashCommandIndex(0);
+          return;
+        }
+        if (slashCommandKeyAction === "last") {
+          setActiveSlashCommandIndex(
+            Math.max(0, filteredSlashCommandOptions.length - 1),
+          );
+          return;
+        }
+        if (slashCommandKeyAction === "dismiss") {
+          setDismissedSlashCommandText(composerText);
+          return;
+        }
+        if (slashCommandKeyAction === "complete") {
+          selectActiveSlashCommand();
           return;
         }
       }

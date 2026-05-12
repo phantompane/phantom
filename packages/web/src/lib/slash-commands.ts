@@ -5,6 +5,24 @@ export interface SlashCommandOption {
   label: string;
 }
 
+export type SlashCommandKeyAction =
+  | "complete"
+  | "dismiss"
+  | "first"
+  | "last"
+  | "next"
+  | "previous";
+
+export interface SlashCommandKeyEvent {
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  isComposing?: boolean;
+  key: string;
+  keyCode?: number;
+  metaKey?: boolean;
+  shiftKey?: boolean;
+}
+
 export const slashCommandOptions: SlashCommandOption[] = [
   {
     command: "/plan",
@@ -141,4 +159,45 @@ export function filterSlashCommands(
 
 export function completeSlashCommand(command: SlashCommandOption): string {
   return `${command.command} `;
+}
+
+export function getSlashCommandKeyAction(
+  event: SlashCommandKeyEvent,
+  hasOptions: boolean,
+): SlashCommandKeyAction | null {
+  if (event.isComposing || event.keyCode === 229) {
+    return null;
+  }
+
+  if (event.key === "Escape") {
+    return "dismiss";
+  }
+
+  if (!hasOptions || hasSlashCommandKeyModifier(event)) {
+    return null;
+  }
+
+  if (event.key === "ArrowDown") {
+    return "next";
+  }
+  if (event.key === "ArrowUp") {
+    return "previous";
+  }
+  if (event.key === "Home") {
+    return "first";
+  }
+  if (event.key === "End") {
+    return "last";
+  }
+  if (event.key === "Enter" || event.key === "Tab") {
+    return "complete";
+  }
+
+  return null;
+}
+
+function hasSlashCommandKeyModifier(event: SlashCommandKeyEvent): boolean {
+  return Boolean(
+    event.altKey || event.ctrlKey || event.metaKey || event.shiftKey,
+  );
 }
