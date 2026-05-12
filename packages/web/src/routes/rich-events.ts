@@ -68,6 +68,15 @@ export function isRichEventMessage(
   return getRichEventKind(message) !== null;
 }
 
+export function isHiddenRichEventMessage(message: ChatMessageRecord): boolean {
+  if (getRichEventKind(message) !== "warning") {
+    return false;
+  }
+
+  const warning = getWarningEventText(message);
+  return isHiddenWarningText(warning.summary);
+}
+
 export function getPlanEventData(message: ChatMessageRecord): {
   explanation: string | null;
   plan: RichPlanStep[];
@@ -142,6 +151,13 @@ export function getWarningEventText(message: ChatMessageRecord): {
     summary,
     details: getString(eventData, "details") ?? null,
   };
+}
+
+function isHiddenWarningText(value: string): boolean {
+  return (
+    value.trim().replace(/\s+/g, " ").toLowerCase() ===
+    "automatic approval review approved"
+  );
 }
 
 export function getCommandEventMeta(message: ChatMessageRecord): {

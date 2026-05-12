@@ -2168,6 +2168,9 @@ export class ServeServices {
 
   private async processCodexNotification(message: CodexMessage): Promise<void> {
     const method = message.method ?? "unknown";
+    if (isHiddenCodexWarning(method, message.params)) {
+      return;
+    }
     const chat = await this.findChatByCodexParams(message.params);
     const eventType = mapCodexMethodToEvent(method);
 
@@ -6372,7 +6375,7 @@ function sanitizeCodexEventParams(method: string, params: unknown): unknown {
 }
 
 const hiddenCodexWarningMessages = new Set([
-  "Automatic approval review approved",
+  "automatic approval review approved",
 ]);
 
 function isHiddenCodexWarning(method: string, params: unknown): boolean {
@@ -6393,8 +6396,12 @@ function isHiddenCodexWarning(method: string, params: unknown): boolean {
   return candidates.some(
     (candidate) =>
       typeof candidate === "string" &&
-      hiddenCodexWarningMessages.has(candidate.trim()),
+      hiddenCodexWarningMessages.has(normalizeCodexWarningMessage(candidate)),
   );
+}
+
+function normalizeCodexWarningMessage(message: string): string {
+  return message.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function sanitizeCodexEventItem(item: Record<string, unknown>): unknown {

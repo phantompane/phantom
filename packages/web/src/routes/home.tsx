@@ -161,6 +161,7 @@ import {
   getRichEventText,
   getTextLineCount,
   getWarningEventText,
+  isHiddenRichEventMessage,
   isRichEventMessage,
 } from "./rich-events";
 import type {
@@ -1336,7 +1337,8 @@ export function HomeRoute() {
     () =>
       messages.filter(
         (message): message is VisibleMessageRecord =>
-          message.role !== "event" || isRichEventMessage(message),
+          message.role !== "event" ||
+          (isRichEventMessage(message) && !isHiddenRichEventMessage(message)),
       ),
     [messages],
   );

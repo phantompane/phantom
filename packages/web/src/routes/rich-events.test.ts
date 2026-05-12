@@ -10,6 +10,7 @@ import {
   getRichEventKind,
   getRichEventText,
   getTextLineCount,
+  isHiddenRichEventMessage,
   isRichEventMessage,
 } from "./rich-events";
 import type { ChatMessageRecord } from "@phantompane/server";
@@ -53,6 +54,29 @@ describe("rich event helpers", () => {
     );
     strictEqual(
       isRichEventMessage(createMessage({ eventType: "item/completed" })),
+      false,
+    );
+  });
+
+  it("hides approved automatic approval review warnings", () => {
+    strictEqual(
+      isHiddenRichEventMessage(
+        createMessage({
+          eventType: "warning",
+          eventData: { message: "Automatic approval review approved" },
+          text: "Automatic approval review approved",
+        }),
+      ),
+      true,
+    );
+    strictEqual(
+      isHiddenRichEventMessage(
+        createMessage({
+          eventType: "warning",
+          eventData: { message: "Review this warning" },
+          text: "Review this warning",
+        }),
+      ),
       false,
     );
   });
