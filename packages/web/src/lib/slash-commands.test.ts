@@ -44,9 +44,9 @@ describe("filterSlashCommands", () => {
   });
 
   it("does not advertise commands that require unimplemented web handling", () => {
-    expect(slashCommandOptions.map((command) => command.command)).not.toContain(
-      "/clear",
-    );
+    const commandNames = slashCommandOptions.map((command) => command.command);
+    expect(commandNames).not.toContain("/clear");
+    expect(commandNames).not.toContain("/review");
   });
 
   it("keeps only active-turn-safe commands while a chat is running", () => {

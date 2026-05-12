@@ -66,12 +66,6 @@ export const slashCommandOptions: SlashCommandOption[] = [
     keywords: ["reasoning", "effort"],
   },
   {
-    command: "/review",
-    label: "Review",
-    description: "Review current changes and find issues.",
-    keywords: ["code review", "diff"],
-  },
-  {
     command: "/compact",
     label: "Compact",
     description: "Summarize history and free up context.",
