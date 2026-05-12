@@ -36,6 +36,7 @@ import {
   FormEvent,
   KeyboardEvent,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -136,6 +137,17 @@ import {
   type ComposerSubmitMode,
 } from "../lib/composer-keyboard";
 import { getProjectSkillPathIdentity } from "../lib/project-skill-path";
+import {
+  completeSlashCommand,
+  filterSlashCommands,
+  filterSlashCommandsForState,
+  getSlashCommandKeyAction,
+  getSlashCommandQuery,
+  getSlashCommandSubmitMode,
+  shouldOpenSlashCommandMenu,
+  slashCommandOptions,
+  type SlashCommandOption,
+} from "../lib/slash-commands";
 import { cn } from "../lib/utils";
 import {
   dedupeChatThreads,
@@ -207,6 +219,7 @@ const chatEventNames = [
 const chatScrollStorageKeyPrefix = "phantom.chatScroll:v1:";
 const chatScrollBottomThreshold = 4;
 const maxVisibleRecentSkillSuggestions = 5;
+const maxVisibleSlashCommands = 8;
 const searchParamKeys = {
   chat: "chat",
   effort: "effort",
@@ -622,6 +635,10 @@ export function HomeRoute() {
     useState<DeleteWorktreeBranchMode>("default");
   const [deleteWorktreeForce, setDeleteWorktreeForce] = useState(false);
   const [composerText, setComposerText] = useState("");
+  const [dismissedSlashCommandText, setDismissedSlashCommandText] = useState<
+    string | null
+  >(null);
+  const [activeSlashCommandIndex, setActiveSlashCommandIndex] = useState(0);
   const [models, setModels] = useState<CodexModelRecord[]>([]);
   const [skills, setSkills] = useState<CodexSkillRecord[]>([]);
   const [selectedSkillPaths, setSelectedSkillPaths] = useState<Set<string>>(
@@ -717,6 +734,7 @@ export function HomeRoute() {
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerTextRef = useRef(composerText);
+  const slashCommandListboxId = useId();
   const hasSelectedContextRef = useRef(false);
   const restoredPendingComposerContextRef =
     useRef<RestoredPendingComposerContext | null>(null);
@@ -1108,26 +1126,89 @@ export function HomeRoute() {
     Boolean(
       selectedChatId && pendingSendChatIdsRef.current.has(selectedChatId),
     );
-  const canSubmitPrimaryComposerAction =
-    canSendMessage &&
-    !isComposerBlocked &&
-    (primaryComposerMode !== "steer" || isChatRunning);
   const canQueueComposerMessage =
     hasSelectedChat &&
     !isSelectedChatArchived &&
     canSendMessage &&
     !isComposerBlocked;
+  const effectivePrimaryComposerMode = getSlashCommandSubmitMode(
+    slashCommandOptions,
+    {
+      composerText,
+      submitMode: primaryComposerMode,
+    },
+  );
+  const canSubmitPrimaryComposerAction =
+    canSendMessage &&
+    !isComposerBlocked &&
+    (effectivePrimaryComposerMode !== "steer" || isChatRunning);
   const canInterruptActiveTurn =
     hasActiveTurn && !isInterrupting && Boolean(selectedChat?.activeTurnId);
   const areComposerOptionsDisabled = !hasSelectedChat || isComposerBlocked;
   const canSelectProjectComposerContext =
     Boolean(selectedProject) && !isComposerBlocked;
-  const primaryComposerActionLabel =
-    formatComposerModeAction(primaryComposerMode);
+  const primaryComposerActionLabel = formatComposerModeAction(
+    effectivePrimaryComposerMode,
+  );
   const primaryComposerButtonLabel =
-    pendingComposerMode === primaryComposerMode
-      ? formatComposerModeBusy(pendingComposerMode)
+    pendingComposerMode === effectivePrimaryComposerMode
+      ? formatComposerModeBusy(effectivePrimaryComposerMode)
       : primaryComposerActionLabel;
+  const slashCommandQuery = getSlashCommandQuery(composerText);
+  const availableSlashCommandOptions = useMemo(
+    () =>
+      filterSlashCommandsForState(slashCommandOptions, {
+        canQueueCommands: canQueueComposerMessage,
+        hasActiveTurn,
+      }),
+    [canQueueComposerMessage, hasActiveTurn],
+  );
+  const filteredSlashCommandOptions = useMemo(
+    () =>
+      slashCommandQuery === null
+        ? []
+        : filterSlashCommands(
+            availableSlashCommandOptions,
+            slashCommandQuery,
+          ).slice(0, maxVisibleSlashCommands),
+    [availableSlashCommandOptions, slashCommandQuery],
+  );
+  const isSlashCommandMenuOpen = shouldOpenSlashCommandMenu({
+    composerText,
+    dismissedText: dismissedSlashCommandText,
+    hasSelectedChat,
+    hasSelectedProject: Boolean(selectedProject),
+    isComposerBlocked,
+    query: slashCommandQuery,
+  });
+  const safeActiveSlashCommandIndex =
+    isSlashCommandMenuOpen && filteredSlashCommandOptions.length > 0
+      ? Math.min(
+          activeSlashCommandIndex,
+          filteredSlashCommandOptions.length - 1,
+        )
+      : -1;
+  const activeSlashCommandOption =
+    safeActiveSlashCommandIndex >= 0
+      ? filteredSlashCommandOptions[safeActiveSlashCommandIndex]
+      : null;
+  const activeSlashCommandOptionId =
+    safeActiveSlashCommandIndex >= 0
+      ? `${slashCommandListboxId}-option-${safeActiveSlashCommandIndex}`
+      : undefined;
+
+  useEffect(() => {
+    setActiveSlashCommandIndex(0);
+  }, [slashCommandQuery]);
+
+  useEffect(() => {
+    if (!isSlashCommandMenuOpen || filteredSlashCommandOptions.length === 0) {
+      return;
+    }
+    setActiveSlashCommandIndex((current) =>
+      Math.min(current, filteredSlashCommandOptions.length - 1),
+    );
+  }, [filteredSlashCommandOptions.length, isSlashCommandMenuOpen]);
 
   const modelOptions = useMemo<ComboboxOption[]>(
     () =>
@@ -3101,7 +3182,90 @@ export function HomeRoute() {
     });
   }
 
+  function selectSlashCommand(command: SlashCommandOption) {
+    const completedCommand = completeSlashCommand(command);
+    setComposerText(completedCommand);
+    setDismissedSlashCommandText(null);
+    if (composerError) {
+      setComposerError(null);
+    }
+    requestAnimationFrame(() => {
+      const textarea = composerTextareaRef.current;
+      if (!textarea) {
+        return;
+      }
+      textarea.focus();
+      textarea.setSelectionRange(
+        completedCommand.length,
+        completedCommand.length,
+      );
+    });
+  }
+
+  function moveActiveSlashCommand(delta: number) {
+    const commandCount = filteredSlashCommandOptions.length;
+    if (commandCount === 0) {
+      return;
+    }
+    setActiveSlashCommandIndex(
+      (current) => (current + delta + commandCount) % commandCount,
+    );
+  }
+
+  function selectActiveSlashCommand(): boolean {
+    if (!activeSlashCommandOption) {
+      return false;
+    }
+    selectSlashCommand(activeSlashCommandOption);
+    return true;
+  }
+
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (isSlashCommandMenuOpen) {
+      const slashCommandKeyAction = getSlashCommandKeyAction(
+        {
+          altKey: event.altKey,
+          ctrlKey: event.ctrlKey,
+          isComposing: event.nativeEvent.isComposing,
+          key: event.key,
+          keyCode: event.keyCode,
+          metaKey: event.metaKey,
+          shiftKey: event.shiftKey,
+        },
+        filteredSlashCommandOptions.length > 0,
+      );
+
+      if (slashCommandKeyAction) {
+        event.preventDefault();
+        if (slashCommandKeyAction === "next") {
+          moveActiveSlashCommand(1);
+          return;
+        }
+        if (slashCommandKeyAction === "previous") {
+          moveActiveSlashCommand(-1);
+          return;
+        }
+        if (slashCommandKeyAction === "first") {
+          setActiveSlashCommandIndex(0);
+          return;
+        }
+        if (slashCommandKeyAction === "last") {
+          setActiveSlashCommandIndex(
+            Math.max(0, filteredSlashCommandOptions.length - 1),
+          );
+          return;
+        }
+        if (slashCommandKeyAction === "dismiss") {
+          setDismissedSlashCommandText(composerText);
+          return;
+        }
+        if (slashCommandKeyAction === "complete") {
+          selectActiveSlashCommand();
+          return;
+        }
+      }
+    }
+
     const action = getComposerEnterAction({
       altKey: event.altKey,
       code: event.code,
@@ -3123,15 +3287,24 @@ export function HomeRoute() {
       return;
     }
     const submitMode = getComposerSubmitModeForEnter(action, selectedChat);
-    if (!submitMode || (!validatedSelectedChatId && submitMode !== "send")) {
+    const effectiveSubmitMode = submitMode
+      ? getSlashCommandSubmitMode(slashCommandOptions, {
+          composerText,
+          submitMode,
+        })
+      : null;
+    if (
+      !effectiveSubmitMode ||
+      (!validatedSelectedChatId && effectiveSubmitMode !== "send")
+    ) {
       return;
     }
     event.preventDefault();
-    if (submitMode === "send") {
+    if (effectiveSubmitMode === "send") {
       event.currentTarget.form?.requestSubmit();
       return;
     }
-    void submitComposer(submitMode);
+    void submitComposer(effectiveSubmitMode);
   }
 
   async function interruptChat() {
@@ -4334,11 +4507,30 @@ export function HomeRoute() {
                   </div>
                 )}
                 <div className="flex items-end gap-2">
-                  <div className="min-w-0 flex-1">
+                  <div className="relative min-w-0 flex-1">
                     <Label className="sr-only" htmlFor="composer">
                       Message
                     </Label>
+                    <SlashCommandMenu
+                      activeOptionId={activeSlashCommandOptionId}
+                      activeOptionIndex={safeActiveSlashCommandIndex}
+                      commands={filteredSlashCommandOptions}
+                      isOpen={isSlashCommandMenuOpen}
+                      listboxId={slashCommandListboxId}
+                      query={slashCommandQuery ?? ""}
+                      onActiveOptionChange={setActiveSlashCommandIndex}
+                      onSelectCommand={selectSlashCommand}
+                    />
                     <Textarea
+                      aria-activedescendant={activeSlashCommandOptionId}
+                      aria-autocomplete="list"
+                      aria-controls={
+                        isSlashCommandMenuOpen
+                          ? slashCommandListboxId
+                          : undefined
+                      }
+                      aria-expanded={isSlashCommandMenuOpen}
+                      aria-haspopup="listbox"
                       className="min-h-12 border-0 bg-transparent px-2 py-2 shadow-none focus-visible:shadow-none"
                       disabled={!selectedProject || isComposerBlocked}
                       enterKeyHint="enter"
@@ -4356,7 +4548,11 @@ export function HomeRoute() {
                       ref={composerTextareaRef}
                       value={composerText}
                       onChange={(event) => {
-                        setComposerText(event.target.value);
+                        const nextComposerText = event.target.value;
+                        setComposerText(nextComposerText);
+                        if (dismissedSlashCommandText !== null) {
+                          setDismissedSlashCommandText(null);
+                        }
                         if (composerError) {
                           setComposerError(null);
                         }
@@ -4388,44 +4584,46 @@ export function HomeRoute() {
                     >
                       <Paperclip />
                     </Button>
-                    {hasSelectedChat && primaryComposerMode !== "queue" && (
-                      <Button
-                        aria-label={
-                          pendingComposerMode === "queue"
-                            ? "Queueing message"
-                            : "Queue message"
-                        }
-                        className="size-10"
-                        disabled={!canQueueComposerMessage}
-                        onClick={() => void submitComposer("queue")}
-                        size="icon"
-                        title="Queue message"
-                        type="button"
-                        variant="outline"
-                      >
-                        {pendingComposerMode === "queue" ? (
-                          <LoadingSpinner />
-                        ) : (
-                          <Clock3 />
-                        )}
-                      </Button>
-                    )}
+                    {hasSelectedChat &&
+                      effectivePrimaryComposerMode !== "queue" && (
+                        <Button
+                          aria-label={
+                            pendingComposerMode === "queue"
+                              ? "Queueing message"
+                              : "Queue message"
+                          }
+                          className="size-10"
+                          disabled={!canQueueComposerMessage}
+                          onClick={() => void submitComposer("queue")}
+                          size="icon"
+                          title="Queue message"
+                          type="button"
+                          variant="outline"
+                        >
+                          {pendingComposerMode === "queue" ? (
+                            <LoadingSpinner />
+                          ) : (
+                            <Clock3 />
+                          )}
+                        </Button>
+                      )}
                     <Button
                       aria-label={primaryComposerButtonLabel}
                       className="size-10"
                       disabled={!canSubmitPrimaryComposerAction}
                       onClick={
                         hasActiveTurn
-                          ? () => void submitComposer(primaryComposerMode)
+                          ? () =>
+                              void submitComposer(effectivePrimaryComposerMode)
                           : undefined
                       }
                       size="icon"
                       title={primaryComposerActionLabel}
                       type={hasActiveTurn ? "button" : "submit"}
                     >
-                      {pendingComposerMode === primaryComposerMode ? (
+                      {pendingComposerMode === effectivePrimaryComposerMode ? (
                         <LoadingSpinner />
-                      ) : primaryComposerMode === "queue" ? (
+                      ) : effectivePrimaryComposerMode === "queue" ? (
                         <Clock3 />
                       ) : (
                         <Send />
@@ -4875,6 +5073,108 @@ function InlineNotice({
           <X className="size-3.5" />
         </button>
       )}
+    </div>
+  );
+}
+
+function SlashCommandMenu({
+  activeOptionId,
+  activeOptionIndex,
+  commands,
+  isOpen,
+  listboxId,
+  onActiveOptionChange,
+  onSelectCommand,
+  query,
+}: {
+  activeOptionId?: string;
+  activeOptionIndex: number;
+  commands: SlashCommandOption[];
+  isOpen: boolean;
+  listboxId: string;
+  onActiveOptionChange: (index: number) => void;
+  onSelectCommand: (command: SlashCommandOption) => void;
+  query: string;
+}) {
+  const listboxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen || !activeOptionId) {
+      return;
+    }
+
+    const activeOption = document.getElementById(activeOptionId);
+    if (!activeOption || !listboxRef.current?.contains(activeOption)) {
+      return;
+    }
+
+    activeOption.scrollIntoView({ block: "nearest" });
+  }, [activeOptionId, isOpen]);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div
+      aria-label="Codex commands"
+      className="absolute bottom-full left-0 right-0 z-40 mb-2 overflow-hidden rounded-[var(--radius-md)] border border-border bg-popover text-popover-foreground shadow-[var(--shadow-md)]"
+    >
+      <div className="flex items-center gap-2 border-b border-[var(--border-divider)] px-3 py-2">
+        <Terminal className="size-3.5 shrink-0 text-[var(--icon-color-muted)]" />
+        <span className="min-w-0 flex-1 truncate text-[length:var(--font-size-xs)] font-medium uppercase text-[var(--text-tertiary)]">
+          Codex commands
+        </span>
+        {query && (
+          <span className="max-w-36 truncate font-mono text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+            /{query}
+          </span>
+        )}
+      </div>
+      <div
+        aria-activedescendant={activeOptionId}
+        className="max-h-72 overflow-y-auto p-1"
+        id={listboxId}
+        ref={listboxRef}
+        role="listbox"
+      >
+        {commands.length === 0 ? (
+          <div className="px-3 py-3 text-[length:var(--font-size-sm)] text-[var(--text-tertiary)]">
+            No matching commands
+          </div>
+        ) : (
+          commands.map((command, index) => {
+            const isActive = index === activeOptionIndex;
+            return (
+              <button
+                aria-selected={isActive}
+                className={cn(
+                  "flex w-full min-w-0 items-start gap-2 rounded-[var(--radius-sm)] px-2.5 py-2 text-left outline-none transition-colors hover:bg-[var(--state-hover-bg)] focus-visible:shadow-[var(--state-focus-ring)]",
+                  isActive && "bg-[var(--state-selected-bg)]",
+                )}
+                id={`${listboxId}-option-${index}`}
+                key={command.command}
+                onClick={() => onSelectCommand(command)}
+                onMouseEnter={() => onActiveOptionChange(index)}
+                role="option"
+                type="button"
+              >
+                <span className="mt-0.5 shrink-0 rounded-[var(--radius-xs)] bg-[var(--surface-code)] px-1.5 py-0.5 font-mono text-[length:var(--font-size-xs)] text-[var(--text-secondary)]">
+                  {command.command}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[length:var(--font-size-sm)] font-medium text-[var(--text-primary)]">
+                    {command.label}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+                    {command.description}
+                  </span>
+                </span>
+              </button>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
