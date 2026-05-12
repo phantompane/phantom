@@ -12,10 +12,12 @@ Follow this sequence before opening a PR:
 1. Run `git status -sb` to identify the current branch and pending changes.
 2. If the current branch is `main` or the repository default branch, create or ask for an appropriate feature branch before committing or pushing.
 3. Inspect the change set with `git diff`, `git diff --staged`, and relevant commit history such as `git log --oneline --decorate --max-count=20`.
-4. Commit all intended changes before PR creation. Do not include unrelated user changes unless the user explicitly asks.
-5. Push the branch to `origin` with upstream tracking if needed.
-6. Read the repository PR template before drafting the body. Check common paths such as `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE.md`, and `.github/PULL_REQUEST_TEMPLATE/*.md`.
-7. Create the PR with the available GitHub tool first. If no GitHub tool can create PRs, use `gh pr create`.
+4. Run relevant validation or repository preflight checks when feasible. If validation is skipped or fails, record the exact reason for the PR body.
+5. Commit all intended changes before PR creation. Do not include unrelated user changes unless the user explicitly asks.
+6. Push the branch to `origin` with upstream tracking if needed.
+7. Check whether the current head branch already has an open PR using a GitHub tool, `gh pr view`, or `gh pr list --head <branch>`. Report or update the existing PR instead of creating a duplicate.
+8. Read the repository PR template before drafting the body. Check common paths such as `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE.md`, and `.github/PULL_REQUEST_TEMPLATE/*.md`.
+9. Create the PR with the available GitHub tool first. If no GitHub tool can create PRs, use `gh pr create`.
 
 ## PR Title
 
@@ -65,6 +67,8 @@ git diff
 git diff --staged
 git log --oneline --decorate --max-count=20
 git push -u origin <branch>
+gh pr view --json number,url,state,isDraft,title
+gh pr list --head <branch>
 ```
 
 ```bash
