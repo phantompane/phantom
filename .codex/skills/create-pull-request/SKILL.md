@@ -21,7 +21,7 @@ Follow this sequence before opening a PR:
 
 - Write a concise title that matches the repository's convention.
 - Do not prefix the title with `[codex]`, even if older PRs in the repository used that prefix.
-- Use the user-requested title when provided, but always remove `[codex]` from the PR title.
+- Use the user-requested title when provided, but strip a leading `[codex]` prefix case-insensitively before creating the PR.
 
 ## PR Body
 
