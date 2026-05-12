@@ -9473,14 +9473,15 @@ describe("ServeServices", () => {
       projects: [createProject()],
       chats: [createChat({ status: "running", activeTurnId: "turn_1" })],
     };
-    const { codex, store } = await createHarness(state);
+    const { codex, services, store } = await createHarness(state);
+    const emitSpy = vi.spyOn(services.eventHub, "emit");
 
     codex.emitNotification({
       method: "warning",
       params: {
         threadId: "thread_1",
         turnId: "turn_1",
-        message: "Automatic approval review approved",
+        message: " Automatic approval\nreview approved ",
       },
     });
     codex.emitNotification({
@@ -9504,6 +9505,18 @@ describe("ServeServices", () => {
         message.eventType,
       ]),
       [["event", "Review this warning", "warning"]],
+    );
+    deepStrictEqual(
+      emitSpy.mock.calls
+        .filter((call) => call[0] === "agent.warning")
+        .map((call) => (call[1] as CodexMessage).params),
+      [
+        {
+          threadId: "thread_1",
+          turnId: "turn_1",
+          message: "Review this warning",
+        },
+      ],
     );
   });
 
