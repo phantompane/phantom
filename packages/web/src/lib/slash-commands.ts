@@ -164,10 +164,10 @@ export function filterSlashCommands(
 export function filterSlashCommandsForState(
   commands: SlashCommandOption[],
   options: {
-    isChatRunning: boolean;
+    hasActiveTurn: boolean;
   },
 ): SlashCommandOption[] {
-  if (!options.isChatRunning) {
+  if (!options.hasActiveTurn) {
     return commands;
   }
 
@@ -198,11 +198,15 @@ export function getSlashCommandKeyAction(
     return null;
   }
 
+  if (hasSlashCommandKeyModifier(event)) {
+    return null;
+  }
+
   if (event.key === "Escape") {
     return "dismiss";
   }
 
-  if (!hasOptions || hasSlashCommandKeyModifier(event)) {
+  if (!hasOptions) {
     return null;
   }
 

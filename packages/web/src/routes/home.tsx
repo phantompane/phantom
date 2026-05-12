@@ -1148,9 +1148,9 @@ export function HomeRoute() {
   const availableSlashCommandOptions = useMemo(
     () =>
       filterSlashCommandsForState(slashCommandOptions, {
-        isChatRunning,
+        hasActiveTurn,
       }),
-    [isChatRunning],
+    [hasActiveTurn],
   );
   const filteredSlashCommandOptions = useMemo(
     () =>
@@ -5073,6 +5073,21 @@ function SlashCommandMenu({
   onSelectCommand: (command: SlashCommandOption) => void;
   query: string;
 }) {
+  const listboxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen || !activeOptionId) {
+      return;
+    }
+
+    const activeOption = document.getElementById(activeOptionId);
+    if (!activeOption || !listboxRef.current?.contains(activeOption)) {
+      return;
+    }
+
+    activeOption.scrollIntoView({ block: "nearest" });
+  }, [activeOptionId, isOpen]);
+
   if (!isOpen) {
     return null;
   }
@@ -5097,6 +5112,7 @@ function SlashCommandMenu({
         aria-activedescendant={activeOptionId}
         className="max-h-72 overflow-y-auto p-1"
         id={listboxId}
+        ref={listboxRef}
         role="listbox"
       >
         {commands.length === 0 ? (

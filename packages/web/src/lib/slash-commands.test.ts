@@ -52,7 +52,7 @@ describe("filterSlashCommands", () => {
   it("keeps only active-turn-safe commands while a chat is running", () => {
     expect(
       filterSlashCommandsForState(slashCommandOptions, {
-        isChatRunning: true,
+        hasActiveTurn: true,
       }).map((command) => command.command),
     ).toEqual([
       "/status",
@@ -67,7 +67,7 @@ describe("filterSlashCommands", () => {
   it("keeps the full command list while a chat is idle", () => {
     expect(
       filterSlashCommandsForState(slashCommandOptions, {
-        isChatRunning: false,
+        hasActiveTurn: false,
       }),
     ).toEqual(slashCommandOptions);
   });
@@ -107,6 +107,9 @@ describe("getSlashCommandKeyAction", () => {
     ).toBeNull();
     expect(
       getSlashCommandKeyAction({ key: "ArrowDown", shiftKey: true }, true),
+    ).toBeNull();
+    expect(
+      getSlashCommandKeyAction({ key: "Escape", altKey: true }, true),
     ).toBeNull();
   });
 
