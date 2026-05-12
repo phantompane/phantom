@@ -36,6 +36,7 @@ import {
   FormEvent,
   KeyboardEvent,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -136,6 +137,13 @@ import {
   type ComposerSubmitMode,
 } from "../lib/composer-keyboard";
 import { getProjectSkillPathIdentity } from "../lib/project-skill-path";
+import {
+  completeSlashCommand,
+  filterSlashCommands,
+  getSlashCommandQuery,
+  slashCommandOptions,
+  type SlashCommandOption,
+} from "../lib/slash-commands";
 import { cn } from "../lib/utils";
 import {
   dedupeChatThreads,
@@ -206,6 +214,7 @@ const chatEventNames = [
 const chatScrollStorageKeyPrefix = "phantom.chatScroll:v1:";
 const chatScrollBottomThreshold = 4;
 const maxVisibleRecentSkillSuggestions = 5;
+const maxVisibleSlashCommands = 8;
 const searchParamKeys = {
   chat: "chat",
   effort: "effort",
@@ -621,6 +630,10 @@ export function HomeRoute() {
     useState<DeleteWorktreeBranchMode>("default");
   const [deleteWorktreeForce, setDeleteWorktreeForce] = useState(false);
   const [composerText, setComposerText] = useState("");
+  const [dismissedSlashCommandText, setDismissedSlashCommandText] = useState<
+    string | null
+  >(null);
+  const [activeSlashCommandIndex, setActiveSlashCommandIndex] = useState(0);
   const [models, setModels] = useState<CodexModelRecord[]>([]);
   const [skills, setSkills] = useState<CodexSkillRecord[]>([]);
   const [selectedSkillPaths, setSelectedSkillPaths] = useState<Set<string>>(
@@ -716,6 +729,7 @@ export function HomeRoute() {
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerTextRef = useRef(composerText);
+  const slashCommandListboxId = useId();
   const hasSelectedContextRef = useRef(false);
   const restoredPendingComposerContextRef =
     useRef<RestoredPendingComposerContext | null>(null);
@@ -1127,6 +1141,50 @@ export function HomeRoute() {
     pendingComposerMode === primaryComposerMode
       ? formatComposerModeBusy(pendingComposerMode)
       : primaryComposerActionLabel;
+  const slashCommandQuery = getSlashCommandQuery(composerText);
+  const filteredSlashCommandOptions = useMemo(
+    () =>
+      slashCommandQuery === null
+        ? []
+        : filterSlashCommands(slashCommandOptions, slashCommandQuery).slice(
+            0,
+            maxVisibleSlashCommands,
+          ),
+    [slashCommandQuery],
+  );
+  const isSlashCommandMenuOpen =
+    Boolean(selectedProject) &&
+    !isComposerBlocked &&
+    slashCommandQuery !== null &&
+    dismissedSlashCommandText !== composerText;
+  const safeActiveSlashCommandIndex =
+    isSlashCommandMenuOpen && filteredSlashCommandOptions.length > 0
+      ? Math.min(
+          activeSlashCommandIndex,
+          filteredSlashCommandOptions.length - 1,
+        )
+      : -1;
+  const activeSlashCommandOption =
+    safeActiveSlashCommandIndex >= 0
+      ? filteredSlashCommandOptions[safeActiveSlashCommandIndex]
+      : null;
+  const activeSlashCommandOptionId =
+    safeActiveSlashCommandIndex >= 0
+      ? `${slashCommandListboxId}-option-${safeActiveSlashCommandIndex}`
+      : undefined;
+
+  useEffect(() => {
+    setActiveSlashCommandIndex(0);
+  }, [slashCommandQuery]);
+
+  useEffect(() => {
+    if (!isSlashCommandMenuOpen || filteredSlashCommandOptions.length === 0) {
+      return;
+    }
+    setActiveSlashCommandIndex((current) =>
+      Math.min(current, filteredSlashCommandOptions.length - 1),
+    );
+  }, [filteredSlashCommandOptions.length, isSlashCommandMenuOpen]);
 
   const modelOptions = useMemo<ComboboxOption[]>(
     () =>
@@ -3099,7 +3157,81 @@ export function HomeRoute() {
     });
   }
 
+  function selectSlashCommand(command: SlashCommandOption) {
+    const completedCommand = completeSlashCommand(command);
+    setComposerText(completedCommand);
+    setDismissedSlashCommandText(null);
+    if (composerError) {
+      setComposerError(null);
+    }
+    requestAnimationFrame(() => {
+      const textarea = composerTextareaRef.current;
+      if (!textarea) {
+        return;
+      }
+      textarea.focus();
+      textarea.setSelectionRange(
+        completedCommand.length,
+        completedCommand.length,
+      );
+    });
+  }
+
+  function moveActiveSlashCommand(delta: number) {
+    const commandCount = filteredSlashCommandOptions.length;
+    if (commandCount === 0) {
+      return;
+    }
+    setActiveSlashCommandIndex(
+      (current) => (current + delta + commandCount) % commandCount,
+    );
+  }
+
+  function selectActiveSlashCommand(): boolean {
+    if (!activeSlashCommandOption) {
+      return false;
+    }
+    selectSlashCommand(activeSlashCommandOption);
+    return true;
+  }
+
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (isSlashCommandMenuOpen) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        moveActiveSlashCommand(1);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        moveActiveSlashCommand(-1);
+        return;
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        setActiveSlashCommandIndex(0);
+        return;
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        setActiveSlashCommandIndex(
+          Math.max(0, filteredSlashCommandOptions.length - 1),
+        );
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDismissedSlashCommandText(composerText);
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        if (selectActiveSlashCommand()) {
+          event.preventDefault();
+          return;
+        }
+      }
+    }
+
     const action = getComposerEnterAction({
       altKey: event.altKey,
       code: event.code,
@@ -4332,11 +4464,30 @@ export function HomeRoute() {
                   </div>
                 )}
                 <div className="flex items-end gap-2">
-                  <div className="min-w-0 flex-1">
+                  <div className="relative min-w-0 flex-1">
                     <Label className="sr-only" htmlFor="composer">
                       Message
                     </Label>
+                    <SlashCommandMenu
+                      activeOptionId={activeSlashCommandOptionId}
+                      activeOptionIndex={safeActiveSlashCommandIndex}
+                      commands={filteredSlashCommandOptions}
+                      isOpen={isSlashCommandMenuOpen}
+                      listboxId={slashCommandListboxId}
+                      query={slashCommandQuery ?? ""}
+                      onActiveOptionChange={setActiveSlashCommandIndex}
+                      onSelectCommand={selectSlashCommand}
+                    />
                     <Textarea
+                      aria-activedescendant={activeSlashCommandOptionId}
+                      aria-autocomplete="list"
+                      aria-controls={
+                        isSlashCommandMenuOpen
+                          ? slashCommandListboxId
+                          : undefined
+                      }
+                      aria-expanded={isSlashCommandMenuOpen}
+                      aria-haspopup="listbox"
                       className="min-h-12 border-0 bg-transparent px-2 py-2 shadow-none focus-visible:shadow-none"
                       disabled={!selectedProject || isComposerBlocked}
                       enterKeyHint="enter"
@@ -4354,7 +4505,11 @@ export function HomeRoute() {
                       ref={composerTextareaRef}
                       value={composerText}
                       onChange={(event) => {
-                        setComposerText(event.target.value);
+                        const nextComposerText = event.target.value;
+                        setComposerText(nextComposerText);
+                        if (dismissedSlashCommandText !== null) {
+                          setDismissedSlashCommandText(null);
+                        }
                         if (composerError) {
                           setComposerError(null);
                         }
@@ -4873,6 +5028,92 @@ function InlineNotice({
           <X className="size-3.5" />
         </button>
       )}
+    </div>
+  );
+}
+
+function SlashCommandMenu({
+  activeOptionId,
+  activeOptionIndex,
+  commands,
+  isOpen,
+  listboxId,
+  onActiveOptionChange,
+  onSelectCommand,
+  query,
+}: {
+  activeOptionId?: string;
+  activeOptionIndex: number;
+  commands: SlashCommandOption[];
+  isOpen: boolean;
+  listboxId: string;
+  onActiveOptionChange: (index: number) => void;
+  onSelectCommand: (command: SlashCommandOption) => void;
+  query: string;
+}) {
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div
+      aria-label="Codex commands"
+      className="absolute bottom-full left-0 right-0 z-40 mb-2 overflow-hidden rounded-[var(--radius-md)] border border-border bg-popover text-popover-foreground shadow-[var(--shadow-md)]"
+    >
+      <div className="flex items-center gap-2 border-b border-[var(--border-divider)] px-3 py-2">
+        <Terminal className="size-3.5 shrink-0 text-[var(--icon-color-muted)]" />
+        <span className="min-w-0 flex-1 truncate text-[length:var(--font-size-xs)] font-medium uppercase text-[var(--text-tertiary)]">
+          Codex commands
+        </span>
+        {query && (
+          <span className="max-w-36 truncate font-mono text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+            /{query}
+          </span>
+        )}
+      </div>
+      <div
+        aria-activedescendant={activeOptionId}
+        className="max-h-72 overflow-y-auto p-1"
+        id={listboxId}
+        role="listbox"
+      >
+        {commands.length === 0 ? (
+          <div className="px-3 py-3 text-[length:var(--font-size-sm)] text-[var(--text-tertiary)]">
+            No matching commands
+          </div>
+        ) : (
+          commands.map((command, index) => {
+            const isActive = index === activeOptionIndex;
+            return (
+              <button
+                aria-selected={isActive}
+                className={cn(
+                  "flex w-full min-w-0 items-start gap-2 rounded-[var(--radius-sm)] px-2.5 py-2 text-left outline-none transition-colors hover:bg-[var(--state-hover-bg)] focus-visible:shadow-[var(--state-focus-ring)]",
+                  isActive && "bg-[var(--state-selected-bg)]",
+                )}
+                id={`${listboxId}-option-${index}`}
+                key={command.command}
+                onClick={() => onSelectCommand(command)}
+                onMouseEnter={() => onActiveOptionChange(index)}
+                role="option"
+                type="button"
+              >
+                <span className="mt-0.5 shrink-0 rounded-[var(--radius-xs)] bg-[var(--surface-code)] px-1.5 py-0.5 font-mono text-[length:var(--font-size-xs)] text-[var(--text-secondary)]">
+                  {command.command}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[length:var(--font-size-sm)] font-medium text-[var(--text-primary)]">
+                    {command.label}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+                    {command.description}
+                  </span>
+                </span>
+              </button>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
