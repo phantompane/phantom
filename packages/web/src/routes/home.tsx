@@ -142,6 +142,7 @@ import {
   filterSlashCommands,
   getSlashCommandKeyAction,
   getSlashCommandQuery,
+  shouldOpenSlashCommandMenu,
   slashCommandOptions,
   type SlashCommandOption,
 } from "../lib/slash-commands";
@@ -1153,11 +1154,14 @@ export function HomeRoute() {
           ),
     [slashCommandQuery],
   );
-  const isSlashCommandMenuOpen =
-    Boolean(selectedProject) &&
-    !isComposerBlocked &&
-    slashCommandQuery !== null &&
-    dismissedSlashCommandText !== composerText;
+  const isSlashCommandMenuOpen = shouldOpenSlashCommandMenu({
+    composerText,
+    dismissedText: dismissedSlashCommandText,
+    hasSelectedChat,
+    hasSelectedProject: Boolean(selectedProject),
+    isComposerBlocked,
+    query: slashCommandQuery,
+  });
   const safeActiveSlashCommandIndex =
     isSlashCommandMenuOpen && filteredSlashCommandOptions.length > 0
       ? Math.min(

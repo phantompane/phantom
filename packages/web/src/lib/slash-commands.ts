@@ -23,6 +23,15 @@ export interface SlashCommandKeyEvent {
   shiftKey?: boolean;
 }
 
+export interface SlashCommandMenuState {
+  composerText: string;
+  dismissedText: string | null;
+  hasSelectedChat: boolean;
+  hasSelectedProject: boolean;
+  isComposerBlocked: boolean;
+  query: string | null;
+}
+
 export const slashCommandOptions: SlashCommandOption[] = [
   {
     command: "/plan",
@@ -65,12 +74,6 @@ export const slashCommandOptions: SlashCommandOption[] = [
     label: "Compact",
     description: "Summarize history and free up context.",
     keywords: ["context", "summary"],
-  },
-  {
-    command: "/clear",
-    label: "Clear",
-    description: "Clear the current conversation view.",
-    keywords: ["reset"],
   },
   {
     command: "/diff",
@@ -159,6 +162,18 @@ export function filterSlashCommands(
 
 export function completeSlashCommand(command: SlashCommandOption): string {
   return `${command.command} `;
+}
+
+export function shouldOpenSlashCommandMenu(
+  state: SlashCommandMenuState,
+): boolean {
+  return (
+    state.hasSelectedProject &&
+    state.hasSelectedChat &&
+    !state.isComposerBlocked &&
+    state.query !== null &&
+    state.dismissedText !== state.composerText
+  );
 }
 
 export function getSlashCommandKeyAction(

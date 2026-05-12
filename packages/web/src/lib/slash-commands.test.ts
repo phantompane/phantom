@@ -4,6 +4,7 @@ import {
   filterSlashCommands,
   getSlashCommandKeyAction,
   getSlashCommandQuery,
+  shouldOpenSlashCommandMenu,
   slashCommandOptions,
 } from "./slash-commands";
 
@@ -39,6 +40,12 @@ describe("filterSlashCommands", () => {
         (command) => command.command,
       ),
     ).toContain("/status");
+  });
+
+  it("does not advertise commands that require unimplemented web handling", () => {
+    expect(slashCommandOptions.map((command) => command.command)).not.toContain(
+      "/clear",
+    );
   });
 });
 
@@ -83,5 +90,38 @@ describe("getSlashCommandKeyAction", () => {
     expect(getSlashCommandKeyAction({ key: "ArrowDown" }, false)).toBeNull();
     expect(getSlashCommandKeyAction({ key: "Enter" }, false)).toBeNull();
     expect(getSlashCommandKeyAction({ key: "Escape" }, false)).toBe("dismiss");
+  });
+});
+
+describe("shouldOpenSlashCommandMenu", () => {
+  const baseState = {
+    composerText: "/",
+    dismissedText: null,
+    hasSelectedChat: true,
+    hasSelectedProject: true,
+    isComposerBlocked: false,
+    query: "",
+  };
+
+  it("opens for slash input in an existing chat", () => {
+    expect(shouldOpenSlashCommandMenu(baseState)).toBe(true);
+  });
+
+  it("stays closed before a chat exists", () => {
+    expect(
+      shouldOpenSlashCommandMenu({
+        ...baseState,
+        hasSelectedChat: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("stays closed when dismissed for the current text", () => {
+    expect(
+      shouldOpenSlashCommandMenu({
+        ...baseState,
+        dismissedText: "/",
+      }),
+    ).toBe(false);
   });
 });
