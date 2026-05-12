@@ -14,6 +14,8 @@ export type SlashCommandKeyAction =
   | "next"
   | "previous";
 
+export type SlashCommandSubmitMode = "queue" | "send" | "steer";
+
 export interface SlashCommandKeyEvent {
   altKey?: boolean;
   ctrlKey?: boolean;
@@ -164,14 +166,47 @@ export function filterSlashCommands(
 export function filterSlashCommandsForState(
   commands: SlashCommandOption[],
   options: {
+    canQueueCommands: boolean;
     hasActiveTurn: boolean;
   },
 ): SlashCommandOption[] {
-  if (!options.hasActiveTurn) {
+  if (!options.hasActiveTurn || options.canQueueCommands) {
     return commands;
   }
 
   return commands.filter((command) => command.availableDuringActiveTurn);
+}
+
+export function getSlashCommandForText(
+  commands: SlashCommandOption[],
+  text: string,
+): SlashCommandOption | null {
+  const commandTokenMatch = text.match(/^\/[^\s\r\n]*/);
+  const commandToken = commandTokenMatch?.[0];
+  if (!commandToken) {
+    return null;
+  }
+
+  return commands.find((command) => command.command === commandToken) ?? null;
+}
+
+export function getSlashCommandSubmitMode(
+  commands: SlashCommandOption[],
+  options: {
+    composerText: string;
+    submitMode: SlashCommandSubmitMode;
+  },
+): SlashCommandSubmitMode {
+  if (options.submitMode !== "steer") {
+    return options.submitMode;
+  }
+
+  const command = getSlashCommandForText(commands, options.composerText);
+  if (!command || command.availableDuringActiveTurn) {
+    return options.submitMode;
+  }
+
+  return "queue";
 }
 
 export function completeSlashCommand(command: SlashCommandOption): string {

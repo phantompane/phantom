@@ -143,6 +143,7 @@ import {
   filterSlashCommandsForState,
   getSlashCommandKeyAction,
   getSlashCommandQuery,
+  getSlashCommandSubmitMode,
   shouldOpenSlashCommandMenu,
   slashCommandOptions,
   type SlashCommandOption,
@@ -1124,33 +1125,42 @@ export function HomeRoute() {
     Boolean(
       selectedChatId && pendingSendChatIdsRef.current.has(selectedChatId),
     );
-  const canSubmitPrimaryComposerAction =
-    canSendMessage &&
-    !isComposerBlocked &&
-    (primaryComposerMode !== "steer" || isChatRunning);
   const canQueueComposerMessage =
     hasSelectedChat &&
     !isSelectedChatArchived &&
     canSendMessage &&
     !isComposerBlocked;
+  const effectivePrimaryComposerMode = getSlashCommandSubmitMode(
+    slashCommandOptions,
+    {
+      composerText,
+      submitMode: primaryComposerMode,
+    },
+  );
+  const canSubmitPrimaryComposerAction =
+    canSendMessage &&
+    !isComposerBlocked &&
+    (effectivePrimaryComposerMode !== "steer" || isChatRunning);
   const canInterruptActiveTurn =
     hasActiveTurn && !isInterrupting && Boolean(selectedChat?.activeTurnId);
   const areComposerOptionsDisabled = !hasSelectedChat || isComposerBlocked;
   const canSelectProjectComposerContext =
     Boolean(selectedProject) && !isComposerBlocked;
-  const primaryComposerActionLabel =
-    formatComposerModeAction(primaryComposerMode);
+  const primaryComposerActionLabel = formatComposerModeAction(
+    effectivePrimaryComposerMode,
+  );
   const primaryComposerButtonLabel =
-    pendingComposerMode === primaryComposerMode
-      ? formatComposerModeBusy(pendingComposerMode)
+    pendingComposerMode === effectivePrimaryComposerMode
+      ? formatComposerModeBusy(effectivePrimaryComposerMode)
       : primaryComposerActionLabel;
   const slashCommandQuery = getSlashCommandQuery(composerText);
   const availableSlashCommandOptions = useMemo(
     () =>
       filterSlashCommandsForState(slashCommandOptions, {
+        canQueueCommands: canQueueComposerMessage,
         hasActiveTurn,
       }),
-    [hasActiveTurn],
+    [canQueueComposerMessage, hasActiveTurn],
   );
   const filteredSlashCommandOptions = useMemo(
     () =>
@@ -3275,15 +3285,24 @@ export function HomeRoute() {
       return;
     }
     const submitMode = getComposerSubmitModeForEnter(action, selectedChat);
-    if (!submitMode || (!validatedSelectedChatId && submitMode !== "send")) {
+    const effectiveSubmitMode = submitMode
+      ? getSlashCommandSubmitMode(slashCommandOptions, {
+          composerText,
+          submitMode,
+        })
+      : null;
+    if (
+      !effectiveSubmitMode ||
+      (!validatedSelectedChatId && effectiveSubmitMode !== "send")
+    ) {
       return;
     }
     event.preventDefault();
-    if (submitMode === "send") {
+    if (effectiveSubmitMode === "send") {
       event.currentTarget.form?.requestSubmit();
       return;
     }
-    void submitComposer(submitMode);
+    void submitComposer(effectiveSubmitMode);
   }
 
   async function interruptChat() {
@@ -4563,44 +4582,46 @@ export function HomeRoute() {
                     >
                       <Paperclip />
                     </Button>
-                    {hasSelectedChat && primaryComposerMode !== "queue" && (
-                      <Button
-                        aria-label={
-                          pendingComposerMode === "queue"
-                            ? "Queueing message"
-                            : "Queue message"
-                        }
-                        className="size-10"
-                        disabled={!canQueueComposerMessage}
-                        onClick={() => void submitComposer("queue")}
-                        size="icon"
-                        title="Queue message"
-                        type="button"
-                        variant="outline"
-                      >
-                        {pendingComposerMode === "queue" ? (
-                          <LoadingSpinner />
-                        ) : (
-                          <Clock3 />
-                        )}
-                      </Button>
-                    )}
+                    {hasSelectedChat &&
+                      effectivePrimaryComposerMode !== "queue" && (
+                        <Button
+                          aria-label={
+                            pendingComposerMode === "queue"
+                              ? "Queueing message"
+                              : "Queue message"
+                          }
+                          className="size-10"
+                          disabled={!canQueueComposerMessage}
+                          onClick={() => void submitComposer("queue")}
+                          size="icon"
+                          title="Queue message"
+                          type="button"
+                          variant="outline"
+                        >
+                          {pendingComposerMode === "queue" ? (
+                            <LoadingSpinner />
+                          ) : (
+                            <Clock3 />
+                          )}
+                        </Button>
+                      )}
                     <Button
                       aria-label={primaryComposerButtonLabel}
                       className="size-10"
                       disabled={!canSubmitPrimaryComposerAction}
                       onClick={
                         hasActiveTurn
-                          ? () => void submitComposer(primaryComposerMode)
+                          ? () =>
+                              void submitComposer(effectivePrimaryComposerMode)
                           : undefined
                       }
                       size="icon"
                       title={primaryComposerActionLabel}
                       type={hasActiveTurn ? "button" : "submit"}
                     >
-                      {pendingComposerMode === primaryComposerMode ? (
+                      {pendingComposerMode === effectivePrimaryComposerMode ? (
                         <LoadingSpinner />
-                      ) : primaryComposerMode === "queue" ? (
+                      ) : effectivePrimaryComposerMode === "queue" ? (
                         <Clock3 />
                       ) : (
                         <Send />

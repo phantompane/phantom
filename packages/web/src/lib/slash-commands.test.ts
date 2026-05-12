@@ -3,6 +3,7 @@ import {
   completeSlashCommand,
   filterSlashCommands,
   filterSlashCommandsForState,
+  getSlashCommandSubmitMode,
   getSlashCommandKeyAction,
   getSlashCommandQuery,
   shouldOpenSlashCommandMenu,
@@ -49,9 +50,19 @@ describe("filterSlashCommands", () => {
     expect(commandNames).not.toContain("/review");
   });
 
-  it("keeps only active-turn-safe commands while a chat is running", () => {
+  it("keeps all commands during an active turn when queueing is available", () => {
     expect(
       filterSlashCommandsForState(slashCommandOptions, {
+        canQueueCommands: true,
+        hasActiveTurn: true,
+      }),
+    ).toEqual(slashCommandOptions);
+  });
+
+  it("keeps only active-turn-safe commands when active commands cannot be queued", () => {
+    expect(
+      filterSlashCommandsForState(slashCommandOptions, {
+        canQueueCommands: false,
         hasActiveTurn: true,
       }).map((command) => command.command),
     ).toEqual([
@@ -67,9 +78,39 @@ describe("filterSlashCommands", () => {
   it("keeps the full command list while a chat is idle", () => {
     expect(
       filterSlashCommandsForState(slashCommandOptions, {
+        canQueueCommands: false,
         hasActiveTurn: false,
       }),
     ).toEqual(slashCommandOptions);
+  });
+});
+
+describe("getSlashCommandSubmitMode", () => {
+  it("queues active-turn-unsafe commands instead of steering them", () => {
+    expect(
+      getSlashCommandSubmitMode(slashCommandOptions, {
+        composerText: "/model ",
+        submitMode: "steer",
+      }),
+    ).toBe("queue");
+  });
+
+  it("keeps active-turn-safe commands in the current turn", () => {
+    expect(
+      getSlashCommandSubmitMode(slashCommandOptions, {
+        composerText: "/status ",
+        submitMode: "steer",
+      }),
+    ).toBe("steer");
+  });
+
+  it("leaves non-steer submit modes unchanged", () => {
+    expect(
+      getSlashCommandSubmitMode(slashCommandOptions, {
+        composerText: "/model ",
+        submitMode: "send",
+      }),
+    ).toBe("send");
   });
 });
 
