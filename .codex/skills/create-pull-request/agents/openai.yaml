@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Pull Request"
+  short_description: "Create draft GitHub pull requests"
+  default_prompt: "Use $create-pull-request to create a draft GitHub pull request for the current branch."
