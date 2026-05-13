@@ -4263,14 +4263,14 @@ export function HomeRoute() {
                 {canSelectProjectComposerContext &&
                   !isChatContextLoading &&
                   recentSkillSuggestions.length > 0 && (
-                    <div className="flex min-h-8 flex-wrap items-center gap-2 px-1">
-                      <span className="text-[length:var(--font-size-xs)] font-medium text-[var(--text-tertiary)]">
+                    <div className="flex min-h-8 min-w-0 max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 pb-1">
+                      <span className="shrink-0 whitespace-nowrap text-[length:var(--font-size-xs)] font-medium text-[var(--text-tertiary)]">
                         Recent skills
                       </span>
                       {recentSkillSuggestions.map((skill) => (
                         <button
                           aria-label={`Select ${skill.displayName}`}
-                          className="inline-flex h-8 max-w-48 items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border-divider)] bg-[var(--surface-input)] px-2 text-[length:var(--font-size-sm)] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--state-hover-bg)] hover:text-[var(--text-primary)] focus-visible:shadow-[var(--state-focus-ring)]"
+                          className="inline-flex h-8 max-w-48 shrink-0 items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border-divider)] bg-[var(--surface-input)] px-2 text-[length:var(--font-size-sm)] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--state-hover-bg)] hover:text-[var(--text-primary)] focus-visible:shadow-[var(--state-focus-ring)]"
                           key={skill.path}
                           onClick={() => selectSkill(skill.path)}
                           title={skill.displayName}
