@@ -36,6 +36,7 @@ import {
   FormEvent,
   KeyboardEvent,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -136,6 +137,16 @@ import {
   type ComposerSubmitMode,
 } from "../lib/composer-keyboard";
 import { getProjectSkillPathIdentity } from "../lib/project-skill-path";
+import {
+  completeSkillMention,
+  filterSkillMentions,
+  getMentionedSkillPaths,
+  getSkillMentionKeyAction,
+  getSkillMentionQuery,
+  hasSkillMentionText,
+  shouldOpenSkillMentionMenu,
+  type SkillMentionQuery,
+} from "../lib/skill-mentions";
 import { cn } from "../lib/utils";
 import {
   dedupeChatThreads,
@@ -207,6 +218,7 @@ const chatEventNames = [
 const chatScrollStorageKeyPrefix = "phantom.chatScroll:v1:";
 const chatScrollBottomThreshold = 4;
 const maxVisibleRecentSkillSuggestions = 5;
+const maxVisibleSkillMentionSuggestions = 8;
 const searchParamKeys = {
   chat: "chat",
   effort: "effort",
@@ -622,6 +634,11 @@ export function HomeRoute() {
     useState<DeleteWorktreeBranchMode>("default");
   const [deleteWorktreeForce, setDeleteWorktreeForce] = useState(false);
   const [composerText, setComposerText] = useState("");
+  const [composerCursorPosition, setComposerCursorPosition] = useState(0);
+  const [dismissedSkillMentionText, setDismissedSkillMentionText] = useState<
+    string | null
+  >(null);
+  const [activeSkillMentionIndex, setActiveSkillMentionIndex] = useState(0);
   const [models, setModels] = useState<CodexModelRecord[]>([]);
   const [skills, setSkills] = useState<CodexSkillRecord[]>([]);
   const [selectedSkillPaths, setSelectedSkillPaths] = useState<Set<string>>(
@@ -717,6 +734,7 @@ export function HomeRoute() {
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerTextRef = useRef(composerText);
+  const skillMentionListboxId = useId();
   const hasSelectedContextRef = useRef(false);
   const restoredPendingComposerContextRef =
     useRef<RestoredPendingComposerContext | null>(null);
@@ -1085,12 +1103,16 @@ export function HomeRoute() {
     selectedSkills.length > 0;
   composerTextRef.current = composerText;
   hasSelectedContextRef.current = hasSelectedContext;
+  const hasPendingSkillMentionContext =
+    isChatContextLoading && hasSkillMentionText(composerText);
   const canStartNewProjectChat =
     Boolean(selectedProject) &&
     !selectedChatId &&
+    !hasPendingSkillMentionContext &&
     Boolean(composerText.trim() || hasSelectedContext);
   const canSendMessage =
-    (hasSelectedChat &&
+    (!hasPendingSkillMentionContext &&
+      hasSelectedChat &&
       !isSelectedChatArchived &&
       Boolean(composerText.trim() || hasSelectedContext)) ||
     canStartNewProjectChat;
@@ -1168,6 +1190,46 @@ export function HomeRoute() {
         })),
     [selectedSkillPaths, skills],
   );
+  const skillMentionQuery = getSkillMentionQuery(
+    composerText,
+    composerCursorPosition,
+  );
+  const skillMentionQueryKey = skillMentionQuery
+    ? `${skillMentionQuery.start}:${skillMentionQuery.query}`
+    : null;
+  const skillMentionQueryText = skillMentionQuery?.query ?? null;
+  const filteredSkillMentionOptions = useMemo(
+    () =>
+      skillMentionQueryText !== null
+        ? filterSkillMentions(skills, skillMentionQueryText).slice(
+            0,
+            maxVisibleSkillMentionSuggestions,
+          )
+        : [],
+    [skillMentionQueryText, skills],
+  );
+  const isSkillMentionMenuOpen = shouldOpenSkillMentionMenu({
+    composerText,
+    dismissedText: dismissedSkillMentionText,
+    hasSelectedProject: Boolean(selectedProject),
+    isComposerBlocked,
+    query: skillMentionQuery,
+  });
+  const safeActiveSkillMentionIndex =
+    isSkillMentionMenuOpen && filteredSkillMentionOptions.length > 0
+      ? Math.min(
+          activeSkillMentionIndex,
+          filteredSkillMentionOptions.length - 1,
+        )
+      : -1;
+  const activeSkillMentionOption =
+    safeActiveSkillMentionIndex >= 0
+      ? filteredSkillMentionOptions[safeActiveSkillMentionIndex]
+      : null;
+  const activeSkillMentionOptionId =
+    safeActiveSkillMentionIndex >= 0
+      ? `${skillMentionListboxId}-option-${safeActiveSkillMentionIndex}`
+      : undefined;
   const projectSkillRoots = useMemo(
     () =>
       [selectedProject?.rootPath ?? null, selectedChat?.worktreePath ?? null]
@@ -1199,6 +1261,19 @@ export function HomeRoute() {
       .filter((skill): skill is CodexSkillRecord => Boolean(skill))
       .slice(0, maxVisibleRecentSkillSuggestions);
   }, [projectSkillRoots, recentProjectSkills, selectedSkillPaths, skills]);
+
+  useEffect(() => {
+    setActiveSkillMentionIndex(0);
+  }, [skillMentionQueryKey]);
+
+  useEffect(() => {
+    if (!isSkillMentionMenuOpen || filteredSkillMentionOptions.length === 0) {
+      return;
+    }
+    setActiveSkillMentionIndex((current) =>
+      Math.min(current, filteredSkillMentionOptions.length - 1),
+    );
+  }, [filteredSkillMentionOptions.length, isSkillMentionMenuOpen]);
 
   const fileOptions = useMemo<ComboboxOption[]>(
     () =>
@@ -2740,6 +2815,7 @@ export function HomeRoute() {
     text: string,
     restoredPendingContext: RestoredPendingComposerContext | null,
     attachments: ChatAttachmentRecord[] = [],
+    skillPaths: ReadonlySet<string> = selectedSkillPaths,
   ): SendMessageInput {
     const turnModel =
       selectedModel?.id ??
@@ -2766,7 +2842,7 @@ export function HomeRoute() {
       files,
       model: turnModel,
       serviceTier: turnServiceTier,
-      skills: getSelectedSkillContextItems(skills, selectedSkillPaths),
+      skills: getSelectedSkillContextItems(skills, skillPaths),
       text,
     };
   }
@@ -2796,7 +2872,8 @@ export function HomeRoute() {
     input: SendMessageInput,
     composerInput: string,
     composerAttachments: SelectedAttachment[],
-    composerSkillPaths: Set<string>,
+    composerSelectedSkillPaths: Set<string>,
+    mentionedSkillPaths: string[],
     requestWorkspaceSelectionKey: string,
     githubTargetNumber: number | null,
   ) {
@@ -2824,7 +2901,7 @@ export function HomeRoute() {
         if (isRequestWorkspaceSelected()) {
           setComposerText(composerInput);
           setSelectedAttachments(composerAttachments);
-          setSelectedSkillPaths(new Set(composerSkillPaths));
+          setSelectedSkillPaths(new Set(composerSelectedSkillPaths));
         }
         return;
       }
@@ -2854,6 +2931,7 @@ export function HomeRoute() {
         setSelectedSkillPaths(new Set());
         setSelectedGitHubTargetNumber(null);
         setFileSearchQuery("");
+        rememberMentionedSkills(projectId, mentionedSkillPaths);
         await refreshMessages(chat.id);
       }
     } catch (err) {
@@ -2862,7 +2940,7 @@ export function HomeRoute() {
       ) {
         setComposerText(composerInput);
         setSelectedAttachments(composerAttachments);
-        setSelectedSkillPaths(new Set(composerSkillPaths));
+        setSelectedSkillPaths(new Set(composerSelectedSkillPaths));
         setComposerError(formatErrorMessage("Could not send message", err));
       }
     } finally {
@@ -2900,16 +2978,26 @@ export function HomeRoute() {
       sendMessageRequestIdRef.current === requestId;
     const composerInput = composerText;
     const composerAttachments = selectedAttachments;
-    const composerSkillPaths = new Set(selectedSkillPaths);
+    const composerSelectedSkillPaths = new Set(selectedSkillPaths);
+    const mentionedSkillPaths = getMentionedSkillPaths(skills, composerInput);
+    const turnSkillPaths = new Set([
+      ...composerSelectedSkillPaths,
+      ...mentionedSkillPaths,
+    ]);
+    const turnSkills = skills.filter(
+      (skill) => skill.enabled && turnSkillPaths.has(skill.path),
+    );
     const text =
       composerInput.trim().length > 0
         ? composerInput
         : getContextOnlyMessage({
             hasAttachments: selectedAttachments.length > 0,
             hasFiles: selectedFiles.length > 0,
-            hasSkills: selectedSkills.length > 0,
+            hasSkills: turnSkills.length > 0,
           });
     setComposerText("");
+    setComposerCursorPosition(0);
+    setDismissedSkillMentionText(null);
     const restoredPendingContext =
       requestChatId &&
       restoredPendingComposerContextRef.current?.chatId === requestChatId
@@ -2922,6 +3010,8 @@ export function HomeRoute() {
       const messageInput = createComposerMessageInput(
         text,
         restoredPendingContext,
+        [],
+        turnSkillPaths,
       );
       setIsSendingMessage(true);
       setPendingComposerMode("send");
@@ -2930,7 +3020,8 @@ export function HomeRoute() {
         messageInput,
         composerInput,
         composerAttachments,
-        composerSkillPaths,
+        composerSelectedSkillPaths,
+        mentionedSkillPaths,
         workspaceSelectionKeyRef.current,
         selectedGitHubTarget?.number ?? null,
       );
@@ -2951,6 +3042,7 @@ export function HomeRoute() {
         text,
         restoredPendingContext,
         attachments,
+        turnSkillPaths,
       );
       const mutation =
         mode === "steer"
@@ -2975,12 +3067,16 @@ export function HomeRoute() {
       setSelectedAttachments([]);
       setSelectedSkillPaths(new Set());
       setFileSearchQuery("");
+      if (selectedProjectId) {
+        rememberMentionedSkills(selectedProjectId, mentionedSkillPaths);
+      }
       await refreshMessages(requestChatId);
     } catch (err) {
       if (!isCurrentSendRequest()) {
         return;
       }
       setComposerText(composerInput);
+      setComposerCursorPosition(composerInput.length);
       setComposerError(formatErrorMessage("Could not send message", err));
     } finally {
       pendingSendChatIdsRef.current.delete(requestChatId);
@@ -3067,6 +3163,7 @@ export function HomeRoute() {
       serviceTier: deletedPendingMessage.queuedMessage.serviceTier ?? null,
     };
     setComposerText(deletedPendingMessage.message.text);
+    setComposerCursorPosition(deletedPendingMessage.message.text.length);
     setSelectedFiles(
       (deletedPendingMessage.queuedMessage.files ?? []).map(
         contextItemToSelectedFile,
@@ -3101,7 +3198,108 @@ export function HomeRoute() {
     });
   }
 
+  function updateComposerCursorFromTextarea(
+    textarea: HTMLTextAreaElement | null,
+  ) {
+    if (!textarea) {
+      return;
+    }
+    setComposerCursorPosition(textarea.selectionStart);
+  }
+
+  function selectSkillMention(
+    skill: CodexSkillRecord,
+    mention: SkillMentionQuery | null = skillMentionQuery,
+  ) {
+    if (!mention) {
+      return;
+    }
+
+    const completedMention = completeSkillMention(composerText, mention, skill);
+    setComposerText(completedMention.text);
+    setComposerCursorPosition(completedMention.cursorPosition);
+    setDismissedSkillMentionText(null);
+    if (composerError) {
+      setComposerError(null);
+    }
+    requestAnimationFrame(() => {
+      const textarea = composerTextareaRef.current;
+      if (!textarea) {
+        return;
+      }
+      textarea.focus();
+      textarea.setSelectionRange(
+        completedMention.cursorPosition,
+        completedMention.cursorPosition,
+      );
+    });
+  }
+
+  function moveActiveSkillMention(delta: number) {
+    const skillCount = filteredSkillMentionOptions.length;
+    if (skillCount === 0) {
+      return;
+    }
+    setActiveSkillMentionIndex(
+      (current) => (current + delta + skillCount) % skillCount,
+    );
+  }
+
+  function selectActiveSkillMention(): boolean {
+    if (!activeSkillMentionOption) {
+      return false;
+    }
+    selectSkillMention(activeSkillMentionOption);
+    return true;
+  }
+
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    setComposerCursorPosition(event.currentTarget.selectionStart);
+    if (isSkillMentionMenuOpen) {
+      const skillMentionKeyAction = getSkillMentionKeyAction(
+        {
+          altKey: event.altKey,
+          ctrlKey: event.ctrlKey,
+          isComposing: event.nativeEvent.isComposing,
+          key: event.key,
+          keyCode: event.keyCode,
+          metaKey: event.metaKey,
+          shiftKey: event.shiftKey,
+        },
+        filteredSkillMentionOptions.length > 0,
+      );
+
+      if (skillMentionKeyAction) {
+        event.preventDefault();
+        if (skillMentionKeyAction === "next") {
+          moveActiveSkillMention(1);
+          return;
+        }
+        if (skillMentionKeyAction === "previous") {
+          moveActiveSkillMention(-1);
+          return;
+        }
+        if (skillMentionKeyAction === "first") {
+          setActiveSkillMentionIndex(0);
+          return;
+        }
+        if (skillMentionKeyAction === "last") {
+          setActiveSkillMentionIndex(
+            Math.max(0, filteredSkillMentionOptions.length - 1),
+          );
+          return;
+        }
+        if (skillMentionKeyAction === "dismiss") {
+          setDismissedSkillMentionText(composerText);
+          return;
+        }
+        if (skillMentionKeyAction === "complete") {
+          selectActiveSkillMention();
+          return;
+        }
+      }
+    }
+
     const action = getComposerEnterAction({
       altKey: event.altKey,
       code: event.code,
@@ -3341,6 +3539,12 @@ export function HomeRoute() {
       return;
     }
     void rememberSelectedProjectSkill(selectedProjectId, path);
+  }
+
+  function rememberMentionedSkills(projectId: string, paths: string[]) {
+    for (const path of paths) {
+      void rememberSelectedProjectSkill(projectId, path);
+    }
   }
 
   function rememberSelectedProjectSkill(projectId: string, path: string) {
@@ -4334,11 +4538,31 @@ export function HomeRoute() {
                   </div>
                 )}
                 <div className="flex items-end gap-2">
-                  <div className="min-w-0 flex-1">
+                  <div className="relative min-w-0 flex-1">
                     <Label className="sr-only" htmlFor="composer">
                       Message
                     </Label>
+                    <SkillMentionMenu
+                      activeOptionId={activeSkillMentionOptionId}
+                      activeOptionIndex={safeActiveSkillMentionIndex}
+                      isLoading={isChatContextLoading}
+                      isOpen={isSkillMentionMenuOpen}
+                      listboxId={skillMentionListboxId}
+                      query={skillMentionQuery?.query ?? ""}
+                      skills={filteredSkillMentionOptions}
+                      onActiveOptionChange={setActiveSkillMentionIndex}
+                      onSelectSkill={selectSkillMention}
+                    />
                     <Textarea
+                      aria-activedescendant={activeSkillMentionOptionId}
+                      aria-autocomplete="list"
+                      aria-controls={
+                        isSkillMentionMenuOpen
+                          ? skillMentionListboxId
+                          : undefined
+                      }
+                      aria-expanded={isSkillMentionMenuOpen}
+                      aria-haspopup="listbox"
                       className="min-h-12 border-0 bg-transparent px-2 py-2 shadow-none focus-visible:shadow-none"
                       disabled={!selectedProject || isComposerBlocked}
                       enterKeyHint="enter"
@@ -4357,11 +4581,26 @@ export function HomeRoute() {
                       value={composerText}
                       onChange={(event) => {
                         setComposerText(event.target.value);
+                        setComposerCursorPosition(
+                          event.currentTarget.selectionStart,
+                        );
+                        if (dismissedSkillMentionText !== null) {
+                          setDismissedSkillMentionText(null);
+                        }
                         if (composerError) {
                           setComposerError(null);
                         }
                       }}
+                      onClick={(event) =>
+                        updateComposerCursorFromTextarea(event.currentTarget)
+                      }
                       onKeyDown={handleComposerKeyDown}
+                      onKeyUp={(event) =>
+                        updateComposerCursorFromTextarea(event.currentTarget)
+                      }
+                      onSelect={(event) =>
+                        updateComposerCursorFromTextarea(event.currentTarget)
+                      }
                     />
                   </div>
                   <div className="flex shrink-0 items-end gap-1.5">
@@ -4875,6 +5114,114 @@ function InlineNotice({
           <X className="size-3.5" />
         </button>
       )}
+    </div>
+  );
+}
+
+function SkillMentionMenu({
+  activeOptionId,
+  activeOptionIndex,
+  isLoading,
+  isOpen,
+  listboxId,
+  onActiveOptionChange,
+  onSelectSkill,
+  query,
+  skills,
+}: {
+  activeOptionId?: string;
+  activeOptionIndex: number;
+  isLoading: boolean;
+  isOpen: boolean;
+  listboxId: string;
+  onActiveOptionChange: (index: number) => void;
+  onSelectSkill: (skill: CodexSkillRecord) => void;
+  query: string;
+  skills: CodexSkillRecord[];
+}) {
+  const listboxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen || !activeOptionId) {
+      return;
+    }
+
+    const activeOption = document.getElementById(activeOptionId);
+    if (!activeOption || !listboxRef.current?.contains(activeOption)) {
+      return;
+    }
+
+    activeOption.scrollIntoView({ block: "nearest" });
+  }, [activeOptionId, isOpen]);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  const emptyMessage = isLoading ? "Loading skills" : "No matching skills";
+
+  return (
+    <div
+      aria-label="Codex skills"
+      className="absolute bottom-full left-0 right-0 z-40 mb-2 overflow-hidden rounded-[var(--radius-md)] border border-border bg-popover text-popover-foreground shadow-[var(--shadow-md)]"
+    >
+      <div className="flex items-center gap-2 border-b border-[var(--border-divider)] px-3 py-2">
+        <Sparkles className="size-3.5 shrink-0 text-[var(--icon-color-muted)]" />
+        <span className="min-w-0 flex-1 truncate text-[length:var(--font-size-xs)] font-medium uppercase text-[var(--text-tertiary)]">
+          Skills
+        </span>
+        {query && (
+          <span className="max-w-36 truncate font-mono text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+            ${query}
+          </span>
+        )}
+      </div>
+      <div
+        aria-activedescendant={activeOptionId}
+        className="max-h-72 overflow-y-auto p-1"
+        id={listboxId}
+        ref={listboxRef}
+        role="listbox"
+      >
+        {skills.length === 0 ? (
+          <div className="px-3 py-3 text-[length:var(--font-size-sm)] text-[var(--text-tertiary)]">
+            {emptyMessage}
+          </div>
+        ) : (
+          skills.map((skill, index) => {
+            const isActive = index === activeOptionIndex;
+            return (
+              <button
+                aria-selected={isActive}
+                className={cn(
+                  "flex w-full min-w-0 items-start gap-2 rounded-[var(--radius-sm)] px-2.5 py-2 text-left outline-none transition-colors hover:bg-[var(--state-hover-bg)] focus-visible:shadow-[var(--state-focus-ring)]",
+                  isActive && "bg-[var(--state-selected-bg)]",
+                )}
+                id={`${listboxId}-option-${index}`}
+                key={skill.path}
+                onClick={() => onSelectSkill(skill)}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => onActiveOptionChange(index)}
+                role="option"
+                tabIndex={-1}
+                type="button"
+              >
+                <span className="mt-0.5 shrink-0 rounded-[var(--radius-xs)] bg-[var(--surface-code)] px-1.5 py-0.5 font-mono text-[length:var(--font-size-xs)] text-[var(--text-secondary)]">
+                  ${skill.name}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[length:var(--font-size-sm)] font-medium text-[var(--text-primary)]">
+                    {skill.displayName}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[length:var(--font-size-xs)] text-[var(--text-tertiary)]">
+                    {skill.shortDescription ?? skill.description}
+                  </span>
+                </span>
+              </button>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
