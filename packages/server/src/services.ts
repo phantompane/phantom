@@ -1229,12 +1229,25 @@ export class ServeServices {
     }
     this.assertCanSetChatArchived(initialState, initialChat, archived);
     this.archiveOperationChatIds.add(chatId);
+    let clearUnavailableCodexThread = false;
     try {
       if (initialChat.codexThreadId) {
-        if (archived) {
-          await this.codex.archiveThread(initialChat.codexThreadId);
-        } else {
-          await this.codex.unarchiveThread(initialChat.codexThreadId);
+        try {
+          if (archived) {
+            await this.codex.archiveThread(initialChat.codexThreadId);
+          } else {
+            await this.codex.unarchiveThread(initialChat.codexThreadId);
+          }
+        } catch (error) {
+          if (
+            archived &&
+            isMissingCodexRolloutError(error, initialChat.codexThreadId) &&
+            isLocallyEmptyChat(initialState, initialChat)
+          ) {
+            clearUnavailableCodexThread = true;
+          } else {
+            throw error;
+          }
         }
       }
 
@@ -1250,6 +1263,9 @@ export class ServeServices {
 
         const nextChat: ChatRecord = {
           ...chat,
+          codexThreadId: clearUnavailableCodexThread
+            ? null
+            : chat.codexThreadId,
           status: archived ? "archived" : "idle",
           activeTurnId: null,
           updatedAt: createTimestamp(),
@@ -6679,6 +6695,21 @@ function getStringArray(value: unknown): string[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isLocallyEmptyChat(state: ServeState, chat: ChatRecord): boolean {
+  return (
+    !state.messages.some((message) => message.chatId === chat.id) &&
+    !state.queuedMessages.some((message) => message.chatId === chat.id)
+  );
+}
+
+function isMissingCodexRolloutError(error: unknown, threadId: string): boolean {
+  const message = toErrorMessage(error);
+  return (
+    message.includes("no rollout found for thread id") &&
+    message.includes(threadId)
+  );
 }
 
 function toErrorMessage(error: unknown): string {

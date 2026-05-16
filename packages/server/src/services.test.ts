@@ -1723,6 +1723,56 @@ describe("ServeServices", () => {
     strictEqual(codex.unarchiveThread.mock.calls.length, 0);
   });
 
+  it("archives empty chats with missing Codex rollouts locally", async () => {
+    const threadId = "019e2ee9-8e0e-7722-9fa1-86230697e3c9";
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ codexThreadId: threadId })],
+    });
+    codex.archiveThread.mockRejectedValueOnce(
+      new Error(`no rollout found for thread id ${threadId}`),
+    );
+
+    const archivedChat = await services.setChatArchived("chat_1", true);
+    const restoredChat = await services.setChatArchived("chat_1", false);
+
+    strictEqual(archivedChat.status, "archived");
+    strictEqual(archivedChat.codexThreadId, null);
+    strictEqual(restoredChat.status, "idle");
+    strictEqual(restoredChat.codexThreadId, null);
+    strictEqual((await store.load()).chats[0]?.status, "idle");
+    strictEqual((await store.load()).chats[0]?.codexThreadId, null);
+    deepStrictEqual(codex.archiveThread.mock.calls, [[threadId]]);
+    strictEqual(codex.unarchiveThread.mock.calls.length, 0);
+  });
+
+  it("does not archive non-empty chats with missing Codex rollouts locally", async () => {
+    const threadId = "019e2ee9-8e0e-7722-9fa1-86230697e3c9";
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ codexThreadId: threadId })],
+      messages: [
+        {
+          id: "msg_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "existing message",
+          createdAt: timestamp,
+        },
+      ],
+    });
+    codex.archiveThread.mockRejectedValueOnce(
+      new Error(`no rollout found for thread id ${threadId}`),
+    );
+
+    await rejects(services.setChatArchived("chat_1", true), /no rollout found/);
+
+    strictEqual((await store.load()).chats[0]?.status, "idle");
+    strictEqual((await store.load()).chats[0]?.codexThreadId, threadId);
+  });
+
   it("does not update local archive state when Codex archive fails", async () => {
     const { codex, services, store } = await createHarness({
       ...createTestState(),
