@@ -1738,13 +1738,71 @@ describe("ServeServices", () => {
     const restoredChat = await services.setChatArchived("chat_1", false);
 
     strictEqual(archivedChat.status, "archived");
-    strictEqual(archivedChat.codexThreadId, null);
+    strictEqual(archivedChat.codexThreadId, threadId);
+    strictEqual(archivedChat.codexArchiveUnavailable, true);
     strictEqual(restoredChat.status, "idle");
-    strictEqual(restoredChat.codexThreadId, null);
+    strictEqual(restoredChat.codexThreadId, threadId);
+    strictEqual(restoredChat.codexArchiveUnavailable, undefined);
     strictEqual((await store.load()).chats[0]?.status, "idle");
-    strictEqual((await store.load()).chats[0]?.codexThreadId, null);
+    strictEqual((await store.load()).chats[0]?.codexThreadId, threadId);
     deepStrictEqual(codex.archiveThread.mock.calls, [[threadId]]);
     strictEqual(codex.unarchiveThread.mock.calls.length, 0);
+  });
+
+  it("keeps empty chats with unavailable Codex archives matched during sync", async () => {
+    const threadId = "019e2ee9-8e0e-7722-9fa1-86230697e3c9";
+    const worktreePath = "/repo/.git/phantom/worktrees/feature/list";
+    const { codex, services, store } = await createHarness({
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [
+        createChat({
+          codexArchiveUnavailable: true,
+          codexThreadId: threadId,
+          status: "archived",
+          worktreeName: "feature/list",
+          worktreePath,
+        }),
+      ],
+    });
+    coreMocks.listWorktrees.mockResolvedValue({
+      ok: true,
+      value: {
+        worktrees: [
+          {
+            name: "feature/list",
+            path: worktreePath,
+            pathToDisplay: ".git/phantom/worktrees/feature/list",
+            branch: "feature/list",
+            isClean: true,
+          },
+        ],
+      },
+    });
+    codex.listThreads.mockResolvedValueOnce({
+      threads: [
+        {
+          id: threadId,
+          cwd: worktreePath,
+          title: "Existing work",
+          createdAt: "2026-04-25T00:00:00.000Z",
+          updatedAt: "2026-04-25T00:03:00.000Z",
+        },
+      ],
+    });
+    codex.listThreads.mockResolvedValueOnce({ threads: [] });
+
+    const chats = await services.listChats("proj_1");
+
+    strictEqual(chats.length, 1);
+    strictEqual(chats[0]?.id, "chat_1");
+    strictEqual(chats[0]?.status, "archived");
+    strictEqual(chats[0]?.codexThreadId, threadId);
+    strictEqual(chats[0]?.codexArchiveUnavailable, true);
+    const savedState = await store.load();
+    strictEqual(savedState.chats.length, 1);
+    strictEqual(savedState.chats[0]?.id, "chat_1");
+    strictEqual(savedState.chats[0]?.status, "archived");
   });
 
   it("does not archive non-empty chats with missing Codex rollouts locally", async () => {

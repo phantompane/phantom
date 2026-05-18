@@ -553,10 +553,26 @@ export class ServeServices {
           .filter((chat) => chat.codexThreadId)
           .map((chat) => [chat.codexThreadId, chat]),
       );
-      const nextProjectChats = threadChats.map((chat) => {
+      const nextProjectChats = threadChats.map((chat): ChatRecord => {
         const existingChat = existingChatsByThreadId.get(chat.codexThreadId);
         if (!existingChat) {
           return chat;
+        }
+        if (
+          chat.status !== "archived" &&
+          existingChat.status === "archived" &&
+          existingChat.codexArchiveUnavailable &&
+          isLocallyEmptyChat(nextState, existingChat)
+        ) {
+          return {
+            ...chat,
+            id: existingChat.id,
+            status: "archived",
+            activeTurnId: null,
+            codexArchiveUnavailable: true,
+            createdAt: existingChat.createdAt,
+            updatedAt: existingChat.updatedAt,
+          };
         }
         const archiveBlockMessage =
           chat.status === "archived"
@@ -1229,13 +1245,13 @@ export class ServeServices {
     }
     this.assertCanSetChatArchived(initialState, initialChat, archived);
     this.archiveOperationChatIds.add(chatId);
-    let clearUnavailableCodexThread = false;
+    let codexArchiveUnavailable = false;
     try {
       if (initialChat.codexThreadId) {
         try {
           if (archived) {
             await this.codex.archiveThread(initialChat.codexThreadId);
-          } else {
+          } else if (!initialChat.codexArchiveUnavailable) {
             await this.codex.unarchiveThread(initialChat.codexThreadId);
           }
         } catch (error) {
@@ -1244,7 +1260,7 @@ export class ServeServices {
             isMissingCodexRolloutError(error, initialChat.codexThreadId) &&
             isLocallyEmptyChat(initialState, initialChat)
           ) {
-            clearUnavailableCodexThread = true;
+            codexArchiveUnavailable = true;
           } else {
             throw error;
           }
@@ -1263,11 +1279,13 @@ export class ServeServices {
 
         const nextChat: ChatRecord = {
           ...chat,
-          codexThreadId: clearUnavailableCodexThread
-            ? null
-            : chat.codexThreadId,
           status: archived ? "archived" : "idle",
           activeTurnId: null,
+          codexArchiveUnavailable:
+            archived &&
+            (codexArchiveUnavailable || chat.codexArchiveUnavailable)
+              ? true
+              : undefined,
           updatedAt: createTimestamp(),
         };
         updatedChat = nextChat;
