@@ -236,6 +236,67 @@ describe("ServeStateStore", () => {
     strictEqual(savedState.customTopLevelField, "state metadata");
   });
 
+  it("loads external file changes after a previous load", async () => {
+    const directory = await createTemporaryDirectory();
+    const store = new ServeStateStore(directory);
+
+    deepStrictEqual(await store.load(), createTestState());
+
+    const externallyUpdatedState = createTestState({
+      projects: [
+        {
+          id: "proj_1",
+          name: "repo",
+          rootPath: "/repo",
+          createdAt: "2026-04-25T00:00:00.000Z",
+          updatedAt: "2026-04-25T00:00:00.000Z",
+          lastOpenedAt: "2026-04-25T00:00:00.000Z",
+        },
+      ],
+    });
+    await writeFile(
+      join(directory, "state.json"),
+      `${JSON.stringify(externallyUpdatedState)}\n`,
+    );
+
+    strictEqual((await store.load()).projects[0]?.rootPath, "/repo");
+  });
+
+  it("updates from the latest file state after a previous load", async () => {
+    const directory = await createTemporaryDirectory();
+    const store = new ServeStateStore(directory);
+
+    deepStrictEqual(await store.load(), createTestState());
+
+    const externallyUpdatedState = createTestState({
+      projects: [
+        {
+          id: "proj_1",
+          name: "repo",
+          rootPath: "/repo",
+          createdAt: "2026-04-25T00:00:00.000Z",
+          updatedAt: "2026-04-25T00:00:00.000Z",
+          lastOpenedAt: "2026-04-25T00:00:00.000Z",
+        },
+      ],
+    });
+    await writeFile(
+      join(directory, "state.json"),
+      `${JSON.stringify(externallyUpdatedState)}\n`,
+    );
+
+    await store.update((state) => ({
+      ...state,
+      selectedProjectId: "proj_1",
+    }));
+
+    const savedState = JSON.parse(
+      await readFile(join(directory, "state.json"), "utf8"),
+    );
+    strictEqual(savedState.projects[0]?.rootPath, "/repo");
+    strictEqual(savedState.selectedProjectId, "proj_1");
+  });
+
   it("rejects malformed state", async () => {
     const directory = await createTemporaryDirectory();
     await writeFile(join(directory, "state.json"), '{"version":1}');

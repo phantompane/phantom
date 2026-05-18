@@ -71,10 +71,6 @@ export class ServeStateStore {
   }
 
   private async loadOrCreateState(): Promise<ServeState> {
-    if (this.state) {
-      return this.state;
-    }
-
     const statePath = getStatePath(this.dataDir);
     try {
       const content = await readFile(statePath, "utf8");
@@ -98,10 +94,6 @@ export class ServeStateStore {
   }
 
   async load(): Promise<ServeState> {
-    if (this.state) {
-      return this.state;
-    }
-
     const nextLoad = this.updateChain.then(() => this.loadOrCreateState());
     this.updateChain = nextLoad.catch(() => undefined);
     return nextLoad;
