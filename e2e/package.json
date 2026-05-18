@@ -8,5 +8,5 @@
     "typecheck": "tsgo --noEmit",
     "test": "vitest run"
   },
-  "version": "6.3.0-6"
+  "version": "6.3.0-7"
 }

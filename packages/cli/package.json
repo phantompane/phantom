@@ -1,6 +1,6 @@
 {
   "name": "@phantompane/cli-private",
-  "version": "6.3.0-6",
+  "version": "6.3.0-7",
   "private": true,
   "type": "module",
   "scripts": {
