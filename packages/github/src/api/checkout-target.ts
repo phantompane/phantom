@@ -25,7 +25,7 @@ export async function listGitHubCheckoutTargets(
       .list({
         owner,
         repo,
-        state: "open",
+        state: "all",
         sort: "updated",
         direction: "desc",
         per_page: perPage,
@@ -36,7 +36,7 @@ export async function listGitHubCheckoutTargets(
     pullRequests.map((pullRequest) => [pullRequest.number, pullRequest]),
   );
 
-  return issues.map((item) => {
+  const issueTargets = issues.map((item) => {
     const pullRequest = item.pull_request
       ? pullRequestByNumber.get(item.number)
       : undefined;
@@ -48,13 +48,41 @@ export async function listGitHubCheckoutTargets(
             baseRepoFullName: pullRequest.base.repo.full_name,
             headRef: pullRequest.head.ref,
             headRepoFullName: pullRequest.head.repo?.full_name,
+            isDraft: pullRequest.draft,
+            isMerged: Boolean(pullRequest.merged_at),
           }
         : {}),
       htmlUrl: item.html_url,
       kind: item.pull_request ? "pullRequest" : "issue",
       number: item.number,
+      state: item.state === "closed" ? "closed" : "open",
       title: item.title,
       updatedAt: item.updated_at,
-    };
+    } satisfies GitHubCheckoutTarget;
   });
+
+  const issueNumbers = new Set(issues.map((issue) => issue.number));
+  const closedPullRequestTargets = pullRequests
+    .filter((pullRequest) => !issueNumbers.has(pullRequest.number))
+    .map(
+      (pullRequest) =>
+        ({
+          author: pullRequest.user?.login ?? null,
+          baseRepoFullName: pullRequest.base.repo.full_name,
+          headRef: pullRequest.head.ref,
+          headRepoFullName: pullRequest.head.repo?.full_name,
+          htmlUrl: pullRequest.html_url,
+          isDraft: pullRequest.draft,
+          isMerged: Boolean(pullRequest.merged_at),
+          kind: "pullRequest",
+          number: pullRequest.number,
+          state: pullRequest.state === "closed" ? "closed" : "open",
+          title: pullRequest.title,
+          updatedAt: pullRequest.updated_at,
+        }) satisfies GitHubCheckoutTarget,
+    );
+
+  return [...issueTargets, ...closedPullRequestTargets].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  );
 }

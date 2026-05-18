@@ -34,8 +34,11 @@ export interface GitHubCheckoutTargetRecord {
   headRef?: string;
   headRepoFullName?: string;
   htmlUrl: string;
+  isDraft?: boolean;
+  isMerged?: boolean;
   kind: "issue" | "pullRequest";
   number: number;
+  state?: "closed" | "open";
   title: string;
   updatedAt: string;
 }
