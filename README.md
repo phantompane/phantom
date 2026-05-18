@@ -28,6 +28,7 @@ Phantom is a powerful CLI tool that dramatically boosts your development product
 - 🔍 **Interactive selection with fzf** - Use built-in fzf option for worktree selection
 - 🎮 **Shell completion** - Full autocomplete support for Fish, Zsh, and Bash
 - 🧭 **Configurable defaults** - Set editor, AI commands, and worktree location once via `phantom preferences` (stored in global git config)
+- 🗂️ **Project registry** - Track repositories with `phantom project` and share the same project list with Phantom web
 - 🐙 **GitHub Integration** - Create worktrees directly from GitHub PRs and issues
 - 🤖 **MCP Integration** - AI autonomously manages worktrees for parallel development
 - ⚡ **Fast and lightweight** - Minimal external dependencies
@@ -216,6 +217,16 @@ phantom create feature-awesome
 phantom create
 
 phantom list
+```
+
+### Register and list projects
+
+```bash
+# Register the current repository for Phantom web/project workflows
+phantom project add
+
+# List registered projects
+phantom project list
 ```
 
 ### Start a new shell in the worktree
