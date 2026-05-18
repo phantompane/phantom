@@ -553,10 +553,26 @@ export class ServeServices {
           .filter((chat) => chat.codexThreadId)
           .map((chat) => [chat.codexThreadId, chat]),
       );
-      const nextProjectChats = threadChats.map((chat) => {
+      const nextProjectChats = threadChats.map((chat): ChatRecord => {
         const existingChat = existingChatsByThreadId.get(chat.codexThreadId);
         if (!existingChat) {
           return chat;
+        }
+        if (
+          chat.status !== "archived" &&
+          existingChat.status === "archived" &&
+          existingChat.codexArchiveUnavailable &&
+          isLocallyEmptyChat(nextState, existingChat)
+        ) {
+          return {
+            ...chat,
+            id: existingChat.id,
+            status: "archived",
+            activeTurnId: null,
+            codexArchiveUnavailable: true,
+            createdAt: existingChat.createdAt,
+            updatedAt: existingChat.updatedAt,
+          };
         }
         const archiveBlockMessage =
           chat.status === "archived"
@@ -1229,12 +1245,25 @@ export class ServeServices {
     }
     this.assertCanSetChatArchived(initialState, initialChat, archived);
     this.archiveOperationChatIds.add(chatId);
+    let codexArchiveUnavailable = false;
     try {
       if (initialChat.codexThreadId) {
-        if (archived) {
-          await this.codex.archiveThread(initialChat.codexThreadId);
-        } else {
-          await this.codex.unarchiveThread(initialChat.codexThreadId);
+        try {
+          if (archived) {
+            await this.codex.archiveThread(initialChat.codexThreadId);
+          } else if (!initialChat.codexArchiveUnavailable) {
+            await this.codex.unarchiveThread(initialChat.codexThreadId);
+          }
+        } catch (error) {
+          if (
+            archived &&
+            isMissingCodexRolloutError(error, initialChat.codexThreadId) &&
+            isLocallyEmptyChat(initialState, initialChat)
+          ) {
+            codexArchiveUnavailable = true;
+          } else {
+            throw error;
+          }
         }
       }
 
@@ -1252,6 +1281,11 @@ export class ServeServices {
           ...chat,
           status: archived ? "archived" : "idle",
           activeTurnId: null,
+          codexArchiveUnavailable:
+            archived &&
+            (codexArchiveUnavailable || chat.codexArchiveUnavailable)
+              ? true
+              : undefined,
           updatedAt: createTimestamp(),
         };
         updatedChat = nextChat;
@@ -6679,6 +6713,21 @@ function getStringArray(value: unknown): string[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isLocallyEmptyChat(state: ServeState, chat: ChatRecord): boolean {
+  return (
+    !state.messages.some((message) => message.chatId === chat.id) &&
+    !state.queuedMessages.some((message) => message.chatId === chat.id)
+  );
+}
+
+function isMissingCodexRolloutError(error: unknown, threadId: string): boolean {
+  const message = toErrorMessage(error);
+  return (
+    message.includes("no rollout found for thread id") &&
+    message.includes(threadId)
+  );
 }
 
 function toErrorMessage(error: unknown): string {

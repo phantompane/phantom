@@ -74,6 +74,7 @@ const chatRecordBaseSchema = z.object({
   title: z.string(),
   status: chatStatusSchema,
   activeTurnId: z.string().nullable().optional(),
+  codexArchiveUnavailable: z.boolean().optional(),
   hasQueuedMessages: z.boolean().optional(),
   isDrainingQueuedMessages: z.boolean().optional(),
   createdAt: z.string(),
