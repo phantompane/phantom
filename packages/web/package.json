@@ -1,6 +1,6 @@
 {
   "name": "@phantompane/web",
-  "version": "6.3.0-7",
+  "version": "6.3.0-8",
   "private": true,
   "type": "module",
   "scripts": {
