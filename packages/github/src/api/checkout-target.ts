@@ -12,7 +12,11 @@ export async function listGitHubCheckoutTargets(
 ): Promise<GitHubCheckoutTarget[]> {
   const github = await createGitHubClient();
   const perPage = options.limit ?? 30;
-  const [{ data: issues }, { data: pullRequests }] = await Promise.all([
+  const [
+    { data: issues },
+    { data: openPullRequests },
+    { data: allPullRequests },
+  ] = await Promise.all([
     github.issues.listForRepo({
       owner,
       repo,
@@ -25,6 +29,16 @@ export async function listGitHubCheckoutTargets(
       .list({
         owner,
         repo,
+        state: "open",
+        sort: "updated",
+        direction: "desc",
+        per_page: perPage,
+      })
+      .catch(() => ({ data: [] })),
+    github.pulls
+      .list({
+        owner,
+        repo,
         state: "all",
         sort: "updated",
         direction: "desc",
@@ -33,7 +47,7 @@ export async function listGitHubCheckoutTargets(
       .catch(() => ({ data: [] })),
   ]);
   const pullRequestByNumber = new Map(
-    pullRequests.map((pullRequest) => [pullRequest.number, pullRequest]),
+    openPullRequests.map((pullRequest) => [pullRequest.number, pullRequest]),
   );
 
   const issueTargets = issues.map((item) => {
@@ -62,7 +76,7 @@ export async function listGitHubCheckoutTargets(
   });
 
   const issueNumbers = new Set(issues.map((issue) => issue.number));
-  const closedPullRequestTargets = pullRequests
+  const closedPullRequestTargets = allPullRequests
     .filter((pullRequest) => !issueNumbers.has(pullRequest.number))
     .map(
       (pullRequest) =>

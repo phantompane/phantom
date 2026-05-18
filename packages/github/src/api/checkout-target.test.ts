@@ -51,43 +51,47 @@ describe("listGitHubCheckoutTargets", () => {
         })),
       },
       pulls: {
-        list: vi.fn(async () => ({
-          data: [
-            {
-              number: 42,
-              head: {
-                ref: "fix/checkout",
-                repo: { full_name: "owner/repo" },
-              },
-              base: {
-                repo: { full_name: "owner/repo" },
-              },
-              draft: true,
-              html_url: "https://github.com/owner/repo/pull/42",
-              merged_at: null,
-              state: "open",
-              title: "Fix checkout",
-              updated_at: "2026-05-04T00:00:00Z",
-              user: { login: "alice" },
-            },
-            {
-              number: 11,
-              head: {
-                ref: "feat/done",
-                repo: { full_name: "owner/repo" },
-              },
-              base: {
-                repo: { full_name: "owner/repo" },
-              },
-              draft: false,
-              html_url: "https://github.com/owner/repo/pull/11",
-              merged_at: "2026-05-05T00:00:00Z",
-              state: "closed",
-              title: "Ship done work",
-              updated_at: "2026-05-05T00:00:00Z",
-              user: { login: "bob" },
-            },
-          ],
+        list: vi.fn(async ({ state }: { state: string }) => ({
+          data:
+            state === "open"
+              ? [
+                  {
+                    number: 42,
+                    head: {
+                      ref: "fix/checkout",
+                      repo: { full_name: "owner/repo" },
+                    },
+                    base: {
+                      repo: { full_name: "owner/repo" },
+                    },
+                    draft: true,
+                    html_url: "https://github.com/owner/repo/pull/42",
+                    merged_at: null,
+                    state: "open",
+                    title: "Fix checkout",
+                    updated_at: "2026-05-04T00:00:00Z",
+                    user: { login: "alice" },
+                  },
+                ]
+              : [
+                  {
+                    number: 11,
+                    head: {
+                      ref: "feat/done",
+                      repo: { full_name: "owner/repo" },
+                    },
+                    base: {
+                      repo: { full_name: "owner/repo" },
+                    },
+                    draft: false,
+                    html_url: "https://github.com/owner/repo/pull/11",
+                    merged_at: "2026-05-05T00:00:00Z",
+                    state: "closed",
+                    title: "Ship done work",
+                    updated_at: "2026-05-05T00:00:00Z",
+                    user: { login: "bob" },
+                  },
+                ],
         })),
       },
     };
@@ -106,6 +110,14 @@ describe("listGitHubCheckoutTargets", () => {
       per_page: 10,
     });
     deepStrictEqual(mockOctokit!.pulls.list.mock.calls[0]?.[0], {
+      owner: "owner",
+      repo: "repo",
+      state: "open",
+      sort: "updated",
+      direction: "desc",
+      per_page: 10,
+    });
+    deepStrictEqual(mockOctokit!.pulls.list.mock.calls[1]?.[0], {
       owner: "owner",
       repo: "repo",
       state: "all",

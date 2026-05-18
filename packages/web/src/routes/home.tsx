@@ -288,10 +288,11 @@ function getPullRequestTargetForWorktree(
   if (!worktree || !githubTargets?.available) {
     return null;
   }
+  const matchingTargets = githubTargets.targets.filter(
+    (target) => getPullRequestBranchName(target) === worktree.branch,
+  );
   return (
-    githubTargets.targets.find(
-      (target) => getPullRequestBranchName(target) === worktree.branch,
-    ) ?? null
+    matchingTargets.find(isOpenCheckoutTarget) ?? matchingTargets[0] ?? null
   );
 }
 
@@ -1103,7 +1104,9 @@ export function HomeRoute() {
     }
     return (
       selectedProjectGitHubTargets.targets.find(
-        (target) => target.number === selectedGitHubTargetNumber,
+        (target) =>
+          target.number === selectedGitHubTargetNumber &&
+          isOpenCheckoutTarget(target),
       ) ?? null
     );
   }, [selectedGitHubTargetNumber, selectedProjectGitHubTargets]);
@@ -1546,7 +1549,9 @@ export function HomeRoute() {
       selectedGitHubTargetNumber === null ||
       !selectedProjectGitHubTargets?.available ||
       selectedProjectGitHubTargets.targets.some(
-        (target) => target.number === selectedGitHubTargetNumber,
+        (target) =>
+          target.number === selectedGitHubTargetNumber &&
+          isOpenCheckoutTarget(target),
       )
     ) {
       return;
