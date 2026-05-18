@@ -59,6 +59,9 @@ importers:
       '@phantompane/process':
         specifier: workspace:*
         version: link:../process
+      '@phantompane/state':
+        specifier: workspace:*
+        version: link:../state
       '@phantompane/tmux':
         specifier: workspace:*
         version: link:../tmux

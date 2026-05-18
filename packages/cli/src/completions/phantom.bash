@@ -72,7 +72,7 @@ _phantom_completion() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="create attach list where delete exec edit ai shell serve preferences github gh version completion mcp"
+    local commands="create attach list where delete exec edit ai shell serve project preferences github gh version completion mcp"
     local global_opts="--help --version"
 
     if [[ ${cword} -eq 1 ]]; then
@@ -263,6 +263,30 @@ _phantom_completion() {
         serve)
             local opts="--host --port"
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        project)
+            if [[ ${cword} -eq 2 ]]; then
+                local subcommands="list add remove"
+                COMPREPLY=( $(compgen -W "${subcommands}" -- "${cur}") )
+                return 0
+            elif [[ ${words[2]} == "list" ]]; then
+                local opts="--json --names --paths"
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            elif [[ ${words[2]} == "add" ]]; then
+                if [[ "${cur}" == -* ]]; then
+                    local opts="--json"
+                    COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                else
+                    _filedir -d
+                fi
+                return 0
+            elif [[ ${words[2]} == "remove" ]]; then
+                local opts="--json"
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
             return 0
             ;;
         completion)

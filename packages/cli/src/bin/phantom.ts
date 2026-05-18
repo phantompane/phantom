@@ -12,6 +12,10 @@ import { githubHandler } from "../handlers/github.ts";
 import { githubCheckoutHandler } from "../handlers/github-checkout.ts";
 import { listHandler } from "../handlers/list.ts";
 import { mcpHandler } from "../handlers/mcp.ts";
+import { projectAddHandler } from "../handlers/project-add.ts";
+import { projectListHandler } from "../handlers/project-list.ts";
+import { projectRemoveHandler } from "../handlers/project-remove.ts";
+import { projectHandler } from "../handlers/project.ts";
 import { preferencesHandler } from "../handlers/preferences.ts";
 import { preferencesGetHandler } from "../handlers/preferences-get.ts";
 import { preferencesRemoveHandler } from "../handlers/preferences-remove.ts";
@@ -30,6 +34,12 @@ import { execHelp } from "../help/exec.ts";
 import { githubCheckoutHelp, githubHelp } from "../help/github.ts";
 import { listHelp } from "../help/list.ts";
 import { mcpHelp } from "../help/mcp.ts";
+import {
+  projectAddHelp,
+  projectHelp,
+  projectListHelp,
+  projectRemoveHelp,
+} from "../help/project.ts";
 import {
   preferencesGetHelp,
   preferencesHelp,
@@ -110,6 +120,32 @@ const commands: Command[] = [
     description: "Start the experimental bundled Phantom web server",
     handler: serveHandler,
     help: serveHelp,
+  },
+  {
+    name: "project",
+    description: "Manage Phantom projects",
+    handler: projectHandler,
+    help: projectHelp,
+    subcommands: [
+      {
+        name: "list",
+        description: "List registered Phantom projects",
+        handler: projectListHandler,
+        help: projectListHelp,
+      },
+      {
+        name: "add",
+        description: "Register a Git repository as a Phantom project",
+        handler: projectAddHandler,
+        help: projectAddHelp,
+      },
+      {
+        name: "remove",
+        description: "Remove a registered Phantom project",
+        handler: projectRemoveHandler,
+        help: projectRemoveHelp,
+      },
+    ],
   },
   {
     name: "preferences",

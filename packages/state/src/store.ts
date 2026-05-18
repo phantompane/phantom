@@ -64,8 +64,11 @@ function validateState(value: unknown): ServeState {
 export class ServeStateStore {
   private state: ServeState | null = null;
   private updateChain: Promise<unknown> = Promise.resolve();
+  private readonly dataDir: string;
 
-  constructor(private readonly dataDir = getServeDataDir()) {}
+  constructor(dataDir = getServeDataDir()) {
+    this.dataDir = dataDir;
+  }
 
   private async loadOrCreateState(): Promise<ServeState> {
     if (this.state) {
