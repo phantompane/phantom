@@ -3900,6 +3900,18 @@ export function HomeRoute() {
                                           <DropdownMenuItem
                                             disabled={isBusy}
                                             onSelect={() =>
+                                              void createChat(
+                                                project.id,
+                                                worktree,
+                                              )
+                                            }
+                                          >
+                                            <MessageSquarePlus className="size-4" />
+                                            <span>New chat</span>
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem
+                                            disabled={isBusy}
+                                            onSelect={() =>
                                               void syncWorktreeBranch(
                                                 project.id,
                                                 worktree,
