@@ -34,11 +34,6 @@ export const projectListHelp: CommandHelp = {
   usage: "phantom project list [options]",
   options: [
     {
-      name: "json",
-      type: "boolean",
-      description: "Output project records as JSON",
-    },
-    {
       name: "names",
       type: "boolean",
       description: "Output only project names",
@@ -54,28 +49,14 @@ export const projectListHelp: CommandHelp = {
 export const projectAddHelp: CommandHelp = {
   name: "project add",
   description: "Register a Git repository as a Phantom project",
-  usage: "phantom project add [path] [options]",
-  options: [
-    {
-      name: "json",
-      type: "boolean",
-      description: "Output the project record as JSON",
-    },
-  ],
+  usage: "phantom project add [path]",
   notes: ["When path is omitted, the current directory is used."],
 };
 
 export const projectRemoveHelp: CommandHelp = {
   name: "project remove",
   description: "Remove a registered Phantom project",
-  usage: "phantom project remove <project> [options]",
-  options: [
-    {
-      name: "json",
-      type: "boolean",
-      description: "Output the removed project record as JSON",
-    },
-  ],
+  usage: "phantom project remove <project>",
   notes: [
     "The project can be specified by id, name, or root path.",
     "Projects with running, approval, or queued chats cannot be removed.",

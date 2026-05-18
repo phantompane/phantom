@@ -271,20 +271,13 @@ _phantom_completion() {
                 COMPREPLY=( $(compgen -W "${subcommands}" -- "${cur}") )
                 return 0
             elif [[ ${words[2]} == "list" ]]; then
-                local opts="--json --names --paths"
+                local opts="--names --paths"
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             elif [[ ${words[2]} == "add" ]]; then
-                if [[ "${cur}" == -* ]]; then
-                    local opts="--json"
-                    COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
-                else
-                    _filedir -d
-                fi
+                _filedir -d
                 return 0
             elif [[ ${words[2]} == "remove" ]]; then
-                local opts="--json"
-                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             return 0

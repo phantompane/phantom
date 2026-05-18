@@ -8,10 +8,6 @@ export async function projectListHandler(args: string[] = []): Promise<void> {
   const { values } = parseArgs({
     args,
     options: {
-      json: {
-        type: "boolean",
-        default: false,
-      },
       names: {
         type: "boolean",
         default: false,
@@ -25,20 +21,15 @@ export async function projectListHandler(args: string[] = []): Promise<void> {
     allowPositionals: false,
   });
 
-  if ([values.json, values.names, values.paths].filter(Boolean).length > 1) {
+  if (values.names && values.paths) {
     exitWithError(
-      "Only one of --json, --names, or --paths can be specified",
+      "Only one of --names or --paths can be specified",
       exitCodes.validationError,
     );
   }
 
   const state = await new ServeStateStore().load();
   const projects = sortProjects(state.projects);
-
-  if (values.json) {
-    output.log(JSON.stringify({ projects }, null, 2));
-    exitWithSuccess();
-  }
 
   if (projects.length === 0) {
     if (!values.names && !values.paths) {

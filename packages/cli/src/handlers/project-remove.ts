@@ -5,20 +5,21 @@ import { output } from "../output.ts";
 import { findProject, hasBlockingProjectChat } from "./project-utils.ts";
 
 export async function projectRemoveHandler(args: string[] = []): Promise<void> {
-  const { positionals, values } = parseArgs({
+  const { positionals } = parseArgs({
     args,
-    options: {
-      json: {
-        type: "boolean",
-        default: false,
-      },
-    },
+    options: {},
     strict: true,
     allowPositionals: true,
   });
 
   const identifier = positionals[0];
   if (!identifier) {
+    exitWithError(
+      "Usage: phantom project remove <project>",
+      exitCodes.validationError,
+    );
+  }
+  if (positionals.length > 1) {
     exitWithError(
       "Usage: phantom project remove <project>",
       exitCodes.validationError,
@@ -90,13 +91,9 @@ export async function projectRemoveHandler(args: string[] = []): Promise<void> {
     };
   });
 
-  if (values.json) {
-    output.log(JSON.stringify({ removedProject }, null, 2));
-  } else {
-    output.log(
-      `Removed project '${removedProject!.name}' (${removedProject!.rootPath})`,
-    );
-  }
+  output.log(
+    `Removed project '${removedProject!.name}' (${removedProject!.rootPath})`,
+  );
 
   exitWithSuccess();
 }

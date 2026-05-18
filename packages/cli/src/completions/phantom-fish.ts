@@ -182,11 +182,8 @@ complete -c phantom -n "__phantom_using_command serve" -l port -d "Port to bind 
 
 # project command
 complete -c phantom -n "__phantom_using_command project" -a "list add remove" -d "Manage projects"
-complete -c phantom -n "__phantom_using_command project list" -l json -d "Output project records as JSON"
 complete -c phantom -n "__phantom_using_command project list" -l names -d "Output only project names"
 complete -c phantom -n "__phantom_using_command project list" -l paths -d "Output only project root paths"
-complete -c phantom -n "__phantom_using_command project add" -l json -d "Output the project record as JSON"
-complete -c phantom -n "__phantom_using_command project remove" -l json -d "Output the removed project record as JSON"
 
 # completion command - shell names
 complete -c phantom -n "__phantom_using_command completion" -a "fish zsh bash" -d "Shell type"

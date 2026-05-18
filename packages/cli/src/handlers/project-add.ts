@@ -7,22 +7,24 @@ import {
   touchProject,
   type ProjectRecord,
 } from "@phantompane/state";
-import { exitWithSuccess } from "../errors.ts";
+import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 import { resolveProjectRootPath } from "./project-utils.ts";
 
 export async function projectAddHandler(args: string[] = []): Promise<void> {
-  const { positionals, values } = parseArgs({
+  const { positionals } = parseArgs({
     args,
-    options: {
-      json: {
-        type: "boolean",
-        default: false,
-      },
-    },
+    options: {},
     strict: true,
     allowPositionals: true,
   });
+
+  if (positionals.length > 1) {
+    exitWithError(
+      "Usage: phantom project add [path]",
+      exitCodes.validationError,
+    );
+  }
 
   const targetPath = positionals[0] ?? process.cwd();
   const rootPath = await resolveProjectRootPath(targetPath);
@@ -59,11 +61,7 @@ export async function projectAddHandler(args: string[] = []): Promise<void> {
     };
   });
 
-  if (values.json) {
-    output.log(JSON.stringify({ project }, null, 2));
-  } else {
-    output.log(`Added project '${project!.name}' (${project!.rootPath})`);
-  }
+  output.log(`Added project '${project!.name}' (${project!.rootPath})`);
 
   exitWithSuccess();
 }

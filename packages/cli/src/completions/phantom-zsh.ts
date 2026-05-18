@@ -135,16 +135,13 @@ _phantom() {
                             '1:subcommand:(list add remove)'
                     elif [[ \${line[2]} == "list" ]]; then
                         _arguments \
-                            '--json[Output project records as JSON]' \
                             '--names[Output only project names]' \
                             '--paths[Output only project root paths]'
                     elif [[ \${line[2]} == "add" ]]; then
                         _arguments \
-                            '--json[Output the project record as JSON]' \
                             '1::path:_files -/'
                     elif [[ \${line[2]} == "remove" ]]; then
                         _arguments \
-                            '--json[Output the removed project record as JSON]' \
                             '1:project:'
                     fi
                     ;;
