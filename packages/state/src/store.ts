@@ -64,14 +64,13 @@ function validateState(value: unknown): ServeState {
 export class ServeStateStore {
   private state: ServeState | null = null;
   private updateChain: Promise<unknown> = Promise.resolve();
+  private readonly dataDir: string;
 
-  constructor(private readonly dataDir = getServeDataDir()) {}
+  constructor(dataDir = getServeDataDir()) {
+    this.dataDir = dataDir;
+  }
 
   private async loadOrCreateState(): Promise<ServeState> {
-    if (this.state) {
-      return this.state;
-    }
-
     const statePath = getStatePath(this.dataDir);
     try {
       const content = await readFile(statePath, "utf8");
@@ -95,10 +94,6 @@ export class ServeStateStore {
   }
 
   async load(): Promise<ServeState> {
-    if (this.state) {
-      return this.state;
-    }
-
     const nextLoad = this.updateChain.then(() => this.loadOrCreateState());
     this.updateChain = nextLoad.catch(() => undefined);
     return nextLoad;

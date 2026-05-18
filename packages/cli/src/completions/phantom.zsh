@@ -16,6 +16,7 @@ _phantom() {
         'ai:Launch your configured AI coding assistant in a worktree'
         'shell:Open an interactive shell in a worktree directory'
         'serve:Start the bundled Phantom web server'
+        'project:Manage Phantom projects'
         'preferences:Manage editor/ai/worktreesDirectory/directoryNameSeparator preferences (git config --global)'
         'github:GitHub integration commands'
         'gh:GitHub integration commands (alias)'
@@ -126,6 +127,22 @@ _phantom() {
                     _arguments \
                         '--host[Host interface to bind the server to]:host:' \
                         '--port[Port to bind the server to]:port:'
+                    ;;
+                project)
+                    if [[ ${#line} -eq 1 ]]; then
+                        _arguments \
+                            '1:subcommand:(list add remove)'
+                    elif [[ ${line[2]} == "list" ]]; then
+                        _arguments \
+                            '--names[Output only project names]' \
+                            '--paths[Output only project root paths]'
+                    elif [[ ${line[2]} == "add" ]]; then
+                        _arguments \
+                            '1::path:_files -/'
+                    elif [[ ${line[2]} == "remove" ]]; then
+                        _arguments \
+                            '1:project:'
+                    fi
                     ;;
                 github|gh)
                     if [[ ${#line} -eq 1 ]]; then

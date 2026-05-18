@@ -19,6 +19,10 @@ This document provides a comprehensive reference for all Phantom commands and th
   - [preferences get](#preferences-get)
   - [preferences set](#preferences-set)
   - [preferences remove](#preferences-remove)
+- [Project Management](#project-management)
+  - [project list](#project-list)
+  - [project add](#project-add)
+  - [project remove](#project-remove)
 - [GitHub Integration](#github-integration)
   - [github checkout](#github-checkout)
 - [Other Commands](#other-commands)
@@ -401,6 +405,80 @@ phantom preferences remove keepBranch
 - `worktreesDirectory` should be set relative to the Git repository root (default: `.git/phantom/worktrees`)
 - `directoryNameSeparator` only changes the directory path; the worktree/branch name remains unchanged
 - `keepBranch` accepts `true` or `false` and applies to both `phantom delete` and MCP delete requests when the request omits an explicit override
+
+## Project Management
+
+Manage the project registry shared with Phantom web. Project commands store repository roots in Phantom's serve state, so the CLI and web UI use the same project list.
+
+### project list
+
+List registered projects.
+
+```bash
+phantom project list [options]
+```
+
+**Options:**
+
+- `--names` - Output only project names
+- `--paths` - Output only project root paths
+
+**Examples:**
+
+```bash
+# Show project names, paths, and ids
+phantom project list
+
+# Print only project names
+phantom project list --names
+
+# Print only project root paths
+phantom project list --paths
+```
+
+### project add
+
+Register a Git repository as a Phantom project. If `path` is omitted, the current directory is used. Phantom resolves the path to the repository root before storing it.
+
+```bash
+phantom project add [path]
+```
+
+**Examples:**
+
+```bash
+# Register the current repository
+phantom project add
+
+# Register a repository by path
+phantom project add ~/src/example
+```
+
+### project remove
+
+Remove a project from the shared project registry. The project can be specified by id, name, or root path. Removing a project also removes its stored chats, messages, queued messages, and recent skill records from Phantom state.
+
+```bash
+phantom project remove <project>
+```
+
+**Examples:**
+
+```bash
+# Remove by project id
+phantom project remove proj_abc123
+
+# Remove by project name
+phantom project remove example
+
+# Remove by project root path
+phantom project remove ~/src/example
+```
+
+**Notes:**
+
+- Projects with running, approval, or queued chats cannot be removed.
+- This only removes the project from Phantom state; it does not delete the repository or any Git worktrees.
 
 ## GitHub Integration
 
