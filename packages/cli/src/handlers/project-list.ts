@@ -1,8 +1,7 @@
 import { parseArgs } from "node:util";
-import { ServeStateStore } from "@phantompane/state";
+import { ServeStateStore, type ProjectRecord } from "@phantompane/state";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
-import { sortProjects } from "./project-utils.ts";
 
 export async function projectListHandler(args: string[] = []): Promise<void> {
   const { values } = parseArgs({
@@ -49,4 +48,10 @@ export async function projectListHandler(args: string[] = []): Promise<void> {
   }
 
   exitWithSuccess();
+}
+
+function sortProjects(projects: ProjectRecord[]): ProjectRecord[] {
+  return [...projects].sort((left, right) =>
+    right.lastOpenedAt.localeCompare(left.lastOpenedAt),
+  );
 }

@@ -1,5 +1,8 @@
+import { realpath } from "node:fs/promises";
 import { basename } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { getGitRoot } from "@phantompane/git";
 import {
   createRecordId,
   createTimestamp,
@@ -9,7 +12,6 @@ import {
 } from "@phantompane/state";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
-import { resolveProjectRootPath } from "./project-utils.ts";
 
 export async function projectAddHandler(args: string[] = []): Promise<void> {
   const { positionals } = parseArgs({
@@ -64,4 +66,10 @@ export async function projectAddHandler(args: string[] = []): Promise<void> {
   output.log(`Added project '${project!.name}' (${project!.rootPath})`);
 
   exitWithSuccess();
+}
+
+async function resolveProjectRootPath(path: string): Promise<string> {
+  const absolutePath = isAbsolute(path) ? path : resolve(path);
+  const resolvedPath = await realpath(absolutePath);
+  return await getGitRoot({ cwd: resolvedPath });
 }
