@@ -288,10 +288,11 @@ function getPullRequestTargetForWorktree(
   if (!worktree || !githubTargets?.available) {
     return null;
   }
+  const matchingTargets = githubTargets.targets.filter(
+    (target) => getPullRequestBranchName(target) === worktree.branch,
+  );
   return (
-    githubTargets.targets.find(
-      (target) => getPullRequestBranchName(target) === worktree.branch,
-    ) ?? null
+    matchingTargets.find(isOpenCheckoutTarget) ?? matchingTargets[0] ?? null
   );
 }
 
@@ -300,6 +301,55 @@ function getWorktreeDisplayName(
   pullRequestTarget: GitHubCheckoutTargetRecord | null,
 ): string {
   return pullRequestTarget?.title ?? worktree.name;
+}
+
+type PullRequestStatus = "closed" | "draft" | "merged" | "open";
+
+const pullRequestStatusMeta: Record<
+  PullRequestStatus,
+  {
+    label: string;
+    variant: "danger" | "info" | "secondary" | "success" | "warning";
+  }
+> = {
+  closed: {
+    label: "Closed",
+    variant: "danger",
+  },
+  draft: {
+    label: "Draft",
+    variant: "warning",
+  },
+  merged: {
+    label: "Merged",
+    variant: "success",
+  },
+  open: {
+    label: "Open",
+    variant: "info",
+  },
+};
+
+function getPullRequestStatus(
+  target: GitHubCheckoutTargetRecord | null,
+): PullRequestStatus | null {
+  if (!target || target.kind !== "pullRequest") {
+    return null;
+  }
+  if (target.isMerged) {
+    return "merged";
+  }
+  if (target.state === "closed") {
+    return "closed";
+  }
+  if (target.isDraft) {
+    return "draft";
+  }
+  return "open";
+}
+
+function isOpenCheckoutTarget(target: GitHubCheckoutTargetRecord): boolean {
+  return target.kind === "issue" || target.state !== "closed";
 }
 
 function GitHubMark({ className }: { className?: string }) {
@@ -1054,7 +1104,9 @@ export function HomeRoute() {
     }
     return (
       selectedProjectGitHubTargets.targets.find(
-        (target) => target.number === selectedGitHubTargetNumber,
+        (target) =>
+          target.number === selectedGitHubTargetNumber &&
+          isOpenCheckoutTarget(target),
       ) ?? null
     );
   }, [selectedGitHubTargetNumber, selectedProjectGitHubTargets]);
@@ -1497,7 +1549,9 @@ export function HomeRoute() {
       selectedGitHubTargetNumber === null ||
       !selectedProjectGitHubTargets?.available ||
       selectedProjectGitHubTargets.targets.some(
-        (target) => target.number === selectedGitHubTargetNumber,
+        (target) =>
+          target.number === selectedGitHubTargetNumber &&
+          isOpenCheckoutTarget(target),
       )
     ) {
       return;
@@ -3765,6 +3819,11 @@ export function HomeRoute() {
                                   worktree,
                                   pullRequestTarget,
                                 );
+                              const pullRequestStatus =
+                                getPullRequestStatus(pullRequestTarget);
+                              const pullRequestStatusLabel = pullRequestStatus
+                                ? pullRequestStatusMeta[pullRequestStatus].label
+                                : null;
                               const worktreeChats =
                                 chatsByWorktreeByProject[project.id]?.get(
                                   worktree.path,
@@ -3796,7 +3855,7 @@ export function HomeRoute() {
                                 worktreeChats.length === 0;
                               const title = `${worktree.name} (${worktree.path})${
                                 pullRequestTarget
-                                  ? ` [PR #${pullRequestTarget.number}: ${pullRequestTarget.title}]`
+                                  ? ` [PR #${pullRequestTarget.number}: ${pullRequestTarget.title}${pullRequestStatusLabel ? `, ${pullRequestStatusLabel}` : ""}]`
                                   : ""
                               }${worktree.isClean ? "" : " [dirty]"}${
                                 worktree.isMainWorktree
@@ -3860,6 +3919,12 @@ export function HomeRoute() {
                                           <span className="block min-w-0 truncate font-medium">
                                             {worktreeDisplayName}
                                           </span>
+                                          {pullRequestStatus && (
+                                            <PullRequestStatusBadge
+                                              className="shrink-0 px-1.5 py-0 text-[length:var(--font-size-xs)]"
+                                              status={pullRequestStatus}
+                                            />
+                                          )}
                                         </span>
                                       </span>
                                       {!worktree.isClean && (
@@ -4229,6 +4294,11 @@ export function HomeRoute() {
                         : "Workspace"}
                   </p>
                   {selectedChat && <StatusBadge status={selectedChat.status} />}
+                  {selectedPullRequestTarget && (
+                    <PullRequestStatusBadge
+                      status={getPullRequestStatus(selectedPullRequestTarget)}
+                    />
+                  )}
                 </div>
                 <p className="flex min-w-0 text-[length:var(--font-size-xs)] text-muted-foreground">
                   <span className="shrink-0">
@@ -4989,6 +5059,24 @@ function StatusBadge({ status }: { status: ChatStatus }) {
   );
 }
 
+function PullRequestStatusBadge({
+  className,
+  status,
+}: {
+  className?: string;
+  status: PullRequestStatus | null;
+}) {
+  if (!status) {
+    return null;
+  }
+  const meta = pullRequestStatusMeta[status];
+  return (
+    <Badge className={className} variant={meta.variant}>
+      {meta.label}
+    </Badge>
+  );
+}
+
 function LeadingEllipsisText({ text }: { text: string }) {
   return (
     <span className="block min-w-0 truncate" title={text}>
@@ -5347,6 +5435,8 @@ function GitHubTargetPicker({
   selectedNumber: number | null;
   targets: GitHubCheckoutTargetRecord[];
 }) {
+  const checkoutTargets = targets.filter(isOpenCheckoutTarget);
+
   return (
     <div className="mx-auto mt-2 grid w-full gap-2 text-left">
       <div className="flex items-center justify-between gap-3 px-1">
@@ -5355,13 +5445,13 @@ function GitHubTargetPicker({
         </p>
         {isLoading && <InlineLoading label="Refreshing" />}
       </div>
-      {targets.length === 0 ? (
+      {checkoutTargets.length === 0 ? (
         <p className="rounded-[var(--radius-sm)] border border-dashed border-[var(--border-divider)] bg-[var(--surface-code)] px-3 py-2 text-[length:var(--font-size-sm)] text-muted-foreground">
           No open issues or pull requests.
         </p>
       ) : (
         <ul className="max-h-72 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--border-divider)] bg-[var(--surface-code)]">
-          {targets.map((target) => (
+          {checkoutTargets.map((target) => (
             <GitHubTargetOption
               isSelected={selectedNumber === target.number}
               key={`${target.kind}-${target.number}`}
@@ -5385,6 +5475,7 @@ function GitHubTargetOption({
   target: GitHubCheckoutTargetRecord;
 }) {
   const label = `${target.kind === "pullRequest" ? "PR" : "Issue"} #${target.number}: ${target.title}`;
+  const pullRequestStatus = getPullRequestStatus(target);
 
   return (
     <li className="border-b border-[var(--border-divider)] last:border-b-0">
@@ -5416,6 +5507,12 @@ function GitHubTargetOption({
             <span className="truncate font-medium text-[var(--text-primary)]">
               {target.title}
             </span>
+            {pullRequestStatus && (
+              <PullRequestStatusBadge
+                className="shrink-0 px-1.5 py-0"
+                status={pullRequestStatus}
+              />
+            )}
           </span>
           <span className="truncate text-[length:var(--font-size-xs)] text-muted-foreground">
             {target.kind === "pullRequest" ? "Pull request" : "Issue"}
