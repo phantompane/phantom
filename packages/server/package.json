@@ -20,7 +20,7 @@
     "@phantompane/core": "workspace:*",
     "@phantompane/git": "workspace:*",
     "@phantompane/state": "workspace:*",
-    "hono": "^4.12.14",
+    "hono": "^4.12.18",
     "marked": "^18.0.3",
     "sanitize-html": "^2.17.3",
     "zod": "^4.4.3"
