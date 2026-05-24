@@ -3,14 +3,7 @@ import { getGitRoot, addWorktree } from "@phantompane/git";
 import { err, isErr, isOk, ok, type Result } from "@phantompane/utils";
 import { createContext } from "../context.ts";
 import { getWorktreePathFromDirectory } from "../paths.ts";
-import {
-  mergeWorktreeCopyFiles,
-  resolveWorktreeAction,
-  runWorktreeAction,
-  validateWorktreeAction,
-  type WorktreeActionOptions,
-  type WorktreeLogger,
-} from "./action.ts";
+import { mergeWorktreeCopyFiles, type WorktreeLogger } from "./action.ts";
 import { copyFiles } from "./file-copier.ts";
 import { type WorktreeAlreadyExistsError, WorktreeError } from "./errors.ts";
 import { generateUniqueName } from "./generate-name.ts";
@@ -39,16 +32,16 @@ export interface RunCreateWorktreeOptions {
   gitRoot?: string;
   base?: string;
   copyFiles?: string[];
-  action?: WorktreeActionOptions;
   logger?: WorktreeLogger;
 }
 
 export interface RunCreateWorktreeSuccess {
+  gitRoot: string;
+  worktreesDirectory: string;
   name: string;
   path: string;
   message: string;
   copyError?: string;
-  exitProcessCode?: number;
 }
 
 export async function createWorktree(
@@ -135,16 +128,6 @@ export async function createWorktree(
 export async function runCreateWorktree(
   options: RunCreateWorktreeOptions,
 ): Promise<Result<RunCreateWorktreeSuccess>> {
-  const actionResult = resolveWorktreeAction(options.action);
-  if (isErr(actionResult)) {
-    return actionResult;
-  }
-
-  const actionValidation = await validateWorktreeAction(actionResult.value);
-  if (isErr(actionValidation)) {
-    return actionValidation;
-  }
-
   try {
     const gitRoot = options.gitRoot ?? (await getGitRoot());
     const context = await createContext(gitRoot);
@@ -190,26 +173,13 @@ export async function runCreateWorktree(
       );
     }
 
-    const worktreeActionResult = await runWorktreeAction({
-      gitRoot: context.gitRoot,
-      worktreeDirectory: context.worktreesDirectory,
-      worktreeName,
-      worktreePath: createResult.value.path,
-      action: actionResult.value,
-      logger: options.logger,
-      exitWithProcessCode: true,
-    });
-
-    if (isErr(worktreeActionResult)) {
-      return err(worktreeActionResult.error);
-    }
-
     return ok({
+      gitRoot: context.gitRoot,
+      worktreesDirectory: context.worktreesDirectory,
       name: worktreeName,
       path: createResult.value.path,
       message: createResult.value.message,
       copyError: createResult.value.copyError,
-      exitProcessCode: worktreeActionResult.value.exitProcessCode,
     });
   } catch (error) {
     return err(error instanceof Error ? error : new Error(String(error)));

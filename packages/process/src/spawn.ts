@@ -19,17 +19,22 @@ export interface SpawnConfig {
   command: string;
   args?: string[];
   options?: SpawnOptions;
+  onSpawned?: () => void;
 }
 
 export async function spawnProcess(
   config: SpawnConfig,
 ): Promise<Result<SpawnSuccess, ProcessError>> {
   return new Promise((resolve) => {
-    const { command, args = [], options = {} } = config;
+    const { command, args = [], options = {}, onSpawned } = config;
 
     const childProcess: ChildProcess = nodeSpawn(command, args, {
       stdio: "inherit",
       ...options,
+    });
+
+    childProcess.on("spawn", () => {
+      onSpawned?.();
     });
 
     childProcess.on("error", (error) => {

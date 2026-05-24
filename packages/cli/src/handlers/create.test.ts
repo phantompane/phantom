@@ -8,7 +8,10 @@ import {
 import { err, ok } from "@phantompane/utils";
 
 const exitMock = vi.fn();
+const resolveWorktreeActionMock = vi.fn();
+const validateWorktreeActionMock = vi.fn();
 const runCreateWorktreeMock = vi.fn();
+const runWorktreeActionMock = vi.fn();
 const runPostCreateWorktreeMock = vi.fn();
 const exitWithErrorMock = vi.fn((message, code) => {
   throw new Error(`Exit with code ${code}: ${message}`);
@@ -33,9 +36,12 @@ afterAll(() => {
 });
 
 vi.doMock("@phantompane/core", () => ({
+  resolveWorktreeAction: resolveWorktreeActionMock,
   runCreateWorktree: runCreateWorktreeMock,
+  runWorktreeAction: runWorktreeActionMock,
   runPostCreateWorktree: runPostCreateWorktreeMock,
   TmuxSessionRequiredError,
+  validateWorktreeAction: validateWorktreeActionMock,
   WorktreeActionConflictError,
   WorktreeAlreadyExistsError,
 }));
@@ -66,7 +72,30 @@ const { createHandler } = await import("./create.ts");
 describe("createHandler", () => {
   const resetMocks = () => {
     exitMock.mockReset();
+    resolveWorktreeActionMock.mockReset();
+    resolveWorktreeActionMock.mockImplementation((options) => {
+      if (options.shell && options.exec !== undefined) {
+        return err(new WorktreeActionConflictError());
+      }
+      if (options.shell) {
+        return ok({ kind: "shell" });
+      }
+      if (options.exec !== undefined) {
+        return ok({ kind: "exec", command: options.exec });
+      }
+      if (options.tmuxDirection) {
+        return ok({ kind: "tmux", direction: options.tmuxDirection });
+      }
+      return ok(undefined);
+    });
+    validateWorktreeActionMock.mockReset();
+    validateWorktreeActionMock.mockResolvedValue(ok(undefined));
     runCreateWorktreeMock.mockReset();
+    runWorktreeActionMock.mockReset();
+    runWorktreeActionMock.mockImplementation((options) => {
+      options.onStarted?.();
+      return Promise.resolve(ok({}));
+    });
     runPostCreateWorktreeMock.mockReset();
     runPostCreateWorktreeMock.mockResolvedValue(ok({ executedCommands: [] }));
     exitWithErrorMock.mockReset();
@@ -80,6 +109,8 @@ describe("createHandler", () => {
     resetMocks();
     runCreateWorktreeMock.mockResolvedValue(
       ok({
+        gitRoot: "/repo",
+        worktreesDirectory: "/repo/.git/phantom/worktrees",
         name: "feature",
         path: "/repo/.git/phantom/worktrees/feature",
         message: "Created worktree",
@@ -103,12 +134,13 @@ describe("createHandler", () => {
     strictEqual(runCreateWorktreeMock.mock.calls[0][0].name, "feature");
     strictEqual(runCreateWorktreeMock.mock.calls[0][0].base, "main");
     strictEqual(runCreateWorktreeMock.mock.calls[0][0].copyFiles[0], ".env");
+    strictEqual(runCreateWorktreeMock.mock.calls[0][0].logger, outputMock);
     strictEqual(
-      runCreateWorktreeMock.mock.calls[0][0].action.tmuxDirection,
+      runWorktreeActionMock.mock.calls[0][0].action.direction,
       "vertical",
     );
-    strictEqual(runCreateWorktreeMock.mock.calls[0][0].logger, outputMock);
     strictEqual(runCreateWorktreeMock.mock.calls[0][0].postCreate, undefined);
+    strictEqual(runWorktreeActionMock.mock.calls[0][0].logger, outputMock);
     strictEqual(runPostCreateWorktreeMock.mock.calls.length, 1);
     strictEqual(
       runPostCreateWorktreeMock.mock.calls[0][0].worktreeName,
@@ -119,9 +151,6 @@ describe("createHandler", () => {
 
   it("maps validation errors to validation exit codes", async () => {
     resetMocks();
-    runCreateWorktreeMock.mockResolvedValue(
-      err(new WorktreeActionConflictError()),
-    );
 
     await rejects(
       async () => await createHandler(["feature", "--shell", "--exec", "ls"]),
@@ -133,6 +162,7 @@ describe("createHandler", () => {
       new WorktreeActionConflictError().message,
     );
     strictEqual(exitWithErrorMock.mock.calls[0][1], 2);
+    strictEqual(runCreateWorktreeMock.mock.calls.length, 0);
     strictEqual(runPostCreateWorktreeMock.mock.calls.length, 0);
   });
 
@@ -140,12 +170,17 @@ describe("createHandler", () => {
     resetMocks();
     runCreateWorktreeMock.mockResolvedValue(
       ok({
+        gitRoot: "/repo",
+        worktreesDirectory: "/repo/.git/phantom/worktrees",
         name: "feature",
         path: "/repo/.git/phantom/worktrees/feature",
         message: "Created worktree",
-        exitProcessCode: 0,
       }),
     );
+    runWorktreeActionMock.mockImplementation((options) => {
+      options.onStarted?.();
+      return Promise.resolve(ok({ exitProcessCode: 0 }));
+    });
 
     await createHandler(["feature", "--exec", "echo hello"]);
 
@@ -154,9 +189,48 @@ describe("createHandler", () => {
     strictEqual(exitWithSuccessMock.mock.calls.length, 0);
   });
 
+  it("starts post-create when the requested action starts", async () => {
+    resetMocks();
+    let resolveAction!: (result: unknown) => void;
+    runCreateWorktreeMock.mockResolvedValue(
+      ok({
+        gitRoot: "/repo",
+        worktreesDirectory: "/repo/.git/phantom/worktrees",
+        name: "feature",
+        path: "/repo/.git/phantom/worktrees/feature",
+        message: "Created worktree",
+      }),
+    );
+    runWorktreeActionMock.mockImplementation((options) => {
+      options.onStarted?.();
+      return new Promise((resolve) => {
+        resolveAction = resolve;
+      });
+    });
+
+    const handler = createHandler(["feature", "--shell"]);
+
+    await vi.waitFor(() => {
+      strictEqual(runPostCreateWorktreeMock.mock.calls.length, 1);
+    });
+    strictEqual(exitWithSuccessMock.mock.calls.length, 0);
+
+    resolveAction(ok({}));
+    await rejects(async () => await handler, /Exit with code 0/);
+  });
+
   it("preserves process error exit codes from core actions", async () => {
     resetMocks();
     runCreateWorktreeMock.mockResolvedValue(
+      ok({
+        gitRoot: "/repo",
+        worktreesDirectory: "/repo/.git/phantom/worktrees",
+        name: "feature",
+        path: "/repo/.git/phantom/worktrees/feature",
+        message: "Created worktree",
+      }),
+    );
+    runWorktreeActionMock.mockResolvedValue(
       err(
         Object.assign(
           new Error("Command '/bin/sh' failed with exit code 127"),

@@ -36,6 +36,7 @@ export interface RunWorktreeActionOptions {
   action?: ResolvedWorktreeAction;
   logger?: WorktreeLogger;
   exitWithProcessCode?: boolean;
+  onStarted?: () => void;
 }
 
 export interface RunWorktreeActionSuccess {
@@ -98,6 +99,7 @@ export async function runWorktreeAction(
     action,
     logger,
     exitWithProcessCode = false,
+    onStarted,
   } = options;
 
   if (!action) {
@@ -112,6 +114,7 @@ export async function runWorktreeAction(
       gitRoot,
       worktreeDirectory,
       worktreeName,
+      ...(onStarted ? [{ onStarted }] : []),
     );
     if (isErr(shellResult)) {
       return err(shellResult.error);
@@ -135,7 +138,10 @@ export async function runWorktreeAction(
       worktreeDirectory,
       worktreeName,
       [shell, "-c", action.command],
-      { interactive: true },
+      {
+        interactive: true,
+        ...(onStarted ? { onStarted } : {}),
+      },
     );
     if (isErr(execResult)) {
       return err(execResult.error);
@@ -165,6 +171,7 @@ export async function runWorktreeAction(
   if (isErr(tmuxResult)) {
     return err(tmuxResult.error);
   }
+  onStarted?.();
 
   return ok({});
 }

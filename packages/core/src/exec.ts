@@ -12,6 +12,7 @@ export type ExecInWorktreeSuccess = SpawnSuccess;
 
 export interface ExecInWorktreeOptions {
   interactive?: boolean;
+  onStarted?: () => void;
 }
 
 export async function execInWorktree(
@@ -39,6 +40,8 @@ export async function execInWorktree(
     ? "inherit"
     : ["ignore", "inherit", "inherit"];
 
+  const onSpawned = options?.onStarted;
+
   return spawnProcess({
     command: cmd,
     args,
@@ -46,5 +49,6 @@ export async function execInWorktree(
       cwd: worktreePath,
       stdio,
     },
+    ...(onSpawned ? { onSpawned } : {}),
   });
 }

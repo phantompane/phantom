@@ -1,8 +1,11 @@
 import { parseArgs } from "node:util";
 import {
+  resolveWorktreeAction,
   runPostCreateWorktree,
   runCreateWorktree,
+  runWorktreeAction,
   TmuxSessionRequiredError,
+  validateWorktreeAction,
   WorktreeActionConflictError,
   WorktreeAlreadyExistsError,
 } from "@phantompane/core";
@@ -63,15 +66,24 @@ export async function createHandler(args: string[]): Promise<void> {
         ? "horizontal"
         : undefined;
 
+  const actionResult = resolveWorktreeAction({
+    shell: values.shell ?? false,
+    exec: values.exec,
+    tmuxDirection,
+  });
+  if (isErr(actionResult)) {
+    exitWithError(actionResult.error.message, exitCodes.validationError);
+  }
+
+  const actionValidation = await validateWorktreeAction(actionResult.value);
+  if (isErr(actionValidation)) {
+    exitWithError(actionValidation.error.message, exitCodes.validationError);
+  }
+
   const result = await runCreateWorktree({
     name: positionals[0],
     base: values.base,
     copyFiles: values["copy-file"],
-    action: {
-      shell: values.shell ?? false,
-      exec: values.exec,
-      tmuxDirection,
-    },
     logger: output,
   });
 
@@ -85,16 +97,43 @@ export async function createHandler(args: string[]): Promise<void> {
     exitWithError(result.error.message, exitCode);
   }
 
-  const postCreateResult = await runPostCreateWorktree({
+  let postCreatePromise: ReturnType<typeof runPostCreateWorktree> | undefined;
+  const startPostCreate = () => {
+    return (postCreatePromise ??= runPostCreateWorktree({
+      worktreeName: result.value.name,
+      logger: output,
+    }));
+  };
+
+  const actionRunResult = await runWorktreeAction({
+    gitRoot: result.value.gitRoot,
+    worktreeDirectory: result.value.worktreesDirectory,
     worktreeName: result.value.name,
+    worktreePath: result.value.path,
+    action: actionResult.value,
     logger: output,
+    exitWithProcessCode: true,
+    onStarted: () => {
+      void startPostCreate();
+    },
   });
+  if (isErr(actionRunResult)) {
+    if (postCreatePromise) {
+      await postCreatePromise.catch(() => undefined);
+    }
+    exitWithError(
+      actionRunResult.error.message,
+      getProcessExitCode(actionRunResult.error) ?? exitCodes.generalError,
+    );
+  }
+
+  const postCreateResult = await startPostCreate();
   if (isErr(postCreateResult)) {
     exitWithError(postCreateResult.error.message, exitCodes.generalError);
   }
 
-  if (result.value.exitProcessCode !== undefined) {
-    return process.exit(result.value.exitProcessCode);
+  if (actionRunResult.value.exitProcessCode !== undefined) {
+    return process.exit(actionRunResult.value.exitProcessCode);
   }
 
   exitWithSuccess();

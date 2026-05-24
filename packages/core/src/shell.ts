@@ -10,10 +10,15 @@ import { validateWorktreeExists } from "./worktree/validate.ts";
 
 export type ShellInWorktreeSuccess = SpawnSuccess;
 
+export interface ShellInWorktreeOptions {
+  onStarted?: () => void;
+}
+
 export async function shellInWorktree(
   gitRoot: string,
   worktreeDirectory: string,
   worktreeName: string,
+  options?: ShellInWorktreeOptions,
 ): Promise<
   Result<ShellInWorktreeSuccess, WorktreeNotFoundError | ProcessError>
 > {
@@ -28,6 +33,7 @@ export async function shellInWorktree(
 
   const worktreePath = validation.value.path;
   const shell = process.env.SHELL || "/bin/sh";
+  const onSpawned = options?.onStarted;
 
   return spawnProcess({
     command: shell,
@@ -39,5 +45,6 @@ export async function shellInWorktree(
         ...getPhantomEnv(worktreeName, worktreePath),
       },
     },
+    ...(onSpawned ? { onSpawned } : {}),
   });
 }

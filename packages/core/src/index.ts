@@ -5,6 +5,7 @@ export * from "./exec.ts";
 export * from "./github/checkout.ts";
 export * from "./paths.ts";
 export * from "./shell.ts";
+export * from "./worktree/action.ts";
 export * from "./worktree/attach.ts";
 export * from "./worktree/create.ts";
 export * from "./worktree/current.ts";

@@ -162,6 +162,27 @@ describe("spawnProcess", () => {
     }
   });
 
+  it("should call onSpawned after the process starts", async () => {
+    const mockChildProcess = new EventEmitter();
+    const onSpawned = vi.fn();
+    spawnMock.mockClear();
+    spawnMock.mockImplementation(() => {
+      setTimeout(() => {
+        mockChildProcess.emit("spawn");
+        mockChildProcess.emit("exit", 0, null);
+      }, 0);
+      return mockChildProcess;
+    });
+
+    const result = await spawnProcess({
+      command: "echo",
+      onSpawned,
+    });
+
+    strictEqual(isOk(result), true);
+    strictEqual(onSpawned.mock.calls.length, 1);
+  });
+
   it("should use default values when args and options are not provided", async () => {
     const mockChildProcess = new EventEmitter();
     spawnMock.mockClear();

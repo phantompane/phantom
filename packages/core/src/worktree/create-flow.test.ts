@@ -1,6 +1,6 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { afterAll, describe, it, vi } from "vitest";
-import { err, ok } from "@phantompane/utils";
+import { describe, it, vi } from "vitest";
+import { ok } from "@phantompane/utils";
 
 const accessMock = vi.fn();
 const mkdirMock = vi.fn();
@@ -15,17 +15,6 @@ const getWorktreePathFromDirectoryMock = vi.fn(
     `${worktreeDirectory}/${name.replaceAll("/", separator)}`,
 );
 const copyFilesMock = vi.fn();
-const isInsideTmuxMock = vi.fn();
-const executeTmuxCommandMock = vi.fn();
-const getPhantomEnvMock = vi.fn();
-
-const originalProcessEnv = process.env;
-const processEnvMock: NodeJS.ProcessEnv = {};
-process.env = processEnvMock;
-
-afterAll(() => {
-  process.env = originalProcessEnv;
-});
 
 vi.doMock("node:fs/promises", () => {
   const mockedFs = {
@@ -65,15 +54,6 @@ vi.doMock("./file-copier.ts", () => ({
   copyFiles: copyFilesMock,
 }));
 
-vi.doMock("@phantompane/process", () => ({
-  getPhantomEnv: getPhantomEnvMock,
-}));
-
-vi.doMock("@phantompane/tmux", () => ({
-  executeTmuxCommand: executeTmuxCommandMock,
-  isInsideTmux: isInsideTmuxMock,
-}));
-
 const { runCreateWorktree } = await import("./create.ts");
 
 describe("runCreateWorktree", () => {
@@ -88,13 +68,6 @@ describe("runCreateWorktree", () => {
     generateUniqueNameMock.mockReset();
     getWorktreePathFromDirectoryMock.mockClear();
     copyFilesMock.mockReset();
-    isInsideTmuxMock.mockReset();
-    executeTmuxCommandMock.mockReset();
-    getPhantomEnvMock.mockReset();
-
-    for (const key of Object.keys(processEnvMock)) {
-      delete processEnvMock[key];
-    }
   };
 
   it("merges configured copy files with CLI copy files and auto-generates the name", async () => {
@@ -135,6 +108,11 @@ describe("runCreateWorktree", () => {
 
     strictEqual(result.ok, true);
     if (result.ok) {
+      strictEqual(result.value.gitRoot, "/repo");
+      strictEqual(
+        result.value.worktreesDirectory,
+        "/repo/.git/phantom/worktrees",
+      );
       strictEqual(result.value.name, "fuzzy-cats-dance");
       strictEqual(
         result.value.path,
@@ -185,120 +163,5 @@ describe("runCreateWorktree", () => {
       base: "HEAD",
       cwd: "/selected/repo",
     });
-  });
-
-  it("returns a validation error when multiple open actions are requested", async () => {
-    resetMocks();
-
-    const result = await runCreateWorktree({
-      name: "feature",
-      action: {
-        shell: true,
-        exec: "echo hello",
-      },
-    });
-
-    strictEqual(result.ok, false);
-    if (!result.ok) {
-      strictEqual(
-        result.error.message,
-        "Cannot use --shell, --exec, and --tmux options together",
-      );
-    }
-    strictEqual(getGitRootMock.mock.calls.length, 0);
-  });
-
-  it("opens the created worktree in tmux from core", async () => {
-    resetMocks();
-    processEnvMock.SHELL = "/bin/bash";
-    accessMock.mockResolvedValue(undefined);
-    validateWorktreeNameMock.mockReturnValue(ok(undefined));
-    validateWorktreeDoesNotExistMock.mockResolvedValue(ok(undefined));
-    addWorktreeMock.mockResolvedValue(undefined);
-    getGitRootMock.mockResolvedValue("/repo");
-    createContextMock.mockResolvedValue({
-      gitRoot: "/repo",
-      worktreesDirectory: "/repo/.git/phantom/worktrees",
-      directoryNameSeparator: "/",
-      config: null,
-      preferences: {},
-    });
-    copyFilesMock.mockResolvedValue(
-      ok({
-        copiedFiles: [],
-        skippedFiles: [],
-      }),
-    );
-    isInsideTmuxMock.mockResolvedValue(true);
-    executeTmuxCommandMock.mockResolvedValue(ok({ exitCode: 0 }));
-    getPhantomEnvMock.mockReturnValue({
-      PHANTOM_NAME: "feature",
-      PHANTOM_PATH: "/repo/.git/phantom/worktrees/feature",
-    });
-    const logger = {
-      log: vi.fn(),
-      warn: vi.fn(),
-    };
-
-    const result = await runCreateWorktree({
-      name: "feature",
-      action: {
-        tmuxDirection: "new",
-      },
-      logger,
-    });
-
-    strictEqual(result.ok, true);
-    deepStrictEqual(executeTmuxCommandMock.mock.calls[0][0], {
-      direction: "new",
-      command: "/bin/bash",
-      cwd: "/repo/.git/phantom/worktrees/feature",
-      env: {
-        PHANTOM_NAME: "feature",
-        PHANTOM_PATH: "/repo/.git/phantom/worktrees/feature",
-      },
-      windowName: "feature",
-    });
-    strictEqual(
-      logger.log.mock.calls[1][0],
-      "\nOpening worktree 'feature' in tmux window...",
-    );
-  });
-
-  it("returns an error when opening the requested action fails", async () => {
-    resetMocks();
-    processEnvMock.SHELL = "/bin/bash";
-    accessMock.mockResolvedValue(undefined);
-    validateWorktreeNameMock.mockReturnValue(ok(undefined));
-    validateWorktreeDoesNotExistMock.mockResolvedValue(ok(undefined));
-    addWorktreeMock.mockResolvedValue(undefined);
-    getGitRootMock.mockResolvedValue("/repo");
-    createContextMock.mockResolvedValue({
-      gitRoot: "/repo",
-      worktreesDirectory: "/repo/.git/phantom/worktrees",
-      directoryNameSeparator: "/",
-      config: {
-        postCreate: {
-          commands: ["npm install"],
-        },
-      },
-      preferences: {},
-    });
-    isInsideTmuxMock.mockResolvedValue(true);
-    executeTmuxCommandMock.mockResolvedValue(err(new Error("tmux failed")));
-    getPhantomEnvMock.mockReturnValue({
-      PHANTOM_NAME: "feature",
-      PHANTOM_PATH: "/repo/.git/phantom/worktrees/feature",
-    });
-
-    const result = await runCreateWorktree({
-      name: "feature",
-      action: {
-        tmuxDirection: "new",
-      },
-    });
-
-    strictEqual(result.ok, false);
-    strictEqual(executeTmuxCommandMock.mock.calls.length, 1);
   });
 });
