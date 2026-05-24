@@ -311,6 +311,7 @@ export class ServeServices {
   private readonly archiveOperationChatIds = new Set<string>();
   private readonly activeWorktreeOperationLocks = new Map<string, number>();
   private readonly reportedAgentErrors = new WeakSet<object>();
+  private accumulatedLocalTimelineStateCheckKey: string | null = null;
 
   constructor(options: ServeServicesOptions = {}) {
     this.eventHub = options.eventHub ?? new EventHub();
@@ -2847,22 +2848,55 @@ export class ServeServices {
     const hasStaleTransientChat = state.chats.some((chat) =>
       this.isStaleTransientChat(chat),
     );
-    const hasStoredHiddenRichEventContent = state.messages.some(
+    const hasStoredHiddenRichEventContentSnapshot = state.messages.some(
       hasHiddenRichEventContent,
     );
-    if (!hasStaleTransientChat && !hasStoredHiddenRichEventContent) {
+    const accumulatedLocalTimelineStateCheckKey =
+      createAccumulatedLocalTimelineStateCheckKey(state);
+    const shouldCheckAccumulatedLocalTimeline =
+      this.accumulatedLocalTimelineStateCheckKey !==
+      accumulatedLocalTimelineStateCheckKey;
+    const hasAccumulatedLocalTimelineChatSnapshot =
+      shouldCheckAccumulatedLocalTimeline &&
+      findAccumulatedLocalTimelineChatIds(state).size > 0;
+    if (
+      !hasStaleTransientChat &&
+      !hasStoredHiddenRichEventContentSnapshot &&
+      !hasAccumulatedLocalTimelineChatSnapshot
+    ) {
+      if (shouldCheckAccumulatedLocalTimeline) {
+        this.accumulatedLocalTimelineStateCheckKey =
+          accumulatedLocalTimelineStateCheckKey;
+      }
       return new Set();
     }
 
     const resetChatIds = new Set<string>();
+    let didCheckAccumulatedLocalTimeline = false;
     const timestamp = createTimestamp();
-    await this.store.update((nextState) => {
+    const updatedState = await this.store.update((nextState) => {
       resetChatIds.clear();
+      const nextAccumulatedLocalTimelineStateCheckKey =
+        createAccumulatedLocalTimelineStateCheckKey(nextState);
+      const shouldCheckNextAccumulatedLocalTimeline =
+        this.accumulatedLocalTimelineStateCheckKey !==
+        nextAccumulatedLocalTimelineStateCheckKey;
+      didCheckAccumulatedLocalTimeline =
+        shouldCheckNextAccumulatedLocalTimeline;
+      const accumulatedLocalTimelineChatIds =
+        shouldCheckNextAccumulatedLocalTimeline
+          ? findAccumulatedLocalTimelineChatIds(nextState)
+          : new Set<string>();
+      const pruneMessageChatIds = new Set(accumulatedLocalTimelineChatIds);
+      const hasStoredHiddenRichEventContent = nextState.messages.some(
+        hasHiddenRichEventContent,
+      );
       const chats = nextState.chats.map((chat) => {
         if (!this.isStaleTransientChat(chat)) {
           return chat;
         }
         resetChatIds.add(chat.id);
+        pruneMessageChatIds.add(chat.id);
         return {
           ...chat,
           status: "idle" as const,
@@ -2870,22 +2904,40 @@ export class ServeServices {
           updatedAt: timestamp,
         };
       });
-      if (resetChatIds.size === 0 && !hasStoredHiddenRichEventContent) {
+      if (
+        resetChatIds.size === 0 &&
+        pruneMessageChatIds.size === 0 &&
+        !hasStoredHiddenRichEventContent
+      ) {
         return nextState;
       }
+      const retainedPrunedMessageIds = findRetainedPrunedMessageIds(
+        nextState.messages,
+        pruneMessageChatIds,
+      );
       return {
         ...nextState,
         chats,
-        messages: nextState.messages.map((message) => {
-          const nextMessage =
-            resetChatIds.has(message.chatId) &&
-            message.eventType === "chat.message.steered"
-              ? { ...message, eventType: undefined }
-              : message;
-          return stripHiddenRichEventContent(nextMessage);
-        }),
+        messages: nextState.messages
+          .filter(
+            (message) =>
+              !pruneMessageChatIds.has(message.chatId) ||
+              retainedPrunedMessageIds.has(message.id),
+          )
+          .map((message) => {
+            const nextMessage =
+              pruneMessageChatIds.has(message.chatId) &&
+              message.eventType === "chat.message.steered"
+                ? { ...message, eventType: undefined }
+                : message;
+            return stripHiddenRichEventContent(nextMessage);
+          }),
       };
     });
+    if (didCheckAccumulatedLocalTimeline) {
+      this.accumulatedLocalTimelineStateCheckKey =
+        createAccumulatedLocalTimelineStateCheckKey(updatedState);
+    }
     return resetChatIds;
   }
 
@@ -4063,6 +4115,161 @@ function resolveChatMessageTimeline({
     activeTurnId,
     chat.activeTurnId != null,
     canonicalLocalTranscriptMatch.localMessageCodexOrderMatches,
+  );
+}
+
+function localMessagesForCurrentActiveTurn(
+  localMessages: ChatMessageRecord[],
+): ChatMessageRecord[] {
+  const latestLocalUserCreatedAt = localMessages
+    .filter(isActiveTurnLocalUserBoundary)
+    .map((message) => message.createdAt)
+    .sort((left, right) => right.localeCompare(left))[0];
+  if (!latestLocalUserCreatedAt) {
+    return localMessages;
+  }
+  return localMessages.filter(
+    (message) =>
+      isQueuedMessage(message) || message.createdAt >= latestLocalUserCreatedAt,
+  );
+}
+
+function isActiveTurnLocalUserBoundary(message: ChatMessageRecord): boolean {
+  return message.role === "user" && !isQueuedMessage(message);
+}
+
+function createAccumulatedLocalTimelineStateCheckKey(
+  state: ServeState,
+): string {
+  return [
+    state.messages.length,
+    ...state.chats.map((chat) =>
+      [
+        chat.id,
+        chat.codexThreadId ?? "",
+        chat.status,
+        chat.activeTurnId ?? "",
+        chat.updatedAt,
+      ].join(":"),
+    ),
+  ].join("|");
+}
+
+function findAccumulatedLocalTimelineChatIds(
+  state: ServeState,
+): ReadonlySet<string> {
+  const eligibleChatIds = new Set<string>();
+  for (const chat of state.chats) {
+    if (canPruneAccumulatedLocalTimeline(chat)) {
+      eligibleChatIds.add(chat.id);
+    }
+  }
+  if (eligibleChatIds.size === 0) {
+    return new Set();
+  }
+
+  const statsByChatId = new Map<
+    string,
+    {
+      earliestTransientCreatedAt: string | null;
+      latestUserCreatedAt: string | null;
+      userBoundaryCount: number;
+    }
+  >();
+  for (const message of state.messages) {
+    if (!eligibleChatIds.has(message.chatId)) {
+      continue;
+    }
+    const stats = statsByChatId.get(message.chatId) ?? {
+      earliestTransientCreatedAt: null,
+      latestUserCreatedAt: null,
+      userBoundaryCount: 0,
+    };
+    if (isActiveTurnLocalUserBoundary(message)) {
+      stats.userBoundaryCount += 1;
+      if (
+        stats.latestUserCreatedAt === null ||
+        message.createdAt > stats.latestUserCreatedAt
+      ) {
+        stats.latestUserCreatedAt = message.createdAt;
+      }
+    }
+    if (
+      isTransientLocalCodexMessage(message) &&
+      (stats.earliestTransientCreatedAt === null ||
+        message.createdAt < stats.earliestTransientCreatedAt)
+    ) {
+      stats.earliestTransientCreatedAt = message.createdAt;
+    }
+    statsByChatId.set(message.chatId, stats);
+  }
+
+  return new Set(
+    Array.from(statsByChatId.entries())
+      .filter(([, stats]) =>
+        hasAccumulatedLocalTimelineStats(
+          stats.userBoundaryCount,
+          stats.latestUserCreatedAt,
+          stats.earliestTransientCreatedAt,
+        ),
+      )
+      .map(([chatId]) => chatId),
+  );
+}
+
+function canPruneAccumulatedLocalTimeline(chat: ChatRecord): boolean {
+  return Boolean(
+    chat.codexThreadId && chat.status === "idle" && !chat.activeTurnId,
+  );
+}
+
+function hasAccumulatedLocalTimelineStats(
+  userBoundaryCount: number,
+  latestUserCreatedAt: string | null,
+  earliestTransientCreatedAt: string | null,
+): boolean {
+  if (
+    userBoundaryCount < 2 ||
+    !latestUserCreatedAt ||
+    !earliestTransientCreatedAt ||
+    earliestTransientCreatedAt >= latestUserCreatedAt
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function findRetainedPrunedMessageIds(
+  messages: ChatMessageRecord[],
+  chatIds: ReadonlySet<string>,
+): ReadonlySet<string> {
+  if (chatIds.size === 0) {
+    return new Set();
+  }
+  const messagesByChatId = new Map<string, ChatMessageRecord[]>();
+  for (const message of messages) {
+    if (!chatIds.has(message.chatId)) {
+      continue;
+    }
+    const chatMessages = messagesByChatId.get(message.chatId) ?? [];
+    chatMessages.push(message);
+    messagesByChatId.set(message.chatId, chatMessages);
+  }
+
+  const retainedMessageIds = new Set<string>();
+  for (const chatMessages of messagesByChatId.values()) {
+    for (const message of localMessagesForCurrentActiveTurn(chatMessages)) {
+      retainedMessageIds.add(message.id);
+    }
+  }
+  return retainedMessageIds;
+}
+
+function isTransientLocalCodexMessage(message: ChatMessageRecord): boolean {
+  return (
+    message.role === "event" ||
+    message.eventType === "item/agentMessage/delta" ||
+    message.eventType === "chat.message.steered"
   );
 }
 

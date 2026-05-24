@@ -2200,14 +2200,10 @@ describe("ServeServices", () => {
         message.eventType,
       ]),
       [
-        ["msg_user_1", "user", "initial request", undefined],
-        ["msg_event", "event", "item/started: agentMessage", "item/started"],
-        [
-          "msg_assistant_1",
-          "assistant",
-          "first update",
-          "item/agentMessage/delta",
-        ],
+        ["chat_1_codex_turn_1_0", "user", "initial request", undefined],
+        ["chat_1_codex_turn_1_1", "assistant", "first update", undefined],
+        ["chat_1_codex_turn_1_2", "user", "follow up", undefined],
+        ["chat_1_codex_turn_1_3", "assistant", "second update", undefined],
         ["msg_user_2", "user", "follow up", undefined],
         [
           "msg_assistant_2",
@@ -2296,10 +2292,12 @@ describe("ServeServices", () => {
       ]),
       [
         ["user", "initial request", undefined],
-        ["assistant", "first update", "item/agentMessage/delta"],
+        ["assistant", "first update", undefined],
+        ["user", "follow up", undefined],
+        ["assistant", "second update", undefined],
+        ["assistant", "newer update", undefined],
         ["user", "follow up", undefined],
         ["assistant", "second update", "item/agentMessage/delta"],
-        ["assistant", "newer update", undefined],
         ["user", "queued next", "chat.message.queued"],
       ],
     );
@@ -2501,15 +2499,11 @@ describe("ServeServices", () => {
         message.eventType,
       ]),
       [
-        ["msg_user_1", "user", "initial request", undefined],
-        [
-          "msg_assistant_1",
-          "assistant",
-          "first update",
-          "item/agentMessage/delta",
-        ],
-        ["msg_user_2", "user", "follow up", undefined],
+        ["chat_1_codex_turn_1_0", "user", "initial request", undefined],
+        ["chat_1_codex_turn_1_1", "assistant", "first update", undefined],
+        ["chat_1_codex_turn_2_0", "user", "follow up", undefined],
         ["chat_1_codex_turn_2_1", "assistant", "newer update", undefined],
+        ["msg_user_2", "user", "follow up", undefined],
         ["msg_queued", "user", "queued next", "chat.message.queued"],
       ],
     );
@@ -2585,13 +2579,11 @@ describe("ServeServices", () => {
         message.eventType,
       ]),
       [
-        ["msg_user_1", "user", "initial request", undefined],
-        [
-          "msg_assistant_1",
-          "assistant",
-          "first update",
-          "item/agentMessage/delta",
-        ],
+        ["chat_1_codex_turn_1_0", "user", "initial request", undefined],
+        ["chat_1_codex_turn_1_1", "assistant", "first update", undefined],
+        ["chat_1_codex_turn_1_2", "user", "adjust course", undefined],
+        ["chat_1_codex_turn_1_3", "assistant", "adjusted update", undefined],
+        ["chat_1_codex_turn_1_4", "assistant", "newer update", undefined],
         ["msg_steered", "user", "adjust course", undefined],
         [
           "msg_assistant_2",
@@ -2599,7 +2591,6 @@ describe("ServeServices", () => {
           "adjusted update",
           "item/agentMessage/delta",
         ],
-        ["chat_1_codex_turn_1_4", "assistant", "newer update", undefined],
       ],
     );
   });
@@ -2668,11 +2659,13 @@ describe("ServeServices", () => {
     deepStrictEqual(
       messages.map((message) => [message.id, message.role, message.text]),
       [
-        ["msg_user_1", "user", "initial request"],
-        ["msg_assistant_1", "assistant", "repeated update"],
+        ["chat_1_codex_turn_1_0", "user", "initial request"],
+        ["chat_1_codex_turn_1_1", "assistant", "repeated update"],
+        ["chat_1_codex_turn_1_2", "user", "follow up"],
+        ["chat_1_codex_turn_1_3", "assistant", "second update"],
+        ["chat_1_codex_turn_1_4", "assistant", "repeated update"],
         ["msg_user_2", "user", "follow up"],
         ["msg_assistant_2", "assistant", "second update"],
-        ["chat_1_codex_turn_1_4", "assistant", "repeated update"],
       ],
     );
   });
@@ -2784,7 +2777,7 @@ describe("ServeServices", () => {
     );
   });
 
-  it("keeps repeated active local turns separate from older Codex history", async () => {
+  it("keeps only the latest active local turn overlay with older Codex history", async () => {
     const state = {
       ...createTestState(),
       projects: [createProject()],
@@ -2825,7 +2818,6 @@ describe("ServeServices", () => {
       ],
     };
     const { codex, services } = await createHarness(state);
-    markChatActiveInCurrentProcess(services, "chat_1");
     codex.readThread.mockResolvedValueOnce({
       thread: {
         turns: [
@@ -2866,13 +2858,6 @@ describe("ServeServices", () => {
           "second repeat response",
           undefined,
         ],
-        ["msg_current_user_1", "user", "repeat request", undefined],
-        [
-          "msg_current_assistant_1",
-          "assistant",
-          "first repeat response",
-          "item/agentMessage/delta",
-        ],
         ["msg_current_user_2", "user", "repeat follow up", undefined],
         [
           "msg_current_assistant_2",
@@ -2882,6 +2867,447 @@ describe("ServeServices", () => {
         ],
       ],
     );
+  });
+
+  it("drops stale local Codex events before the latest active user message", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "running", activeTurnId: "turn_current" })],
+      messages: [
+        {
+          id: "msg_old_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "old request",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_old_command",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_old",
+          createdAt: "2026-05-08T00:45:01.000Z",
+        },
+        {
+          id: "msg_old_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "old local delta",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_old",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+        {
+          id: "msg_latest_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "latest request",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+        {
+          id: "msg_latest_command",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_latest",
+          createdAt: "2026-05-08T00:46:01.000Z",
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [
+              { type: "userMessage", text: "old request" },
+              { type: "agentMessage", text: "old local delta" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+    const savedState = await store.load();
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_old_0", "user", "old request", undefined],
+        ["chat_1_codex_turn_old_1", "assistant", "old local delta", undefined],
+        ["msg_latest_user", "user", "latest request", undefined],
+        [
+          "msg_latest_command",
+          "event",
+          "",
+          "item/commandExecution/outputDelta",
+        ],
+      ],
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => message.id),
+      ["msg_latest_user", "msg_latest_command"],
+    );
+  });
+
+  it("prunes accumulated idle local timeline after two repeated submitted user messages", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_old_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "retry",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_old_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "old local delta",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_old",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+        {
+          id: "msg_latest_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "retry",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+        {
+          id: "msg_latest_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "latest local delta",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_latest",
+          createdAt: "2026-05-08T00:46:01.000Z",
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [
+              {
+                type: "userMessage",
+                text: "retry",
+                createdAt: "2026-05-08T00:45:00.000Z",
+              },
+              {
+                type: "agentMessage",
+                text: "old local delta",
+                createdAt: "2026-05-08T00:45:02.000Z",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+    const savedState = await store.load();
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_old_0", "user", "retry", undefined],
+        ["chat_1_codex_turn_old_1", "assistant", "old local delta", undefined],
+        ["msg_latest_user", "user", "retry", undefined],
+        [
+          "msg_latest_assistant",
+          "assistant",
+          "latest local delta",
+          "item/agentMessage/delta",
+        ],
+      ],
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["msg_latest_user", "user", "retry", undefined],
+        [
+          "msg_latest_assistant",
+          "assistant",
+          "latest local delta",
+          "item/agentMessage/delta",
+        ],
+      ],
+    );
+  });
+
+  it("clears retained steered state while pruning accumulated idle local timeline", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_old_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "old request",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_old_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "old local delta",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_old",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+        {
+          id: "msg_latest_steered",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "adjust course",
+          eventType: "chat.message.steered",
+          itemId: "turn_old",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [
+              { type: "userMessage", text: "old request" },
+              { type: "agentMessage", text: "old local delta" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+    const savedState = await store.load();
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_old_0", "user", "old request", undefined],
+        ["chat_1_codex_turn_old_1", "assistant", "old local delta", undefined],
+        ["msg_latest_steered", "user", "adjust course", undefined],
+      ],
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [["msg_latest_steered", "user", "adjust course", undefined]],
+    );
+  });
+
+  it("rechecks accumulated idle local timeline after an earlier no-op cleanup pass", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+    };
+    const { codex, services, store } = await createHarness(state);
+
+    await services.listProjects();
+    await store.update((nextState) => ({
+      ...nextState,
+      messages: [
+        {
+          id: "msg_old_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "retry",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_old_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "old local delta",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_old",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+        {
+          id: "msg_latest_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "retry",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+      ],
+    }));
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [
+              { type: "userMessage", text: "retry" },
+              { type: "agentMessage", text: "old local delta" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+    const savedState = await store.load();
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_old_0", "user", "retry", undefined],
+        ["chat_1_codex_turn_old_1", "assistant", "old local delta", undefined],
+        ["msg_latest_user", "user", "retry", undefined],
+      ],
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => message.id),
+      ["msg_latest_user"],
+    );
+  });
+
+  it("preserves queued messages while pruning accumulated idle local timeline", async () => {
+    const queuedMessage = {
+      id: "queue_1",
+      chatId: "chat_1",
+      messageId: "msg_queued",
+      text: "queued request",
+      createdAt: "2026-05-08T00:47:00.000Z",
+    };
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_old_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "old request",
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_old_command",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_old",
+          createdAt: "2026-05-08T00:45:01.000Z",
+        },
+        {
+          id: "msg_latest_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "latest request",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+        {
+          id: "msg_latest_command",
+          chatId: "chat_1",
+          role: "event" as const,
+          text: "",
+          eventType: "item/commandExecution/outputDelta",
+          itemId: "cmd_latest",
+          createdAt: "2026-05-08T00:46:01.000Z",
+        },
+        {
+          id: "msg_queued",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "queued request",
+          eventType: "chat.message.queued",
+          createdAt: "2026-05-08T00:47:00.000Z",
+        },
+      ],
+      queuedMessages: [queuedMessage],
+    };
+    const { codex, services, store } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [{ type: "userMessage", text: "old request" }],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+    const savedState = await store.load();
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_old_0", "user", "old request", undefined],
+        ["msg_latest_user", "user", "latest request", undefined],
+        [
+          "msg_latest_command",
+          "event",
+          "",
+          "item/commandExecution/outputDelta",
+        ],
+        ["msg_queued", "user", "queued request", "chat.message.queued"],
+      ],
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => message.id),
+      ["msg_latest_user", "msg_latest_command", "msg_queued"],
+    );
+    deepStrictEqual(savedState.queuedMessages, [queuedMessage]);
   });
 
   it("preserves local attachment metadata when Codex thread history matches a sent user message", async () => {
@@ -3181,7 +3607,6 @@ describe("ServeServices", () => {
       [
         ["chat_1_codex_turn_1_0", "user", "install skills", undefined],
         ["chat_1_codex_turn_1_1", "assistant", "already installed", undefined],
-        ["msg_interrupted", "user", "use npx", undefined],
         [
           "chat_1_codex_turn_2_0",
           "user",
@@ -3923,7 +4348,7 @@ describe("ServeServices", () => {
     );
   });
 
-  it("keeps local Codex events before later live assistant deltas", async () => {
+  it("drops stale local Codex events before a later active user message", async () => {
     const state = {
       ...createTestState(),
       projects: [createProject()],
@@ -3984,8 +4409,6 @@ describe("ServeServices", () => {
       [
         ["user", "fix the UI", undefined],
         ["assistant", "done", undefined],
-        ["event", "", "item/commandExecution/outputDelta"],
-        ["assistant", "still working", "item/agentMessage/delta"],
         ["user", "next request", undefined],
       ],
     );
@@ -4130,7 +4553,7 @@ describe("ServeServices", () => {
     );
   });
 
-  it("keeps local Codex events between live assistant deltas and later user messages", async () => {
+  it("drops stale local Codex events between live assistant deltas and later user messages", async () => {
     const state = {
       ...createTestState(),
       projects: [createProject()],
@@ -4191,8 +4614,6 @@ describe("ServeServices", () => {
       [
         ["user", "fix the UI", undefined],
         ["assistant", "done", undefined],
-        ["assistant", "still working", "item/agentMessage/delta"],
-        ["event", "", "item/commandExecution/outputDelta"],
         ["user", "next request", undefined],
       ],
     );
@@ -4451,7 +4872,7 @@ describe("ServeServices", () => {
     );
   });
 
-  it("keeps local Codex events between a deduplicated and retained repeated user message", async () => {
+  it("drops stale local Codex events between a deduplicated and retained repeated user message", async () => {
     const state = {
       ...createTestState(),
       projects: [createProject()],
@@ -4519,8 +4940,6 @@ describe("ServeServices", () => {
       ]),
       [
         ["user", "repeat", undefined],
-        ["event", "", "item/commandExecution/outputDelta"],
-        ["assistant", "still working", "item/agentMessage/delta"],
         ["user", "repeat", undefined],
       ],
     );
@@ -4587,16 +5006,11 @@ describe("ServeServices", () => {
         message.text,
         message.eventType,
       ]),
-      [
-        ["user", "retry", undefined],
-        ["assistant", "still working", "item/agentMessage/delta"],
-        ["event", "", "item/commandExecution/outputDelta"],
-        ["user", "retry", undefined],
-      ],
+      [["user", "retry", undefined]],
     );
   });
 
-  it("keeps local Codex events before a later repeated user boundary", async () => {
+  it("drops stale local Codex events before a later repeated user boundary", async () => {
     const state = {
       ...createTestState(),
       projects: [createProject()],
@@ -4669,8 +5083,6 @@ describe("ServeServices", () => {
       ]),
       [
         ["user", "repeat", undefined],
-        ["assistant", "still working", "item/agentMessage/delta"],
-        ["event", "", "item/commandExecution/outputDelta"],
         ["user", "repeat", undefined],
       ],
     );
@@ -5086,8 +5498,7 @@ describe("ServeServices", () => {
       ]),
       [
         ["chat_1_codex_turn_1_0", "user", "start", undefined],
-        ["msg_live_delta", "assistant", "working", "item/agentMessage/delta"],
-        ["msg_steered", "user", "adjust now", "chat.message.steered"],
+        ["msg_steered", "user", "adjust now", undefined],
         ["msg_queued", "user", "next queued", "chat.message.queued"],
       ],
     );
@@ -5222,8 +5633,8 @@ describe("ServeServices", () => {
         ["chat_1_codex_turn_1_0", "user", "repeat", undefined],
         ["chat_1_codex_turn_1_1", "user", "repeat", undefined],
         ["chat_1_codex_turn_1_2", "assistant", "between repeats", undefined],
-        ["msg_live_delta", "assistant", "streaming", "item/agentMessage/delta"],
         ["chat_1_codex_turn_1_3", "user", "repeat", undefined],
+        ["msg_steered_2", "user", "repeat", undefined],
       ],
     );
   });
@@ -5304,8 +5715,7 @@ describe("ServeServices", () => {
         ["chat_1_codex_turn_1_1", "user", "repeat", undefined],
         ["chat_1_codex_turn_1_2", "assistant", "between repeats", undefined],
         ["chat_1_codex_turn_1_3", "user", "repeat", undefined],
-        ["msg_live_delta", "assistant", "streaming", "item/agentMessage/delta"],
-        ["msg_steered_3", "user", "repeat", "chat.message.steered"],
+        ["msg_steered_3", "user", "repeat", undefined],
       ],
     );
   });
@@ -5678,10 +6088,17 @@ describe("ServeServices", () => {
           "user",
           "repeat",
           undefined,
-          "2026-04-25T00:01:00.000Z",
+          "2026-04-25T00:00:00.000Z",
         ],
         [
           "chat_1_codex_turn_1_2",
+          "user",
+          "repeat",
+          undefined,
+          "2026-04-25T00:00:00.000Z",
+        ],
+        [
+          "msg_steered_repeat_2",
           "user",
           "repeat",
           undefined,
@@ -5958,10 +6375,17 @@ describe("ServeServices", () => {
           "user",
           "repeat",
           undefined,
-          "2026-04-25T00:01:00.000Z",
+          "2026-04-25T00:00:00.000Z",
         ],
         [
           "chat_1_codex_turn_1_1",
+          "user",
+          "repeat",
+          undefined,
+          "2026-04-25T00:00:00.000Z",
+        ],
+        [
+          "msg_steered_without_input_2",
           "user",
           "repeat",
           undefined,
