@@ -8,6 +8,10 @@ import type { GitHubPullRequest } from "@phantompane/github";
 import { err, isErr, ok, type Result } from "@phantompane/utils";
 import { createContext } from "../../context.ts";
 import { attachWorktreeCore } from "../../worktree/attach.ts";
+import {
+  createWorktreePostCreateTask,
+  type WorktreePostCreateTask,
+} from "../../worktree/create.ts";
 import { validateWorktreeExists } from "../../worktree/validate.ts";
 
 export interface CheckoutResult {
@@ -16,10 +20,12 @@ export interface CheckoutResult {
   path: string;
   alreadyExists?: boolean;
   createdBranch?: boolean;
+  postCreate?: WorktreePostCreateTask;
 }
 
 export interface CheckoutPullRequestOptions {
   cwd?: string;
+  postCreate?: "run" | "skip";
 }
 
 function getForkWorktreeName(pullRequest: GitHubPullRequest): string {
@@ -100,12 +106,19 @@ export async function checkoutPullRequest(
   }
 
   // Attach the worktree to the fetched branch
+  const postCreateTask = createWorktreePostCreateTask(
+    context.gitRoot,
+    context.worktreesDirectory,
+    worktreeName,
+    context.config?.postCreate?.commands,
+  );
+
   const attachResult = await attachWorktreeCore(
     context.gitRoot,
     context.worktreesDirectory,
     worktreeName,
     context.config?.postCreate?.copyFiles,
-    context.config?.postCreate?.commands,
+    options.postCreate === "skip" ? undefined : postCreateTask?.commands,
     context.directoryNameSeparator,
   );
 
@@ -122,5 +135,6 @@ export async function checkoutPullRequest(
     worktree: worktreeName,
     path: attachResult.value,
     createdBranch,
+    postCreate: options.postCreate === "skip" ? postCreateTask : undefined,
   });
 }

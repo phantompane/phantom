@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { githubCheckout } from "@phantompane/core";
+import { githubCheckout, runPostCreateWorktree } from "@phantompane/core";
 import { getPhantomEnv } from "@phantompane/process";
 import { isErr } from "@phantompane/utils";
 import { executeTmuxCommand, isInsideTmux } from "@phantompane/tmux";
@@ -66,7 +66,11 @@ export async function githubCheckoutHandler(args: string[]): Promise<void> {
     );
   }
 
-  const result = await githubCheckout({ number, base: values.base });
+  const result = await githubCheckout({
+    number,
+    base: values.base,
+    postCreate: "skip",
+  });
 
   if (isErr(result)) {
     exitWithError(result.error.message, exitCodes.generalError);
@@ -99,6 +103,15 @@ export async function githubCheckoutHandler(args: string[]): Promise<void> {
           ? (tmuxResult.error.exitCode ?? exitCodes.generalError)
           : exitCodes.generalError;
       exitWithError("", exitCode);
+    }
+  }
+  if (result.value.postCreate) {
+    const postCreateResult = await runPostCreateWorktree({
+      ...result.value.postCreate,
+      logger: output,
+    });
+    if (isErr(postCreateResult)) {
+      exitWithError(postCreateResult.error.message, exitCodes.generalError);
     }
   }
 }

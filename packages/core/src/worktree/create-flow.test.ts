@@ -162,7 +162,7 @@ describe("runCreateWorktree", () => {
       [".env", "config.json"],
     ]);
     strictEqual(
-      logger.log.mock.calls[1][0],
+      logger.log.mock.calls[0][0],
       "Created worktree 'fuzzy-cats-dance' at /repo/.git/phantom/worktrees/fuzzy-cats-dance",
     );
   });
@@ -271,6 +271,52 @@ describe("runCreateWorktree", () => {
     strictEqual(
       logger.log.mock.calls[1][0],
       "\nOpening worktree 'feature' in tmux window...",
+    );
+  });
+
+  it("runs post-create commands after opening the requested action", async () => {
+    resetMocks();
+    processEnvMock.SHELL = "/bin/bash";
+    accessMock.mockResolvedValue(undefined);
+    validateWorktreeNameMock.mockReturnValue(ok(undefined));
+    validateWorktreeDoesNotExistMock.mockResolvedValue(ok(undefined));
+    addWorktreeMock.mockResolvedValue(undefined);
+    getGitRootMock.mockResolvedValue("/repo");
+    createContextMock.mockResolvedValue({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      directoryNameSeparator: "/",
+      config: {
+        postCreate: {
+          commands: ["npm install"],
+        },
+      },
+      preferences: {},
+    });
+    isInsideTmuxMock.mockResolvedValue(true);
+    executeTmuxCommandMock.mockResolvedValue(ok({ exitCode: 0 }));
+    executePostCreateCommandsMock.mockResolvedValue(
+      ok({ executedCommands: ["npm install"] }),
+    );
+    getPhantomEnvMock.mockReturnValue({
+      PHANTOM_NAME: "feature",
+      PHANTOM_PATH: "/repo/.git/phantom/worktrees/feature",
+    });
+
+    const result = await runCreateWorktree({
+      name: "feature",
+      action: {
+        tmuxDirection: "new",
+      },
+    });
+
+    strictEqual(result.ok, true);
+    strictEqual(executeTmuxCommandMock.mock.calls.length, 1);
+    strictEqual(executePostCreateCommandsMock.mock.calls.length, 1);
+    strictEqual(
+      executeTmuxCommandMock.mock.invocationCallOrder[0] <
+        executePostCreateCommandsMock.mock.invocationCallOrder[0],
+      true,
     );
   });
 });

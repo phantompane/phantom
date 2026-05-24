@@ -10,6 +10,7 @@ const exitWithErrorMock = vi.fn((message, code) => {
 const outputLogMock = vi.fn();
 const outputErrorMock = vi.fn();
 const githubCheckoutMock = vi.fn();
+const runPostCreateWorktreeMock = vi.fn();
 const isInsideTmuxMock = vi.fn();
 const executeTmuxCommandMock = vi.fn();
 const getPhantomEnvMock = vi.fn();
@@ -28,6 +29,7 @@ vi.doMock("../output.ts", () => ({
 
 vi.doMock("@phantompane/core", () => ({
   githubCheckout: githubCheckoutMock,
+  runPostCreateWorktree: runPostCreateWorktreeMock,
 }));
 
 vi.doMock("@phantompane/process", () => ({

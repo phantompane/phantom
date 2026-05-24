@@ -26,7 +26,9 @@ import {
   listGitHubCheckoutTargets,
   removeWorktree,
   runCreateWorktree,
+  runPostCreateWorktree,
   WorktreeAlreadyExistsError,
+  type WorktreePostCreateTask,
 } from "@phantompane/core";
 import {
   CodexBridge,
@@ -310,6 +312,11 @@ export class ServeServices {
   private readonly activeTurnChatIds = new Set<string>();
   private readonly archiveOperationChatIds = new Set<string>();
   private readonly activeWorktreeOperationLocks = new Map<string, number>();
+  private readonly waitableWorktreeOperationLocks = new Map<string, number>();
+  private readonly worktreeOperationWaiters = new Map<
+    string,
+    Set<() => void>
+  >();
   private readonly reportedAgentErrors = new WeakSet<object>();
 
   constructor(options: ServeServicesOptions = {}) {
@@ -953,16 +960,19 @@ export class ServeServices {
         number: String(input.githubTargetNumber),
         base: input.base,
         cwd: project.rootPath,
+        postCreate: "skip",
       });
       if (!result.ok) {
         throw result.error;
       }
       try {
-        return await this.createExistingWorktreeChat(projectId, project, {
+        const chat = await this.createExistingWorktreeChat(projectId, project, {
           serviceTier: input.serviceTier,
           worktreeName: result.value.worktree,
           worktreePath: result.value.path,
         });
+        this.scheduleDeferredPostCreate(chat, result.value.postCreate);
+        return chat;
       } catch (error) {
         if (!result.value.alreadyExists) {
           try {
@@ -1010,6 +1020,7 @@ export class ServeServices {
       gitRoot: project.rootPath,
       name: inferredName,
       base: input.base,
+      postCreate: "skip",
     });
     if (
       !createResult.ok &&
@@ -1020,6 +1031,7 @@ export class ServeServices {
       createResult = await runCreateWorktree({
         gitRoot: project.rootPath,
         base: input.base,
+        postCreate: "skip",
       });
     }
 
@@ -1074,7 +1086,44 @@ export class ServeServices {
     }));
 
     this.eventHub.emit("chat.created", chat, { chatId: chat.id });
+    this.scheduleDeferredPostCreate(chat, createResult.value.postCreate);
     return chat;
+  }
+
+  private scheduleDeferredPostCreate(
+    chat: ChatRecord,
+    postCreate: WorktreePostCreateTask | undefined,
+  ): void {
+    if (!postCreate) {
+      return;
+    }
+
+    const release = this.acquireWorktreeOperationLock(chat.worktreePath, {
+      waitForMessages: true,
+    });
+    const timer = setTimeout(() => {
+      void this.runDeferredPostCreate(chat, postCreate, release);
+    }, 0);
+    timer.unref?.();
+  }
+
+  private async runDeferredPostCreate(
+    chat: ChatRecord,
+    postCreate: WorktreePostCreateTask,
+    release: () => void,
+  ): Promise<void> {
+    try {
+      const result = await runPostCreateWorktree(postCreate);
+      if (!result.ok) {
+        throw result.error;
+      }
+    } catch (error) {
+      await this.addAgentErrorMessage(chat.id, error);
+      this.emitAgentError(chat.id, error);
+    } finally {
+      release();
+      await this.drainQueuedMessagesAndReport(chat.id);
+    }
   }
 
   private async inferWorktreeName(
@@ -1347,8 +1396,13 @@ export class ServeServices {
     input: SendMessageInput,
   ): Promise<ChatRecord> {
     await this.resetStaleTransientChatState();
-    const state = await this.store.load();
-    const chat = this.requireChat(state, chatId);
+    let state = await this.store.load();
+    let chat = this.requireChat(state, chatId);
+    if (this.isWaitableWorktreeOperationActive(chat.worktreePath)) {
+      await this.waitForWorktreeOperation(chat.worktreePath);
+      state = await this.store.load();
+      chat = this.requireChat(state, chatId);
+    }
     const isDrainingQueuedMessage =
       this.drainingQueuedMessageChatIds.has(chatId);
     if (
@@ -2511,10 +2565,18 @@ export class ServeServices {
     }
   }
 
-  private acquireWorktreeOperationLock(worktreePath: string): () => void {
+  private acquireWorktreeOperationLock(
+    worktreePath: string,
+    options: { waitForMessages?: boolean } = {},
+  ): () => void {
     const activeCount =
       this.activeWorktreeOperationLocks.get(worktreePath) ?? 0;
     this.activeWorktreeOperationLocks.set(worktreePath, activeCount + 1);
+    if (options.waitForMessages) {
+      const waitableCount =
+        this.waitableWorktreeOperationLocks.get(worktreePath) ?? 0;
+      this.waitableWorktreeOperationLocks.set(worktreePath, waitableCount + 1);
+    }
     let released = false;
     return () => {
       if (released) {
@@ -2528,11 +2590,52 @@ export class ServeServices {
       } else {
         this.activeWorktreeOperationLocks.delete(worktreePath);
       }
+      if (options.waitForMessages) {
+        const nextWaitableCount =
+          (this.waitableWorktreeOperationLocks.get(worktreePath) ?? 1) - 1;
+        if (nextWaitableCount > 0) {
+          this.waitableWorktreeOperationLocks.set(
+            worktreePath,
+            nextWaitableCount,
+          );
+        } else {
+          this.waitableWorktreeOperationLocks.delete(worktreePath);
+          this.resolveWorktreeOperationWaiters(worktreePath);
+        }
+      }
     };
+  }
+
+  private resolveWorktreeOperationWaiters(worktreePath: string): void {
+    const waiters = this.worktreeOperationWaiters.get(worktreePath);
+    if (!waiters) {
+      return;
+    }
+
+    this.worktreeOperationWaiters.delete(worktreePath);
+    for (const resolveWaiter of waiters) {
+      resolveWaiter();
+    }
+  }
+
+  private async waitForWorktreeOperation(worktreePath: string): Promise<void> {
+    while (this.isWaitableWorktreeOperationActive(worktreePath)) {
+      await new Promise<void>((resolveWaiter) => {
+        const waiters =
+          this.worktreeOperationWaiters.get(worktreePath) ??
+          new Set<() => void>();
+        waiters.add(resolveWaiter);
+        this.worktreeOperationWaiters.set(worktreePath, waiters);
+      });
+    }
   }
 
   private isWorktreeOperationActive(worktreePath: string): boolean {
     return (this.activeWorktreeOperationLocks.get(worktreePath) ?? 0) > 0;
+  }
+
+  private isWaitableWorktreeOperationActive(worktreePath: string): boolean {
+    return (this.waitableWorktreeOperationLocks.get(worktreePath) ?? 0) > 0;
   }
 
   private assertNoBlockingWorktreeChat(

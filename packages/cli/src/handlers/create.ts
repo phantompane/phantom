@@ -72,6 +72,7 @@ export async function createHandler(args: string[]): Promise<void> {
       tmuxDirection,
     },
     logger: output,
+    postCreate: "afterAction",
   });
 
   if (isErr(result)) {

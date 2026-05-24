@@ -104,6 +104,10 @@ describe("createHandler", () => {
       "vertical",
     );
     strictEqual(runCreateWorktreeMock.mock.calls[0][0].logger, outputMock);
+    strictEqual(
+      runCreateWorktreeMock.mock.calls[0][0].postCreate,
+      "afterAction",
+    );
   });
 
   it("maps validation errors to validation exit codes", async () => {

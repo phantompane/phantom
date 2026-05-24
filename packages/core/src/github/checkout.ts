@@ -16,6 +16,7 @@ export interface GitHubCheckoutOptions {
   number: string;
   base?: string;
   cwd?: string;
+  postCreate?: "run" | "skip";
 }
 
 export interface ListGitHubCheckoutTargetsOptions {
@@ -26,7 +27,14 @@ export interface ListGitHubCheckoutTargetsOptions {
 export async function githubCheckout(
   options: GitHubCheckoutOptions,
 ): Promise<Result<CheckoutResult>> {
-  const { number, base, cwd } = options;
+  const { number, base, cwd, postCreate } = options;
+  const checkoutOptions =
+    cwd || postCreate !== undefined
+      ? {
+          ...(cwd ? { cwd } : {}),
+          ...(postCreate !== undefined ? { postCreate } : {}),
+        }
+      : undefined;
   const { owner, repo } = cwd
     ? await getGitHubRepoInfo({ cwd })
     : await getGitHubRepoInfo();
@@ -51,14 +59,14 @@ export async function githubCheckout(
         ),
       );
     }
-    const result = cwd
-      ? await checkoutPullRequest(issue.pullRequest, undefined, { cwd })
+    const result = checkoutOptions
+      ? await checkoutPullRequest(issue.pullRequest, undefined, checkoutOptions)
       : await checkoutPullRequest(issue.pullRequest);
     return result;
   }
 
-  const result = cwd
-    ? await checkoutIssue(issue, base, { cwd })
+  const result = checkoutOptions
+    ? await checkoutIssue(issue, base, checkoutOptions)
     : await checkoutIssue(issue, base);
   return result;
 }

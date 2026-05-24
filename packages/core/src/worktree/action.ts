@@ -36,6 +36,7 @@ export interface RunWorktreeActionOptions {
   action?: ResolvedWorktreeAction;
   logger?: WorktreeLogger;
   exitWithProcessCode?: boolean;
+  onStarted?: () => void;
 }
 
 export interface RunWorktreeActionSuccess {
@@ -98,6 +99,7 @@ export async function runWorktreeAction(
     action,
     logger,
     exitWithProcessCode = false,
+    onStarted,
   } = options;
 
   if (!action) {
@@ -107,6 +109,7 @@ export async function runWorktreeAction(
   if (action.kind === "shell") {
     logger?.log(`\nEntering worktree '${worktreeName}' at ${worktreePath}`);
     logger?.log("Type 'exit' to return to your original directory\n");
+    onStarted?.();
 
     const shellResult = await shellInWorktree(
       gitRoot,
@@ -128,6 +131,7 @@ export async function runWorktreeAction(
     logger?.log(
       `\nExecuting command in worktree '${worktreeName}': ${action.command}`,
     );
+    onStarted?.();
 
     const shell = process.env.SHELL || "/bin/sh";
     const execResult = await execInWorktree(
@@ -165,6 +169,7 @@ export async function runWorktreeAction(
   if (isErr(tmuxResult)) {
     return err(tmuxResult.error);
   }
+  onStarted?.();
 
   return ok({});
 }

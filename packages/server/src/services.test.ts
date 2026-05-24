@@ -24,6 +24,7 @@ const coreMocks = vi.hoisted(() => ({
   listWorktrees: vi.fn(),
   removeWorktree: vi.fn(),
   runCreateWorktree: vi.fn(),
+  runPostCreateWorktree: vi.fn(),
 }));
 
 const gitMocks = vi.hoisted(() => ({
@@ -6190,6 +6191,98 @@ describe("ServeServices", () => {
     deepStrictEqual(savedState.messages, []);
   });
 
+  it("defers post-create commands after creating a worktree chat", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { codex, services } = await createHarness(state);
+    const postCreate = {
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      worktreeName: "feature",
+      commands: ["pnpm install"],
+    };
+    coreMocks.runCreateWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: "feature",
+        path: "/repo/.git/phantom/worktrees/feature",
+        postCreate,
+      },
+    });
+    coreMocks.runPostCreateWorktree.mockReturnValueOnce(
+      new Promise(() => undefined),
+    );
+    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
+
+    const chat = await services.createChat("proj_1", { name: "feature" });
+
+    strictEqual(chat.worktreeName, "feature");
+    strictEqual(
+      coreMocks.runCreateWorktree.mock.calls[0][0].postCreate,
+      "skip",
+    );
+    strictEqual(coreMocks.runPostCreateWorktree.mock.calls.length, 0);
+    await vi.waitFor(() => {
+      strictEqual(coreMocks.runPostCreateWorktree.mock.calls.length, 1);
+    });
+    deepStrictEqual(
+      coreMocks.runPostCreateWorktree.mock.calls[0][0],
+      postCreate,
+    );
+  });
+
+  it("waits to send messages until deferred post-create commands finish", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { codex, services } = await createHarness(state);
+    const postCreate = {
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      worktreeName: "feature",
+      commands: ["pnpm install"],
+    };
+    let resolvePostCreate!: (value: {
+      ok: true;
+      value: { executedCommands: string[] };
+    }) => void;
+    coreMocks.runCreateWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: "feature",
+        path: "/repo/.git/phantom/worktrees/feature",
+        postCreate,
+      },
+    });
+    coreMocks.runPostCreateWorktree.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePostCreate = resolve;
+      }),
+    );
+    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
+    codex.startTurn.mockResolvedValueOnce({ turn: { id: "turn_1" } });
+
+    const chat = await services.createChat("proj_1", { name: "feature" });
+    await vi.waitFor(() => {
+      strictEqual(coreMocks.runPostCreateWorktree.mock.calls.length, 1);
+    });
+
+    const send = services.sendMessage(chat.id, { text: "start work" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    strictEqual(codex.startTurn.mock.calls.length, 0);
+
+    resolvePostCreate({
+      ok: true,
+      value: { executedCommands: ["pnpm install"] },
+    });
+    await send;
+
+    strictEqual(codex.startTurn.mock.calls.length, 1);
+  });
+
   it("starts a new Codex thread in an existing worktree", async () => {
     const state = {
       ...createTestState(),
@@ -6293,6 +6386,7 @@ describe("ServeServices", () => {
         number: "42",
         base: undefined,
         cwd: "/repo",
+        postCreate: "skip",
       },
     ]);
     deepStrictEqual(codex.startThread.mock.calls[0], [

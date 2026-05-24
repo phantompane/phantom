@@ -2,12 +2,16 @@ import { getGitRoot } from "@phantompane/git";
 import { type GitHubIssue, isPullRequest } from "@phantompane/github";
 import { err, isErr, ok, type Result } from "@phantompane/utils";
 import { createContext } from "../../context.ts";
-import { createWorktree as createWorktreeCore } from "../../worktree/create.ts";
+import {
+  createWorktree as createWorktreeCore,
+  createWorktreePostCreateTask,
+} from "../../worktree/create.ts";
 import { validateWorktreeExists } from "../../worktree/validate.ts";
 import type { CheckoutResult } from "./pr.ts";
 
 export interface CheckoutIssueOptions {
   cwd?: string;
+  postCreate?: "run" | "skip";
 }
 
 export async function checkoutIssue(
@@ -46,6 +50,13 @@ export async function checkoutIssue(
     });
   }
 
+  const postCreateTask = createWorktreePostCreateTask(
+    context.gitRoot,
+    context.worktreesDirectory,
+    worktreeName,
+    context.config?.postCreate?.commands,
+  );
+
   const result = await createWorktreeCore(
     context.gitRoot,
     context.worktreesDirectory,
@@ -55,7 +66,7 @@ export async function checkoutIssue(
       base,
     },
     context.config?.postCreate?.copyFiles,
-    context.config?.postCreate?.commands,
+    options.postCreate === "skip" ? undefined : postCreateTask?.commands,
     context.directoryNameSeparator,
   );
 
@@ -68,5 +79,6 @@ export async function checkoutIssue(
     worktree: worktreeName,
     path: result.value.path,
     createdBranch: true,
+    postCreate: options.postCreate === "skip" ? postCreateTask : undefined,
   });
 }

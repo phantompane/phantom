@@ -8,6 +8,7 @@ const exitWithErrorMock = vi.fn((message, code) => {
 const outputLogMock = vi.fn();
 const outputErrorMock = vi.fn();
 const githubCheckoutMock = vi.fn();
+const runPostCreateWorktreeMock = vi.fn();
 
 vi.doMock("../errors.ts", () => ({
   exitWithError: exitWithErrorMock,
@@ -23,6 +24,7 @@ vi.doMock("../output.ts", () => ({
 
 vi.doMock("@phantompane/core", () => ({
   githubCheckout: githubCheckoutMock,
+  runPostCreateWorktree: runPostCreateWorktreeMock,
 }));
 
 const { githubCheckoutHandler } = await import("./github-checkout.ts");
@@ -47,12 +49,13 @@ describe("githubCheckoutHandler", () => {
     await githubCheckoutHandler(["123"]);
 
     // Verify that githubCheckout was called with options only
-    // The github library internally creates context and handles postCreate
+    // The handler defers postCreate so checkout output and navigation can happen first
     deepStrictEqual(githubCheckoutMock.mock.calls.length, 1);
     const [options] = githubCheckoutMock.mock.calls[0];
     deepStrictEqual(options, {
       number: "123",
       base: undefined,
+      postCreate: "skip",
     });
     deepStrictEqual(outputLogMock.mock.calls[0][0], "Checked out issue #123");
   });
@@ -80,6 +83,39 @@ describe("githubCheckoutHandler", () => {
       outputLogMock.mock.calls[0][0],
       "Worktree for PR #456 is already checked out",
     );
+  });
+
+  it("should run deferred post-create after checkout output", async () => {
+    exitWithErrorMock.mockClear();
+    outputLogMock.mockClear();
+    githubCheckoutMock.mockClear();
+    runPostCreateWorktreeMock.mockClear();
+
+    const postCreate = {
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      worktreeName: "issues/123",
+      commands: ["pnpm install"],
+    };
+    githubCheckoutMock.mockResolvedValueOnce(
+      ok({
+        message: "Checked out issue #123",
+        worktree: "issues/123",
+        path: "/repo/.git/phantom/worktrees/issues/123",
+        postCreate,
+      }),
+    );
+    runPostCreateWorktreeMock.mockResolvedValueOnce(
+      ok({ executedCommands: ["pnpm install"] }),
+    );
+
+    await githubCheckoutHandler(["123"]);
+
+    deepStrictEqual(outputLogMock.mock.calls[0][0], "Checked out issue #123");
+    deepStrictEqual(runPostCreateWorktreeMock.mock.calls[0][0], {
+      ...postCreate,
+      logger: { log: outputLogMock, error: outputErrorMock },
+    });
   });
 
   it("should handle githubCheckout error", async () => {
@@ -117,6 +153,7 @@ describe("githubCheckoutHandler", () => {
     deepStrictEqual(githubCheckoutMock.mock.calls[0][0], {
       number: "123",
       base: "develop",
+      postCreate: "skip",
     });
   });
 
@@ -144,6 +181,7 @@ describe("githubCheckoutHandler", () => {
     deepStrictEqual(options, {
       number: "123",
       base: undefined,
+      postCreate: "skip",
     });
     deepStrictEqual(outputErrorMock.mock.calls.length, 0);
   });

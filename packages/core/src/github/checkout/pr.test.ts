@@ -8,6 +8,17 @@ const fetchMock = vi.fn();
 const attachWorktreeCoreMock = vi.fn();
 const setUpstreamBranchMock = vi.fn();
 const createContextMock = vi.fn();
+const createWorktreePostCreateTaskMock = vi.fn(
+  (
+    gitRoot: string,
+    worktreesDirectory: string,
+    worktreeName: string,
+    commands: string[] | undefined,
+  ) =>
+    commands
+      ? { gitRoot, worktreesDirectory, worktreeName, commands }
+      : undefined,
+);
 const validateWorktreeExistsMock = vi.fn();
 
 vi.doMock("@phantompane/git", () => ({
@@ -23,6 +34,10 @@ vi.doMock("../../context.ts", () => ({
 
 vi.doMock("../../worktree/attach.ts", () => ({
   attachWorktreeCore: attachWorktreeCoreMock,
+}));
+
+vi.doMock("../../worktree/create.ts", () => ({
+  createWorktreePostCreateTask: createWorktreePostCreateTaskMock,
 }));
 
 vi.doMock("../../worktree/validate.ts", () => ({
@@ -42,6 +57,7 @@ describe("checkoutPullRequest", () => {
     fetchMock.mockClear();
     attachWorktreeCoreMock.mockClear();
     setUpstreamBranchMock.mockClear();
+    createWorktreePostCreateTaskMock.mockClear();
     validateWorktreeExistsMock.mockClear();
   };
 
