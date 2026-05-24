@@ -109,8 +109,6 @@ describe("createWorktree", () => {
       "/test/repo/.git/phantom/worktrees",
       "feature-branch",
       {},
-      undefined,
-      undefined,
       "/",
     );
 
@@ -151,8 +149,6 @@ describe("createWorktree", () => {
       "/test/repo/.git/phantom/worktrees",
       "new-feature",
       {},
-      undefined,
-      undefined,
       "/",
     );
 
@@ -175,8 +171,6 @@ describe("createWorktree", () => {
       "/test/repo/.git/phantom/worktrees",
       "existing",
       {},
-      undefined,
-      undefined,
       "/",
     );
 
@@ -205,8 +199,6 @@ describe("createWorktree", () => {
         branch: "custom-branch",
         base: "main",
       },
-      undefined,
-      undefined,
       "/",
     );
 
@@ -232,8 +224,6 @@ describe("createWorktree", () => {
       "/test/repo/.git/phantom/worktrees",
       "bad-branch",
       {},
-      undefined,
-      undefined,
       "/",
     );
 
@@ -261,8 +251,6 @@ describe("createWorktree", () => {
       "/test/repo/.git/phantom/worktrees",
       "feature/test",
       {},
-      undefined,
-      undefined,
       "-",
     );
 
@@ -280,7 +268,7 @@ describe("createWorktree", () => {
     }
   });
 
-  it("merges explicit and post-create copy files without duplicates", async () => {
+  it("copies requested files", async () => {
     resetMocks();
     accessMock.mockImplementation(() => Promise.resolve());
     validateWorktreeNameMock.mockImplementation(() => ok(undefined));
@@ -302,10 +290,8 @@ describe("createWorktree", () => {
       "/test/repo/.git/phantom/worktrees",
       "feature",
       {
-        copyFiles: [".env", "config.json"],
+        copyFiles: [".env", "config.json", ".npmrc"],
       },
-      [".env", ".npmrc"],
-      undefined,
       "/",
     );
 
@@ -337,8 +323,6 @@ describe("createWorktree", () => {
         "/test/phantom-external",
         "feature-branch",
         {},
-        undefined,
-        undefined,
         "/",
       );
 
@@ -381,8 +365,6 @@ describe("createWorktree", () => {
         "/tmp/phantom-worktrees",
         "feature-branch",
         {},
-        undefined,
-        undefined,
         "/",
       );
 
@@ -418,8 +400,6 @@ describe("createWorktree", () => {
         "/test/phantom-external",
         "feature-branch",
         {},
-        undefined,
-        undefined,
         "/",
       );
 

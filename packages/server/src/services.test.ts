@@ -2,7 +2,7 @@ import { deepStrictEqual, rejects, strictEqual } from "node:assert";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { WorktreeAlreadyExistsError } from "@phantompane/core";
 import type { CodexBridge, CodexMessage } from "@phantompane/codex";
 import { ServeStateStore } from "@phantompane/state";
@@ -20,6 +20,7 @@ const coreMocks = vi.hoisted(() => ({
   deleteBranch: vi.fn(),
   deleteWorktree: vi.fn(),
   githubCheckout: vi.fn(),
+  hasPostCreateWorktreeCommands: vi.fn(),
   listGitHubCheckoutTargets: vi.fn(),
   listWorktrees: vi.fn(),
   removeWorktree: vi.fn(),
@@ -53,6 +54,17 @@ const validInterlacedPngBytes = new Uint8Array([
   156, 99, 96, 96, 96, 0, 0, 0, 4, 0, 1, 246, 23, 56, 85, 0, 0, 0, 0, 73, 69,
   78, 68, 174, 66, 96, 130,
 ]);
+
+beforeEach(() => {
+  coreMocks.hasPostCreateWorktreeCommands.mockResolvedValue({
+    ok: true,
+    value: false,
+  });
+  coreMocks.runPostCreateWorktree.mockResolvedValue({
+    ok: true,
+    value: { executedCommands: [] },
+  });
+});
 
 class FakeCodexBridge {
   readonly notificationHandlers: Array<(message: CodexMessage) => void> = [];
@@ -6197,54 +6209,6 @@ describe("ServeServices", () => {
       projects: [createProject()],
     };
     const { codex, services } = await createHarness(state);
-    const postCreate = {
-      gitRoot: "/repo",
-      worktreesDirectory: "/repo/.git/phantom/worktrees",
-      worktreeName: "feature",
-      commands: ["pnpm install"],
-    };
-    coreMocks.runCreateWorktree.mockResolvedValueOnce({
-      ok: true,
-      value: {
-        name: "feature",
-        path: "/repo/.git/phantom/worktrees/feature",
-        postCreate,
-      },
-    });
-    coreMocks.runPostCreateWorktree.mockReturnValueOnce(
-      new Promise(() => undefined),
-    );
-    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
-
-    const chat = await services.createChat("proj_1", { name: "feature" });
-
-    strictEqual(chat.worktreeName, "feature");
-    strictEqual(
-      coreMocks.runCreateWorktree.mock.calls[0][0].postCreate,
-      "skip",
-    );
-    strictEqual(coreMocks.runPostCreateWorktree.mock.calls.length, 0);
-    await vi.waitFor(() => {
-      strictEqual(coreMocks.runPostCreateWorktree.mock.calls.length, 1);
-    });
-    deepStrictEqual(
-      coreMocks.runPostCreateWorktree.mock.calls[0][0],
-      postCreate,
-    );
-  });
-
-  it("waits to send messages until deferred post-create commands finish", async () => {
-    const state = {
-      ...createTestState(),
-      projects: [createProject()],
-    };
-    const { codex, services } = await createHarness(state);
-    const postCreate = {
-      gitRoot: "/repo",
-      worktreesDirectory: "/repo/.git/phantom/worktrees",
-      worktreeName: "feature",
-      commands: ["pnpm install"],
-    };
     let resolvePostCreate!: (value: {
       ok: true;
       value: { executedCommands: string[] };
@@ -6254,8 +6218,60 @@ describe("ServeServices", () => {
       value: {
         name: "feature",
         path: "/repo/.git/phantom/worktrees/feature",
-        postCreate,
       },
+    });
+    coreMocks.hasPostCreateWorktreeCommands.mockResolvedValueOnce({
+      ok: true,
+      value: true,
+    });
+    coreMocks.runPostCreateWorktree.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePostCreate = resolve;
+      }),
+    );
+    codex.startThread.mockResolvedValueOnce({ thread: { id: "thread_new" } });
+
+    const chat = await services.createChat("proj_1", { name: "feature" });
+
+    strictEqual(chat.worktreeName, "feature");
+    strictEqual(
+      coreMocks.runCreateWorktree.mock.calls[0][0].postCreate,
+      undefined,
+    );
+    await vi.waitFor(() => {
+      strictEqual(coreMocks.runPostCreateWorktree.mock.calls.length, 1);
+    });
+    deepStrictEqual(coreMocks.runPostCreateWorktree.mock.calls[0][0], {
+      gitRoot: "/repo",
+      worktreeName: "feature",
+    });
+    resolvePostCreate({
+      ok: true,
+      value: { executedCommands: ["pnpm install"] },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it("waits to send messages until deferred post-create commands finish", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+    };
+    const { codex, services } = await createHarness(state);
+    let resolvePostCreate!: (value: {
+      ok: true;
+      value: { executedCommands: string[] };
+    }) => void;
+    coreMocks.runCreateWorktree.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        name: "feature",
+        path: "/repo/.git/phantom/worktrees/feature",
+      },
+    });
+    coreMocks.hasPostCreateWorktreeCommands.mockResolvedValueOnce({
+      ok: true,
+      value: true,
     });
     coreMocks.runPostCreateWorktree.mockReturnValueOnce(
       new Promise((resolve) => {
@@ -6386,7 +6402,6 @@ describe("ServeServices", () => {
         number: "42",
         base: undefined,
         cwd: "/repo",
-        postCreate: "skip",
       },
     ]);
     deepStrictEqual(codex.startThread.mock.calls[0], [

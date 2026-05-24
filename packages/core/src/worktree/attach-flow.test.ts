@@ -13,7 +13,6 @@ const getWorktreePathFromDirectoryMock = vi.fn(
 );
 const validateWorktreeNameMock = vi.fn();
 const copyFilesMock = vi.fn();
-const executePostCreateCommandsMock = vi.fn();
 const execInWorktreeMock = vi.fn();
 
 const originalProcessEnv = process.env;
@@ -44,10 +43,6 @@ vi.doMock("../paths.ts", () => ({
 
 vi.doMock("./validate.ts", () => ({
   validateWorktreeName: validateWorktreeNameMock,
-}));
-
-vi.doMock("./post-create.ts", () => ({
-  executePostCreateCommands: executePostCreateCommandsMock,
 }));
 
 vi.doMock("./file-copier.ts", () => ({
@@ -83,7 +78,6 @@ describe("runAttachWorktree", () => {
     getWorktreePathFromDirectoryMock.mockClear();
     validateWorktreeNameMock.mockReset();
     copyFilesMock.mockReset();
-    executePostCreateCommandsMock.mockReset();
     execInWorktreeMock.mockReset();
 
     for (const key of Object.keys(processEnvMock)) {
@@ -116,9 +110,6 @@ describe("runAttachWorktree", () => {
         skippedFiles: [],
       }),
     );
-    executePostCreateCommandsMock.mockResolvedValue(
-      ok({ executedCommands: ["npm install"] }),
-    );
     const logger = {
       log: vi.fn(),
       warn: vi.fn(),
@@ -136,11 +127,7 @@ describe("runAttachWorktree", () => {
       "/repo/.git/phantom/worktrees/feature",
       [".env", "config.json"],
     ]);
-    strictEqual(
-      logger.log.mock.calls[0][0],
-      "\nRunning post-create commands...",
-    );
-    strictEqual(logger.log.mock.calls[1][0], "Attached phantom: feature");
+    strictEqual(logger.log.mock.calls[0][0], "Attached phantom: feature");
   });
 
   it("executes --exec actions from core", async () => {

@@ -6,17 +6,6 @@ const getGitRootMock = vi.fn();
 const createWorktreeCoreMock = vi.fn();
 const isPullRequestMock = vi.fn();
 const createContextMock = vi.fn();
-const createWorktreePostCreateTaskMock = vi.fn(
-  (
-    gitRoot: string,
-    worktreesDirectory: string,
-    worktreeName: string,
-    commands: string[] | undefined,
-  ) =>
-    commands
-      ? { gitRoot, worktreesDirectory, worktreeName, commands }
-      : undefined,
-);
 const validateWorktreeExistsMock = vi.fn();
 
 vi.doMock("@phantompane/git", () => ({
@@ -33,7 +22,6 @@ vi.doMock("../../context.ts", () => ({
 
 vi.doMock("../../worktree/create.ts", () => ({
   createWorktree: createWorktreeCoreMock,
-  createWorktreePostCreateTask: createWorktreePostCreateTaskMock,
 }));
 
 vi.doMock("../../worktree/validate.ts", () => ({
@@ -47,7 +35,6 @@ describe("checkoutIssue", () => {
     getGitRootMock.mockClear();
     createWorktreeCoreMock.mockClear();
     isPullRequestMock.mockClear();
-    createWorktreePostCreateTaskMock.mockClear();
     validateWorktreeExistsMock.mockClear();
   };
 
@@ -151,6 +138,7 @@ describe("checkoutIssue", () => {
     deepEqual(options, {
       branch: "issues/456",
       base: undefined,
+      copyFiles: undefined,
     });
   });
 
@@ -192,6 +180,7 @@ describe("checkoutIssue", () => {
     deepEqual(options, {
       branch: "issues/789",
       base: "develop",
+      copyFiles: undefined,
     });
   });
 
@@ -296,7 +285,7 @@ describe("checkoutIssue", () => {
     equal(options.branch, "issues/333");
   });
 
-  it("should return post-create task without running commands when skipped", async () => {
+  it("should pass configured copy files without post-create commands", async () => {
     resetMocks();
     const mockGitRoot = "/path/to/repo";
     const mockIssue = {
@@ -328,20 +317,12 @@ describe("checkoutIssue", () => {
       },
     }));
 
-    const result = await checkoutIssue(mockIssue, undefined, {
-      postCreate: "skip",
-    });
+    const result = await checkoutIssue(mockIssue);
 
     ok(isOk(result));
-    if (isOk(result)) {
-      deepEqual(result.value.postCreate, {
-        gitRoot: mockGitRoot,
-        worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
-        worktreeName: "issues/444",
-        commands: ["pnpm install"],
-      });
-    }
-    deepEqual(createWorktreeCoreMock.mock.calls[0][4], [".env"]);
-    equal(createWorktreeCoreMock.mock.calls[0][5], undefined);
+    const [, , , options, directoryNameSeparator] =
+      createWorktreeCoreMock.mock.calls[0];
+    deepEqual(options.copyFiles, [".env"]);
+    equal(directoryNameSeparator, "/");
   });
 });

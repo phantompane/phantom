@@ -16,7 +16,6 @@ export interface GitHubCheckoutOptions {
   number: string;
   base?: string;
   cwd?: string;
-  postCreate?: "run" | "skip";
 }
 
 export interface ListGitHubCheckoutTargetsOptions {
@@ -27,14 +26,8 @@ export interface ListGitHubCheckoutTargetsOptions {
 export async function githubCheckout(
   options: GitHubCheckoutOptions,
 ): Promise<Result<CheckoutResult>> {
-  const { number, base, cwd, postCreate } = options;
-  const checkoutOptions =
-    cwd || postCreate !== undefined
-      ? {
-          ...(cwd ? { cwd } : {}),
-          ...(postCreate !== undefined ? { postCreate } : {}),
-        }
-      : undefined;
+  const { number, base, cwd } = options;
+  const checkoutOptions = cwd ? { cwd } : undefined;
   const { owner, repo } = cwd
     ? await getGitHubRepoInfo({ cwd })
     : await getGitHubRepoInfo();

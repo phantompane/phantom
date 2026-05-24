@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import {
+  runPostCreateWorktree,
   runCreateWorktree,
   TmuxSessionRequiredError,
   WorktreeActionConflictError,
@@ -72,7 +73,6 @@ export async function createHandler(args: string[]): Promise<void> {
       tmuxDirection,
     },
     logger: output,
-    postCreate: "afterAction",
   });
 
   if (isErr(result)) {
@@ -83,6 +83,14 @@ export async function createHandler(args: string[]): Promise<void> {
         ? exitCodes.validationError
         : (getProcessExitCode(result.error) ?? exitCodes.generalError);
     exitWithError(result.error.message, exitCode);
+  }
+
+  const postCreateResult = await runPostCreateWorktree({
+    worktreeName: result.value.name,
+    logger: output,
+  });
+  if (isErr(postCreateResult)) {
+    exitWithError(postCreateResult.error.message, exitCodes.generalError);
   }
 
   if (result.value.exitProcessCode !== undefined) {

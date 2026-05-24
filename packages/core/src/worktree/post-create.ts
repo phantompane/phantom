@@ -1,6 +1,20 @@
+import { getGitRoot } from "@phantompane/git";
 import { err, isErr, ok, type Result } from "@phantompane/utils";
+import { createContext } from "../context.ts";
 import { execInWorktree } from "../exec.ts";
 import type { WorktreeLogger } from "./action.ts";
+import { WorktreeError } from "./errors.ts";
+
+export interface RunPostCreateWorktreeOptions {
+  gitRoot?: string;
+  worktreeName: string;
+  commands?: string[];
+  logger?: WorktreeLogger;
+}
+
+export interface HasPostCreateWorktreeCommandsOptions {
+  gitRoot?: string;
+}
 
 export interface PostCreateExecutionOptions {
   gitRoot: string;
@@ -12,6 +26,50 @@ export interface PostCreateExecutionOptions {
 
 export interface PostCreateExecutionResult {
   executedCommands: string[];
+}
+
+export async function hasPostCreateWorktreeCommands(
+  options: HasPostCreateWorktreeCommandsOptions = {},
+): Promise<Result<boolean, WorktreeError>> {
+  try {
+    const gitRoot = options.gitRoot ?? (await getGitRoot());
+    const context = await createContext(gitRoot);
+    return ok((context.config?.postCreate?.commands?.length ?? 0) > 0);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return err(new WorktreeError(message));
+  }
+}
+
+export async function runPostCreateWorktree(
+  options: RunPostCreateWorktreeOptions,
+): Promise<Result<PostCreateExecutionResult, WorktreeError>> {
+  try {
+    const gitRoot = options.gitRoot ?? (await getGitRoot());
+    const context = await createContext(gitRoot);
+    const commands = options.commands ?? context.config?.postCreate?.commands;
+
+    if (!commands || commands.length === 0) {
+      return ok({ executedCommands: [] });
+    }
+
+    options.logger?.log?.("\nRunning post-create commands...");
+    const commandsResult = await executePostCreateCommands({
+      gitRoot: context.gitRoot,
+      worktreesDirectory: context.worktreesDirectory,
+      worktreeName: options.worktreeName,
+      commands,
+      logger: options.logger,
+    });
+    if (isErr(commandsResult)) {
+      return err(new WorktreeError(commandsResult.error.message));
+    }
+
+    return commandsResult;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return err(new WorktreeError(message));
+  }
 }
 
 export async function executePostCreateCommands(

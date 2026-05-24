@@ -3,15 +3,26 @@ import { describe, it, vi } from "vitest";
 import { err, isErr, isOk, ok } from "@phantompane/utils";
 
 const execInWorktreeMock = vi.fn();
+const getGitRootMock = vi.fn();
+const createContextMock = vi.fn();
 const logger = {
   log: vi.fn(),
 };
+
+vi.doMock("@phantompane/git", () => ({
+  getGitRoot: getGitRootMock,
+}));
+
+vi.doMock("../context.ts", () => ({
+  createContext: createContextMock,
+}));
 
 vi.doMock("../exec.ts", () => ({
   execInWorktree: execInWorktreeMock,
 }));
 
-const { executePostCreateCommands } = await import("./post-create.ts");
+const { executePostCreateCommands, runPostCreateWorktree } =
+  await import("./post-create.ts");
 
 describe("executePostCreateCommands", () => {
   it("should execute commands successfully", async () => {
@@ -145,5 +156,66 @@ describe("executePostCreateCommands", () => {
         "Post-create command failed with exit code 1: cmd2",
       );
     }
+  });
+});
+
+describe("runPostCreateWorktree", () => {
+  it("loads post-create commands from config and executes them", async () => {
+    execInWorktreeMock.mockClear();
+    getGitRootMock.mockClear();
+    createContextMock.mockClear();
+    logger.log.mockClear();
+    getGitRootMock.mockResolvedValue("/repo");
+    createContextMock.mockResolvedValue({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      config: {
+        postCreate: {
+          commands: ["pnpm install"],
+        },
+      },
+    });
+    execInWorktreeMock.mockResolvedValue(ok({ exitCode: 0 }));
+
+    const result = await runPostCreateWorktree({
+      worktreeName: "feature",
+      logger,
+    });
+
+    deepStrictEqual(isOk(result), true);
+    deepStrictEqual(getGitRootMock.mock.calls.length, 1);
+    deepStrictEqual(createContextMock.mock.calls[0], ["/repo"]);
+    deepStrictEqual(execInWorktreeMock.mock.calls[0].slice(0, 4), [
+      "/repo",
+      "/repo/.git/phantom/worktrees",
+      "feature",
+      [process.env.SHELL || "/bin/sh", "-c", "pnpm install"],
+    ]);
+    deepStrictEqual(
+      logger.log.mock.calls[0][0],
+      "\nRunning post-create commands...",
+    );
+  });
+
+  it("returns without executing when no post-create commands are configured", async () => {
+    execInWorktreeMock.mockClear();
+    getGitRootMock.mockClear();
+    createContextMock.mockClear();
+    getGitRootMock.mockResolvedValue("/repo");
+    createContextMock.mockResolvedValue({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      config: {},
+    });
+
+    const result = await runPostCreateWorktree({
+      worktreeName: "feature",
+    });
+
+    deepStrictEqual(isOk(result), true);
+    if (isOk(result)) {
+      deepStrictEqual(result.value.executedCommands, []);
+    }
+    deepStrictEqual(execInWorktreeMock.mock.calls.length, 0);
   });
 });

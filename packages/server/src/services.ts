@@ -22,13 +22,13 @@ import {
   deleteBranch,
   deleteWorktree as deleteWorktreeCore,
   githubCheckout,
-  listWorktrees,
+  hasPostCreateWorktreeCommands,
   listGitHubCheckoutTargets,
+  listWorktrees,
   removeWorktree,
   runCreateWorktree,
   runPostCreateWorktree,
   WorktreeAlreadyExistsError,
-  type WorktreePostCreateTask,
 } from "@phantompane/core";
 import {
   CodexBridge,
@@ -960,7 +960,6 @@ export class ServeServices {
         number: String(input.githubTargetNumber),
         base: input.base,
         cwd: project.rootPath,
-        postCreate: "skip",
       });
       if (!result.ok) {
         throw result.error;
@@ -971,7 +970,13 @@ export class ServeServices {
           worktreeName: result.value.worktree,
           worktreePath: result.value.path,
         });
-        this.scheduleDeferredPostCreate(chat, result.value.postCreate);
+        if (!result.value.alreadyExists) {
+          await this.scheduleDeferredPostCreate(
+            chat,
+            project.rootPath,
+            result.value.worktree,
+          );
+        }
         return chat;
       } catch (error) {
         if (!result.value.alreadyExists) {
@@ -1020,7 +1025,6 @@ export class ServeServices {
       gitRoot: project.rootPath,
       name: inferredName,
       base: input.base,
-      postCreate: "skip",
     });
     if (
       !createResult.ok &&
@@ -1031,7 +1035,6 @@ export class ServeServices {
       createResult = await runCreateWorktree({
         gitRoot: project.rootPath,
         base: input.base,
-        postCreate: "skip",
       });
     }
 
@@ -1086,15 +1089,26 @@ export class ServeServices {
     }));
 
     this.eventHub.emit("chat.created", chat, { chatId: chat.id });
-    this.scheduleDeferredPostCreate(chat, createResult.value.postCreate);
+    await this.scheduleDeferredPostCreate(
+      chat,
+      project.rootPath,
+      createResult.value.name,
+    );
     return chat;
   }
 
-  private scheduleDeferredPostCreate(
+  private async scheduleDeferredPostCreate(
     chat: ChatRecord,
-    postCreate: WorktreePostCreateTask | undefined,
-  ): void {
-    if (!postCreate) {
+    gitRoot: string,
+    worktreeName: string,
+  ): Promise<void> {
+    const hasCommands = await hasPostCreateWorktreeCommands({ gitRoot });
+    if (!hasCommands.ok) {
+      await this.addAgentErrorMessage(chat.id, hasCommands.error);
+      this.emitAgentError(chat.id, hasCommands.error);
+      return;
+    }
+    if (!hasCommands.value) {
       return;
     }
 
@@ -1102,18 +1116,22 @@ export class ServeServices {
       waitForMessages: true,
     });
     const timer = setTimeout(() => {
-      void this.runDeferredPostCreate(chat, postCreate, release);
+      void this.runDeferredPostCreate(chat, gitRoot, worktreeName, release);
     }, 0);
     timer.unref?.();
   }
 
   private async runDeferredPostCreate(
     chat: ChatRecord,
-    postCreate: WorktreePostCreateTask,
+    gitRoot: string,
+    worktreeName: string,
     release: () => void,
   ): Promise<void> {
     try {
-      const result = await runPostCreateWorktree(postCreate);
+      const result = await runPostCreateWorktree({
+        gitRoot,
+        worktreeName,
+      });
       if (!result.ok) {
         throw result.error;
       }

@@ -4,10 +4,6 @@ import { err, isErr, isOk, ok, type Result } from "@phantompane/utils";
 import { createContext } from "../context.ts";
 import { getWorktreePathFromDirectory } from "../paths.ts";
 import {
-  executePostCreateCommands,
-  type PostCreateExecutionResult,
-} from "./post-create.ts";
-import {
   mergeWorktreeCopyFiles,
   resolveWorktreeAction,
   runWorktreeAction,
@@ -38,22 +34,6 @@ export interface CreateWorktreeSuccess {
   copyError?: string;
 }
 
-export type RunCreateWorktreePostCreateMode =
-  | "afterAction"
-  | "beforeAction"
-  | "skip";
-
-export interface WorktreePostCreateTask {
-  gitRoot: string;
-  worktreesDirectory: string;
-  worktreeName: string;
-  commands: string[];
-}
-
-export interface RunPostCreateWorktreeOptions extends WorktreePostCreateTask {
-  logger?: WorktreeLogger;
-}
-
 export interface RunCreateWorktreeOptions {
   name?: string;
   gitRoot?: string;
@@ -61,7 +41,6 @@ export interface RunCreateWorktreeOptions {
   copyFiles?: string[];
   action?: WorktreeActionOptions;
   logger?: WorktreeLogger;
-  postCreate?: RunCreateWorktreePostCreateMode;
 }
 
 export interface RunCreateWorktreeSuccess {
@@ -70,7 +49,6 @@ export interface RunCreateWorktreeSuccess {
   message: string;
   copyError?: string;
   exitProcessCode?: number;
-  postCreate?: WorktreePostCreateTask;
 }
 
 export async function createWorktree(
@@ -78,8 +56,6 @@ export async function createWorktree(
   worktreeDirectory: string,
   name: string,
   options: CreateWorktreeOptions,
-  postCreateCopyFiles: string[] | undefined,
-  postCreateCommands: string[] | undefined,
   directoryNameSeparator: string,
 ): Promise<
   Result<CreateWorktreeSuccess, WorktreeAlreadyExistsError | WorktreeError>
@@ -93,7 +69,6 @@ export async function createWorktree(
     branch = name,
     base = "HEAD",
     copyFiles: requestedCopyFiles,
-    logger,
   } = options;
 
   const worktreePath = getWorktreePathFromDirectory(
@@ -129,32 +104,18 @@ export async function createWorktree(
     let skippedFiles: string[] | undefined;
     let copyError: string | undefined;
 
-    const filesToCopy = mergeWorktreeCopyFiles(
-      requestedCopyFiles,
-      postCreateCopyFiles,
-    );
-
-    if (filesToCopy) {
-      const copyResult = await copyFiles(gitRoot, worktreePath, filesToCopy);
+    if (requestedCopyFiles) {
+      const copyResult = await copyFiles(
+        gitRoot,
+        worktreePath,
+        requestedCopyFiles,
+      );
 
       if (isOk(copyResult)) {
         copiedFiles = copyResult.value.copiedFiles;
         skippedFiles = copyResult.value.skippedFiles;
       } else {
         copyError = copyResult.error.message;
-      }
-    }
-
-    if (postCreateCommands && postCreateCommands.length > 0) {
-      const commandsResult = await runPostCreateWorktree({
-        gitRoot,
-        worktreesDirectory: worktreeDirectory,
-        worktreeName: name,
-        commands: postCreateCommands,
-        logger,
-      });
-      if (isErr(commandsResult)) {
-        return err(commandsResult.error);
       }
     }
 
@@ -171,46 +132,6 @@ export async function createWorktree(
   }
 }
 
-export async function runPostCreateWorktree(
-  options: RunPostCreateWorktreeOptions,
-): Promise<Result<PostCreateExecutionResult, WorktreeError>> {
-  if (options.commands.length === 0) {
-    return ok({ executedCommands: [] });
-  }
-
-  options.logger?.log?.("\nRunning post-create commands...");
-  const commandsResult = await executePostCreateCommands({
-    gitRoot: options.gitRoot,
-    worktreesDirectory: options.worktreesDirectory,
-    worktreeName: options.worktreeName,
-    commands: options.commands,
-    logger: options.logger,
-  });
-  if (isErr(commandsResult)) {
-    return err(new WorktreeError(commandsResult.error.message));
-  }
-
-  return commandsResult;
-}
-
-export function createWorktreePostCreateTask(
-  gitRoot: string,
-  worktreesDirectory: string,
-  worktreeName: string,
-  commands: string[] | undefined,
-): WorktreePostCreateTask | undefined {
-  if (!commands || commands.length === 0) {
-    return undefined;
-  }
-
-  return {
-    gitRoot,
-    worktreesDirectory,
-    worktreeName,
-    commands,
-  };
-}
-
 export async function runCreateWorktree(
   options: RunCreateWorktreeOptions,
 ): Promise<Result<RunCreateWorktreeSuccess>> {
@@ -223,8 +144,6 @@ export async function runCreateWorktree(
   if (isErr(actionValidation)) {
     return actionValidation;
   }
-
-  const postCreateMode = options.postCreate ?? "afterAction";
 
   try {
     const gitRoot = options.gitRoot ?? (await getGitRoot());
@@ -248,13 +167,6 @@ export async function runCreateWorktree(
       options.copyFiles,
     );
 
-    const postCreateTask = createWorktreePostCreateTask(
-      context.gitRoot,
-      context.worktreesDirectory,
-      worktreeName,
-      context.config?.postCreate?.commands,
-    );
-
     const createResult = await createWorktree(
       context.gitRoot,
       context.worktreesDirectory,
@@ -264,8 +176,6 @@ export async function runCreateWorktree(
         copyFiles: filesToCopy,
         logger: options.logger,
       },
-      undefined,
-      postCreateMode === "beforeAction" ? postCreateTask?.commands : undefined,
       context.directoryNameSeparator,
     );
     if (isErr(createResult)) {
@@ -280,42 +190,6 @@ export async function runCreateWorktree(
       );
     }
 
-    if (postCreateMode === "skip") {
-      return ok({
-        name: worktreeName,
-        path: createResult.value.path,
-        message: createResult.value.message,
-        copyError: createResult.value.copyError,
-        postCreate: postCreateTask,
-      });
-    }
-
-    let postCreatePromise:
-      | Promise<Result<PostCreateExecutionResult, WorktreeError>>
-      | undefined;
-    const startPostCreate = () => {
-      if (!postCreateTask) {
-        return undefined;
-      }
-      postCreatePromise ??= runPostCreateWorktree({
-        ...postCreateTask,
-        logger: options.logger,
-      });
-      return postCreatePromise;
-    };
-    const schedulePostCreate = () => {
-      if (!postCreateTask) {
-        return undefined;
-      }
-      postCreatePromise ??= Promise.resolve().then(() =>
-        runPostCreateWorktree({
-          ...postCreateTask,
-          logger: options.logger,
-        }),
-      );
-      return postCreatePromise;
-    };
-
     const worktreeActionResult = await runWorktreeAction({
       gitRoot: context.gitRoot,
       worktreeDirectory: context.worktreesDirectory,
@@ -324,23 +198,10 @@ export async function runCreateWorktree(
       action: actionResult.value,
       logger: options.logger,
       exitWithProcessCode: true,
-      onStarted:
-        postCreateMode === "afterAction" ? schedulePostCreate : undefined,
     });
 
     if (isErr(worktreeActionResult)) {
-      if (postCreatePromise) {
-        await postCreatePromise.catch(() => undefined);
-      }
       return err(worktreeActionResult.error);
-    }
-
-    const postCreateResult =
-      postCreateMode === "afterAction"
-        ? await (postCreatePromise ?? startPostCreate())
-        : undefined;
-    if (postCreateResult && isErr(postCreateResult)) {
-      return err(postCreateResult.error);
     }
 
     return ok({

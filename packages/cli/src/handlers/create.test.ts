@@ -9,6 +9,7 @@ import { err, ok } from "@phantompane/utils";
 
 const exitMock = vi.fn();
 const runCreateWorktreeMock = vi.fn();
+const runPostCreateWorktreeMock = vi.fn();
 const exitWithErrorMock = vi.fn((message, code) => {
   throw new Error(`Exit with code ${code}: ${message}`);
 });
@@ -33,6 +34,7 @@ afterAll(() => {
 
 vi.doMock("@phantompane/core", () => ({
   runCreateWorktree: runCreateWorktreeMock,
+  runPostCreateWorktree: runPostCreateWorktreeMock,
   TmuxSessionRequiredError,
   WorktreeActionConflictError,
   WorktreeAlreadyExistsError,
@@ -65,6 +67,8 @@ describe("createHandler", () => {
   const resetMocks = () => {
     exitMock.mockReset();
     runCreateWorktreeMock.mockReset();
+    runPostCreateWorktreeMock.mockReset();
+    runPostCreateWorktreeMock.mockResolvedValue(ok({ executedCommands: [] }));
     exitWithErrorMock.mockReset();
     exitWithSuccessMock.mockReset();
     outputMock.log.mockReset();
@@ -104,10 +108,13 @@ describe("createHandler", () => {
       "vertical",
     );
     strictEqual(runCreateWorktreeMock.mock.calls[0][0].logger, outputMock);
+    strictEqual(runCreateWorktreeMock.mock.calls[0][0].postCreate, undefined);
+    strictEqual(runPostCreateWorktreeMock.mock.calls.length, 1);
     strictEqual(
-      runCreateWorktreeMock.mock.calls[0][0].postCreate,
-      "afterAction",
+      runPostCreateWorktreeMock.mock.calls[0][0].worktreeName,
+      "feature",
     );
+    strictEqual(runPostCreateWorktreeMock.mock.calls[0][0].logger, outputMock);
   });
 
   it("maps validation errors to validation exit codes", async () => {
@@ -126,6 +133,7 @@ describe("createHandler", () => {
       new WorktreeActionConflictError().message,
     );
     strictEqual(exitWithErrorMock.mock.calls[0][1], 2);
+    strictEqual(runPostCreateWorktreeMock.mock.calls.length, 0);
   });
 
   it("exits with the propagated process exit code when core requests it", async () => {
@@ -141,6 +149,7 @@ describe("createHandler", () => {
 
     await createHandler(["feature", "--exec", "echo hello"]);
 
+    strictEqual(runPostCreateWorktreeMock.mock.calls.length, 1);
     strictEqual(exitMock.mock.calls[0][0], 0);
     strictEqual(exitWithSuccessMock.mock.calls.length, 0);
   });

@@ -35,6 +35,8 @@ describe("githubCheckoutHandler", () => {
     outputLogMock.mockClear();
     outputErrorMock.mockClear();
     githubCheckoutMock.mockClear();
+    runPostCreateWorktreeMock.mockClear();
+    runPostCreateWorktreeMock.mockResolvedValue(ok({ executedCommands: [] }));
 
     githubCheckoutMock.mockImplementation(() =>
       Promise.resolve(
@@ -55,15 +57,19 @@ describe("githubCheckoutHandler", () => {
     deepStrictEqual(options, {
       number: "123",
       base: undefined,
-      postCreate: "skip",
     });
     deepStrictEqual(outputLogMock.mock.calls[0][0], "Checked out issue #123");
+    deepStrictEqual(runPostCreateWorktreeMock.mock.calls[0][0], {
+      worktreeName: "issues/123",
+      logger: { log: outputLogMock, error: outputErrorMock },
+    });
   });
 
   it("should handle existing worktree response", async () => {
     exitWithErrorMock.mockClear();
     outputLogMock.mockClear();
     githubCheckoutMock.mockClear();
+    runPostCreateWorktreeMock.mockClear();
 
     githubCheckoutMock.mockImplementation(() =>
       Promise.resolve(
@@ -83,6 +89,7 @@ describe("githubCheckoutHandler", () => {
       outputLogMock.mock.calls[0][0],
       "Worktree for PR #456 is already checked out",
     );
+    deepStrictEqual(runPostCreateWorktreeMock.mock.calls.length, 0);
   });
 
   it("should run deferred post-create after checkout output", async () => {
@@ -91,18 +98,11 @@ describe("githubCheckoutHandler", () => {
     githubCheckoutMock.mockClear();
     runPostCreateWorktreeMock.mockClear();
 
-    const postCreate = {
-      gitRoot: "/repo",
-      worktreesDirectory: "/repo/.git/phantom/worktrees",
-      worktreeName: "issues/123",
-      commands: ["pnpm install"],
-    };
     githubCheckoutMock.mockResolvedValueOnce(
       ok({
         message: "Checked out issue #123",
         worktree: "issues/123",
         path: "/repo/.git/phantom/worktrees/issues/123",
-        postCreate,
       }),
     );
     runPostCreateWorktreeMock.mockResolvedValueOnce(
@@ -113,7 +113,7 @@ describe("githubCheckoutHandler", () => {
 
     deepStrictEqual(outputLogMock.mock.calls[0][0], "Checked out issue #123");
     deepStrictEqual(runPostCreateWorktreeMock.mock.calls[0][0], {
-      ...postCreate,
+      worktreeName: "issues/123",
       logger: { log: outputLogMock, error: outputErrorMock },
     });
   });
@@ -121,6 +121,7 @@ describe("githubCheckoutHandler", () => {
   it("should handle githubCheckout error", async () => {
     exitWithErrorMock.mockClear();
     githubCheckoutMock.mockClear();
+    runPostCreateWorktreeMock.mockClear();
 
     githubCheckoutMock.mockImplementation(() =>
       Promise.resolve(err(new Error("GitHub API error"))),
@@ -137,6 +138,8 @@ describe("githubCheckoutHandler", () => {
   it("should pass base option to githubCheckout", async () => {
     exitWithErrorMock.mockClear();
     githubCheckoutMock.mockClear();
+    runPostCreateWorktreeMock.mockClear();
+    runPostCreateWorktreeMock.mockResolvedValue(ok({ executedCommands: [] }));
 
     githubCheckoutMock.mockImplementation(() =>
       Promise.resolve(
@@ -153,7 +156,6 @@ describe("githubCheckoutHandler", () => {
     deepStrictEqual(githubCheckoutMock.mock.calls[0][0], {
       number: "123",
       base: "develop",
-      postCreate: "skip",
     });
   });
 
@@ -162,6 +164,8 @@ describe("githubCheckoutHandler", () => {
     outputLogMock.mockClear();
     outputErrorMock.mockClear();
     githubCheckoutMock.mockClear();
+    runPostCreateWorktreeMock.mockClear();
+    runPostCreateWorktreeMock.mockResolvedValue(ok({ executedCommands: [] }));
 
     githubCheckoutMock.mockImplementation(() =>
       Promise.resolve(
@@ -181,7 +185,6 @@ describe("githubCheckoutHandler", () => {
     deepStrictEqual(options, {
       number: "123",
       base: undefined,
-      postCreate: "skip",
     });
     deepStrictEqual(outputErrorMock.mock.calls.length, 0);
   });

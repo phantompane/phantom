@@ -57,7 +57,6 @@ describe("attachWorktreeCore", () => {
       "/repo/.git/phantom/worktrees",
       "feature-branch",
       undefined,
-      undefined,
       "/",
     );
 
@@ -98,7 +97,6 @@ describe("attachWorktreeCore", () => {
       "/repo/.git/phantom/worktrees",
       "feature/branch",
       undefined,
-      undefined,
       "/",
     );
 
@@ -123,7 +121,6 @@ describe("attachWorktreeCore", () => {
       "/repo",
       "/repo/.git/phantom/worktrees",
       "existing-feature",
-      undefined,
       undefined,
       "/",
     );
@@ -151,7 +148,6 @@ describe("attachWorktreeCore", () => {
       "/repo/.git/phantom/worktrees",
       "non-existent",
       undefined,
-      undefined,
       "/",
     );
 
@@ -178,7 +174,6 @@ describe("attachWorktreeCore", () => {
       "/repo/.git/phantom/worktrees",
       "feature",
       undefined,
-      undefined,
       "/",
     );
 
@@ -200,7 +195,6 @@ describe("attachWorktreeCore", () => {
       "/repo",
       "/repo/.git/phantom/worktrees",
       "feature",
-      undefined,
       undefined,
       "/",
     );
@@ -228,7 +222,6 @@ describe("attachWorktreeCore", () => {
       "/repo",
       "/repo/.git/phantom/worktrees",
       "feature/test",
-      undefined,
       undefined,
       "-",
     );

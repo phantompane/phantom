@@ -11,13 +11,8 @@ import {
   type WorktreeActionOptions,
   type WorktreeLogger,
 } from "./action.ts";
-import {
-  BranchNotFoundError,
-  WorktreeAlreadyExistsError,
-  WorktreeError,
-} from "./errors.ts";
+import { BranchNotFoundError, WorktreeAlreadyExistsError } from "./errors.ts";
 import { copyFiles } from "./file-copier.ts";
-import { executePostCreateCommands } from "./post-create.ts";
 import { validateWorktreeName } from "./validate.ts";
 
 export interface RunAttachWorktreeOptions {
@@ -36,8 +31,7 @@ export async function attachWorktreeCore(
   gitRoot: string,
   worktreeDirectory: string,
   name: string,
-  postCreateCopyFiles: string[] | undefined,
-  postCreateCommands: string[] | undefined,
+  filesToCopy: string[] | undefined,
   directoryNameSeparator: string,
   logger?: WorktreeLogger,
 ): Promise<Result<string, Error>> {
@@ -79,30 +73,12 @@ export async function attachWorktreeCore(
     );
   }
 
-  if (postCreateCopyFiles && postCreateCopyFiles.length > 0) {
-    const copyResult = await copyFiles(
-      gitRoot,
-      worktreePath,
-      postCreateCopyFiles,
-    );
+  if (filesToCopy && filesToCopy.length > 0) {
+    const copyResult = await copyFiles(gitRoot, worktreePath, filesToCopy);
     if (isErr(copyResult)) {
       logger?.warn?.(
         `Warning: Failed to copy some files: ${copyResult.error.message}`,
       );
-    }
-  }
-
-  if (postCreateCommands && postCreateCommands.length > 0) {
-    logger?.log?.("\nRunning post-create commands...");
-    const commandsResult = await executePostCreateCommands({
-      gitRoot,
-      worktreesDirectory: worktreeDirectory,
-      worktreeName: name,
-      commands: postCreateCommands,
-      logger,
-    });
-    if (isErr(commandsResult)) {
-      return err(new WorktreeError(commandsResult.error.message));
     }
   }
 
@@ -136,7 +112,6 @@ export async function runAttachWorktree(
       context.worktreesDirectory,
       options.name,
       filesToCopy,
-      context.config?.postCreate?.commands,
       context.directoryNameSeparator,
       options.logger,
     );

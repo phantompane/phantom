@@ -100,8 +100,6 @@ describe("createWorktreeTool", () => {
         copyFiles: undefined,
       },
       undefined,
-      undefined,
-      undefined,
     ]);
 
     strictEqual(result.content.length, 1);
@@ -150,8 +148,6 @@ describe("createWorktreeTool", () => {
         base: "develop",
         copyFiles: undefined,
       },
-      undefined,
-      undefined,
       undefined,
     ]);
 

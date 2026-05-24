@@ -69,7 +69,6 @@ export async function githubCheckoutHandler(args: string[]): Promise<void> {
   const result = await githubCheckout({
     number,
     base: values.base,
-    postCreate: "skip",
   });
 
   if (isErr(result)) {
@@ -105,9 +104,9 @@ export async function githubCheckoutHandler(args: string[]): Promise<void> {
       exitWithError("", exitCode);
     }
   }
-  if (result.value.postCreate) {
+  if (!result.value.alreadyExists) {
     const postCreateResult = await runPostCreateWorktree({
-      ...result.value.postCreate,
+      worktreeName: result.value.worktree,
       logger: output,
     });
     if (isErr(postCreateResult)) {

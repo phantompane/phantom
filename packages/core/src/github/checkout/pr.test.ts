@@ -8,17 +8,6 @@ const fetchMock = vi.fn();
 const attachWorktreeCoreMock = vi.fn();
 const setUpstreamBranchMock = vi.fn();
 const createContextMock = vi.fn();
-const createWorktreePostCreateTaskMock = vi.fn(
-  (
-    gitRoot: string,
-    worktreesDirectory: string,
-    worktreeName: string,
-    commands: string[] | undefined,
-  ) =>
-    commands
-      ? { gitRoot, worktreesDirectory, worktreeName, commands }
-      : undefined,
-);
 const validateWorktreeExistsMock = vi.fn();
 
 vi.doMock("@phantompane/git", () => ({
@@ -34,10 +23,6 @@ vi.doMock("../../context.ts", () => ({
 
 vi.doMock("../../worktree/attach.ts", () => ({
   attachWorktreeCore: attachWorktreeCoreMock,
-}));
-
-vi.doMock("../../worktree/create.ts", () => ({
-  createWorktreePostCreateTask: createWorktreePostCreateTaskMock,
 }));
 
 vi.doMock("../../worktree/validate.ts", () => ({
@@ -57,7 +42,6 @@ describe("checkoutPullRequest", () => {
     fetchMock.mockClear();
     attachWorktreeCoreMock.mockClear();
     setUpstreamBranchMock.mockClear();
-    createWorktreePostCreateTaskMock.mockClear();
     validateWorktreeExistsMock.mockClear();
   };
 
@@ -475,7 +459,7 @@ describe("checkoutPullRequest", () => {
     equal(setUpstreamBranchMock.mock.calls.length, 0);
   });
 
-  it("should return post-create task without running commands when skipped", async () => {
+  it("should pass configured copy files without post-create commands", async () => {
     resetMocks();
     const mockGitRoot = "/path/to/repo";
     const mockPullRequest = {
@@ -523,20 +507,10 @@ describe("checkoutPullRequest", () => {
       value: undefined,
     }));
 
-    const result = await checkoutPullRequest(mockPullRequest, undefined, {
-      postCreate: "skip",
-    });
+    const result = await checkoutPullRequest(mockPullRequest);
 
     ok(isOk(result));
-    if (isOk(result)) {
-      deepEqual(result.value.postCreate, {
-        gitRoot: mockGitRoot,
-        worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
-        worktreeName: "feature-branch",
-        commands: ["pnpm install"],
-      });
-    }
     deepEqual(attachWorktreeCoreMock.mock.calls[0][3], [".env"]);
-    equal(attachWorktreeCoreMock.mock.calls[0][4], undefined);
+    equal(attachWorktreeCoreMock.mock.calls[0][4], "/");
   });
 });
