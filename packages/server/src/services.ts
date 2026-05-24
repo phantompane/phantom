@@ -4744,7 +4744,7 @@ function getStandardLocalMessageMergeSortBucket(
         !codexMessage.hasFallbackTimestamp &&
         codexMessage.createdAt > message.createdAt,
     );
-    return applyEarlierLocalCodexBoundary(
+    return applyLocalCodexBoundaries(
       nextTrustedInsertionIndex === -1
         ? getAfterCodexMessagesMergeSortBucket(orderedCodexMessages, 1)
         : getBeforeCodexMessageMergeSortBucket(
@@ -4763,7 +4763,7 @@ function getStandardLocalMessageMergeSortBucket(
           orderedCodexMessages,
           insertionIndex,
         );
-  return applyEarlierLocalCodexBoundary(
+  return applyLocalCodexBoundaries(
     bucket,
     index,
     localMessages,
@@ -4771,7 +4771,7 @@ function getStandardLocalMessageMergeSortBucket(
   );
 }
 
-function applyEarlierLocalCodexBoundary(
+function applyLocalCodexBoundaries(
   bucket: number,
   index: number | undefined,
   localMessages: ChatMessageRecord[] | undefined,
@@ -4787,10 +4787,21 @@ function applyEarlierLocalCodexBoundary(
         localMessageCodexOrderMatches,
       )
     : undefined;
-  if (earlierMatchedCodexOrder === undefined) {
-    return bucket;
+  const laterMatchedCodexOrder = localMessages
+    ? getLaterLocalCodexOrder(
+        index,
+        localMessages,
+        localMessageCodexOrderMatches,
+      )
+    : undefined;
+  let boundedBucket = bucket;
+  if (earlierMatchedCodexOrder !== undefined) {
+    boundedBucket = Math.max(boundedBucket, earlierMatchedCodexOrder * 2 + 0.5);
   }
-  return Math.max(bucket, earlierMatchedCodexOrder * 2 + 0.5);
+  if (laterMatchedCodexOrder !== undefined) {
+    boundedBucket = Math.min(boundedBucket, laterMatchedCodexOrder * 2 - 0.5);
+  }
+  return boundedBucket;
 }
 
 function getEarlierLocalCodexOrder(
@@ -4801,6 +4812,17 @@ function getEarlierLocalCodexOrder(
   return localMessages
     .slice(0, index)
     .reverse()
+    .map((message) => localMessageCodexOrderMatches.get(message.id))
+    .find((codexOrder): codexOrder is number => codexOrder !== undefined);
+}
+
+function getLaterLocalCodexOrder(
+  index: number,
+  localMessages: ChatMessageRecord[],
+  localMessageCodexOrderMatches: ReadonlyMap<string, number>,
+): number | undefined {
+  return localMessages
+    .slice(index + 1)
     .map((message) => localMessageCodexOrderMatches.get(message.id))
     .find((codexOrder): codexOrder is number => codexOrder !== undefined);
 }
@@ -4887,7 +4909,7 @@ function getLiveAssistantDeltaMergeSortBucket(
     orderedCodexMessages,
     boundaryInsertionIndex,
   );
-  return applyEarlierLocalCodexBoundary(
+  return applyLocalCodexBoundaries(
     bucket,
     index,
     localMessages,

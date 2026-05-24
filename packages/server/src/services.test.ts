@@ -3100,6 +3100,99 @@ describe("ServeServices", () => {
     );
   });
 
+  it("keeps unmatched local transcript messages between fallback Codex anchors", async () => {
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_user_1",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "install skills",
+          createdAt: "2026-04-25T00:01:00.000Z",
+        },
+        {
+          id: "msg_assistant_1",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "already installed",
+          eventType: "item/agentMessage/delta",
+          itemId: "agent_msg_1",
+          createdAt: "2026-04-25T00:02:00.000Z",
+        },
+        {
+          id: "msg_interrupted",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "use npx",
+          createdAt: "2026-04-25T00:03:00.000Z",
+        },
+        {
+          id: "msg_user_2",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "use npx skills\ncheck README",
+          createdAt: "2026-04-25T00:04:00.000Z",
+        },
+        {
+          id: "msg_assistant_2",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "using npx",
+          eventType: "item/agentMessage/delta",
+          itemId: "agent_msg_2",
+          createdAt: "2026-04-25T00:05:00.000Z",
+        },
+      ],
+    };
+    const { codex, services } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_1",
+            items: [
+              { type: "userMessage", text: "install skills" },
+              { type: "agentMessage", text: "already installed" },
+            ],
+          },
+          {
+            id: "turn_2",
+            items: [
+              { type: "userMessage", text: "use npx skills\ncheck README" },
+              { type: "agentMessage", text: "using npx" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+
+    deepStrictEqual(
+      messages.map((message) => [
+        message.id,
+        message.role,
+        message.text,
+        message.eventType,
+      ]),
+      [
+        ["chat_1_codex_turn_1_0", "user", "install skills", undefined],
+        ["chat_1_codex_turn_1_1", "assistant", "already installed", undefined],
+        ["msg_interrupted", "user", "use npx", undefined],
+        [
+          "chat_1_codex_turn_2_0",
+          "user",
+          "use npx skills\ncheck README",
+          undefined,
+        ],
+        ["chat_1_codex_turn_2_1", "assistant", "using npx", undefined],
+      ],
+    );
+  });
+
   it("treats missing active turn id as inactive for fallback transcript deduplication", async () => {
     const chatWithoutActiveTurnId = createChat({ status: "idle" });
     delete (chatWithoutActiveTurnId as Partial<typeof chatWithoutActiveTurnId>)
