@@ -1,6 +1,6 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { afterAll, describe, it, vi } from "vitest";
-import { ok } from "@phantompane/utils";
+import { err, ok } from "@phantompane/utils";
 
 const accessMock = vi.fn();
 const mkdirMock = vi.fn();
@@ -318,5 +318,43 @@ describe("runCreateWorktree", () => {
         executePostCreateCommandsMock.mock.invocationCallOrder[0],
       true,
     );
+  });
+
+  it("does not start post-create when opening the requested action fails", async () => {
+    resetMocks();
+    processEnvMock.SHELL = "/bin/bash";
+    accessMock.mockResolvedValue(undefined);
+    validateWorktreeNameMock.mockReturnValue(ok(undefined));
+    validateWorktreeDoesNotExistMock.mockResolvedValue(ok(undefined));
+    addWorktreeMock.mockResolvedValue(undefined);
+    getGitRootMock.mockResolvedValue("/repo");
+    createContextMock.mockResolvedValue({
+      gitRoot: "/repo",
+      worktreesDirectory: "/repo/.git/phantom/worktrees",
+      directoryNameSeparator: "/",
+      config: {
+        postCreate: {
+          commands: ["npm install"],
+        },
+      },
+      preferences: {},
+    });
+    isInsideTmuxMock.mockResolvedValue(true);
+    executeTmuxCommandMock.mockResolvedValue(err(new Error("tmux failed")));
+    getPhantomEnvMock.mockReturnValue({
+      PHANTOM_NAME: "feature",
+      PHANTOM_PATH: "/repo/.git/phantom/worktrees/feature",
+    });
+
+    const result = await runCreateWorktree({
+      name: "feature",
+      action: {
+        tmuxDirection: "new",
+      },
+    });
+
+    strictEqual(result.ok, false);
+    strictEqual(executeTmuxCommandMock.mock.calls.length, 1);
+    strictEqual(executePostCreateCommandsMock.mock.calls.length, 0);
   });
 });

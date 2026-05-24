@@ -328,13 +328,17 @@ export async function runCreateWorktree(
         postCreateMode === "afterAction" ? schedulePostCreate : undefined,
     });
 
+    if (isErr(worktreeActionResult)) {
+      if (postCreatePromise) {
+        await postCreatePromise.catch(() => undefined);
+      }
+      return err(worktreeActionResult.error);
+    }
+
     const postCreateResult =
       postCreateMode === "afterAction"
         ? await (postCreatePromise ?? startPostCreate())
         : undefined;
-    if (isErr(worktreeActionResult)) {
-      return err(worktreeActionResult.error);
-    }
     if (postCreateResult && isErr(postCreateResult)) {
       return err(postCreateResult.error);
     }
