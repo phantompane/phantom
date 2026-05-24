@@ -1,4 +1,4 @@
-import { equal, ok } from "node:assert/strict";
+import { deepEqual, equal, ok } from "node:assert/strict";
 import { describe, it, vi } from "vitest";
 import { isErr, isOk } from "@phantompane/utils";
 
@@ -473,5 +473,70 @@ describe("checkoutPullRequest", () => {
 
     // Verify upstream function was not called when fetch fails
     equal(setUpstreamBranchMock.mock.calls.length, 0);
+  });
+
+  it("should return post-create task without running commands when skipped", async () => {
+    resetMocks();
+    const mockGitRoot = "/path/to/repo";
+    const mockPullRequest = {
+      number: 888,
+      isFromFork: false,
+      head: {
+        ref: "feature-branch",
+        repo: {
+          full_name: "owner/repo",
+        },
+      },
+      base: {
+        repo: {
+          full_name: "owner/repo",
+        },
+      },
+    };
+
+    getGitRootMock.mockImplementation(async () => mockGitRoot);
+    createContextMock.mockImplementation(async () => ({
+      gitRoot: mockGitRoot,
+      worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
+      directoryNameSeparator: "/",
+      config: {
+        postCreate: {
+          copyFiles: [".env"],
+          commands: ["pnpm install"],
+        },
+      },
+    }));
+    validateWorktreeExistsMock.mockImplementation(async () => ({
+      ok: false,
+      error: new Error("Worktree not found"),
+    }));
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      value: undefined,
+    }));
+    attachWorktreeCoreMock.mockImplementation(async () => ({
+      ok: true,
+      value: "/path/to/repo/.git/phantom/worktrees/feature-branch",
+    }));
+    setUpstreamBranchMock.mockImplementation(async () => ({
+      ok: true,
+      value: undefined,
+    }));
+
+    const result = await checkoutPullRequest(mockPullRequest, undefined, {
+      postCreate: "skip",
+    });
+
+    ok(isOk(result));
+    if (isOk(result)) {
+      deepEqual(result.value.postCreate, {
+        gitRoot: mockGitRoot,
+        worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
+        worktreeName: "feature-branch",
+        commands: ["pnpm install"],
+      });
+    }
+    deepEqual(attachWorktreeCoreMock.mock.calls[0][3], [".env"]);
+    equal(attachWorktreeCoreMock.mock.calls[0][4], undefined);
   });
 });

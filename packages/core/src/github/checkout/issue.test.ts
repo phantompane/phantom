@@ -295,4 +295,53 @@ describe("checkoutIssue", () => {
     equal(worktreeName, "issues/333");
     equal(options.branch, "issues/333");
   });
+
+  it("should return post-create task without running commands when skipped", async () => {
+    resetMocks();
+    const mockGitRoot = "/path/to/repo";
+    const mockIssue = {
+      number: 444,
+    };
+
+    isPullRequestMock.mockImplementation(() => false);
+    getGitRootMock.mockImplementation(async () => mockGitRoot);
+    createContextMock.mockImplementation(async () => ({
+      gitRoot: mockGitRoot,
+      worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
+      directoryNameSeparator: "/",
+      config: {
+        postCreate: {
+          copyFiles: [".env"],
+          commands: ["pnpm install"],
+        },
+      },
+    }));
+    validateWorktreeExistsMock.mockImplementation(async () => ({
+      ok: false,
+      error: new Error("Worktree not found"),
+    }));
+    createWorktreeCoreMock.mockImplementation(async () => ({
+      ok: true,
+      value: {
+        message: "Success",
+        path: "/path/to/repo/.git/phantom/worktrees/issues/444",
+      },
+    }));
+
+    const result = await checkoutIssue(mockIssue, undefined, {
+      postCreate: "skip",
+    });
+
+    ok(isOk(result));
+    if (isOk(result)) {
+      deepEqual(result.value.postCreate, {
+        gitRoot: mockGitRoot,
+        worktreesDirectory: `${mockGitRoot}/.git/phantom/worktrees`,
+        worktreeName: "issues/444",
+        commands: ["pnpm install"],
+      });
+    }
+    deepEqual(createWorktreeCoreMock.mock.calls[0][4], [".env"]);
+    equal(createWorktreeCoreMock.mock.calls[0][5], undefined);
+  });
 });
