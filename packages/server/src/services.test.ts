@@ -3310,6 +3310,123 @@ describe("ServeServices", () => {
     deepStrictEqual(savedState.queuedMessages, [queuedMessage]);
   });
 
+  it("preserves historical attachment metadata while pruning accumulated idle local timeline", async () => {
+    const attachment = {
+      name: "screenshot.png",
+      path: "/tmp/phantom-attachments/chat_1/screenshot.png",
+      mimeType: "image/png",
+      size: 68,
+    };
+    const state = {
+      ...createTestState(),
+      projects: [createProject()],
+      chats: [createChat({ status: "idle", activeTurnId: null })],
+      messages: [
+        {
+          id: "msg_old_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "old request",
+          attachments: [attachment],
+          createdAt: "2026-05-08T00:45:00.000Z",
+        },
+        {
+          id: "msg_old_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "old local delta",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_old",
+          createdAt: "2026-05-08T00:45:02.000Z",
+        },
+        {
+          id: "msg_latest_user",
+          chatId: "chat_1",
+          role: "user" as const,
+          text: "latest request",
+          createdAt: "2026-05-08T00:46:00.000Z",
+        },
+        {
+          id: "msg_latest_assistant",
+          chatId: "chat_1",
+          role: "assistant" as const,
+          text: "latest local delta",
+          eventType: "item/agentMessage/delta",
+          itemId: "assistant_latest",
+          createdAt: "2026-05-08T00:46:01.000Z",
+        },
+      ],
+    };
+    const { codex, services, store } = await createHarness(state);
+    codex.readThread.mockResolvedValueOnce({
+      thread: {
+        turns: [
+          {
+            id: "turn_old",
+            items: [
+              { type: "userMessage", text: "old request" },
+              { type: "agentMessage", text: "old local delta" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const messages = await services.getMessages("chat_1");
+    const savedState = await store.load();
+
+    deepStrictEqual(
+      messages.map((message) => ({
+        attachments: message.attachments,
+        eventType: message.eventType,
+        id: message.id,
+        role: message.role,
+        text: message.text,
+      })),
+      [
+        {
+          attachments: [attachment],
+          eventType: undefined,
+          id: "chat_1_codex_turn_old_0",
+          role: "user",
+          text: "old request",
+        },
+        {
+          attachments: undefined,
+          eventType: undefined,
+          id: "chat_1_codex_turn_old_1",
+          role: "assistant",
+          text: "old local delta",
+        },
+        {
+          attachments: undefined,
+          eventType: undefined,
+          id: "msg_latest_user",
+          role: "user",
+          text: "latest request",
+        },
+        {
+          attachments: undefined,
+          eventType: "item/agentMessage/delta",
+          id: "msg_latest_assistant",
+          role: "assistant",
+          text: "latest local delta",
+        },
+      ],
+    );
+    deepStrictEqual(
+      savedState.messages.map((message) => ({
+        attachments: message.attachments,
+        id: message.id,
+      })),
+      [
+        { attachments: [attachment], id: "msg_old_user" },
+        { attachments: undefined, id: "msg_latest_user" },
+        { attachments: undefined, id: "msg_latest_assistant" },
+      ],
+    );
+  });
+
   it("preserves local attachment metadata when Codex thread history matches a sent user message", async () => {
     const attachment = {
       name: "screenshot.png",

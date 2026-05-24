@@ -4121,21 +4121,53 @@ function resolveChatMessageTimeline({
 function localMessagesForCurrentActiveTurn(
   localMessages: ChatMessageRecord[],
 ): ChatMessageRecord[] {
-  const latestLocalUserCreatedAt = localMessages
-    .filter(isActiveTurnLocalUserBoundary)
-    .map((message) => message.createdAt)
-    .sort((left, right) => right.localeCompare(left))[0];
+  const latestLocalUserCreatedAt =
+    findLatestLocalUserBoundaryCreatedAt(localMessages);
   if (!latestLocalUserCreatedAt) {
     return localMessages;
   }
   return localMessages.filter(
     (message) =>
-      isQueuedMessage(message) || message.createdAt >= latestLocalUserCreatedAt,
+      isQueuedMessage(message) ||
+      isHistoricalLocalMetadataForCodexMessageMerge(
+        message,
+        latestLocalUserCreatedAt,
+      ) ||
+      message.createdAt >= latestLocalUserCreatedAt,
   );
+}
+
+function findLatestLocalUserBoundaryCreatedAt(
+  localMessages: ChatMessageRecord[],
+): string | undefined {
+  return localMessages
+    .filter(isActiveTurnLocalUserBoundary)
+    .map((message) => message.createdAt)
+    .sort((left, right) => right.localeCompare(left))[0];
 }
 
 function isActiveTurnLocalUserBoundary(message: ChatMessageRecord): boolean {
   return message.role === "user" && !isQueuedMessage(message);
+}
+
+function isHistoricalLocalMetadataForCodexMessageMerge(
+  message: ChatMessageRecord,
+  latestLocalUserCreatedAt: string | undefined,
+): boolean {
+  return Boolean(
+    latestLocalUserCreatedAt &&
+    message.createdAt < latestLocalUserCreatedAt &&
+    hasLocalMetadataForCodexMessageMerge(message),
+  );
+}
+
+function hasLocalMetadataForCodexMessageMerge(
+  message: ChatMessageRecord,
+): boolean {
+  return (
+    isFallbackTranscriptMatchableLocalMessage(message) &&
+    (message.attachments?.length ?? 0) > 0
+  );
 }
 
 function createAccumulatedLocalTimelineStateCheckKey(
@@ -4302,6 +4334,13 @@ function mergeCodexAndLocalMessages(
       activeTurnId,
       activeLocalTurnStartIndex,
     );
+  const fallbackLocalMetadataMatches = findFallbackLocalMetadataMatches(
+    mergedCodexMessages,
+    localMessages,
+    fallbackTranscriptLocalMessageMatches,
+    activeTurnId,
+    activeLocalTurnStartIndex,
+  );
   const liveAssistantDeltaCodexOrderLimits =
     findLiveAssistantDeltaCodexOrderLimits(
       localMessages,
@@ -4340,6 +4379,28 @@ function mergeCodexAndLocalMessages(
       }
       unmatchedCodexMessageIndexes.splice(
         unmatchedCodexMessageIndexes.indexOf(fallbackTranscriptCodexIndex),
+        1,
+      );
+      return false;
+    }
+    const fallbackLocalMetadataCodexIndex = fallbackLocalMetadataMatches.get(
+      message.id,
+    );
+    if (
+      fallbackLocalMetadataCodexIndex !== undefined &&
+      unmatchedCodexMessageIndexes.includes(fallbackLocalMetadataCodexIndex)
+    ) {
+      const fallbackCodexMessage =
+        mergedCodexMessages[fallbackLocalMetadataCodexIndex];
+      if (fallbackCodexMessage) {
+        mergedCodexMessages[fallbackLocalMetadataCodexIndex] =
+          mergeLocalMessageMetadataIntoCodexMessage(
+            fallbackCodexMessage,
+            message,
+          );
+      }
+      unmatchedCodexMessageIndexes.splice(
+        unmatchedCodexMessageIndexes.indexOf(fallbackLocalMetadataCodexIndex),
         1,
       );
       return false;
@@ -5473,6 +5534,68 @@ function findFallbackTranscriptLocalMessageMatches(
     }
     nextSearchLocalEntryIndex =
       turnMatches[0]?.localEntryIndex ?? nextSearchLocalEntryIndex;
+  }
+  return matches;
+}
+
+function findFallbackLocalMetadataMatches(
+  codexMessages: InternalChatMessageRecord[],
+  localMessages: ChatMessageRecord[],
+  fallbackTranscriptLocalMessageMatches: ReadonlyMap<string, number>,
+  activeTurnId: string | null,
+  activeLocalTurnStartIndex: number,
+): ReadonlyMap<string, number> {
+  const localEntries = localMessages
+    .map((message, index) => ({ index, message }))
+    .filter(({ message }) => isFallbackTranscriptMatchableLocalMessage(message))
+    .filter(
+      ({ index }) => activeTurnId === null || index < activeLocalTurnStartIndex,
+    );
+  if (localEntries.length === 0) {
+    return new Map();
+  }
+
+  const matches = new Map<string, number>();
+  const latestLocalUserCreatedAt =
+    findLatestLocalUserBoundaryCreatedAt(localMessages);
+  const usedCodexMessageIndexes = new Set(
+    fallbackTranscriptLocalMessageMatches.values(),
+  );
+  const codexEntries = codexMessages
+    .map((message, index) => ({ index, message }))
+    .filter(
+      ({ index, message }) =>
+        !usedCodexMessageIndexes.has(index) &&
+        message.hasFallbackTimestamp &&
+        message.codexTurnId !== activeTurnId &&
+        isTranscriptMessage(message),
+    )
+    .sort(
+      (left, right) =>
+        (left.message.codexOrder ?? left.index) -
+        (right.message.codexOrder ?? right.index),
+    );
+
+  for (const { message: localMessage } of localEntries) {
+    if (
+      fallbackTranscriptLocalMessageMatches.has(localMessage.id) ||
+      !isHistoricalLocalMetadataForCodexMessageMerge(
+        localMessage,
+        latestLocalUserCreatedAt,
+      )
+    ) {
+      continue;
+    }
+    const matchedEntry = codexEntries.find(
+      ({ index, message }) =>
+        !usedCodexMessageIndexes.has(index) &&
+        messageFingerprint(message) === messageFingerprint(localMessage),
+    );
+    if (!matchedEntry) {
+      continue;
+    }
+    matches.set(localMessage.id, matchedEntry.index);
+    usedCodexMessageIndexes.add(matchedEntry.index);
   }
   return matches;
 }
