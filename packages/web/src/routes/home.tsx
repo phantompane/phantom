@@ -5151,16 +5151,16 @@ function getContextOnlyMessage({
   hasSkills: boolean;
 }): string {
   if (hasAttachments && hasFiles && hasSkills) {
-    return "Use the attached images, selected files, and selected skills as context.";
+    return "Run the selected skills using the attached images and selected files as inputs.";
   }
   if (hasAttachments && hasFiles) {
     return "Use the attached images and selected files as context.";
   }
   if (hasAttachments && hasSkills) {
-    return "Use the attached images and selected skills as context.";
+    return "Run the selected skills using the attached images as inputs.";
   }
   if (hasFiles && hasSkills) {
-    return "Use the selected files and skills as context.";
+    return "Run the selected skills using the selected files as inputs.";
   }
   if (hasAttachments) {
     return "Use the attached images as context.";
@@ -5168,7 +5168,7 @@ function getContextOnlyMessage({
   if (hasFiles) {
     return "Use the selected files as context.";
   }
-  return "Use the selected skills as context.";
+  return "Run the selected skills.";
 }
 
 function getNoticeToneClass(tone: ToastTone): string {
