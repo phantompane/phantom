@@ -27,7 +27,7 @@
     "node": ">=22.0.0"
   },
   "devDependencies": {
-    "@types/node": "^25.5.0",
+    "@types/node": "^25.9.1",
     "@typescript/native-preview": "7.0.0-dev.20260421.2",
     "oxfmt": "^0.48.0",
     "oxlint": "^1.63.0",
