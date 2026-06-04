@@ -15,7 +15,7 @@
     "test": "vitest run --root ../.. packages/server/src"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.14",
+    "@hono/node-server": "^2.0.1",
     "@phantompane/codex": "workspace:*",
     "@phantompane/core": "workspace:*",
     "@phantompane/git": "workspace:*",
