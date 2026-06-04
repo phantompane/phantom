@@ -22,7 +22,7 @@
     "@phantompane/state": "workspace:*",
     "hono": "^4.12.18",
     "marked": "^18.0.4",
-    "sanitize-html": "^2.17.3",
+    "sanitize-html": "^2.17.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
