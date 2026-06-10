@@ -174,7 +174,7 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: ^1.19.14
-        version: 1.19.14(hono@4.12.21)
+        version: 1.19.14(hono@4.12.23)
       '@phantompane/codex':
         specifier: workspace:*
         version: link:../codex
@@ -188,8 +188,8 @@ importers:
         specifier: workspace:*
         version: link:../state
       hono:
-        specifier: ^4.12.21
-        version: 4.12.21
+        specifier: ^4.12.23
+        version: 4.12.23
       marked:
         specifier: ^18.0.4
         version: 18.0.4
@@ -245,8 +245,8 @@ importers:
         specifier: ^5.100.6
         version: 5.100.6(react@19.2.6)
       hono:
-        specifier: ^4.12.21
-        version: 4.12.21
+        specifier: ^4.12.23
+        version: 4.12.23
       lucide-react:
         specifier: ^1.16.0
         version: 1.16.0(react@19.2.6)
@@ -2243,8 +2243,8 @@ packages:
     resolution: {integrity: sha512-p1JfQMKaceuCbpJKAPKVqyqviZdS0eUxH9v82oWo1kb9xjQ5wA6iP3FNVAPDFlz5/p7d45lO+BpSk1tuSZMF4Q==}
     engines: {node: '>=16.9.0'}
 
-  hono@4.12.21:
-    resolution: {integrity: sha512-uV63apnb0kyPtAUwoWgaGh9HyIFcv8lgmzPZSiTBQAFOFGIzka5EZ1dZocmGnn0XdX0+XTqJ6Tqv7selMuGLRQ==}
+  hono@4.12.23:
+    resolution: {integrity: sha512-eIaZ9qDgu7XV0pxOCrg7/WhnQ6Ivm22UcxhXx/A3dcbqbbYgBEkc6e/J/s7j2tS96zoB0S9VBdLwQNCWwUo4LA==}
     engines: {node: '>=16.9.0'}
 
   hookable@6.1.1:
@@ -3362,9 +3362,9 @@ snapshots:
     dependencies:
       hono: 4.12.12
 
-  '@hono/node-server@1.19.14(hono@4.12.21)':
+  '@hono/node-server@1.19.14(hono@4.12.23)':
     dependencies:
-      hono: 4.12.21
+      hono: 4.12.23
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -5152,7 +5152,7 @@ snapshots:
 
   hono@4.12.12: {}
 
-  hono@4.12.21: {}
+  hono@4.12.23: {}
 
   hookable@6.1.1: {}
 
