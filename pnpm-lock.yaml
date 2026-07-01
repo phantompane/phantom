@@ -153,7 +153,7 @@ importers:
     devDependencies:
       '@modelcontextprotocol/inspector':
         specifier: ^0.21.2
-        version: 0.21.2(@types/node@25.9.3)(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)(@typescript/typescript6@6.0.1)
+        version: 0.21.2(@types/node@25.9.3)(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)(typescript@6.0.3)
 
   packages/preferences:
     dependencies:
@@ -248,8 +248,8 @@ importers:
         specifier: ^4.12.25
         version: 4.12.25
       lucide-react:
-        specifier: ^1.16.0
-        version: 1.16.0(react@19.2.6)
+        specifier: ^1.20.0
+        version: 1.20.0(react@19.2.6)
       react:
         specifier: ^19.2.6
         version: 19.2.6
@@ -1849,10 +1849,6 @@ packages:
     resolution: {integrity: sha512-lPkLZmYG9nNF0Y07ET9arSHw+EWy2TsXZ12SsiV/1SeI1/AzeAhkMzEmR729ExtaBvYEA87C3ga9YB8NE0AbFA==}
     hasBin: true
 
-  '@typescript/typescript6@6.0.1':
-    resolution: {integrity: sha512-JbesA1Y3wSOYpcw4b4XvG8KCk9AaStATxk1Vmc1qY0Y30fjovvcuRXX2fJ8eC2JRycKQi7V1VYKUljSVBJUzZA==}
-    hasBin: true
-
   '@vitejs/plugin-react@6.0.2':
     resolution: {integrity: sha512-DlSMqo4WhThw4vB8Mpn0Woe9J+Jfq1geJ61AKW0QEgLzGMNwtIMdxbDUzLxcun8W7NbJO0e2Jg/Nxm3cCSVzzg==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -2548,8 +2544,8 @@ packages:
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
-  lucide-react@1.16.0:
-    resolution: {integrity: sha512-dYwyPzb4MEKpGUmNYk3WKWPnMrHs3FKM+q94kAnJrcDIqqn1hq2xY8scaS2ovsOCM5D51ey2gaRG3PBb1vgoYQ==}
+  lucide-react@1.20.0:
+    resolution: {integrity: sha512-jhXLeC/7m0/tjL1nzMdKk6x256zWA6AtbhTVreHOiKPoeX2d6MK4FbyIQPpVq0E6iPWBisyy1TW+pEge/uMEuQ==}
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
@@ -3587,7 +3583,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@modelcontextprotocol/inspector@0.21.2(@types/node@25.9.3)(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)(@typescript/typescript6@6.0.1)':
+  '@modelcontextprotocol/inspector@0.21.2(@types/node@25.9.3)(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)(typescript@6.0.3)':
     dependencies:
       '@modelcontextprotocol/inspector-cli': 0.21.2(zod@3.25.76)
       '@modelcontextprotocol/inspector-client': 0.21.2(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)
@@ -3598,7 +3594,7 @@ snapshots:
       open: 10.2.0
       shell-quote: 1.8.3
       spawn-rx: 5.1.2
-      ts-node: 10.9.2(@types/node@25.9.3)(@typescript/typescript6@6.0.1)
+      ts-node: 10.9.2(@types/node@25.9.3)(typescript@6.0.3)
       zod: 3.25.76
     transitivePeerDependencies:
       - '@cfworker/json-schema'
@@ -4826,10 +4822,6 @@ snapshots:
     dependencies:
       typescript: 6.0.3
 
-  '@typescript/typescript6@6.0.1':
-    dependencies:
-      typescript: 6.0.3
-
   '@vitejs/plugin-react@6.0.2(vite@8.0.16(@types/node@25.9.1)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
@@ -5475,7 +5467,7 @@ snapshots:
     dependencies:
       react: 18.3.1
 
-  lucide-react@1.16.0(react@19.2.6):
+  lucide-react@1.20.0(react@19.2.6):
     dependencies:
       react: 19.2.6
 
@@ -6037,7 +6029,7 @@ snapshots:
 
   tree-kill@1.2.2: {}
 
-  ts-node@10.9.2(@types/node@25.9.3)(@typescript/typescript6@6.0.1):
+  ts-node@10.9.2(@types/node@25.9.3)(typescript@6.0.3):
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       '@tsconfig/node10': 1.0.12
@@ -6051,7 +6043,7 @@ snapshots:
       create-require: 1.1.1
       diff: 4.0.4
       make-error: 1.3.6
-      typescript: '@typescript/typescript6@6.0.1'
+      typescript: 6.0.3
       v8-compile-cache-lib: 3.0.1
       yn: 3.1.1
 
