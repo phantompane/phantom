@@ -21,7 +21,7 @@
     "@phantompane/git": "workspace:*",
     "@phantompane/state": "workspace:*",
     "hono": "^4.12.25",
-    "marked": "^18.0.4",
+    "marked": "^18.0.5",
     "sanitize-html": "^2.17.5",
     "zod": "^4.4.3"
   },
