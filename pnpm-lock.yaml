@@ -25,8 +25,8 @@ importers:
         specifier: ^1.70.0
         version: 1.70.0
       portless:
-        specifier: 0.13.0
-        version: 0.13.0
+        specifier: 0.14.0
+        version: 0.14.0
       tsdown:
         specifier: ^0.22.3
         version: 0.22.3(@typescript/native-preview@7.0.0-dev.20260421.2)(@typescript/typescript6@6.0.0)(tsx@4.21.0)(unrun@0.2.37)
@@ -2707,9 +2707,9 @@ packages:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
 
-  portless@0.13.0:
-    resolution: {integrity: sha512-PxMZ5BHH+ZZi9rTq4T8m003aZxh56qI0aBdNsxLn7jrTtvNJYBWYD3lc5PuQrom/aVh6z8iLb+tKUI6b7QNYQw==}
-    engines: {node: '>=20'}
+  portless@0.14.0:
+    resolution: {integrity: sha512-kKxmxB1DQ9gI8t+V13VhuwTXu31io5nbFubvZAE82AxzXBsvcJV7qQJbmomrQUpbVxo2UVHqs14iX4YK0BClmQ==}
+    engines: {node: '>=24'}
     os: [darwin, linux, win32]
     hasBin: true
 
@@ -5610,7 +5610,7 @@ snapshots:
 
   pkce-challenge@5.0.1: {}
 
-  portless@0.13.0: {}
+  portless@0.14.0: {}
 
   postcss@8.5.15:
     dependencies:
