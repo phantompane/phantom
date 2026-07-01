@@ -35,7 +35,7 @@
     "tsdown": "^0.22.3",
     "turbo": "^2.9.14",
     "typescript": "npm:@typescript/typescript6@^6.0.0",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.9"
   },
   "dependencies": {
     "zod": "^4.4.3"
