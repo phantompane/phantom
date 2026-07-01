@@ -33,7 +33,7 @@
     "oxlint": "^1.70.0",
     "portless": "0.13.0",
     "tsdown": "^0.22.3",
-    "turbo": "^2.9.14",
+    "turbo": "^2.9.18",
     "typescript": "npm:@typescript/typescript6@^6.0.0",
     "vitest": "^4.1.9"
   },
