@@ -31,7 +31,7 @@
     "@typescript/native-preview": "7.0.0-dev.20260421.2",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.71.0",
-    "portless": "0.14.0",
+    "portless": "0.15.1",
     "tsdown": "^0.22.3",
     "turbo": "^2.9.18",
     "typescript": "npm:@typescript/typescript6@^6.0.0",
