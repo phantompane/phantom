@@ -104,20 +104,19 @@ export async function serveHandler(args: string[] = []): Promise<void> {
       "server",
       "start.mjs",
     );
-    const webDistDirectory = join(dirname(bundledEntrypoint), "app", "web");
-    process.env.PHANTOM_WEB_DIST_DIR = webDistDirectory;
-
     try {
       await access(serverEntry);
     } catch {
       throw new Error("Could not find Phantom server assets.");
     }
 
-    const url = `http://${host}:${port}`;
+    const apiUrl = `http://${host}:${port}`;
+    const webUrl = "https://phantompane.dev";
     output.log(`Starting Phantom server from ${serverEntry}`);
-    output.log(`Phantom server listening at ${url}`);
+    output.log(`Phantom API listening at ${apiUrl}`);
+    output.log(`Phantom Web is available at ${webUrl}`);
     if (values.open) {
-      openBrowser(url);
+      openBrowser(webUrl);
     }
     await import(pathToFileURL(serverEntry).href);
   } catch (error) {

@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "phantompane-web",
+  "compatibility_date": "2026-07-19",
+  "workers_dev": false,
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+  },
+  "routes": [
+    {
+      "pattern": "phantompane.dev",
+      "custom_domain": true,
+    },
+  ],
+}

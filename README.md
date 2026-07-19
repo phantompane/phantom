@@ -206,6 +206,33 @@ The AI agent will create two worktrees and implement Express and Hono apps in ea
 
 See [MCP Integration Guide](./docs/mcp.md) for detailed setup and usage.
 
+### Web interface
+
+Start a local Phantom API instance, then open the hosted Web client:
+
+```bash
+phantom serve --open
+```
+
+`phantom serve` listens on `127.0.0.1:9640` by default and does not serve Web
+assets. In [phantompane.dev](https://phantompane.dev), add an HTTP connection
+to host `127.0.0.1` and port `9640`. Connections are saved in the browser, and
+you can register and switch between multiple Phantom instances.
+
+To reach Phantom from another device, bind the API to a reachable interface:
+
+```bash
+phantom serve --host 0.0.0.0 --port 9640
+```
+
+Only expose the API on a trusted private network. For reliable browser access
+from the HTTPS Web client, put non-loopback endpoints behind a trusted HTTPS
+reverse proxy on that private network; browsers may block plain HTTP LAN
+connections. CORS origin checks are not authentication, so do not publish an
+unauthenticated Phantom API through a public tunnel. Additional self-hosted Web
+origins can be allowed with the comma-separated
+`PHANTOM_SERVE_ALLOWED_ORIGINS` environment variable.
+
 ## 🔍 Basic Usage
 
 ### Create a new worktree

@@ -1,6 +1,13 @@
 import { strictEqual } from "node:assert";
 import { describe, it } from "vitest";
-import { joinApiPath, routeParam } from "./client";
+import {
+  apiUrl,
+  configureApiBaseUrl,
+  getApiBaseUrl,
+  joinApiPath,
+  normalizeApiBaseUrl,
+  routeParam,
+} from "./client";
 
 describe("joinApiPath", () => {
   it("joins the default API base with a path", () => {
@@ -21,5 +28,25 @@ describe("joinApiPath", () => {
 describe("routeParam", () => {
   it("encodes reserved URL characters for Hono RPC path params", () => {
     strictEqual(routeParam("request/with#hash"), "request%2Fwith%23hash");
+  });
+});
+
+describe("runtime API configuration", () => {
+  it("reconfigures API URLs without rebuilding the web application", () => {
+    const originalApiBaseUrl = getApiBaseUrl();
+    try {
+      configureApiBaseUrl("https://phantom.example.test:9640/api/");
+      strictEqual(
+        apiUrl("/health"),
+        "https://phantom.example.test:9640/api/health",
+      );
+    } finally {
+      configureApiBaseUrl(originalApiBaseUrl);
+    }
+  });
+
+  it("normalizes empty and trailing-slash bases", () => {
+    strictEqual(normalizeApiBaseUrl(""), "/api");
+    strictEqual(normalizeApiBaseUrl(" /api/// "), "/api");
   });
 });

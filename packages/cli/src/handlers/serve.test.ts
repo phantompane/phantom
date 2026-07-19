@@ -1,7 +1,7 @@
 import { rejects, strictEqual } from "node:assert";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, it, vi } from "vitest";
 
 const fileURLToPathMock = vi.hoisted(() => vi.fn());
@@ -34,7 +34,6 @@ const originalPort = process.env.PORT;
 const originalNitroPort = process.env.NITRO_PORT;
 const originalCodexBin = process.env.PHANTOM_SERVE_CODEX_BIN;
 const originalDataDir = process.env.PHANTOM_SERVE_DATA_DIR;
-const originalWebDistDir = process.env.PHANTOM_WEB_DIST_DIR;
 const originalArgv = [...process.argv];
 
 vi.doMock("node:url", async () => {
@@ -105,12 +104,6 @@ afterEach(async () => {
     process.env.PHANTOM_SERVE_DATA_DIR = originalDataDir;
   }
 
-  if (originalWebDistDir === undefined) {
-    delete process.env.PHANTOM_WEB_DIST_DIR;
-  } else {
-    process.env.PHANTOM_WEB_DIST_DIR = originalWebDistDir;
-  }
-
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -161,24 +154,24 @@ describe("serveHandler", () => {
     strictEqual(process.env.PORT, "9640");
     strictEqual(process.env.NITRO_PORT, "9640");
     strictEqual(process.env.PHANTOM_SERVE_CODEX_BIN, "codex");
-    strictEqual(
-      process.env.PHANTOM_WEB_DIST_DIR,
-      join(dirname(cliEntry), "app", "web"),
-    );
     strictEqual(spawnSyncMock.mock.calls[0][0], "codex");
     strictEqual(consoleWarnMock.mock.calls.length, 1);
     strictEqual(
       consoleWarnMock.mock.calls[0][0],
       "Warning: `phantom serve` is experimental and may change without notice.",
     );
-    strictEqual(consoleLogMock.mock.calls.length, 2);
+    strictEqual(consoleLogMock.mock.calls.length, 3);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       `Starting Phantom server from ${serverEntry}`,
     );
     strictEqual(
       consoleLogMock.mock.calls[1][0],
-      "Phantom server listening at http://127.0.0.1:9640",
+      "Phantom API listening at http://127.0.0.1:9640",
+    );
+    strictEqual(
+      consoleLogMock.mock.calls[2][0],
+      "Phantom Web is available at https://phantompane.dev",
     );
   });
 
@@ -220,6 +213,7 @@ describe("serveHandler", () => {
     await serveHandler(["--open"]);
 
     strictEqual(spawnMock.mock.calls.length, 1);
+    strictEqual(spawnMock.mock.calls[0][1].at(-1), "https://phantompane.dev");
   });
 
   it("keeps serving when the browser launcher fails", async () => {
@@ -238,7 +232,7 @@ describe("serveHandler", () => {
 
     await serveHandler(["--open"]);
 
-    strictEqual(consoleLogMock.mock.calls.length, 2);
+    strictEqual(consoleLogMock.mock.calls.length, 3);
     strictEqual(
       consoleWarnMock.mock.calls.some(
         (call) => call[0] === "Failed to open browser: ENOENT",
@@ -255,7 +249,7 @@ describe("serveHandler", () => {
     await serveHandler([]);
 
     strictEqual(consoleWarnMock.mock.calls.length, 1);
-    strictEqual(consoleLogMock.mock.calls.length, 2);
+    strictEqual(consoleLogMock.mock.calls.length, 3);
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       `Starting Phantom server from ${serverEntry}`,

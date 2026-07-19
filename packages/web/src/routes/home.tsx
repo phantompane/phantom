@@ -79,9 +79,11 @@ import {
 } from "../api/queries";
 import { apiUrl } from "../api/client";
 import { queryKeys } from "../api/query-keys";
+import { useActiveConnection } from "../connection-context";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Combobox, type ComboboxOption } from "../components/ui/combobox";
+import { ConnectionSwitcher } from "../components/connection-controls";
 import {
   InlineLoading,
   LoadingSpinner,
@@ -215,7 +217,7 @@ const chatEventNames = [
   "agent.event",
   "auth.updated",
 ];
-const chatScrollStorageKeyPrefix = "phantom.chatScroll:v1:";
+const chatScrollStorageKeyPrefix = "phantom.chatScroll:v2:";
 const chatScrollBottomThreshold = 4;
 const maxVisibleRecentSkillSuggestions = 5;
 const maxVisibleSkillMentionSuggestions = 8;
@@ -558,16 +560,17 @@ function formatLeadingEllipsisPath(path: string, maxLength = 44): string {
   return `...${slashIndex > 0 ? suffix.slice(slashIndex) : suffix}`;
 }
 
-function getChatScrollStorageKey(chatId: string): string {
-  return `${chatScrollStorageKeyPrefix}${chatId}`;
+function getChatScrollStorageKey(connectionId: string, chatId: string): string {
+  return `${chatScrollStorageKeyPrefix}${connectionId}:${chatId}`;
 }
 
 function readStoredChatScrollPosition(
+  connectionId: string,
   chatId: string,
 ): StoredChatScrollPosition | null {
   try {
     const rawValue = window.localStorage.getItem(
-      getChatScrollStorageKey(chatId),
+      getChatScrollStorageKey(connectionId, chatId),
     );
     if (!rawValue) {
       return null;
@@ -593,12 +596,13 @@ function readStoredChatScrollPosition(
 }
 
 function writeStoredChatScrollPosition(
+  connectionId: string,
   chatId: string,
   timeline: HTMLElement,
 ): void {
   try {
     window.localStorage.setItem(
-      getChatScrollStorageKey(chatId),
+      getChatScrollStorageKey(connectionId, chatId),
       JSON.stringify({
         version: 1,
         pinnedToBottom: isChatTimelineScrolledToBottom(timeline),
@@ -618,6 +622,8 @@ function isChatTimelineScrolledToBottom(timeline: HTMLElement): boolean {
 }
 
 export function HomeRoute() {
+  const activeConnection = useActiveConnection();
+  const connectionId = activeConnection.id;
   const [searchParams, setSearchParams] = useSearchParams();
   const searchParamsRef = useRef(searchParams);
   searchParamsRef.current = searchParams;
@@ -1700,7 +1706,10 @@ export function HomeRoute() {
     }
 
     if (scrollRestoredChatIdRef.current !== selectedChatId) {
-      const storedScrollPosition = readStoredChatScrollPosition(selectedChatId);
+      const storedScrollPosition = readStoredChatScrollPosition(
+        connectionId,
+        selectedChatId,
+      );
       const shouldRestoreToBottom =
         !storedScrollPosition || storedScrollPosition.pinnedToBottom;
       shouldIgnoreNextChatTimelineScrollRef.current = true;
@@ -1718,6 +1727,7 @@ export function HomeRoute() {
       timeline.scrollTop = timeline.scrollHeight;
     }
   }, [
+    connectionId,
     messagesChatId,
     pendingDeliveryMessageIdsKey,
     selectedChatId,
@@ -2400,7 +2410,7 @@ export function HomeRoute() {
     if (!timeline || scrollRestoredChatIdRef.current !== chatId) {
       return;
     }
-    writeStoredChatScrollPosition(chatId, timeline);
+    writeStoredChatScrollPosition(connectionId, chatId, timeline);
   }
 
   function scheduleSelectedChatScrollPositionSave() {
@@ -4310,6 +4320,7 @@ export function HomeRoute() {
                   )}
                 </p>
               </div>
+              <ConnectionSwitcher />
               {selectedPullRequestTarget && (
                 <a
                   aria-label={`Open PR #${selectedPullRequestTarget.number}`}

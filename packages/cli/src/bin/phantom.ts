@@ -117,7 +117,7 @@ const commands: Command[] = [
   },
   {
     name: "serve",
-    description: "Start the experimental bundled Phantom web server",
+    description: "Start the experimental Phantom API server",
     handler: serveHandler,
     help: serveHelp,
   },

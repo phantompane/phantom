@@ -15,7 +15,7 @@ _phantom() {
         'edit:Open a worktree in your configured editor'
         'ai:Launch your configured AI coding assistant in a worktree'
         'shell:Open an interactive shell in a worktree directory'
-        'serve:Start the bundled Phantom web server'
+        'serve:Start the Phantom API server'
         'project:Manage Phantom projects'
         'preferences:Manage editor/ai/worktreesDirectory/directoryNameSeparator preferences (git config --global)'
         'github:GitHub integration commands'

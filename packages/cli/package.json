@@ -6,7 +6,7 @@
   "scripts": {
     "phantom": "node --no-warnings --experimental-strip-types src/bin/phantom.ts",
     "build": "pnpm run build-app && tsdown && pnpm run copy-app",
-    "build-app": "pnpm --filter @phantompane/server build && pnpm --filter @phantompane/web build",
+    "build-app": "pnpm --filter @phantompane/server build",
     "copy-app": "node --no-warnings --experimental-strip-types copy-app-assets.ts",
     "precompile": "rm -f output/*",
     "compile": "pnpm run build-app && pnpm run copy-app && node --no-warnings --experimental-strip-types build-executable.ts",

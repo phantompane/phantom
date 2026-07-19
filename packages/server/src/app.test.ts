@@ -1,52 +1,34 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, it } from "vitest";
-import { createApp } from "./app.ts";
-import { getWebDistDirectory } from "./static.ts";
+import { createApp, isAllowedWebOrigin } from "./app.ts";
 
-const originalWebDistDir = process.env.PHANTOM_WEB_DIST_DIR;
-const temporaryDirectories: string[] = [];
+const originalAllowedOrigins = process.env.PHANTOM_SERVE_ALLOWED_ORIGINS;
 
-afterEach(async () => {
-  if (originalWebDistDir === undefined) {
-    delete process.env.PHANTOM_WEB_DIST_DIR;
+afterEach(() => {
+  if (originalAllowedOrigins === undefined) {
+    delete process.env.PHANTOM_SERVE_ALLOWED_ORIGINS;
   } else {
-    process.env.PHANTOM_WEB_DIST_DIR = originalWebDistDir;
+    process.env.PHANTOM_SERVE_ALLOWED_ORIGINS = originalAllowedOrigins;
   }
-
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
 });
 
-async function createWebDistFixture(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "phantom-web-dist-"));
-  temporaryDirectories.push(directory);
-  await mkdir(join(directory, "assets"), { recursive: true });
-  await writeFile(join(directory, "index.html"), "<!doctype html><div></div>");
-  await writeFile(join(directory, "assets", "app.js"), "export {};\n");
-  return directory;
-}
-
 describe("createApp", () => {
-  it("returns JSON API errors for malformed JSON bodies", async () => {
-    process.env.PHANTOM_WEB_DIST_DIR = await createWebDistFixture();
-
+  it("returns JSON API errors with CORS headers for the hosted Web UI", async () => {
     const response = await createApp().request("/api/projects", {
       method: "POST",
       body: "{",
       headers: {
         "Content-Type": "application/json",
+        Origin: "https://phantompane.dev",
       },
     });
 
     strictEqual(response.status, 400);
     strictEqual(response.headers.get("Content-Type")?.includes("json"), true);
+    strictEqual(
+      response.headers.get("Access-Control-Allow-Origin"),
+      "https://phantompane.dev",
+    );
     deepStrictEqual(await response.json(), {
       error: {
         message: "Malformed JSON in request body",
@@ -54,56 +36,64 @@ describe("createApp", () => {
     });
   });
 
-  it("serves the SPA fallback for HTML navigations", async () => {
-    process.env.PHANTOM_WEB_DIST_DIR = await createWebDistFixture();
-
-    const response = await createApp().request("/worktrees/example", {
+  it("handles preflight requests from the hosted Web UI", async () => {
+    const response = await createApp().request("/api/projects", {
+      method: "OPTIONS",
       headers: {
-        Accept: "text/html",
+        "Access-Control-Request-Headers": "content-type",
+        "Access-Control-Request-Method": "POST",
+        Origin: "https://phantompane.dev",
       },
     });
 
-    strictEqual(response.status, 200);
-    strictEqual(await response.text(), "<!doctype html><div></div>");
-  });
-
-  it("does not serve the SPA fallback for missing static assets", async () => {
-    process.env.PHANTOM_WEB_DIST_DIR = await createWebDistFixture();
-
-    const response = await createApp().request("/assets/missing.js", {
-      headers: {
-        Accept: "*/*",
-      },
-    });
-
-    strictEqual(response.status, 404);
-  });
-
-  it("does not serve the SPA fallback for the API namespace root", async () => {
-    process.env.PHANTOM_WEB_DIST_DIR = await createWebDistFixture();
-
-    const response = await createApp().request("/api", {
-      headers: {
-        Accept: "text/html",
-      },
-    });
-
-    strictEqual(response.status, 404);
-    deepStrictEqual(await response.json(), {
-      error: {
-        message: "Not found",
-      },
-    });
-  });
-});
-
-describe("getWebDistDirectory", () => {
-  it("defaults to the workspace web dist directory", () => {
-    delete process.env.PHANTOM_WEB_DIST_DIR;
-
+    strictEqual(response.status, 204);
     strictEqual(
-      getWebDistDirectory(),
-      fileURLToPath(new URL("../../web/dist/", import.meta.url)),
+      response.headers.get("Access-Control-Allow-Origin"),
+      "https://phantompane.dev",
     );
+    strictEqual(
+      response.headers.get("Access-Control-Allow-Headers"),
+      "Content-Type,Last-Event-ID",
+    );
+    strictEqual(
+      response.headers.get("Access-Control-Allow-Methods"),
+      "GET,POST,DELETE,OPTIONS",
+    );
+  });
+
+  it("rejects browser requests from untrusted origins", async () => {
+    const response = await createApp().request("/api/health", {
+      headers: { Origin: "https://attacker.example" },
+    });
+
+    strictEqual(response.status, 403);
+    strictEqual(response.headers.get("Access-Control-Allow-Origin"), null);
+    deepStrictEqual(await response.json(), {
+      error: { message: "Origin is not allowed" },
+    });
+  });
+
+  it("does not serve the Web application", async () => {
+    const response = await createApp().request("/", {
+      headers: { Accept: "text/html" },
+    });
+
+    strictEqual(response.status, 404);
+  });
+
+  it("allows exact additional origins from the environment", () => {
+    process.env.PHANTOM_SERVE_ALLOWED_ORIGINS =
+      "https://phantom.example, https://second.example:8443";
+
+    strictEqual(isAllowedWebOrigin("https://phantom.example"), true);
+    strictEqual(isAllowedWebOrigin("https://second.example:8443"), true);
+    strictEqual(isAllowedWebOrigin("https://second.example"), false);
+  });
+
+  it("allows local Vite and Portless development origins", () => {
+    strictEqual(isAllowedWebOrigin("http://localhost:3000"), true);
+    strictEqual(isAllowedWebOrigin("http://127.0.0.1:4173"), true);
+    strictEqual(isAllowedWebOrigin("https://phantom.localhost"), true);
+    strictEqual(isAllowedWebOrigin("https://feature.phantom.localhost"), true);
   });
 });

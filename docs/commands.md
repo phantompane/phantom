@@ -406,6 +406,35 @@ phantom preferences remove keepBranch
 - `directoryNameSeparator` only changes the directory path; the worktree/branch name remains unchanged
 - `keepBranch` accepts `true` or `false` and applies to both `phantom delete` and MCP delete requests when the request omits an explicit override
 
+## Web API Server
+
+Start the Phantom API used by the hosted Web interface at
+[phantompane.dev](https://phantompane.dev).
+
+```bash
+phantom serve [options]
+```
+
+**Options:**
+
+- `--host <host>` - Interface to bind (default: `127.0.0.1`)
+- `--port <port>` - Port to bind (default: `9640`)
+- `--codex-bin <path>` - Codex executable used by the App Server backend
+- `--data-dir <path>` - Directory for Phantom serve state
+- `--open` - Open `phantompane.dev` in the default browser
+
+The command hosts only the API; Web assets are deployed separately. For a
+same-device connection, register HTTP host `127.0.0.1` and port `9640` in the
+Web UI. To connect from another device, bind to a reachable interface, register
+that machine's host or IP in the Web UI, and use a trusted HTTPS reverse proxy
+on the same private network for reliable browser support. Do not expose the API
+on an untrusted network or through a public tunnel: CORS origin checks are not
+authentication.
+
+Browser requests are accepted from `https://phantompane.dev` and local
+development origins. Set `PHANTOM_SERVE_ALLOWED_ORIGINS` to a comma-separated
+list of exact origins when using an additional self-hosted Web client.
+
 ## Project Management
 
 Manage the project registry shared with Phantom web. Project commands store repository roots in Phantom's serve state, so the CLI and web UI use the same project list.

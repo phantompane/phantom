@@ -1,9 +1,26 @@
 import { hc } from "hono/client";
 import type { AppType, ApiErrorBody } from "@phantompane/server";
 
-const apiBaseUrl = import.meta.env.VITE_PHANTOM_API_BASE_URL ?? "/api";
+export const configuredApiBaseUrl =
+  import.meta.env.VITE_PHANTOM_API_BASE_URL?.trim() || null;
+export const defaultApiBaseUrl = configuredApiBaseUrl ?? "/api";
 
-export const api = hc<AppType>(apiBaseUrl);
+let apiBaseUrl = normalizeApiBaseUrl(defaultApiBaseUrl);
+
+export let api = hc<AppType>(apiBaseUrl);
+
+export function configureApiBaseUrl(value: string): void {
+  const nextApiBaseUrl = normalizeApiBaseUrl(value);
+  if (nextApiBaseUrl === apiBaseUrl) {
+    return;
+  }
+  apiBaseUrl = nextApiBaseUrl;
+  api = hc<AppType>(apiBaseUrl);
+}
+
+export function getApiBaseUrl(): string {
+  return apiBaseUrl;
+}
 
 export function joinApiPath(baseUrl: string, path: string): string {
   const normalizedBase = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
@@ -17,6 +34,14 @@ export function routeParam(value: string): string {
 
 export function apiUrl(path: string): string {
   return joinApiPath(apiBaseUrl, path);
+}
+
+export function normalizeApiBaseUrl(value: string): string {
+  const trimmedValue = value.trim();
+  if (!trimmedValue || trimmedValue === "/") {
+    return "/api";
+  }
+  return trimmedValue.replace(/\/+$/, "");
 }
 
 export async function readRpcJson<T>(response: Response): Promise<T> {

@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "react-router";
+import { ConnectionProvider } from "./connection-context";
 import { registerServiceWorker } from "./pwa";
 import { createAppRouter } from "./router";
 
@@ -15,7 +16,9 @@ if (!root) {
 createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={createAppRouter()} />
+      <ConnectionProvider queryClient={queryClient}>
+        <RouterProvider router={createAppRouter()} />
+      </ConnectionProvider>
     </QueryClientProvider>
   </StrictMode>,
 );
