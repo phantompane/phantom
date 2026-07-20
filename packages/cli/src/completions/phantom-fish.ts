@@ -93,8 +93,6 @@ complete -c phantom -n "__phantom_using_command" -a "exec" -d "Execute a command
 complete -c phantom -n "__phantom_using_command" -a "edit" -d "Open a worktree in your configured editor"
 complete -c phantom -n "__phantom_using_command" -a "ai" -d "Launch your configured AI coding assistant in a worktree"
 complete -c phantom -n "__phantom_using_command" -a "shell" -d "Open an interactive shell in a worktree directory"
-complete -c phantom -n "__phantom_using_command" -a "serve" -d "Start the bundled Phantom web server"
-complete -c phantom -n "__phantom_using_command" -a "project" -d "Manage Phantom projects"
 complete -c phantom -n "__phantom_using_command" -a "preferences" -d "Manage editor/ai/worktreesDirectory/directoryNameSeparator preferences (stored in git config --global)"
 complete -c phantom -n "__phantom_using_command" -a "github" -d "GitHub integration commands"
 complete -c phantom -n "__phantom_using_command" -a "gh" -d "GitHub integration commands (alias)"
@@ -175,15 +173,6 @@ complete -c phantom -n "__phantom_using_command shell" -l tmux-horizontal -d "Op
 complete -c phantom -n "__phantom_using_command shell" -l tmux-v -d "Alias for --tmux-vertical"
 complete -c phantom -n "__phantom_using_command shell" -l tmux-h -d "Alias for --tmux-horizontal"
 complete -c phantom -n "__phantom_using_command shell" -a "(__phantom_list_worktrees)"
-
-# serve command options
-complete -c phantom -n "__phantom_using_command serve" -l host -d "Host interface to bind the server to" -x
-complete -c phantom -n "__phantom_using_command serve" -l port -d "Port to bind the server to" -x
-
-# project command
-complete -c phantom -n "__phantom_using_command project" -a "list add remove" -d "Manage projects"
-complete -c phantom -n "__phantom_using_command project list" -l names -d "Output only project names"
-complete -c phantom -n "__phantom_using_command project list" -l paths -d "Output only project root paths"
 
 # completion command - shell names
 complete -c phantom -n "__phantom_using_command completion" -a "fish zsh bash" -d "Shell type"
