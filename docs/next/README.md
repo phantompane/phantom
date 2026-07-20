@@ -122,7 +122,7 @@ below makes the disposition of each area explicit before it is changed.
 9. **Small vertical slices.** Each pull request must produce one testable user
    outcome and avoid speculative infrastructure.
 10. **Break cleanly.** Next does not preserve an obsolete API, configuration,
-   or state shape solely for v6 compatibility.
+    or state shape solely for v6 compatibility.
 
 ## Domain Model
 
