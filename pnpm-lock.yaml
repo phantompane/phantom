@@ -56,6 +56,9 @@ importers:
       '@phantompane/process':
         specifier: workspace:*
         version: link:../process
+      '@phantompane/projects':
+        specifier: workspace:*
+        version: link:../projects
       '@phantompane/tmux':
         specifier: workspace:*
         version: link:../tmux
@@ -161,6 +164,12 @@ importers:
       '@phantompane/utils':
         specifier: workspace:*
         version: link:../utils
+
+  packages/projects:
+    dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
   packages/tmux:
     dependencies:

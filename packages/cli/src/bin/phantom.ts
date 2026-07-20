@@ -12,6 +12,10 @@ import { githubHandler } from "../handlers/github.ts";
 import { githubCheckoutHandler } from "../handlers/github-checkout.ts";
 import { listHandler } from "../handlers/list.ts";
 import { mcpHandler } from "../handlers/mcp.ts";
+import { projectAddHandler } from "../handlers/project-add.ts";
+import { projectListHandler } from "../handlers/project-list.ts";
+import { projectRemoveHandler } from "../handlers/project-remove.ts";
+import { projectHandler } from "../handlers/project.ts";
 import { preferencesHandler } from "../handlers/preferences.ts";
 import { preferencesGetHandler } from "../handlers/preferences-get.ts";
 import { preferencesRemoveHandler } from "../handlers/preferences-remove.ts";
@@ -29,6 +33,12 @@ import { execHelp } from "../help/exec.ts";
 import { githubCheckoutHelp, githubHelp } from "../help/github.ts";
 import { listHelp } from "../help/list.ts";
 import { mcpHelp } from "../help/mcp.ts";
+import {
+  projectAddHelp,
+  projectHelp,
+  projectListHelp,
+  projectRemoveHelp,
+} from "../help/project.ts";
 import {
   preferencesGetHelp,
   preferencesHelp,
@@ -146,6 +156,32 @@ const commands: Command[] = [
     description: "Manage MCP server for AI assistants",
     handler: mcpHandler,
     help: mcpHelp,
+  },
+  {
+    name: "project",
+    description: "Manage registered Git projects",
+    handler: projectHandler,
+    help: projectHelp,
+    subcommands: [
+      {
+        name: "add",
+        description: "Register a Git repository",
+        handler: projectAddHandler,
+        help: projectAddHelp,
+      },
+      {
+        name: "list",
+        description: "List registered Git projects",
+        handler: projectListHandler,
+        help: projectListHelp,
+      },
+      {
+        name: "remove",
+        description: "Remove a registered Git project",
+        handler: projectRemoveHandler,
+        help: projectRemoveHelp,
+      },
+    ],
   },
   {
     name: "github",

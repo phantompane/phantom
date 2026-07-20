@@ -35,6 +35,74 @@ describe("phantom.fish completion", () => {
     ok(!completions.includes("serve"));
   });
 
+  it("completes the project command", () => {
+    const { completions, result } = runFishCompletion(completionScriptPath, [
+      "phantom",
+      "p",
+    ]);
+
+    strictEqual(result.status, 0, result.stderr);
+    ok(completions.includes("project"));
+  });
+
+  it("completes project subcommands", () => {
+    const { completions, result } = runFishCompletion(completionScriptPath, [
+      "phantom",
+      "project",
+      "",
+    ]);
+
+    strictEqual(result.status, 0, result.stderr);
+    ok(completions.includes("add"));
+    ok(completions.includes("list"));
+    ok(completions.includes("remove"));
+  });
+
+  it("completes project list output flags", () => {
+    const { completions, result } = runFishCompletion(completionScriptPath, [
+      "phantom",
+      "project",
+      "list",
+      "--",
+    ]);
+
+    strictEqual(result.status, 0, result.stderr);
+    ok(completions.includes("--json"));
+    ok(completions.includes("--names"));
+    ok(completions.includes("--paths"));
+  });
+
+  it("does not offer another project list output mode", () => {
+    for (const selectedMode of ["--json", "--names", "--paths"]) {
+      const { completions, result } = runFishCompletion(completionScriptPath, [
+        "phantom",
+        "project",
+        "list",
+        selectedMode,
+        "--",
+      ]);
+
+      strictEqual(result.status, 0, result.stderr);
+      ok(!completions.includes("--json"));
+      ok(!completions.includes("--names"));
+      ok(!completions.includes("--paths"));
+    }
+  });
+
+  it("completes the JSON flag for project mutations", () => {
+    for (const subcommand of ["add", "remove"]) {
+      const { completions, result } = runFishCompletion(completionScriptPath, [
+        "phantom",
+        "project",
+        subcommand,
+        "--j",
+      ]);
+
+      strictEqual(result.status, 0, result.stderr);
+      ok(completions.includes("--json"));
+    }
+  });
+
   it("passes exec completions through to the invoked command", () => {
     const setupScript = `
 complete -c dummycmd -l from-dummy -d "Dummy option"

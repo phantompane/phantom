@@ -72,7 +72,7 @@ _phantom_completion() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="create attach list where delete exec edit ai shell preferences github gh version completion mcp"
+    local commands="create attach list where delete exec edit ai shell project preferences github gh version completion mcp"
     local global_opts="--help --version"
 
     if [[ ${cword} -eq 1 ]]; then
@@ -263,6 +263,39 @@ _phantom_completion() {
         completion)
             local shells="fish zsh bash"
             COMPREPLY=( $(compgen -W "${shells}" -- "${cur}") )
+            return 0
+            ;;
+        project)
+            if [[ ${cword} -eq 2 ]]; then
+                local subcommands="add list remove"
+                COMPREPLY=( $(compgen -W "${subcommands}" -- "${cur}") )
+                return 0
+            elif [[ ${words[2]} == "add" ]]; then
+                if [[ "${cur}" == -* ]]; then
+                    local opts="--json"
+                    COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                else
+                    _filedir -d
+                fi
+                return 0
+            elif [[ ${words[2]} == "list" ]]; then
+                local word
+                for word in "${words[@]:3}"; do
+                    case "${word}" in
+                        --json|--names|--paths)
+                            COMPREPLY=()
+                            return 0
+                            ;;
+                    esac
+                done
+                local opts="--json --names --paths"
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            elif [[ ${words[2]} == "remove" ]]; then
+                local opts="--json"
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
             return 0
             ;;
         preferences)

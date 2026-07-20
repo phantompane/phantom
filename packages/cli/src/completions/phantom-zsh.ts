@@ -1,4 +1,4 @@
-export const ZSH_COMPLETION_SCRIPT = `#compdef phantom
+export const ZSH_COMPLETION_SCRIPT = String.raw`#compdef phantom
 # Zsh completion for phantom
 # Load with: eval "$(phantom completion zsh)"
 
@@ -15,6 +15,7 @@ _phantom() {
         'edit:Open a worktree in your configured editor'
         'ai:Launch your configured AI coding assistant in a worktree'
         'shell:Open an interactive shell in a worktree directory'
+        'project:Manage registered Git projects'
         'preferences:Manage editor/ai/worktreesDirectory/directoryNameSeparator preferences (git config --global)'
         'github:GitHub integration commands'
         'gh:GitHub integration commands (alias)'
@@ -113,6 +114,25 @@ _phantom() {
                     _arguments \
                         '1:worktree:(\${(q)worktrees[@]})'
                     ;;
+                project)
+                    if [[ \${#line} -eq 1 ]]; then
+                        _arguments \
+                            '1:subcommand:(add list remove)'
+                    elif [[ \${line[2]} == "add" ]]; then
+                        _arguments \
+                            '--json[Output the registration result as JSON]' \
+                            '1::path:_files -/'
+                    elif [[ \${line[2]} == "list" ]]; then
+                        _arguments \
+                            '(--names --paths)--json[Output the registry as JSON]' \
+                            '(--json --paths)--names[Output only project names]' \
+                            '(--json --names)--paths[Output only project root paths]'
+                    elif [[ \${line[2]} == "remove" ]]; then
+                        _arguments \
+                            '--json[Output the removal result as JSON]' \
+                            '1:project id, name, or path:'
+                    fi
+                    ;;
                 preferences)
                     _arguments \
                         '1:subcommand:(get set remove)' \
@@ -150,4 +170,4 @@ if [ "$funcstack[1]" = "_phantom" ]; then
     _phantom "$@"
 else
     compdef _phantom phantom
-fi`;
+fi`.replaceAll("\\${", "${");
