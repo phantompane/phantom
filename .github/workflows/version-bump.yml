@@ -33,6 +33,27 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate workflow inputs
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+        run: |
+          case "$TARGET_BRANCH" in
+            main | next) ;;
+            *)
+              echo "Unsupported target branch '$TARGET_BRANCH'." >&2
+              exit 1
+              ;;
+          esac
+
+          case "$RELEASE_TYPE" in
+            patch | minor | major | prepatch | preminor | premajor | prerelease) ;;
+            *)
+              echo "Unsupported release type '$RELEASE_TYPE'." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
@@ -53,9 +74,11 @@ jobs:
 
       - name: Bump version
         id: bump
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type }}
         run: |
           node --experimental-strip-types scripts/bump-version.ts \
-            --release-type "${{ inputs.release_type }}"
+            --release-type "$RELEASE_TYPE"
 
       - name: Read new version
         id: version
