@@ -23,7 +23,7 @@ describe("phantom.fish completion", () => {
     );
   });
 
-  it("completes serve when typing phantom s", () => {
+  it("does not complete the removed serve command", () => {
     const { completions, result } = runFishCompletion(completionScriptPath, [
       "phantom",
       "s",
@@ -31,10 +31,8 @@ describe("phantom.fish completion", () => {
 
     strictEqual(result.status, 0, result.stderr);
 
-    ok(
-      completions.includes("serve"),
-      `Expected serve to be offered, got: ${completions.join(", ")}`,
-    );
+    ok(completions.includes("shell"));
+    ok(!completions.includes("serve"));
   });
 
   it("passes exec completions through to the invoked command", () => {

@@ -31,25 +31,6 @@ pnpm install
 pnpm phantom
 ```
 
-### Running Web and API Dev Servers
-
-```bash
-pnpm dev
-```
-
-`pnpm dev` runs the Phantom web app and API through Portless, so each Git worktree gets stable, conflict-free local URLs.
-
-| Checkout        | Web URL                                       | API URL                                           |
-| --------------- | --------------------------------------------- | ------------------------------------------------- |
-| Main checkout   | `https://phantom.localhost`                   | `https://api.phantom.localhost`                   |
-| Linked worktree | `https://<worktree-prefix>.phantom.localhost` | `https://<worktree-prefix>.api.phantom.localhost` |
-
-The worktree prefix is derived by Portless from the linked worktree branch or directory. For example, a worktree prefix of `portless-worktree-ports` is served at `https://portless-worktree-ports.phantom.localhost`.
-
-If your local Portless proxy is configured without TLS on port 1355, use the same hostnames with `http://...:1355`, for example `http://portless-worktree-ports.phantom.localhost:1355`.
-
-To bypass Portless for debugging, run `PORTLESS=0 pnpm dev`. This uses the fixed fallback ports (`web` on 3000 and API on 9640), so it is not suitable for running multiple worktrees at once.
-
 ### Development Workflow
 
 ```bash

@@ -5,11 +5,9 @@
   "type": "module",
   "scripts": {
     "phantom": "node --no-warnings --experimental-strip-types src/bin/phantom.ts",
-    "build": "pnpm run build-app && tsdown && pnpm run copy-app",
-    "build-app": "pnpm --filter @phantompane/server build && pnpm --filter @phantompane/web build",
-    "copy-app": "node --no-warnings --experimental-strip-types copy-app-assets.ts",
+    "build": "tsdown",
     "precompile": "rm -f output/*",
-    "compile": "pnpm run build-app && pnpm run copy-app && node --no-warnings --experimental-strip-types build-executable.ts",
+    "compile": "node --no-warnings --experimental-strip-types build-executable.ts",
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
     "typecheck": "tsgo --noEmit",
@@ -26,7 +24,6 @@
     "@phantompane/mcp": "workspace:*",
     "@phantompane/preferences": "workspace:*",
     "@phantompane/process": "workspace:*",
-    "@phantompane/state": "workspace:*",
     "@phantompane/utils": "workspace:*",
     "@phantompane/tmux": "workspace:*"
   }
