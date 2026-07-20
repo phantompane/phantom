@@ -6,13 +6,17 @@ on:
       - closed
     branches:
       - main
+      - next
 
 permissions:
   contents: write
 
 jobs:
   tag:
-    if: "github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'chore(version): ')"
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.title, 'chore(version): ') &&
+      startsWith(github.event.pull_request.head.ref, 'chore/release/')
     runs-on: ubuntu-latest
     steps:
       - name: Extract version from PR title
@@ -36,23 +40,50 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.merge_commit_sha }}
 
+      - name: Validate release source and package version
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          expected_head="chore/release/${BASE_REF}/${TAG}"
+          if [[ "$HEAD_REF" != "$expected_head" ]]; then
+            echo "Expected release branch '$expected_head', got '$HEAD_REF'." >&2
+            exit 1
+          fi
+
+          package_version=$(node -p "require('./package.json').version")
+          if [[ "$package_version" != "$VERSION" ]]; then
+            echo "Package version '$package_version' does not match '$VERSION'." >&2
+            exit 1
+          fi
+
       - name: Fetch tags
         run: git fetch --tags
 
       - name: Create tag
+        id: create_tag
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists, skipping."
+          target_commit=$(git rev-parse HEAD)
+          if existing_commit=$(git rev-list -n 1 "$TAG" 2>/dev/null); then
+            if [[ "$existing_commit" != "$target_commit" ]]; then
+              echo "Tag $TAG already points to $existing_commit, not $target_commit." >&2
+              exit 1
+            fi
+            echo "Tag $TAG already points to the merged commit."
+            echo "created=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag "$TAG"
+          echo "created=true" >> "$GITHUB_OUTPUT"
 
       - name: Push tag
-        if: ${{ always() && success() }}
+        if: steps.create_tag.outputs.created == 'true'
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: git push origin "$TAG"
