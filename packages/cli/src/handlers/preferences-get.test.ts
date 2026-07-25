@@ -89,7 +89,7 @@ describe("preferencesGetHandler", () => {
 
     await rejects(
       async () => await preferencesGetHandler(["unknown"]),
-      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch/,
+      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery/,
     );
 
     strictEqual(exitMock.mock.calls[0][0], 3);
@@ -170,6 +170,21 @@ describe("preferencesGetHandler", () => {
     strictEqual(exitMock.mock.calls[0][0], 0);
   });
 
+  it("prints ghqDiscovery preference when set", async () => {
+    resetMocks();
+    loadPreferencesMock.mockImplementation(async () => ({
+      ghqDiscovery: false,
+    }));
+
+    await rejects(
+      async () => await preferencesGetHandler(["ghqDiscovery"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(consoleLogMock.mock.calls[0][0], "false");
+    strictEqual(exitMock.mock.calls[0][0], 0);
+  });
+
   it("warns when preference is unset", async () => {
     resetMocks();
     loadPreferencesMock.mockImplementation(async () => ({}));
@@ -242,6 +257,21 @@ describe("preferencesGetHandler", () => {
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Preference 'keepBranch' is not set (git config --global phantom.keepBranch)",
+    );
+  });
+
+  it("warns when ghqDiscovery preference is unset", async () => {
+    resetMocks();
+    loadPreferencesMock.mockImplementation(async () => ({}));
+
+    await rejects(
+      async () => await preferencesGetHandler(["ghqDiscovery"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(
+      consoleLogMock.mock.calls[0][0],
+      "Preference 'ghqDiscovery' is not set (git config --global phantom.ghqDiscovery)",
     );
   });
 });

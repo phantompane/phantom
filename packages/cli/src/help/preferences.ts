@@ -36,6 +36,10 @@ export const preferencesHelp: CommandHelp = {
         "Keep branches by default when deleting worktrees with phantom delete or MCP",
     },
     {
+      command: "phantom preferences set ghqDiscovery false",
+      description: "Disable automatic project discovery through ghq",
+    },
+    {
       command: "phantom preferences remove editor",
       description: "Remove the editor preference (fallback to env/default)",
     },
@@ -53,6 +57,7 @@ export const preferencesHelp: CommandHelp = {
     "  worktreesDirectory - path relative to the Git repo root for storing worktrees (defaults to .git/phantom/worktrees)",
     "  directoryNameSeparator - replaces '/' in worktree directory names only (defaults to / for nested directories)",
     "  keepBranch - keeps the branch when deleting a worktree (defaults to false)",
+    "  ghqDiscovery - discovers ghq-managed repositories as projects (defaults to true)",
   ],
 };
 
@@ -83,9 +88,13 @@ export const preferencesGetHelp: CommandHelp = {
       command: "phantom preferences get keepBranch",
       description: "Show whether delete keeps branches by default",
     },
+    {
+      command: "phantom preferences get ghqDiscovery",
+      description: "Show whether ghq project discovery is enabled",
+    },
   ],
   notes: [
-    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch",
+    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery",
   ],
 };
 
@@ -118,12 +127,17 @@ export const preferencesSetHelp: CommandHelp = {
       command: "phantom preferences set keepBranch true",
       description: "Keep branches when deleting worktrees by default",
     },
+    {
+      command: "phantom preferences set ghqDiscovery false",
+      description: "Disable automatic project discovery through ghq",
+    },
   ],
   notes: [
-    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch",
+    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery",
     "For worktreesDirectory, provide a path relative to the Git repository root; defaults to .git/phantom/worktrees when unset",
     "For directoryNameSeparator, '/' keeps nested directories; any other string replaces '/' only in the directory path",
     "For keepBranch, use true to preserve branches on delete or false to keep the default branch deletion behavior",
+    "For ghqDiscovery, use false to list only projects registered directly with Phantom",
   ],
 };
 
@@ -155,8 +169,12 @@ export const preferencesRemoveHelp: CommandHelp = {
       description:
         "Restore the default behavior of deleting branches with worktrees",
     },
+    {
+      command: "phantom preferences remove ghqDiscovery",
+      description: "Restore the default behavior of discovering ghq projects",
+    },
   ],
   notes: [
-    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch",
+    "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery",
   ],
 };

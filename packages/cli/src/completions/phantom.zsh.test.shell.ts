@@ -90,4 +90,16 @@ describe("phantom.zsh completion", () => {
       ok(completions.includes("--json"));
     }
   });
+
+  it("completes the ghqDiscovery preference", () => {
+    const { completions, result } = runZshCompletion(completionScriptPath, [
+      "phantom",
+      "preferences",
+      "set",
+      "ghqD",
+    ]);
+
+    strictEqual(result.status, 0, result.stderr);
+    ok(completions.includes("ghqDiscovery"));
+  });
 });

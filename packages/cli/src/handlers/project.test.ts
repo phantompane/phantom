@@ -4,8 +4,10 @@ import { afterAll, beforeEach, describe, it, vi } from "vitest";
 const exitMock = vi.fn();
 const outputLogMock = vi.fn();
 const outputErrorMock = vi.fn();
-const getGitRootMock = vi.fn();
-const realpathMock = vi.fn();
+const outputWarnMock = vi.fn();
+const listProjectCatalogMock = vi.fn();
+const loadPreferencesMock = vi.fn();
+const resolveProjectRootPathMock = vi.fn();
 const storeAddMock = vi.fn();
 const storeListMock = vi.fn();
 const storeRemoveMock = vi.fn();
@@ -17,16 +19,9 @@ process.exit = (code): never => {
   throw new Error(`Exit with code ${code ?? 0}`);
 };
 
-vi.doMock("node:fs/promises", () => ({
-  realpath: realpathMock,
-}));
-
-vi.doMock("@phantompane/git", () => ({
-  getGitRoot: getGitRootMock,
-}));
-
 vi.doMock("@phantompane/projects", () => ({
-  PROJECT_REGISTRY_VERSION: 1,
+  listProjectCatalog: listProjectCatalogMock,
+  resolveProjectRootPath: resolveProjectRootPathMock,
   ProjectRegistryStore: class {
     add = storeAddMock;
     list = storeListMock;
@@ -34,10 +29,15 @@ vi.doMock("@phantompane/projects", () => ({
   },
 }));
 
+vi.doMock("@phantompane/preferences", () => ({
+  loadPreferences: loadPreferencesMock,
+}));
+
 vi.doMock("../output.ts", () => ({
   output: {
     log: outputLogMock,
     error: outputErrorMock,
+    warn: outputWarnMock,
   },
 }));
 
@@ -63,14 +63,21 @@ beforeEach(() => {
   exitMock.mockClear();
   outputLogMock.mockClear();
   outputErrorMock.mockClear();
-  getGitRootMock.mockReset();
-  realpathMock.mockReset();
+  outputWarnMock.mockClear();
+  listProjectCatalogMock.mockReset();
+  loadPreferencesMock.mockReset();
+  resolveProjectRootPathMock.mockReset();
   storeAddMock.mockReset();
   storeListMock.mockReset();
   storeRemoveMock.mockReset();
 
-  realpathMock.mockImplementation(async (inputPath) => String(inputPath));
-  getGitRootMock.mockImplementation(async ({ cwd }) => cwd);
+  resolveProjectRootPathMock.mockImplementation(async (inputPath) => inputPath);
+  listProjectCatalogMock.mockResolvedValue({
+    version: 2,
+    projects: [],
+    warnings: [],
+  });
+  loadPreferencesMock.mockResolvedValue({});
   storeListMock.mockResolvedValue([]);
 });
 
@@ -80,7 +87,7 @@ afterAll(() => {
 
 describe("project add", () => {
   it("registers the canonical Git root", async () => {
-    getGitRootMock.mockResolvedValueOnce("/repos/alpha");
+    resolveProjectRootPathMock.mockResolvedValueOnce("/repos/alpha");
     storeAddMock.mockResolvedValueOnce({
       project: alphaProject,
       added: true,
@@ -91,8 +98,8 @@ describe("project add", () => {
       /Exit with code 0/,
     );
 
-    deepStrictEqual(getGitRootMock.mock.calls[0], [
-      { cwd: "/repos/alpha/packages/cli" },
+    deepStrictEqual(resolveProjectRootPathMock.mock.calls[0], [
+      "/repos/alpha/packages/cli",
     ]);
     deepStrictEqual(storeAddMock.mock.calls[0], ["/repos/alpha"]);
     strictEqual(
@@ -102,7 +109,7 @@ describe("project add", () => {
   });
 
   it("reports an idempotent add as existing JSON", async () => {
-    getGitRootMock.mockResolvedValueOnce("/repos/alpha");
+    resolveProjectRootPathMock.mockResolvedValueOnce("/repos/alpha");
     storeAddMock.mockResolvedValueOnce({
       project: alphaProject,
       added: false,
@@ -144,16 +151,22 @@ describe("project add", () => {
 });
 
 describe("project list", () => {
-  it("prints a deterministic human-readable list", async () => {
-    storeListMock.mockResolvedValueOnce([
-      betaProject,
-      {
-        ...alphaProject,
-        id: "proj_00000000-0000-4000-8000-000000000003",
-        rootPath: "/repos/alpha-z",
-      },
-      alphaProject,
-    ]);
+  it("prints the catalog in human-readable form", async () => {
+    const secondAlpha = {
+      ...alphaProject,
+      id: "proj_00000000-0000-4000-8000-000000000003",
+      rootPath: "/repos/alpha-z",
+      source: "registry" as const,
+    };
+    listProjectCatalogMock.mockResolvedValueOnce({
+      version: 2,
+      projects: [
+        { ...alphaProject, source: "registry" },
+        secondAlpha,
+        { ...betaProject, source: "registry" },
+      ],
+      warnings: [],
+    });
 
     await rejects(async () => await projectListHandler([]), /Exit with code 0/);
 
@@ -167,8 +180,15 @@ describe("project list", () => {
     );
   });
 
-  it("prints the versioned registry as JSON", async () => {
-    storeListMock.mockResolvedValueOnce([betaProject, alphaProject]);
+  it("prints the versioned project catalog as JSON", async () => {
+    listProjectCatalogMock.mockResolvedValueOnce({
+      version: 2,
+      projects: [
+        { ...alphaProject, source: "registry" },
+        { ...betaProject, source: "registry" },
+      ],
+      warnings: [],
+    });
 
     await rejects(
       async () => await projectListHandler(["--json"]),
@@ -176,50 +196,23 @@ describe("project list", () => {
     );
 
     deepStrictEqual(JSON.parse(outputLogMock.mock.calls[0][0]), {
-      version: 1,
-      projects: [alphaProject, betaProject],
+      version: 2,
+      projects: [
+        { ...alphaProject, source: "registry" },
+        { ...betaProject, source: "registry" },
+      ],
     });
   });
 
-  it("sorts JSON output by code point instead of the host locale", async () => {
-    const uppercaseProject = {
-      ...alphaProject,
-      id: "proj_00000000-0000-4000-8000-000000000005",
-      name: "Alpha",
-      rootPath: "/repos/uppercase",
-    };
-    const zetaProject = {
-      ...alphaProject,
-      id: "proj_00000000-0000-4000-8000-000000000006",
-      name: "zeta",
-      rootPath: "/repos/zeta",
-    };
-    const umlautProject = {
-      ...alphaProject,
-      id: "proj_00000000-0000-4000-8000-000000000007",
-      name: "äther",
-      rootPath: "/repos/umlaut",
-    };
-    storeListMock.mockResolvedValueOnce([
-      umlautProject,
-      zetaProject,
-      uppercaseProject,
-    ]);
-
-    await rejects(
-      async () => await projectListHandler(["--json"]),
-      /Exit with code 0/,
-    );
-
-    deepStrictEqual(JSON.parse(outputLogMock.mock.calls[0][0]).projects, [
-      uppercaseProject,
-      zetaProject,
-      umlautProject,
-    ]);
-  });
-
   it("prints only names or paths when requested", async () => {
-    storeListMock.mockResolvedValue([betaProject, alphaProject]);
+    listProjectCatalogMock.mockResolvedValue({
+      version: 2,
+      projects: [
+        { ...alphaProject, source: "registry" },
+        { ...betaProject, source: "registry" },
+      ],
+      warnings: [],
+    });
 
     await rejects(
       async () => await projectListHandler(["--names"]),
@@ -251,7 +244,7 @@ describe("project list", () => {
       outputErrorMock.mock.calls[0][0],
       "Only one of --json, --names, or --paths can be specified",
     );
-    strictEqual(storeListMock.mock.calls.length, 0);
+    strictEqual(listProjectCatalogMock.mock.calls.length, 0);
   });
 
   it("reports unexpected positionals as validation errors", async () => {
@@ -261,13 +254,111 @@ describe("project list", () => {
     );
 
     strictEqual(exitMock.mock.calls[0][0], 3);
-    strictEqual(storeListMock.mock.calls.length, 0);
+    strictEqual(listProjectCatalogMock.mock.calls.length, 0);
   });
 
   it("prints a message for an empty human-readable list", async () => {
     await rejects(async () => await projectListHandler([]), /Exit with code 0/);
 
     strictEqual(outputLogMock.mock.calls[0][0], "No projects found.");
+  });
+
+  it("marks ghq projects in human-readable output", async () => {
+    listProjectCatalogMock.mockResolvedValueOnce({
+      version: 2,
+      projects: [
+        { ...alphaProject, source: "registry" },
+        {
+          source: "ghq",
+          name: "beta",
+          rootPath: "/repos/beta",
+        },
+      ],
+      warnings: [],
+    });
+
+    await rejects(async () => await projectListHandler([]), /Exit with code 0/);
+
+    deepStrictEqual(
+      outputLogMock.mock.calls.map(([message]) => message),
+      [`alpha (/repos/alpha) [${alphaProject.id}]`, "beta (/repos/beta) [ghq]"],
+    );
+  });
+
+  it("marks ghq projects in JSON output", async () => {
+    listProjectCatalogMock.mockResolvedValueOnce({
+      version: 2,
+      projects: [
+        {
+          source: "ghq",
+          name: "beta",
+          rootPath: "/repos/beta",
+        },
+      ],
+      warnings: [],
+    });
+
+    await rejects(
+      async () => await projectListHandler(["--json"]),
+      /Exit with code 0/,
+    );
+
+    deepStrictEqual(JSON.parse(outputLogMock.mock.calls[0][0]), {
+      version: 2,
+      projects: [
+        {
+          source: "ghq",
+          name: "beta",
+          rootPath: "/repos/beta",
+        },
+      ],
+    });
+  });
+
+  it("skips ghq discovery when disabled", async () => {
+    loadPreferencesMock.mockResolvedValueOnce({ ghqDiscovery: false });
+    listProjectCatalogMock.mockResolvedValueOnce({
+      version: 2,
+      projects: [{ ...alphaProject, source: "registry" }],
+      warnings: [],
+    });
+
+    await rejects(async () => await projectListHandler([]), /Exit with code 0/);
+
+    deepStrictEqual(listProjectCatalogMock.mock.calls[0], [
+      { includeGhq: false },
+    ]);
+    deepStrictEqual(
+      outputLogMock.mock.calls.map(([message]) => message),
+      [`alpha (/repos/alpha) [${alphaProject.id}]`],
+    );
+  });
+
+  it("prints catalog warnings without failing the list", async () => {
+    listProjectCatalogMock.mockResolvedValueOnce({
+      version: 2,
+      projects: [{ ...alphaProject, source: "registry" }],
+      warnings: ["Failed to discover ghq repositories: ghq list failed"],
+    });
+
+    await rejects(async () => await projectListHandler([]), /Exit with code 0/);
+
+    strictEqual(
+      outputWarnMock.mock.calls[0][0],
+      "Warning: Failed to discover ghq repositories: ghq list failed",
+    );
+    deepStrictEqual(
+      outputLogMock.mock.calls.map(([message]) => message),
+      [`alpha (/repos/alpha) [${alphaProject.id}]`],
+    );
+  });
+
+  it("enables ghq discovery by default", async () => {
+    await rejects(async () => await projectListHandler([]), /Exit with code 0/);
+
+    deepStrictEqual(listProjectCatalogMock.mock.calls[0], [
+      { includeGhq: true },
+    ]);
   });
 });
 
@@ -282,7 +373,7 @@ describe("project remove", () => {
     );
 
     deepStrictEqual(storeRemoveMock.mock.calls[0], [alphaProject.id]);
-    strictEqual(realpathMock.mock.calls.length, 0);
+    strictEqual(resolveProjectRootPathMock.mock.calls.length, 0);
     strictEqual(
       outputLogMock.mock.calls[0][0],
       "Removed project 'alpha' (/repos/alpha)",
@@ -308,14 +399,13 @@ describe("project remove", () => {
   it("removes a missing repository by its exact stored path", async () => {
     storeListMock.mockResolvedValueOnce([alphaProject]);
     storeRemoveMock.mockResolvedValueOnce(alphaProject);
-    realpathMock.mockRejectedValueOnce(new Error("Path does not exist"));
 
     await rejects(
       async () => await projectRemoveHandler([alphaProject.rootPath, "--json"]),
       /Exit with code 0/,
     );
 
-    strictEqual(realpathMock.mock.calls.length, 0);
+    strictEqual(resolveProjectRootPathMock.mock.calls.length, 0);
     deepStrictEqual(JSON.parse(outputLogMock.mock.calls[0][0]), {
       status: "removed",
       project: alphaProject,
@@ -324,10 +414,7 @@ describe("project remove", () => {
 
   it("canonicalizes an existing path before matching it", async () => {
     storeListMock.mockResolvedValueOnce([alphaProject]);
-    realpathMock
-      .mockResolvedValueOnce("/repos/alpha/packages/cli")
-      .mockResolvedValueOnce("/repos/alpha");
-    getGitRootMock.mockResolvedValueOnce("/repos/alpha");
+    resolveProjectRootPathMock.mockResolvedValueOnce("/repos/alpha");
     storeRemoveMock.mockResolvedValueOnce(alphaProject);
 
     await rejects(
@@ -336,6 +423,9 @@ describe("project remove", () => {
     );
 
     deepStrictEqual(storeRemoveMock.mock.calls[0], [alphaProject.id]);
+    deepStrictEqual(resolveProjectRootPathMock.mock.calls[0], [
+      "./packages/cli",
+    ]);
   });
 
   it("requires an id or path when a name is ambiguous", async () => {
@@ -362,7 +452,9 @@ describe("project remove", () => {
 
   it("returns not found for an unknown selector", async () => {
     storeListMock.mockResolvedValueOnce([alphaProject]);
-    realpathMock.mockRejectedValueOnce(new Error("Path does not exist"));
+    resolveProjectRootPathMock.mockRejectedValueOnce(
+      new Error("Path does not exist"),
+    );
 
     await rejects(
       async () => await projectRemoveHandler(["missing"]),

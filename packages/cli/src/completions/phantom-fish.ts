@@ -103,7 +103,7 @@ complete -c phantom -n "__phantom_using_command" -a "exec" -d "Execute a command
 complete -c phantom -n "__phantom_using_command" -a "edit" -d "Open a worktree in your configured editor"
 complete -c phantom -n "__phantom_using_command" -a "ai" -d "Launch your configured AI coding assistant in a worktree"
 complete -c phantom -n "__phantom_using_command" -a "shell" -d "Open an interactive shell in a worktree directory"
-complete -c phantom -n "__phantom_using_command" -a "project" -d "Manage registered Git projects"
+complete -c phantom -n "__phantom_using_command" -a "project" -d "Manage and discover Git projects"
 complete -c phantom -n "__phantom_using_command" -a "preferences" -d "Manage editor/ai/worktreesDirectory/directoryNameSeparator preferences (stored in git config --global)"
 complete -c phantom -n "__phantom_using_command" -a "github" -d "GitHub integration commands"
 complete -c phantom -n "__phantom_using_command" -a "gh" -d "GitHub integration commands (alias)"
@@ -171,19 +171,19 @@ complete -c phantom -n "__phantom_using_command edit; and __fish_seen_subcommand
 complete -c phantom -n "__phantom_using_command ai" -a "(__phantom_list_worktrees)"
 
 # project command
-complete -c phantom -n "__phantom_using_command project; and not __fish_seen_subcommand_from add list remove" -a "add list remove" -d "Manage registered Git projects"
+complete -c phantom -n "__phantom_using_command project; and not __fish_seen_subcommand_from add list remove" -a "add list remove" -d "Manage and discover Git projects"
 complete -c phantom -n "__phantom_using_command project; and __fish_seen_subcommand_from add" -l json -d "Output the registration result as JSON"
 complete -c phantom -n "__phantom_using_command project; and __fish_seen_subcommand_from add" -a "(__fish_complete_directories)" -d "Git repository directory"
-complete -c phantom -n "__phantom_using_command project; and __fish_seen_subcommand_from list; and not __phantom_project_list_has_output_mode" -l json -d "Output the registry as JSON"
+complete -c phantom -n "__phantom_using_command project; and __fish_seen_subcommand_from list; and not __phantom_project_list_has_output_mode" -l json -d "Output the v2 project catalog as JSON"
 complete -c phantom -n "__phantom_using_command project; and __fish_seen_subcommand_from list; and not __phantom_project_list_has_output_mode" -l names -d "Output only project names"
 complete -c phantom -n "__phantom_using_command project; and __fish_seen_subcommand_from list; and not __phantom_project_list_has_output_mode" -l paths -d "Output only project root paths"
 complete -c phantom -n "__phantom_using_command project; and __fish_seen_subcommand_from remove" -l json -d "Output the removal result as JSON"
 
 # preferences command
 complete -c phantom -n "__phantom_using_command preferences" -a "get set remove" -d "Manage preferences"
-complete -c phantom -n "__phantom_using_command preferences get" -a "editor ai worktreesDirectory directoryNameSeparator keepBranch" -d "Preference key"
-complete -c phantom -n "__phantom_using_command preferences set" -a "editor ai worktreesDirectory directoryNameSeparator keepBranch" -d "Preference key"
-complete -c phantom -n "__phantom_using_command preferences remove" -a "editor ai worktreesDirectory directoryNameSeparator keepBranch" -d "Preference key"
+complete -c phantom -n "__phantom_using_command preferences get" -a "editor ai worktreesDirectory directoryNameSeparator keepBranch ghqDiscovery" -d "Preference key"
+complete -c phantom -n "__phantom_using_command preferences set" -a "editor ai worktreesDirectory directoryNameSeparator keepBranch ghqDiscovery" -d "Preference key"
+complete -c phantom -n "__phantom_using_command preferences remove" -a "editor ai worktreesDirectory directoryNameSeparator keepBranch ghqDiscovery" -d "Preference key"
 
 # shell command options
 complete -c phantom -n "__phantom_using_command shell" -l fzf -d "Use fzf for interactive selection"

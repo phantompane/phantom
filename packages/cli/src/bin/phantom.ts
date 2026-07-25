@@ -159,7 +159,7 @@ const commands: Command[] = [
   },
   {
     name: "project",
-    description: "Manage registered Git projects",
+    description: "Manage and discover Git projects",
     handler: projectHandler,
     help: projectHelp,
     subcommands: [
@@ -171,7 +171,7 @@ const commands: Command[] = [
       },
       {
         name: "list",
-        description: "List registered Git projects",
+        description: "List registered and discovered Git projects",
         handler: projectListHandler,
         help: projectListHelp,
       },

@@ -103,6 +103,18 @@ describe("phantom.fish completion", () => {
     }
   });
 
+  it("completes the ghqDiscovery preference", () => {
+    const { completions, result } = runFishCompletion(completionScriptPath, [
+      "phantom",
+      "preferences",
+      "set",
+      "ghqD",
+    ]);
+
+    strictEqual(result.status, 0, result.stderr);
+    ok(completions.includes("ghqDiscovery"));
+  });
+
   it("passes exec completions through to the invoked command", () => {
     const setupScript = `
 complete -c dummycmd -l from-dummy -d "Dummy option"

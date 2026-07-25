@@ -15,7 +15,7 @@ _phantom() {
         'edit:Open a worktree in your configured editor'
         'ai:Launch your configured AI coding assistant in a worktree'
         'shell:Open an interactive shell in a worktree directory'
-        'project:Manage registered Git projects'
+        'project:Manage and discover Git projects'
         'preferences:Manage editor/ai/worktreesDirectory/directoryNameSeparator preferences (git config --global)'
         'github:GitHub integration commands'
         'gh:GitHub integration commands (alias)'
@@ -124,7 +124,7 @@ _phantom() {
                             '1::path:_files -/'
                     elif [[ ${line[2]} == "list" ]]; then
                         _arguments \
-                            '(--names --paths)--json[Output the registry as JSON]' \
+                            '(--names --paths)--json[Output the v2 project catalog as JSON]' \
                             '(--json --paths)--names[Output only project names]' \
                             '(--json --names)--paths[Output only project root paths]'
                     elif [[ ${line[2]} == "remove" ]]; then
@@ -136,7 +136,7 @@ _phantom() {
                 preferences)
                     _arguments \
                         '1:subcommand:(get set remove)' \
-                        '2:key:(editor ai worktreesDirectory directoryNameSeparator keepBranch)'
+                        '2:key:(editor ai worktreesDirectory directoryNameSeparator keepBranch ghqDiscovery)'
                     ;;
                 completion)
                     _arguments \

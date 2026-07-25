@@ -4,6 +4,7 @@ export const supportedPreferenceKeys = [
   "worktreesDirectory",
   "directoryNameSeparator",
   "keepBranch",
+  "ghqDiscovery",
 ] as const;
 
 export type PreferenceKey = (typeof supportedPreferenceKeys)[number];
@@ -14,6 +15,7 @@ export interface Preferences {
   worktreesDirectory?: string;
   directoryNameSeparator?: string;
   keepBranch?: boolean;
+  ghqDiscovery?: boolean;
 }
 
 export function isPreferenceKey(value: string): value is PreferenceKey {
@@ -39,8 +41,12 @@ export function validatePreferenceValue(
   key: PreferenceKey,
   value: string,
 ): string | null {
-  if (key === "keepBranch" && value !== "true" && value !== "false") {
-    return "Preference 'keepBranch' must be 'true' or 'false'";
+  if (
+    (key === "keepBranch" || key === "ghqDiscovery") &&
+    value !== "true" &&
+    value !== "false"
+  ) {
+    return `Preference '${key}' must be 'true' or 'false'`;
   }
 
   return null;

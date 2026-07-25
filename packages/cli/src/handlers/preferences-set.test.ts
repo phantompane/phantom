@@ -82,7 +82,7 @@ describe("preferencesSetHandler", () => {
 
     await rejects(
       async () => await preferencesSetHandler(["unknown", "value"]),
-      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch/,
+      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery/,
     );
 
     strictEqual(exitMock.mock.calls[0][0], 3);
@@ -218,6 +218,32 @@ describe("preferencesSetHandler", () => {
     await rejects(
       async () => await preferencesSetHandler(["keepBranch", "yes"]),
       /Exit with code 3: Preference 'keepBranch' must be 'true' or 'false'/,
+    );
+  });
+
+  it("sets ghqDiscovery preference via git config --global", async () => {
+    resetMocks();
+    configSetMock.mockImplementation(async () => undefined);
+
+    await rejects(
+      async () => await preferencesSetHandler(["ghqDiscovery", "false"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(configSetMock.mock.calls[0][0].key, "phantom.ghqDiscovery");
+    strictEqual(configSetMock.mock.calls[0][0].value, "false");
+    strictEqual(
+      consoleLogMock.mock.calls[0][0],
+      "Set phantom.ghqDiscovery (global) to 'false'",
+    );
+  });
+
+  it("rejects invalid ghqDiscovery preference values", async () => {
+    resetMocks();
+
+    await rejects(
+      async () => await preferencesSetHandler(["ghqDiscovery", "yes"]),
+      /Exit with code 3: Preference 'ghqDiscovery' must be 'true' or 'false'/,
     );
   });
 });

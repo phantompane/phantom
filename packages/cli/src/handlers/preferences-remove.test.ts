@@ -82,7 +82,7 @@ describe("preferencesRemoveHandler", () => {
 
     await rejects(
       async () => await preferencesRemoveHandler(["unknown"]),
-      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch/,
+      /Exit with code 3: Unknown preference 'unknown'\. Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery/,
     );
 
     strictEqual(exitMock.mock.calls[0][0], 3);
@@ -177,6 +177,23 @@ describe("preferencesRemoveHandler", () => {
     strictEqual(
       consoleLogMock.mock.calls[0][0],
       "Removed phantom.keepBranch from global git config",
+    );
+    strictEqual(exitMock.mock.calls[0][0], 0);
+  });
+
+  it("unsets ghqDiscovery preference via git config --global", async () => {
+    resetMocks();
+    configUnsetMock.mockImplementation(async () => undefined);
+
+    await rejects(
+      async () => await preferencesRemoveHandler(["ghqDiscovery"]),
+      /Process exit with code 0/,
+    );
+
+    strictEqual(configUnsetMock.mock.calls[0][0].key, "phantom.ghqDiscovery");
+    strictEqual(
+      consoleLogMock.mock.calls[0][0],
+      "Removed phantom.ghqDiscovery from global git config",
     );
     strictEqual(exitMock.mock.calls[0][0], 0);
   });
