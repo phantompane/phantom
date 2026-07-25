@@ -15,6 +15,10 @@ This document provides a comprehensive reference for all Phantom commands and th
   - [exec](#exec)
   - [edit](#edit)
   - [ai](#ai)
+- [Project Registry](#project-registry)
+  - [project add](#project-add)
+  - [project list](#project-list)
+  - [project remove](#project-remove)
 - [Preferences](#preferences)
   - [preferences get](#preferences-get)
   - [preferences set](#preferences-set)
@@ -337,6 +341,132 @@ phantom ai feature-auth
 
 - Configure the assistant with `phantom preferences set ai <command>` (e.g., `claude` or `codex --full-auto`) stored as `phantom.ai` in global git config
 
+## Project Registry
+
+Phantom maintains an independent, global registry of Git repositories. It is available from any directory, so people and AI agents can find projects before choosing where to work.
+
+The registry is stored at `$XDG_STATE_HOME/phantom/projects.json` when `XDG_STATE_HOME` is an absolute path. If it is unset or relative, Phantom uses `~/.local/state/phantom/projects.json`.
+
+Each project record contains an opaque, stable `id`, the repository `name`, its absolute `rootPath`, and an ISO 8601 `createdAt` timestamp.
+
+### project add
+
+Register a Git repository. If `path` is omitted, Phantom uses the current directory. Phantom resolves paths inside a repository to the repository root, and adding the same root again is idempotent.
+
+```bash
+phantom project add [path] [--json]
+```
+
+**Options:**
+
+- `--json` - Output the registration result as JSON
+
+**Examples:**
+
+```bash
+# Register the repository containing the current directory
+phantom project add
+
+# Register a repository by path
+phantom project add ~/src/example
+
+# Return structured output for an agent or script
+phantom project add ~/src/example --json
+```
+
+JSON output reports whether the project was newly added or already registered:
+
+```json
+{
+  "status": "added",
+  "project": {
+    "id": "proj_550e8400-e29b-41d4-a716-446655440000",
+    "name": "example",
+    "rootPath": "/home/user/src/example",
+    "createdAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+### project list
+
+List registered projects. Projects are sorted by name, then by root path.
+
+```bash
+phantom project list [options]
+```
+
+**Options:**
+
+- `--json` - Output the versioned registry as JSON
+- `--names` - Output only project names, one per line
+- `--paths` - Output only project root paths, one per line
+
+The output options are mutually exclusive.
+
+**Examples:**
+
+```bash
+# Show each project's name, root path, and id
+phantom project list
+
+# Print paths for a shell script
+phantom project list --paths
+
+# Return structured output for an agent
+phantom project list --json
+```
+
+```json
+{
+  "version": 1,
+  "projects": [
+    {
+      "id": "proj_550e8400-e29b-41d4-a716-446655440000",
+      "name": "example",
+      "rootPath": "/home/user/src/example",
+      "createdAt": "2026-07-20T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+### project remove
+
+Remove a project from the registry by id, name, or its exact stored root path. If a name matches more than one project, use an id or path instead.
+
+```bash
+phantom project remove <id|name|path> [--json]
+```
+
+**Options:**
+
+- `--json` - Output the removed project as JSON
+
+**Examples:**
+
+```bash
+# Remove by name
+phantom project remove example
+
+# Remove by id and return structured output
+phantom project remove proj_550e8400-e29b-41d4-a716-446655440000 --json
+```
+
+```json
+{
+  "status": "removed",
+  "project": {
+    "id": "proj_550e8400-e29b-41d4-a716-446655440000",
+    "name": "example",
+    "rootPath": "/home/user/src/example",
+    "createdAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+Removing a project only removes its registry record. It does not delete the Git repository, branches, or worktrees.
+
 ## Preferences
 
 Configure defaults for Phantom commands using global git config. Preferences are stored under the `phantom.<key>` namespace and currently support:
@@ -524,10 +654,10 @@ Phantom uses the following exit codes:
 
 - `0` - Success
 - `1` - General error
-- `2` - Invalid arguments
-- `3` - Git operation failed
-- `4` - Worktree operation failed
-- `127` - Command not found
+- `2` - Requested resource not found
+- `3` - Invalid arguments or validation error
+
+Commands that execute another process may propagate that process's exit code.
 
 ## Related Documentation
 

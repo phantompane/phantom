@@ -24,6 +24,7 @@
     "@phantompane/mcp": "workspace:*",
     "@phantompane/preferences": "workspace:*",
     "@phantompane/process": "workspace:*",
+    "@phantompane/projects": "workspace:*",
     "@phantompane/utils": "workspace:*",
     "@phantompane/tmux": "workspace:*"
   }

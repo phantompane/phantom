@@ -14,6 +14,7 @@ export const runZshCompletion = (
 ): ZshCompletionResult => {
   const resolvedCurrentWordIndex = Math.max(words.length - 1, 0);
   const wordList = createWordsList(words);
+  const argumentList = createWordsList(words.slice(1, -1));
   const buffer = words.join(" ");
 
   const command = `
@@ -24,8 +25,29 @@ compdef() {
 }
 
 _arguments() {
-  state="command"
-  line=(${wordList})
+  if [[ "$1" == "-C" ]]; then
+    if (( CURRENT <= 2 )); then
+      state="command"
+    else
+      state="args"
+    fi
+    line=(${argumentList})
+    return 0
+  fi
+
+  local spec option
+  for spec in "$@"; do
+    case "$spec" in
+      '1:subcommand:(add list remove)')
+        completions+=(add list remove)
+        ;;
+      --*|'('*--*)
+        option="\${spec%%\\[*}"
+        option="\${option##*)}"
+        completions+=("$option")
+        ;;
+    esac
+  done
   return 0
 }
 
