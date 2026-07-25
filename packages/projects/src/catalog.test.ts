@@ -1,4 +1,9 @@
+import { execFile } from "node:child_process";
 import { deepStrictEqual, strictEqual } from "node:assert";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { describe, it } from "vitest";
 import {
   DEFAULT_ROOT_RESOLUTION_CONCURRENCY,
@@ -10,6 +15,8 @@ import {
 } from "./catalog.ts";
 import { GhqDiscoveryError } from "./ghq.ts";
 import type { ProjectRecord } from "./types.ts";
+
+const execFileAsync = promisify(execFile);
 
 function project(
   name: string,
@@ -101,6 +108,37 @@ describe("listProjectCatalog", () => {
       },
     ]);
     deepStrictEqual(result.warnings, []);
+  });
+
+  it("discovers bare ghq repositories", async () => {
+    const temporaryDirectory = await mkdtemp(
+      join(tmpdir(), "phantom-ghq-bare-"),
+    );
+    const bareRoot = join(temporaryDirectory, "example.git");
+
+    try {
+      await execFileAsync("git", ["init", "--bare", bareRoot]);
+      const canonicalRoot = await realpath(bareRoot);
+
+      const result = await listProjectCatalog({
+        store: createStore([]),
+        discoverGhqRepositories: async () => ({
+          available: true,
+          rootPaths: [bareRoot],
+        }),
+      });
+
+      deepStrictEqual(result.projects, [
+        {
+          source: "ghq",
+          name: "example.git",
+          rootPath: canonicalRoot,
+        },
+      ]);
+      deepStrictEqual(result.warnings, []);
+    } finally {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
   });
 
   it("skips invalid roots and canonicalizes ghq candidates with bounded concurrency", async () => {
