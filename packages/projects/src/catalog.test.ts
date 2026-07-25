@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -114,32 +114,50 @@ describe("listProjectCatalog", () => {
     const temporaryDirectory = await mkdtemp(
       join(tmpdir(), "phantom-ghq-bare-"),
     );
+    const homeRoot = join(temporaryDirectory, "home");
     const seedRoot = join(temporaryDirectory, "seed");
     const bareRoot = join(temporaryDirectory, "example.git");
     const linkedRoot = join(temporaryDirectory, "linked");
+    const globalGitConfig = join(homeRoot, ".gitconfig");
+    const gitEnvironment: NodeJS.ProcessEnv = {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: globalGitConfig,
+      GIT_CONFIG_NOSYSTEM: "1",
+      HOME: homeRoot,
+      XDG_CONFIG_HOME: join(homeRoot, ".config"),
+    };
+    const gitOptions = { env: gitEnvironment };
 
     try {
-      await execFileAsync("git", ["init", seedRoot]);
-      await execFileAsync("git", [
-        "-C",
-        seedRoot,
-        "-c",
-        "user.name=Phantom Test",
-        "-c",
-        "user.email=phantom@example.com",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "Initial commit",
-      ]);
-      await execFileAsync("git", ["clone", "--bare", seedRoot, bareRoot]);
-      await execFileAsync("git", [
-        "-C",
-        bareRoot,
-        "worktree",
-        "add",
-        linkedRoot,
-      ]);
+      await mkdir(homeRoot, { recursive: true });
+      await writeFile(globalGitConfig, "");
+      await execFileAsync("git", ["init", seedRoot], gitOptions);
+      await execFileAsync(
+        "git",
+        [
+          "-C",
+          seedRoot,
+          "-c",
+          "user.name=Phantom Test",
+          "-c",
+          "user.email=phantom@example.com",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "Initial commit",
+        ],
+        gitOptions,
+      );
+      await execFileAsync(
+        "git",
+        ["clone", "--bare", seedRoot, bareRoot],
+        gitOptions,
+      );
+      await execFileAsync(
+        "git",
+        ["-C", bareRoot, "worktree", "add", linkedRoot],
+        gitOptions,
+      );
       const canonicalRoot = await realpath(bareRoot);
 
       const result = await listProjectCatalog({
