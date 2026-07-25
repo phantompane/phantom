@@ -110,21 +110,43 @@ describe("listProjectCatalog", () => {
     deepStrictEqual(result.warnings, []);
   });
 
-  it("discovers bare ghq repositories", async () => {
+  it("deduplicates a bare ghq repository and its linked worktree", async () => {
     const temporaryDirectory = await mkdtemp(
       join(tmpdir(), "phantom-ghq-bare-"),
     );
+    const seedRoot = join(temporaryDirectory, "seed");
     const bareRoot = join(temporaryDirectory, "example.git");
+    const linkedRoot = join(temporaryDirectory, "linked");
 
     try {
-      await execFileAsync("git", ["init", "--bare", bareRoot]);
+      await execFileAsync("git", ["init", seedRoot]);
+      await execFileAsync("git", [
+        "-C",
+        seedRoot,
+        "-c",
+        "user.name=Phantom Test",
+        "-c",
+        "user.email=phantom@example.com",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "Initial commit",
+      ]);
+      await execFileAsync("git", ["clone", "--bare", seedRoot, bareRoot]);
+      await execFileAsync("git", [
+        "-C",
+        bareRoot,
+        "worktree",
+        "add",
+        linkedRoot,
+      ]);
       const canonicalRoot = await realpath(bareRoot);
 
       const result = await listProjectCatalog({
         store: createStore([]),
         discoverGhqRepositories: async () => ({
           available: true,
-          rootPaths: [bareRoot],
+          rootPaths: [linkedRoot, bareRoot],
         }),
       });
 
