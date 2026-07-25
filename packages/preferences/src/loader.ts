@@ -16,6 +16,7 @@ const preferencesSchema = z
     worktreesDirectory: z.string().optional(),
     directoryNameSeparator: z.string().optional(),
     keepBranch: z.boolean().optional(),
+    ghqDiscovery: z.boolean().optional(),
   })
   .passthrough();
 
@@ -55,6 +56,9 @@ export function parsePreferences(output: string): Preferences {
       preferences.directoryNameSeparator = value;
     } else if (strippedKey === "keepbranch") {
       preferences.keepBranch =
+        value === "true" ? true : value === "false" ? false : undefined;
+    } else if (strippedKey === "ghqdiscovery") {
+      preferences.ghqDiscovery =
         value === "true" ? true : value === "false" ? false : undefined;
     }
   }

@@ -35,11 +35,13 @@ _arguments() {
     return 0
   fi
 
-  local spec option
+  local spec option choices
   for spec in "$@"; do
     case "$spec" in
-      '1:subcommand:(add list remove)')
-        completions+=(add list remove)
+      [0-9]*:*:\\(*\\))
+        choices="\${spec##*:\\(}"
+        choices="\${choices%\\)}"
+        completions+=(\${(z)choices})
         ;;
       --*|'('*--*)
         option="\${spec%%\\[*}"

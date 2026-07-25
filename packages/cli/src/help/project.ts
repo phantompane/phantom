@@ -2,7 +2,7 @@ import type { CommandHelp } from "../help.ts";
 
 export const projectHelp: CommandHelp = {
   name: "project",
-  description: "Manage registered Git projects",
+  description: "Manage and discover Git projects",
   usage: "phantom project <subcommand> [options]",
   examples: [
     {
@@ -10,7 +10,7 @@ export const projectHelp: CommandHelp = {
       command: "phantom project add",
     },
     {
-      description: "List registered projects for an AI agent",
+      description: "List available projects for an AI agent",
       command: "phantom project list --json",
     },
     {
@@ -44,7 +44,7 @@ export const projectAddHelp: CommandHelp = {
 
 export const projectListHelp: CommandHelp = {
   name: "project list",
-  description: "List registered Phantom projects",
+  description: "List registered and discovered Phantom projects",
   usage: "phantom project list [options]",
   options: [
     {
@@ -63,7 +63,11 @@ export const projectListHelp: CommandHelp = {
       description: "Output only project root paths",
     },
   ],
-  notes: ["Only one output format option can be used at a time."],
+  notes: [
+    "Only one output format option can be used at a time.",
+    "Repositories managed by ghq are discovered automatically unless the ghqDiscovery preference is false.",
+    "ghq is optional; when it is not installed, only registered projects are listed.",
+  ],
 };
 
 export const projectRemoveHelp: CommandHelp = {
@@ -81,5 +85,6 @@ export const projectRemoveHelp: CommandHelp = {
     "The project can be specified by id, name, or root path.",
     "If a name matches multiple projects, use an id or path instead.",
     "This command never deletes the Git repository or its worktrees.",
+    "A repository discovered through ghq remains visible after its registry record is removed.",
   ],
 };

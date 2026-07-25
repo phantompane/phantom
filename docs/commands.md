@@ -343,7 +343,7 @@ phantom ai feature-auth
 
 ## Project Registry
 
-Phantom maintains an independent, global registry of Git repositories. It is available from any directory, so people and AI agents can find projects before choosing where to work.
+Phantom maintains an independent, global registry of Git repositories. It is available from any directory, so people and AI agents can find projects before choosing where to work. When [ghq](https://github.com/x-motemen/ghq) is installed, Phantom also discovers repositories managed by ghq by default.
 
 The registry is stored at `$XDG_STATE_HOME/phantom/projects.json` when `XDG_STATE_HOME` is an absolute path. If it is unset or relative, Phantom uses `~/.local/state/phantom/projects.json`.
 
@@ -390,7 +390,7 @@ JSON output reports whether the project was newly added or already registered:
 
 ### project list
 
-List registered projects. Projects are sorted by name, then by root path.
+List registered projects and repositories discovered through ghq. Projects are sorted by name, then by root path. A repository present in both sources appears once, with the explicit Phantom registry record taking precedence.
 
 ```bash
 phantom project list [options]
@@ -398,7 +398,7 @@ phantom project list [options]
 
 **Options:**
 
-- `--json` - Output the versioned registry as JSON
+- `--json` - Output the versioned project catalog as JSON
 - `--names` - Output only project names, one per line
 - `--paths` - Output only project root paths, one per line
 
@@ -407,7 +407,7 @@ The output options are mutually exclusive.
 **Examples:**
 
 ```bash
-# Show each project's name, root path, and id
+# Show each project's name, root path, and source
 phantom project list
 
 # Print paths for a shell script
@@ -419,17 +419,25 @@ phantom project list --json
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "projects": [
     {
       "id": "proj_550e8400-e29b-41d4-a716-446655440000",
       "name": "example",
       "rootPath": "/home/user/src/example",
-      "createdAt": "2026-07-20T12:00:00.000Z"
+      "createdAt": "2026-07-20T12:00:00.000Z",
+      "source": "registry"
+    },
+    {
+      "source": "ghq",
+      "name": "another-project",
+      "rootPath": "/home/user/repo/github.com/example/another-project"
     }
   ]
 }
 ```
+
+ghq is optional. If its executable is not installed, `project list` returns the registered projects without an error. If ghq is installed but discovery fails, `project list` still exits successfully and returns the native registry entries; it writes a warning only to stderr, so `--json` stdout remains a valid version 2 project catalog. Set `phantom.ghqDiscovery` to `false` to disable ghq discovery explicitly.
 
 ### project remove
 
@@ -465,7 +473,7 @@ phantom project remove proj_550e8400-e29b-41d4-a716-446655440000 --json
 }
 ```
 
-Removing a project only removes its registry record. It does not delete the Git repository, branches, or worktrees.
+Removing a project only removes its registry record. It does not delete the Git repository, branches, or worktrees. If the same repository is managed by ghq, it remains visible as a discovered project.
 
 ## Preferences
 
@@ -476,6 +484,7 @@ Configure defaults for Phantom commands using global git config. Preferences are
 - `worktreesDirectory` - where to store worktrees (relative to the Git repository root; defaults to `.git/phantom/worktrees`)
 - `directoryNameSeparator` - replaces `/` in worktree directory names only (defaults to `/`, which keeps nested directories)
 - `keepBranch` - keeps the branch when deleting a worktree (defaults to `false`)
+- `ghqDiscovery` - discovers ghq-managed repositories as projects (defaults to `true`)
 
 Set them once to avoid exporting environment variables each time.
 
@@ -489,6 +498,7 @@ phantom preferences get ai
 phantom preferences get worktreesDirectory
 phantom preferences get directoryNameSeparator
 phantom preferences get keepBranch
+phantom preferences get ghqDiscovery
 ```
 
 ### preferences set
@@ -510,6 +520,9 @@ phantom preferences set directoryNameSeparator "-"
 
 # Keep branches when deleting worktrees by default
 phantom preferences set keepBranch true
+
+# List only projects explicitly registered with Phantom
+phantom preferences set ghqDiscovery false
 ```
 
 ### preferences remove
@@ -522,6 +535,7 @@ phantom preferences remove ai
 phantom preferences remove worktreesDirectory
 phantom preferences remove directoryNameSeparator
 phantom preferences remove keepBranch
+phantom preferences remove ghqDiscovery
 ```
 
 **Notes:**
@@ -531,6 +545,7 @@ phantom preferences remove keepBranch
 - `worktreesDirectory` should be set relative to the Git repository root (default: `.git/phantom/worktrees`)
 - `directoryNameSeparator` only changes the directory path; the worktree/branch name remains unchanged
 - `keepBranch` accepts `true` or `false` and applies to both `phantom delete` and MCP delete requests when the request omits an explicit override
+- `ghqDiscovery` accepts `true` or `false`; removing it restores the default of enabling discovery
 
 ## GitHub Integration
 

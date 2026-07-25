@@ -119,6 +119,18 @@ _filedir() {
     ok(completions.includes("demo-repository/"));
   });
 
+  it("completes the ghqDiscovery preference", () => {
+    const { completions, result } = runBashCompletion(completionScriptPath, [
+      "phantom",
+      "preferences",
+      "set",
+      "ghqD",
+    ]);
+
+    strictEqual(result.status, 0, result.stderr);
+    ok(completions.includes("ghqDiscovery"));
+  });
+
   it("completes exec command arguments with the target command's completion", () => {
     const setupScript = `
 _dummy_complete() {

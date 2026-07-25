@@ -1,11 +1,11 @@
 import {
   ProjectRegistryStore,
+  resolveProjectRootPath,
   type ProjectRecord,
 } from "@phantompane/projects";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 import { parseArgsOrExit } from "../parse-args.ts";
-import { resolveProjectRootPath } from "./project-add.ts";
 
 export async function projectRemoveHandler(args: string[] = []): Promise<void> {
   const { positionals, values } = parseArgsOrExit({

@@ -38,6 +38,10 @@ describe("getGitRoot", () => {
         stderr: "",
       })
       .mockResolvedValueOnce({
+        stdout: "false",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
         stdout: "/repo/.git/phantom/worktrees/feature",
         stderr: "",
       });
@@ -48,8 +52,54 @@ describe("getGitRoot", () => {
 
     strictEqual(result, "/repo/.git/phantom/worktrees/feature");
     deepStrictEqual(executeGitCommandMock.mock.calls[1], [
+      ["rev-parse", "--is-bare-repository"],
+      { cwd: "/repo/.git/worktrees/feature" },
+    ]);
+    deepStrictEqual(executeGitCommandMock.mock.calls[2], [
       ["rev-parse", "--show-toplevel"],
       { cwd: "/repo/.git/phantom/worktrees/feature/src" },
+    ]);
+  });
+
+  it("returns the common directory for a bare repository", async () => {
+    resetMocks();
+    executeGitCommandMock
+      .mockResolvedValueOnce({
+        stdout: ".",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: "true",
+        stderr: "",
+      });
+
+    const result = await getGitRoot({ cwd: "/repos/example.git" });
+
+    strictEqual(result, "/repos/example.git");
+    deepStrictEqual(executeGitCommandMock.mock.calls, [
+      [["rev-parse", "--git-common-dir"], { cwd: "/repos/example.git" }],
+      [["rev-parse", "--is-bare-repository"], { cwd: "/repos/example.git" }],
+    ]);
+  });
+
+  it("returns the bare common directory for a linked worktree", async () => {
+    resetMocks();
+    executeGitCommandMock
+      .mockResolvedValueOnce({
+        stdout: "/repos/example.git",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: "true",
+        stderr: "",
+      });
+
+    const result = await getGitRoot({ cwd: "/repos/example-worktree" });
+
+    strictEqual(result, "/repos/example.git");
+    deepStrictEqual(executeGitCommandMock.mock.calls, [
+      [["rev-parse", "--git-common-dir"], { cwd: "/repos/example-worktree" }],
+      [["rev-parse", "--is-bare-repository"], { cwd: "/repos/example.git" }],
     ]);
   });
 });

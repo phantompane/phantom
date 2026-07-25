@@ -20,6 +20,15 @@ export async function getGitRoot(
     return resolve(cwd, dirname(stdout));
   }
 
+  const commonDirectory = resolve(cwd, stdout);
+  const { stdout: isBareRepository } = await executeGitCommand(
+    ["rev-parse", "--is-bare-repository"],
+    { cwd: commonDirectory },
+  );
+  if (isBareRepository === "true") {
+    return commonDirectory;
+  }
+
   const { stdout: toplevel } = await executeGitCommand(
     ["rev-parse", "--show-toplevel"],
     { cwd },

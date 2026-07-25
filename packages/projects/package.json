@@ -12,6 +12,7 @@
     "test": "vitest run --root ../.. packages/projects/src"
   },
   "dependencies": {
+    "@phantompane/git": "workspace:*",
     "zod": "^4.4.3"
   }
 }

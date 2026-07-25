@@ -167,6 +167,9 @@ importers:
 
   packages/projects:
     dependencies:
+      '@phantompane/git':
+        specifier: workspace:*
+        version: link:../git
       zod:
         specifier: ^4.4.3
         version: 4.4.3

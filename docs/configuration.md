@@ -225,6 +225,7 @@ Use `phantom preferences` for per-user defaults stored in `git config --global` 
 - `worktreesDirectory`: Personal default worktree directory relative to the Git repository root
 - `directoryNameSeparator`: Personal default separator for flattening worktree directory names on disk
 - `keepBranch`: Keep branches by default when deleting worktrees through `phantom delete` or MCP
+- `ghqDiscovery`: Discover ghq-managed repositories in `phantom project list` (defaults to `true`)
 
 ### `keepBranch`
 
@@ -247,6 +248,20 @@ phantom preferences remove keepBranch
 
 - Valid values are `true` and `false`
 - CLI and MCP delete operations both use this preference when no explicit `keepBranch` override is provided
+
+### `ghqDiscovery`
+
+When [ghq](https://github.com/x-motemen/ghq) is installed, `phantom project list` discovers its repositories automatically. The native Phantom registry remains independent, and an explicitly registered repository takes precedence when the same Git root is also returned by ghq.
+
+```bash
+# Disable ghq project discovery
+phantom preferences set ghqDiscovery false
+
+# Restore the default behavior
+phantom preferences remove ghqDiscovery
+```
+
+If ghq is not installed, project listing continues with Phantom's native registry without an error. If ghq is installed but discovery fails, project listing is a partial success: the command exits successfully, returns native registry entries, and writes a warning only to stderr. In `--json` mode, stdout remains a valid version 2 project catalog.
 
 ### preDelete.commands
 

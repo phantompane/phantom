@@ -18,7 +18,7 @@ describe("loadPreferences", () => {
     resetMocks();
     configGetRegexpMock.mockImplementation(
       async () =>
-        "phantom.editor\ncode\u0000phantom.ai\nclaude\u0000phantom.worktreesdirectory\n../phantom-worktrees\u0000phantom.directorynameseparator\n-\u0000phantom.keepbranch\ntrue\u0000",
+        "phantom.editor\ncode\u0000phantom.ai\nclaude\u0000phantom.worktreesdirectory\n../phantom-worktrees\u0000phantom.directorynameseparator\n-\u0000phantom.keepbranch\ntrue\u0000phantom.ghqdiscovery\nfalse\u0000",
     );
 
     const preferences = await loadPreferences();
@@ -29,6 +29,7 @@ describe("loadPreferences", () => {
       worktreesDirectory: "../phantom-worktrees",
       directoryNameSeparator: "-",
       keepBranch: true,
+      ghqDiscovery: false,
     });
     deepStrictEqual(configGetRegexpMock.mock.calls[0][0], {
       pattern: "^phantom\\.",
@@ -41,7 +42,7 @@ describe("loadPreferences", () => {
     resetMocks();
     configGetRegexpMock.mockImplementation(
       async () =>
-        "phantom.unknown\nvalue\u0000phantom.editor\nvim\u0000phantom.ai\ncodex\u0000phantom.worktreesdirectory\n../phantom\u0000phantom.directorynameseparator\n_\u0000phantom.keepbranch\nfalse\u0000",
+        "phantom.unknown\nvalue\u0000phantom.editor\nvim\u0000phantom.ai\ncodex\u0000phantom.worktreesdirectory\n../phantom\u0000phantom.directorynameseparator\n_\u0000phantom.keepbranch\nfalse\u0000phantom.ghqdiscovery\ntrue\u0000",
     );
 
     const preferences = await loadPreferences();
@@ -52,6 +53,7 @@ describe("loadPreferences", () => {
       worktreesDirectory: "../phantom",
       directoryNameSeparator: "_",
       keepBranch: false,
+      ghqDiscovery: true,
     });
   });
 
@@ -68,7 +70,7 @@ describe("loadPreferences", () => {
     resetMocks();
     configGetRegexpMock.mockImplementation(
       async () =>
-        "phantom.editor\nvim\u0000phantom.editor\ncode\u0000phantom.ai\nclaude\u0000phantom.ai\ncursor\u0000phantom.worktreesdirectory\n../phantom-custom\u0000phantom.worktreesdirectory\n../phantom-worktrees\u0000phantom.directorynameseparator\n_\u0000phantom.directorynameseparator\n-\u0000phantom.keepbranch\nfalse\u0000phantom.keepbranch\ntrue\u0000",
+        "phantom.editor\nvim\u0000phantom.editor\ncode\u0000phantom.ai\nclaude\u0000phantom.ai\ncursor\u0000phantom.worktreesdirectory\n../phantom-custom\u0000phantom.worktreesdirectory\n../phantom-worktrees\u0000phantom.directorynameseparator\n_\u0000phantom.directorynameseparator\n-\u0000phantom.keepbranch\nfalse\u0000phantom.keepbranch\ntrue\u0000phantom.ghqdiscovery\nfalse\u0000phantom.ghqdiscovery\ntrue\u0000",
     );
 
     const preferences = await loadPreferences();
@@ -78,20 +80,27 @@ describe("loadPreferences", () => {
     equal(preferences.worktreesDirectory, "../phantom-worktrees");
     equal(preferences.directoryNameSeparator, "-");
     equal(preferences.keepBranch, true);
+    equal(preferences.ghqDiscovery, true);
   });
 
   it("parses preference keys regardless of git config key casing", async () => {
-    equal(
-      parsePreferences(
-        "phantom.Editor\nvim\u0000phantom.AI\nclaude\u0000phantom.WorktreesDirectory\n../phantom-wt\u0000phantom.DirectoryNameSeparator\n_\u0000phantom.KeepBranch\ntrue\u0000",
-      ).editor,
-      "vim",
+    const preferences = parsePreferences(
+      "phantom.Editor\nvim\u0000phantom.AI\nclaude\u0000phantom.WorktreesDirectory\n../phantom-wt\u0000phantom.DirectoryNameSeparator\n_\u0000phantom.KeepBranch\ntrue\u0000phantom.GhqDiscovery\nfalse\u0000",
     );
+
+    equal(preferences.editor, "vim");
+    equal(preferences.ghqDiscovery, false);
   });
 
   it("ignores invalid keepBranch preference values", () => {
     const preferences = parsePreferences("phantom.keepbranch\nyes\u0000");
 
     equal(preferences.keepBranch, undefined);
+  });
+
+  it("ignores invalid ghqDiscovery preference values", () => {
+    const preferences = parsePreferences("phantom.ghqdiscovery\nenabled\u0000");
+
+    equal(preferences.ghqDiscovery, undefined);
   });
 });
