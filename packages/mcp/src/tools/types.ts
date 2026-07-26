@@ -7,3 +7,10 @@ export interface Tool<TSchema extends z.ZodObject> {
   inputSchema: TSchema;
   handler: ToolCallback<TSchema>;
 }
+
+export interface StructuredTool<
+  TInputSchema extends z.ZodObject,
+  TOutputSchema extends z.ZodObject,
+> extends Tool<TInputSchema> {
+  outputSchema: TOutputSchema;
+}

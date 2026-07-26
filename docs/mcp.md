@@ -65,9 +65,56 @@ phantom mcp serve
 
 ## Available MCP Commands
 
-The Phantom MCP server exposes four main tools:
+The Phantom MCP server exposes five main tools:
 
-### 1. `phantom_create_worktree`
+### 1. `phantom_list_projects`
+
+Lists projects registered directly with Phantom and repositories discovered
+through ghq. The response is a versioned project catalog containing each
+project's `source` and canonical `rootPath`. ghq discovery follows the
+`phantom.ghqDiscovery` preference.
+
+**Parameters:** None
+
+**Example:**
+
+```typescript
+{
+  "tool": "phantom_list_projects",
+  "arguments": {}
+}
+```
+
+**Response:**
+
+```json
+{
+  "version": 2,
+  "projects": [
+    {
+      "source": "registry",
+      "id": "proj_00000000-0000-4000-8000-000000000001",
+      "name": "phantom",
+      "rootPath": "/home/user/repo/github.com/phantompane/phantom",
+      "createdAt": "2026-07-20T00:00:00.000Z"
+    },
+    {
+      "source": "ghq",
+      "name": "another-project",
+      "rootPath": "/home/user/repo/github.com/example/another-project"
+    }
+  ],
+  "warnings": [],
+  "note": "Use rootPath to identify a project."
+}
+```
+
+Registered projects include stable `id` and `createdAt` fields. Projects
+discovered from ghq are read in real time and only include `source`, `name`, and
+`rootPath`; they are not copied into Phantom's registry. A ghq discovery failure
+is reported in `warnings` without discarding registered projects.
+
+### 2. `phantom_create_worktree`
 
 Creates a new Git worktree.
 
@@ -88,7 +135,7 @@ Creates a new Git worktree.
 }
 ```
 
-### 2. `phantom_list_worktrees`
+### 3. `phantom_list_worktrees`
 
 Lists all Git worktrees (phantoms).
 
@@ -103,7 +150,7 @@ Lists all Git worktrees (phantoms).
 }
 ```
 
-### 3. `phantom_delete_worktree`
+### 4. `phantom_delete_worktree`
 
 Deletes a Git worktree (phantom).
 
@@ -128,7 +175,7 @@ If `keepBranch` is omitted, Phantom falls back to the user's `phantom.keepBranch
 }
 ```
 
-### 4. `phantom_github_checkout`
+### 5. `phantom_github_checkout`
 
 Checkout a GitHub issue or pull request by number into a new worktree.
 

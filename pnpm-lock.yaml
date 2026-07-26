@@ -136,9 +136,15 @@ importers:
       '@phantompane/git':
         specifier: workspace:*
         version: link:../git
+      '@phantompane/preferences':
+        specifier: workspace:*
+        version: link:../preferences
       '@phantompane/process':
         specifier: workspace:*
         version: link:../process
+      '@phantompane/projects':
+        specifier: workspace:*
+        version: link:../projects
       '@phantompane/utils':
         specifier: workspace:*
         version: link:../utils
