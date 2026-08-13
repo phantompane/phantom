@@ -48,6 +48,7 @@ describe("listProjectsTool", () => {
     deepStrictEqual(Object.keys(listProjectsTool.inputSchema.shape), []);
     strictEqual(listProjectsTool.outputSchema instanceof z.ZodObject, true);
     deepStrictEqual(Object.keys(listProjectsTool.outputSchema.shape), [
+      "schemaVersion",
       "version",
       "projects",
       "warnings",
@@ -82,6 +83,7 @@ describe("listProjectsTool", () => {
       [{ includeGhq: true }],
     ]);
     const expected = {
+      schemaVersion: 1,
       version: 2,
       projects,
       warnings: [],

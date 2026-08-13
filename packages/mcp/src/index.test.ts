@@ -19,6 +19,7 @@ const { createMcpServer } = await import("./index.ts");
 
 it("exposes and returns the structured project catalog over MCP", async () => {
   const expected = {
+    schemaVersion: 1,
     version: 2,
     projects: [
       {
@@ -57,6 +58,7 @@ it("exposes and returns the structured project catalog over MCP", async () => {
     strictEqual(listedTool.annotations?.readOnlyHint, true);
     strictEqual(listedTool.outputSchema?.type, "object");
     deepStrictEqual(listedTool.outputSchema?.required, [
+      "schemaVersion",
       "version",
       "projects",
       "warnings",

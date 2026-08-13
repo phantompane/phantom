@@ -28,6 +28,7 @@ const ghqProjectSchema = z
 
 export const listProjectsOutputSchema = z
   .object({
+    schemaVersion: z.literal(1),
     version: z.literal(PROJECT_LIST_VERSION),
     projects: z.array(
       z.discriminatedUnion("source", [registryProjectSchema, ghqProjectSchema]),
@@ -53,6 +54,7 @@ export const listProjectsTool: StructuredTool<
       includeGhq: preferences.ghqDiscovery !== false,
     });
     const structuredContent = {
+      schemaVersion: 1,
       version: catalog.version,
       projects: catalog.projects,
       warnings: catalog.warnings,
