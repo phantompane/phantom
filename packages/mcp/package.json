@@ -15,7 +15,9 @@
   "dependencies": {
     "@phantompane/core": "workspace:*",
     "@phantompane/git": "workspace:*",
+    "@phantompane/preferences": "workspace:*",
     "@phantompane/process": "workspace:*",
+    "@phantompane/projects": "workspace:*",
     "@phantompane/utils": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
