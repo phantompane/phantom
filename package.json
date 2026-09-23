@@ -30,7 +30,7 @@
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "oxfmt": "^0.66.0",
     "oxlint": "^1.81.0",
-    "tsdown": "^0.22.14",
+    "tsdown": "^0.23.0",
     "turbo": "^2.10.12",
     "typescript": "npm:@typescript/typescript6@^6.0.0",
     "vitest": "^4.1.11"
