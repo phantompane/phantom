@@ -19,7 +19,7 @@
     "@phantompane/process": "workspace:*",
     "@phantompane/projects": "workspace:*",
     "@phantompane/utils": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
