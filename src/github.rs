@@ -13,9 +13,10 @@ pub struct Checkout {
     pub worktree: String,
     pub path: std::path::PathBuf,
     pub already_exists: bool,
+    pub hook_failure: Option<worktree::HookFailure>,
 }
 
-pub fn checkout(number: &str, base: Option<&str>) -> Result<Checkout> {
+pub fn checkout(number: &str, base: Option<&str>, logger: &Logger) -> Result<Checkout> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let (owner, repo) = repo_info(&cwd)?;
     let issue = fetch_issue(&owner, &repo, number)?;
@@ -31,9 +32,9 @@ pub fn checkout(number: &str, base: Option<&str>) -> Result<Checkout> {
                 pull.head_ref
             )));
         }
-        checkout_pull_request(&cwd, &pull)
+        checkout_pull_request(&cwd, &pull, logger)
     } else {
-        checkout_issue(&cwd, issue.number, base)
+        checkout_issue(&cwd, issue.number, base, logger)
     }
 }
 
@@ -49,7 +50,7 @@ struct PullRequest {
     head_repo: String,
 }
 
-fn checkout_pull_request(cwd: &Path, pull: &PullRequest) -> Result<Checkout> {
+fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Result<Checkout> {
     let git_root = git::git_root(cwd)?;
     let context = context::create(&git_root)?;
     let worktree_name = if pull.fork {
@@ -68,6 +69,7 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest) -> Result<Checkout> {
             worktree: worktree_name,
             path: existing.path.into(),
             already_exists: true,
+            hook_failure: None,
         });
     }
     let upstream = if pull.fork {
@@ -82,8 +84,7 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest) -> Result<Checkout> {
     }
     let files = copy_files(&context);
     let commands = post_commands(&context);
-    let path =
-        worktree::attach_worktree(&context, &worktree_name, &files, &commands, &Logger::off())?;
+    let attached = worktree::attach_worktree(&context, &worktree_name, &files, &commands, logger)?;
     let message = if pull.fork {
         format!(
             "Checked out PR #{} from fork {}",
@@ -98,12 +99,18 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest) -> Result<Checkout> {
     Ok(Checkout {
         message,
         worktree: worktree_name,
-        path,
+        path: attached.path,
         already_exists: false,
+        hook_failure: attached.hook_failure,
     })
 }
 
-fn checkout_issue(cwd: &Path, number: u64, base: Option<&str>) -> Result<Checkout> {
+fn checkout_issue(
+    cwd: &Path,
+    number: u64,
+    base: Option<&str>,
+    logger: &Logger,
+) -> Result<Checkout> {
     let git_root = git::git_root(cwd)?;
     let context = context::create(&git_root)?;
     let name = format!("issues/{number}");
@@ -113,6 +120,7 @@ fn checkout_issue(cwd: &Path, number: u64, base: Option<&str>) -> Result<Checkou
             worktree: name,
             path: existing.path.into(),
             already_exists: true,
+            hook_failure: None,
         });
     }
     let files = copy_files(&context);
@@ -123,13 +131,14 @@ fn checkout_issue(cwd: &Path, number: u64, base: Option<&str>) -> Result<Checkou
         base.unwrap_or("HEAD"),
         &files,
         &commands,
-        &Logger::off(),
+        logger,
     )?;
     Ok(Checkout {
         message: format!("Created worktree '{name}' at {}", created.path.display()),
         worktree: name,
         path: created.path,
         already_exists: false,
+        hook_failure: created.hook_failure,
     })
 }
 

@@ -267,6 +267,183 @@ fn invalid_config_names_the_file_and_the_problem() {
 }
 
 #[test]
+fn github_checkout_logger_follows_the_caller() {
+    let repo = Repo::new();
+    fs::write(
+        repo.repo.join("phantom.config.json"),
+        r#"{"postCreate":{"commands":["true"]}}"#,
+    )
+    .expect("config");
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let gh = bin.join("gh");
+    fs::write(
+        &gh,
+        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nif [ \"$1\" = \"api\" ]; then\n  printf '%s\\n' '{\"number\":7}'\n  exit 0\nfi\nprintf '%s\\n' \"unexpected gh: $*\" >&2\nexit 1\n",
+    )
+    .expect("gh");
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(&gh).expect("meta").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&gh, perms).expect("chmod");
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let cli = repo
+        .command(env!("CARGO_BIN_EXE_phantom"), &["github", "checkout", "7"])
+        .env("PATH", &path)
+        .output()
+        .expect("cli");
+    assert!(
+        cli.status.success(),
+        "{}\n{}",
+        text(&cli.stdout),
+        text(&cli.stderr)
+    );
+    assert!(
+        text(&cli.stdout).contains("Executing: true"),
+        "CLI checkout should log the hook:\n{}",
+        text(&cli.stdout)
+    );
+
+    let mcp = mcp_tool(
+        &repo,
+        &[("PATH", path.as_str())],
+        "phantom_github_checkout",
+        serde_json::json!({"number": "8"}),
+    );
+    assert!(
+        !mcp.stdout.contains("Running post-create"),
+        "MCP stdout must stay JSON-RPC:\n{}",
+        mcp.stdout
+    );
+    assert!(
+        !mcp.stdout.contains("Executing:"),
+        "MCP stdout must stay JSON-RPC:\n{}",
+        mcp.stdout
+    );
+    assert!(
+        mcp.stdout.contains("issues/8"),
+        "MCP should still return the checkout:\n{}\n{}",
+        mcp.stdout,
+        mcp.stderr
+    );
+}
+
+struct McpOutput {
+    stdout: String,
+    stderr: String,
+}
+
+fn mcp_tool(
+    repo: &Repo,
+    env: &[(&str, &str)],
+    tool: &str,
+    arguments: serde_json::Value,
+) -> McpOutput {
+    let mut command = repo.command(env!("CARGO_BIN_EXE_phantom"), &["mcp", "serve"]);
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let mut child = command.spawn().expect("mcp");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let call = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": tool, "arguments": arguments}
+    });
+    use std::io::Write;
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"test","version":"0"}}}}}}"#
+    )
+    .expect("init");
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#
+    )
+    .expect("initialized");
+    writeln!(stdin, "{call}").expect("call");
+    drop(stdin);
+    let pid = child.id();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(8));
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .status();
+    });
+    let output = child.wait_with_output().expect("wait");
+    McpOutput {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    }
+}
+
+#[test]
+fn post_create_failure_reports_the_created_worktree() {
+    let repo = Repo::new();
+    fs::write(
+        repo.repo.join("phantom.config.json"),
+        r#"{"postCreate":{"commands":["phantom-missing-post-create-bin"]}}"#,
+    )
+    .expect("config");
+    let created = repo.phantom(&["create", "feature/hooks"]);
+    let worktree = repo.repo.join(".git/phantom/worktrees/feature/hooks");
+    assert!(
+        worktree.join("README.md").is_file(),
+        "worktree should exist after a post-create failure"
+    );
+    let stdout = text(&created.stdout);
+    let stderr = text(&created.stderr);
+    assert!(
+        stdout.contains("Created worktree 'feature/hooks' at "),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains(&worktree.to_string_lossy().to_string()),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("Executing: phantom-missing-post-create-bin"),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stderr.contains("Warning:"),
+        "stderr should warn, not look like creation failed: {stderr}"
+    );
+    assert!(
+        stderr.contains("phantom-missing-post-create-bin"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("127"), "{stderr}");
+    assert_eq!(created.status.code(), Some(127), "{stderr}");
+
+    repo.git(&["branch", "existing-hook"]);
+    let attached = repo.phantom(&["attach", "existing-hook"]);
+    let attached_path = repo.repo.join(".git/phantom/worktrees/existing-hook");
+    assert!(attached_path.join("README.md").is_file());
+    assert!(
+        text(&attached.stdout).contains("Attached phantom: existing-hook"),
+        "{}",
+        text(&attached.stdout)
+    );
+    assert!(
+        text(&attached.stderr).contains("Warning:"),
+        "{}",
+        text(&attached.stderr)
+    );
+    assert_eq!(attached.status.code(), Some(127));
+}
+
+#[test]
 fn copies_config_files_and_runs_post_create() {
     let repo = Repo::new();
     fs::write(repo.repo.join(".env.local"), "API_KEY=test-value\n").expect("env");
