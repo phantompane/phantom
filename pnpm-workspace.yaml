@@ -4,3 +4,8 @@ packages:
   - "packages/cli/dist"
 
 minimumReleaseAge: 20160
+# tsc-ts 0.0.2 is the typechecker. It and the @tsc-ts platform binaries
+# published 2026-10-17, inside the 14-day window. Exempt only these.
+minimumReleaseAgeExclude:
+  - tsc-ts
+  - "@tsc-ts/*"

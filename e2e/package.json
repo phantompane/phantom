@@ -5,7 +5,7 @@
   "scripts": {
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc-ts --noEmit",
     "test": "vitest run"
   },
   "version": "6.3.2"

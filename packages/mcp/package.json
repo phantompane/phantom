@@ -8,7 +8,7 @@
   "scripts": {
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc-ts --noEmit",
     "test": "vitest run --root ../.. packages/mcp/src",
     "inspect": "npx @modelcontextprotocol/inspector node --no-warnings --experimental-strip-types src/dev.ts"
   },

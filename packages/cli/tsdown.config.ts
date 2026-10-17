@@ -2,6 +2,10 @@ import { chmod, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { defineConfig } from "tsdown";
 
+// tsc-ts typechecks this package, but it does not replace this bundle.
+// The published CLI is one file with dependencies inlined. tsc-ts emits
+// per file, and allowImportingTsExtensions rejects emit unless noEmit,
+// emitDeclarationOnly, or rewriteRelativeImportExtensions is set.
 export default defineConfig({
   entry: ["src/bin/*.ts"],
   root: "src/bin",
