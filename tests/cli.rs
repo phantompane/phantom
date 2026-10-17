@@ -73,6 +73,53 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim_end().to_string()
 }
 
+fn phantom_color(
+    repo: &Repo,
+    args: &[&str],
+    no_color: Option<&str>,
+    force_color: Option<&str>,
+) -> std::process::Output {
+    let mut command = repo.command(env!("CARGO_BIN_EXE_phantom"), args);
+    command.env_remove("NO_COLOR").env_remove("FORCE_COLOR");
+    if let Some(value) = no_color {
+        command.env("NO_COLOR", value);
+    }
+    if let Some(value) = force_color {
+        command.env("FORCE_COLOR", value);
+    }
+    command.output().expect("phantom")
+}
+
+#[test]
+fn help_is_plain_when_stdout_is_not_a_tty() {
+    let repo = Repo::new();
+    let help = phantom_color(&repo, &["--help"], None, None);
+    assert!(help.status.success());
+    assert!(
+        !text(&help.stdout).contains('\u{1b}'),
+        "piped help should not include ANSI color: {}",
+        text(&help.stdout)
+    );
+    let list = phantom_color(&repo, &["list", "--help"], None, None);
+    assert!(list.status.success());
+    assert!(!text(&list.stdout).contains('\u{1b}'));
+
+    let forced = phantom_color(&repo, &["--help"], None, Some("1"));
+    assert!(
+        text(&forced.stdout).contains('\u{1b}'),
+        "FORCE_COLOR=1 should color piped help"
+    );
+
+    let no_color = phantom_color(&repo, &["--help"], Some("1"), Some("1"));
+    assert!(
+        !text(&no_color.stdout).contains('\u{1b}'),
+        "NO_COLOR disables color even when FORCE_COLOR is set"
+    );
+
+    let disabled = phantom_color(&repo, &["github", "checkout", "--help"], None, Some("0"));
+    assert!(!text(&disabled.stdout).contains('\u{1b}'));
+}
+
 #[test]
 fn version_help_and_unknown_command() {
     let repo = Repo::new();

@@ -212,13 +212,57 @@ fn width() -> usize {
 }
 
 fn bold(text: &str) -> String {
-    format!("\u{1b}[1m{text}\u{1b}[0m")
+    styled("1", text)
 }
 
 fn dim(text: &str) -> String {
-    format!("\u{1b}[2m{text}\u{1b}[0m")
+    styled("2", text)
 }
 
 fn cyan(text: &str) -> String {
-    format!("\u{1b}[36m{text}\u{1b}[0m")
+    styled("36", text)
+}
+
+fn styled(code: &str, text: &str) -> String {
+    if colors_enabled() {
+        format!("\u{1b}[{code}m{text}\u{1b}[0m")
+    } else {
+        text.to_string()
+    }
+}
+
+fn colors_enabled() -> bool {
+    color_enabled(
+        std::env::var("NO_COLOR").ok().as_deref(),
+        std::env::var("FORCE_COLOR").ok().as_deref(),
+        std::io::stdout().is_terminal(),
+    )
+}
+
+fn color_enabled(no_color: Option<&str>, force_color: Option<&str>, stdout_is_tty: bool) -> bool {
+    if no_color.is_some_and(|value| !value.is_empty()) {
+        return false;
+    }
+    if let Some(value) = force_color {
+        return value != "0" && !value.eq_ignore_ascii_case("false");
+    }
+    stdout_is_tty
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_follows_tty_no_color_and_force_color() {
+        assert!(!color_enabled(None, None, false));
+        assert!(color_enabled(None, None, true));
+        assert!(!color_enabled(Some("1"), None, true));
+        assert!(color_enabled(Some(""), None, true));
+        assert!(color_enabled(None, Some("1"), false));
+        assert!(color_enabled(None, Some(""), false));
+        assert!(!color_enabled(None, Some("0"), true));
+        assert!(!color_enabled(None, Some("false"), true));
+        assert!(!color_enabled(Some("1"), Some("1"), true));
+    }
 }
