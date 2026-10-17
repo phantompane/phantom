@@ -5,7 +5,7 @@
 - Phantom is a Rust CLI. The crate lives at the repository root (`Cargo.toml`, `src/`, `tests/`).
 - Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `tmux`, `github`, `mcp`, `help`.
 - Shell completion scripts are embedded from `completions/`. Command help text is generated from `help-data.json`.
-- Docs and assets: `docs/`. Project config example: `phantom.config.json`.
+- Project config example: `phantom.config.json`.
 - Principles: single responsibility, a centralized git executor, and `Result` for every fallible path.
 
 ## Build, Test, and Development Commands
@@ -22,7 +22,7 @@
 - Rust 2021. `rustfmt` is the formatter.
 - Non-test code must not use `unwrap()`, `expect()`, or `panic!`. Propagate errors with `Result` and `thiserror`. The crate denies `clippy::unwrap_used`, `clippy::expect_used`, and `clippy::panic` outside tests.
 - Use PascalCase for types, camelCase for functions and variables, and snake_case for modules.
-- Keep CLI flags and config keys consistent with `phantom.config.json` and the docs.
+- Keep CLI flags and config keys consistent with `phantom.config.json`.
 - All files, issues, and pull requests must be written in English. Follow existing patterns.
 
 ## Testing Guidelines
