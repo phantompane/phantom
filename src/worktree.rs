@@ -440,7 +440,20 @@ pub fn exec_in_worktree(
     env: &[(&str, &str)],
 ) -> Result<i32> {
     let worktree = find_worktree(git_root, name, false, None)?;
-    process::inherit(command, args, Some(Path::new(&worktree.path)), env)
+    let path = PathBuf::from(&worktree.path);
+    let owned = phantom_env(&worktree.name, &path);
+    let mut pairs = owned
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
+    for (key, value) in env {
+        if let Some(existing) = pairs.iter_mut().find(|(name, _)| *name == *key) {
+            existing.1 = value;
+        } else {
+            pairs.push((key, value));
+        }
+    }
+    process::inherit(command, args, Some(&path), &pairs)
 }
 
 pub fn select_with_fzf(git_root: &Path, exclude_default: bool) -> Result<Option<WorktreeInfo>> {
@@ -544,7 +557,12 @@ fn run_action(
                 "\nExecuting command in worktree '{name}': {command}"
             ));
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-            let code = process::inherit(&shell, &["-c", &command], Some(path), &[])?;
+            let env = phantom_env(name, path);
+            let pairs = env
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str()))
+                .collect::<Vec<_>>();
+            let code = process::inherit(&shell, &["-c", &command], Some(path), &pairs)?;
             if code == 0 {
                 Ok(return_success_code.then_some(code))
             } else {
