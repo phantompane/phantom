@@ -1,7 +1,5 @@
 # Phantom
 
-[日本語](./README.ja.md)
-
 Development of Phantom, the Git worktree manager, has ended.
 
 Phantom is being rebuilt from scratch as a tool designed to work closely with AI agents. That work is in progress, and there are no install instructions yet.
