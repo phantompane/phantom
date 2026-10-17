@@ -4,11 +4,15 @@ import { dirname, join } from "node:path";
 import { describe, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { ZSH_COMPLETION_SCRIPT } from "./phantom-zsh.ts";
+import { resolveCompletionScript } from "../test-utils/resolve-completion-script.ts";
 import { runZshCompletion } from "../test-utils/run-zsh-completion.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const completionScriptPath = join(__dirname, "phantom.zsh");
+const completionScriptPath = resolveCompletionScript(
+  "zsh",
+  join(__dirname, "phantom.zsh"),
+);
 
 describe("phantom.zsh completion", () => {
   it("tests the completion script emitted by the CLI", () => {

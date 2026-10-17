@@ -17,6 +17,7 @@
     "dist/**",
     "**/dist/**",
     "package.json",
-    ".claude/**"
+    ".claude/**",
+    "rust/**"
   ]
 }

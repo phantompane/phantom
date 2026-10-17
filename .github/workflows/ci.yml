@@ -123,3 +123,27 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y fish
       - name: Run shell tests
         run: pnpm test:shell:fish
+
+  # Experimental Rust port. This job is informational: it is not part of the
+  # required pull request checks configured for the TypeScript pipeline.
+  rust:
+    name: Rust (experimental)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Check formatting
+        working-directory: rust
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        working-directory: rust
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        working-directory: rust
+        run: cargo test
+      - name: Build release binary
+        working-directory: rust
+        run: cargo build --release

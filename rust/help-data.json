@@ -1,0 +1,1007 @@
+{
+  "commands": [
+    {
+      "name": "create",
+      "description": "Create a new Git worktree (phantom)"
+    },
+    {
+      "name": "attach",
+      "description": "Attach to an existing branch by creating a new worktree"
+    },
+    {
+      "name": "list",
+      "description": "List all Git worktrees (phantoms)"
+    },
+    {
+      "name": "where",
+      "description": "Output the filesystem path of a specific worktree"
+    },
+    {
+      "name": "delete",
+      "description": "Delete a Git worktree (phantom)"
+    },
+    {
+      "name": "exec",
+      "description": "Execute a command in a worktree directory"
+    },
+    {
+      "name": "edit",
+      "description": "Open a worktree in your configured editor"
+    },
+    {
+      "name": "ai",
+      "description": "Launch your configured AI coding assistant in a worktree"
+    },
+    {
+      "name": "shell",
+      "description": "Open an interactive shell in a worktree directory"
+    },
+    {
+      "name": "preferences",
+      "description": "Manage phantom user preferences (git config)"
+    },
+    {
+      "name": "version",
+      "description": "Display phantom version information"
+    },
+    {
+      "name": "completion",
+      "description": "Generate shell completion scripts"
+    },
+    {
+      "name": "mcp",
+      "description": "Manage MCP server for AI assistants"
+    },
+    {
+      "name": "project",
+      "description": "Manage and discover Git projects"
+    },
+    {
+      "name": "github",
+      "description": "GitHub-specific commands for phantom"
+    },
+    {
+      "name": "gh",
+      "description": "GitHub-specific commands for phantom (alias)"
+    }
+  ],
+  "helps": {
+    "create": {
+      "name": "create",
+      "description": "Create a new Git worktree",
+      "usage": "phantom create [name] [options]",
+      "options": [
+        {
+          "name": "shell",
+          "short": "s",
+          "type": "boolean",
+          "description": "Open an interactive shell in the new worktree after creation"
+        },
+        {
+          "name": "exec",
+          "short": "x",
+          "type": "string",
+          "description": "Execute a command in the new worktree after creation",
+          "example": "--exec 'npm install'"
+        },
+        {
+          "name": "tmux",
+          "short": "t",
+          "type": "boolean",
+          "description": "Open the worktree in a new tmux window (requires being inside tmux)"
+        },
+        {
+          "name": "tmux-vertical",
+          "type": "boolean",
+          "description": "Open the worktree in a vertical tmux pane (requires being inside tmux)"
+        },
+        {
+          "name": "tmux-horizontal",
+          "type": "boolean",
+          "description": "Open the worktree in a horizontal tmux pane (requires being inside tmux)"
+        },
+        {
+          "name": "copy-file",
+          "type": "string",
+          "multiple": true,
+          "description": "Copy specified files from the current worktree to the new one. Can be used multiple times",
+          "example": "--copy-file .env --copy-file config.local.json"
+        },
+        {
+          "name": "base",
+          "type": "string",
+          "description": "Branch or commit to create the new worktree from (defaults to HEAD)",
+          "example": "--base main, --base origin/release, --base feature"
+        }
+      ],
+      "examples": [
+        {
+          "description": "Create a new worktree with an auto-generated name",
+          "command": "phantom create"
+        },
+        {
+          "description": "Create a new worktree named 'feature-auth'",
+          "command": "phantom create feature-auth"
+        },
+        {
+          "description": "Create a worktree and open a shell in it",
+          "command": "phantom create bugfix-123 --shell"
+        },
+        {
+          "description": "Create a worktree and run npm install",
+          "command": "phantom create new-feature --exec 'npm install'"
+        },
+        {
+          "description": "Create a worktree in a new tmux window",
+          "command": "phantom create experiment --tmux"
+        },
+        {
+          "description": "Create a worktree and copy environment files",
+          "command": "phantom create staging --copy-file .env --copy-file database.yml"
+        },
+        {
+          "description": "Create a worktree from main branch",
+          "command": "phantom create feature-new --base main"
+        },
+        {
+          "description": "Create a worktree from remote branch",
+          "command": "phantom create hotfix --base origin/production"
+        }
+      ],
+      "notes": [
+        "If name is omitted, a random human-readable name is generated automatically",
+        "The worktree name will be used as the branch name",
+        "Only one of --shell, --exec, or --tmux options can be used at a time",
+        "File copying can also be configured in phantom.config.json"
+      ]
+    },
+    "attach": {
+      "name": "attach",
+      "description": "Attach to an existing branch by creating a new worktree",
+      "usage": "phantom attach <branch-name> [options]",
+      "options": [
+        {
+          "name": "shell",
+          "short": "s",
+          "type": "boolean",
+          "description": "Open an interactive shell in the worktree after attaching"
+        },
+        {
+          "name": "exec",
+          "short": "x",
+          "type": "string",
+          "description": "Execute a command in the worktree after attaching",
+          "example": "--exec 'git pull'"
+        },
+        {
+          "name": "tmux",
+          "short": "t",
+          "type": "boolean",
+          "description": "Open the worktree in a new tmux window after attaching"
+        },
+        {
+          "name": "tmux-vertical",
+          "type": "boolean",
+          "description": "Open the worktree in a vertical tmux pane after attaching"
+        },
+        {
+          "name": "tmux-v",
+          "type": "boolean",
+          "description": "Alias for --tmux-vertical"
+        },
+        {
+          "name": "tmux-horizontal",
+          "type": "boolean",
+          "description": "Open the worktree in a horizontal tmux pane after attaching"
+        },
+        {
+          "name": "tmux-h",
+          "type": "boolean",
+          "description": "Alias for --tmux-horizontal"
+        },
+        {
+          "name": "copy-file",
+          "type": "string",
+          "multiple": true,
+          "description": "Copy specified files from the current worktree before attaching. Can be used multiple times",
+          "example": "--copy-file .env --copy-file .npmrc"
+        }
+      ],
+      "examples": [
+        {
+          "description": "Attach to an existing branch",
+          "command": "phantom attach main"
+        },
+        {
+          "description": "Attach to a branch and open a shell",
+          "command": "phantom attach feature-branch --shell"
+        },
+        {
+          "description": "Attach to a branch and pull latest changes",
+          "command": "phantom attach develop --exec 'git pull'"
+        },
+        {
+          "description": "Attach and open the worktree in a tmux window",
+          "command": "phantom attach feature-branch --tmux"
+        },
+        {
+          "description": "Attach and copy shared environment files",
+          "command": "phantom attach feature-branch --copy-file .env --copy-file .npmrc"
+        }
+      ],
+      "notes": [
+        "The branch must already exist locally",
+        "To work with remote branches, first checkout the branch with git",
+        "Only one of --shell, --exec, or tmux options can be used at a time",
+        "The tmux options require running phantom inside an active tmux session"
+      ]
+    },
+    "list": {
+      "name": "list",
+      "description": "List all Git worktrees",
+      "usage": "phantom list [options]",
+      "options": [
+        {
+          "name": "--fzf",
+          "type": "boolean",
+          "description": "Use fzf for interactive selection"
+        },
+        {
+          "name": "--no-default",
+          "type": "boolean",
+          "description": "Exclude the default worktree from the list"
+        },
+        {
+          "name": "--names",
+          "type": "boolean",
+          "description": "Output only worktree names (for scripts and completion)"
+        }
+      ],
+      "examples": [
+        {
+          "description": "List all worktrees",
+          "command": "phantom list"
+        },
+        {
+          "description": "List worktrees with interactive fzf selection",
+          "command": "phantom list --fzf"
+        },
+        {
+          "description": "List only worktree names",
+          "command": "phantom list --names"
+        },
+        {
+          "description": "List only non-default worktrees",
+          "command": "phantom list --no-default"
+        }
+      ],
+      "notes": [
+        "Shows all worktrees with their paths and associated branches",
+        "The default worktree is included unless --no-default is set",
+        "The main worktree is marked as '(bare)' if using a bare repository",
+        "With --fzf, outputs only the selected worktree name",
+        "Use --names for shell completion scripts and automation"
+      ]
+    },
+    "where": {
+      "name": "where",
+      "description": "Output the filesystem path of a specific worktree",
+      "usage": "phantom where <worktree-name> [options]",
+      "options": [
+        {
+          "name": "--fzf",
+          "type": "boolean",
+          "description": "Use fzf for interactive selection"
+        }
+      ],
+      "examples": [
+        {
+          "description": "Get the path of a worktree",
+          "command": "phantom where feature-auth"
+        },
+        {
+          "description": "Change directory to a worktree",
+          "command": "cd $(phantom where staging)"
+        },
+        {
+          "description": "Get path with interactive fzf selection",
+          "command": "phantom where --fzf"
+        },
+        {
+          "description": "Change directory using fzf selection",
+          "command": "cd $(phantom where --fzf)"
+        }
+      ],
+      "notes": [
+        "Outputs only the path, making it suitable for use in scripts",
+        "Exits with an error code if the worktree doesn't exist",
+        "With --fzf, you can interactively select the worktree"
+      ]
+    },
+    "delete": {
+      "name": "delete",
+      "description": "Delete one or more Git worktrees",
+      "usage": "phantom delete <name...> [options]",
+      "options": [
+        {
+          "name": "force",
+          "short": "f",
+          "type": "boolean",
+          "description": "Force deletion even if the worktree has uncommitted or unpushed changes"
+        },
+        {
+          "name": "--current",
+          "type": "boolean",
+          "description": "Delete the current worktree"
+        },
+        {
+          "name": "--keep-branch",
+          "type": "boolean",
+          "description": "Delete the worktree but keep its branch"
+        },
+        {
+          "name": "--fzf",
+          "type": "boolean",
+          "description": "Use fzf for interactive selection"
+        }
+      ],
+      "examples": [
+        {
+          "description": "Delete a worktree",
+          "command": "phantom delete feature-auth"
+        },
+        {
+          "description": "Delete multiple worktrees in one command",
+          "command": "phantom delete feature-auth docs-cleanup spike-login"
+        },
+        {
+          "description": "Force delete a worktree with uncommitted changes",
+          "command": "phantom delete experimental --force"
+        },
+        {
+          "description": "Delete the current worktree",
+          "command": "phantom delete --current"
+        },
+        {
+          "description": "Delete a worktree while keeping its branch",
+          "command": "phantom delete feature-auth --keep-branch"
+        },
+        {
+          "description": "Delete a worktree with interactive fzf selection",
+          "command": "phantom delete --fzf"
+        }
+      ],
+      "notes": [
+        "By default, deletion will fail if the worktree has uncommitted changes",
+        "You can pass multiple worktree names to delete them at once",
+        "The associated branch will also be deleted if it's not checked out elsewhere",
+        "Use --keep-branch to delete only the worktree and preserve the branch",
+        "With --fzf, you can interactively select the worktree to delete"
+      ]
+    },
+    "exec": {
+      "name": "exec",
+      "description": "Execute a command in a worktree directory",
+      "usage": "phantom exec [options] <worktree-name> <command> [args...]",
+      "options": [
+        {
+          "name": "--fzf",
+          "type": "boolean",
+          "description": "Use fzf for interactive worktree selection"
+        },
+        {
+          "name": "--tmux, -t",
+          "type": "boolean",
+          "description": "Execute command in new tmux window"
+        },
+        {
+          "name": "--tmux-vertical, --tmux-v",
+          "type": "boolean",
+          "description": "Execute command in vertical split pane"
+        },
+        {
+          "name": "--tmux-horizontal, --tmux-h",
+          "type": "boolean",
+          "description": "Execute command in horizontal split pane"
+        }
+      ],
+      "examples": [
+        {
+          "description": "Run npm test in a worktree",
+          "command": "phantom exec feature-auth npm test"
+        },
+        {
+          "description": "Check git status in a worktree",
+          "command": "phantom exec bugfix-123 git status"
+        },
+        {
+          "description": "Run a complex command with arguments",
+          "command": "phantom exec staging npm run build -- --production"
+        },
+        {
+          "description": "Execute with interactive selection",
+          "command": "phantom exec --fzf npm run dev"
+        },
+        {
+          "description": "Run dev server in new tmux window",
+          "command": "phantom exec --tmux feature-auth npm run dev"
+        },
+        {
+          "description": "Run tests in vertical split pane",
+          "command": "phantom exec --tmux-v feature-auth npm test"
+        },
+        {
+          "description": "Interactive selection with tmux",
+          "command": "phantom exec --fzf --tmux npm run dev"
+        }
+      ],
+      "notes": [
+        "The command is executed with the worktree directory as the working directory",
+        "All arguments after the worktree name are passed to the command",
+        "The exit code of the executed command is preserved",
+        "With --fzf, select the worktree interactively before executing the command",
+        "Tmux options require being inside a tmux session"
+      ]
+    },
+    "edit": {
+      "name": "edit",
+      "description": "Open a worktree in your configured editor",
+      "usage": "phantom edit <worktree-name> [path]",
+      "examples": [
+        {
+          "description": "Open the worktree root in your configured editor",
+          "command": "phantom edit feature-auth"
+        },
+        {
+          "description": "Edit a specific file in a worktree",
+          "command": "phantom edit feature-auth README.md"
+        }
+      ],
+      "notes": [
+        "Uses the phantom.editor preference when set (`phantom preferences set editor <command>`), falling back to $EDITOR",
+        "The editor launches inside the worktree so relative paths resolve there"
+      ]
+    },
+    "ai": {
+      "name": "ai",
+      "description": "Launch your configured AI coding assistant in a worktree",
+      "usage": "phantom ai <worktree-name>",
+      "examples": [
+        {
+          "description": "Start the AI assistant in a worktree",
+          "command": "phantom ai feature-auth"
+        }
+      ],
+      "notes": [
+        "Configure the assistant first with 'phantom preferences set ai <command>' (stored as phantom.ai in git config --global, e.g., 'claude' or 'codex --full-auto').",
+        "The assistant runs inside the worktree so it can access project files and context."
+      ]
+    },
+    "shell": {
+      "name": "shell",
+      "description": "Open an interactive shell in a worktree directory",
+      "usage": "phantom shell <worktree-name> [options]",
+      "options": [
+        {
+          "name": "--fzf",
+          "type": "boolean",
+          "description": "Use fzf for interactive selection"
+        },
+        {
+          "name": "--tmux, -t",
+          "type": "boolean",
+          "description": "Open shell in new tmux window"
+        },
+        {
+          "name": "--tmux-vertical, --tmux-v",
+          "type": "boolean",
+          "description": "Open shell in vertical split pane"
+        },
+        {
+          "name": "--tmux-horizontal, --tmux-h",
+          "type": "boolean",
+          "description": "Open shell in horizontal split pane"
+        }
+      ],
+      "examples": [
+        {
+          "description": "Open a shell in a worktree",
+          "command": "phantom shell feature-auth"
+        },
+        {
+          "description": "Open a shell with interactive fzf selection",
+          "command": "phantom shell --fzf"
+        },
+        {
+          "description": "Open a shell in a new tmux window",
+          "command": "phantom shell feature-auth --tmux"
+        },
+        {
+          "description": "Open a shell in a vertical tmux pane",
+          "command": "phantom shell feature-auth --tmux-v"
+        },
+        {
+          "description": "Interactive selection with tmux",
+          "command": "phantom shell --fzf --tmux"
+        }
+      ],
+      "notes": [
+        "Uses your default shell from the SHELL environment variable",
+        "The shell starts with the worktree directory as the working directory",
+        "Type 'exit' to return to your original directory",
+        "With --fzf, you can interactively select the worktree to enter",
+        "Tmux options require being inside a tmux session"
+      ]
+    },
+    "preferences": {
+      "name": "preferences",
+      "usage": "phantom preferences <subcommand>",
+      "description": "Manage phantom user preferences stored in git config (global)",
+      "examples": [
+        {
+          "command": "phantom preferences get editor",
+          "description": "Show the configured editor preference"
+        },
+        {
+          "command": "phantom preferences set editor code",
+          "description": "Set the editor preference (stored as phantom.editor in git config --global)"
+        },
+        {
+          "command": "phantom preferences set ai \"codex --full-auto\"",
+          "description": "Set the AI assistant preference (stored as phantom.ai in git config --global)"
+        },
+        {
+          "command": "phantom preferences set worktreesDirectory ../phantom-worktrees",
+          "description": "Store a custom worktreesDirectory (relative to the Git repository root) for all commands"
+        },
+        {
+          "command": "phantom preferences set directoryNameSeparator \"-\"",
+          "description": "Store a separator for flattening worktree directory names while keeping branch names unchanged"
+        },
+        {
+          "command": "phantom preferences set keepBranch true",
+          "description": "Keep branches by default when deleting worktrees with phantom delete or MCP"
+        },
+        {
+          "command": "phantom preferences set ghqDiscovery false",
+          "description": "Disable automatic project discovery through ghq"
+        },
+        {
+          "command": "phantom preferences remove editor",
+          "description": "Remove the editor preference (fallback to env/default)"
+        }
+      ],
+      "notes": [
+        "Subcommands:",
+        "  get <key>    Show a preference value",
+        "  set <key>    Set a preference value",
+        "  remove <key> Remove a preference value",
+        "",
+        "Preferences are saved in git config with the 'phantom.' prefix (global scope).",
+        "Supported keys:",
+        "  editor - used by 'phantom edit', preferred over $EDITOR",
+        "  ai - used by 'phantom ai'",
+        "  worktreesDirectory - path relative to the Git repo root for storing worktrees (defaults to .git/phantom/worktrees)",
+        "  directoryNameSeparator - replaces '/' in worktree directory names only (defaults to / for nested directories)",
+        "  keepBranch - keeps the branch when deleting a worktree (defaults to false)",
+        "  ghqDiscovery - discovers ghq-managed repositories as projects (defaults to true)"
+      ]
+    },
+    "preferences get": {
+      "name": "preferences get",
+      "usage": "phantom preferences get <key>",
+      "description": "Show a preference value (reads git config --global phantom.<key>)",
+      "examples": [
+        {
+          "command": "phantom preferences get editor",
+          "description": "Show the editor preference"
+        },
+        {
+          "command": "phantom preferences get ai",
+          "description": "Show the AI assistant preference"
+        },
+        {
+          "command": "phantom preferences get worktreesDirectory",
+          "description": "Show the preferred worktrees directory (relative to repo root)"
+        },
+        {
+          "command": "phantom preferences get directoryNameSeparator",
+          "description": "Show the preferred worktree directory name separator"
+        },
+        {
+          "command": "phantom preferences get keepBranch",
+          "description": "Show whether delete keeps branches by default"
+        },
+        {
+          "command": "phantom preferences get ghqDiscovery",
+          "description": "Show whether ghq project discovery is enabled"
+        }
+      ],
+      "notes": [
+        "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery"
+      ]
+    },
+    "preferences set": {
+      "name": "preferences set",
+      "usage": "phantom preferences set <key> <value>",
+      "description": "Set a preference value (writes git config --global phantom.<key>)",
+      "examples": [
+        {
+          "command": "phantom preferences set editor code",
+          "description": "Set VS Code as the editor"
+        },
+        {
+          "command": "phantom preferences set ai claude",
+          "description": "Configure the AI assistant command"
+        },
+        {
+          "command": "phantom preferences set worktreesDirectory ../phantom-worktrees",
+          "description": "Store worktrees in ../phantom-worktrees relative to the Git repository root"
+        },
+        {
+          "command": "phantom preferences set directoryNameSeparator \"-\"",
+          "description": "Flatten worktree directory names such as feature/test to feature-test"
+        },
+        {
+          "command": "phantom preferences set keepBranch true",
+          "description": "Keep branches when deleting worktrees by default"
+        },
+        {
+          "command": "phantom preferences set ghqDiscovery false",
+          "description": "Disable automatic project discovery through ghq"
+        }
+      ],
+      "notes": [
+        "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery",
+        "For worktreesDirectory, provide a path relative to the Git repository root; defaults to .git/phantom/worktrees when unset",
+        "For directoryNameSeparator, '/' keeps nested directories; any other string replaces '/' only in the directory path",
+        "For keepBranch, use true to preserve branches on delete or false to keep the default branch deletion behavior",
+        "For ghqDiscovery, use false to list only projects registered directly with Phantom"
+      ]
+    },
+    "preferences remove": {
+      "name": "preferences remove",
+      "usage": "phantom preferences remove <key>",
+      "description": "Remove a preference value (git config --global --unset phantom.<key>)",
+      "examples": [
+        {
+          "command": "phantom preferences remove editor",
+          "description": "Unset the editor preference"
+        },
+        {
+          "command": "phantom preferences remove ai",
+          "description": "Unset the AI assistant preference"
+        },
+        {
+          "command": "phantom preferences remove worktreesDirectory",
+          "description": "Unset the custom worktrees directory preference"
+        },
+        {
+          "command": "phantom preferences remove directoryNameSeparator",
+          "description": "Restore nested worktree directories that follow branch slashes"
+        },
+        {
+          "command": "phantom preferences remove keepBranch",
+          "description": "Restore the default behavior of deleting branches with worktrees"
+        },
+        {
+          "command": "phantom preferences remove ghqDiscovery",
+          "description": "Restore the default behavior of discovering ghq projects"
+        }
+      ],
+      "notes": [
+        "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery"
+      ]
+    },
+    "version": {
+      "name": "version",
+      "description": "Display phantom version information",
+      "usage": "phantom version",
+      "examples": [
+        {
+          "description": "Show version",
+          "command": "phantom version"
+        }
+      ],
+      "notes": [
+        "Also accessible via 'phantom --version' or 'phantom -v'"
+      ]
+    },
+    "completion": {
+      "name": "completion",
+      "usage": "phantom completion <shell>",
+      "description": "Generate shell completion scripts for fish, zsh, or bash",
+      "examples": [
+        {
+          "command": "phantom completion fish | source",
+          "description": "Load Fish completion (add to ~/.config/fish/config.fish for persistence)"
+        },
+        {
+          "command": "eval \"$(phantom completion zsh)\"",
+          "description": "Load Zsh completion (add to .zshrc for persistence)"
+        },
+        {
+          "command": "eval \"$(phantom completion bash)\"",
+          "description": "Load Bash completion (add to .bashrc for persistence)"
+        }
+      ],
+      "notes": [
+        "Supported shells: fish, zsh, bash",
+        "For Fish: add the source command to ~/.config/fish/config.fish for persistence",
+        "For Zsh: add the eval command to your .zshrc for persistence",
+        "For Bash: requires bash-completion v2, add the eval command to your .bashrc for persistence"
+      ]
+    },
+    "mcp": {
+      "name": "mcp",
+      "description": "Manage MCP (Model Context Protocol) server for Phantom",
+      "usage": "phantom mcp <subcommand> [options]",
+      "options": [
+        {
+          "name": "help",
+          "short": "h",
+          "type": "boolean",
+          "description": "Show help message"
+        }
+      ],
+      "examples": [
+        {
+          "description": "Start the MCP server",
+          "command": "phantom mcp serve"
+        }
+      ],
+      "notes": [
+        "Subcommands:",
+        "  serve    Start the MCP server with stdio transport",
+        "",
+        "The MCP server allows AI assistants to manage Git worktrees through the Model Context Protocol."
+      ]
+    },
+    "project": {
+      "name": "project",
+      "description": "Manage and discover Git projects",
+      "usage": "phantom project <subcommand> [options]",
+      "examples": [
+        {
+          "description": "Register the current Git repository",
+          "command": "phantom project add"
+        },
+        {
+          "description": "List available projects for an AI agent",
+          "command": "phantom project list --json"
+        },
+        {
+          "description": "Remove a project from the registry",
+          "command": "phantom project remove proj_550e8400-e29b-41d4-a716-446655440000"
+        }
+      ],
+      "notes": [
+        "Available subcommands: add, list, remove",
+        "Removing a project only updates Phantom's registry; it never deletes the Git repository."
+      ]
+    },
+    "project add": {
+      "name": "project add",
+      "description": "Register a Git repository as a Phantom project",
+      "usage": "phantom project add [path] [options]",
+      "options": [
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Output the result as JSON"
+        }
+      ],
+      "notes": [
+        "When path is omitted, the current directory is used.",
+        "Adding an already registered repository succeeds without creating a duplicate."
+      ]
+    },
+    "project list": {
+      "name": "project list",
+      "description": "List registered and discovered Phantom projects",
+      "usage": "phantom project list [options]",
+      "options": [
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Output a versioned JSON object for automation"
+        },
+        {
+          "name": "names",
+          "type": "boolean",
+          "description": "Output only project names"
+        },
+        {
+          "name": "paths",
+          "type": "boolean",
+          "description": "Output only project root paths"
+        }
+      ],
+      "notes": [
+        "Only one output format option can be used at a time.",
+        "Repositories managed by ghq are discovered automatically unless the ghqDiscovery preference is false.",
+        "ghq is optional; when it is not installed, only registered projects are listed."
+      ]
+    },
+    "project remove": {
+      "name": "project remove",
+      "description": "Remove a Git project from Phantom's registry",
+      "usage": "phantom project remove <id|name|path> [options]",
+      "options": [
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Output the result as JSON"
+        }
+      ],
+      "notes": [
+        "The project can be specified by id, name, or root path.",
+        "If a name matches multiple projects, use an id or path instead.",
+        "This command never deletes the Git repository or its worktrees.",
+        "A repository discovered through ghq remains visible after its registry record is removed."
+      ]
+    },
+    "github": {
+      "name": "github",
+      "usage": "phantom github <subcommand> [options]",
+      "description": "GitHub-specific commands for phantom",
+      "examples": [
+        {
+          "command": "phantom github checkout 123",
+          "description": "Create a worktree for PR or issue #123"
+        },
+        {
+          "command": "phantom gh checkout 456",
+          "description": "Same as above, using the gh alias"
+        }
+      ],
+      "notes": [
+        "Subcommands:",
+        "  checkout    Create a worktree for a GitHub PR or issue",
+        "",
+        "Alias: 'gh' can be used instead of 'github'",
+        "",
+        "Requirements:",
+        "  - GitHub CLI (gh) must be installed",
+        "  - Must be authenticated with 'gh auth login'"
+      ]
+    },
+    "github checkout": {
+      "name": "github checkout",
+      "usage": "phantom github checkout <number> [options]",
+      "description": "Create a worktree for a GitHub PR or issue",
+      "options": [
+        {
+          "name": "--base",
+          "type": "string",
+          "description": "Base branch for new issue branches (issues only, default: repository HEAD)"
+        },
+        {
+          "name": "--tmux, -t",
+          "type": "boolean",
+          "description": "Open worktree in new tmux window"
+        },
+        {
+          "name": "--tmux-vertical, --tmux-v",
+          "type": "boolean",
+          "description": "Open worktree in vertical split pane"
+        },
+        {
+          "name": "--tmux-horizontal, --tmux-h",
+          "type": "boolean",
+          "description": "Open worktree in horizontal split pane"
+        }
+      ],
+      "examples": [
+        {
+          "command": "phantom github checkout 123",
+          "description": "Create a worktree for PR #123 (checks out PR branch)"
+        },
+        {
+          "command": "phantom github checkout 456",
+          "description": "Create a worktree for issue #456 (creates new branch)"
+        },
+        {
+          "command": "phantom github checkout 789 --base develop",
+          "description": "Create a worktree for issue #789 based on develop branch"
+        },
+        {
+          "command": "phantom github checkout 321 --tmux",
+          "description": "Create a worktree and open it in a new tmux window"
+        }
+      ],
+      "notes": [
+        "For same-repo PRs: Worktree name matches the PR branch (e.g., 'feature/add-logging')",
+        "For fork PRs: Worktree name is '{owner}/{branch}' (e.g., 'aku11i/feature/add-logging')",
+        "For Issues: Creates worktree named 'issues/{number}' with a new branch",
+        "",
+        "Requirements:",
+        "  - GitHub CLI (gh) must be installed",
+        "  - Must be authenticated with 'gh auth login'",
+        "",
+        "Tmux options require being inside a tmux session"
+      ]
+    },
+    "gh": {
+      "name": "github",
+      "usage": "phantom github <subcommand> [options]",
+      "description": "GitHub-specific commands for phantom",
+      "examples": [
+        {
+          "command": "phantom github checkout 123",
+          "description": "Create a worktree for PR or issue #123"
+        },
+        {
+          "command": "phantom gh checkout 456",
+          "description": "Same as above, using the gh alias"
+        }
+      ],
+      "notes": [
+        "Subcommands:",
+        "  checkout    Create a worktree for a GitHub PR or issue",
+        "",
+        "Alias: 'gh' can be used instead of 'github'",
+        "",
+        "Requirements:",
+        "  - GitHub CLI (gh) must be installed",
+        "  - Must be authenticated with 'gh auth login'"
+      ]
+    },
+    "gh checkout": {
+      "name": "github checkout",
+      "usage": "phantom github checkout <number> [options]",
+      "description": "Create a worktree for a GitHub PR or issue",
+      "options": [
+        {
+          "name": "--base",
+          "type": "string",
+          "description": "Base branch for new issue branches (issues only, default: repository HEAD)"
+        },
+        {
+          "name": "--tmux, -t",
+          "type": "boolean",
+          "description": "Open worktree in new tmux window"
+        },
+        {
+          "name": "--tmux-vertical, --tmux-v",
+          "type": "boolean",
+          "description": "Open worktree in vertical split pane"
+        },
+        {
+          "name": "--tmux-horizontal, --tmux-h",
+          "type": "boolean",
+          "description": "Open worktree in horizontal split pane"
+        }
+      ],
+      "examples": [
+        {
+          "command": "phantom github checkout 123",
+          "description": "Create a worktree for PR #123 (checks out PR branch)"
+        },
+        {
+          "command": "phantom github checkout 456",
+          "description": "Create a worktree for issue #456 (creates new branch)"
+        },
+        {
+          "command": "phantom github checkout 789 --base develop",
+          "description": "Create a worktree for issue #789 based on develop branch"
+        },
+        {
+          "command": "phantom github checkout 321 --tmux",
+          "description": "Create a worktree and open it in a new tmux window"
+        }
+      ],
+      "notes": [
+        "For same-repo PRs: Worktree name matches the PR branch (e.g., 'feature/add-logging')",
+        "For fork PRs: Worktree name is '{owner}/{branch}' (e.g., 'aku11i/feature/add-logging')",
+        "For Issues: Creates worktree named 'issues/{number}' with a new branch",
+        "",
+        "Requirements:",
+        "  - GitHub CLI (gh) must be installed",
+        "  - Must be authenticated with 'gh auth login'",
+        "",
+        "Tmux options require being inside a tmux session"
+      ]
+    }
+  }
+}

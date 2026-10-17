@@ -28,13 +28,20 @@ export interface RepoContext {
   rootDir: string;
 }
 
+export function resolveCommand(command: string): string {
+  if (command === "phantom" && process.env.PHANTOM_BIN) {
+    return process.env.PHANTOM_BIN;
+  }
+  return command;
+}
+
 export async function runCommand(
   command: string,
   args: string[],
   options: CommandOptions,
 ): Promise<CommandResult> {
   try {
-    const result = await execFile(command, args, {
+    const result = await execFile(resolveCommand(command), args, {
       cwd: options.cwd,
       env: options.env,
       encoding: "utf8",

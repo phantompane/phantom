@@ -11,3 +11,6 @@ node_modules
 .pre-commit-config.yaml
 devenv.local.nix
 devenv.local.yaml
+
+# Rust prototype build output
+rust/target/
