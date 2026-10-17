@@ -3,28 +3,29 @@
 {
   cachix.enable = false;
 
-  languages.javascript = {
+  languages.rust = {
     enable = true;
-    package = pkgs.nodejs_24;
-    pnpm = {
-      enable = true;
-      install.enable = true;
-    };
+    channel = "1.99.1";
   };
 
+  packages = [
+    pkgs.zsh
+    pkgs.fish
+  ];
+
   git-hooks.hooks = {
-    fix = {
+    fmt = {
       enable = true;
-      name = "fix";
-      entry = "pnpm exec turbo run fix";
+      name = "fmt";
+      entry = "cargo fmt --all -- --check";
       pass_filenames = false;
       always_run = true;
     };
 
-    typecheck = {
+    clippy = {
       enable = true;
-      name = "typecheck";
-      entry = "pnpm exec turbo run typecheck";
+      name = "clippy";
+      entry = "cargo clippy --locked --all-targets -- -D warnings";
       pass_filenames = false;
       always_run = true;
     };
@@ -32,20 +33,9 @@
     test = {
       enable = true;
       name = "test";
-      entry = "pnpm exec turbo run test";
+      entry = "cargo test --locked";
       pass_filenames = false;
       always_run = true;
     };
   };
-
-  packages = with pkgs; [
-    bash-completion
-    bashInteractive
-    fish
-    fzf
-    gh
-    git
-    tmux
-    zsh
-  ];
 }

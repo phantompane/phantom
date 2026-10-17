@@ -2,55 +2,49 @@
 
 ## Project Structure & Module Organization
 
-- Monorepo managed by pnpm; source lives in `packages/`.
-- Key packages: `cli` (user-facing CLI), `core` (worktree orchestration/validation), `git` (executor/helpers), `github` (API + checkout flows), `mcp` (MCP tools), `process` (spawn/tmux utilities), `utils` (types/guards).
-- Docs and assets: `docs/`; shared configs: `.oxfmtrc.json`, `.oxlintrc.json`, `tsconfig*.json`, `phantom.config.json`; builds land in package-level `dist/`.
-- Principles: single responsibility, separation of concerns, centralized git executor, dependency flow CLI → core → git/process/utils.
+- Phantom is a Rust CLI. The crate lives at the repository root (`Cargo.toml`, `src/`, `tests/`).
+- Development happens on `next`. `main` stays the previous TypeScript version.
+- Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `tmux`, `github`, `mcp`, `help`.
+- Shell completion scripts are embedded from `completions/`. Command help text is generated from `help-data.json`.
+- Project config example: `phantom.config.json`.
+- Principles: single responsibility, a centralized git executor, and `Result` for every fallible path.
 
 ## Build, Test, and Development Commands
 
-- Prereqs: Node 22+ and pnpm 10+; install deps via `pnpm install`.
-- Run CLI locally: `pnpm phantom`.
-- Build: `pnpm build`; type check: `pnpm typecheck`.
-- Lint/format: `pnpm lint` (check with `oxfmt` + `oxlint`) or `pnpm fix` (apply formatter and auto-fixes).
-- Tests: `pnpm test` (Vitest across packages).
-- Pre-flight: `pnpm ready` (`turbo run fix typecheck test`) or `pnpm ready:check` (`turbo run lint typecheck test`).
-- After finishing an implementation, run `pnpm ready` to execute fix, typecheck, and tests before shipping changes.
-- Scope work: `pnpm --filter <pkg> <cmd>` (e.g., `pnpm --filter @phantompane/github test`).
+- Prerequisite: Rust 1.99.1, pinned in `rust-toolchain.toml`. The same version is pinned in `.github/workflows/ci.yml`, `release-compile.yml` (`toolchain` and `RUSTUP_TOOLCHAIN`), `version-bump.yml`, and `devenv.nix`. Dependabot updates Cargo dependencies and GitHub Action SHAs. It does not bump `rust-toolchain.toml` or those workflow strings. To move the pin, change every one of those places together, then run fmt, clippy, and tests on the new compiler. Change `rust-version` in `Cargo.toml` only when the MSRV changes. It is 1.89 because uuid 1.28 declares `rust-version = "1.89.0"`.
+- Run the CLI: `cargo run --locked -- --help`.
+- Format: `cargo fmt --all`.
+- Lint: `cargo clippy --locked --all-targets -- -D warnings`.
+- Tests: `cargo test --locked`. Shell completion tests spawn bash, zsh, and fish (`cargo test --locked --test completion`).
+- Before shipping, run `cargo fmt --all`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo test --locked`.
 
 ## Coding Style & Naming Conventions
 
-- ESM with TypeScript sources; tests are `.test.ts` files.
-- `oxfmt` enforces 2-space indentation and double quotes; `oxlint` enforces correctness rules including no unused variables.
-- Use PascalCase for types/interfaces, camelCase for functions/variables, and kebab-case for package or file names where applicable.
-- Keep CLI flags and config keys consistent with `phantom.config.json` and README examples.
-- All files/issues/PRs must be written in English; follow existing patterns over inventing new ones.
+- Rust 2021. `rustfmt` is the formatter.
+- Non-test code must not use `unwrap()`, `expect()`, or `panic!`. Propagate errors with `Result` and `thiserror`. The crate denies `clippy::unwrap_used`, `clippy::expect_used`, and `clippy::panic` outside tests.
+- Use PascalCase for types, camelCase for functions and variables, and snake_case for modules.
+- Keep CLI flags and config keys consistent with `phantom.config.json`.
+- All files, issues, and pull requests must be written in English. Follow existing patterns.
 
 ## Testing Guidelines
 
-- Tests run with `vitest`.
-- Place tests beside source under `src/**/*/*.test.ts`, mirroring module names.
-- Cover success/error paths for worktree creation, git/github flows, and MCP tools; use temporary directories and the centralized git executor. Prefer tests over ad-hoc manual commands.
+- Unit tests sit next to the module in `src/`. CLI and shell-completion coverage lives in `tests/`.
+- Cover success and error paths for worktree creation, git flows, the project registry, and shell completion. Use temporary directories and the git executor.
 
 ## Commit & Pull Request Guidelines
 
-- Use conventional commits as in history: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:` (often suffixed with `(#123)`).
-- PRs should include a clear summary, linked issue/PR context, verification steps, and CLI output or screenshots for UX-facing changes.
-- Ensure checks pass (`pnpm ready` or at least lint + typecheck + test); note any known gaps in the PR body.
+- Use conventional commits as in history: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`.
+- PRs should include a summary, verification steps, and CLI output for UX-facing changes.
+- Ensure `cargo fmt`, `cargo clippy --locked`, and `cargo test --locked` pass. Note known gaps in the PR body.
 
 ## Security & Configuration Tips
 
-- Never commit tokens or GitHub credentials; use env vars such as `GH_TOKEN`/`GH_HOST` locally.
-- Keep worktrees under `.git/phantom/worktrees/` unless overridden in `phantom.config.json`; avoid leaking local paths in logs.
-- Reuse existing validation helpers (e.g., `worktree/validate-name`) rather than re-implementing parsing of user input.
+- Never commit tokens or GitHub credentials. `github checkout` uses the `gh` CLI (`GH_TOKEN` / `GH_HOST`).
+- Keep worktrees under `.git/phantom/worktrees/` unless overridden in `phantom.config.json`. Avoid leaking local paths in logs.
+- Reuse `validate_worktree_name` rather than re-implementing name parsing.
 
-<!-- BEGIN:turborepo-agent-rules -->
+## Releases
 
-# This is NOT the Turborepo you know
-
-Turborepo configuration, task behavior, and CLI commands can vary between installed versions and may differ from your training data. Resolve the `turbo` package from this file's directory or relevant workspace; in monorepos, it may not be visible from the repository root. For example, run `node -p "require.resolve('turbo/package.json')"` from a workspace that depends on `turbo`.
-
-Read `docs/README.md` inside that installed package first, then read the relevant pages from its `docs/` directory before changing Turborepo configuration or commands. Heed deprecation notices. These bundled docs match the installed package version and are available without network access.
-
-This block is written and re-added by `turbo` before repository-scoped commands when an AI agent is detected. In the Turborepo source repository, its template is defined in `crates/turborepo-cli/src/cli/agent_guidance.rs`. Removing the managed block while updates are enabled means a later qualifying invocation will add it again. Set `"agentGuidance": false` in the root `turbo.json` or `turbo.jsonc` to opt out; this does not remove an existing block. Keep the block committed with your work to avoid an uncommitted change on the next agent invocation.
-<!-- END:turborepo-agent-rules -->
+- Version lives in `Cargo.toml`. `.github/workflows/version-bump.yml` bumps it from `next`, refreshes `Cargo.lock` with `cargo update -p phantom --offline`, and opens a PR against `next`.
+- Merging a `chore(version): vX.Y.Z` PR into `next` tags that version.
+- Publishing a GitHub release builds linux/darwin x64/arm64 binaries and uploads them. npm is not published.

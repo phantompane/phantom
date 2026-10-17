@@ -2,10 +2,12 @@
 .DS_Store
 Thumbs.db
 
-# Dependencies
+# Build output
+/target/
 node_modules
+__pycache__/
+*.pyc
 .output
-.turbo
 .worktrees
 .devenv*
 .pre-commit-config.yaml

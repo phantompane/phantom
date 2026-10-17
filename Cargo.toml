@@ -1,0 +1,32 @@
+[package]
+name = "phantom"
+version = "6.3.2"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+description = "Rust prototype of the phantom Git worktree manager"
+license = "MIT"
+
+[[bin]]
+name = "phantom"
+path = "src/main.rs"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+rmcp = { version = "1.4", features = ["server", "transport-io"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+terminal_size = "0.4"
+thiserror = "1"
+tokio = { version = "1", features = ["io-std", "macros", "rt", "sync", "time"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "z"
+strip = "symbols"
