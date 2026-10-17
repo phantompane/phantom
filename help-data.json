@@ -25,10 +25,6 @@
       "description": "Execute a command in a worktree directory"
     },
     {
-      "name": "ai",
-      "description": "Launch your configured AI coding assistant in a worktree"
-    },
-    {
       "name": "preferences",
       "description": "Manage phantom user preferences (git config)"
     },
@@ -282,30 +278,11 @@
         "The exit code of the executed command is preserved"
       ]
     },
-    "ai": {
-      "name": "ai",
-      "description": "Launch your configured AI coding assistant in a worktree",
-      "usage": "phantom ai <worktree-name>",
-      "examples": [
-        {
-          "description": "Start the AI assistant in a worktree",
-          "command": "phantom ai feature-auth"
-        }
-      ],
-      "notes": [
-        "Configure the assistant first with 'phantom preferences set ai <command>' (stored as phantom.ai in git config --global, e.g., 'claude' or 'codex --full-auto').",
-        "The assistant runs inside the worktree so it can access project files and context."
-      ]
-    },
     "preferences": {
       "name": "preferences",
       "usage": "phantom preferences <subcommand>",
       "description": "Manage phantom user preferences stored in git config (global)",
       "examples": [
-        {
-          "command": "phantom preferences set ai \"codex --full-auto\"",
-          "description": "Set the AI assistant preference (stored as phantom.ai in git config --global)"
-        },
         {
           "command": "phantom preferences set worktreesDirectory ../phantom-worktrees",
           "description": "Store a custom worktreesDirectory (relative to the Git repository root) for all commands"
@@ -331,7 +308,6 @@
         "",
         "Preferences are saved in git config with the 'phantom.' prefix (global scope).",
         "Supported keys:",
-        "  ai - used by 'phantom ai'",
         "  worktreesDirectory - path relative to the Git repo root for storing worktrees (defaults to .git/phantom/worktrees)",
         "  directoryNameSeparator - replaces '/' in worktree directory names only (defaults to / for nested directories)",
         "  keepBranch - keeps the branch when deleting a worktree (defaults to false)",
@@ -343,10 +319,6 @@
       "usage": "phantom preferences get <key>",
       "description": "Show a preference value (reads git config --global phantom.<key>)",
       "examples": [
-        {
-          "command": "phantom preferences get ai",
-          "description": "Show the AI assistant preference"
-        },
         {
           "command": "phantom preferences get worktreesDirectory",
           "description": "Show the preferred worktrees directory (relative to repo root)"
@@ -365,7 +337,7 @@
         }
       ],
       "notes": [
-        "Supported keys: ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery"
+        "Supported keys: worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery"
       ]
     },
     "preferences set": {
@@ -373,10 +345,6 @@
       "usage": "phantom preferences set <key> <value>",
       "description": "Set a preference value (writes git config --global phantom.<key>)",
       "examples": [
-        {
-          "command": "phantom preferences set ai claude",
-          "description": "Configure the AI assistant command"
-        },
         {
           "command": "phantom preferences set worktreesDirectory ../phantom-worktrees",
           "description": "Store worktrees in ../phantom-worktrees relative to the Git repository root"
@@ -395,7 +363,7 @@
         }
       ],
       "notes": [
-        "Supported keys: ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery",
+        "Supported keys: worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery",
         "For worktreesDirectory, provide a path relative to the Git repository root; defaults to .git/phantom/worktrees when unset",
         "For directoryNameSeparator, '/' keeps nested directories; any other string replaces '/' only in the directory path",
         "For keepBranch, use true to preserve branches on delete or false to keep the default branch deletion behavior",
@@ -407,10 +375,6 @@
       "usage": "phantom preferences remove <key>",
       "description": "Remove a preference value (git config --global --unset phantom.<key>)",
       "examples": [
-        {
-          "command": "phantom preferences remove ai",
-          "description": "Unset the AI assistant preference"
-        },
         {
           "command": "phantom preferences remove worktreesDirectory",
           "description": "Unset the custom worktrees directory preference"
@@ -429,7 +393,7 @@
         }
       ],
       "notes": [
-        "Supported keys: ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery"
+        "Supported keys: worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery"
       ]
     },
     "version": {

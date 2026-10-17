@@ -566,6 +566,20 @@ fn keep_branch_preference_applies_to_delete() {
 }
 
 #[test]
+fn removed_ai_command_and_preference_are_unknown() {
+    let repo = Repo::new();
+    let command = repo.phantom(&["ai", "feature"]);
+    assert_eq!(command.status.code(), Some(1));
+    assert!(text(&command.stderr).contains("Unknown command 'ai feature'"));
+
+    let preference = repo.phantom(&["preferences", "set", "ai", "claude"]);
+    assert_eq!(preference.status.code(), Some(3));
+    let stderr = text(&preference.stderr);
+    assert!(stderr.contains("Unknown preference 'ai'"), "{stderr}");
+    assert!(stderr.contains("worktreesDirectory"), "{stderr}");
+}
+
+#[test]
 fn removed_edit_command_and_editor_preference_are_unknown() {
     let repo = Repo::new();
     let command = repo.phantom(&["edit", "feature"]);
@@ -576,8 +590,7 @@ fn removed_edit_command_and_editor_preference_are_unknown() {
     assert_eq!(preference.status.code(), Some(3));
     let stderr = text(&preference.stderr);
     assert!(stderr.contains("Unknown preference 'editor'"), "{stderr}");
-    assert!(stderr.contains("ai"), "{stderr}");
-    assert!(!stderr.contains("editor, ai"), "{stderr}");
+    assert!(stderr.contains("worktreesDirectory"), "{stderr}");
 }
 
 #[test]

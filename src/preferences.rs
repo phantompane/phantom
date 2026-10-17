@@ -2,7 +2,6 @@ use crate::error::{Error, Result};
 use crate::git;
 
 pub const SUPPORTED_KEYS: &[&str] = &[
-    "ai",
     "worktreesDirectory",
     "directoryNameSeparator",
     "keepBranch",
@@ -11,7 +10,6 @@ pub const SUPPORTED_KEYS: &[&str] = &[
 
 #[derive(Debug, Clone, Default)]
 pub struct Preferences {
-    pub ai: Option<String>,
     pub worktrees_directory: Option<String>,
     pub directory_name_separator: Option<String>,
     pub keep_branch: Option<bool>,
@@ -28,7 +26,6 @@ pub fn config_key(key: &str) -> String {
 
 pub fn preference_value(preferences: &Preferences, key: &str) -> Option<String> {
     match key {
-        "ai" => preferences.ai.clone(),
         "worktreesDirectory" => preferences.worktrees_directory.clone(),
         "directoryNameSeparator" => preferences.directory_name_separator.clone(),
         "keepBranch" => preferences.keep_branch.map(|value| value.to_string()),
@@ -66,7 +63,6 @@ pub fn parse_preferences(output: &str) -> Preferences {
             continue;
         };
         match stripped.to_ascii_lowercase().as_str() {
-            "ai" => preferences.ai = Some(value.to_string()),
             "worktreesdirectory" => preferences.worktrees_directory = Some(value.to_string()),
             "directorynameseparator" => {
                 preferences.directory_name_separator = Some(value.to_string());
@@ -109,10 +105,9 @@ mod tests {
     #[test]
     fn parses_null_separated_git_config() {
         let parsed = parse_preferences(
-            "phantom.worktreesDirectory\n.phantom\0phantom.keepBranch\ntrue\0phantom.editor\ncode\0",
+            "phantom.worktreesDirectory\n.phantom\0phantom.keepBranch\ntrue\0phantom.editor\ncode\0phantom.ai\nclaude\0",
         );
         assert_eq!(parsed.worktrees_directory.as_deref(), Some(".phantom"));
         assert_eq!(parsed.keep_branch, Some(true));
-        assert!(parsed.ai.is_none());
     }
 }

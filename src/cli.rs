@@ -6,7 +6,6 @@ use crate::git;
 use crate::github;
 use crate::help;
 use crate::preferences::{self, Preferences};
-use crate::process;
 use crate::projects::{self, ProjectListEntry, ProjectRecord, ProjectRegistryStore};
 use crate::worktree::{self, ActionRequest, Logger};
 
@@ -303,49 +302,6 @@ fn exec(args: &[String]) -> Result<i32> {
             };
             fail(&error, code)
         }
-    }
-}
-
-fn ai(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &[], true)?;
-    if parsed.positionals.len() != 1 {
-        return fail(&Error::msg("Usage: phantom ai <worktree-name>"), VALIDATION);
-    }
-    let name = &parsed.positionals[0];
-    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
-    let git_root = match git::git_root(&cwd) {
-        Ok(root) => root,
-        Err(error) => return fail(&error, error.exit_code()),
-    };
-    let context = match crate::context::create(&git_root) {
-        Ok(context) => context,
-        Err(error) => return fail(&error, GENERAL),
-    };
-    let Some(command) = context.preferences.ai.clone() else {
-        return fail(
-            &Error::msg(
-                "AI assistant is not configured. Run 'phantom preferences set ai <command>' first.",
-            ),
-            VALIDATION,
-        );
-    };
-    let worktree = match worktree::find_worktree(&context.git_root, name, false, None) {
-        Ok(worktree) => worktree,
-        Err(Error::WorktreeNotFound(missing)) => {
-            return fail(&Error::WorktreeNotFound(missing), NOT_FOUND);
-        }
-        Err(error) => return fail(&error, GENERAL),
-    };
-    let path = Path::new(&worktree.path).to_path_buf();
-    println!("Launching AI assistant in worktree '{name}'...");
-    let env = worktree::phantom_env(name, &path);
-    let pairs = env
-        .iter()
-        .map(|(key, value)| (key.as_str(), value.as_str()))
-        .collect::<Vec<_>>();
-    match process::shell(&command, &path, &pairs) {
-        Ok(code) => Ok(code),
-        Err(error) => fail(&error, GENERAL),
     }
 }
 
@@ -849,12 +805,6 @@ static COMMANDS: &[Command] = &[
         name: "exec",
         help_key: "exec",
         run: exec,
-        children: &[],
-    },
-    Command {
-        name: "ai",
-        help_key: "ai",
-        run: ai,
         children: &[],
     },
     Command {
