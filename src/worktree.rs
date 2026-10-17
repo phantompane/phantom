@@ -673,50 +673,225 @@ fn copy_files_into(source_root: &Path, target_root: &Path, patterns: &[String]) 
 
 fn resolve_patterns(source_root: &Path, patterns: &[String]) -> Result<Vec<String>> {
     let mut files = Vec::new();
+    let mut walked: Option<Vec<String>> = None;
     for pattern in patterns {
         let normalized = pattern.replace('\\', "/");
-        if has_magic(&normalized) {
-            let absolute = if Path::new(&normalized).is_absolute() {
-                normalized.clone()
-            } else {
-                source_root
-                    .join(&normalized)
-                    .to_string_lossy()
-                    .replace('\\', "/")
-            };
-            let paths = glob::glob(&absolute).map_err(|error| {
-                Error::msg(format!("Failed to resolve pattern '{pattern}': {error}"))
-            })?;
-            for entry in paths {
-                let path = entry.map_err(|error| {
-                    Error::msg(format!("Failed to resolve pattern '{pattern}': {error}"))
-                })?;
-                if !path.is_file() {
-                    continue;
+        for alternative in expand_braces(&normalized) {
+            if !has_magic(&alternative) {
+                if !files.contains(&alternative) {
+                    files.push(alternative);
                 }
-                let relative = path
-                    .strip_prefix(source_root)
-                    .map(|path| path.to_path_buf())
-                    .unwrap_or(path);
-                let relative = relative.to_string_lossy().replace('\\', "/");
-                if relative == ".git" || relative.starts_with(".git/") {
-                    continue;
-                }
-                if !files.contains(&relative) {
-                    files.push(relative);
+                continue;
+            }
+            if walked.is_none() {
+                walked = Some(walk_files(source_root)?);
+            }
+            let existing = walked.as_deref().unwrap_or(&[]);
+            for relative in existing {
+                if glob_matches(&alternative, relative) && !files.contains(relative) {
+                    files.push(relative.clone());
                 }
             }
-        } else if !files.contains(&normalized) {
-            files.push(normalized);
         }
     }
     Ok(files)
+}
+
+fn walk_files(root: &Path) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+    walk_files_at(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn walk_files_at(root: &Path, dir: &Path, files: &mut Vec<String>) -> Result<()> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(Error::msg(format!("Failed to resolve pattern: {error}"))),
+    };
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| Error::msg(format!("Failed to resolve pattern: {error}")))?;
+        let path = entry.path();
+        let relative = match path.strip_prefix(root) {
+            Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
+            Err(_) => continue,
+        };
+        if relative == ".git" || relative.starts_with(".git/") {
+            continue;
+        }
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => continue,
+        };
+        if metadata.is_dir() {
+            walk_files_at(root, &path, files)?;
+        } else if metadata.is_file() {
+            files.push(relative);
+        }
+    }
+    Ok(())
 }
 
 fn has_magic(pattern: &str) -> bool {
     pattern
         .chars()
         .any(|char| matches!(char, '*' | '?' | '[' | '{'))
+}
+
+fn expand_braces(pattern: &str) -> Vec<String> {
+    let chars = pattern.chars().collect::<Vec<_>>();
+    let Some(open) = chars.iter().position(|char| *char == '{') else {
+        return vec![pattern.to_string()];
+    };
+    let Some(close) = matching_brace(&chars, open) else {
+        return vec![pattern.to_string()];
+    };
+    let prefix = chars[..open].iter().collect::<String>();
+    let body = chars[open + 1..close].iter().collect::<String>();
+    let suffix = chars[close + 1..].iter().collect::<String>();
+    let mut expanded = Vec::new();
+    for alternative in split_brace_alternatives(&body) {
+        for alternative in expand_braces(&alternative) {
+            for suffix in expand_braces(&suffix) {
+                expanded.push(format!("{prefix}{alternative}{suffix}"));
+            }
+        }
+    }
+    if expanded.is_empty() {
+        vec![pattern.to_string()]
+    } else {
+        expanded
+    }
+}
+
+fn matching_brace(chars: &[char], open: usize) -> Option<usize> {
+    let mut depth = 0;
+    for (index, char) in chars.iter().enumerate().skip(open) {
+        if *char == '{' {
+            depth += 1;
+        } else if *char == '}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(index);
+            }
+        }
+    }
+    None
+}
+
+fn split_brace_alternatives(body: &str) -> Vec<String> {
+    let mut alternatives = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0_i32;
+    for char in body.chars() {
+        match char {
+            '{' => {
+                depth += 1;
+                current.push(char);
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                current.push(char);
+            }
+            ',' if depth == 0 => {
+                alternatives.push(std::mem::take(&mut current));
+            }
+            _ => current.push(char),
+        }
+    }
+    alternatives.push(current);
+    alternatives
+}
+
+fn glob_matches(pattern: &str, path: &str) -> bool {
+    let pattern_segments = pattern.split('/').collect::<Vec<_>>();
+    let path_segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    match_segments(&pattern_segments, &path_segments)
+}
+
+fn match_segments(pattern: &[&str], path: &[&str]) -> bool {
+    let Some(head) = pattern.first() else {
+        return path.is_empty();
+    };
+    if *head == "**" {
+        if match_segments(&pattern[1..], path) {
+            return true;
+        }
+        return !path.is_empty() && match_segments(pattern, &path[1..]);
+    }
+    let Some(segment) = path.first() else {
+        return false;
+    };
+    segment_matches(head, segment) && match_segments(&pattern[1..], &path[1..])
+}
+
+fn segment_matches(pattern: &str, text: &str) -> bool {
+    match_atom(pattern.as_bytes(), text.as_bytes())
+}
+
+fn match_atom(pattern: &[u8], text: &[u8]) -> bool {
+    if pattern.is_empty() {
+        return text.is_empty();
+    }
+    match pattern[0] {
+        b'*' => {
+            if match_atom(&pattern[1..], text) {
+                return true;
+            }
+            !text.is_empty() && match_atom(pattern, &text[1..])
+        }
+        b'?' => !text.is_empty() && match_atom(&pattern[1..], &text[1..]),
+        b'[' => {
+            let Some(end) = pattern.iter().skip(1).position(|byte| *byte == b']') else {
+                return !text.is_empty()
+                    && pattern[0] == text[0]
+                    && match_atom(&pattern[1..], &text[1..]);
+            };
+            let class = &pattern[1..end + 1];
+            let rest = &pattern[end + 2..];
+            if text.is_empty() {
+                return false;
+            }
+            class_matches(class, text[0]) && match_atom(rest, &text[1..])
+        }
+        byte => !text.is_empty() && byte == text[0] && match_atom(&pattern[1..], &text[1..]),
+    }
+}
+
+fn class_matches(class: &[u8], byte: u8) -> bool {
+    if class.is_empty() {
+        return false;
+    }
+    let (negated, class) = if class[0] == b'!' || class[0] == b'^' {
+        (true, &class[1..])
+    } else {
+        (false, class)
+    };
+    let mut matched = false;
+    let mut index = 0;
+    while index < class.len() {
+        if index + 2 < class.len() && class[index + 1] == b'-' {
+            let start = class[index];
+            let end = class[index + 2];
+            if byte >= start && byte <= end {
+                matched = true;
+                break;
+            }
+            index += 3;
+        } else {
+            if class[index] == byte {
+                matched = true;
+                break;
+            }
+            index += 1;
+        }
+    }
+    matched != negated
 }
 
 #[cfg(test)]
@@ -729,6 +904,45 @@ mod tests {
         assert!(validate_worktree_name("feature/test").is_ok());
         assert!(validate_worktree_name("has space").is_err());
         assert!(validate_worktree_name("bad..name").is_err());
+    }
+
+    #[test]
+    fn matches_v6_copy_globs() {
+        let root = std::env::temp_dir().join(format!(
+            "phantom-glob-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("config/db")).expect("dirs");
+        fs::create_dir_all(root.join("nested/deep")).expect("nested");
+        fs::write(root.join(".env"), "a").expect("env");
+        fs::write(root.join("local.env"), "b").expect("local");
+        fs::write(root.join("config.json"), "c").expect("json");
+        fs::write(root.join("readme.md"), "d").expect("md");
+        fs::write(root.join("config/db/database.local.yml"), "e").expect("yml");
+        fs::create_dir_all(root.join(".git")).expect("gitdir");
+        fs::write(root.join("nested/deep/file.txt"), "f").expect("txt");
+        fs::write(root.join(".git/config"), "g").expect("git");
+
+        let braces = resolve_patterns(&root, &["*.{env,json}".to_string()]).expect("braces");
+        assert!(braces.contains(&"local.env".to_string()));
+        assert!(braces.contains(&"config.json".to_string()));
+        assert!(!braces.contains(&"readme.md".to_string()));
+
+        let dot = resolve_patterns(&root, &["*.env".to_string()]).expect("dot");
+        assert!(dot.contains(&".env".to_string()));
+
+        let recursive =
+            resolve_patterns(&root, &["config/**/*.local.yml".to_string()]).expect("recursive");
+        assert_eq!(recursive, vec!["config/db/database.local.yml".to_string()]);
+
+        let directory = resolve_patterns(&root, &["nested/**".to_string()]).expect("dir");
+        assert_eq!(directory, vec!["nested/deep/file.txt".to_string()]);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

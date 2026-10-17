@@ -52,13 +52,51 @@ struct LockObservation {
     token: Option<String>,
 }
 
+type NowFn = Arc<dyn Fn() -> u64 + Send + Sync>;
+type DelayFn = Arc<dyn Fn(u64) + Send + Sync>;
+type HookFn = Arc<dyn Fn() + Send + Sync>;
+
 pub struct ProjectRegistryStore {
     data_dir: PathBuf,
+    lock_timeout_ms: u64,
+    lock_retry_ms: u64,
+    now_ms: NowFn,
+    delay: DelayFn,
+    on_lock_acquired: Option<HookFn>,
 }
 
 impl ProjectRegistryStore {
     pub fn new(data_dir: PathBuf) -> Self {
-        Self { data_dir }
+        let started = Instant::now();
+        Self {
+            data_dir,
+            lock_timeout_ms: u64::try_from(LOCK_TIMEOUT.as_millis()).unwrap_or(5_000),
+            lock_retry_ms: u64::try_from(LOCK_RETRY.as_millis()).unwrap_or(20),
+            now_ms: Arc::new(move || {
+                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+            }),
+            delay: Arc::new(|milliseconds| thread::sleep(Duration::from_millis(milliseconds))),
+            on_lock_acquired: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn controlled(
+        data_dir: PathBuf,
+        lock_timeout_ms: u64,
+        lock_retry_ms: u64,
+        now_ms: NowFn,
+        delay: DelayFn,
+        on_lock_acquired: Option<HookFn>,
+    ) -> Self {
+        Self {
+            data_dir,
+            lock_timeout_ms,
+            lock_retry_ms,
+            now_ms,
+            delay,
+            on_lock_acquired,
+        }
     }
 
     pub fn default_store() -> Result<Self> {
@@ -188,7 +226,7 @@ impl ProjectRegistryStore {
         fs::create_dir_all(&self.data_dir).map_err(|error| Error::Projects(error.to_string()))?;
         let lock_path = self.data_dir.join(LOCK_DIR);
         let recovery_path = self.data_dir.join(RECOVERY_DIR);
-        let mut deadline = Instant::now() + LOCK_TIMEOUT;
+        let mut deadline = (self.now_ms)().saturating_add(self.lock_timeout_ms);
         let mut initialized = false;
         let mut snapshot: Option<LockObservation> = None;
         let owner = loop {
@@ -224,6 +262,9 @@ impl ProjectRegistryStore {
                     continue;
                 }
                 Err(error) => return Err(Error::Projects(error.to_string())),
+            }
+            if let Some(hook) = &self.on_lock_acquired {
+                hook();
             }
             let recovery_active = self.has_active_recovery(&recovery_path)?;
             let still_owns = directory_owned_by(&lock_path, &candidate.token)?;
@@ -365,28 +406,29 @@ impl ProjectRegistryStore {
 
     fn wait_for_lock(
         &self,
-        mut deadline: Instant,
+        mut deadline: u64,
         lock_path: &Path,
         recovery_path: &Path,
         initialized: &mut bool,
         snapshot: &mut Option<LockObservation>,
-    ) -> Result<Instant> {
+    ) -> Result<u64> {
         let current = read_observation(lock_path)?;
+        let now = (self.now_ms)();
         if !*initialized {
             *snapshot = current.clone();
             *initialized = true;
         } else if !same_holder(snapshot.as_ref(), current.as_ref()) {
             *snapshot = current;
-            deadline = Instant::now() + LOCK_TIMEOUT;
+            deadline = now.saturating_add(self.lock_timeout_ms);
         }
-        if Instant::now() >= deadline {
+        if now >= deadline {
             return Err(Error::Projects(format!(
                 "Timed out waiting for projects registry lock at {}. Inspect {} for abandoned recovery markers.",
                 lock_path.display(),
                 recovery_path.display()
             )));
         }
-        thread::sleep(LOCK_RETRY);
+        (self.delay)(self.lock_retry_ms);
         Ok(deadline)
     }
 }
@@ -820,6 +862,123 @@ mod tests {
             Some(first.id.as_str())
         );
         assert!(store.list().expect("list").is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn does_not_time_out_while_queued_behind_live_holders() {
+        let dir = std::env::temp_dir().join(format!("phantom-queue-{}", uuid::Uuid::new_v4()));
+        let state = dir.join("state");
+        fs::create_dir_all(&state).expect("state");
+        let clock = Arc::new(std::sync::Mutex::new(0_u64));
+        let stores = (0..8)
+            .map(|_| {
+                let now_clock = Arc::clone(&clock);
+                let hook_clock = Arc::clone(&clock);
+                ProjectRegistryStore::controlled(
+                    state.clone(),
+                    500,
+                    1,
+                    Arc::new(move || {
+                        *now_clock
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    }),
+                    Arc::new(|_| thread::yield_now()),
+                    Some(Arc::new(move || {
+                        *hook_clock
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) += 100;
+                        thread::yield_now();
+                    })),
+                )
+            })
+            .collect::<Vec<_>>();
+        let handles = stores
+            .into_iter()
+            .enumerate()
+            .map(|(index, store)| {
+                thread::spawn(move || {
+                    store
+                        .add(Path::new(&format!("/work/project-{index}")))
+                        .expect("add");
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().expect("join");
+        }
+        let listed = ProjectRegistryStore::new(state).list().expect("list");
+        assert_eq!(listed.len(), 8);
+        let elapsed = *clock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(elapsed >= 800, "clock advanced {elapsed}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resets_the_deadline_when_the_lock_holder_changes() {
+        let dir = std::env::temp_dir().join(format!("phantom-holder-{}", uuid::Uuid::new_v4()));
+        let state = dir.join("state");
+        let lock_path = state.join("projects.lock");
+        fs::create_dir_all(&lock_path).expect("lock");
+        let owner_path = lock_path.join("owner.json");
+        let time = Arc::new(std::sync::Mutex::new(0_u64));
+        let stage = Arc::new(std::sync::Mutex::new(0_u8));
+        let timeout = 100_u64;
+        let now_time = Arc::clone(&time);
+        let delay_time = Arc::clone(&time);
+        let delay_stage = Arc::clone(&stage);
+        let delay_owner = owner_path.clone();
+        let delay_lock = lock_path.clone();
+        let store = ProjectRegistryStore::controlled(
+            state.clone(),
+            timeout,
+            10,
+            Arc::new(move || {
+                *now_time
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            }),
+            Arc::new(move |milliseconds| {
+                let mut stage = delay_stage
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut time = delay_time
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if *stage == 0 {
+                    *time += milliseconds;
+                    let owner = serde_json::json!({
+                        "token": "other-holder",
+                        "pid": std::process::id(),
+                        "createdAt": "2026-01-01T00:00:00.000Z",
+                        "processIdentity": null,
+                    });
+                    fs::write(&delay_owner, format!("{owner}\n")).expect("owner");
+                    *stage = 1;
+                } else if *stage == 1 {
+                    *time = timeout + 50;
+                    let _ = fs::remove_file(&delay_owner);
+                    *stage = 2;
+                } else if *stage == 2 {
+                    *time += milliseconds;
+                    let _ = fs::remove_dir_all(&delay_lock);
+                    *stage = 3;
+                } else {
+                    *time += milliseconds;
+                }
+            }),
+            None,
+        );
+        let (_project, added) = store.add(Path::new("/work/project")).expect("add");
+        assert!(added);
+        assert_eq!(store.list().expect("list").len(), 1);
+        let elapsed = *time
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(elapsed > timeout, "elapsed {elapsed}");
         let _ = fs::remove_dir_all(&dir);
     }
 }

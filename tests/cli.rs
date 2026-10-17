@@ -343,6 +343,126 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
 }
 
 #[test]
+fn copy_file_globs_match_v6() {
+    let repo = Repo::new();
+    fs::write(repo.repo.join("local.env"), "env\n").expect("env");
+    fs::write(repo.repo.join("config.json"), "{}\n").expect("json");
+    fs::write(repo.repo.join("readme.md"), "md\n").expect("md");
+    fs::create_dir_all(repo.repo.join("nested/deep")).expect("nested");
+    fs::write(repo.repo.join("nested/deep/file.txt"), "nested\n").expect("nested file");
+    let created = repo.phantom(&[
+        "create",
+        "copied",
+        "--copy-file",
+        "*.{env,json}",
+        "--copy-file",
+        "nested/**",
+    ]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let worktree = repo.repo.join(".git/phantom/worktrees/copied");
+    assert_eq!(
+        fs::read_to_string(worktree.join("local.env")).expect("env"),
+        "env\n"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("config.json")).expect("json"),
+        "{}\n"
+    );
+    assert!(fs::read_to_string(worktree.join("readme.md")).is_err());
+    assert_eq!(
+        fs::read_to_string(worktree.join("nested/deep/file.txt")).expect("nested"),
+        "nested\n"
+    );
+}
+
+#[test]
+fn copy_file_globs_ignore_brackets_in_the_repository_path() {
+    let root = std::env::temp_dir().join(format!(
+        "phantom-bracket-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    let repo_dir = root.join("repo[tmp]");
+    let home = root.join("home");
+    fs::create_dir_all(home.join(".config/git")).expect("home");
+    fs::create_dir_all(&repo_dir).expect("repo");
+    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(&repo_dir)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &home)
+            .output()
+            .expect("git");
+        assert!(output.status.success(), "{}", text(&output.stderr));
+    };
+    git(&["init", "-b", "main"]);
+    git(&["config", "user.name", "Phantom Rust"]);
+    git(&["config", "user.email", "phantom-rust@example.com"]);
+    fs::write(repo_dir.join("README.md"), "#\n").expect("readme");
+    git(&["add", "README.md"]);
+    git(&["commit", "-m", "initial"]);
+    fs::write(repo_dir.join("kept.env"), "kept\n").expect("kept");
+    let output = Command::new(env!("CARGO_BIN_EXE_phantom"))
+        .args(["create", "copied", "--copy-file", "*.env"])
+        .current_dir(&repo_dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .output()
+        .expect("phantom");
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert_eq!(
+        fs::read_to_string(repo_dir.join(".git/phantom/worktrees/copied/kept.env"))
+            .expect("copied"),
+        "kept\n"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn concurrent_project_add_processes_keep_every_record() {
+    let repo = Repo::new();
+    repo.phantom(&["preferences", "set", "ghqDiscovery", "false"]);
+    let mut children = Vec::new();
+    for index in 0..6 {
+        let path = repo.root.join(format!("project-{index}"));
+        fs::create_dir_all(&path).expect("project");
+        let init = repo
+            .command("git", &["init", "-b", "main"])
+            .current_dir(&path)
+            .output()
+            .expect("init");
+        assert!(init.status.success(), "{}", text(&init.stderr));
+        let child = repo
+            .command(
+                env!("CARGO_BIN_EXE_phantom"),
+                &["project", "add", path.to_str().expect("path"), "--json"],
+            )
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        children.push(child);
+    }
+    for child in children {
+        let output = child.wait_with_output().expect("wait");
+        assert!(output.status.success(), "{}", text(&output.stderr));
+    }
+    let listed = repo.phantom(&["project", "list", "--names"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let names = text(&listed.stdout);
+    for index in 0..6 {
+        assert!(names.contains(&format!("project-{index}")), "{names}");
+    }
+}
+
+#[test]
 fn exec_preserves_the_child_exit_code() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "feature/exec"]);
