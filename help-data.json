@@ -25,10 +25,6 @@
       "description": "Execute a command in a worktree directory"
     },
     {
-      "name": "edit",
-      "description": "Open a worktree in your configured editor"
-    },
-    {
       "name": "ai",
       "description": "Launch your configured AI coding assistant in a worktree"
     },
@@ -286,25 +282,6 @@
         "The exit code of the executed command is preserved"
       ]
     },
-    "edit": {
-      "name": "edit",
-      "description": "Open a worktree in your configured editor",
-      "usage": "phantom edit <worktree-name> [path]",
-      "examples": [
-        {
-          "description": "Open the worktree root in your configured editor",
-          "command": "phantom edit feature-auth"
-        },
-        {
-          "description": "Edit a specific file in a worktree",
-          "command": "phantom edit feature-auth README.md"
-        }
-      ],
-      "notes": [
-        "Uses the phantom.editor preference when set (`phantom preferences set editor <command>`), falling back to $EDITOR",
-        "The editor launches inside the worktree so relative paths resolve there"
-      ]
-    },
     "ai": {
       "name": "ai",
       "description": "Launch your configured AI coding assistant in a worktree",
@@ -326,14 +303,6 @@
       "description": "Manage phantom user preferences stored in git config (global)",
       "examples": [
         {
-          "command": "phantom preferences get editor",
-          "description": "Show the configured editor preference"
-        },
-        {
-          "command": "phantom preferences set editor code",
-          "description": "Set the editor preference (stored as phantom.editor in git config --global)"
-        },
-        {
           "command": "phantom preferences set ai \"codex --full-auto\"",
           "description": "Set the AI assistant preference (stored as phantom.ai in git config --global)"
         },
@@ -352,10 +321,6 @@
         {
           "command": "phantom preferences set ghqDiscovery false",
           "description": "Disable automatic project discovery through ghq"
-        },
-        {
-          "command": "phantom preferences remove editor",
-          "description": "Remove the editor preference (fallback to env/default)"
         }
       ],
       "notes": [
@@ -366,7 +331,6 @@
         "",
         "Preferences are saved in git config with the 'phantom.' prefix (global scope).",
         "Supported keys:",
-        "  editor - used by 'phantom edit', preferred over $EDITOR",
         "  ai - used by 'phantom ai'",
         "  worktreesDirectory - path relative to the Git repo root for storing worktrees (defaults to .git/phantom/worktrees)",
         "  directoryNameSeparator - replaces '/' in worktree directory names only (defaults to / for nested directories)",
@@ -379,10 +343,6 @@
       "usage": "phantom preferences get <key>",
       "description": "Show a preference value (reads git config --global phantom.<key>)",
       "examples": [
-        {
-          "command": "phantom preferences get editor",
-          "description": "Show the editor preference"
-        },
         {
           "command": "phantom preferences get ai",
           "description": "Show the AI assistant preference"
@@ -405,7 +365,7 @@
         }
       ],
       "notes": [
-        "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery"
+        "Supported keys: ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery"
       ]
     },
     "preferences set": {
@@ -413,10 +373,6 @@
       "usage": "phantom preferences set <key> <value>",
       "description": "Set a preference value (writes git config --global phantom.<key>)",
       "examples": [
-        {
-          "command": "phantom preferences set editor code",
-          "description": "Set VS Code as the editor"
-        },
         {
           "command": "phantom preferences set ai claude",
           "description": "Configure the AI assistant command"
@@ -439,7 +395,7 @@
         }
       ],
       "notes": [
-        "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery",
+        "Supported keys: ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery",
         "For worktreesDirectory, provide a path relative to the Git repository root; defaults to .git/phantom/worktrees when unset",
         "For directoryNameSeparator, '/' keeps nested directories; any other string replaces '/' only in the directory path",
         "For keepBranch, use true to preserve branches on delete or false to keep the default branch deletion behavior",
@@ -451,10 +407,6 @@
       "usage": "phantom preferences remove <key>",
       "description": "Remove a preference value (git config --global --unset phantom.<key>)",
       "examples": [
-        {
-          "command": "phantom preferences remove editor",
-          "description": "Unset the editor preference"
-        },
         {
           "command": "phantom preferences remove ai",
           "description": "Unset the AI assistant preference"
@@ -477,7 +429,7 @@
         }
       ],
       "notes": [
-        "Supported keys: editor, ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery"
+        "Supported keys: ai, worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery"
       ]
     },
     "version": {

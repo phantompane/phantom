@@ -2,7 +2,6 @@ use crate::error::{Error, Result};
 use crate::git;
 
 pub const SUPPORTED_KEYS: &[&str] = &[
-    "editor",
     "ai",
     "worktreesDirectory",
     "directoryNameSeparator",
@@ -12,7 +11,6 @@ pub const SUPPORTED_KEYS: &[&str] = &[
 
 #[derive(Debug, Clone, Default)]
 pub struct Preferences {
-    pub editor: Option<String>,
     pub ai: Option<String>,
     pub worktrees_directory: Option<String>,
     pub directory_name_separator: Option<String>,
@@ -30,7 +28,6 @@ pub fn config_key(key: &str) -> String {
 
 pub fn preference_value(preferences: &Preferences, key: &str) -> Option<String> {
     match key {
-        "editor" => preferences.editor.clone(),
         "ai" => preferences.ai.clone(),
         "worktreesDirectory" => preferences.worktrees_directory.clone(),
         "directoryNameSeparator" => preferences.directory_name_separator.clone(),
@@ -69,7 +66,6 @@ pub fn parse_preferences(output: &str) -> Preferences {
             continue;
         };
         match stripped.to_ascii_lowercase().as_str() {
-            "editor" => preferences.editor = Some(value.to_string()),
             "ai" => preferences.ai = Some(value.to_string()),
             "worktreesdirectory" => preferences.worktrees_directory = Some(value.to_string()),
             "directorynameseparator" => {
@@ -112,9 +108,11 @@ mod tests {
 
     #[test]
     fn parses_null_separated_git_config() {
-        let parsed =
-            parse_preferences("phantom.editor\ncode --reuse-window\0phantom.keepBranch\ntrue\0");
-        assert_eq!(parsed.editor.as_deref(), Some("code --reuse-window"));
+        let parsed = parse_preferences(
+            "phantom.worktreesDirectory\n.phantom\0phantom.keepBranch\ntrue\0phantom.editor\ncode\0",
+        );
+        assert_eq!(parsed.worktrees_directory.as_deref(), Some(".phantom"));
         assert_eq!(parsed.keep_branch, Some(true));
+        assert!(parsed.ai.is_none());
     }
 }
