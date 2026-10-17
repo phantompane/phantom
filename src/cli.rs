@@ -673,26 +673,6 @@ fn version(args: &[String]) -> Result<i32> {
     Ok(SUCCESS)
 }
 
-fn completion(args: &[String]) -> Result<i32> {
-    let Some(shell) = args.first() else {
-        eprintln!("Usage: phantom completion <shell>");
-        eprintln!("Supported shells: fish, zsh, bash");
-        return Ok(GENERAL);
-    };
-    let script = match shell.to_ascii_lowercase().as_str() {
-        "bash" => include_str!("../completions/phantom.bash"),
-        "zsh" => include_str!("../completions/phantom.zsh"),
-        "fish" => include_str!("../completions/phantom.fish"),
-        _ => {
-            eprintln!("Unsupported shell: {shell}");
-            eprintln!("Supported shells: fish, zsh, bash");
-            return Ok(GENERAL);
-        }
-    };
-    println!("{script}");
-    Ok(SUCCESS)
-}
-
 fn mcp(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &[flag("help", Some('h'))], true)?;
     if parsed.flag("help") || parsed.positionals.is_empty() {
@@ -1164,12 +1144,6 @@ static COMMANDS: &[Command] = &[
         name: "version",
         help_key: "version",
         run: version,
-        children: &[],
-    },
-    Command {
-        name: "completion",
-        help_key: "completion",
-        run: completion,
         children: &[],
     },
     Command {
