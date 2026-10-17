@@ -20,12 +20,10 @@ pub struct WorktreeInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionKind {
-    Shell,
     Exec(String),
 }
 
 pub struct ActionRequest {
-    pub shell: bool,
     pub exec: Option<String>,
 }
 
@@ -266,14 +264,7 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
         request.logger.warn(&failure.warning(&created.path));
         failure.code
     });
-    let action_code = run_action(
-        &context,
-        &name,
-        &created.path,
-        action,
-        &request.logger,
-        true,
-    )?;
+    let action_code = run_action(&name, &created.path, action, &request.logger, true)?;
     Ok(CreateOutcome {
         name,
         path: created.path,
@@ -399,14 +390,7 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
         request.logger.warn(&failure.warning(&attached.path));
         failure.code
     });
-    let action_code = run_action(
-        &context,
-        request.name,
-        &attached.path,
-        action,
-        &request.logger,
-        false,
-    )?;
+    let action_code = run_action(request.name, &attached.path, action, &request.logger, false)?;
     Ok(AttachOutcome {
         path: attached.path,
         exit_code: combine_exit(action_code, hook_code),
@@ -592,20 +576,13 @@ pub fn exec_in_worktree(
 
 pub fn resolve_action(request: &ActionRequest) -> Result<Option<ActionKind>> {
     let mut actions = Vec::new();
-    if request.shell {
-        actions.push(ActionKind::Shell);
-    }
     if let Some(command) = &request.exec {
         actions.push(ActionKind::Exec(command.clone()));
-    }
-    if actions.len() > 1 {
-        return Err(Error::ActionConflict);
     }
     Ok(actions.into_iter().next())
 }
 
 fn run_action(
-    context: &Context,
     name: &str,
     path: &Path,
     action: Option<ActionKind>,
@@ -616,19 +593,6 @@ fn run_action(
         return Ok(None);
     };
     match action {
-        ActionKind::Shell => {
-            logger.log(&format!(
-                "\nEntering worktree '{name}' at {}",
-                path.display()
-            ));
-            logger.log("Type 'exit' to return to your original directory\n");
-            let code = open_shell(&context.git_root, name)?;
-            if code == 0 {
-                Ok(return_success_code.then_some(code))
-            } else {
-                Err(command_failure(&code))
-            }
-        }
         ActionKind::Exec(command) => {
             logger.log(&format!(
                 "\nExecuting command in worktree '{name}': {command}"
@@ -650,26 +614,6 @@ fn run_action(
             }
         }
     }
-}
-
-fn command_failure(code: &i32) -> Error {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    Error::CommandFailed {
-        command: shell,
-        code: *code,
-    }
-}
-
-pub fn open_shell(git_root: &Path, name: &str) -> Result<i32> {
-    let worktree = find_worktree(git_root, name, false, None)?;
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let path = PathBuf::from(&worktree.path);
-    let env = phantom_env(name, &path);
-    let pairs = env
-        .iter()
-        .map(|(key, value)| (key.as_str(), value.as_str()))
-        .collect::<Vec<_>>();
-    process::inherit(&shell, &[], Some(&path), &pairs)
 }
 
 pub fn phantom_env(name: &str, path: &Path) -> Vec<(String, String)> {
@@ -1239,15 +1183,5 @@ mod tests {
         assert!(files.is_empty());
 
         let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn rejects_conflicting_actions() {
-        let error = resolve_action(&ActionRequest {
-            shell: true,
-            exec: Some("true".to_string()),
-        })
-        .expect_err("conflict");
-        assert!(matches!(error, Error::ActionConflict));
     }
 }

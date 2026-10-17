@@ -134,8 +134,8 @@ mod tests {
     fn parses_create_style_flags() {
         let options = [
             Opt {
-                name: "shell",
-                short: Some('s'),
+                name: "force",
+                short: Some('f'),
                 value: false,
                 multiple: false,
             },
@@ -153,7 +153,7 @@ mod tests {
             },
         ];
         let args = [
-            "--shell",
+            "--force",
             "-xhi",
             "--copy-file",
             "a",
@@ -163,7 +163,7 @@ mod tests {
         ]
         .map(str::to_string);
         let parsed = parse(&args, &options, true).expect("parse");
-        assert!(parsed.flag("shell"));
+        assert!(parsed.flag("force"));
         assert_eq!(parsed.value("exec"), Some("hi"));
         assert_eq!(
             parsed.values("copy-file"),

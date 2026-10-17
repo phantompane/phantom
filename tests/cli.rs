@@ -51,6 +51,13 @@ impl Repo {
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_STATE_HOME", self.root.join("state"));
+        // Parallel `git init` hardlinks the shared template and can fail with
+        // "File exists" on the hook samples. Give each repo an empty template.
+        if program.ends_with("git") && args.first() == Some(&"init") {
+            let template = self.root.join("git-template");
+            fs::create_dir_all(&template).expect("git template");
+            command.env("GIT_TEMPLATE_DIR", &template);
+        }
         command
     }
 }
@@ -187,7 +194,6 @@ fn removed_tmux_options_are_unknown() {
         vec!["create", "name", "-t"],
         vec!["attach", "main", "--tmux-vertical"],
         vec!["exec", "--tmux-h", "name", "true"],
-        vec!["shell", "name", "--tmux-v"],
         vec!["github", "checkout", "1", "--tmux"],
         vec!["gh", "checkout", "1", "-t"],
     ];
@@ -560,6 +566,32 @@ fn keep_branch_preference_applies_to_delete() {
 }
 
 #[test]
+fn removed_shell_command_and_flag_are_unknown() {
+    let repo = Repo::new();
+    let command = repo.phantom(&["shell", "feature"]);
+    assert_eq!(command.status.code(), Some(1));
+    assert!(text(&command.stderr).contains("Unknown command 'shell feature'"));
+
+    for args in [
+        vec!["create", "name", "--shell"],
+        vec!["attach", "main", "-s"],
+    ] {
+        let output = repo.phantom(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{args:?} {}",
+            text(&output.stderr)
+        );
+        assert!(
+            text(&output.stderr).contains("Unknown option"),
+            "{args:?} {}",
+            text(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn removed_fzf_option_is_unknown() {
     let repo = Repo::new();
     let cases = [
@@ -567,7 +599,6 @@ fn removed_fzf_option_is_unknown() {
         vec!["where", "--fzf"],
         vec!["delete", "--fzf"],
         vec!["exec", "--fzf", "true"],
-        vec!["shell", "--fzf"],
     ];
     for args in cases {
         let output = repo.phantom(&args);

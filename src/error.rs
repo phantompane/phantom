@@ -16,8 +16,6 @@ pub enum Error {
     BranchNotFound(String),
     #[error("Not a git repository. Run phantom from inside a Git repository.")]
     NotARepository,
-    #[error("Cannot use --shell and --exec options together")]
-    ActionConflict,
     #[error(
         "Worktree '{name}' has uncommitted changes ({files} files). Use --force to delete anyway."
     )]
