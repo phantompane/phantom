@@ -949,6 +949,76 @@ fn delete_removes_empty_parent_directories() {
 }
 
 #[test]
+fn detached_worktree_keeps_its_directory_name() {
+    let repo = Repo::new();
+    let worktree = repo.repo.join(".git/phantom/worktrees/next");
+    repo.git(&[
+        "worktree",
+        "add",
+        "--detach",
+        worktree.to_str().expect("path"),
+        "HEAD",
+    ]);
+    let head = repo
+        .command("git", &["rev-parse", "--short=7", "HEAD"])
+        .output()
+        .expect("rev-parse");
+    let sha = text(&head.stdout);
+    let names = repo.phantom(&["list", "--names", "--no-default"]);
+    assert!(names.status.success(), "{}", text(&names.stderr));
+    assert_eq!(text(&names.stdout), "next");
+    let listed = repo.phantom(&["list", "--no-default"]);
+    assert!(
+        text(&listed.stdout).starts_with("next ("),
+        "{}",
+        text(&listed.stdout)
+    );
+    assert!(
+        !text(&listed.stdout).starts_with(&sha),
+        "{}",
+        text(&listed.stdout)
+    );
+
+    let found = repo.phantom(&["where", "next"]);
+    assert_eq!(found.status.code(), Some(0), "{}", text(&found.stderr));
+    assert_eq!(text(&found.stdout), worktree.to_string_lossy());
+
+    let moved = repo
+        .command(
+            "git",
+            &["commit", "--allow-empty", "-m", "move detached head"],
+        )
+        .current_dir(&worktree)
+        .output()
+        .expect("commit");
+    assert!(moved.status.success(), "{}", text(&moved.stderr));
+    let names_after = repo.phantom(&["list", "--names", "--no-default"]);
+    assert_eq!(text(&names_after.stdout), "next");
+
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic",
+        repo.repo
+            .join(".git/phantom/worktrees/alias")
+            .to_str()
+            .expect("path"),
+        "HEAD",
+    ]);
+    let by_directory = repo.phantom(&["where", "alias"]);
+    let by_branch = repo.phantom(&["where", "topic"]);
+    let alias = repo.repo.join(".git/phantom/worktrees/alias");
+    assert_eq!(text(&by_directory.stdout), alias.to_string_lossy());
+    assert_eq!(text(&by_branch.stdout), alias.to_string_lossy());
+    let both = repo.phantom(&["list", "--names", "--no-default"]);
+    let listed_names = text(&both.stdout);
+    assert!(listed_names.contains("next"), "{listed_names}");
+    assert!(listed_names.contains("alias"), "{listed_names}");
+    assert!(!listed_names.lines().any(|line| line == "topic"));
+}
+
+#[test]
 fn exec_preserves_the_child_exit_code() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "feature/exec"]);
