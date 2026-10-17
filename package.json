@@ -37,5 +37,11 @@
   },
   "dependencies": {
     "zod": "^4.6.5"
+  },
+  "pnpm": {
+    "overrides": {
+      "brace-expansion@>=5": "5.0.12",
+      "brace-expansion@<2": "1.1.21"
+    }
   }
 }
