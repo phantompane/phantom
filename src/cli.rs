@@ -10,7 +10,6 @@ use crate::process;
 use crate::projects::{self, ProjectListEntry, ProjectRecord, ProjectRegistryStore};
 use crate::tmux::{self, TmuxDirection};
 use crate::worktree::{self, ActionRequest, Logger};
-use crate::VERSION;
 
 struct Command {
     name: &'static str,
@@ -25,7 +24,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         return Ok(SUCCESS);
     }
     if args[0] == "-v" || args[0] == "--version" {
-        println!("Phantom v{VERSION}");
+        println!("{}", crate::version_line());
         return Ok(SUCCESS);
     }
     match find(args, COMMANDS) {
@@ -669,7 +668,7 @@ fn preferences_remove(args: &[String]) -> Result<i32> {
 
 fn version(args: &[String]) -> Result<i32> {
     args::parse(args, &[], false)?;
-    println!("Phantom v{VERSION}");
+    println!("{}", crate::version_line());
     Ok(SUCCESS)
 }
 
