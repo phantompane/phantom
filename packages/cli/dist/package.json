@@ -24,7 +24,7 @@
   "author": "aku11i",
   "type": "module",
   "bin": {
-    "phantom": "./phantom.js"
+    "phantom": "phantom.js"
   },
   "files": [
     "phantom.js",
