@@ -16,7 +16,7 @@ pub struct Checkout {
     pub hook_failure: Option<worktree::HookFailure>,
 }
 
-pub fn checkout(number: &str, base: Option<&str>) -> Result<Checkout> {
+pub fn checkout(number: &str, base: Option<&str>, logger: &Logger) -> Result<Checkout> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let (owner, repo) = repo_info(&cwd)?;
     let issue = fetch_issue(&owner, &repo, number)?;
@@ -32,9 +32,9 @@ pub fn checkout(number: &str, base: Option<&str>) -> Result<Checkout> {
                 pull.head_ref
             )));
         }
-        checkout_pull_request(&cwd, &pull)
+        checkout_pull_request(&cwd, &pull, logger)
     } else {
-        checkout_issue(&cwd, issue.number, base)
+        checkout_issue(&cwd, issue.number, base, logger)
     }
 }
 
@@ -50,7 +50,7 @@ struct PullRequest {
     head_repo: String,
 }
 
-fn checkout_pull_request(cwd: &Path, pull: &PullRequest) -> Result<Checkout> {
+fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Result<Checkout> {
     let git_root = git::git_root(cwd)?;
     let context = context::create(&git_root)?;
     let worktree_name = if pull.fork {
@@ -84,8 +84,7 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest) -> Result<Checkout> {
     }
     let files = copy_files(&context);
     let commands = post_commands(&context);
-    let attached =
-        worktree::attach_worktree(&context, &worktree_name, &files, &commands, &Logger::on())?;
+    let attached = worktree::attach_worktree(&context, &worktree_name, &files, &commands, logger)?;
     let message = if pull.fork {
         format!(
             "Checked out PR #{} from fork {}",
@@ -106,7 +105,12 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest) -> Result<Checkout> {
     })
 }
 
-fn checkout_issue(cwd: &Path, number: u64, base: Option<&str>) -> Result<Checkout> {
+fn checkout_issue(
+    cwd: &Path,
+    number: u64,
+    base: Option<&str>,
+    logger: &Logger,
+) -> Result<Checkout> {
     let git_root = git::git_root(cwd)?;
     let context = context::create(&git_root)?;
     let name = format!("issues/{number}");
@@ -127,7 +131,7 @@ fn checkout_issue(cwd: &Path, number: u64, base: Option<&str>) -> Result<Checkou
         base.unwrap_or("HEAD"),
         &files,
         &commands,
-        &Logger::on(),
+        logger,
     )?;
     Ok(Checkout {
         message: format!("Created worktree '{name}' at {}", created.path.display()),

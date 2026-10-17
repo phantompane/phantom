@@ -271,7 +271,7 @@ impl PhantomServer {
         &self,
         Parameters(args): Parameters<CheckoutArgs>,
     ) -> std::result::Result<String, String> {
-        let checkout = github::checkout(&args.number, args.base.as_deref())
+        let checkout = github::checkout(&args.number, args.base.as_deref(), &Logger::off())
             .map_err(|error| error.to_string())?;
         let message = if checkout.already_exists {
             format!("Worktree '{}' already exists.", checkout.worktree)

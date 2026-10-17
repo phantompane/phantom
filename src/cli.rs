@@ -933,7 +933,7 @@ fn github_checkout(args: &[String]) -> Result<i32> {
     if direction.is_some() && !tmux::inside_tmux() {
         return fail(&Error::TmuxRequired, VALIDATION);
     }
-    let checkout = match github::checkout(number, parsed.value("base")) {
+    let checkout = match github::checkout(number, parsed.value("base"), &Logger::on()) {
         Ok(checkout) => checkout,
         Err(error) => return fail(&error, error.exit_code()),
     };
