@@ -673,7 +673,6 @@ fn copy_files_into(source_root: &Path, target_root: &Path, patterns: &[String]) 
 
 fn resolve_patterns(source_root: &Path, patterns: &[String]) -> Result<Vec<String>> {
     let mut files = Vec::new();
-    let mut walked: Option<Vec<String>> = None;
     for pattern in patterns {
         let normalized = pattern.replace('\\', "/");
         for alternative in expand_braces(&normalized) {
@@ -683,27 +682,42 @@ fn resolve_patterns(source_root: &Path, patterns: &[String]) -> Result<Vec<Strin
                 }
                 continue;
             }
-            if walked.is_none() {
-                walked = Some(walk_files(source_root)?);
-            }
-            let existing = walked.as_deref().unwrap_or(&[]);
-            for relative in existing {
-                if glob_matches(&alternative, relative) && !files.contains(relative) {
-                    files.push(relative.clone());
-                }
-            }
+            collect_pattern(source_root, &alternative, &mut files)?;
         }
     }
     Ok(files)
 }
 
-fn walk_files(root: &Path) -> Result<Vec<String>> {
-    let mut files = Vec::new();
-    walk_files_at(root, root, &mut files)?;
-    Ok(files)
+fn collect_pattern(root: &Path, pattern: &str, files: &mut Vec<String>) -> Result<()> {
+    let segments = pattern
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let prefix_len = segments
+        .iter()
+        .position(|segment| *segment == "**" || segment_has_magic(segment))
+        .unwrap_or(segments.len());
+    let start = root.join(segments[..prefix_len].join("/"));
+    let rest = &segments[prefix_len..];
+    if rest.is_empty() {
+        return Ok(());
+    }
+    let max_dir_depth = if rest.contains(&"**") {
+        None
+    } else {
+        Some(rest.len().saturating_sub(1))
+    };
+    walk_matching(root, &start, 0, max_dir_depth, pattern, files)
 }
 
-fn walk_files_at(root: &Path, dir: &Path, files: &mut Vec<String>) -> Result<()> {
+fn walk_matching(
+    root: &Path,
+    dir: &Path,
+    depth: usize,
+    max_dir_depth: Option<usize>,
+    pattern: &str,
+    files: &mut Vec<String>,
+) -> Result<()> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -717,21 +731,43 @@ fn walk_files_at(root: &Path, dir: &Path, files: &mut Vec<String>) -> Result<()>
             Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
             Err(_) => continue,
         };
-        if relative == ".git" || relative.starts_with(".git/") {
+        if relative.split('/').any(|segment| segment == ".git") {
             continue;
         }
-        let metadata = match fs::metadata(&path) {
-            Ok(metadata) => metadata,
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(_) => continue,
+            Err(error) => return Err(Error::msg(format!("Failed to resolve pattern: {error}"))),
         };
-        if metadata.is_dir() {
-            walk_files_at(root, &path, files)?;
-        } else if metadata.is_file() {
+        // file_type does not follow symlinks, so a directory link is not a directory.
+        if file_type.is_dir() {
+            let descend = match max_dir_depth {
+                Some(limit) => depth < limit,
+                None => true,
+            };
+            if descend {
+                walk_matching(root, &path, depth + 1, max_dir_depth, pattern, files)?;
+            }
+            continue;
+        }
+        if copyable_file(&path) && glob_matches(pattern, &relative) && !files.contains(&relative) {
             files.push(relative);
         }
     }
     Ok(())
+}
+
+fn copyable_file(path: &Path) -> bool {
+    match fs::metadata(path) {
+        Ok(metadata) => metadata.is_file(),
+        Err(_) => false,
+    }
+}
+
+fn segment_has_magic(segment: &str) -> bool {
+    segment
+        .chars()
+        .any(|char| matches!(char, '*' | '?' | '[' | '{'))
 }
 
 fn has_magic(pattern: &str) -> bool {
@@ -943,6 +979,61 @@ mod tests {
         assert_eq!(directory, vec!["nested/deep/file.txt".to_string()]);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn copy_globs_skip_directory_symlinks_and_unrelated_trees() {
+        let root = std::env::temp_dir().join(format!(
+            "phantom-glob-link-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let outside = std::env::temp_dir().join(format!(
+            "phantom-glob-outside-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("keep")).expect("keep");
+        fs::create_dir_all(root.join("nested")).expect("nested");
+        fs::create_dir_all(root.join("deep/a")).expect("deep");
+        fs::create_dir_all(&outside).expect("outside");
+        fs::write(root.join(".env"), "a").expect("env");
+        fs::write(root.join("real.env"), "b").expect("real");
+        fs::write(root.join("nested/.env"), "c").expect("nested env");
+        fs::write(root.join("keep/note.txt"), "d").expect("note");
+        fs::write(root.join("deep/a/file.txt"), "e").expect("deep file");
+        fs::write(outside.join("secret.txt"), "no").expect("secret");
+        std::os::unix::fs::symlink(&root, root.join("cycle")).expect("cycle");
+        std::os::unix::fs::symlink(root.join("nested"), root.join("nested/again")).expect("again");
+        std::os::unix::fs::symlink(&outside, root.join("outside")).expect("outside link");
+        std::os::unix::fs::symlink(root.join("real.env"), root.join("link.env"))
+            .expect("file link");
+
+        let all = resolve_patterns(&root, &["**".to_string()]).expect("all");
+        assert!(all.contains(&".env".to_string()));
+        assert!(all.contains(&"keep/note.txt".to_string()));
+        assert!(all.contains(&"link.env".to_string()));
+        assert!(!all.iter().any(|path| path.contains("secret")));
+        assert!(!all.iter().any(|path| path.starts_with("outside/")));
+        assert!(!all.iter().any(|path| path.starts_with("cycle/")));
+        assert!(!all.iter().any(|path| path.starts_with("nested/again/")));
+
+        let root_env = resolve_patterns(&root, &["*.env".to_string()]).expect("root env");
+        assert!(root_env.contains(&".env".to_string()));
+        assert!(root_env.contains(&"link.env".to_string()));
+        assert!(!root_env.iter().any(|path| path.contains('/')));
+
+        let prefixed = resolve_patterns(&root, &["keep/*.txt".to_string()]).expect("prefix");
+        assert_eq!(prefixed, vec!["keep/note.txt".to_string()]);
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
     }
 
     #[test]

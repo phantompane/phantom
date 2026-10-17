@@ -121,12 +121,13 @@ To release a new version of Phantom:
 1. **Bump version**
 
    ```bash
-   # Trigger the automated version bump workflow via GitHub CLI
+   # Dispatch the workflow that lives on next. The default branch is main,
+   # which still has the TypeScript workflow, so --ref next is required.
    # release_type: patch | minor | major | prepatch | preminor | premajor | prerelease
-   gh workflow run version-bump.yml -f release_type=patch
+   gh workflow run version-bump.yml --ref next -f release_type=patch
 
    # Example: start a prerelease minor bump
-   gh workflow run version-bump.yml -f release_type=preminor
+   gh workflow run version-bump.yml --ref next -f release_type=preminor
 
    # Wait for the workflow to finish and create the PR for you
    gh run watch --exit-status --workflow=version-bump.yml
