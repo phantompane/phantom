@@ -13,11 +13,28 @@ pub struct GitWorktree {
 }
 
 pub fn output(args: &[&str], cwd: Option<&Path>, trim_stdout: bool) -> Result<String> {
-    Ok(process::capture("git", args, cwd, trim_stdout)?.stdout)
+    match process::capture("git", args, cwd, trim_stdout) {
+        Ok(captured) => Ok(captured.stdout),
+        Err(error) => Err(repository_error(error)),
+    }
 }
 
 pub fn run(args: &[&str], cwd: Option<&Path>) -> Result<()> {
-    process::capture("git", args, cwd, true).map(|_| ())
+    process::capture("git", args, cwd, true)
+        .map(|_| ())
+        .map_err(repository_error)
+}
+
+fn repository_error(error: Error) -> Error {
+    if error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("not a git repository")
+    {
+        Error::NotARepository
+    } else {
+        error
+    }
 }
 
 pub fn git_root(cwd: &Path) -> Result<PathBuf> {
@@ -200,6 +217,18 @@ fn normalize(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rewrites_missing_repository_errors() {
+        let error = repository_error(Error::msg(
+            "fatal: not a git repository (or any of the parent directories): .git",
+        ));
+        assert!(matches!(error, Error::NotARepository));
+        assert_eq!(error.exit_code(), crate::error::NOT_REPOSITORY);
+        assert!(!error.to_string().to_ascii_lowercase().contains("fatal:"));
+        let other = repository_error(Error::msg("fatal: not something else"));
+        assert!(matches!(other, Error::Message(_)));
+    }
 
     #[test]
     fn parses_porcelain() {
