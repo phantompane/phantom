@@ -11,7 +11,7 @@
 
 ## Build, Test, and Development Commands
 
-- Prerequisite: Rust 1.99.1, pinned in `rust-toolchain.toml`. The same version is pinned in `.github/workflows/ci.yml`, `release-compile.yml` (`toolchain` and `RUSTUP_TOOLCHAIN`), `version-bump.yml`, and `devenv.nix`. Dependabot updates Cargo dependencies and GitHub Action SHAs. It does not bump `rust-toolchain.toml` or those workflow strings. To move the pin, change every one of those places together, then run fmt, clippy, and tests on the new compiler. Change `rust-version` in `Cargo.toml` only when the MSRV changes. It is 1.89 because uuid 1.28 declares `rust-version = "1.89.0"`.
+- Prerequisite: Rust 1.99.1, pinned in `rust-toolchain.toml`. The same version is pinned in `.github/workflows/ci.yml`, `release-compile.yml` (`toolchain` and `RUSTUP_TOOLCHAIN`), `version-bump.yml`, and `devenv.nix`. Dependabot reads `.github/dependabot.yml` only from the default branch, so Cargo and GitHub Actions updates start after `next` is merged into `main`. It does not bump `rust-toolchain.toml` or those workflow strings. To move the pin, change every one of those places together, then run fmt, clippy, and tests on the new compiler. Change `rust-version` in `Cargo.toml` only when the MSRV changes. It is 1.89 because uuid 1.28 declares `rust-version = "1.89.0"`.
 - Run the CLI: `cargo run --locked -- --help`.
 - Format: `cargo fmt --all`.
 - Lint: `cargo clippy --locked --all-targets -- -D warnings`.
