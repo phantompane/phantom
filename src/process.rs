@@ -110,11 +110,6 @@ fn inherit_io(
     exit_code(command, status)
 }
 
-pub fn shell(script: &str, cwd: &Path, env: &[(&str, &str)]) -> Result<i32> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    inherit(&shell, &["-c", script], Some(cwd), env)
-}
-
 pub fn run_with_timeout(command: &str, args: &[&str], timeout: Duration) -> Result<Captured> {
     let mut child = Command::new(command)
         .args(args)
