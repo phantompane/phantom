@@ -51,6 +51,13 @@ impl Repo {
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_STATE_HOME", self.root.join("state"));
+        // Parallel `git init` hardlinks the shared template and can fail with
+        // "File exists" on the hook samples. Give each repo an empty template.
+        if program.ends_with("git") && args.first() == Some(&"init") {
+            let template = self.root.join("git-template");
+            fs::create_dir_all(&template).expect("git template");
+            command.env("GIT_TEMPLATE_DIR", &template);
+        }
         command
     }
 }
