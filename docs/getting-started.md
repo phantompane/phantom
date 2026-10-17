@@ -4,27 +4,10 @@ This guide will help you get up and running with Phantom quickly.
 
 ## 📋 Table of Contents
 
-- [Installation](#-installation)
 - [Basic Concepts](#-basic-concepts)
 - [Your First Phantom](#-your-first-phantom)
 - [Essential Commands](#-essential-commands)
 - [Common Workflows](#-common-workflows)
-
-## 📥 Installation
-
-```bash
-# From a GitHub release archive, or from source:
-cargo install --path . --locked
-
-# Optional tools for a better experience: fzf and tmux
-```
-
-> **Note:** For Bash users, you need bash-completion v2 installed first, then add this to your `.bashrc` or `.bash_profile`:
->
-> ```bash
-> # Prerequisites: bash-completion v2 must be installed
-> eval "$(phantom completion bash)"
-> ```
 
 ## 💡 Basic Concepts
 

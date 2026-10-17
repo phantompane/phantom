@@ -647,9 +647,7 @@ phantom completion <shell>
 - `zsh` - Z shell
 - `bash` - Bash shell
 
-**Installation:**
-
-When installed via Homebrew, completions for Fish and Zsh are installed automatically. For Bash, manual setup is required:
+Add the script to your shell config:
 
 ```bash
 # For Fish (add to ~/.config/fish/config.fish for persistence)

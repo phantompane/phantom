@@ -159,7 +159,6 @@ To release a new version of Phantom:
      - Add usage examples for new features with code blocks
      - Credit external contributors inline (e.g., "Thanks @username!")
      - Include PR numbers for all changes
-     - Add installation/upgrade instructions
      - Include "New Contributors" section with PR numbers
 
    ````bash
@@ -193,14 +192,6 @@ To release a new version of Phantom:
    - @username - Contribution description (#PR)
 
    ***
-
-   **Installation/Upgrade:**
-
-   ```bash
-   # Download phantom-v<version>-<os>-<arch>.tar.gz from the GitHub release
-   # or build from the tag:
-   cargo install --path . --locked
-   ```
 
    **Full Changelog**: https://github.com/phantompane/phantom/compare/v<previous>...v<version>
    EOF
