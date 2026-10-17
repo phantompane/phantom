@@ -30,8 +30,14 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: pnpm
 
-      - name: Install latest npm
-        run: npm install -g npm@latest
+      # npm@latest is 12.x, which requires Node ^22.22.2 || ^24.15.0 || >=26.
+      # This job uses .node-version (v24.1.0), which CI, release-compile, and
+      # version-bump also use. npm 11 still supports trusted publishing and
+      # provenance on that Node.
+      - name: Install npm 11
+        run: |
+          npm install -g npm@11
+          npm --version
 
       - name: Determine npm dist-tag
         id: dist_tag
