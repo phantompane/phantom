@@ -37,6 +37,15 @@ interface LockOwner {
   processIdentity: string | null;
 }
 
+interface LockObservation {
+  token: string | null;
+}
+
+interface LockWaitProgress {
+  initialized: boolean;
+  snapshot: LockObservation | null;
+}
+
 export interface ProjectRegistryStoreOptions {
   lockTimeoutMs?: number;
   lockRetryMs?: number;
@@ -243,12 +252,18 @@ export class ProjectRegistryStore {
       this.dataDir,
       LOCK_RECOVERY_DIRECTORY_NAME,
     );
-    const deadline = Date.now() + this.lockTimeoutMs;
+    let deadline = Date.now() + this.lockTimeoutMs;
+    const progress: LockWaitProgress = { initialized: false, snapshot: null };
     let owner: LockOwner | undefined;
 
     while (true) {
       if (await this.hasActiveRecoveryMarkers(recoveryDirectoryPath)) {
-        await this.waitForLock(deadline, lockPath, recoveryDirectoryPath);
+        deadline = await this.waitForLock(
+          deadline,
+          lockPath,
+          recoveryDirectoryPath,
+          progress,
+        );
         continue;
       }
 
@@ -278,7 +293,12 @@ export class ProjectRegistryStore {
         if (await this.recoverStaleLock(lockPath, recoveryDirectoryPath)) {
           continue;
         }
-        await this.waitForLock(deadline, lockPath, recoveryDirectoryPath);
+        deadline = await this.waitForLock(
+          deadline,
+          lockPath,
+          recoveryDirectoryPath,
+          progress,
+        );
         continue;
       }
 
@@ -305,7 +325,12 @@ export class ProjectRegistryStore {
             recoveryDirectoryPath,
           );
         }
-        await this.waitForLock(deadline, lockPath, recoveryDirectoryPath);
+        deadline = await this.waitForLock(
+          deadline,
+          lockPath,
+          recoveryDirectoryPath,
+          progress,
+        );
         continue;
       }
 
@@ -481,14 +506,30 @@ export class ProjectRegistryStore {
     deadline: number,
     lockPath: string,
     recoveryDirectoryPath: string,
-  ): Promise<void> {
-    if (Date.now() >= deadline) {
-      throw new ProjectRegistryError(
-        `Timed out waiting for projects registry lock at ${lockPath}. ` +
-          `Inspect ${recoveryDirectoryPath} for abandoned recovery markers.`,
-      );
+    progress: LockWaitProgress,
+  ): Promise<number> {
+    if (!progress.initialized) {
+      progress.snapshot = await readLockObservation(lockPath);
+      progress.initialized = true;
     }
+
+    if (Date.now() >= deadline) {
+      const current = await readLockObservation(lockPath);
+      // The deadline bounds one live holder, not the whole queue. A different
+      // owner means the lock is making progress, so keep waiting. The same
+      // holder, including one that only heartbeats, still times out.
+      if (sameLockHolder(progress.snapshot, current)) {
+        throw new ProjectRegistryError(
+          `Timed out waiting for projects registry lock at ${lockPath}. ` +
+            `Inspect ${recoveryDirectoryPath} for abandoned recovery markers.`,
+        );
+      }
+      progress.snapshot = current;
+      deadline = Date.now() + this.lockTimeoutMs;
+    }
+
     await delay(this.lockRetryMs);
+    return deadline;
   }
 }
 
@@ -653,3 +694,30 @@ function delay(milliseconds: number): Promise<void> {
 }
 
 const currentProcessIdentity = readProcessIdentity(process.pid);
+
+async function readLockObservation(
+  lockPath: string,
+): Promise<LockObservation | null> {
+  try {
+    await stat(lockPath);
+    const owner = await readLockOwner(lockPath);
+    return {
+      token: owner?.token ?? null,
+    };
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function sameLockHolder(
+  left: LockObservation | null,
+  right: LockObservation | null,
+): boolean {
+  if (left === null || right === null) {
+    return left === right;
+  }
+  return left.token === right.token;
+}
