@@ -281,9 +281,6 @@ mod tests {
             .expect("help")
             .expect("checkout");
         assert!(checkout.contains("--base <value>"));
-        assert!(checkout.contains("-t, --tmux"));
-        assert!(checkout.contains("--tmux-vertical, --tmux-v"));
-        assert!(checkout.contains("--tmux-horizontal, --tmux-h"));
     }
 
     #[test]

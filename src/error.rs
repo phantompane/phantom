@@ -16,10 +16,8 @@ pub enum Error {
     BranchNotFound(String),
     #[error("Not a git repository. Run phantom from inside a Git repository.")]
     NotARepository,
-    #[error("Cannot use --shell, --exec, and --tmux options together")]
+    #[error("Cannot use --shell and --exec options together")]
     ActionConflict,
-    #[error("The --tmux option can only be used inside a tmux session")]
-    TmuxRequired,
     #[error(
         "Worktree '{name}' has uncommitted changes ({files} files). Use --force to delete anyway."
     )]
