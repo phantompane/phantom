@@ -28,11 +28,11 @@
   "devDependencies": {
     "@types/node": "^25.9.4",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
-    "oxfmt": "^0.70.0",
-    "oxlint": "^1.85.0",
+    "oxfmt": "^0.71.0",
+    "oxlint": "^1.86.0",
     "tsdown": "^0.23.0",
-    "turbo": "^2.11.3",
-    "typescript": "npm:@typescript/typescript6@^6.0.0",
+    "turbo": "^2.11.7",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
     "vitest": "^5.0.3"
   },
   "dependencies": {
