@@ -141,7 +141,7 @@ fn list(args: &[String]) -> Result<i32> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = match git::git_root(&cwd) {
         Ok(root) => root,
-        Err(error) => return fail(&error, GENERAL),
+        Err(error) => return fail(&error, error.exit_code()),
     };
     let exclude_default = parsed.flag("no-default");
     if parsed.flag("fzf") {
@@ -199,7 +199,7 @@ fn where_cmd(args: &[String]) -> Result<i32> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = match git::git_root(&cwd) {
         Ok(root) => root,
-        Err(error) => return fail(&error, GENERAL),
+        Err(error) => return fail(&error, error.exit_code()),
     };
     let context = crate::context::create(&git_root)?;
     let name = if use_fzf {
@@ -257,7 +257,7 @@ fn delete(args: &[String]) -> Result<i32> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = match git::git_root(&cwd) {
         Ok(root) => root,
-        Err(error) => return fail(&error, GENERAL),
+        Err(error) => return fail(&error, error.exit_code()),
     };
     let context = match crate::context::create(&git_root) {
         Ok(context) => context,
@@ -328,7 +328,7 @@ fn exec(args: &[String]) -> Result<i32> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = match git::git_root(&cwd) {
         Ok(root) => root,
-        Err(error) => return fail(&error, GENERAL),
+        Err(error) => return fail(&error, error.exit_code()),
     };
     let context = match crate::context::create(&git_root) {
         Ok(context) => context,
@@ -422,7 +422,7 @@ fn shell(args: &[String]) -> Result<i32> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = match git::git_root(&cwd) {
         Ok(root) => root,
-        Err(error) => return fail(&error, GENERAL),
+        Err(error) => return fail(&error, error.exit_code()),
     };
     let context = match crate::context::create(&git_root) {
         Ok(context) => context,
@@ -514,7 +514,7 @@ fn launch_configured(args: &[String], editor: bool) -> Result<i32> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = match git::git_root(&cwd) {
         Ok(root) => root,
-        Err(error) => return fail(&error, GENERAL),
+        Err(error) => return fail(&error, error.exit_code()),
     };
     let context = match crate::context::create(&git_root) {
         Ok(context) => context,
@@ -935,7 +935,7 @@ fn github_checkout(args: &[String]) -> Result<i32> {
     }
     let checkout = match github::checkout(number, parsed.value("base")) {
         Ok(checkout) => checkout,
-        Err(error) => return fail(&error, GENERAL),
+        Err(error) => return fail(&error, error.exit_code()),
     };
     println!("{}", checkout.message);
     if let Some(direction) = direction {
