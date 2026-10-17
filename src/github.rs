@@ -74,13 +74,15 @@ fn checkout_pull_request(
         pull.head_ref.clone()
     };
     if let Ok(existing) = worktree::find_worktree(&context.git_root, &worktree_name, false, None) {
-        return Ok(Checkout {
-            message: format!("PR #{} is already checked out", pull.number),
-            worktree: worktree_name,
-            path: existing.path.into(),
-            already_exists: true,
-            hook_failure: None,
-        });
+        if existing.branch == worktree_name {
+            return Ok(Checkout {
+                message: format!("PR #{} is already checked out", pull.number),
+                worktree: worktree_name,
+                path: existing.path.into(),
+                already_exists: true,
+                hook_failure: None,
+            });
+        }
     }
     let upstream = if pull.fork {
         format!("origin/pull/{}/head", pull.number)

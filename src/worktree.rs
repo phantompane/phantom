@@ -88,6 +88,7 @@ pub fn list_worktrees(
     exclude_default: bool,
     include_prunable: bool,
 ) -> Result<Vec<WorktreeInfo>> {
+    let context = context::create(git_root)?;
     let git_root_string = git_root.to_string_lossy().to_string();
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let mut infos = Vec::new();
@@ -100,33 +101,85 @@ pub fn list_worktrees(
         if exclude_default && worktree.path == git_root_string {
             continue;
         }
-        infos.push(info_from_git(&worktree, &cwd));
+        infos.push(info_from_git(&worktree, &cwd, &context));
     }
     Ok(infos)
 }
 
-fn info_from_git(worktree: &GitWorktree, cwd: &Path) -> WorktreeInfo {
+fn info_from_git(worktree: &GitWorktree, cwd: &Path, context: &Context) -> WorktreeInfo {
     let short_head = worktree
         .head
         .as_deref()
         .map(|head| head.chars().take(7).collect::<String>())
         .unwrap_or_else(|| "HEAD".to_string());
-    let branch_name = match worktree.branch.as_deref() {
+    let branch = match worktree.branch.as_deref() {
         Some(branch) if branch != "(detached HEAD)" => branch.to_string(),
-        _ => short_head,
+        _ => "(detached HEAD)".to_string(),
     };
     let path = PathBuf::from(&worktree.path);
+    let directory_name = directory_name(&path, &context.worktrees_directory);
+    let name = directory_name.unwrap_or_else(|| {
+        if branch == "(detached HEAD)" {
+            short_head
+        } else {
+            branch.clone()
+        }
+    });
     let relative = paths::relative(cwd, &path);
     WorktreeInfo {
-        name: branch_name.clone(),
+        name,
         path: worktree.path.clone(),
         path_to_display: if relative.is_empty() {
             ".".to_string()
         } else {
             relative
         },
-        branch: branch_name,
+        branch,
         is_clean: git::is_clean(&path),
+    }
+}
+
+fn directory_name(path: &Path, worktrees_directory: &Path) -> Option<String> {
+    if !paths::is_strictly_inside(path, worktrees_directory) {
+        return None;
+    }
+    let relative = paths::relative(worktrees_directory, path);
+    if relative.is_empty() {
+        None
+    } else {
+        Some(relative)
+    }
+}
+
+fn same_worktree(worktree: &WorktreeInfo, name: &str) -> bool {
+    worktree.name == name || (worktree.branch != "(detached HEAD)" && worktree.branch == name)
+}
+
+fn select_worktree(worktrees: Vec<WorktreeInfo>, name: &str) -> Result<WorktreeInfo> {
+    let directories = worktrees
+        .iter()
+        .filter(|worktree| worktree.name == name)
+        .cloned()
+        .collect::<Vec<_>>();
+    match directories.as_slice() {
+        [found] => return Ok(found.clone()),
+        [] => {}
+        _ => {
+            return Err(Error::msg(format!(
+                "More than one worktree is named '{name}'."
+            )));
+        }
+    }
+    let branches = worktrees
+        .into_iter()
+        .filter(|worktree| worktree.branch != "(detached HEAD)" && worktree.branch == name)
+        .collect::<Vec<_>>();
+    match branches.as_slice() {
+        [found] => Ok(found.clone()),
+        [] => Err(Error::WorktreeNotFound(name.to_string())),
+        _ => Err(Error::msg(format!(
+            "Branch '{name}' matches more than one worktree. Use the worktree directory name."
+        ))),
     }
 }
 
@@ -136,20 +189,17 @@ pub fn find_worktree(
     exclude_default: bool,
     expected_path: Option<&Path>,
 ) -> Result<WorktreeInfo> {
-    let worktrees = list_worktrees(git_root, exclude_default, true)?;
-    worktrees
+    let worktrees = list_worktrees(git_root, exclude_default, true)?
         .into_iter()
-        .find(|worktree| {
-            worktree.name == name
-                && expected_path.is_none_or(|path| Path::new(&worktree.path) == path)
-        })
-        .ok_or_else(|| Error::WorktreeNotFound(name.to_string()))
+        .filter(|worktree| expected_path.is_none_or(|path| Path::new(&worktree.path) == path))
+        .collect();
+    select_worktree(worktrees, name)
 }
 
 pub fn ensure_absent(git_root: &Path, name: &str) -> Result<()> {
     if list_worktrees(git_root, false, true)?
         .iter()
-        .any(|worktree| worktree.name == name)
+        .any(|worktree| same_worktree(worktree, name))
     {
         Err(Error::WorktreeAlreadyExists(name.to_string()))
     } else {
@@ -466,13 +516,22 @@ pub fn delete_worktree(
     }
     git::remove_worktree(&context.git_root, &path, force)?;
     let cleanup_warning = remove_empty_parents(&path, &context.worktrees_directory);
-    let message = if keep_branch {
-        format!("Deleted worktree '{name}' and kept its branch '{name}'")
+    let message = if worktree.branch == "(detached HEAD)" {
+        format!("Deleted worktree '{name}'")
+    } else if keep_branch {
+        format!(
+            "Deleted worktree '{name}' and kept its branch '{}'",
+            worktree.branch
+        )
     } else {
-        match git::delete_branch(&context.git_root, name) {
-            Ok(()) => format!("Deleted worktree '{name}' and its branch '{name}'"),
+        match git::delete_branch(&context.git_root, &worktree.branch) {
+            Ok(()) => format!(
+                "Deleted worktree '{name}' and its branch '{}'",
+                worktree.branch
+            ),
             Err(error) => format!(
-                "Deleted worktree '{name}'\nNote: Branch '{name}' could not be deleted: {error}"
+                "Deleted worktree '{name}'\nNote: Branch '{}' could not be deleted: {error}",
+                worktree.branch
             ),
         }
     };
@@ -495,13 +554,15 @@ pub fn current_worktree_name(git_root: &Path) -> Result<Option<String>> {
         Ok(top) => top,
         Err(_) => return Ok(None),
     };
-    if top == git_root {
+    if paths::normalize(&top) == paths::normalize(git_root) {
         return Ok(None);
     }
-    match git::current_branch(&top) {
-        Ok(branch) if !branch.is_empty() => Ok(Some(branch)),
-        _ => Ok(None),
-    }
+    let top = paths::normalize(&top);
+    Ok(list_worktrees(git_root, true, true)?
+        .into_iter()
+        .find_map(|worktree| {
+            (paths::normalize(Path::new(&worktree.path)) == top).then_some(worktree.name)
+        }))
 }
 
 pub fn exec_in_worktree(
@@ -1081,6 +1142,38 @@ fn class_matches(class: &[u8], byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample(name: &str, branch: &str) -> WorktreeInfo {
+        WorktreeInfo {
+            name: name.to_string(),
+            path: format!("/worktrees/{name}"),
+            path_to_display: name.to_string(),
+            branch: branch.to_string(),
+            is_clean: true,
+        }
+    }
+
+    #[test]
+    fn directory_name_beats_a_branch_and_ambiguous_branches_error() {
+        let preferred = select_worktree(
+            vec![sample("a", "topic"), sample("topic", "other")],
+            "topic",
+        )
+        .expect("directory");
+        assert_eq!(preferred.name, "topic");
+        assert_eq!(preferred.branch, "other");
+
+        let fallback = select_worktree(vec![sample("a", "topic")], "topic").expect("branch");
+        assert_eq!(fallback.name, "a");
+
+        let error = select_worktree(vec![sample("a", "topic"), sample("b", "topic")], "topic")
+            .expect_err("ambiguous");
+        assert!(error.to_string().contains("more than one"));
+        assert!(matches!(
+            select_worktree(vec![sample("a", "other")], "topic"),
+            Err(Error::WorktreeNotFound(_))
+        ));
+    }
 
     #[test]
     fn rejects_invalid_names() {

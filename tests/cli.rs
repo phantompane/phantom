@@ -949,6 +949,220 @@ fn delete_removes_empty_parent_directories() {
 }
 
 #[test]
+fn detached_worktree_keeps_its_directory_name() {
+    let repo = Repo::new();
+    let worktree = repo.repo.join(".git/phantom/worktrees/next");
+    repo.git(&[
+        "worktree",
+        "add",
+        "--detach",
+        worktree.to_str().expect("path"),
+        "HEAD",
+    ]);
+    let head = repo
+        .command("git", &["rev-parse", "--short=7", "HEAD"])
+        .output()
+        .expect("rev-parse");
+    let sha = text(&head.stdout);
+    let names = repo.phantom(&["list", "--names", "--no-default"]);
+    assert!(names.status.success(), "{}", text(&names.stderr));
+    assert_eq!(text(&names.stdout), "next");
+    let listed = repo.phantom(&["list", "--no-default"]);
+    assert!(
+        text(&listed.stdout).starts_with("next ("),
+        "{}",
+        text(&listed.stdout)
+    );
+    assert!(
+        !text(&listed.stdout).starts_with(&sha),
+        "{}",
+        text(&listed.stdout)
+    );
+
+    let found = repo.phantom(&["where", "next"]);
+    assert_eq!(found.status.code(), Some(0), "{}", text(&found.stderr));
+    assert_eq!(text(&found.stdout), worktree.to_string_lossy());
+
+    let moved = repo
+        .command(
+            "git",
+            &["commit", "--allow-empty", "-m", "move detached head"],
+        )
+        .current_dir(&worktree)
+        .output()
+        .expect("commit");
+    assert!(moved.status.success(), "{}", text(&moved.stderr));
+    let names_after = repo.phantom(&["list", "--names", "--no-default"]);
+    assert_eq!(text(&names_after.stdout), "next");
+
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic",
+        repo.repo
+            .join(".git/phantom/worktrees/alias")
+            .to_str()
+            .expect("path"),
+        "HEAD",
+    ]);
+    let by_directory = repo.phantom(&["where", "alias"]);
+    let by_branch = repo.phantom(&["where", "topic"]);
+    let alias = repo.repo.join(".git/phantom/worktrees/alias");
+    assert_eq!(text(&by_directory.stdout), alias.to_string_lossy());
+    assert_eq!(text(&by_branch.stdout), alias.to_string_lossy());
+    let both = repo.phantom(&["list", "--names", "--no-default"]);
+    let listed_names = text(&both.stdout);
+    assert!(listed_names.contains("next"), "{listed_names}");
+    assert!(listed_names.contains("alias"), "{listed_names}");
+    assert!(!listed_names.lines().any(|line| line == "topic"));
+}
+
+#[test]
+fn directory_name_is_preferred_over_another_worktrees_branch() {
+    let repo = Repo::new();
+    let branch_topic = repo.repo.join(".git/phantom/worktrees/a");
+    let directory_topic = repo.repo.join(".git/phantom/worktrees/topic");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic",
+        branch_topic.to_str().expect("path"),
+        "HEAD",
+    ]);
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "other",
+        directory_topic.to_str().expect("path"),
+        "HEAD",
+    ]);
+
+    let found = repo.phantom(&["where", "topic"]);
+    assert_eq!(found.status.code(), Some(0), "{}", text(&found.stderr));
+    assert_eq!(
+        text(&found.stdout),
+        directory_topic.to_string_lossy(),
+        "directory name should win over branch topic checked out at a"
+    );
+
+    let deleted = repo.phantom(&["delete", "topic", "--keep-branch"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(!directory_topic.exists());
+    assert!(
+        branch_topic.exists(),
+        "delete topic must not remove the worktree whose branch is topic"
+    );
+    let kept = repo
+        .command("git", &["branch", "--list", "other"])
+        .output()
+        .expect("branch");
+    assert!(
+        text(&kept.stdout).contains("other"),
+        "kept the branch of the directory named topic"
+    );
+}
+
+fn fake_gh_for_topic_pr(repo: &Repo) -> String {
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let gh = bin.join("gh");
+    fs::write(
+        &gh,
+        r#"#!/bin/sh
+if [ "$1" = "repo" ]; then
+  printf '%s\n' '{"owner":{"login":"acme"},"name":"demo"}'
+  exit 0
+fi
+case "$2" in
+  *pulls*)
+    printf '%s\n' '{"head":{"ref":"topic","repo":{"full_name":"acme/demo"}},"base":{"repo":{"full_name":"acme/demo"}}}'
+    ;;
+  *)
+    printf '%s\n' '{"number":7,"pull_request":{}}'
+    ;;
+esac
+"#,
+    )
+    .expect("gh");
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(&gh).expect("meta").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&gh, perms).expect("chmod");
+    format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
+#[test]
+fn pr_checkout_requires_the_branch_not_only_the_directory() {
+    let repo = Repo::new();
+    let path = fake_gh_for_topic_pr(&repo);
+    let directory = repo.repo.join(".git/phantom/worktrees/topic");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "other",
+        directory.to_str().expect("path"),
+        "HEAD",
+    ]);
+    let output = repo
+        .command(env!("CARGO_BIN_EXE_phantom"), &["github", "checkout", "7"])
+        .env("PATH", &path)
+        .output()
+        .expect("checkout");
+    let combined = format!("{}\n{}", text(&output.stdout), text(&output.stderr));
+    assert!(
+        !combined.contains("already checked out"),
+        "directory topic on branch other is not PR branch topic:\n{combined}"
+    );
+    let current = repo
+        .command("git", &["branch", "--show-current"])
+        .current_dir(&directory)
+        .output()
+        .expect("branch");
+    assert_eq!(text(&current.stdout), "other");
+
+    let matching = Repo::new();
+    let matching_path = fake_gh_for_topic_pr(&matching);
+    let checked_out = matching.repo.join(".git/phantom/worktrees/topic");
+    matching.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic",
+        checked_out.to_str().expect("path"),
+        "HEAD",
+    ]);
+    let again = matching
+        .command(env!("CARGO_BIN_EXE_phantom"), &["github", "checkout", "7"])
+        .env("PATH", &matching_path)
+        .output()
+        .expect("again");
+    assert!(
+        again.status.success(),
+        "{}\n{}",
+        text(&again.stdout),
+        text(&again.stderr)
+    );
+    assert!(
+        text(&again.stdout).contains("already checked out"),
+        "{}",
+        text(&again.stdout)
+    );
+}
+
+#[test]
 fn exec_preserves_the_child_exit_code() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "feature/exec"]);
