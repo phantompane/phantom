@@ -43,6 +43,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # 22: engines minimum (Maintenance LTS).
+        # 24: Active LTS line. Lint, typecheck, and shell jobs use the
+        # .node-version patch on this same major.
+        # latest: Current release line.
         node-version: ["22", "24", "latest"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

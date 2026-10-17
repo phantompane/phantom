@@ -30,13 +30,12 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: pnpm
 
-      # npm@latest is 12.x, which requires Node ^22.22.2 || ^24.15.0 || >=26.
-      # This job uses .node-version (v24.1.0), which CI, release-compile, and
-      # version-bump also use. npm 11 still supports trusted publishing and
-      # provenance on that Node.
-      - name: Install npm 11
+      # Pin the 12 line, not `latest`, so a future npm major cannot land in a
+      # release job. npm 12 requires Node ^22.22.2 || ^24.15.0 || >=26, and
+      # this job reads .node-version. Merge the Node 24.22 LTS bump first.
+      - name: Install npm 12
         run: |
-          npm install -g npm@11
+          npm install -g npm@12
           npm --version
 
       - name: Determine npm dist-tag
