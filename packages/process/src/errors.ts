@@ -3,7 +3,7 @@ export class ProcessError extends Error {
 
   constructor(message: string, exitCode?: number) {
     super(message);
-    this.name = this.constructor.name;
+    this.name = "ProcessError";
     this.exitCode = exitCode;
   }
 }

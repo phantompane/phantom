@@ -20,7 +20,9 @@ export type Result<T, E = Error> =
  * const result = ok(42);
  * // result: Result<number, never> = { ok: true, value: 42 }
  */
-export const ok = <T>(value: T): Result<T, never> => ({
+// The error type parameter is inferred from the expected Result<T, E>.
+// A fixed `never` error arm does not convert to Result<T, Error> under scriptc.
+export const ok = <T, E = never>(value: T): Result<T, E> => ({
   ok: true,
   value,
 });
@@ -36,7 +38,7 @@ export const ok = <T>(value: T): Result<T, never> => ({
  * const result = err(new Error("Something went wrong"));
  * // result: Result<never, Error> = { ok: false, error: Error(...) }
  */
-export const err = <E>(error: E): Result<never, E> => ({
+export const err = <E, T = never>(error: E): Result<T, E> => ({
   ok: false,
   error,
 });

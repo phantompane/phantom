@@ -1,5 +1,4 @@
-import { githubCheckout } from "@phantompane/core";
-import { isOk } from "@phantompane/utils";
+import { githubCheckout } from "@phantompane/core/src/github/checkout.ts";
 import { z } from "zod";
 import type { Tool } from "./types.ts";
 
@@ -19,7 +18,7 @@ export const githubCheckoutTool: Tool<typeof schema> = {
   handler: async ({ number, base }) => {
     const result = await githubCheckout({ number, base });
 
-    if (!isOk(result)) {
+    if (!result.ok) {
       throw new Error(result.error.message);
     }
 

@@ -33,15 +33,14 @@ export async function selectWithFzf(
     let result = "";
     let errorOutput = "";
 
-    fzf.stdout.on("data", (data) => {
-      result += data.toString();
+    // scriptc only lowers stream "data" listeners typed as Buffer or string.
+    fzf.stdout?.on("data", (data: Buffer | string) => {
+      result += typeof data === "string" ? data : data.toString("utf8");
     });
 
-    if (fzf.stderr) {
-      fzf.stderr.on("data", (data) => {
-        errorOutput += data.toString();
-      });
-    }
+    fzf.stderr?.on("data", (data: Buffer | string) => {
+      errorOutput += typeof data === "string" ? data : data.toString("utf8");
+    });
 
     fzf.on("error", (error) => {
       if (error.message.includes("ENOENT")) {

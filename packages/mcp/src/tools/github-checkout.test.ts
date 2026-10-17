@@ -3,7 +3,7 @@ import { test, vi } from "vitest";
 
 const githubCheckoutMock = vi.fn();
 
-vi.doMock("@phantompane/core", () => ({
+vi.doMock("@phantompane/core/src/github/checkout.ts", () => ({
   githubCheckout: githubCheckoutMock,
 }));
 
