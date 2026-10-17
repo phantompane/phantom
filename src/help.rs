@@ -264,7 +264,6 @@ mod tests {
             "github checkout",
             "gh checkout",
             "exec",
-            "shell",
             "delete",
             "where",
         ] {
