@@ -532,6 +532,32 @@ fn keep_branch_preference_applies_to_delete() {
 }
 
 #[test]
+fn removed_fzf_option_is_unknown() {
+    let repo = Repo::new();
+    let cases = [
+        vec!["list", "--fzf"],
+        vec!["where", "--fzf"],
+        vec!["delete", "--fzf"],
+        vec!["exec", "--fzf", "true"],
+        vec!["shell", "--fzf"],
+    ];
+    for args in cases {
+        let output = repo.phantom(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{args:?} {}",
+            text(&output.stderr)
+        );
+        let stderr = text(&output.stderr);
+        assert!(
+            stderr.contains("Unknown option"),
+            "{args:?} produced {stderr}"
+        );
+    }
+}
+
+#[test]
 fn reports_when_only_the_default_worktree_exists() {
     let repo = Repo::new();
     let result = repo.phantom(&["list", "--no-default"]);
