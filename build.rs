@@ -1,10 +1,11 @@
+mod build_git;
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    if let Ok(head) = std::fs::read_to_string(".git/HEAD") {
-        println!("cargo:rerun-if-changed=.git/HEAD");
-        if let Some(reference) = head.trim().strip_prefix("ref: ") {
-            println!("cargo:rerun-if-changed=.git/{reference}");
-        }
+    println!("cargo:rerun-if-changed=build_git.rs");
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    for path in build_git::head_watch_paths(&cwd) {
+        println!("cargo:rerun-if-changed={}", path.display());
     }
     println!("cargo:rustc-env=PHANTOM_GIT_SHA={}", git_sha());
 }
