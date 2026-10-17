@@ -84,7 +84,7 @@ function resetMocks() {
   spawnMock.mockClear();
 }
 
-describe.sequential("editHandler", () => {
+describe("editHandler", { concurrent: false }, () => {
   it("should error when no worktree name is provided", async () => {
     resetMocks();
     process.env.EDITOR = "vim";
