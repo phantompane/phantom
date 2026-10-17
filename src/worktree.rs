@@ -398,6 +398,7 @@ pub fn delete_worktree(
         )?;
     }
     git::remove_worktree(&context.git_root, &path, force)?;
+    remove_empty_parents(&path, &context.worktrees_directory)?;
     let message = if keep_branch {
         format!("Deleted worktree '{name}' and kept its branch '{name}'")
     } else {
@@ -653,6 +654,27 @@ fn run_hook_commands(
             return Err(Error::msg(format!(
                 "{label} command failed with exit code {code}: {command}"
             )));
+        }
+    }
+    Ok(())
+}
+
+fn remove_empty_parents(path: &Path, root: &Path) -> Result<()> {
+    let mut current = path.parent().map(Path::to_path_buf);
+    while let Some(dir) = current {
+        if !paths::is_strictly_inside(&dir, root) {
+            break;
+        }
+        match fs::remove_dir(&dir) {
+            Ok(()) => current = dir.parent().map(Path::to_path_buf),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => break,
+            Err(error) => {
+                return Err(Error::msg(format!(
+                    "Failed to remove empty directory {}: {error}",
+                    dir.display()
+                )));
+            }
         }
     }
     Ok(())

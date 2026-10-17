@@ -627,6 +627,34 @@ fn assert_phantom_env(worktree: &std::path::Path, name: &str) {
 }
 
 #[test]
+fn delete_removes_empty_parent_directories() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "cursor/foo"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let root = repo.repo.join(".git/phantom/worktrees");
+    let parent = root.join("cursor");
+    assert!(parent.join("foo").is_dir());
+    let deleted = repo.phantom(&["delete", "cursor/foo"]);
+    assert!(deleted.status.success(), "{}", text(&deleted.stderr));
+    assert!(!parent.join("foo").exists());
+    assert!(!parent.exists(), "empty parent directory should be removed");
+    assert!(root.is_dir(), "worktrees root should stay");
+
+    assert!(repo.phantom(&["create", "cursor/foo"]).status.success());
+    assert!(repo.phantom(&["create", "cursor/bar"]).status.success());
+    assert!(repo.phantom(&["delete", "cursor/foo"]).status.success());
+    assert!(parent.join("bar").is_dir());
+    assert!(parent.is_dir(), "parent still holds another worktree");
+    assert!(repo.phantom(&["delete", "cursor/bar"]).status.success());
+    assert!(!parent.exists());
+
+    assert!(repo.phantom(&["create", "a/b/c"]).status.success());
+    assert!(repo.phantom(&["delete", "a/b/c"]).status.success());
+    assert!(!root.join("a").exists());
+    assert!(root.is_dir());
+}
+
+#[test]
 fn exec_preserves_the_child_exit_code() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "feature/exec"]);
