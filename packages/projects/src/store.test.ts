@@ -228,6 +228,29 @@ describe("ProjectRegistryStore", () => {
     );
   });
 
+  it("does not time out while queued behind live lock holders", async () => {
+    const dataDirectory = await createTemporaryDirectory();
+    const holdMs = 100;
+    const stores = Array.from(
+      { length: 8 },
+      () =>
+        new ProjectRegistryStore(dataDirectory, {
+          lockRetryMs: 1,
+          lockTimeoutMs: 500,
+          onLockAcquired: () =>
+            new Promise((resolve) => {
+              setTimeout(resolve, holdMs);
+            }),
+        }),
+    );
+
+    await Promise.all(
+      stores.map((store, index) => store.add(`/work/project-${index}`)),
+    );
+
+    strictEqual((await stores[0]!.list()).length, stores.length);
+  });
+
   it("serializes concurrent add and remove operations", async () => {
     const dataDirectory = await createTemporaryDirectory();
     const firstStore = new ProjectRegistryStore(dataDirectory, {
