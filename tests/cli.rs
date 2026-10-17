@@ -224,6 +224,42 @@ fn create_list_where_delete_and_attach() {
 }
 
 #[test]
+fn invalid_config_names_the_file_and_the_problem() {
+    let repo = Repo::new();
+    fs::write(repo.repo.join("phantom.config.json"), "{").expect("config");
+    let created = repo.phantom(&["create", "feature/bad-json"]);
+    let stderr = text(&created.stderr);
+    assert!(
+        !created.status.success(),
+        "invalid JSON should fail, stdout: {}",
+        text(&created.stdout)
+    );
+    assert!(
+        stderr.contains("phantom.config.json"),
+        "stderr should name the file: {stderr}"
+    );
+    assert!(
+        stderr.contains("parse") || stderr.contains("expected"),
+        "stderr should describe the JSON problem: {stderr}"
+    );
+    assert!(!repo
+        .repo
+        .join(".git/phantom/worktrees/feature/bad-json")
+        .exists());
+
+    fs::write(
+        repo.repo.join("phantom.config.json"),
+        r#"{"postCreate":{"copyFiles":[1]}}"#,
+    )
+    .expect("schema");
+    let created = repo.phantom(&["where", "feature/bad-json"]);
+    let stderr = text(&created.stderr);
+    assert!(!created.status.success(), "{}", text(&created.stdout));
+    assert!(stderr.contains("phantom.config.json"), "{stderr}");
+    assert!(stderr.contains("copyFiles"), "{stderr}");
+}
+
+#[test]
 fn copies_config_files_and_runs_post_create() {
     let repo = Repo::new();
     fs::write(repo.repo.join(".env.local"), "API_KEY=test-value\n").expect("env");
