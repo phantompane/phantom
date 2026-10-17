@@ -4,7 +4,7 @@ import {
   getStatus,
   removeWorktree as gitRemoveWorktree,
 } from "@phantompane/git";
-import { err, isErr, isOk, ok, type Result } from "@phantompane/utils";
+import { err, ok, type Result } from "@phantompane/utils";
 import { WorktreeError, type WorktreeNotFoundError } from "./errors.ts";
 import { executePreDeleteCommands } from "./pre-delete.ts";
 import { validateWorktreeExists } from "./validate.ts";
@@ -98,7 +98,7 @@ export async function deleteWorktree(
     name,
     validateOptions,
   );
-  if (isErr(validation)) {
+  if (!validation.ok) {
     return err(validation.error);
   }
 
@@ -131,7 +131,7 @@ export async function deleteWorktree(
       commands: preDeleteCommands,
     });
 
-    if (isErr(preDeleteResult)) {
+    if (!preDeleteResult.ok) {
       return err(new WorktreeError(preDeleteResult.error.message));
     }
   }
@@ -145,7 +145,7 @@ export async function deleteWorktree(
       message = `Deleted worktree '${name}' and kept its branch '${branchName}'`;
     } else {
       const branchResult = await deleteBranch(gitRoot, branchName);
-      if (isOk(branchResult)) {
+      if (branchResult.ok) {
         message = `Deleted worktree '${name}' and its branch '${branchName}'`;
       } else {
         message = `Deleted worktree '${name}'`;

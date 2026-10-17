@@ -1,5 +1,5 @@
-import { glob, hasMagic } from "glob";
 import { err, ok, type Result } from "@phantompane/utils";
+import { hasMagic, matchFiles } from "./match-files.ts";
 
 export interface ResolvedPattern {
   pattern: string;
@@ -43,14 +43,8 @@ export async function resolveGlobPatterns(
     const normalizedPattern = normalizePatternPath(pattern);
 
     try {
-      const resolvedFiles = hasMagic(normalizedPattern, { magicalBraces: true })
-        ? await glob(normalizedPattern, {
-            cwd: gitRoot,
-            dot: true,
-            ignore: ".git/**",
-            nodir: true,
-            posix: true,
-          })
+      const resolvedFiles = hasMagic(normalizedPattern)
+        ? await matchFiles(gitRoot, normalizedPattern)
         : [normalizedPattern];
 
       // Add to deduplication set

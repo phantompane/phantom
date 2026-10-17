@@ -1,7 +1,7 @@
 import { branchExists } from "@phantompane/git";
-import { err, isErr, ok, type Result } from "@phantompane/utils";
-import { humanId } from "human-id";
+import { err, ok, type Result } from "@phantompane/utils";
 import { getWorktreePathFromDirectory } from "../paths.ts";
+import { humanName } from "./human-name.ts";
 import {
   validateWorktreeDirectoryExists,
   validateWorktreeName,
@@ -10,7 +10,7 @@ import {
 const MAX_RETRIES = 10;
 
 function generate(): string {
-  return humanId({ separator: "-", capitalize: false });
+  return humanName();
 }
 
 export async function generateUniqueName(
@@ -21,7 +21,7 @@ export async function generateUniqueName(
   for (let i = 0; i < MAX_RETRIES; i++) {
     const name = generate();
 
-    if (isErr(validateWorktreeName(name))) {
+    if (!validateWorktreeName(name).ok) {
       continue;
     }
 
@@ -35,7 +35,7 @@ export async function generateUniqueName(
     }
 
     const result = await branchExists(gitRoot, name);
-    if (isErr(result)) {
+    if (!result.ok) {
       return err(result.error);
     }
     if (result.value) {

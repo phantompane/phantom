@@ -2,7 +2,8 @@ export * from "@phantompane/config";
 export * from "@phantompane/preferences";
 export * from "./context.ts";
 export * from "./exec.ts";
-export * from "./github/checkout.ts";
+// GitHub checkout stays on its own module. Re-exporting it here pulls
+// @octokit/rest into every core import, which scriptc cannot compile.
 export * from "./paths.ts";
 export * from "./shell.ts";
 export * from "./worktree/attach.ts";

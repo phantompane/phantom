@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { getGitRoot, addWorktree, branchExists } from "@phantompane/git";
-import { err, isErr, ok, type Result } from "@phantompane/utils";
+import { type ProcessError } from "@phantompane/process";
+import { err, ok, type Result } from "@phantompane/utils";
 import { createContext } from "../context.ts";
 import { getWorktreePathFromDirectory } from "../paths.ts";
 import {
@@ -13,8 +14,11 @@ import {
 } from "./action.ts";
 import {
   BranchNotFoundError,
+  TmuxSessionRequiredError,
+  WorktreeActionConflictError,
   WorktreeAlreadyExistsError,
   WorktreeError,
+  type WorktreeNotFoundError,
 } from "./errors.ts";
 import { copyFiles } from "./file-copier.ts";
 import { executePostCreateCommands } from "./post-create.ts";
@@ -42,7 +46,7 @@ export async function attachWorktreeCore(
   logger?: WorktreeLogger,
 ): Promise<Result<string, Error>> {
   const validation = validateWorktreeName(name);
-  if (isErr(validation)) {
+  if (!validation.ok) {
     return validation;
   }
 
@@ -56,7 +60,7 @@ export async function attachWorktreeCore(
   }
 
   const branchCheckResult = await branchExists(gitRoot, name);
-  if (isErr(branchCheckResult)) {
+  if (!branchCheckResult.ok) {
     return err(branchCheckResult.error);
   }
 
@@ -85,7 +89,7 @@ export async function attachWorktreeCore(
       worktreePath,
       postCreateCopyFiles,
     );
-    if (isErr(copyResult)) {
+    if (!copyResult.ok) {
       logger?.warn?.(
         `Warning: Failed to copy some files: ${copyResult.error.message}`,
       );
@@ -101,7 +105,7 @@ export async function attachWorktreeCore(
       commands: postCreateCommands,
       logger,
     });
-    if (isErr(commandsResult)) {
+    if (!commandsResult.ok) {
       return err(new WorktreeError(commandsResult.error.message));
     }
   }
@@ -111,14 +115,26 @@ export async function attachWorktreeCore(
 
 export async function runAttachWorktree(
   options: RunAttachWorktreeOptions,
-): Promise<Result<RunAttachWorktreeSuccess>> {
+): Promise<
+  Result<
+    RunAttachWorktreeSuccess,
+    | ProcessError
+    | WorktreeNotFoundError
+    | WorktreeActionConflictError
+    | TmuxSessionRequiredError
+    | BranchNotFoundError
+    | WorktreeAlreadyExistsError
+    | WorktreeError
+    | Error
+  >
+> {
   const actionResult = resolveWorktreeAction(options.action);
-  if (isErr(actionResult)) {
+  if (!actionResult.ok) {
     return actionResult;
   }
 
   const actionValidation = await validateWorktreeAction(actionResult.value);
-  if (isErr(actionValidation)) {
+  if (!actionValidation.ok) {
     return actionValidation;
   }
 
@@ -140,7 +156,7 @@ export async function runAttachWorktree(
       context.directoryNameSeparator,
       options.logger,
     );
-    if (isErr(attachResult)) {
+    if (!attachResult.ok) {
       return err(attachResult.error);
     }
 
@@ -154,8 +170,8 @@ export async function runAttachWorktree(
       action: actionResult.value,
       logger: options.logger,
     });
-    if (isErr(worktreeActionResult)) {
-      return err(worktreeActionResult.error);
+    if (!worktreeActionResult.ok) {
+      return { ok: false, error: worktreeActionResult.error };
     }
 
     return ok({

@@ -5,7 +5,7 @@ import {
   setUpstreamBranch,
 } from "@phantompane/git";
 import type { GitHubPullRequest } from "@phantompane/github";
-import { err, isErr, ok, type Result } from "@phantompane/utils";
+import { err, ok, type Result } from "@phantompane/utils";
 import { createContext } from "../../context.ts";
 import { attachWorktreeCore } from "../../worktree/attach.ts";
 import { validateWorktreeExists } from "../../worktree/validate.ts";
@@ -48,7 +48,7 @@ export async function checkoutPullRequest(
     worktreeName,
   );
 
-  if (!isErr(existsResult)) {
+  if (existsResult.ok) {
     // Worktree already exists, return its path
     return ok({
       message: `PR #${pullRequest.number} is already checked out`,
@@ -60,7 +60,7 @@ export async function checkoutPullRequest(
   }
 
   const branchExistsResult = await branchExists(context.gitRoot, localBranch);
-  if (isErr(branchExistsResult)) {
+  if (!branchExistsResult.ok) {
     return err(branchExistsResult.error);
   }
   const createdBranch = !branchExistsResult.value;
@@ -76,7 +76,7 @@ export async function checkoutPullRequest(
 
   // Fetch the PR to a local branch
   const fetchResult = await fetch({ cwd: gitRoot, refspec });
-  if (isErr(fetchResult)) {
+  if (!fetchResult.ok) {
     return err(
       new Error(
         `Failed to fetch PR #${pullRequest.number}: ${fetchResult.error.message}`,
@@ -92,7 +92,7 @@ export async function checkoutPullRequest(
     localBranch,
     upstream,
   );
-  if (isErr(setUpstreamResult)) {
+  if (!setUpstreamResult.ok) {
     // Log the error but don't fail the checkout
     console.warn(
       `Warning: Could not set upstream branch: ${setUpstreamResult.error.message}`,
@@ -109,7 +109,7 @@ export async function checkoutPullRequest(
     context.directoryNameSeparator,
   );
 
-  if (isErr(attachResult)) {
+  if (!attachResult.ok) {
     return err(attachResult.error);
   }
 

@@ -1,6 +1,7 @@
-import fs from "node:fs/promises";
+import { access, mkdir } from "node:fs/promises";
 import { getGitRoot, addWorktree } from "@phantompane/git";
-import { err, isErr, isOk, ok, type Result } from "@phantompane/utils";
+import { type ProcessError } from "@phantompane/process";
+import { err, ok, type Result } from "@phantompane/utils";
 import { createContext } from "../context.ts";
 import { getWorktreePathFromDirectory } from "../paths.ts";
 import { executePostCreateCommands } from "./post-create.ts";
@@ -13,7 +14,13 @@ import {
   type WorktreeLogger,
 } from "./action.ts";
 import { copyFiles } from "./file-copier.ts";
-import { type WorktreeAlreadyExistsError, WorktreeError } from "./errors.ts";
+import {
+  TmuxSessionRequiredError,
+  WorktreeActionConflictError,
+  type WorktreeAlreadyExistsError,
+  WorktreeError,
+  type WorktreeNotFoundError,
+} from "./errors.ts";
 import { generateUniqueName } from "./generate-name.ts";
 import {
   validateWorktreeDoesNotExist,
@@ -64,8 +71,8 @@ export async function createWorktree(
   Result<CreateWorktreeSuccess, WorktreeAlreadyExistsError | WorktreeError>
 > {
   const nameValidation = validateWorktreeName(name);
-  if (isErr(nameValidation)) {
-    return nameValidation;
+  if (!nameValidation.ok) {
+    return err(new WorktreeError(nameValidation.error.message));
   }
 
   const {
@@ -82,9 +89,9 @@ export async function createWorktree(
   );
 
   try {
-    await fs.access(worktreeDirectory);
+    await access(worktreeDirectory);
   } catch {
-    await fs.mkdir(worktreeDirectory, { recursive: true });
+    await mkdir(worktreeDirectory, { recursive: true });
   }
 
   const validation = await validateWorktreeDoesNotExist(
@@ -92,7 +99,7 @@ export async function createWorktree(
     worktreeDirectory,
     name,
   );
-  if (isErr(validation)) {
+  if (!validation.ok) {
     return err(validation.error);
   }
 
@@ -116,7 +123,7 @@ export async function createWorktree(
     if (filesToCopy) {
       const copyResult = await copyFiles(gitRoot, worktreePath, filesToCopy);
 
-      if (isOk(copyResult)) {
+      if (copyResult.ok) {
         copiedFiles = copyResult.value.copiedFiles;
         skippedFiles = copyResult.value.skippedFiles;
       } else {
@@ -133,7 +140,7 @@ export async function createWorktree(
         commands: postCreateCommands,
         logger,
       });
-      if (isErr(commandsResult)) {
+      if (!commandsResult.ok) {
         return err(new WorktreeError(commandsResult.error.message));
       }
     }
@@ -153,14 +160,25 @@ export async function createWorktree(
 
 export async function runCreateWorktree(
   options: RunCreateWorktreeOptions,
-): Promise<Result<RunCreateWorktreeSuccess>> {
+): Promise<
+  Result<
+    RunCreateWorktreeSuccess,
+    | WorktreeAlreadyExistsError
+    | WorktreeError
+    | WorktreeActionConflictError
+    | TmuxSessionRequiredError
+    | ProcessError
+    | WorktreeNotFoundError
+    | Error
+  >
+> {
   const actionResult = resolveWorktreeAction(options.action);
-  if (isErr(actionResult)) {
+  if (!actionResult.ok) {
     return actionResult;
   }
 
   const actionValidation = await validateWorktreeAction(actionResult.value);
-  if (isErr(actionValidation)) {
+  if (!actionValidation.ok) {
     return actionValidation;
   }
 
@@ -175,7 +193,7 @@ export async function runCreateWorktree(
         context.worktreesDirectory,
         context.directoryNameSeparator,
       );
-      if (isErr(nameResult)) {
+      if (!nameResult.ok) {
         return err(nameResult.error);
       }
       worktreeName = nameResult.value;
@@ -199,8 +217,8 @@ export async function runCreateWorktree(
       context.config?.postCreate?.commands,
       context.directoryNameSeparator,
     );
-    if (isErr(createResult)) {
-      return err(createResult.error);
+    if (!createResult.ok) {
+      return { ok: false, error: createResult.error };
     }
 
     options.logger?.log(createResult.value.message);
@@ -220,17 +238,25 @@ export async function runCreateWorktree(
       logger: options.logger,
       exitWithProcessCode: true,
     });
-    if (isErr(worktreeActionResult)) {
-      return err(worktreeActionResult.error);
+    if (!worktreeActionResult.ok) {
+      return { ok: false, error: worktreeActionResult.error };
     }
 
-    return ok({
-      name: worktreeName,
-      path: createResult.value.path,
-      message: createResult.value.message,
-      copyError: createResult.value.copyError,
-      exitProcessCode: worktreeActionResult.value.exitProcessCode,
-    });
+    const name = worktreeName;
+    const path = createResult.value.path;
+    const message = createResult.value.message;
+    const copyError = createResult.value.copyError;
+    const exitProcessCode = worktreeActionResult.value.exitProcessCode;
+    if (copyError !== undefined && exitProcessCode !== undefined) {
+      return ok({ name, path, message, copyError, exitProcessCode });
+    }
+    if (copyError !== undefined) {
+      return ok({ name, path, message, copyError });
+    }
+    if (exitProcessCode !== undefined) {
+      return ok({ name, path, message, exitProcessCode });
+    }
+    return ok({ name, path, message });
   } catch (error) {
     return err(error instanceof Error ? error : new Error(String(error)));
   }

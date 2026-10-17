@@ -1,6 +1,6 @@
 import { copyFile, mkdir, stat } from "node:fs/promises";
-import path from "node:path";
-import { err, isErr, ok, type Result } from "@phantompane/utils";
+import { dirname, join } from "node:path";
+import { err, ok, type Result } from "@phantompane/utils";
 
 import {
   type GlobResolutionError,
@@ -29,7 +29,7 @@ export async function copyFiles(
 ): Promise<Result<CopyFileResult, FileCopyError | GlobResolutionError>> {
   // Resolve glob patterns first
   const resolveResult = await resolveGlobPatterns(sourceDir, files);
-  if (isErr(resolveResult)) {
+  if (!resolveResult.ok) {
     return resolveResult;
   }
 
@@ -38,8 +38,8 @@ export async function copyFiles(
   const skippedFiles: string[] = [];
 
   for (const file of resolvedFiles) {
-    const sourcePath = path.join(sourceDir, file);
-    const targetPath = path.join(targetDir, file);
+    const sourcePath = join(sourceDir, file);
+    const targetPath = join(targetDir, file);
 
     try {
       const stats = await stat(sourcePath);
@@ -48,23 +48,19 @@ export async function copyFiles(
         continue;
       }
 
-      const targetDirPath = path.dirname(targetPath);
+      const targetDirPath = dirname(targetPath);
       await mkdir(targetDirPath, { recursive: true });
 
       await copyFile(sourcePath, targetPath);
       copiedFiles.push(file);
     } catch (error) {
-      if (
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ENOENT"
-      ) {
+      if (error instanceof Error && error.message.includes("ENOENT")) {
         skippedFiles.push(file);
       } else {
         return err(
           new FileCopyError(
             file,
-            error instanceof Error ? error.message : String(error),
+            error instanceof Error ? error.message : "unknown error",
           ),
         );
       }

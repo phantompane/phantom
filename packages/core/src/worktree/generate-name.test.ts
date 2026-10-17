@@ -17,8 +17,8 @@ vi.doMock("./validate.ts", () => ({
   validateWorktreeName: validateWorktreeNameMock,
 }));
 
-vi.doMock("human-id", () => ({
-  humanId: () => {
+vi.doMock("./human-name.ts", () => ({
+  humanName: () => {
     humanIdCallCount++;
     return `generated-name-${humanIdCallCount}`;
   },

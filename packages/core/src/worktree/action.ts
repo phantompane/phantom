@@ -1,5 +1,5 @@
-import { getPhantomEnv } from "@phantompane/process";
-import { err, isErr, ok, type Result } from "@phantompane/utils";
+import { getPhantomEnv, type ProcessError } from "@phantompane/process";
+import { err, ok, type Result } from "@phantompane/utils";
 import {
   executeTmuxCommand,
   isInsideTmux,
@@ -10,6 +10,7 @@ import { shellInWorktree } from "../shell.ts";
 import {
   TmuxSessionRequiredError,
   WorktreeActionConflictError,
+  type WorktreeNotFoundError,
 } from "./errors.ts";
 
 export interface WorktreeLogger {
@@ -33,7 +34,7 @@ export interface RunWorktreeActionOptions {
   worktreeDirectory: string;
   worktreeName: string;
   worktreePath: string;
-  action?: ResolvedWorktreeAction;
+  action?: ResolvedWorktreeAction | null;
   logger?: WorktreeLogger;
   exitWithProcessCode?: boolean;
 }
@@ -55,7 +56,7 @@ export function mergeWorktreeCopyFiles(
 
 export function resolveWorktreeAction(
   options: WorktreeActionOptions | undefined,
-): Result<ResolvedWorktreeAction | undefined, WorktreeActionConflictError> {
+): Result<ResolvedWorktreeAction | null, WorktreeActionConflictError> {
   const actions: ResolvedWorktreeAction[] = [];
 
   if (options?.shell) {
@@ -74,22 +75,29 @@ export function resolveWorktreeAction(
     return err(new WorktreeActionConflictError());
   }
 
-  return ok(actions[0]);
+  const action = actions[0];
+  if (action === undefined) {
+    return ok(null);
+  }
+
+  return ok(action);
 }
 
 export async function validateWorktreeAction(
-  action: ResolvedWorktreeAction | undefined,
-): Promise<Result<void, TmuxSessionRequiredError>> {
+  action: ResolvedWorktreeAction | null | undefined,
+): Promise<Result<true, TmuxSessionRequiredError>> {
   if (action?.kind === "tmux" && !(await isInsideTmux())) {
     return err(new TmuxSessionRequiredError());
   }
 
-  return ok(undefined);
+  return ok(true);
 }
 
 export async function runWorktreeAction(
   options: RunWorktreeActionOptions,
-): Promise<Result<RunWorktreeActionSuccess>> {
+): Promise<
+  Result<RunWorktreeActionSuccess, ProcessError | WorktreeNotFoundError>
+> {
   const {
     gitRoot,
     worktreeDirectory,
@@ -113,8 +121,8 @@ export async function runWorktreeAction(
       worktreeDirectory,
       worktreeName,
     );
-    if (isErr(shellResult)) {
-      return err(shellResult.error);
+    if (!shellResult.ok) {
+      return { ok: false, error: shellResult.error };
     }
 
     return ok({
@@ -137,8 +145,8 @@ export async function runWorktreeAction(
       [shell, "-c", action.command],
       { interactive: true },
     );
-    if (isErr(execResult)) {
-      return err(execResult.error);
+    if (!execResult.ok) {
+      return { ok: false, error: execResult.error };
     }
 
     return ok({
@@ -162,7 +170,7 @@ export async function runWorktreeAction(
     env: getPhantomEnv(worktreeName, worktreePath),
     windowName: action.direction === "new" ? worktreeName : undefined,
   });
-  if (isErr(tmuxResult)) {
+  if (!tmuxResult.ok) {
     return err(tmuxResult.error);
   }
 
