@@ -242,17 +242,17 @@
       "usage": "phantom list [options]",
       "options": [
         {
-          "name": "--fzf",
+          "name": "fzf",
           "type": "boolean",
           "description": "Use fzf for interactive selection"
         },
         {
-          "name": "--no-default",
+          "name": "no-default",
           "type": "boolean",
           "description": "Exclude the default worktree from the list"
         },
         {
-          "name": "--names",
+          "name": "names",
           "type": "boolean",
           "description": "Output only worktree names (for scripts and completion)"
         }
@@ -289,7 +289,7 @@
       "usage": "phantom where <worktree-name> [options]",
       "options": [
         {
-          "name": "--fzf",
+          "name": "fzf",
           "type": "boolean",
           "description": "Use fzf for interactive selection"
         }
@@ -330,17 +330,17 @@
           "description": "Force deletion even if the worktree has uncommitted or unpushed changes"
         },
         {
-          "name": "--current",
+          "name": "current",
           "type": "boolean",
           "description": "Delete the current worktree"
         },
         {
-          "name": "--keep-branch",
+          "name": "keep-branch",
           "type": "boolean",
           "description": "Delete the worktree but keep its branch"
         },
         {
-          "name": "--fzf",
+          "name": "fzf",
           "type": "boolean",
           "description": "Use fzf for interactive selection"
         }
@@ -385,22 +385,25 @@
       "usage": "phantom exec [options] <worktree-name> <command> [args...]",
       "options": [
         {
-          "name": "--fzf",
+          "name": "fzf",
           "type": "boolean",
           "description": "Use fzf for interactive worktree selection"
         },
         {
-          "name": "--tmux, -t",
+          "name": "tmux",
+          "short": "t",
           "type": "boolean",
           "description": "Execute command in new tmux window"
         },
         {
-          "name": "--tmux-vertical, --tmux-v",
+          "name": "tmux-vertical",
+          "aliases": ["tmux-v"],
           "type": "boolean",
           "description": "Execute command in vertical split pane"
         },
         {
-          "name": "--tmux-horizontal, --tmux-h",
+          "name": "tmux-horizontal",
+          "aliases": ["tmux-h"],
           "type": "boolean",
           "description": "Execute command in horizontal split pane"
         }
@@ -483,22 +486,25 @@
       "usage": "phantom shell <worktree-name> [options]",
       "options": [
         {
-          "name": "--fzf",
+          "name": "fzf",
           "type": "boolean",
           "description": "Use fzf for interactive selection"
         },
         {
-          "name": "--tmux, -t",
+          "name": "tmux",
+          "short": "t",
           "type": "boolean",
           "description": "Open shell in new tmux window"
         },
         {
-          "name": "--tmux-vertical, --tmux-v",
+          "name": "tmux-vertical",
+          "aliases": ["tmux-v"],
           "type": "boolean",
           "description": "Open shell in vertical split pane"
         },
         {
-          "name": "--tmux-horizontal, --tmux-h",
+          "name": "tmux-horizontal",
+          "aliases": ["tmux-h"],
           "type": "boolean",
           "description": "Open shell in horizontal split pane"
         }
@@ -872,22 +878,25 @@
       "description": "Create a worktree for a GitHub PR or issue",
       "options": [
         {
-          "name": "--base",
+          "name": "base",
           "type": "string",
           "description": "Base branch for new issue branches (issues only, default: repository HEAD)"
         },
         {
-          "name": "--tmux, -t",
+          "name": "tmux",
+          "short": "t",
           "type": "boolean",
           "description": "Open worktree in new tmux window"
         },
         {
-          "name": "--tmux-vertical, --tmux-v",
+          "name": "tmux-vertical",
+          "aliases": ["tmux-v"],
           "type": "boolean",
           "description": "Open worktree in vertical split pane"
         },
         {
-          "name": "--tmux-horizontal, --tmux-h",
+          "name": "tmux-horizontal",
+          "aliases": ["tmux-h"],
           "type": "boolean",
           "description": "Open worktree in horizontal split pane"
         }
@@ -953,22 +962,25 @@
       "description": "Create a worktree for a GitHub PR or issue",
       "options": [
         {
-          "name": "--base",
+          "name": "base",
           "type": "string",
           "description": "Base branch for new issue branches (issues only, default: repository HEAD)"
         },
         {
-          "name": "--tmux, -t",
+          "name": "tmux",
+          "short": "t",
           "type": "boolean",
           "description": "Open worktree in new tmux window"
         },
         {
-          "name": "--tmux-vertical, --tmux-v",
+          "name": "tmux-vertical",
+          "aliases": ["tmux-v"],
           "type": "boolean",
           "description": "Open worktree in vertical split pane"
         },
         {
-          "name": "--tmux-horizontal, --tmux-h",
+          "name": "tmux-horizontal",
+          "aliases": ["tmux-h"],
           "type": "boolean",
           "description": "Open worktree in horizontal split pane"
         }
