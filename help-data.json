@@ -238,11 +238,6 @@
       "usage": "phantom list [options]",
       "options": [
         {
-          "name": "fzf",
-          "type": "boolean",
-          "description": "Use fzf for interactive selection"
-        },
-        {
           "name": "no-default",
           "type": "boolean",
           "description": "Exclude the default worktree from the list"
@@ -259,10 +254,6 @@
           "command": "phantom list"
         },
         {
-          "description": "List worktrees with interactive fzf selection",
-          "command": "phantom list --fzf"
-        },
-        {
           "description": "List only worktree names",
           "command": "phantom list --names"
         },
@@ -275,21 +266,13 @@
         "Shows all worktrees with their paths and associated branches",
         "The default worktree is included unless --no-default is set",
         "The main worktree is marked as '(bare)' if using a bare repository",
-        "With --fzf, outputs only the selected worktree name",
         "Use --names for scripts and automation"
       ]
     },
     "where": {
       "name": "where",
       "description": "Output the filesystem path of a specific worktree",
-      "usage": "phantom where <worktree-name> [options]",
-      "options": [
-        {
-          "name": "fzf",
-          "type": "boolean",
-          "description": "Use fzf for interactive selection"
-        }
-      ],
+      "usage": "phantom where <worktree-name>",
       "examples": [
         {
           "description": "Get the path of a worktree",
@@ -298,20 +281,11 @@
         {
           "description": "Change directory to a worktree",
           "command": "cd $(phantom where staging)"
-        },
-        {
-          "description": "Get path with interactive fzf selection",
-          "command": "phantom where --fzf"
-        },
-        {
-          "description": "Change directory using fzf selection",
-          "command": "cd $(phantom where --fzf)"
         }
       ],
       "notes": [
         "Outputs only the path, making it suitable for use in scripts",
-        "Exits with an error code if the worktree doesn't exist",
-        "With --fzf, you can interactively select the worktree"
+        "Exits with an error code if the worktree doesn't exist"
       ]
     },
     "delete": {
@@ -334,11 +308,6 @@
           "name": "keep-branch",
           "type": "boolean",
           "description": "Delete the worktree but keep its branch"
-        },
-        {
-          "name": "fzf",
-          "type": "boolean",
-          "description": "Use fzf for interactive selection"
         }
       ],
       "examples": [
@@ -361,18 +330,13 @@
         {
           "description": "Delete a worktree while keeping its branch",
           "command": "phantom delete feature-auth --keep-branch"
-        },
-        {
-          "description": "Delete a worktree with interactive fzf selection",
-          "command": "phantom delete --fzf"
         }
       ],
       "notes": [
         "By default, deletion will fail if the worktree has uncommitted changes",
         "You can pass multiple worktree names to delete them at once",
         "The associated branch will also be deleted if it's not checked out elsewhere",
-        "Use --keep-branch to delete only the worktree and preserve the branch",
-        "With --fzf, you can interactively select the worktree to delete"
+        "Use --keep-branch to delete only the worktree and preserve the branch"
       ]
     },
     "exec": {
@@ -380,11 +344,6 @@
       "description": "Execute a command in a worktree directory",
       "usage": "phantom exec [options] <worktree-name> <command> [args...]",
       "options": [
-        {
-          "name": "fzf",
-          "type": "boolean",
-          "description": "Use fzf for interactive worktree selection"
-        },
         {
           "name": "tmux",
           "short": "t",
@@ -418,27 +377,18 @@
           "command": "phantom exec staging npm run build -- --production"
         },
         {
-          "description": "Execute with interactive selection",
-          "command": "phantom exec --fzf npm run dev"
-        },
-        {
           "description": "Run dev server in new tmux window",
           "command": "phantom exec --tmux feature-auth npm run dev"
         },
         {
           "description": "Run tests in vertical split pane",
           "command": "phantom exec --tmux-v feature-auth npm test"
-        },
-        {
-          "description": "Interactive selection with tmux",
-          "command": "phantom exec --fzf --tmux npm run dev"
         }
       ],
       "notes": [
         "The command is executed with the worktree directory as the working directory",
         "All arguments after the worktree name are passed to the command",
         "The exit code of the executed command is preserved",
-        "With --fzf, select the worktree interactively before executing the command",
         "Tmux options require being inside a tmux session"
       ]
     },
@@ -482,11 +432,6 @@
       "usage": "phantom shell <worktree-name> [options]",
       "options": [
         {
-          "name": "fzf",
-          "type": "boolean",
-          "description": "Use fzf for interactive selection"
-        },
-        {
           "name": "tmux",
           "short": "t",
           "type": "boolean",
@@ -511,27 +456,18 @@
           "command": "phantom shell feature-auth"
         },
         {
-          "description": "Open a shell with interactive fzf selection",
-          "command": "phantom shell --fzf"
-        },
-        {
           "description": "Open a shell in a new tmux window",
           "command": "phantom shell feature-auth --tmux"
         },
         {
           "description": "Open a shell in a vertical tmux pane",
           "command": "phantom shell feature-auth --tmux-v"
-        },
-        {
-          "description": "Interactive selection with tmux",
-          "command": "phantom shell --fzf --tmux"
         }
       ],
       "notes": [
         "Uses your default shell from the SHELL environment variable",
         "The shell starts with the worktree directory as the working directory",
         "Type 'exit' to return to your original directory",
-        "With --fzf, you can interactively select the worktree to enter",
         "Tmux options require being inside a tmux session"
       ]
     },

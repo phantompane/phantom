@@ -595,53 +595,6 @@ pub fn exec_in_worktree(
     }
 }
 
-pub fn select_with_fzf(git_root: &Path, exclude_default: bool) -> Result<Option<WorktreeInfo>> {
-    let worktrees = list_worktrees(git_root, exclude_default, false)?;
-    if worktrees.is_empty() {
-        return Ok(None);
-    }
-    let lines = worktrees
-        .iter()
-        .map(|worktree| {
-            let dirty = if worktree.is_clean { "" } else { " [dirty]" };
-            format!("{} ({}){dirty}", worktree.name, worktree.path_to_display)
-        })
-        .collect::<Vec<_>>();
-    let captured = match process::write_and_capture(
-        "fzf",
-        &["--prompt", "Select worktree> ", "--header", "Git Worktrees"],
-        &lines.join("\n"),
-    ) {
-        Ok(captured) => captured,
-        Err(Error::Spawn { details, .. }) if details.contains("ENOENT") => {
-            return Err(Error::msg(
-                "fzf command not found. Please install fzf first.",
-            ));
-        }
-        Err(error) => return Err(error),
-    };
-    if captured.code == 1 || captured.code == 130 {
-        return Ok(None);
-    }
-    if captured.code != 0 {
-        return Err(Error::msg(format!(
-            "fzf exited with code {}: {}",
-            captured.code,
-            captured.stderr.trim()
-        )));
-    }
-    let selected = captured.stdout.trim();
-    if selected.is_empty() {
-        return Ok(None);
-    }
-    let name = selected.split(' ').next().unwrap_or(selected);
-    worktrees
-        .into_iter()
-        .find(|worktree| worktree.name == name)
-        .map(Some)
-        .ok_or_else(|| Error::msg("Selected worktree not found"))
-}
-
 pub fn resolve_action(request: &ActionRequest) -> Result<Option<ActionKind>> {
     let mut actions = Vec::new();
     if request.shell {
