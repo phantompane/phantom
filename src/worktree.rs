@@ -720,7 +720,13 @@ fn walk_matching(
 ) -> Result<()> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        // A literal prefix can name a file, or pass through a file. That is no match.
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.kind() == std::io::ErrorKind::NotADirectory =>
+        {
+            return Ok(());
+        }
         Err(error) => return Err(Error::msg(format!("Failed to resolve pattern: {error}"))),
     };
     for entry in entries {
@@ -1034,6 +1040,46 @@ mod tests {
 
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn glob_prefix_that_is_a_file_matches_nothing() {
+        let root = std::env::temp_dir().join(format!(
+            "phantom-glob-file-prefix-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("root");
+        fs::write(root.join("config"), "not a directory").expect("file");
+        fs::write(root.join("other.json"), "{}").expect("json");
+
+        let files = resolve_patterns(&root, &["config/*.json".to_string()]).expect("prefix file");
+        assert!(files.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn glob_intermediate_component_that_is_a_file_matches_nothing() {
+        let root = std::env::temp_dir().join(format!(
+            "phantom-glob-file-mid-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("root");
+        fs::write(root.join("config"), "not a directory").expect("file");
+
+        let files =
+            resolve_patterns(&root, &["config/local/*.json".to_string()]).expect("mid file");
+        assert!(files.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
