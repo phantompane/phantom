@@ -5,12 +5,22 @@ pub fn head_watch_paths(cwd: &Path) -> Vec<PathBuf> {
     let Ok(head) = git_path(cwd, "HEAD") else {
         return Vec::new();
     };
-    let mut paths = vec![head.clone()];
+    let mut paths = Vec::new();
+    if head.is_file() {
+        paths.push(head.clone());
+    }
     if let Ok(text) = std::fs::read_to_string(&head) {
         if let Some(reference) = text.trim().strip_prefix("ref: ") {
             if let Ok(reference_path) = git_path(cwd, reference) {
-                paths.push(reference_path);
+                if reference_path.is_file() {
+                    paths.push(reference_path);
+                }
             }
+        }
+    }
+    if let Ok(packed) = git_path(cwd, "packed-refs") {
+        if packed.is_file() {
+            paths.push(packed);
         }
     }
     paths
