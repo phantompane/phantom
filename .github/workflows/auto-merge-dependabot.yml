@@ -14,6 +14,7 @@ jobs:
       github.event.pull_request.auto_merge == null
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
       pull-requests: write
 
@@ -39,6 +40,7 @@ jobs:
           fi
 
       - name: Enable auto-merge (squash, minor/patch only)
+        id: automerge
         if: |
           (steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
           steps.metadata.outputs.update-type == 'version-update:semver-patch')
@@ -51,6 +53,33 @@ jobs:
             --repo "$GH_REPO" \
             --auto \
             --squash
+
+      - name: Dispatch CI on main after the token merge
+        if: steps.automerge.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # This merge is performed by GITHUB_TOKEN, so the push to main does
+          # not start workflows. workflow_dispatch does. Poll until GitHub
+          # finishes auto-merge, then run CI on that main SHA.
+          for _ in $(seq 1 60); do
+            state=$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json state --jq '.state')
+            if [ "$state" = "MERGED" ]; then
+              sha=$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json mergeCommit --jq '.mergeCommit.oid')
+              existing=$(gh run list --repo "$GH_REPO" --workflow ci.yml --commit "$sha" --json databaseId --jq 'length')
+              if [ "$existing" = "0" ]; then
+                gh workflow run ci.yml --repo "$GH_REPO" --ref main
+                echo "Dispatched CI for main @ ${sha}"
+              else
+                echo "CI already exists for ${sha}"
+              fi
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "Pull request was not merged within 20 minutes; CI on main was not dispatched."
 
       - name: Skip major updates
         if: steps.metadata.outputs.update-type == 'version-update:semver-major'
