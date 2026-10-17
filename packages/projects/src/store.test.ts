@@ -254,22 +254,25 @@ describe("ProjectRegistryStore", () => {
   it("does not time out when the lock changes hands between deadline checks", async () => {
     const dataDirectory = await createTemporaryDirectory();
     const lockPath = join(dataDirectory, "projects.lock");
+    const ownerPath = join(lockPath, "owner.json");
     const sleep = (ms: number) =>
       new Promise((resolve) => {
         setTimeout(resolve, ms);
       });
-    // A holder that has created the lock but not yet written owner.json.
+    // A holder that has created the lock but not yet written owner.json. The
+    // lock directory stays in place until the end, so the waiter cannot take
+    // it early and the test never races its mkdir.
     await mkdir(lockPath, { recursive: true });
     const store = new ProjectRegistryStore(dataDirectory, {
       lockRetryMs: 1,
-      lockTimeoutMs: 200,
+      lockTimeoutMs: 500,
     });
 
     const added = store.add("/work/project");
-    // Hand-off 1: a live holder with an owner file takes over.
+    // Hand-off 1: a live holder with an owner file.
     await sleep(50);
     await writeFile(
-      join(lockPath, "owner.json"),
+      ownerPath,
       `${JSON.stringify({
         token: "other-holder",
         pid: process.pid,
@@ -277,13 +280,13 @@ describe("ProjectRegistryStore", () => {
         processIdentity: null,
       })}\n`,
     );
-    // Hand-off 2: the next holder has again created the lock without an owner
-    // file, so the lock looks the same as when the wait started.
-    await sleep(70);
-    await rm(lockPath, { recursive: true, force: true });
-    await mkdir(lockPath);
-    // Past the first deadline, but the lock has made progress throughout.
-    await sleep(140);
+    // Hand-off 2: the next holder has not written owner.json yet, so the lock
+    // looks the same as when the wait started.
+    await sleep(150);
+    await rm(ownerPath);
+    // Release well past the first deadline (~500ms) and well before the
+    // deadline restarted by hand-off 2 (~700ms).
+    await sleep(360);
     await rm(lockPath, { recursive: true, force: true });
 
     await added;
