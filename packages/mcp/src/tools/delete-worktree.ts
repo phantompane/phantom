@@ -1,6 +1,5 @@
 import { createContext, deleteWorktree } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
-import { isOk } from "@phantompane/utils";
 import { z } from "zod";
 import type { Tool } from "./types.ts";
 
@@ -34,7 +33,7 @@ export const deleteWorktreeTool: Tool<typeof schema> = {
       context.config?.preDelete?.commands,
     );
 
-    if (!isOk(result)) {
+    if (!result.ok) {
       throw new Error(result.error.message);
     }
 

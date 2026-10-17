@@ -16,6 +16,8 @@ export interface GitStatusResult {
   isClean: boolean;
 }
 
+const renamePattern = /^(.+) -> (.+)$/;
+
 function parseStatusLine(line: string): GitStatusEntry {
   const indexStatus = line[0] ?? " ";
   const workingTreeStatus = line[1] ?? " ";
@@ -25,15 +27,26 @@ function parseStatusLine(line: string): GitStatusEntry {
     indexStatus === "C" ||
     workingTreeStatus === "R" ||
     workingTreeStatus === "C";
-  const renamedPaths = isRenameOrCopy
-    ? pathPart.match(/^(?<originalPath>.+) -> (?<path>.+)$/)
-    : null;
+  const renamedPaths = isRenameOrCopy ? pathPart.match(renamePattern) : null;
+
+  let path = pathPart;
+  let originalPath: string | undefined;
+  if (renamedPaths) {
+    const original = renamedPaths[1];
+    const renamed = renamedPaths[2];
+    if (renamed !== undefined) {
+      path = renamed;
+    }
+    if (original !== undefined) {
+      originalPath = original;
+    }
+  }
 
   return {
     indexStatus,
     workingTreeStatus,
-    path: renamedPaths?.groups?.path ?? pathPart,
-    originalPath: renamedPaths?.groups?.originalPath,
+    path,
+    originalPath,
   };
 }
 

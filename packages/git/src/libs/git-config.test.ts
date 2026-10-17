@@ -32,7 +32,6 @@ describe("git config wrappers", () => {
     strictEqual(result, "phantom.editor\ncode\u0000");
     deepStrictEqual(executeGitCommandMock.mock.calls[0], [
       ["config", "--global", "--null", "--get-regexp", "^phantom\\."],
-      { cwd: undefined },
     ]);
   });
 
@@ -48,7 +47,6 @@ describe("git config wrappers", () => {
 
     deepStrictEqual(executeGitCommandMock.mock.calls[0], [
       ["config", "--global", "phantom.editor", "code"],
-      { cwd: undefined },
     ]);
   });
 
@@ -63,7 +61,6 @@ describe("git config wrappers", () => {
 
     deepStrictEqual(executeGitCommandMock.mock.calls[0], [
       ["config", "--global", "--unset", "phantom.editor"],
-      { cwd: undefined },
     ]);
   });
 });

@@ -19,5 +19,9 @@ export async function addWorktree(options: AddWorktreeOptions): Promise<void> {
     args.push(branch);
   }
 
-  await executeGitCommand(args, { cwd });
+  if (cwd !== undefined) {
+    await executeGitCommand(args, { cwd });
+    return;
+  }
+  await executeGitCommand(args);
 }

@@ -1,8 +1,13 @@
 export class GitOperationError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = this.constructor.name;
+    this.name = "GitOperationError";
   }
 }
 
-export class GitWorktreeError extends GitOperationError {}
+export class GitWorktreeError extends GitOperationError {
+  constructor(message: string) {
+    super(message);
+    this.name = "GitWorktreeError";
+  }
+}

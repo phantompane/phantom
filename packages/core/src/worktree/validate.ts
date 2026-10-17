@@ -1,5 +1,5 @@
-import fs from "node:fs/promises";
-import { err, isErr, ok, type Result } from "@phantompane/utils";
+import { access } from "node:fs/promises";
+import { err, ok, type Result } from "@phantompane/utils";
 import { WorktreeAlreadyExistsError, WorktreeNotFoundError } from "./errors.ts";
 import { type ListWorktreesOptions, listWorktrees } from "./list.ts";
 
@@ -20,7 +20,7 @@ export async function validateWorktreeExists(
   const { expectedPath, ...listOptions } = options;
   const worktreesResult = await listWorktrees(gitRoot, listOptions);
 
-  if (isErr(worktreesResult)) {
+  if (!worktreesResult.ok) {
     return err(new WorktreeNotFoundError(name));
   }
 
@@ -39,10 +39,10 @@ export async function validateWorktreeDoesNotExist(
   gitRoot: string,
   _worktreeDirectory: string,
   name: string,
-): Promise<Result<void, WorktreeAlreadyExistsError>> {
+): Promise<Result<true, WorktreeAlreadyExistsError>> {
   const worktreesResult = await listWorktrees(gitRoot);
 
-  if (isErr(worktreesResult)) {
+  if (!worktreesResult.ok) {
     return err(new WorktreeAlreadyExistsError(name));
   }
 
@@ -54,21 +54,21 @@ export async function validateWorktreeDoesNotExist(
     return err(new WorktreeAlreadyExistsError(name));
   }
 
-  return ok(undefined);
+  return ok(true);
 }
 
 export async function validateWorktreeDirectoryExists(
   worktreeDirectory: string,
 ): Promise<boolean> {
   try {
-    await fs.access(worktreeDirectory);
+    await access(worktreeDirectory);
     return true;
   } catch {
     return false;
   }
 }
 
-export function validateWorktreeName(name: string): Result<void, Error> {
+export function validateWorktreeName(name: string): Result<true, Error> {
   if (!name || name.trim() === "") {
     return err(new Error("Phantom name cannot be empty"));
   }
@@ -87,5 +87,5 @@ export function validateWorktreeName(name: string): Result<void, Error> {
     return err(new Error("Phantom name cannot contain consecutive dots"));
   }
 
-  return ok(undefined);
+  return ok(true);
 }

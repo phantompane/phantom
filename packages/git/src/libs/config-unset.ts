@@ -15,5 +15,9 @@ export async function configUnset(options: ConfigUnsetOptions): Promise<void> {
   }
   args.push("--unset", key);
 
-  await executeGitCommand(args, { cwd });
+  if (cwd !== undefined) {
+    await executeGitCommand(args, { cwd });
+    return;
+  }
+  await executeGitCommand(args);
 }

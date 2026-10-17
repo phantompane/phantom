@@ -16,5 +16,9 @@ export async function configSet(options: ConfigSetOptions): Promise<void> {
   }
   args.push(key, value);
 
-  await executeGitCommand(args, { cwd });
+  if (cwd !== undefined) {
+    await executeGitCommand(args, { cwd });
+    return;
+  }
+  await executeGitCommand(args);
 }

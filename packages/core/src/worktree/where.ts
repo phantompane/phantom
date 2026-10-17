@@ -1,4 +1,4 @@
-import { err, isErr, ok, type Result } from "@phantompane/utils";
+import { err, ok, type Result } from "@phantompane/utils";
 import type { WorktreeNotFoundError } from "./errors.ts";
 import { validateWorktreeExists } from "./validate.ts";
 
@@ -17,7 +17,7 @@ export async function whereWorktree(
     name,
   );
 
-  if (isErr(validation)) {
+  if (!validation.ok) {
     return err(validation.error);
   }
 

@@ -17,7 +17,7 @@ export interface WorktreeInfo {
 
 export interface ListWorktreesSuccess {
   worktrees: WorktreeInfo[];
-  message?: string;
+  message: string;
 }
 
 export interface ListWorktreesOptions {
@@ -90,8 +90,9 @@ export async function listWorktrees(
         excludeDefault && availableGitWorktrees.length > 0
           ? "No sub worktrees found"
           : "No worktrees found";
+      const worktrees: WorktreeInfo[] = [];
       return ok({
-        worktrees: [],
+        worktrees,
         message,
       });
     }
@@ -118,6 +119,7 @@ export async function listWorktrees(
 
     return ok({
       worktrees,
+      message: "",
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

@@ -1,28 +1,10 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
-import type { ExecFileException } from "node:child_process";
 import { describe, it, vi } from "vitest";
 
 const execFileMock = vi.fn();
 
 vi.doMock("node:child_process", () => ({
-  execFile: (
-    cmd: string,
-    args: string[],
-    options: { cwd?: string; env?: NodeJS.ProcessEnv; encoding: string },
-    callback?: (
-      error: ExecFileException | null,
-      result?: { stdout: string; stderr: string },
-    ) => void,
-  ) => {
-    const result = execFileMock(cmd, args, options);
-    if (callback) {
-      result.then(
-        (res: { stdout: string; stderr: string }) => callback(null, res),
-        (err: ExecFileException) => callback(err),
-      );
-    }
-    return {};
-  },
+  execFile: execFileMock,
 }));
 
 vi.doMock("node:util", () => ({
@@ -38,7 +20,7 @@ describe("executeGitCommand", () => {
 
   it("should execute git command successfully", async () => {
     resetMocks();
-    execFileMock.mockImplementation((_cmd, _args, _options) =>
+    execFileMock.mockImplementation(() =>
       Promise.resolve({
         stdout: "feature-branch\n",
         stderr: "",
@@ -56,12 +38,11 @@ describe("executeGitCommand", () => {
     deepStrictEqual(args, ["branch", "--show-current"]);
     strictEqual(options.encoding, "utf8");
     strictEqual(options.cwd, undefined);
-    // env should be process.env by default
   });
 
   it("should execute git command with cwd option", async () => {
     resetMocks();
-    execFileMock.mockImplementation((_cmd, _args, _options) =>
+    execFileMock.mockImplementation(() =>
       Promise.resolve({
         stdout: "commit message\n",
         stderr: "",
@@ -82,10 +63,8 @@ describe("executeGitCommand", () => {
   it("should handle git command error", async () => {
     resetMocks();
     const gitError = new Error("fatal: not a git repository") as Error & {
-      code?: string;
       stderr?: string;
     };
-    gitError.code = "ENOENT";
     gitError.stderr = "fatal: not a git repository";
 
     execFileMock.mockImplementation(() => Promise.reject(gitError));
@@ -94,13 +73,16 @@ describe("executeGitCommand", () => {
       await executeGitCommand(["status"]);
       throw new Error("Should have thrown");
     } catch (error) {
-      strictEqual(error, gitError);
+      strictEqual(
+        error instanceof Error ? error.message : "",
+        "fatal: not a git repository",
+      );
     }
   });
 
-  it("should pass through all options to execFile", async () => {
+  it("should pass through cwd and env to execFile", async () => {
     resetMocks();
-    execFileMock.mockImplementation((_cmd, _args, _options) =>
+    execFileMock.mockImplementation(() =>
       Promise.resolve({
         stdout: "output",
         stderr: "",
@@ -119,12 +101,11 @@ describe("executeGitCommand", () => {
     strictEqual(actualOptions.cwd, "/test/path");
     strictEqual(actualOptions.env.GIT_EDITOR, "vim");
     strictEqual(actualOptions.encoding, "utf8");
-    // timeout is not passed through by the implementation
   });
 
   it("should trim stdout output", async () => {
     resetMocks();
-    execFileMock.mockImplementation((_cmd, _args, _options) =>
+    execFileMock.mockImplementation(() =>
       Promise.resolve({
         stdout: "  output with spaces  \n\n",
         stderr: "",
@@ -138,7 +119,7 @@ describe("executeGitCommand", () => {
 
   it("should preserve stdout when trimStdout is disabled", async () => {
     resetMocks();
-    execFileMock.mockImplementation((_cmd, _args, _options) =>
+    execFileMock.mockImplementation(() =>
       Promise.resolve({
         stdout: " M file.txt\n D other.txt\n",
         stderr: "",
@@ -154,7 +135,7 @@ describe("executeGitCommand", () => {
 
   it("should trim stderr output", async () => {
     resetMocks();
-    execFileMock.mockImplementation((_cmd, _args, _options) =>
+    execFileMock.mockImplementation(() =>
       Promise.resolve({
         stdout: "success",
         stderr: "warning: something\n",
@@ -165,5 +146,27 @@ describe("executeGitCommand", () => {
 
     strictEqual(result.stdout, "success");
     strictEqual(result.stderr, "warning: something");
+  });
+
+  it("should treat a missing git config regexp as empty output", async () => {
+    resetMocks();
+    execFileMock.mockImplementation(() =>
+      Promise.reject(
+        new Error(
+          "Command failed: git config --global --null --get-regexp ^phantom\\.",
+        ),
+      ),
+    );
+
+    const result = await executeGitCommand([
+      "config",
+      "--global",
+      "--null",
+      "--get-regexp",
+      "^phantom\\.",
+    ]);
+
+    strictEqual(result.stdout, "");
+    strictEqual(result.stderr, "");
   });
 });

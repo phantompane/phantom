@@ -1,5 +1,5 @@
 import { selectWithFzf } from "@phantompane/process";
-import { isErr, type Result } from "@phantompane/utils";
+import { err, type Result } from "@phantompane/utils";
 import { listWorktrees } from "./list.ts";
 
 export interface SelectWorktreeResult {
@@ -21,8 +21,8 @@ export async function selectWorktreeWithFzf(
     includePrunable: false,
   });
 
-  if (isErr(listResult)) {
-    return listResult;
+  if (!listResult.ok) {
+    return err(new Error("failed to list worktrees"));
   }
 
   const { worktrees } = listResult.value;
@@ -44,7 +44,7 @@ export async function selectWorktreeWithFzf(
     header: "Git Worktrees",
   });
 
-  if (isErr(fzfResult)) {
+  if (!fzfResult.ok) {
     return fzfResult;
   }
 

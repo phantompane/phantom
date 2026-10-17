@@ -33,7 +33,6 @@ describe("addWorktree", () => {
         "feature",
         "main",
       ],
-      { cwd: undefined },
     ]);
   });
 

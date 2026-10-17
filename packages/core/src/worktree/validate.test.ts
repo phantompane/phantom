@@ -199,7 +199,7 @@ describe("validateWorktreeDoesNotExist", () => {
 
     deepStrictEqual(isOk(result), true);
     if (isOk(result)) {
-      deepStrictEqual(result.value, undefined);
+      deepStrictEqual(result.value, true);
     }
   });
 

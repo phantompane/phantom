@@ -21,6 +21,9 @@ export async function configGetRegexp(
   }
   args.push("--get-regexp", pattern);
 
-  const { stdout } = await executeGitCommand(args, { cwd });
+  const { stdout } =
+    cwd !== undefined
+      ? await executeGitCommand(args, { cwd })
+      : await executeGitCommand(args);
   return stdout;
 }

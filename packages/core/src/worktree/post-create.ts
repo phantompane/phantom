@@ -1,4 +1,4 @@
-import { err, isErr, ok, type Result } from "@phantompane/utils";
+import { err, ok, type Result } from "@phantompane/utils";
 import { execInWorktree } from "../exec.ts";
 import type { WorktreeLogger } from "./action.ts";
 
@@ -32,11 +32,11 @@ export async function executePostCreateCommands(
       [shell, "-c", command],
     );
 
-    if (isErr(cmdResult)) {
+    if (!cmdResult.ok) {
       const errorMessage =
         cmdResult.error instanceof Error
           ? cmdResult.error.message
-          : String(cmdResult.error);
+          : "unknown error";
       return err(
         new Error(
           `Failed to execute post-create command "${command}": ${errorMessage}`,

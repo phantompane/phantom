@@ -16,7 +16,11 @@ export interface GitExecutorResult {
 }
 
 /**
- * Execute a git command with consistent error handling
+ * Execute a git command with consistent error handling.
+ *
+ * scriptc's execFile rejection does not include stdout or stderr. `git config
+ * --get-regexp` exits 1 with empty output when nothing matches, which is not
+ * a phantom error.
  */
 export async function executeGitCommand(
   args: string[],
@@ -24,50 +28,65 @@ export async function executeGitCommand(
 ): Promise<GitExecutorResult> {
   const trimStdout = options.trimStdout ?? true;
   const trimStderr = options.trimStderr ?? true;
+  const env = options.env !== undefined ? options.env : process.env;
 
   try {
-    const result = await execFile("git", args, {
-      cwd: options.cwd,
-      env: options.env || process.env,
-      encoding: "utf8",
-    });
+    const result =
+      options.cwd !== undefined
+        ? await execFile("git", args, {
+            cwd: options.cwd,
+            env,
+            encoding: "utf8",
+          })
+        : await execFile("git", args, {
+            env,
+            encoding: "utf8",
+          });
 
     return {
       stdout: trimStdout ? result.stdout.trim() : result.stdout,
       stderr: trimStderr ? result.stderr.trim() : result.stderr,
     };
-  } catch (error) {
-    // Git commands often return non-zero exit codes for normal operations
-    // (e.g., `git diff` returns 1 when there are differences)
-    // So we need to handle errors carefully
+  } catch (caught) {
     if (
-      error &&
-      typeof error === "object" &&
-      "stdout" in error &&
-      "stderr" in error
+      caught instanceof Error &&
+      args.includes("--get-regexp") &&
+      caught.message.startsWith("Command failed:")
     ) {
-      const execError = error as {
-        stdout: string;
-        stderr: string;
-        code?: number;
-      };
-
-      // If we have stderr content, it's likely a real error
-      if (execError.stderr?.trim()) {
-        throw new Error(execError.stderr.trim());
-      }
-
-      // Otherwise, return the output even though the exit code was non-zero
-      return {
-        stdout: trimStdout
-          ? (execError.stdout?.trim() ?? "")
-          : (execError.stdout ?? ""),
-        stderr: trimStderr
-          ? (execError.stderr?.trim() ?? "")
-          : (execError.stderr ?? ""),
-      };
+      return { stdout: "", stderr: "" };
     }
 
-    throw error;
+    if (!(caught instanceof Error)) {
+      throw new Error(String(caught));
+    }
+
+    const stdout = readExecOutput(caught, "stdout");
+    const stderr = readExecOutput(caught, "stderr");
+    if (stdout === undefined && stderr === undefined) {
+      throw caught;
+    }
+
+    const stderrText = stderr ?? "";
+    if (stderrText.trim()) {
+      throw new Error(stderrText.trim());
+    }
+
+    const stdoutText = stdout ?? "";
+    return {
+      stdout: trimStdout ? stdoutText.trim() : stdoutText,
+      stderr: trimStderr ? stderrText.trim() : stderrText,
+    };
   }
+}
+
+function readExecOutput(
+  error: Error,
+  key: "stdout" | "stderr",
+): string | undefined {
+  if (!(key in error)) {
+    return undefined;
+  }
+
+  const value = (error as Error & Record<"stdout" | "stderr", unknown>)[key];
+  return typeof value === "string" ? value : undefined;
 }
