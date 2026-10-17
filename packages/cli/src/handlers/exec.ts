@@ -7,8 +7,7 @@ import {
   WorktreeNotFoundError,
 } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
-import { getPhantomEnv } from "@phantompane/process";
-import { isErr } from "@phantompane/utils";
+import { getPhantomEnv, ProcessError } from "@phantompane/process";
 import { executeTmuxCommand, isInsideTmux } from "@phantompane/tmux";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
@@ -96,7 +95,7 @@ export async function execHandler(args: string[]): Promise<void> {
 
     if (useFzf) {
       const selectResult = await selectWorktreeWithFzf(context.gitRoot);
-      if (isErr(selectResult)) {
+      if (!selectResult.ok) {
         exitWithError(selectResult.error.message, exitCodes.generalError);
       }
       if (!selectResult.value) {
@@ -113,7 +112,7 @@ export async function execHandler(args: string[]): Promise<void> {
       context.worktreesDirectory,
       worktreeName,
     );
-    if (isErr(validation)) {
+    if (!validation.ok) {
       exitWithError(validation.error.message, exitCodes.generalError);
     }
 
@@ -135,11 +134,12 @@ export async function execHandler(args: string[]): Promise<void> {
         windowName: tmuxDirection === "new" ? worktreeName : undefined,
       });
 
-      if (isErr(tmuxResult)) {
+      if (!tmuxResult.ok) {
         output.error(tmuxResult.error.message);
         const exitCode =
-          "exitCode" in tmuxResult.error
-            ? (tmuxResult.error.exitCode ?? exitCodes.generalError)
+          tmuxResult.error instanceof ProcessError &&
+          tmuxResult.error.exitCode !== undefined
+            ? tmuxResult.error.exitCode
             : exitCodes.generalError;
         exitWithError("", exitCode);
       }
@@ -155,7 +155,7 @@ export async function execHandler(args: string[]): Promise<void> {
       { interactive: true },
     );
 
-    if (isErr(result)) {
+    if (!result.ok) {
       const exitCode =
         result.error instanceof WorktreeNotFoundError
           ? exitCodes.notFound

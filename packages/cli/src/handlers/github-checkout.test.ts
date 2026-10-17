@@ -26,7 +26,7 @@ vi.doMock("../output.ts", () => ({
   output: { log: outputLogMock, error: outputErrorMock },
 }));
 
-vi.doMock("@phantompane/core", () => ({
+vi.doMock("@phantompane/core/src/github/checkout.ts", () => ({
   githubCheckout: githubCheckoutMock,
 }));
 

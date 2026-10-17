@@ -3,7 +3,6 @@ import { parseArgs } from "node:util";
 import { createContext, validateWorktreeExists } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
 import { getPhantomEnv } from "@phantompane/process";
-import { isErr } from "@phantompane/utils";
 import { exitCodes, exitWithError } from "../errors.ts";
 import { output } from "../output.ts";
 
@@ -14,8 +13,9 @@ async function openEditor(
   env: NodeJS.ProcessEnv,
 ): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      // shell:true keeps commands with flags (e.g., "code --wait") working.
+    // scriptc only lowers `shell: true` when the full command is argv[0].
+    const commandLine = [command, ...args].join(" ");
+    const child = spawn(commandLine, [], {
       cwd,
       env,
       stdio: "inherit",
@@ -73,7 +73,7 @@ export async function editHandler(args: string[]): Promise<void> {
       worktreeName,
     );
 
-    if (isErr(validation)) {
+    if (!validation.ok) {
       exitWithError(validation.error.message, exitCodes.notFound);
     }
 

@@ -4,11 +4,10 @@ import {
   selectWorktreeWithFzf,
 } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
-import { isErr } from "@phantompane/utils";
 import { exitCodes, exitWithError } from "../errors.ts";
 import { output } from "../output.ts";
 
-export async function listHandler(args: string[] = []): Promise<void> {
+export async function listHandler(args: string[]): Promise<void> {
   const { values } = parseArgs({
     args,
     options: {
@@ -38,7 +37,7 @@ export async function listHandler(args: string[] = []): Promise<void> {
         excludeDefault,
       });
 
-      if (isErr(selectResult)) {
+      if (!selectResult.ok) {
         exitWithError(selectResult.error.message, exitCodes.generalError);
       }
 
@@ -51,7 +50,7 @@ export async function listHandler(args: string[] = []): Promise<void> {
         includePrunable: false,
       });
 
-      if (isErr(result)) {
+      if (!result.ok) {
         exitWithError("Failed to list worktrees", exitCodes.generalError);
       }
 

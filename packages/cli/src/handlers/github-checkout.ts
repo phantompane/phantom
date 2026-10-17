@@ -1,7 +1,6 @@
 import { parseArgs } from "node:util";
-import { githubCheckout } from "@phantompane/core";
+import { githubCheckout } from "@phantompane/core/src/github/checkout.ts";
 import { getPhantomEnv } from "@phantompane/process";
-import { isErr } from "@phantompane/utils";
 import { executeTmuxCommand, isInsideTmux } from "@phantompane/tmux";
 import { exitCodes, exitWithError } from "../errors.ts";
 import { output } from "../output.ts";
@@ -68,7 +67,7 @@ export async function githubCheckoutHandler(args: string[]): Promise<void> {
 
   const result = await githubCheckout({ number, base: values.base });
 
-  if (isErr(result)) {
+  if (!result.ok) {
     exitWithError(result.error.message, exitCodes.generalError);
   }
 
@@ -92,7 +91,7 @@ export async function githubCheckoutHandler(args: string[]): Promise<void> {
       windowName: tmuxDirection === "new" ? result.value.worktree : undefined,
     });
 
-    if (isErr(tmuxResult)) {
+    if (!tmuxResult.ok) {
       output.error(tmuxResult.error.message);
       const exitCode =
         "exitCode" in tmuxResult.error

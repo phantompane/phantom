@@ -277,7 +277,7 @@ describe("execHandler", () => {
       /Exit with code 1:/,
     );
 
-    strictEqual(consoleErrorMock.mock.calls.length, 3);
+    strictEqual(consoleErrorMock.mock.calls.length, 2);
     strictEqual(consoleErrorMock.mock.calls[0][0], "tmux command failed");
   });
 
