@@ -50,6 +50,14 @@ export interface ProjectRegistryStoreOptions {
   lockTimeoutMs?: number;
   lockRetryMs?: number;
   staleLockMs?: number;
+  /**
+   * @internal Clock for lock-wait deadlines. Defaults to Date.now.
+   * Stale-lock checks keep using the wall clock because they compare
+   * filesystem mtimes.
+   */
+  now?: () => number;
+  /** @internal Delay between lock retries. Defaults to a real timer. */
+  delay?: (milliseconds: number) => Promise<void>;
   /** @internal Synchronizes lock-race regression tests. */
   onLockAcquired?: () => void | Promise<void>;
   /** @internal Synchronizes lock-race regression tests. */
@@ -79,8 +87,10 @@ export function getDefaultProjectsDataDir(
 
 export class ProjectRegistryStore {
   private readonly dataDir: string;
+  private readonly delay: (milliseconds: number) => Promise<void>;
   private readonly lockRetryMs: number;
   private readonly lockTimeoutMs: number;
+  private readonly now: () => number;
   private readonly onBeforeLockAcquire?: () => void | Promise<void>;
   private readonly onBeforeStaleLockRemoval?: () => void | Promise<void>;
   private readonly onLockAcquired?: () => void | Promise<void>;
@@ -94,6 +104,8 @@ export class ProjectRegistryStore {
     this.lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
     this.lockRetryMs = options.lockRetryMs ?? DEFAULT_LOCK_RETRY_MS;
     this.staleLockMs = options.staleLockMs ?? DEFAULT_STALE_LOCK_MS;
+    this.now = options.now ?? Date.now;
+    this.delay = options.delay ?? sleep;
     this.onLockAcquired = options.onLockAcquired;
     this.onBeforeLockAcquire = options.onBeforeLockAcquire;
     this.onBeforeStaleLockRemoval = options.onBeforeStaleLockRemoval;
@@ -252,7 +264,7 @@ export class ProjectRegistryStore {
       this.dataDir,
       LOCK_RECOVERY_DIRECTORY_NAME,
     );
-    let deadline = Date.now() + this.lockTimeoutMs;
+    let deadline = this.now() + this.lockTimeoutMs;
     const progress: LockWaitProgress = { initialized: false, snapshot: null };
     let owner: LockOwner | undefined;
 
@@ -519,10 +531,10 @@ export class ProjectRegistryStore {
       // and released it in between. Any change of holder is progress, so the
       // deadline restarts and bounds a single live holder, not the queue.
       progress.snapshot = current;
-      deadline = Date.now() + this.lockTimeoutMs;
+      deadline = this.now() + this.lockTimeoutMs;
     }
 
-    if (Date.now() >= deadline) {
+    if (this.now() >= deadline) {
       // The same holder for the whole window, including one that only
       // heartbeats, still times out.
       throw new ProjectRegistryError(
@@ -531,7 +543,7 @@ export class ProjectRegistryStore {
       );
     }
 
-    await delay(this.lockRetryMs);
+    await this.delay(this.lockRetryMs);
     return deadline;
   }
 }
@@ -692,7 +704,7 @@ function hasErrorCode(error: unknown, code: string): boolean {
   );
 }
 
-function delay(milliseconds: number): Promise<void> {
+function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
