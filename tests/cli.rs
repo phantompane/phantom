@@ -847,6 +847,80 @@ impl Drop for ModeReset<'_> {
 }
 
 #[test]
+fn mcp_hooks_do_not_write_to_stdout() {
+    let repo = Repo::new();
+    fs::write(
+        repo.repo.join("phantom.config.json"),
+        r#"{"postCreate":{"commands":["printf 'HOOK_STDOUT\\n'"]},"preDelete":{"commands":["printf 'PRE_STDOUT\\n'"]}}"#,
+    )
+    .expect("config");
+
+    let cli = repo.phantom(&["create", "cli-hooks"]);
+    assert!(cli.status.success(), "{}", text(&cli.stderr));
+    assert!(
+        text(&cli.stdout).contains("HOOK_STDOUT"),
+        "CLI hooks stay on stdout:\n{}",
+        text(&cli.stdout)
+    );
+
+    let created = mcp_tool(
+        &repo,
+        &[],
+        "phantom_create_worktree",
+        serde_json::json!({"name": "mcp-hooks"}),
+    );
+    assert!(
+        !created.stdout.contains("HOOK_STDOUT"),
+        "post-create output leaked onto MCP stdout:\n{}",
+        created.stdout
+    );
+    assert!(
+        !created.stdout.contains("Running post-create") && !created.stdout.contains("Executing:"),
+        "hook status leaked onto MCP stdout:\n{}",
+        created.stdout
+    );
+    assert!(
+        created.stderr.contains("HOOK_STDOUT"),
+        "hook output should be on stderr:\n{}",
+        created.stderr
+    );
+    assert!(
+        created.stdout.contains("mcp-hooks"),
+        "create tool should still return JSON:\n{}\n{}",
+        created.stdout,
+        created.stderr
+    );
+
+    let deleted = mcp_tool(
+        &repo,
+        &[],
+        "phantom_delete_worktree",
+        serde_json::json!({"name": "mcp-hooks"}),
+    );
+    assert!(
+        !deleted.stdout.contains("PRE_STDOUT"),
+        "pre-delete output leaked onto MCP stdout:\n{}",
+        deleted.stdout
+    );
+    assert!(
+        !deleted.stdout.contains("pre-delete"),
+        "pre-delete status leaked onto MCP stdout:\n{}",
+        deleted.stdout
+    );
+    assert!(
+        deleted.stderr.contains("PRE_STDOUT"),
+        "pre-delete output should be on stderr:\n{}",
+        deleted.stderr
+    );
+    assert!(
+        deleted.stdout.contains("deleted"),
+        "delete tool should still return JSON:\n{}\n{}",
+        deleted.stdout,
+        deleted.stderr
+    );
+}
+
+#[test]
 fn delete_removes_empty_parent_directories() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "cursor/foo"]);

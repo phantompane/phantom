@@ -193,6 +193,7 @@ impl PhantomServer {
             &files,
             &commands,
             &Logger::off(),
+            worktree::HookOutput::Stderr,
         )
         .map_err(|error| error.to_string())?;
         let mut body = json!({
@@ -255,6 +256,7 @@ impl PhantomServer {
             args.force.value().unwrap_or(false),
             keep_branch,
             None,
+            worktree::HookOutput::Stderr,
         )
         .map_err(|error| error.to_string())?;
         Ok(pretty(&json!({
@@ -271,8 +273,13 @@ impl PhantomServer {
         &self,
         Parameters(args): Parameters<CheckoutArgs>,
     ) -> std::result::Result<String, String> {
-        let checkout = github::checkout(&args.number, args.base.as_deref(), &Logger::off())
-            .map_err(|error| error.to_string())?;
+        let checkout = github::checkout(
+            &args.number,
+            args.base.as_deref(),
+            &Logger::off(),
+            worktree::HookOutput::Stderr,
+        )
+        .map_err(|error| error.to_string())?;
         let message = if checkout.already_exists {
             format!("Worktree '{}' already exists.", checkout.worktree)
         } else {
