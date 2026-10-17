@@ -8,7 +8,6 @@ use crate::git::{self, GitWorktree};
 use crate::names;
 use crate::paths;
 use crate::process;
-use crate::tmux::{self, TmuxDirection};
 
 #[derive(Debug, Clone)]
 pub struct WorktreeInfo {
@@ -23,13 +22,11 @@ pub struct WorktreeInfo {
 pub enum ActionKind {
     Shell,
     Exec(String),
-    Tmux(TmuxDirection),
 }
 
 pub struct ActionRequest {
     pub shell: bool,
     pub exec: Option<String>,
-    pub tmux: Option<TmuxDirection>,
 }
 
 pub struct Logger {
@@ -223,7 +220,6 @@ pub struct CreateOutcome {
 
 pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
     let action = resolve_action(&request.action)?;
-    validate_action(action.as_ref())?;
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = git::git_root(&cwd)?;
     let context = context::create(&git_root)?;
@@ -372,7 +368,6 @@ pub struct AttachRequest<'a> {
 
 pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action = resolve_action(&request.action)?;
-    validate_action(action.as_ref())?;
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = git::git_root(&cwd)?;
     let context = context::create(&git_root)?;
@@ -603,20 +598,10 @@ pub fn resolve_action(request: &ActionRequest) -> Result<Option<ActionKind>> {
     if let Some(command) = &request.exec {
         actions.push(ActionKind::Exec(command.clone()));
     }
-    if let Some(direction) = request.tmux {
-        actions.push(ActionKind::Tmux(direction));
-    }
     if actions.len() > 1 {
         return Err(Error::ActionConflict);
     }
     Ok(actions.into_iter().next())
-}
-
-pub fn validate_action(action: Option<&ActionKind>) -> Result<()> {
-    if matches!(action, Some(ActionKind::Tmux(_))) && !tmux::inside_tmux() {
-        return Err(Error::TmuxRequired);
-    }
-    Ok(())
 }
 
 fn run_action(
@@ -663,20 +648,6 @@ fn run_action(
                     code,
                 })
             }
-        }
-        ActionKind::Tmux(direction) => {
-            logger.log(&format!(
-                "\nOpening worktree '{name}' in tmux {}...",
-                if direction == TmuxDirection::New {
-                    "window"
-                } else {
-                    "pane"
-                }
-            ));
-            let env = phantom_env(name, path);
-            let window = (direction == TmuxDirection::New).then_some(name);
-            tmux::open_shell(direction, path, &env, window)?;
-            Ok(None)
         }
     }
 }
@@ -1275,7 +1246,6 @@ mod tests {
         let error = resolve_action(&ActionRequest {
             shell: true,
             exec: Some("true".to_string()),
-            tmux: None,
         })
         .expect_err("conflict");
         assert!(matches!(error, Error::ActionConflict));

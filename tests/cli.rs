@@ -180,6 +180,34 @@ fn version_help_and_unknown_command() {
 }
 
 #[test]
+fn removed_tmux_options_are_unknown() {
+    let repo = Repo::new();
+    let cases = [
+        vec!["create", "name", "--tmux"],
+        vec!["create", "name", "-t"],
+        vec!["attach", "main", "--tmux-vertical"],
+        vec!["exec", "--tmux-h", "name", "true"],
+        vec!["shell", "name", "--tmux-v"],
+        vec!["github", "checkout", "1", "--tmux"],
+        vec!["gh", "checkout", "1", "-t"],
+    ];
+    for args in cases {
+        let output = repo.phantom(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{args:?} {}",
+            text(&output.stderr)
+        );
+        let stderr = text(&output.stderr);
+        assert!(
+            stderr.contains("Unknown option"),
+            "{args:?} produced {stderr}"
+        );
+    }
+}
+
+#[test]
 fn create_list_where_delete_and_attach() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "feature/add-tests"]);

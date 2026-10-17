@@ -8,7 +8,6 @@ use crate::help;
 use crate::preferences::{self, Preferences};
 use crate::process;
 use crate::projects::{self, ProjectListEntry, ProjectRecord, ProjectRegistryStore};
-use crate::tmux::{self, TmuxDirection};
 use crate::worktree::{self, ActionRequest, Logger};
 
 struct Command {
@@ -63,11 +62,6 @@ fn create(args: &[String]) -> Result<i32> {
         &[
             flag("shell", Some('s')),
             value_flag("exec", Some('x')),
-            flag("tmux", Some('t')),
-            flag("tmux-vertical", None),
-            flag("tmux-v", None),
-            flag("tmux-horizontal", None),
-            flag("tmux-h", None),
             Opt {
                 name: "copy-file",
                 short: None,
@@ -96,11 +90,6 @@ fn attach(args: &[String]) -> Result<i32> {
         &[
             flag("shell", Some('s')),
             value_flag("exec", Some('x')),
-            flag("tmux", Some('t')),
-            flag("tmux-vertical", None),
-            flag("tmux-v", None),
-            flag("tmux-horizontal", None),
-            flag("tmux-h", None),
             Opt {
                 name: "copy-file",
                 short: None,
@@ -265,11 +254,7 @@ fn delete(args: &[String]) -> Result<i32> {
 }
 
 fn exec(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &tmux_options_with(&[]), true)?;
-    let direction = tmux_direction(&parsed);
-    if direction.is_some() && !tmux::inside_tmux() {
-        return fail(&Error::TmuxRequired, VALIDATION);
-    }
+    let parsed = args::parse(args, &[], true)?;
     if parsed.positionals.len() < 2 {
         return fail(
             &Error::msg("Usage: phantom exec <worktree-name> <command> [args...]"),
@@ -287,33 +272,8 @@ fn exec(args: &[String]) -> Result<i32> {
         Err(error) => return fail(&error, GENERAL),
     };
     let name = parsed.positionals[0].clone();
-    let worktree = match worktree::find_worktree(&context.git_root, &name, false, None) {
-        Ok(worktree) => worktree,
-        Err(error) => return fail(&error, GENERAL),
-    };
-    let path = Path::new(&worktree.path).to_path_buf();
-    if let Some(direction) = direction {
-        println!(
-            "Executing command in worktree '{name}' in tmux {}...",
-            if direction == TmuxDirection::New {
-                "window"
-            } else {
-                "pane"
-            }
-        );
-        let env = worktree::phantom_env(&name, &path);
-        let command = command_args[0].as_str();
-        let rest = command_args[1..]
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        let window = (direction == TmuxDirection::New).then_some(name.as_str());
-        if let Err(error) = tmux::run_command(direction, command, &rest, &path, &env, window) {
-            eprintln!("{error}");
-            eprintln!();
-            return Ok(error.exit_code());
-        }
-        return Ok(SUCCESS);
+    if let Err(error) = worktree::find_worktree(&context.git_root, &name, false, None) {
+        return fail(&error, GENERAL);
     }
     let command = command_args[0].as_str();
     let rest = command_args[1..]
@@ -349,8 +309,7 @@ fn exec(args: &[String]) -> Result<i32> {
 }
 
 fn shell(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &tmux_options_with(&[]), true)?;
-    let direction = tmux_direction(&parsed);
+    let parsed = args::parse(args, &[], true)?;
     if parsed.positionals.is_empty() {
         return fail(
             &Error::msg("Usage: phantom shell <worktree-name>"),
@@ -366,33 +325,12 @@ fn shell(args: &[String]) -> Result<i32> {
         Ok(context) => context,
         Err(error) => return fail(&error, GENERAL),
     };
-    if direction.is_some() && !tmux::inside_tmux() {
-        return fail(&Error::TmuxRequired, VALIDATION);
-    }
     let name = parsed.positionals[0].clone();
     let worktree = match worktree::find_worktree(&context.git_root, &name, false, None) {
         Ok(worktree) => worktree,
         Err(error) => return fail(&error, GENERAL),
     };
     let path = Path::new(&worktree.path).to_path_buf();
-    if let Some(direction) = direction {
-        println!(
-            "Opening worktree '{name}' in tmux {}...",
-            if direction == TmuxDirection::New {
-                "window"
-            } else {
-                "pane"
-            }
-        );
-        let env = worktree::phantom_env(&name, &path);
-        let window = (direction == TmuxDirection::New).then_some(name.as_str());
-        if let Err(error) = tmux::open_shell(direction, &path, &env, window) {
-            eprintln!("{error}");
-            eprintln!();
-            return Ok(error.exit_code());
-        }
-        return Ok(SUCCESS);
-    }
     println!("Entering worktree '{name}' at {}", path.display());
     println!("Type 'exit' to return to your original directory\n");
     match worktree::open_shell(&context.git_root, &name) {
@@ -832,17 +770,13 @@ fn github_root(args: &[String]) -> Result<i32> {
 }
 
 fn github_checkout(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &tmux_options_with(&[value_flag("base", None)]), true)?;
+    let parsed = args::parse(args, &[value_flag("base", None)], true)?;
     let Some(number) = parsed.positionals.first() else {
         return fail(
             &Error::msg("Please specify a PR or issue number"),
             VALIDATION,
         );
     };
-    let direction = tmux_direction(&parsed);
-    if direction.is_some() && !tmux::inside_tmux() {
-        return fail(&Error::TmuxRequired, VALIDATION);
-    }
     let checkout = match github::checkout(
         number,
         parsed.value("base"),
@@ -856,24 +790,6 @@ fn github_checkout(args: &[String]) -> Result<i32> {
     if let Some(failure) = &checkout.hook_failure {
         let _ = std::io::Write::flush(&mut std::io::stdout());
         eprintln!("{}", failure.warning(&checkout.path));
-    }
-    if let Some(direction) = direction {
-        println!(
-            "\nOpening worktree '{}' in tmux {}...",
-            checkout.worktree,
-            if direction == TmuxDirection::New {
-                "window"
-            } else {
-                "pane"
-            }
-        );
-        let env = worktree::phantom_env(&checkout.worktree, &checkout.path);
-        let window = (direction == TmuxDirection::New).then_some(checkout.worktree.as_str());
-        if let Err(error) = tmux::open_shell(direction, &checkout.path, &env, window) {
-            eprintln!("{error}");
-            eprintln!();
-            return Ok(error.exit_code());
-        }
     }
     Ok(checkout
         .hook_failure
@@ -900,32 +816,7 @@ fn action_from(parsed: &Parsed) -> ActionRequest {
     ActionRequest {
         shell: parsed.flag("shell"),
         exec: parsed.value("exec").map(str::to_string),
-        tmux: tmux_direction(parsed),
     }
-}
-
-fn tmux_direction(parsed: &Parsed) -> Option<TmuxDirection> {
-    if parsed.flag("tmux") {
-        Some(TmuxDirection::New)
-    } else if parsed.flag("tmux-vertical") || parsed.flag("tmux-v") {
-        Some(TmuxDirection::Vertical)
-    } else if parsed.flag("tmux-horizontal") || parsed.flag("tmux-h") {
-        Some(TmuxDirection::Horizontal)
-    } else {
-        None
-    }
-}
-
-fn tmux_options_with(extra: &[Opt]) -> Vec<Opt> {
-    let mut options = extra.to_vec();
-    options.extend([
-        flag("tmux", Some('t')),
-        flag("tmux-vertical", None),
-        flag("tmux-v", None),
-        flag("tmux-horizontal", None),
-        flag("tmux-h", None),
-    ]);
-    options
 }
 
 fn flag(name: &'static str, short: Option<char>) -> Opt {
@@ -958,7 +849,7 @@ fn fail(error: &Error, code: i32) -> Result<i32> {
 
 fn create_code(error: &Error) -> i32 {
     match error {
-        Error::WorktreeAlreadyExists(_) | Error::ActionConflict | Error::TmuxRequired => VALIDATION,
+        Error::WorktreeAlreadyExists(_) | Error::ActionConflict => VALIDATION,
         Error::CommandFailed { code, .. } => *code,
         other => other.exit_code(),
     }
@@ -966,7 +857,7 @@ fn create_code(error: &Error) -> i32 {
 
 fn attach_code(error: &Error) -> i32 {
     match error {
-        Error::WorktreeAlreadyExists(_) | Error::ActionConflict | Error::TmuxRequired => VALIDATION,
+        Error::WorktreeAlreadyExists(_) | Error::ActionConflict => VALIDATION,
         Error::BranchNotFound(_) => NOT_FOUND,
         Error::CommandFailed { code, .. } => *code,
         other => other.exit_code(),
