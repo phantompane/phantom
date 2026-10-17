@@ -260,6 +260,62 @@ fn invalid_config_names_the_file_and_the_problem() {
 }
 
 #[test]
+fn post_create_failure_reports_the_created_worktree() {
+    let repo = Repo::new();
+    fs::write(
+        repo.repo.join("phantom.config.json"),
+        r#"{"postCreate":{"commands":["phantom-missing-post-create-bin"]}}"#,
+    )
+    .expect("config");
+    let created = repo.phantom(&["create", "feature/hooks"]);
+    let worktree = repo.repo.join(".git/phantom/worktrees/feature/hooks");
+    assert!(
+        worktree.join("README.md").is_file(),
+        "worktree should exist after a post-create failure"
+    );
+    let stdout = text(&created.stdout);
+    let stderr = text(&created.stderr);
+    assert!(
+        stdout.contains("Created worktree 'feature/hooks' at "),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains(&worktree.to_string_lossy().to_string()),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("Executing: phantom-missing-post-create-bin"),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stderr.contains("Warning:"),
+        "stderr should warn, not look like creation failed: {stderr}"
+    );
+    assert!(
+        stderr.contains("phantom-missing-post-create-bin"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("127"), "{stderr}");
+    assert_eq!(created.status.code(), Some(127), "{stderr}");
+
+    repo.git(&["branch", "existing-hook"]);
+    let attached = repo.phantom(&["attach", "existing-hook"]);
+    let attached_path = repo.repo.join(".git/phantom/worktrees/existing-hook");
+    assert!(attached_path.join("README.md").is_file());
+    assert!(
+        text(&attached.stdout).contains("Attached phantom: existing-hook"),
+        "{}",
+        text(&attached.stdout)
+    );
+    assert!(
+        text(&attached.stderr).contains("Warning:"),
+        "{}",
+        text(&attached.stderr)
+    );
+    assert_eq!(attached.status.code(), Some(127));
+}
+
+#[test]
 fn copies_config_files_and_runs_post_create() {
     let repo = Repo::new();
     fs::write(repo.repo.join(".env.local"), "API_KEY=test-value\n").expect("env");

@@ -195,12 +195,16 @@ impl PhantomServer {
             &Logger::off(),
         )
         .map_err(|error| error.to_string())?;
-        Ok(pretty(&json!({
+        let mut body = json!({
             "success": true,
             "message": format!("Worktree '{}' created successfully.", args.name),
             "path": created.path,
             "note": format!("You can now switch to the worktree using 'cd {}'", created.path.display()),
-        })))
+        });
+        if let Some(failure) = &created.hook_failure {
+            body["warning"] = json!(failure.warning(&created.path));
+        }
+        Ok(pretty(&body))
     }
 
     #[tool(
@@ -277,13 +281,17 @@ impl PhantomServer {
                 args.number, checkout.worktree
             )
         };
-        Ok(pretty(&json!({
+        let mut body = json!({
             "success": true,
             "message": message,
             "worktree": checkout.worktree,
             "path": checkout.path,
             "note": format!("You can now switch to the worktree using 'cd {}'", checkout.path.display()),
-        })))
+        });
+        if let Some(failure) = &checkout.hook_failure {
+            body["warning"] = json!(failure.warning(&checkout.path));
+        }
+        Ok(pretty(&body))
     }
 
     #[tool(

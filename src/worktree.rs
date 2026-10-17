@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::context::{self, Context};
@@ -52,6 +53,7 @@ impl Logger {
 
     fn warn(&self, message: &str) {
         if self.enabled {
+            let _ = std::io::stdout().flush();
             eprintln!("{message}");
         }
     }
@@ -207,7 +209,11 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
             .logger
             .warn(&format!("\nWarning: Failed to copy some files: {error}"));
     }
-    let exit_code = run_action(
+    let hook_code = created.hook_failure.as_ref().map(|failure| {
+        request.logger.warn(&failure.warning(&created.path));
+        failure.code
+    });
+    let action_code = run_action(
         &context,
         &name,
         &created.path,
@@ -218,13 +224,39 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
     Ok(CreateOutcome {
         name,
         path: created.path,
-        exit_code,
+        exit_code: combine_exit(action_code, hook_code),
     })
 }
 
 pub struct CreatedWorktree {
     pub path: PathBuf,
     pub copy_error: Option<String>,
+    pub hook_failure: Option<HookFailure>,
+}
+
+pub struct AttachedWorktree {
+    pub path: PathBuf,
+    pub hook_failure: Option<HookFailure>,
+}
+
+pub struct AttachOutcome {
+    pub path: PathBuf,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HookFailure {
+    pub command: String,
+    pub code: i32,
+}
+
+impl HookFailure {
+    pub fn warning(&self, path: &Path) -> String {
+        format!(
+            "Warning: Post-create command failed with exit code {}: {}\nThe worktree was created at {}",
+            self.code, self.command, path.display()
+        )
+    }
 }
 
 pub fn create_worktree(
@@ -252,7 +284,9 @@ pub fn create_worktree(
             .err()
             .map(|error| error.to_string())
     };
-    if !commands.is_empty() {
+    let hook_failure = if commands.is_empty() {
+        None
+    } else {
         logger.log("\nRunning post-create commands...");
         run_hook_commands(
             &context.git_root,
@@ -261,9 +295,13 @@ pub fn create_worktree(
             commands,
             true,
             logger,
-        )?;
-    }
-    Ok(CreatedWorktree { path, copy_error })
+        )?
+    };
+    Ok(CreatedWorktree {
+        path,
+        copy_error,
+        hook_failure,
+    })
 }
 
 pub struct AttachRequest<'a> {
@@ -273,7 +311,7 @@ pub struct AttachRequest<'a> {
     pub logger: Logger,
 }
 
-pub fn run_attach(request: AttachRequest<'_>) -> Result<PathBuf> {
+pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action = resolve_action(&request.action)?;
     validate_action(action.as_ref())?;
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
@@ -292,19 +330,26 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<PathBuf> {
         .and_then(|config| config.post_create.as_ref())
         .and_then(|post| post.commands.clone())
         .unwrap_or_default();
-    let path = attach_worktree(&context, request.name, &files, &commands, &request.logger)?;
+    let attached = attach_worktree(&context, request.name, &files, &commands, &request.logger)?;
     request
         .logger
         .log(&format!("Attached phantom: {}", request.name));
-    run_action(
+    let hook_code = attached.hook_failure.as_ref().map(|failure| {
+        request.logger.warn(&failure.warning(&attached.path));
+        failure.code
+    });
+    let action_code = run_action(
         &context,
         request.name,
-        &path,
+        &attached.path,
         action,
         &request.logger,
         false,
     )?;
-    Ok(path)
+    Ok(AttachOutcome {
+        path: attached.path,
+        exit_code: combine_exit(action_code, hook_code),
+    })
 }
 
 pub fn attach_worktree(
@@ -313,7 +358,7 @@ pub fn attach_worktree(
     copy_files: &[String],
     commands: &[String],
     logger: &Logger,
-) -> Result<PathBuf> {
+) -> Result<AttachedWorktree> {
     validate_worktree_name(name)?;
     let path = paths::worktree_path(
         &context.worktrees_directory,
@@ -341,7 +386,9 @@ pub fn attach_worktree(
             logger.warn(&format!("Warning: Failed to copy some files: {error}"));
         }
     }
-    if !commands.is_empty() {
+    let hook_failure = if commands.is_empty() {
+        None
+    } else {
         logger.log("\nRunning post-create commands...");
         run_hook_commands(
             &context.git_root,
@@ -350,9 +397,9 @@ pub fn attach_worktree(
             commands,
             true,
             logger,
-        )?;
-    }
-    Ok(path)
+        )?
+    };
+    Ok(AttachedWorktree { path, hook_failure })
 }
 
 pub struct DeleteOutcome {
@@ -388,7 +435,7 @@ pub fn delete_worktree(
         .unwrap_or_default();
     if !commands.is_empty() {
         println!("\nRunning pre-delete commands...");
-        run_hook_commands(
+        let _ = run_hook_commands(
             &context.git_root,
             &context.worktrees_directory,
             name,
@@ -617,6 +664,14 @@ pub fn phantom_env(name: &str, path: &Path) -> Vec<(String, String)> {
     ]
 }
 
+fn combine_exit(action: Option<i32>, hook: Option<i32>) -> Option<i32> {
+    match (action, hook) {
+        (Some(code), _) if code != 0 => Some(code),
+        (_, Some(code)) => Some(code),
+        (action, None) => action,
+    }
+}
+
 fn run_hook_commands(
     git_root: &Path,
     worktrees_directory: &Path,
@@ -624,7 +679,7 @@ fn run_hook_commands(
     commands: &[String],
     post: bool,
     logger: &Logger,
-) -> Result<()> {
+) -> Result<Option<HookFailure>> {
     for command in commands {
         if post {
             logger.log(&format!("Executing: {command}"));
@@ -649,13 +704,18 @@ fn run_hook_commands(
             }
         };
         if code != 0 {
-            let label = if post { "Post-create" } else { "Pre-delete" };
+            if post {
+                return Ok(Some(HookFailure {
+                    command: command.clone(),
+                    code,
+                }));
+            }
             return Err(Error::msg(format!(
-                "{label} command failed with exit code {code}: {command}"
+                "Pre-delete command failed with exit code {code}: {command}"
             )));
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn merge_files(configured: &[String], requested: &[String]) -> Vec<String> {

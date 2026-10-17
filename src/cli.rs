@@ -123,7 +123,7 @@ fn attach(args: &[String]) -> Result<i32> {
         action: action_from(&parsed),
         logger: Logger::on(),
     }) {
-        Ok(_) => Ok(SUCCESS),
+        Ok(outcome) => Ok(outcome.exit_code.unwrap_or(SUCCESS)),
         Err(error) => fail(&error, attach_code(&error)),
     }
 }
@@ -938,6 +938,10 @@ fn github_checkout(args: &[String]) -> Result<i32> {
         Err(error) => return fail(&error, error.exit_code()),
     };
     println!("{}", checkout.message);
+    if let Some(failure) = &checkout.hook_failure {
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        eprintln!("{}", failure.warning(&checkout.path));
+    }
     if let Some(direction) = direction {
         println!(
             "\nOpening worktree '{}' in tmux {}...",
@@ -956,7 +960,11 @@ fn github_checkout(args: &[String]) -> Result<i32> {
             return Ok(error.exit_code());
         }
     }
-    Ok(SUCCESS)
+    Ok(checkout
+        .hook_failure
+        .as_ref()
+        .map(|failure| failure.code)
+        .unwrap_or(SUCCESS))
 }
 
 fn project_add_json(added: bool, project: &ProjectRecord) -> serde_json::Value {
