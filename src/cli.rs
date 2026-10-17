@@ -286,7 +286,14 @@ fn delete(args: &[String]) -> Result<i32> {
         parsed.positionals.clone()
     };
     for name in names {
-        match worktree::delete_worktree(&context, &name, parsed.flag("force"), keep_branch, None) {
+        match worktree::delete_worktree(
+            &context,
+            &name,
+            parsed.flag("force"),
+            keep_branch,
+            None,
+            worktree::HookOutput::Inherit,
+        ) {
             Ok(outcome) => println!("{}", outcome.message),
             Err(error) => {
                 let code = match &error {
@@ -382,6 +389,7 @@ fn exec(args: &[String]) -> Result<i32> {
         command,
         &rest,
         &[],
+        false,
     ) {
         Ok(0) => Ok(SUCCESS),
         Ok(code) => fail(
@@ -912,7 +920,12 @@ fn github_checkout(args: &[String]) -> Result<i32> {
     if direction.is_some() && !tmux::inside_tmux() {
         return fail(&Error::TmuxRequired, VALIDATION);
     }
-    let checkout = match github::checkout(number, parsed.value("base"), &Logger::on()) {
+    let checkout = match github::checkout(
+        number,
+        parsed.value("base"),
+        &Logger::on(),
+        worktree::HookOutput::Inherit,
+    ) {
         Ok(checkout) => checkout,
         Err(error) => return fail(&error, error.exit_code()),
     };

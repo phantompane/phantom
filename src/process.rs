@@ -72,11 +72,34 @@ pub fn inherit(
     cwd: Option<&Path>,
     env: &[(&str, &str)],
 ) -> Result<i32> {
+    inherit_io(command, args, cwd, env, false)
+}
+
+pub fn inherit_with_stdout_on_stderr(
+    command: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[(&str, &str)],
+) -> Result<i32> {
+    inherit_io(command, args, cwd, env, true)
+}
+
+fn inherit_io(
+    command: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[(&str, &str)],
+    redirect_stdout_to_stderr: bool,
+) -> Result<i32> {
     let mut cmd = Command::new(command);
     cmd.args(args)
         .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    if redirect_stdout_to_stderr {
+        cmd.stdout(stderr_stdio()?);
+    } else {
+        cmd.stdout(Stdio::inherit());
+    }
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
@@ -181,6 +204,22 @@ fn signal_name(signal: i32) -> String {
         9 => "SIGKILL".to_string(),
         1 => "SIGHUP".to_string(),
         other => format!("SIG{other}"),
+    }
+}
+
+fn stderr_stdio() -> Result<Stdio> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsFd;
+        let owned = std::io::stderr()
+            .as_fd()
+            .try_clone_to_owned()
+            .map_err(|error| Error::msg(error.to_string()))?;
+        Ok(Stdio::from(owned))
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(Stdio::inherit())
     }
 }
 

@@ -36,6 +36,12 @@ pub struct Logger {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookOutput {
+    Inherit,
+    Stderr,
+}
+
 impl Logger {
     pub fn on() -> Self {
         Self { enabled: true }
@@ -199,6 +205,7 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
         &files,
         &commands,
         &request.logger,
+        HookOutput::Inherit,
     )?;
     request.logger.log(&format!(
         "Created worktree '{name}' at {}",
@@ -266,6 +273,7 @@ pub fn create_worktree(
     copy_files: &[String],
     commands: &[String],
     logger: &Logger,
+    hook_output: HookOutput,
 ) -> Result<CreatedWorktree> {
     validate_worktree_name(name)?;
     fs::create_dir_all(&context.worktrees_directory)
@@ -295,6 +303,7 @@ pub fn create_worktree(
             commands,
             true,
             logger,
+            hook_output,
         )?
     };
     Ok(CreatedWorktree {
@@ -330,7 +339,14 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
         .and_then(|config| config.post_create.as_ref())
         .and_then(|post| post.commands.clone())
         .unwrap_or_default();
-    let attached = attach_worktree(&context, request.name, &files, &commands, &request.logger)?;
+    let attached = attach_worktree(
+        &context,
+        request.name,
+        &files,
+        &commands,
+        &request.logger,
+        HookOutput::Inherit,
+    )?;
     request
         .logger
         .log(&format!("Attached phantom: {}", request.name));
@@ -358,6 +374,7 @@ pub fn attach_worktree(
     copy_files: &[String],
     commands: &[String],
     logger: &Logger,
+    hook_output: HookOutput,
 ) -> Result<AttachedWorktree> {
     validate_worktree_name(name)?;
     let path = paths::worktree_path(
@@ -397,6 +414,7 @@ pub fn attach_worktree(
             commands,
             true,
             logger,
+            hook_output,
         )?
     };
     Ok(AttachedWorktree { path, hook_failure })
@@ -412,6 +430,7 @@ pub fn delete_worktree(
     force: bool,
     keep_branch: bool,
     expected_path: Option<&Path>,
+    hook_output: HookOutput,
 ) -> Result<DeleteOutcome> {
     let worktree = find_worktree(&context.git_root, name, true, expected_path)?;
     let path = PathBuf::from(&worktree.path);
@@ -434,7 +453,7 @@ pub fn delete_worktree(
         .and_then(|pre| pre.commands.clone())
         .unwrap_or_default();
     if !commands.is_empty() {
-        println!("\nRunning pre-delete commands...");
+        hook_status(hook_output, "\nRunning pre-delete commands...");
         let _ = run_hook_commands(
             &context.git_root,
             &context.worktrees_directory,
@@ -442,6 +461,7 @@ pub fn delete_worktree(
             &commands,
             false,
             &Logger::on(),
+            hook_output,
         )?;
     }
     git::remove_worktree(&context.git_root, &path, force)?;
@@ -491,6 +511,7 @@ pub fn exec_in_worktree(
     command: &str,
     args: &[&str],
     env: &[(&str, &str)],
+    redirect_stdout_to_stderr: bool,
 ) -> Result<i32> {
     let worktree = find_worktree(git_root, name, false, None)?;
     let path = PathBuf::from(&worktree.path);
@@ -506,7 +527,11 @@ pub fn exec_in_worktree(
             pairs.push((key, value));
         }
     }
-    process::inherit(command, args, Some(&path), &pairs)
+    if redirect_stdout_to_stderr {
+        process::inherit_with_stdout_on_stderr(command, args, Some(&path), &pairs)
+    } else {
+        process::inherit(command, args, Some(&path), &pairs)
+    }
 }
 
 pub fn select_with_fzf(git_root: &Path, exclude_default: bool) -> Result<Option<WorktreeInfo>> {
@@ -678,6 +703,13 @@ fn combine_exit(action: Option<i32>, hook: Option<i32>) -> Option<i32> {
     }
 }
 
+fn hook_status(output: HookOutput, message: &str) {
+    match output {
+        HookOutput::Inherit => println!("{message}"),
+        HookOutput::Stderr => eprintln!("{message}"),
+    }
+}
+
 fn run_hook_commands(
     git_root: &Path,
     worktrees_directory: &Path,
@@ -685,12 +717,16 @@ fn run_hook_commands(
     commands: &[String],
     post: bool,
     logger: &Logger,
+    hook_output: HookOutput,
 ) -> Result<Option<HookFailure>> {
     for command in commands {
         if post {
             logger.log(&format!("Executing: {command}"));
         } else {
-            println!("Executing pre-delete command: {command}");
+            hook_status(
+                hook_output,
+                &format!("Executing pre-delete command: {command}"),
+            );
         }
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let code = match exec_in_worktree(
@@ -700,6 +736,7 @@ fn run_hook_commands(
             &shell,
             &["-c", command],
             &[],
+            hook_output == HookOutput::Stderr,
         ) {
             Ok(code) => code,
             Err(error) => {
