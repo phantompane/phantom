@@ -15,7 +15,7 @@ pub struct Context {
 }
 
 pub fn create(git_root: &Path) -> Result<Context> {
-    let config = config::load_config(git_root);
+    let config = config::load_config(git_root)?;
     let preferences = preferences::load_preferences()?;
     let configured_directory = preferences.worktrees_directory.clone().or_else(|| {
         config

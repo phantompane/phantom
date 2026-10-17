@@ -30,10 +30,21 @@ pub struct PreDelete {
     pub commands: Option<Vec<String>>,
 }
 
-pub fn load_config(git_root: &Path) -> Option<PhantomConfig> {
+pub fn load_config(git_root: &Path) -> Result<Option<PhantomConfig>> {
     let path = git_root.join("phantom.config.json");
-    let content = fs::read_to_string(path).ok()?;
-    validate_config(&content).ok()
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(Error::msg(format!(
+                "Failed to read {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    validate_config(&content)
+        .map(Some)
+        .map_err(|error| Error::msg(format!("{}: {error}", path.display())))
 }
 
 pub fn validate_config(content: &str) -> Result<PhantomConfig> {
@@ -122,5 +133,40 @@ mod tests {
     fn rejects_bad_copy_files() {
         let error = validate_config(r#"{"postCreate":{"copyFiles":[1]}}"#).expect_err("invalid");
         assert!(error.to_string().contains("copyFiles"));
+    }
+
+    #[test]
+    fn load_config_reports_the_file_and_the_problem() {
+        let root = std::env::temp_dir().join(format!(
+            "phantom-config-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("root");
+        assert!(load_config(&root).expect("missing").is_none());
+
+        fs::write(root.join("phantom.config.json"), "{").expect("json");
+        let error = load_config(&root).expect_err("invalid json");
+        let message = error.to_string();
+        assert!(message.contains("phantom.config.json"), "{message}");
+        assert!(
+            message.contains("parse") || message.contains("expected"),
+            "{message}"
+        );
+
+        fs::write(
+            root.join("phantom.config.json"),
+            r#"{"postCreate":{"copyFiles":[1]}}"#,
+        )
+        .expect("schema");
+        let error = load_config(&root).expect_err("invalid schema");
+        let message = error.to_string();
+        assert!(message.contains("phantom.config.json"), "{message}");
+        assert!(message.contains("copyFiles"), "{message}");
+
+        let _ = fs::remove_dir_all(root);
     }
 }
