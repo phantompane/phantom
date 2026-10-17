@@ -251,6 +251,45 @@ describe("ProjectRegistryStore", () => {
     strictEqual((await stores[0]!.list()).length, stores.length);
   });
 
+  it("does not time out when the lock changes hands between deadline checks", async () => {
+    const dataDirectory = await createTemporaryDirectory();
+    const lockPath = join(dataDirectory, "projects.lock");
+    const sleep = (ms: number) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      });
+    // A holder that has created the lock but not yet written owner.json.
+    await mkdir(lockPath, { recursive: true });
+    const store = new ProjectRegistryStore(dataDirectory, {
+      lockRetryMs: 1,
+      lockTimeoutMs: 200,
+    });
+
+    const added = store.add("/work/project");
+    // Hand-off 1: a live holder with an owner file takes over.
+    await sleep(50);
+    await writeFile(
+      join(lockPath, "owner.json"),
+      `${JSON.stringify({
+        token: "other-holder",
+        pid: process.pid,
+        createdAt: new Date().toISOString(),
+        processIdentity: null,
+      })}\n`,
+    );
+    // Hand-off 2: the next holder has again created the lock without an owner
+    // file, so the lock looks the same as when the wait started.
+    await sleep(70);
+    await rm(lockPath, { recursive: true, force: true });
+    await mkdir(lockPath);
+    // Past the first deadline, but the lock has made progress throughout.
+    await sleep(140);
+    await rm(lockPath, { recursive: true, force: true });
+
+    await added;
+    strictEqual((await store.list()).length, 1);
+  });
+
   it("serializes concurrent add and remove operations", async () => {
     const dataDirectory = await createTemporaryDirectory();
     const firstStore = new ProjectRegistryStore(dataDirectory, {

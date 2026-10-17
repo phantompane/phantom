@@ -508,24 +508,27 @@ export class ProjectRegistryStore {
     recoveryDirectoryPath: string,
     progress: LockWaitProgress,
   ): Promise<number> {
+    const current = await readLockObservation(lockPath);
     if (!progress.initialized) {
-      progress.snapshot = await readLockObservation(lockPath);
+      progress.snapshot = current;
       progress.initialized = true;
+    } else if (!sameLockHolder(progress.snapshot, current)) {
+      // Sample the holder on every retry, not only at the deadline. Comparing
+      // just two points misses hand-offs: the lock can be free (or not yet
+      // carry an owner file) at both samples while other processes acquired
+      // and released it in between. Any change of holder is progress, so the
+      // deadline restarts and bounds a single live holder, not the queue.
+      progress.snapshot = current;
+      deadline = Date.now() + this.lockTimeoutMs;
     }
 
     if (Date.now() >= deadline) {
-      const current = await readLockObservation(lockPath);
-      // The deadline bounds one live holder, not the whole queue. A different
-      // owner means the lock is making progress, so keep waiting. The same
-      // holder, including one that only heartbeats, still times out.
-      if (sameLockHolder(progress.snapshot, current)) {
-        throw new ProjectRegistryError(
-          `Timed out waiting for projects registry lock at ${lockPath}. ` +
-            `Inspect ${recoveryDirectoryPath} for abandoned recovery markers.`,
-        );
-      }
-      progress.snapshot = current;
-      deadline = Date.now() + this.lockTimeoutMs;
+      // The same holder for the whole window, including one that only
+      // heartbeats, still times out.
+      throw new ProjectRegistryError(
+        `Timed out waiting for projects registry lock at ${lockPath}. ` +
+          `Inspect ${recoveryDirectoryPath} for abandoned recovery markers.`,
+      );
     }
 
     await delay(this.lockRetryMs);
