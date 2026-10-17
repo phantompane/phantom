@@ -81,22 +81,6 @@
           "example": "--exec 'npm install'"
         },
         {
-          "name": "tmux",
-          "short": "t",
-          "type": "boolean",
-          "description": "Open the worktree in a new tmux window (requires being inside tmux)"
-        },
-        {
-          "name": "tmux-vertical",
-          "type": "boolean",
-          "description": "Open the worktree in a vertical tmux pane (requires being inside tmux)"
-        },
-        {
-          "name": "tmux-horizontal",
-          "type": "boolean",
-          "description": "Open the worktree in a horizontal tmux pane (requires being inside tmux)"
-        },
-        {
           "name": "copy-file",
           "type": "string",
           "multiple": true,
@@ -128,10 +112,6 @@
           "command": "phantom create new-feature --exec 'npm install'"
         },
         {
-          "description": "Create a worktree in a new tmux window",
-          "command": "phantom create experiment --tmux"
-        },
-        {
           "description": "Create a worktree and copy environment files",
           "command": "phantom create staging --copy-file .env --copy-file database.yml"
         },
@@ -147,7 +127,7 @@
       "notes": [
         "If name is omitted, a random human-readable name is generated automatically",
         "The worktree name will be used as the branch name",
-        "Only one of --shell, --exec, or --tmux options can be used at a time",
+        "Only one of --shell or --exec can be used at a time",
         "File copying can also be configured in phantom.config.json"
       ]
     },
@@ -168,32 +148,6 @@
           "type": "string",
           "description": "Execute a command in the worktree after attaching",
           "example": "--exec 'git pull'"
-        },
-        {
-          "name": "tmux",
-          "short": "t",
-          "type": "boolean",
-          "description": "Open the worktree in a new tmux window after attaching"
-        },
-        {
-          "name": "tmux-vertical",
-          "type": "boolean",
-          "description": "Open the worktree in a vertical tmux pane after attaching"
-        },
-        {
-          "name": "tmux-v",
-          "type": "boolean",
-          "description": "Alias for --tmux-vertical"
-        },
-        {
-          "name": "tmux-horizontal",
-          "type": "boolean",
-          "description": "Open the worktree in a horizontal tmux pane after attaching"
-        },
-        {
-          "name": "tmux-h",
-          "type": "boolean",
-          "description": "Alias for --tmux-horizontal"
         },
         {
           "name": "copy-file",
@@ -217,10 +171,6 @@
           "command": "phantom attach develop --exec 'git pull'"
         },
         {
-          "description": "Attach and open the worktree in a tmux window",
-          "command": "phantom attach feature-branch --tmux"
-        },
-        {
           "description": "Attach and copy shared environment files",
           "command": "phantom attach feature-branch --copy-file .env --copy-file .npmrc"
         }
@@ -228,8 +178,7 @@
       "notes": [
         "The branch must already exist locally",
         "To work with remote branches, first checkout the branch with git",
-        "Only one of --shell, --exec, or tmux options can be used at a time",
-        "The tmux options require running phantom inside an active tmux session"
+        "Only one of --shell or --exec can be used at a time"
       ]
     },
     "list": {
@@ -342,27 +291,7 @@
     "exec": {
       "name": "exec",
       "description": "Execute a command in a worktree directory",
-      "usage": "phantom exec [options] <worktree-name> <command> [args...]",
-      "options": [
-        {
-          "name": "tmux",
-          "short": "t",
-          "type": "boolean",
-          "description": "Execute command in new tmux window"
-        },
-        {
-          "name": "tmux-vertical",
-          "aliases": ["tmux-v"],
-          "type": "boolean",
-          "description": "Execute command in vertical split pane"
-        },
-        {
-          "name": "tmux-horizontal",
-          "aliases": ["tmux-h"],
-          "type": "boolean",
-          "description": "Execute command in horizontal split pane"
-        }
-      ],
+      "usage": "phantom exec <worktree-name> <command> [args...]",
       "examples": [
         {
           "description": "Run npm test in a worktree",
@@ -375,21 +304,12 @@
         {
           "description": "Run a complex command with arguments",
           "command": "phantom exec staging npm run build -- --production"
-        },
-        {
-          "description": "Run dev server in new tmux window",
-          "command": "phantom exec --tmux feature-auth npm run dev"
-        },
-        {
-          "description": "Run tests in vertical split pane",
-          "command": "phantom exec --tmux-v feature-auth npm test"
         }
       ],
       "notes": [
         "The command is executed with the worktree directory as the working directory",
         "All arguments after the worktree name are passed to the command",
-        "The exit code of the executed command is preserved",
-        "Tmux options require being inside a tmux session"
+        "The exit code of the executed command is preserved"
       ]
     },
     "edit": {
@@ -429,46 +349,17 @@
     "shell": {
       "name": "shell",
       "description": "Open an interactive shell in a worktree directory",
-      "usage": "phantom shell <worktree-name> [options]",
-      "options": [
-        {
-          "name": "tmux",
-          "short": "t",
-          "type": "boolean",
-          "description": "Open shell in new tmux window"
-        },
-        {
-          "name": "tmux-vertical",
-          "aliases": ["tmux-v"],
-          "type": "boolean",
-          "description": "Open shell in vertical split pane"
-        },
-        {
-          "name": "tmux-horizontal",
-          "aliases": ["tmux-h"],
-          "type": "boolean",
-          "description": "Open shell in horizontal split pane"
-        }
-      ],
+      "usage": "phantom shell <worktree-name>",
       "examples": [
         {
           "description": "Open a shell in a worktree",
           "command": "phantom shell feature-auth"
-        },
-        {
-          "description": "Open a shell in a new tmux window",
-          "command": "phantom shell feature-auth --tmux"
-        },
-        {
-          "description": "Open a shell in a vertical tmux pane",
-          "command": "phantom shell feature-auth --tmux-v"
         }
       ],
       "notes": [
         "Uses your default shell from the SHELL environment variable",
         "The shell starts with the worktree directory as the working directory",
-        "Type 'exit' to return to your original directory",
-        "Tmux options require being inside a tmux session"
+        "Type 'exit' to return to your original directory"
       ]
     },
     "preferences": {
@@ -788,24 +679,6 @@
           "name": "base",
           "type": "string",
           "description": "Base branch for new issue branches (issues only, default: repository HEAD)"
-        },
-        {
-          "name": "tmux",
-          "short": "t",
-          "type": "boolean",
-          "description": "Open worktree in new tmux window"
-        },
-        {
-          "name": "tmux-vertical",
-          "aliases": ["tmux-v"],
-          "type": "boolean",
-          "description": "Open worktree in vertical split pane"
-        },
-        {
-          "name": "tmux-horizontal",
-          "aliases": ["tmux-h"],
-          "type": "boolean",
-          "description": "Open worktree in horizontal split pane"
         }
       ],
       "examples": [
@@ -820,10 +693,6 @@
         {
           "command": "phantom github checkout 789 --base develop",
           "description": "Create a worktree for issue #789 based on develop branch"
-        },
-        {
-          "command": "phantom github checkout 321 --tmux",
-          "description": "Create a worktree and open it in a new tmux window"
         }
       ],
       "notes": [
@@ -833,9 +702,7 @@
         "",
         "Requirements:",
         "  - GitHub CLI (gh) must be installed",
-        "  - Must be authenticated with 'gh auth login'",
-        "",
-        "Tmux options require being inside a tmux session"
+        "  - Must be authenticated with 'gh auth login'"
       ]
     },
     "gh": {
@@ -872,24 +739,6 @@
           "name": "base",
           "type": "string",
           "description": "Base branch for new issue branches (issues only, default: repository HEAD)"
-        },
-        {
-          "name": "tmux",
-          "short": "t",
-          "type": "boolean",
-          "description": "Open worktree in new tmux window"
-        },
-        {
-          "name": "tmux-vertical",
-          "aliases": ["tmux-v"],
-          "type": "boolean",
-          "description": "Open worktree in vertical split pane"
-        },
-        {
-          "name": "tmux-horizontal",
-          "aliases": ["tmux-h"],
-          "type": "boolean",
-          "description": "Open worktree in horizontal split pane"
         }
       ],
       "examples": [
@@ -904,10 +753,6 @@
         {
           "command": "phantom github checkout 789 --base develop",
           "description": "Create a worktree for issue #789 based on develop branch"
-        },
-        {
-          "command": "phantom github checkout 321 --tmux",
-          "description": "Create a worktree and open it in a new tmux window"
         }
       ],
       "notes": [
@@ -917,9 +762,7 @@
         "",
         "Requirements:",
         "  - GitHub CLI (gh) must be installed",
-        "  - Must be authenticated with 'gh auth login'",
-        "",
-        "Tmux options require being inside a tmux session"
+        "  - Must be authenticated with 'gh auth login'"
       ]
     }
   }
