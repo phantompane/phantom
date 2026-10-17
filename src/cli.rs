@@ -306,29 +306,12 @@ fn exec(args: &[String]) -> Result<i32> {
     }
 }
 
-fn edit(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &[], true)?;
-    if parsed.positionals.is_empty() || parsed.positionals.len() > 2 {
-        return fail(
-            &Error::msg("Usage: phantom edit <worktree-name> [path]"),
-            VALIDATION,
-        );
-    }
-    launch_configured(args, true)
-}
-
 fn ai(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &[], true)?;
     if parsed.positionals.len() != 1 {
         return fail(&Error::msg("Usage: phantom ai <worktree-name>"), VALIDATION);
     }
-    launch_configured(args, false)
-}
-
-fn launch_configured(args: &[String], editor: bool) -> Result<i32> {
-    let parsed = args::parse(args, &[], true)?;
     let name = &parsed.positionals[0];
-    let target = parsed.positionals.get(1).map(String::as_str).unwrap_or(".");
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = match git::git_root(&cwd) {
         Ok(root) => root,
@@ -338,35 +321,13 @@ fn launch_configured(args: &[String], editor: bool) -> Result<i32> {
         Ok(context) => context,
         Err(error) => return fail(&error, GENERAL),
     };
-    let command = if editor {
-        match context
-            .preferences
-            .editor
-            .clone()
-            .or_else(|| std::env::var("EDITOR").ok())
-        {
-            Some(command) => command,
-            None => {
-                return fail(
-                    &Error::msg(
-                        "Editor is not configured. Run 'phantom preferences set editor <command>' or set the EDITOR env var.",
-                    ),
-                    VALIDATION,
-                );
-            }
-        }
-    } else {
-        match context.preferences.ai.clone() {
-            Some(command) => command,
-            None => {
-                return fail(
-                    &Error::msg(
-                        "AI assistant is not configured. Run 'phantom preferences set ai <command>' first.",
-                    ),
-                    VALIDATION,
-                );
-            }
-        }
+    let Some(command) = context.preferences.ai.clone() else {
+        return fail(
+            &Error::msg(
+                "AI assistant is not configured. Run 'phantom preferences set ai <command>' first.",
+            ),
+            VALIDATION,
+        );
     };
     let worktree = match worktree::find_worktree(&context.git_root, name, false, None) {
         Ok(worktree) => worktree,
@@ -376,22 +337,13 @@ fn launch_configured(args: &[String], editor: bool) -> Result<i32> {
         Err(error) => return fail(&error, GENERAL),
     };
     let path = Path::new(&worktree.path).to_path_buf();
-    if editor {
-        println!("Opening editor in worktree '{name}'...");
-    } else {
-        println!("Launching AI assistant in worktree '{name}'...");
-    }
+    println!("Launching AI assistant in worktree '{name}'...");
     let env = worktree::phantom_env(name, &path);
     let pairs = env
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect::<Vec<_>>();
-    let script = if editor {
-        format!("{command} {target}")
-    } else {
-        command
-    };
-    match process::shell(&script, &path, &pairs) {
+    match process::shell(&command, &path, &pairs) {
         Ok(code) => Ok(code),
         Err(error) => fail(&error, GENERAL),
     }
@@ -897,12 +849,6 @@ static COMMANDS: &[Command] = &[
         name: "exec",
         help_key: "exec",
         run: exec,
-        children: &[],
-    },
-    Command {
-        name: "edit",
-        help_key: "edit",
-        run: edit,
         children: &[],
     },
     Command {

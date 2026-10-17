@@ -566,6 +566,21 @@ fn keep_branch_preference_applies_to_delete() {
 }
 
 #[test]
+fn removed_edit_command_and_editor_preference_are_unknown() {
+    let repo = Repo::new();
+    let command = repo.phantom(&["edit", "feature"]);
+    assert_eq!(command.status.code(), Some(1));
+    assert!(text(&command.stderr).contains("Unknown command 'edit feature'"));
+
+    let preference = repo.phantom(&["preferences", "get", "editor"]);
+    assert_eq!(preference.status.code(), Some(3));
+    let stderr = text(&preference.stderr);
+    assert!(stderr.contains("Unknown preference 'editor'"), "{stderr}");
+    assert!(stderr.contains("ai"), "{stderr}");
+    assert!(!stderr.contains("editor, ai"), "{stderr}");
+}
+
+#[test]
 fn removed_shell_command_and_flag_are_unknown() {
     let repo = Repo::new();
     let command = repo.phantom(&["shell", "feature"]);
