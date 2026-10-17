@@ -17,36 +17,28 @@ Thank you for your interest in contributing to Phantom! This guide will help you
 
 ### Prerequisites
 
-- Node.js 22+ and pnpm 10+
+- Rust 1.99.1 (`rust-toolchain.toml`)
+- bash, zsh, and fish if you run the shell completion tests
+
+Development happens on `next`. Open pull requests against `next`. `main` remains the previous TypeScript version.
+
+Dependabot does not bump the Rust toolchain. The version is pinned in `rust-toolchain.toml`, in the `toolchain:` input of `.github/workflows/ci.yml`, `release-compile.yml`, and `version-bump.yml`, in `RUSTUP_TOOLCHAIN` in `release-compile.yml`, and in `languages.rust.channel` in `devenv.nix`. Update all of those together, then run the checks below on the new compiler. `Cargo.toml` `rust-version` is the MSRV (1.89, required by uuid 1.28) and changes only when that floor moves.
 
 ### Getting Started
 
 ```bash
-# Clone and setup
 git clone https://github.com/phantompane/phantom.git
 cd phantom
-pnpm install
-
-# run phantom in development mode
-pnpm phantom
+git checkout next
+cargo run --locked -- --help
 ```
 
 ### Development Workflow
 
 ```bash
-# Run tests
-pnpm test
-
-# Type checking
-pnpm typecheck
-
-# Linting
-pnpm lint
-# or
-pnpm fix
-
-# Run all checks before committing
-pnpm ready
+cargo test --locked
+cargo fmt --all
+cargo clippy --locked --all-targets -- -D warnings
 ```
 
 ## 📝 Development Guidelines
@@ -59,7 +51,7 @@ pnpm ready
 ### Code Style
 
 - Follow existing code conventions and patterns
-- Use TypeScript for all new code
+- Write new code in Rust. Non-test code returns `Result` and does not call `unwrap()`, `expect()`, or `panic!`
 - Follow the Single Responsibility Principle
 - Keep modules focused and testable
 
@@ -76,11 +68,9 @@ pnpm ready
 ### Running Tests
 
 ```bash
-# Run all tests
-pnpm test
-
-# Run specific test file
-pnpm test:file src/core/worktree/create.test.ts
+cargo test --locked
+cargo test --locked --test cli
+cargo test --locked --test completion
 ```
 
 ### Writing Tests
@@ -97,16 +87,10 @@ pnpm test:file src/core/worktree/create.test.ts
 Always run the following command before committing:
 
 ```bash
-pnpm ready
+cargo fmt --all
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
 ```
-
-This command runs:
-
-- Formatting auto-fixes (`pnpm fix`)
-- Type checking (`pnpm typecheck`)
-- All tests (`pnpm test`)
-
-To run the non-mutating variant, use `pnpm ready:check`, which runs `turbo run lint typecheck test`.
 
 ### Security Best Practices
 
@@ -119,7 +103,7 @@ To run the non-mutating variant, use `pnpm ready:check`, which runs `turbo run l
 - Clear description of changes
 - Tests for new functionality
 - Documentation updates if applicable
-- All checks passing (`pnpm ready`)
+- All checks passing (`cargo fmt`, `cargo clippy --locked`, and `cargo test --locked`)
 - Follow existing code style
 
 ## 📚 Documentation
@@ -152,23 +136,23 @@ To release a new version of Phantom:
    - Confirm version numbers and changelog/doc updates if any
    - Merge the PR once checks pass
 
-3. **Create GitHub release (publishes to npm)**
+3. **Create a GitHub release (builds release binaries)**
 
    ```bash
    # Create a release with automatically generated notes
    gh release create v<version> \
      --title "Phantom v<version>" \
      --generate-notes \
-     --target main
+     --target next
 
    # Example for v1.3.0:
    gh release create v1.3.0 \
      --title "Phantom v1.3.0" \
      --generate-notes \
-     --target main
+     --target next
    ```
 
-   Publishing to npm is handled by `.github/workflows/npm-publish.yml` when the release is published. Releases from `pre*` bumps are published with the `next` dist-tag; all other releases use `latest`. Monitor the workflow run in GitHub Actions to ensure it completes successfully.
+   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `phantom-v<version>-<os>-<arch>.tar.gz` to the release. npm is not published. Monitor the workflow run in GitHub Actions.
 
 4. **Update release notes for clarity**
    - Review the auto-generated release notes using `gh release view v<version>`
@@ -178,7 +162,6 @@ To release a new version of Phantom:
      - Add usage examples for new features with code blocks
      - Credit external contributors inline (e.g., "Thanks @username!")
      - Include PR numbers for all changes
-     - Add installation/upgrade instructions
      - Include "New Contributors" section with PR numbers
 
    ````bash
@@ -212,14 +195,6 @@ To release a new version of Phantom:
    - @username - Contribution description (#PR)
 
    ***
-
-   **Installation/Upgrade:**
-
-   ```bash
-   npm install -g @phantompane/cli@latest
-   # or
-   brew upgrade phantom
-   ```
 
    **Full Changelog**: https://github.com/phantompane/phantom/compare/v<previous>...v<version>
    EOF

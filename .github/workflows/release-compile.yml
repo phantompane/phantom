@@ -7,10 +7,38 @@ on:
 
 permissions:
   contents: write
+  # rust-cache saves to the Actions cache.
+  actions: write
 
 jobs:
   compile:
-    runs-on: ubuntu-latest
+    name: Build ${{ matrix.asset_os }}-${{ matrix.asset_arch }}
+    runs-on: ${{ matrix.os }}
+    env:
+      # rust-toolchain.toml lists rustfmt and clippy. Setting RUSTUP_TOOLCHAIN
+      # makes rustup ignore that file, so the release job does not install them.
+      RUSTUP_TOOLCHAIN: "1.99.1"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset_os: linux
+            asset_arch: x64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset_os: linux
+            asset_arch: arm64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset_os: darwin
+            asset_arch: arm64
+          # Intel macOS runners. macos-15-intel is the GitHub-hosted x64 image.
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            asset_os: darwin
+            asset_arch: x64
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -18,40 +46,30 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name }}
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          node-version-file: .node-version
-          cache: pnpm
+          toolchain: "1.99.1"
+          targets: ${{ matrix.target }}
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
         with:
-          bun-version: latest
+          key: ${{ matrix.target }}
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: cargo build --locked --release --target ${{ matrix.target }}
 
-      - name: Compile
-        run: pnpm compile
+      - name: Package
+        shell: bash
+        run: |
+          version=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
+          archive="phantom-v${version}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}.tar.gz"
+          tar -C "target/${{ matrix.target }}/release" -czf "$archive" phantom
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
 
-      - name: Upload release assets
+      - name: Upload release asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          shopt -s nullglob
-          mapfile -d '' files < <(find packages/cli/output -type f ! -name '.keep' -print0)
-
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No artifacts found in packages/cli/output" >&2
-            exit 1
-          fi
-
-          for file in "${files[@]}"; do
-            echo "Uploading ${file}"
-            gh release upload "${RELEASE_TAG}" "${file}" --clobber
-          done
+        run: gh release upload "$RELEASE_TAG" "$ARCHIVE" --clobber
