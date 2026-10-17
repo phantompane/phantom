@@ -33,10 +33,6 @@
       "description": "Launch your configured AI coding assistant in a worktree"
     },
     {
-      "name": "shell",
-      "description": "Open an interactive shell in a worktree directory"
-    },
-    {
       "name": "preferences",
       "description": "Manage phantom user preferences (git config)"
     },
@@ -68,12 +64,6 @@
       "usage": "phantom create [name] [options]",
       "options": [
         {
-          "name": "shell",
-          "short": "s",
-          "type": "boolean",
-          "description": "Open an interactive shell in the new worktree after creation"
-        },
-        {
           "name": "exec",
           "short": "x",
           "type": "string",
@@ -104,10 +94,6 @@
           "command": "phantom create feature-auth"
         },
         {
-          "description": "Create a worktree and open a shell in it",
-          "command": "phantom create bugfix-123 --shell"
-        },
-        {
           "description": "Create a worktree and run npm install",
           "command": "phantom create new-feature --exec 'npm install'"
         },
@@ -127,7 +113,6 @@
       "notes": [
         "If name is omitted, a random human-readable name is generated automatically",
         "The worktree name will be used as the branch name",
-        "Only one of --shell or --exec can be used at a time",
         "File copying can also be configured in phantom.config.json"
       ]
     },
@@ -136,12 +121,6 @@
       "description": "Attach to an existing branch by creating a new worktree",
       "usage": "phantom attach <branch-name> [options]",
       "options": [
-        {
-          "name": "shell",
-          "short": "s",
-          "type": "boolean",
-          "description": "Open an interactive shell in the worktree after attaching"
-        },
         {
           "name": "exec",
           "short": "x",
@@ -163,10 +142,6 @@
           "command": "phantom attach main"
         },
         {
-          "description": "Attach to a branch and open a shell",
-          "command": "phantom attach feature-branch --shell"
-        },
-        {
           "description": "Attach to a branch and pull latest changes",
           "command": "phantom attach develop --exec 'git pull'"
         },
@@ -177,8 +152,7 @@
       ],
       "notes": [
         "The branch must already exist locally",
-        "To work with remote branches, first checkout the branch with git",
-        "Only one of --shell or --exec can be used at a time"
+        "To work with remote branches, first checkout the branch with git"
       ]
     },
     "list": {
@@ -344,22 +318,6 @@
       "notes": [
         "Configure the assistant first with 'phantom preferences set ai <command>' (stored as phantom.ai in git config --global, e.g., 'claude' or 'codex --full-auto').",
         "The assistant runs inside the worktree so it can access project files and context."
-      ]
-    },
-    "shell": {
-      "name": "shell",
-      "description": "Open an interactive shell in a worktree directory",
-      "usage": "phantom shell <worktree-name>",
-      "examples": [
-        {
-          "description": "Open a shell in a worktree",
-          "command": "phantom shell feature-auth"
-        }
-      ],
-      "notes": [
-        "Uses your default shell from the SHELL environment variable",
-        "The shell starts with the worktree directory as the working directory",
-        "Type 'exit' to return to your original directory"
       ]
     },
     "preferences": {

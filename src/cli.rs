@@ -60,7 +60,6 @@ fn create(args: &[String]) -> Result<i32> {
     let parsed = args::parse(
         args,
         &[
-            flag("shell", Some('s')),
             value_flag("exec", Some('x')),
             Opt {
                 name: "copy-file",
@@ -88,7 +87,6 @@ fn attach(args: &[String]) -> Result<i32> {
     let parsed = args::parse(
         args,
         &[
-            flag("shell", Some('s')),
             value_flag("exec", Some('x')),
             Opt {
                 name: "copy-file",
@@ -297,54 +295,6 @@ fn exec(args: &[String]) -> Result<i32> {
             },
             code,
         ),
-        Err(error) => {
-            let code = if matches!(error, Error::WorktreeNotFound(_)) {
-                NOT_FOUND
-            } else {
-                error.exit_code()
-            };
-            fail(&error, code)
-        }
-    }
-}
-
-fn shell(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &[], true)?;
-    if parsed.positionals.is_empty() {
-        return fail(
-            &Error::msg("Usage: phantom shell <worktree-name>"),
-            VALIDATION,
-        );
-    }
-    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
-    let git_root = match git::git_root(&cwd) {
-        Ok(root) => root,
-        Err(error) => return fail(&error, error.exit_code()),
-    };
-    let context = match crate::context::create(&git_root) {
-        Ok(context) => context,
-        Err(error) => return fail(&error, GENERAL),
-    };
-    let name = parsed.positionals[0].clone();
-    let worktree = match worktree::find_worktree(&context.git_root, &name, false, None) {
-        Ok(worktree) => worktree,
-        Err(error) => return fail(&error, GENERAL),
-    };
-    let path = Path::new(&worktree.path).to_path_buf();
-    println!("Entering worktree '{name}' at {}", path.display());
-    println!("Type 'exit' to return to your original directory\n");
-    match worktree::open_shell(&context.git_root, &name) {
-        Ok(0) => Ok(SUCCESS),
-        Ok(code) => {
-            let shell_name = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-            fail(
-                &Error::CommandFailed {
-                    command: shell_name,
-                    code,
-                },
-                code,
-            )
-        }
         Err(error) => {
             let code = if matches!(error, Error::WorktreeNotFound(_)) {
                 NOT_FOUND
@@ -814,7 +764,6 @@ fn catalog_json(projects: &[ProjectListEntry], version: u32) -> serde_json::Valu
 
 fn action_from(parsed: &Parsed) -> ActionRequest {
     ActionRequest {
-        shell: parsed.flag("shell"),
         exec: parsed.value("exec").map(str::to_string),
     }
 }
@@ -849,7 +798,7 @@ fn fail(error: &Error, code: i32) -> Result<i32> {
 
 fn create_code(error: &Error) -> i32 {
     match error {
-        Error::WorktreeAlreadyExists(_) | Error::ActionConflict => VALIDATION,
+        Error::WorktreeAlreadyExists(_) => VALIDATION,
         Error::CommandFailed { code, .. } => *code,
         other => other.exit_code(),
     }
@@ -857,7 +806,7 @@ fn create_code(error: &Error) -> i32 {
 
 fn attach_code(error: &Error) -> i32 {
     match error {
-        Error::WorktreeAlreadyExists(_) | Error::ActionConflict => VALIDATION,
+        Error::WorktreeAlreadyExists(_) => VALIDATION,
         Error::BranchNotFound(_) => NOT_FOUND,
         Error::CommandFailed { code, .. } => *code,
         other => other.exit_code(),
@@ -960,12 +909,6 @@ static COMMANDS: &[Command] = &[
         name: "ai",
         help_key: "ai",
         run: ai,
-        children: &[],
-    },
-    Command {
-        name: "shell",
-        help_key: "shell",
-        run: shell,
         children: &[],
     },
     Command {
