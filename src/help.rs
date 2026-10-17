@@ -258,24 +258,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn color_follows_tty_no_color_and_force_color() {
-        assert!(!color_enabled(None, None, false));
-        assert!(color_enabled(None, None, true));
-        assert!(!color_enabled(Some("1"), None, true));
-        assert!(color_enabled(Some(""), None, true));
-        assert!(color_enabled(None, Some("1"), false));
-        assert!(color_enabled(None, Some(""), false));
-        assert!(!color_enabled(None, Some("0"), true));
-        assert!(!color_enabled(None, Some("false"), true));
-        assert!(!color_enabled(Some("1"), Some("1"), true));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
     fn long_options_use_two_dashes() {
         for key in [
             "list",
@@ -303,5 +285,18 @@ mod tests {
         assert!(checkout.contains("-t, --tmux"));
         assert!(checkout.contains("--tmux-vertical, --tmux-v"));
         assert!(checkout.contains("--tmux-horizontal, --tmux-h"));
+    }
+
+    #[test]
+    fn color_follows_tty_no_color_and_force_color() {
+        assert!(!color_enabled(None, None, false));
+        assert!(color_enabled(None, None, true));
+        assert!(!color_enabled(Some("1"), None, true));
+        assert!(color_enabled(Some(""), None, true));
+        assert!(color_enabled(None, Some("1"), false));
+        assert!(color_enabled(None, Some(""), false));
+        assert!(!color_enabled(None, Some("0"), true));
+        assert!(!color_enabled(None, Some("false"), true));
+        assert!(!color_enabled(Some("1"), Some("1"), true));
     }
 }
