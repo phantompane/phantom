@@ -4,3 +4,12 @@ packages:
   - "packages/cli/dist"
 
 minimumReleaseAge: 20160
+# scriptc 0.3.5 (2026-10-16) is inside the 14-day window. Exempt only the
+# compiler and the @scriptc/* packages published with that release.
+minimumReleaseAgeExclude:
+  - scriptc
+  - "@scriptc/*"
+# pnpm 10 skips dependency install scripts unless they are listed here.
+# scriptc's postinstall selects the native compiler for this platform.
+onlyBuiltDependencies:
+  - scriptc

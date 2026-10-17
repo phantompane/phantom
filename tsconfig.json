@@ -1,5 +1,9 @@
 {
   "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": [],
+    "typeRoots": ["./tooling/scriptc-empty-types"]
+  },
   "include": ["packages/**/*"],
   "exclude": ["node_modules", "**/dist"]
 }
