@@ -35,7 +35,7 @@ Phantom is a powerful CLI tool that dramatically boosts your development product
 Phantom is a Rust binary. Download a release archive for your platform from [GitHub Releases](https://github.com/phantompane/phantom/releases), or build from source:
 
 ```bash
-cargo install --path .
+cargo install --path . --locked
 ```
 
 Release archives are `phantom-v<version>-<linux|darwin>-<x64|arm64>.tar.gz`. npm packages are no longer published.

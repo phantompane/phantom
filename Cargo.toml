@@ -2,7 +2,7 @@
 name = "phantom"
 version = "6.3.2"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.89"
 publish = false
 description = "Rust prototype of the phantom Git worktree manager"
 license = "MIT"

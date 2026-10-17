@@ -17,23 +17,25 @@ Thank you for your interest in contributing to Phantom! This guide will help you
 
 ### Prerequisites
 
-- Stable Rust (`rust-toolchain.toml`)
+- Rust 1.99.1 (`rust-toolchain.toml`)
 - bash, zsh, and fish if you run the shell completion tests
+
+Dependabot does not bump the Rust toolchain. The version is pinned in `rust-toolchain.toml`, in the `toolchain:` input of `.github/workflows/ci.yml`, `release-compile.yml`, and `version-bump.yml`, in `RUSTUP_TOOLCHAIN` in `release-compile.yml`, and in `languages.rust.channel` in `devenv.nix`. Update all of those together, then run the checks below on the new compiler. `Cargo.toml` `rust-version` is the MSRV (1.89, required by uuid 1.28) and changes only when that floor moves.
 
 ### Getting Started
 
 ```bash
 git clone https://github.com/phantompane/phantom.git
 cd phantom
-cargo run -- --help
+cargo run --locked -- --help
 ```
 
 ### Development Workflow
 
 ```bash
-cargo test
+cargo test --locked
 cargo fmt --all
-cargo clippy --all-targets -- -D warnings
+cargo clippy --locked --all-targets -- -D warnings
 ```
 
 ## 📝 Development Guidelines
@@ -63,9 +65,9 @@ cargo clippy --all-targets -- -D warnings
 ### Running Tests
 
 ```bash
-cargo test
-cargo test --test cli
-cargo test --test completion
+cargo test --locked
+cargo test --locked --test cli
+cargo test --locked --test completion
 ```
 
 ### Writing Tests
@@ -83,8 +85,8 @@ Always run the following command before committing:
 
 ```bash
 cargo fmt --all
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
 ```
 
 ### Security Best Practices
@@ -98,7 +100,7 @@ cargo test
 - Clear description of changes
 - Tests for new functionality
 - Documentation updates if applicable
-- All checks passing (`cargo fmt`, clippy, and `cargo test`)
+- All checks passing (`cargo fmt`, `cargo clippy --locked`, and `cargo test --locked`)
 - Follow existing code style
 
 ## 📚 Documentation

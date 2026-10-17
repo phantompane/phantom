@@ -5,7 +5,6 @@ Thumbs.db
 # Build output
 /target/
 node_modules
-.turbo
 __pycache__/
 *.pyc
 .output

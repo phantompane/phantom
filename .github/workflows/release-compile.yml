@@ -7,11 +7,17 @@ on:
 
 permissions:
   contents: write
+  # rust-cache saves to the Actions cache.
+  actions: write
 
 jobs:
   compile:
     name: Build ${{ matrix.asset_os }}-${{ matrix.asset_arch }}
     runs-on: ${{ matrix.os }}
+    env:
+      # rust-toolchain.toml lists rustfmt and clippy. Setting RUSTUP_TOOLCHAIN
+      # makes rustup ignore that file, so the release job does not install them.
+      RUSTUP_TOOLCHAIN: "1.99.1"
     strategy:
       fail-fast: false
       matrix:
@@ -28,8 +34,8 @@ jobs:
             target: aarch64-apple-darwin
             asset_os: darwin
             asset_arch: arm64
-          # Intel macOS runners. macos-13 is the GitHub-hosted x64 image.
-          - os: macos-13
+          # Intel macOS runners. macos-15-intel is the GitHub-hosted x64 image.
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             asset_os: darwin
             asset_arch: x64
@@ -43,11 +49,16 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          toolchain: stable
+          toolchain: "1.99.1"
           targets: ${{ matrix.target }}
 
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
+        with:
+          key: ${{ matrix.target }}
+
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --locked --release --target ${{ matrix.target }}
 
       - name: Package
         shell: bash

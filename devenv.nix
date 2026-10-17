@@ -5,7 +5,7 @@
 
   languages.rust = {
     enable = true;
-    channel = "stable";
+    channel = "1.99.1";
   };
 
   packages = [
@@ -25,7 +25,7 @@
     clippy = {
       enable = true;
       name = "clippy";
-      entry = "cargo clippy --all-targets -- -D warnings";
+      entry = "cargo clippy --locked --all-targets -- -D warnings";
       pass_filenames = false;
       always_run = true;
     };
@@ -33,7 +33,7 @@
     test = {
       enable = true;
       name = "test";
-      entry = "cargo test";
+      entry = "cargo test --locked";
       pass_filenames = false;
       always_run = true;
     };

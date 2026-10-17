@@ -14,7 +14,7 @@ This guide will help you get up and running with Phantom quickly.
 
 ```bash
 # From a GitHub release archive, or from source:
-cargo install --path .
+cargo install --path . --locked
 
 # Optional tools for a better experience: fzf and tmux
 ```

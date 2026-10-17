@@ -35,7 +35,7 @@ PhantomはGit worktreeをシンプルかつパワフルに操り、開発生産�
 [GitHub Releases](https://github.com/phantompane/phantom/releases) の `phantom-v<version>-<linux|darwin>-<x64|arm64>.tar.gz` を使うか、ソースからビルドします。npm パッケージは公開していません。
 
 ```bash
-cargo install --path .
+cargo install --path . --locked
 ```
 
 Bash の補完は下記の[シェル補完](#シェル補完)を参照してください。

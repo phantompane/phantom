@@ -10,12 +10,12 @@
 
 ## Build, Test, and Development Commands
 
-- Prerequisite: stable Rust (see `rust-toolchain.toml`).
-- Run the CLI: `cargo run -- --help`.
+- Prerequisite: Rust 1.99.1, pinned in `rust-toolchain.toml`. The same version is pinned in `.github/workflows/ci.yml`, `release-compile.yml` (`toolchain` and `RUSTUP_TOOLCHAIN`), `version-bump.yml`, and `devenv.nix`. Dependabot updates Cargo dependencies and GitHub Action SHAs. It does not bump `rust-toolchain.toml` or those workflow strings. To move the pin, change every one of those places together, then run fmt, clippy, and tests on the new compiler. Change `rust-version` in `Cargo.toml` only when the MSRV changes. It is 1.89 because uuid 1.28 declares `rust-version = "1.89.0"`.
+- Run the CLI: `cargo run --locked -- --help`.
 - Format: `cargo fmt --all`.
-- Lint: `cargo clippy --all-targets -- -D warnings`.
-- Tests: `cargo test`. Shell completion tests spawn bash, zsh, and fish (`cargo test --test completion`).
-- Before shipping, run `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings`, and `cargo test`.
+- Lint: `cargo clippy --locked --all-targets -- -D warnings`.
+- Tests: `cargo test --locked`. Shell completion tests spawn bash, zsh, and fish (`cargo test --locked --test completion`).
+- Before shipping, run `cargo fmt --all`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo test --locked`.
 
 ## Coding Style & Naming Conventions
 
@@ -34,7 +34,7 @@
 
 - Use conventional commits as in history: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`.
 - PRs should include a summary, verification steps, and CLI output for UX-facing changes.
-- Ensure `cargo fmt`, clippy, and tests pass. Note known gaps in the PR body.
+- Ensure `cargo fmt`, `cargo clippy --locked`, and `cargo test --locked` pass. Note known gaps in the PR body.
 
 ## Security & Configuration Tips
 
@@ -44,6 +44,6 @@
 
 ## Releases
 
-- Version lives in `Cargo.toml`. `.github/workflows/version-bump.yml` bumps it and opens a PR.
+- Version lives in `Cargo.toml`. `.github/workflows/version-bump.yml` bumps it, refreshes `Cargo.lock` with `cargo update -p phantom --offline`, and opens a PR.
 - Merging a `chore(version): vX.Y.Z` PR tags that version.
 - Publishing a GitHub release builds linux/darwin x64/arm64 binaries and uploads them. npm is not published.

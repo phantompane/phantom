@@ -7,6 +7,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  # rust-cache saves to the Actions cache. contents: read alone cannot write it.
+  actions: write
+
 jobs:
   fmt:
     name: Rust fmt
@@ -15,8 +20,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          toolchain: stable
+          toolchain: "1.99.1"
           components: rustfmt
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -27,10 +33,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          toolchain: stable
+          toolchain: "1.99.1"
           components: clippy
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
   test:
     name: Rust test
@@ -39,9 +46,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          toolchain: stable
+          toolchain: "1.99.1"
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
       - name: Unit and CLI tests
-        run: cargo test --lib --test cli
+        run: cargo test --locked --lib --test cli
 
   test-shell-bash:
     name: Shell completion (bash)
@@ -50,9 +58,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          toolchain: stable
+          toolchain: "1.99.1"
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
       - name: Bash completion
-        run: cargo test --test completion bash_completion
+        run: cargo test --locked --test completion bash_completion
 
   test-shell-zsh:
     name: Shell completion (zsh)
@@ -61,11 +70,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          toolchain: stable
+          toolchain: "1.99.1"
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
       - name: Install zsh
         run: sudo apt-get update && sudo apt-get install -y zsh
       - name: Zsh completion
-        run: cargo test --test completion zsh_completion
+        run: cargo test --locked --test completion zsh_completion
 
   test-shell-fish:
     name: Shell completion (fish)
@@ -74,8 +84,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          toolchain: stable
+          toolchain: "1.99.1"
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
       - name: Install fish
         run: sudo apt-get update && sudo apt-get install -y fish
       - name: Fish completion
-        run: cargo test --test completion fish_completion
+        run: cargo test --locked --test completion fish_completion
