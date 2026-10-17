@@ -11,7 +11,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "vitest";
-import { getDefaultProjectsDataDir, ProjectRegistryStore } from "./store.ts";
+import {
+  getDefaultProjectsDataDir,
+  ProjectRegistryStore,
+  type ProjectRegistryStoreOptions,
+} from "./store.ts";
 import { PROJECT_REGISTRY_VERSION } from "./types.ts";
 
 const temporaryDirectories: string[] = [];
@@ -39,6 +43,51 @@ function createDeferred(): {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+function yieldTurn(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
+/**
+ * Deadlines stay at time zero, so a slow critical section cannot trip a
+ * lock timeout the test is not asserting.
+ */
+function frozenLockTiming(): Pick<
+  ProjectRegistryStoreOptions,
+  "now" | "delay"
+> {
+  return {
+    now: () => 0,
+    delay: () => yieldTurn(),
+  };
+}
+
+function createLockClock(): {
+  now: () => number;
+  delay: (milliseconds: number) => Promise<void>;
+  hold: (milliseconds: number) => Promise<void>;
+} {
+  let time = 0;
+  return {
+    now: () => time,
+    async delay(milliseconds: number) {
+      time += milliseconds;
+      await yieldTurn();
+    },
+    async hold(milliseconds: number) {
+      const start = time;
+      while (time - start < milliseconds) {
+        const observed = time;
+        await yieldTurn();
+        if (time === observed) {
+          time += 1;
+        }
+      }
+    },
+  };
 }
 
 describe("getDefaultProjectsDataDir", () => {
@@ -211,6 +260,7 @@ describe("ProjectRegistryStore", () => {
       { length: 12 },
       () =>
         new ProjectRegistryStore(dataDirectory, {
+          ...frozenLockTiming(),
           lockRetryMs: 1,
           lockTimeoutMs: 2_000,
         }),
@@ -231,16 +281,17 @@ describe("ProjectRegistryStore", () => {
   it("does not time out while queued behind live lock holders", async () => {
     const dataDirectory = await createTemporaryDirectory();
     const holdMs = 100;
+    const lockTimeoutMs = 500;
+    const clock = createLockClock();
     const stores = Array.from(
       { length: 8 },
       () =>
         new ProjectRegistryStore(dataDirectory, {
+          now: clock.now,
+          delay: clock.delay,
           lockRetryMs: 1,
-          lockTimeoutMs: 500,
-          onLockAcquired: () =>
-            new Promise((resolve) => {
-              setTimeout(resolve, holdMs);
-            }),
+          lockTimeoutMs,
+          onLockAcquired: () => clock.hold(holdMs),
         }),
     );
 
@@ -249,56 +300,71 @@ describe("ProjectRegistryStore", () => {
     );
 
     strictEqual((await stores[0]!.list()).length, stores.length);
+    // The queue of holds is longer than one timeout window.
+    strictEqual(clock.now() > lockTimeoutMs, true);
   });
 
   it("does not time out when the lock changes hands between deadline checks", async () => {
     const dataDirectory = await createTemporaryDirectory();
     const lockPath = join(dataDirectory, "projects.lock");
     const ownerPath = join(lockPath, "owner.json");
-    const sleep = (ms: number) =>
-      new Promise((resolve) => {
-        setTimeout(resolve, ms);
-      });
     // A holder that has created the lock but not yet written owner.json. The
     // lock directory stays in place until the end, so the waiter cannot take
     // it early and the test never races its mkdir.
     await mkdir(lockPath, { recursive: true });
+
+    let time = 0;
+    let stage: "seed-owner" | "alias" | "release" | "done" = "seed-owner";
+    const lockTimeoutMs = 100;
     const store = new ProjectRegistryStore(dataDirectory, {
-      lockRetryMs: 1,
-      lockTimeoutMs: 500,
+      lockRetryMs: 10,
+      lockTimeoutMs,
+      now: () => time,
+      delay: async (milliseconds) => {
+        if (stage === "seed-owner") {
+          time += milliseconds;
+          await writeFile(
+            ownerPath,
+            `${JSON.stringify({
+              token: "other-holder",
+              pid: process.pid,
+              createdAt: new Date().toISOString(),
+              processIdentity: null,
+            })}\n`,
+          );
+          stage = "alias";
+        } else if (stage === "alias") {
+          // Past the original deadline and past the window restarted when the
+          // owner file appeared. The next sample has no owner again, so it
+          // aliases the first sample. The waiter survives only because the
+          // intermediate holder reset the deadline.
+          time = lockTimeoutMs + 50;
+          await rm(ownerPath);
+          stage = "release";
+        } else if (stage === "release") {
+          time += milliseconds;
+          await rm(lockPath, { recursive: true, force: true });
+          stage = "done";
+        } else {
+          time += milliseconds;
+        }
+        await yieldTurn();
+      },
     });
 
-    const added = store.add("/work/project");
-    // Hand-off 1: a live holder with an owner file.
-    await sleep(50);
-    await writeFile(
-      ownerPath,
-      `${JSON.stringify({
-        token: "other-holder",
-        pid: process.pid,
-        createdAt: new Date().toISOString(),
-        processIdentity: null,
-      })}\n`,
-    );
-    // Hand-off 2: the next holder has not written owner.json yet, so the lock
-    // looks the same as when the wait started.
-    await sleep(150);
-    await rm(ownerPath);
-    // Release well past the first deadline (~500ms) and well before the
-    // deadline restarted by hand-off 2 (~700ms).
-    await sleep(360);
-    await rm(lockPath, { recursive: true, force: true });
-
-    await added;
+    await store.add("/work/project");
     strictEqual((await store.list()).length, 1);
+    strictEqual(time > lockTimeoutMs, true);
   });
 
   it("serializes concurrent add and remove operations", async () => {
     const dataDirectory = await createTemporaryDirectory();
     const firstStore = new ProjectRegistryStore(dataDirectory, {
+      ...frozenLockTiming(),
       lockRetryMs: 1,
     });
     const secondStore = new ProjectRegistryStore(dataDirectory, {
+      ...frozenLockTiming(),
       lockRetryMs: 1,
     });
     const existing = await firstStore.add("/work/existing");
@@ -331,6 +397,7 @@ describe("ProjectRegistryStore", () => {
     await utimes(lockPath, oldTimestamp, oldTimestamp);
 
     const store = new ProjectRegistryStore(dataDirectory, {
+      ...frozenLockTiming(),
       lockRetryMs: 1,
       lockTimeoutMs: 200,
       staleLockMs: 10,
@@ -357,6 +424,7 @@ describe("ProjectRegistryStore", () => {
     await utimes(lockPath, oldTimestamp, oldTimestamp);
 
     const options = {
+      ...frozenLockTiming(),
       lockRetryMs: 1,
       lockTimeoutMs: 500,
       staleLockMs: 10,
@@ -397,6 +465,7 @@ describe("ProjectRegistryStore", () => {
     let replacementLockCount = 0;
 
     const replacementStore = new ProjectRegistryStore(dataDirectory, {
+      ...frozenLockTiming(),
       lockRetryMs: 1,
       lockTimeoutMs: 2_000,
       staleLockMs: 10,
@@ -414,6 +483,7 @@ describe("ProjectRegistryStore", () => {
       },
     });
     const recoveringStore = new ProjectRegistryStore(dataDirectory, {
+      ...frozenLockTiming(),
       lockRetryMs: 1,
       lockTimeoutMs: 2_000,
       staleLockMs: 10,
@@ -461,6 +531,7 @@ describe("ProjectRegistryStore", () => {
     await utimes(lockPath, oldTimestamp, oldTimestamp);
 
     const store = new ProjectRegistryStore(dataDirectory, {
+      ...frozenLockTiming(),
       lockRetryMs: 1,
       lockTimeoutMs: 500,
       staleLockMs: 10,
@@ -485,12 +556,17 @@ describe("ProjectRegistryStore", () => {
     const oldTimestamp = new Date(Date.now() - 60_000);
     await utimes(lockPath, oldTimestamp, oldTimestamp);
 
+    const clock = createLockClock();
+    const lockTimeoutMs = 20;
     const store = new ProjectRegistryStore(dataDirectory, {
-      lockRetryMs: 1,
-      lockTimeoutMs: 20,
+      now: clock.now,
+      delay: clock.delay,
+      lockRetryMs: 5,
+      lockTimeoutMs,
       staleLockMs: 10,
     });
 
     await rejects(store.add("/work/phantom"), /Timed out waiting/);
+    strictEqual(clock.now() >= lockTimeoutMs, true);
   });
 });
