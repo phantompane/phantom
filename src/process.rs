@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -154,29 +154,6 @@ pub fn run_with_timeout(command: &str, args: &[&str], timeout: Duration) -> Resu
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-pub fn write_and_capture(command: &str, args: &[&str], input: &str) -> Result<Captured> {
-    let mut child = Command::new(command)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| spawn_error(command, &error))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(input.as_bytes())
-            .map_err(|error| Error::msg(error.to_string()))?;
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| Error::msg(error.to_string()))?;
-    Ok(Captured {
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        code: output.status.code().unwrap_or(1),
-    })
 }
 
 fn exit_code(command: &str, status: std::process::ExitStatus) -> Result<i32> {

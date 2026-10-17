@@ -130,11 +130,7 @@ fn attach(args: &[String]) -> Result<i32> {
 fn list(args: &[String]) -> Result<i32> {
     let parsed = args::parse(
         args,
-        &[
-            flag("fzf", None),
-            flag("no-default", None),
-            flag("names", None),
-        ],
+        &[flag("no-default", None), flag("names", None)],
         false,
     )?;
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
@@ -143,16 +139,6 @@ fn list(args: &[String]) -> Result<i32> {
         Err(error) => return fail(&error, error.exit_code()),
     };
     let exclude_default = parsed.flag("no-default");
-    if parsed.flag("fzf") {
-        return match worktree::select_with_fzf(&git_root, exclude_default) {
-            Ok(Some(worktree)) => {
-                println!("{}", worktree.name);
-                Ok(SUCCESS)
-            }
-            Ok(None) => Ok(SUCCESS),
-            Err(error) => fail(&error, GENERAL),
-        };
-    }
     let worktrees = match worktree::list_worktrees(&git_root, exclude_default, false) {
         Ok(worktrees) => worktrees,
         Err(error) => return fail(&error, GENERAL),
@@ -181,17 +167,10 @@ fn list(args: &[String]) -> Result<i32> {
 }
 
 fn where_cmd(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &[flag("fzf", None)], true)?;
-    let use_fzf = parsed.flag("fzf");
-    if parsed.positionals.is_empty() && !use_fzf {
+    let parsed = args::parse(args, &[], true)?;
+    if parsed.positionals.is_empty() {
         return fail(
-            &Error::msg("Usage: phantom where <worktree-name> or phantom where --fzf"),
-            VALIDATION,
-        );
-    }
-    if !parsed.positionals.is_empty() && use_fzf {
-        return fail(
-            &Error::msg("Cannot specify both a worktree name and --fzf option"),
+            &Error::msg("Usage: phantom where <worktree-name>"),
             VALIDATION,
         );
     }
@@ -201,16 +180,8 @@ fn where_cmd(args: &[String]) -> Result<i32> {
         Err(error) => return fail(&error, error.exit_code()),
     };
     let context = crate::context::create(&git_root)?;
-    let name = if use_fzf {
-        match worktree::select_with_fzf(&context.git_root, false) {
-            Ok(Some(worktree)) => worktree.name,
-            Ok(None) => return Ok(SUCCESS),
-            Err(error) => return fail(&error, GENERAL),
-        }
-    } else {
-        parsed.positionals[0].clone()
-    };
-    match worktree::find_worktree(&context.git_root, &name, false, None) {
+    let name = &parsed.positionals[0];
+    match worktree::find_worktree(&context.git_root, name, false, None) {
         Ok(worktree) => {
             println!("{}", worktree.path);
             Ok(SUCCESS)
@@ -227,29 +198,21 @@ fn delete(args: &[String]) -> Result<i32> {
             flag("force", Some('f')),
             flag("keep-branch", None),
             flag("current", None),
-            flag("fzf", None),
         ],
         true,
     )?;
     let delete_current = parsed.flag("current");
-    let use_fzf = parsed.flag("fzf");
-    if parsed.positionals.is_empty() && !delete_current && !use_fzf {
+    if parsed.positionals.is_empty() && !delete_current {
         return fail(
             &Error::msg(
-                "Please provide at least one worktree name to delete, use --current to delete the current worktree, or use --fzf for interactive selection",
+                "Please provide at least one worktree name to delete, or use --current to delete the current worktree",
             ),
             VALIDATION,
         );
     }
-    if (!parsed.positionals.is_empty() || use_fzf) && delete_current {
+    if !parsed.positionals.is_empty() && delete_current {
         return fail(
-            &Error::msg("Cannot specify --current with a worktree name or --fzf option"),
-            VALIDATION,
-        );
-    }
-    if !parsed.positionals.is_empty() && use_fzf {
-        return fail(
-            &Error::msg("Cannot specify both a worktree name and --fzf option"),
+            &Error::msg("Cannot specify --current with a worktree name"),
             VALIDATION,
         );
     }
@@ -275,12 +238,6 @@ fn delete(args: &[String]) -> Result<i32> {
                     VALIDATION,
                 );
             }
-        }
-    } else if use_fzf {
-        match worktree::select_with_fzf(&context.git_root, false) {
-            Ok(Some(worktree)) => vec![worktree.name],
-            Ok(None) => return Ok(SUCCESS),
-            Err(error) => return fail(&error, GENERAL),
         }
     } else {
         parsed.positionals.clone()
@@ -308,29 +265,18 @@ fn delete(args: &[String]) -> Result<i32> {
 }
 
 fn exec(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &tmux_options_with(&[flag("fzf", None)]), true)?;
-    let use_fzf = parsed.flag("fzf");
+    let parsed = args::parse(args, &tmux_options_with(&[]), true)?;
     let direction = tmux_direction(&parsed);
     if direction.is_some() && !tmux::inside_tmux() {
         return fail(&Error::TmuxRequired, VALIDATION);
     }
-    let command_args: Vec<String> = if use_fzf {
-        if parsed.positionals.is_empty() {
-            return fail(
-                &Error::msg("Usage: phantom exec --fzf <command> [args...]"),
-                VALIDATION,
-            );
-        }
-        parsed.positionals.clone()
-    } else {
-        if parsed.positionals.len() < 2 {
-            return fail(
-                &Error::msg("Usage: phantom exec <worktree-name> <command> [args...]"),
-                VALIDATION,
-            );
-        }
-        parsed.positionals[1..].to_vec()
-    };
+    if parsed.positionals.len() < 2 {
+        return fail(
+            &Error::msg("Usage: phantom exec <worktree-name> <command> [args...]"),
+            VALIDATION,
+        );
+    }
+    let command_args = parsed.positionals[1..].to_vec();
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = match git::git_root(&cwd) {
         Ok(root) => root,
@@ -340,15 +286,7 @@ fn exec(args: &[String]) -> Result<i32> {
         Ok(context) => context,
         Err(error) => return fail(&error, GENERAL),
     };
-    let name = if use_fzf {
-        match worktree::select_with_fzf(&context.git_root, false) {
-            Ok(Some(worktree)) => worktree.name,
-            Ok(None) => return Ok(SUCCESS),
-            Err(error) => return fail(&error, GENERAL),
-        }
-    } else {
-        parsed.positionals[0].clone()
-    };
+    let name = parsed.positionals[0].clone();
     let worktree = match worktree::find_worktree(&context.git_root, &name, false, None) {
         Ok(worktree) => worktree,
         Err(error) => return fail(&error, GENERAL),
@@ -411,18 +349,11 @@ fn exec(args: &[String]) -> Result<i32> {
 }
 
 fn shell(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &tmux_options_with(&[flag("fzf", None)]), true)?;
-    let use_fzf = parsed.flag("fzf");
+    let parsed = args::parse(args, &tmux_options_with(&[]), true)?;
     let direction = tmux_direction(&parsed);
-    if parsed.positionals.is_empty() && !use_fzf {
+    if parsed.positionals.is_empty() {
         return fail(
-            &Error::msg("Usage: phantom shell <worktree-name> or phantom shell --fzf"),
-            VALIDATION,
-        );
-    }
-    if !parsed.positionals.is_empty() && use_fzf {
-        return fail(
-            &Error::msg("Cannot specify both a worktree name and --fzf option"),
+            &Error::msg("Usage: phantom shell <worktree-name>"),
             VALIDATION,
         );
     }
@@ -438,15 +369,7 @@ fn shell(args: &[String]) -> Result<i32> {
     if direction.is_some() && !tmux::inside_tmux() {
         return fail(&Error::TmuxRequired, VALIDATION);
     }
-    let name = if use_fzf {
-        match worktree::select_with_fzf(&context.git_root, false) {
-            Ok(Some(worktree)) => worktree.name,
-            Ok(None) => return Ok(SUCCESS),
-            Err(error) => return fail(&error, GENERAL),
-        }
-    } else {
-        parsed.positionals[0].clone()
-    };
+    let name = parsed.positionals[0].clone();
     let worktree = match worktree::find_worktree(&context.git_root, &name, false, None) {
         Ok(worktree) => worktree,
         Err(error) => return fail(&error, GENERAL),
