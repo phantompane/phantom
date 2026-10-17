@@ -532,19 +532,6 @@ fn keep_branch_preference_applies_to_delete() {
 }
 
 #[test]
-fn completion_scripts_are_emitted() {
-    let repo = Repo::new();
-    for shell in ["bash", "zsh", "fish"] {
-        let output = repo.phantom(&["completion", shell]);
-        assert!(output.status.success(), "{}", text(&output.stderr));
-        assert!(!text(&output.stdout).is_empty());
-    }
-    let unsupported = repo.phantom(&["completion", "nu"]);
-    assert_eq!(unsupported.status.code(), Some(1));
-    assert!(text(&unsupported.stderr).contains("Unsupported shell: nu"));
-}
-
-#[test]
 fn reports_when_only_the_default_worktree_exists() {
     let repo = Repo::new();
     let result = repo.phantom(&["list", "--no-default"]);

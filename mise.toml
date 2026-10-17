@@ -2,8 +2,6 @@
 
 [tools]
 python = "3.12"
-"aqua:fish-shell/fish-shell" = "4.9"
-"conda:zsh" = "5.9"
 
 [tasks.fmt]
 description = "Check formatting"

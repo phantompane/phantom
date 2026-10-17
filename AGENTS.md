@@ -5,19 +5,19 @@
 - Phantom is a Rust CLI. The crate lives at the repository root (`Cargo.toml`, `src/`, `tests/`).
 - Development happens on `next`. `main` stays the previous TypeScript version.
 - Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `tmux`, `github`, `mcp`, `help`.
-- Shell completion scripts are embedded from `completions/`. Command help text is generated from `help-data.json`.
+- Command help text is generated from `help-data.json`.
 - Project config example: `phantom.config.json`.
 - Principles: single responsibility, a centralized git executor, and `Result` for every fallible path.
 
 ## Build, Test, and Development Commands
 
 - Prerequisite: Rust 1.99.1, pinned in `rust-toolchain.toml`. The same version is pinned in `.github/workflows/ci.yml`, `release-compile.yml` (`toolchain` and `RUSTUP_TOOLCHAIN`), and `version-bump.yml`. Dependabot reads `.github/dependabot.yml` only from the default branch, so Cargo and GitHub Actions updates start after `next` is merged into `main`. It does not bump `rust-toolchain.toml` or those workflow strings. To move the pin, change every one of those places together, then run fmt, clippy, and tests on the new compiler. Change `rust-version` in `Cargo.toml` only when the MSRV changes. It is 1.89 because uuid 1.28 declares `rust-version = "1.89.0"`.
-- Other dev tools come from `mise.toml`. `mise install` provides Python 3.12 (for `scripts/bump-version.py`), zsh 5.9, and fish 4.9 (shell completion tests). Rust is not listed there.
+- Other dev tools come from `mise.toml`. `mise install` provides Python 3.12 (for `scripts/bump-version.py`). Rust is not listed there.
 - `mise run fmt`, `mise run clippy`, and `mise run test` run the same checks as CI.
 - Run the CLI: `cargo run --locked -- --help`.
 - Format: `cargo fmt --all`.
 - Lint: `cargo clippy --locked --all-targets -- -D warnings`.
-- Tests: `cargo test --locked`. Shell completion tests spawn bash, zsh, and fish (`cargo test --locked --test completion`).
+- Tests: `cargo test --locked`.
 - Before shipping, run `cargo fmt --all`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo test --locked`.
 
 ## Coding Style & Naming Conventions
@@ -30,8 +30,8 @@
 
 ## Testing Guidelines
 
-- Unit tests sit next to the module in `src/`. CLI and shell-completion coverage lives in `tests/`.
-- Cover success and error paths for worktree creation, git flows, the project registry, and shell completion. Use temporary directories and the git executor.
+- Unit tests sit next to the module in `src/`. CLI coverage lives in `tests/`.
+- Cover success and error paths for worktree creation, git flows, and the project registry. Use temporary directories and the git executor.
 
 ## Commit & Pull Request Guidelines
 

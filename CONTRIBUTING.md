@@ -18,8 +18,7 @@ Thank you for your interest in contributing to Phantom! This guide will help you
 ### Prerequisites
 
 - Rust 1.99.1 (`rust-toolchain.toml`). mise does not install Rust.
-- [mise](https://mise.jdx.dev/) for the other tools in `mise.toml` (`mise install`: Python 3.12, zsh 5.9, and fish 4.9)
-- bash, for the shell completion tests (the system shell)
+- [mise](https://mise.jdx.dev/) for the other tools in `mise.toml` (`mise install`: Python 3.12)
 
 Development happens on `next`. Open pull requests against `next`. `main` remains the previous TypeScript version.
 
@@ -74,7 +73,6 @@ cargo clippy --locked --all-targets -- -D warnings
 ```bash
 cargo test --locked
 cargo test --locked --test cli
-cargo test --locked --test completion
 ```
 
 ### Writing Tests

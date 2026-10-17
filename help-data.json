@@ -45,10 +45,6 @@
       "description": "Display phantom version information"
     },
     {
-      "name": "completion",
-      "description": "Generate shell completion scripts"
-    },
-    {
       "name": "mcp",
       "description": "Manage MCP server for AI assistants"
     },
@@ -254,7 +250,7 @@
         {
           "name": "names",
           "type": "boolean",
-          "description": "Output only worktree names (for scripts and completion)"
+          "description": "Output only worktree names (for scripts and automation)"
         }
       ],
       "examples": [
@@ -280,7 +276,7 @@
         "The default worktree is included unless --no-default is set",
         "The main worktree is marked as '(bare)' if using a bare repository",
         "With --fzf, outputs only the selected worktree name",
-        "Use --names for shell completion scripts and automation"
+        "Use --names for scripts and automation"
       ]
     },
     "where": {
@@ -711,31 +707,6 @@
       ],
       "notes": [
         "Also accessible via 'phantom --version' or 'phantom -v'"
-      ]
-    },
-    "completion": {
-      "name": "completion",
-      "usage": "phantom completion <shell>",
-      "description": "Generate shell completion scripts for fish, zsh, or bash",
-      "examples": [
-        {
-          "command": "phantom completion fish | source",
-          "description": "Load Fish completion (add to ~/.config/fish/config.fish for persistence)"
-        },
-        {
-          "command": "eval \"$(phantom completion zsh)\"",
-          "description": "Load Zsh completion (add to .zshrc for persistence)"
-        },
-        {
-          "command": "eval \"$(phantom completion bash)\"",
-          "description": "Load Bash completion (add to .bashrc for persistence)"
-        }
-      ],
-      "notes": [
-        "Supported shells: fish, zsh, bash",
-        "For Fish: add the source command to ~/.config/fish/config.fish for persistence",
-        "For Zsh: add the eval command to your .zshrc for persistence",
-        "For Bash: requires bash-completion v2, add the eval command to your .bashrc for persistence"
       ]
     },
     "mcp": {
