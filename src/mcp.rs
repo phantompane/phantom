@@ -325,7 +325,7 @@ impl PhantomServer {
     }
 }
 
-#[tool_handler(name = "Phantom MCP Server", version = "6.3.2")]
+#[tool_handler(name = "Phantom MCP Server")]
 impl ServerHandler for PhantomServer {}
 
 pub fn serve() -> crate::error::Result<()> {
@@ -372,9 +372,17 @@ fn post_commands(context: &context::Context) -> Vec<String> {
 mod tests {
     use super::*;
     use rmcp::handler::server::tool::IntoCallToolResult;
+    use rmcp::ServerHandler;
 
     fn property_type(schema: &Value, name: &str) -> Value {
         schema["properties"][name]["type"].clone()
+    }
+
+    #[test]
+    fn server_version_tracks_the_crate() {
+        let info = PhantomServer.get_info();
+        assert_eq!(info.server_info.name, "Phantom MCP Server");
+        assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
     }
 
     #[test]
