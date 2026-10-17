@@ -1,0 +1,32 @@
+name: Restore lockfile
+
+on:
+  push:
+    paths:
+      - .github/workflows/restore-lockfile.yml
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: cursor/scriptc-native-binary-f25b
+          fetch-depth: 0
+
+      - name: Restore pnpm-lock.yaml from the main patch
+        run: |
+          set -euo pipefail
+          git checkout origin/main -- pnpm-lock.yaml
+          git apply --whitespace=nowarn .github/scriptc-lock.patch
+          echo "caf79dc7ae1e38859c7e8e7f97d94cec7e839ae06e4579b06e240c28d32a69c7  pnpm-lock.yaml" | sha256sum -c -
+          git add pnpm-lock.yaml
+          git rm -f .github/scriptc-lock.patch .github/workflows/restore-lockfile.yml
+          git config user.name "Cursor Agent"
+          git config user.email "cursor-agent@cursor.com"
+          git commit -m "fix: restore pnpm-lock.yaml for the scriptc prototype"
+          git push origin HEAD:cursor/scriptc-native-binary-f25b
