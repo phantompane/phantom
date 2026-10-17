@@ -1,10 +1,9 @@
-import type { StdioOptions } from "node:child_process";
 import {
   type ProcessError,
   type SpawnSuccess,
   spawnProcess,
 } from "@phantompane/process";
-import { err, isErr, type Result } from "@phantompane/utils";
+import { err, type Result } from "@phantompane/utils";
 import type { WorktreeNotFoundError } from "./worktree/errors.ts";
 import { validateWorktreeExists } from "./worktree/validate.ts";
 
@@ -28,23 +27,30 @@ export async function execInWorktree(
     worktreeDirectory,
     worktreeName,
   );
-  if (isErr(validation)) {
+  if (!validation.ok) {
     return err(validation.error);
   }
 
   const worktreePath = validation.value.path;
   const [cmd, ...args] = command;
 
-  const stdio: StdioOptions = options?.interactive
-    ? "inherit"
-    : ["ignore", "inherit", "inherit"];
+  if (options?.interactive) {
+    return spawnProcess({
+      command: cmd,
+      args,
+      options: {
+        cwd: worktreePath,
+        stdio: "inherit",
+      },
+    });
+  }
 
   return spawnProcess({
     command: cmd,
     args,
     options: {
       cwd: worktreePath,
-      stdio,
+      stdio: ["ignore", "inherit", "inherit"],
     },
   });
 }

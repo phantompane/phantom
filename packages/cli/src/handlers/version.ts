@@ -3,7 +3,7 @@ import { exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 import { getVersion } from "../version.ts";
 
-export function versionHandler(args: string[] = []): void {
+export async function versionHandler(args: string[]): Promise<void> {
   parseArgs({
     args,
     options: {},

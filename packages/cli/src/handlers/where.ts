@@ -5,7 +5,6 @@ import {
   whereWorktree as whereWorktreeCore,
 } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
-import { isErr } from "@phantompane/utils";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 
@@ -55,7 +54,7 @@ export async function whereHandler(args: string[]): Promise<void> {
 
   if (useFzf) {
     const selectResult = await selectWorktreeWithFzf(context.gitRoot);
-    if (isErr(selectResult)) {
+    if (!selectResult.ok) {
       exitWithError(selectResult.error.message, exitCodes.generalError);
     }
     if (!selectResult.value) {
@@ -72,7 +71,7 @@ export async function whereHandler(args: string[]): Promise<void> {
     worktreeName,
   );
 
-  if (isErr(result)) {
+  if (!result.ok) {
     exitWithError(result.error.message, exitCodes.notFound);
   }
 

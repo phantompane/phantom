@@ -1,5 +1,5 @@
-import fs from "node:fs/promises";
-import path from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { err, ok, type Result } from "@phantompane/utils";
 import {
   ConfigValidationError,
@@ -10,14 +10,14 @@ import {
 export class ConfigNotFoundError extends Error {
   constructor() {
     super("phantom.config.json not found");
-    this.name = this.constructor.name;
+    this.name = "ConfigNotFoundError";
   }
 }
 
 export class ConfigParseError extends Error {
   constructor(message: string) {
     super(`Failed to parse phantom.config.json: ${message}`);
-    this.name = this.constructor.name;
+    this.name = "ConfigParseError";
   }
 }
 
@@ -29,10 +29,10 @@ export async function loadConfig(
     ConfigNotFoundError | ConfigParseError | ConfigValidationError
   >
 > {
-  const configPath = path.join(gitRoot, "phantom.config.json");
+  const configPath = join(gitRoot, "phantom.config.json");
 
   try {
-    const content = await fs.readFile(configPath, "utf-8");
+    const content = await readFile(configPath, "utf-8");
 
     try {
       const parsed = JSON.parse(content);
@@ -51,10 +51,10 @@ export async function loadConfig(
       );
     }
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+    if (error instanceof Error && error.message.includes("ENOENT")) {
       return err(new ConfigNotFoundError());
     }
 
-    throw error;
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }

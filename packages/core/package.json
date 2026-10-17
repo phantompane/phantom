@@ -8,7 +8,7 @@
   "scripts": {
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsgo --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run --root ../.. packages/core/src"
   },
   "dependencies": {
@@ -18,8 +18,6 @@
     "@phantompane/preferences": "workspace:*",
     "@phantompane/process": "workspace:*",
     "@phantompane/tmux": "workspace:*",
-    "@phantompane/utils": "workspace:*",
-    "glob": "^13.0.6",
-    "human-id": "^4.2.1"
+    "@phantompane/utils": "workspace:*"
   }
 }

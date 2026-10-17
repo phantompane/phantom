@@ -1,5 +1,3 @@
-import { stdout } from "node:process";
-
 export interface CommandOption {
   name: string;
   short?: string;
@@ -26,7 +24,7 @@ export class HelpFormatter {
   private readonly indent = "  ";
 
   constructor() {
-    this.width = stdout.columns || 80;
+    this.width = process.stdout.columns || 80;
   }
 
   formatMainHelp(

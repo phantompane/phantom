@@ -1,6 +1,5 @@
 import { loadConfig, type PhantomConfig } from "@phantompane/config";
 import { loadPreferences, type Preferences } from "@phantompane/preferences";
-import { isOk } from "@phantompane/utils";
 import { getWorktreesDirectory } from "./paths.ts";
 
 export interface Context {
@@ -13,7 +12,10 @@ export interface Context {
 
 export async function createContext(gitRoot: string): Promise<Context> {
   const configResult = await loadConfig(gitRoot);
-  const config = isOk(configResult) ? configResult.value : null;
+  let config: PhantomConfig | null = null;
+  if (configResult.ok) {
+    config = configResult.value;
+  }
   const preferences = await loadPreferences();
   const worktreesDirectoryConfig = config?.worktreesDirectory;
   const worktreesDirectoryPreference = preferences.worktreesDirectory;

@@ -1,6 +1,6 @@
 import { getGitRoot } from "@phantompane/git";
 import { type GitHubIssue, isPullRequest } from "@phantompane/github";
-import { err, isErr, ok, type Result } from "@phantompane/utils";
+import { err, ok, type Result } from "@phantompane/utils";
 import { createContext } from "../../context.ts";
 import { createWorktree as createWorktreeCore } from "../../worktree/create.ts";
 import { validateWorktreeExists } from "../../worktree/validate.ts";
@@ -35,7 +35,7 @@ export async function checkoutIssue(
     worktreeName,
   );
 
-  if (!isErr(existsResult)) {
+  if (existsResult.ok) {
     // Worktree already exists, return its path
     return ok({
       message: `Issue #${issue.number} is already checked out`,
@@ -59,7 +59,7 @@ export async function checkoutIssue(
     context.directoryNameSeparator,
   );
 
-  if (isErr(result)) {
+  if (!result.ok) {
     return err(result.error);
   }
 

@@ -8,11 +8,10 @@
   "scripts": {
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsgo --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run --root ../.. packages/config/src"
   },
   "dependencies": {
-    "@phantompane/utils": "workspace:*",
-    "zod": "^4.6.5"
+    "@phantompane/utils": "workspace:*"
   }
 }
