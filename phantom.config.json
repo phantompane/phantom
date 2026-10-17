@@ -1,6 +1,5 @@
 {
   "postCreate": {
-    "copyFiles": [".claude/settings.local.json"],
-    "commands": ["direnv allow"]
+    "copyFiles": [".claude/settings.local.json"]
   }
 }

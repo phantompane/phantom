@@ -17,12 +17,13 @@ Thank you for your interest in contributing to Phantom! This guide will help you
 
 ### Prerequisites
 
-- Rust 1.99.1 (`rust-toolchain.toml`)
-- bash, zsh, and fish if you run the shell completion tests
+- Rust 1.99.1 (`rust-toolchain.toml`). mise does not install Rust.
+- [mise](https://mise.jdx.dev/) for the other tools in `mise.toml` (`mise install`: Python 3.12, zsh 5.9, and fish 4.9)
+- bash, for the shell completion tests (the system shell)
 
 Development happens on `next`. Open pull requests against `next`. `main` remains the previous TypeScript version.
 
-Dependabot does not bump the Rust toolchain. The version is pinned in `rust-toolchain.toml`, in the `toolchain:` input of `.github/workflows/ci.yml`, `release-compile.yml`, and `version-bump.yml`, in `RUSTUP_TOOLCHAIN` in `release-compile.yml`, and in `languages.rust.channel` in `devenv.nix`. Update all of those together, then run the checks below on the new compiler. `Cargo.toml` `rust-version` is the MSRV (1.89, required by uuid 1.28) and changes only when that floor moves.
+Dependabot does not bump the Rust toolchain. The version is pinned in `rust-toolchain.toml`, in the `toolchain:` input of `.github/workflows/ci.yml`, `release-compile.yml`, and `version-bump.yml`, and in `RUSTUP_TOOLCHAIN` in `release-compile.yml`. Update all of those together, then run the checks below on the new compiler. `Cargo.toml` `rust-version` is the MSRV (1.89, required by uuid 1.28) and changes only when that floor moves.
 
 ### Getting Started
 
@@ -30,6 +31,7 @@ Dependabot does not bump the Rust toolchain. The version is pinned in `rust-tool
 git clone https://github.com/phantompane/phantom.git
 cd phantom
 git checkout next
+mise install
 cargo run --locked -- --help
 ```
 
@@ -40,6 +42,8 @@ cargo test --locked
 cargo fmt --all
 cargo clippy --locked --all-targets -- -D warnings
 ```
+
+`mise run fmt`, `mise run clippy`, and `mise run test` match the CI checks (`cargo fmt --all -- --check`, Clippy, and `cargo test --locked`).
 
 ## 📝 Development Guidelines
 
