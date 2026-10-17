@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name }}
@@ -24,19 +24,18 @@ jobs:
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
 
       - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version-file: .node-version
           registry-url: https://registry.npmjs.org
           cache: pnpm
 
-      # npm@latest is 12.x, which requires Node ^22.22.2 || ^24.15.0 || >=26.
-      # This job uses .node-version (v24.1.0), which CI, release-compile, and
-      # version-bump also use. npm 11 still supports trusted publishing and
-      # provenance on that Node.
-      - name: Install npm 11
+      # Pin the 12 line, not `latest`, so a future npm major cannot land in a
+      # release job. npm 12 requires Node ^22.22.2 || ^24.15.0 || >=26, and
+      # this job reads .node-version. Merge the Node 24.22 LTS bump first.
+      - name: Install npm 12
         run: |
-          npm install -g npm@11
+          npm install -g npm@12
           npm --version
 
       - name: Determine npm dist-tag
