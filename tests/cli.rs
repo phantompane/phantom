@@ -1070,6 +1070,98 @@ fn directory_name_is_preferred_over_another_worktrees_branch() {
     );
 }
 
+fn fake_gh_for_topic_pr(repo: &Repo) -> String {
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let gh = bin.join("gh");
+    fs::write(
+        &gh,
+        r#"#!/bin/sh
+if [ "$1" = "repo" ]; then
+  printf '%s\n' '{"owner":{"login":"acme"},"name":"demo"}'
+  exit 0
+fi
+case "$2" in
+  *pulls*)
+    printf '%s\n' '{"head":{"ref":"topic","repo":{"full_name":"acme/demo"}},"base":{"repo":{"full_name":"acme/demo"}}}'
+    ;;
+  *)
+    printf '%s\n' '{"number":7,"pull_request":{}}'
+    ;;
+esac
+"#,
+    )
+    .expect("gh");
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(&gh).expect("meta").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&gh, perms).expect("chmod");
+    format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
+#[test]
+fn pr_checkout_requires_the_branch_not_only_the_directory() {
+    let repo = Repo::new();
+    let path = fake_gh_for_topic_pr(&repo);
+    let directory = repo.repo.join(".git/phantom/worktrees/topic");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "other",
+        directory.to_str().expect("path"),
+        "HEAD",
+    ]);
+    let output = repo
+        .command(env!("CARGO_BIN_EXE_phantom"), &["github", "checkout", "7"])
+        .env("PATH", &path)
+        .output()
+        .expect("checkout");
+    let combined = format!("{}\n{}", text(&output.stdout), text(&output.stderr));
+    assert!(
+        !combined.contains("already checked out"),
+        "directory topic on branch other is not PR branch topic:\n{combined}"
+    );
+    let current = repo
+        .command("git", &["branch", "--show-current"])
+        .current_dir(&directory)
+        .output()
+        .expect("branch");
+    assert_eq!(text(&current.stdout), "other");
+
+    let matching = Repo::new();
+    let matching_path = fake_gh_for_topic_pr(&matching);
+    let checked_out = matching.repo.join(".git/phantom/worktrees/topic");
+    matching.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic",
+        checked_out.to_str().expect("path"),
+        "HEAD",
+    ]);
+    let again = matching
+        .command(env!("CARGO_BIN_EXE_phantom"), &["github", "checkout", "7"])
+        .env("PATH", &matching_path)
+        .output()
+        .expect("again");
+    assert!(
+        again.status.success(),
+        "{}\n{}",
+        text(&again.stdout),
+        text(&again.stderr)
+    );
+    assert!(
+        text(&again.stdout).contains("already checked out"),
+        "{}",
+        text(&again.stdout)
+    );
+}
+
 #[test]
 fn exec_preserves_the_child_exit_code() {
     let repo = Repo::new();
