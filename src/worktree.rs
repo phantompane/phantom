@@ -155,20 +155,45 @@ fn same_worktree(worktree: &WorktreeInfo, name: &str) -> bool {
     worktree.name == name || (worktree.branch != "(detached HEAD)" && worktree.branch == name)
 }
 
+fn select_worktree(worktrees: Vec<WorktreeInfo>, name: &str) -> Result<WorktreeInfo> {
+    let directories = worktrees
+        .iter()
+        .filter(|worktree| worktree.name == name)
+        .cloned()
+        .collect::<Vec<_>>();
+    match directories.as_slice() {
+        [found] => return Ok(found.clone()),
+        [] => {}
+        _ => {
+            return Err(Error::msg(format!(
+                "More than one worktree is named '{name}'."
+            )));
+        }
+    }
+    let branches = worktrees
+        .into_iter()
+        .filter(|worktree| worktree.branch != "(detached HEAD)" && worktree.branch == name)
+        .collect::<Vec<_>>();
+    match branches.as_slice() {
+        [found] => Ok(found.clone()),
+        [] => Err(Error::WorktreeNotFound(name.to_string())),
+        _ => Err(Error::msg(format!(
+            "Branch '{name}' matches more than one worktree. Use the worktree directory name."
+        ))),
+    }
+}
+
 pub fn find_worktree(
     git_root: &Path,
     name: &str,
     exclude_default: bool,
     expected_path: Option<&Path>,
 ) -> Result<WorktreeInfo> {
-    let worktrees = list_worktrees(git_root, exclude_default, true)?;
-    worktrees
+    let worktrees = list_worktrees(git_root, exclude_default, true)?
         .into_iter()
-        .find(|worktree| {
-            same_worktree(worktree, name)
-                && expected_path.is_none_or(|path| Path::new(&worktree.path) == path)
-        })
-        .ok_or_else(|| Error::WorktreeNotFound(name.to_string()))
+        .filter(|worktree| expected_path.is_none_or(|path| Path::new(&worktree.path) == path))
+        .collect();
+    select_worktree(worktrees, name)
 }
 
 pub fn ensure_absent(git_root: &Path, name: &str) -> Result<()> {
@@ -1117,6 +1142,38 @@ fn class_matches(class: &[u8], byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample(name: &str, branch: &str) -> WorktreeInfo {
+        WorktreeInfo {
+            name: name.to_string(),
+            path: format!("/worktrees/{name}"),
+            path_to_display: name.to_string(),
+            branch: branch.to_string(),
+            is_clean: true,
+        }
+    }
+
+    #[test]
+    fn directory_name_beats_a_branch_and_ambiguous_branches_error() {
+        let preferred = select_worktree(
+            vec![sample("a", "topic"), sample("topic", "other")],
+            "topic",
+        )
+        .expect("directory");
+        assert_eq!(preferred.name, "topic");
+        assert_eq!(preferred.branch, "other");
+
+        let fallback = select_worktree(vec![sample("a", "topic")], "topic").expect("branch");
+        assert_eq!(fallback.name, "a");
+
+        let error = select_worktree(vec![sample("a", "topic"), sample("b", "topic")], "topic")
+            .expect_err("ambiguous");
+        assert!(error.to_string().contains("more than one"));
+        assert!(matches!(
+            select_worktree(vec![sample("a", "other")], "topic"),
+            Err(Error::WorktreeNotFound(_))
+        ));
+    }
 
     #[test]
     fn rejects_invalid_names() {

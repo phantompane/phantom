@@ -1019,6 +1019,58 @@ fn detached_worktree_keeps_its_directory_name() {
 }
 
 #[test]
+fn directory_name_is_preferred_over_another_worktrees_branch() {
+    let repo = Repo::new();
+    let branch_topic = repo.repo.join(".git/phantom/worktrees/a");
+    let directory_topic = repo.repo.join(".git/phantom/worktrees/topic");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic",
+        branch_topic.to_str().expect("path"),
+        "HEAD",
+    ]);
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "other",
+        directory_topic.to_str().expect("path"),
+        "HEAD",
+    ]);
+
+    let found = repo.phantom(&["where", "topic"]);
+    assert_eq!(found.status.code(), Some(0), "{}", text(&found.stderr));
+    assert_eq!(
+        text(&found.stdout),
+        directory_topic.to_string_lossy(),
+        "directory name should win over branch topic checked out at a"
+    );
+
+    let deleted = repo.phantom(&["delete", "topic", "--keep-branch"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(!directory_topic.exists());
+    assert!(
+        branch_topic.exists(),
+        "delete topic must not remove the worktree whose branch is topic"
+    );
+    let kept = repo
+        .command("git", &["branch", "--list", "other"])
+        .output()
+        .expect("branch");
+    assert!(
+        text(&kept.stdout).contains("other"),
+        "kept the branch of the directory named topic"
+    );
+}
+
+#[test]
 fn exec_preserves_the_child_exit_code() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "feature/exec"]);
