@@ -67,25 +67,13 @@ function frozenLockTiming(): Pick<
 
 function createLockClock(): {
   now: () => number;
-  delay: (milliseconds: number) => Promise<void>;
-  hold: (milliseconds: number) => Promise<void>;
+  advance: (milliseconds: number) => void;
 } {
   let time = 0;
   return {
     now: () => time,
-    async delay(milliseconds: number) {
+    advance(milliseconds: number) {
       time += milliseconds;
-      await yieldTurn();
-    },
-    async hold(milliseconds: number) {
-      const start = time;
-      while (time - start < milliseconds) {
-        const observed = time;
-        await yieldTurn();
-        if (time === observed) {
-          time += 1;
-        }
-      }
     },
   };
 }
@@ -288,10 +276,15 @@ describe("ProjectRegistryStore", () => {
       () =>
         new ProjectRegistryStore(dataDirectory, {
           now: clock.now,
-          delay: clock.delay,
+          // Yield only. Adding lockRetryMs here moves the deadline on every
+          // waiter turn, including while the holder is in real save I/O.
+          delay: () => yieldTurn(),
           lockRetryMs: 1,
           lockTimeoutMs,
-          onLockAcquired: () => clock.hold(holdMs),
+          onLockAcquired: async () => {
+            clock.advance(holdMs);
+            await yieldTurn();
+          },
         }),
     );
 
@@ -300,8 +293,8 @@ describe("ProjectRegistryStore", () => {
     );
 
     strictEqual((await stores[0]!.list()).length, stores.length);
-    // The queue of holds is longer than one timeout window.
-    strictEqual(clock.now() > lockTimeoutMs, true);
+    // Each live holder accounts for holdMs, and the queue outlasts one window.
+    strictEqual(clock.now() >= stores.length * holdMs, true);
   });
 
   it("does not time out when the lock changes hands between deadline checks", async () => {
@@ -345,8 +338,6 @@ describe("ProjectRegistryStore", () => {
           time += milliseconds;
           await rm(lockPath, { recursive: true, force: true });
           stage = "done";
-        } else {
-          time += milliseconds;
         }
         await yieldTurn();
       },
@@ -558,10 +549,16 @@ describe("ProjectRegistryStore", () => {
 
     const clock = createLockClock();
     const lockTimeoutMs = 20;
+    const lockRetryMs = 5;
     const store = new ProjectRegistryStore(dataDirectory, {
       now: clock.now,
-      delay: clock.delay,
-      lockRetryMs: 5,
+      // One waiter. Each retry spends lockRetryMs of deadline, independent of
+      // how long the filesystem calls around it take.
+      delay: async (milliseconds) => {
+        clock.advance(milliseconds);
+        await yieldTurn();
+      },
+      lockRetryMs,
       lockTimeoutMs,
       staleLockMs: 10,
     });
