@@ -8,7 +8,6 @@ import {
   WorktreeNotFoundError,
 } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
-import { isErr } from "@phantompane/utils";
 import { exitCodes, exitWithError, exitWithSuccess } from "../errors.ts";
 import { output } from "../output.ts";
 
@@ -79,7 +78,7 @@ export async function deleteHandler(args: string[]): Promise<void> {
       worktreeNames.push(currentWorktree);
     } else if (useFzf) {
       const selectResult = await selectWorktreeWithFzf(context.gitRoot);
-      if (isErr(selectResult)) {
+      if (!selectResult.ok) {
         exitWithError(selectResult.error.message, exitCodes.generalError);
       }
       if (!selectResult.value) {
@@ -102,7 +101,7 @@ export async function deleteHandler(args: string[]): Promise<void> {
         context.config?.preDelete?.commands,
       );
 
-      if (isErr(result)) {
+      if (!result.ok) {
         const exitCode =
           result.error instanceof WorktreeNotFoundError
             ? exitCodes.validationError

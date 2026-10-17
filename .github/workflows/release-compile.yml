@@ -27,10 +27,17 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: latest
+      - name: Install native toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang xz-utils
+          # scriptc links cross-compiled executables with zig.
+          zig_version=0.15.2
+          zig_dir="/usr/local/zig-x86_64-linux-${zig_version}"
+          curl -fsSL "https://ziglang.org/download/${zig_version}/zig-x86_64-linux-${zig_version}.tar.xz" -o /tmp/zig.tar.xz
+          sudo tar -xJf /tmp/zig.tar.xz -C /usr/local
+          echo "${zig_dir}" >> "$GITHUB_PATH"
+          "${zig_dir}/zig" version
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

@@ -6,7 +6,6 @@ import {
   WorktreeActionConflictError,
   WorktreeAlreadyExistsError,
 } from "@phantompane/core";
-import { isErr } from "@phantompane/utils";
 import { exitCodes, exitWithError, getProcessExitCode } from "../errors.ts";
 import { output } from "../output.ts";
 
@@ -74,7 +73,7 @@ export async function attachHandler(args: string[]): Promise<void> {
     logger: output,
   });
 
-  if (isErr(result)) {
+  if (!result.ok) {
     if (
       result.error instanceof WorktreeAlreadyExistsError ||
       result.error instanceof WorktreeActionConflictError ||

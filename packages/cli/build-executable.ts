@@ -4,44 +4,49 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const entryPoint = join("src", "bin", "phantom.ts");
+const entryPoint = join("native", "bin", "phantom.ts");
 const distDir = "dist";
 const outputDir = "output";
 const binaryName = "phantom";
-const bunExecutable = "bun";
+const scriptcExecutable = "scriptc";
+
 type Target = {
-  bunTarget: string;
+  // Empty string builds for the host. Other values are SCRIPTC_TARGET triples.
+  scriptcTarget: string;
   os: "linux" | "darwin";
   arch: "x64" | "arm64";
   binaryFileName: string;
 };
 
+// scriptc 0.3 builds macOS and Linux executables (arm64 and x64). Windows and
+// WASI are supported by the compiler but are not release targets today.
 const targets: Target[] = [
   {
-    bunTarget: "bun-linux-x64",
+    scriptcTarget: "x86_64-linux-gnu",
     os: "linux",
     arch: "x64",
     binaryFileName: binaryName,
   },
   {
-    bunTarget: "bun-linux-arm64",
+    scriptcTarget: "aarch64-linux-gnu",
     os: "linux",
     arch: "arm64",
     binaryFileName: binaryName,
   },
   {
-    bunTarget: "bun-darwin-arm64",
+    scriptcTarget: "arm64-apple-macosx14.0.0",
     os: "darwin",
     arch: "arm64",
     binaryFileName: binaryName,
   },
   {
-    bunTarget: "bun-darwin-x64",
+    scriptcTarget: "x86_64-apple-macosx14.0.0",
     os: "darwin",
     arch: "x64",
     binaryFileName: binaryName,
   },
 ];
+
 const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
   version?: string;
 };
@@ -51,10 +56,23 @@ if (!version) {
   throw new Error("Version not found in package.json");
 }
 
+const selected = process.env.PHANTOM_COMPILE_TARGETS?.split(",")
+  .map((name) => name.trim())
+  .filter((name) => name.length > 0);
+const selectedTargets = selected
+  ? targets.filter((target) => selected.includes(`${target.os}-${target.arch}`))
+  : targets;
+
+if (selectedTargets.length === 0) {
+  throw new Error(
+    `No compile targets matched PHANTOM_COMPILE_TARGETS=${process.env.PHANTOM_COMPILE_TARGETS}`,
+  );
+}
+
 await mkdir(distDir, { recursive: true });
 await mkdir(outputDir, { recursive: true });
 
-for (const target of targets) {
+for (const target of selectedTargets) {
   await compile(target);
   const archiveName = `phantom-v${version}-${target.os}-${target.arch}.tar.gz`;
   const archivePath = join(outputDir, archiveName);
@@ -65,18 +83,29 @@ for (const target of targets) {
 
 async function compile(target: Target): Promise<string> {
   console.log(
-    `Building phantom single executable with ${bunExecutable} (${target.bunTarget})...`,
+    `Building phantom with scriptc (${target.scriptcTarget || "host"})...`,
   );
   const binaryPath = join(distDir, target.binaryFileName);
-  await execFileAsync(bunExecutable, [
-    "build",
-    entryPoint,
-    "--compile",
-    `--target=${target.bunTarget}`,
-    "--minify",
-    "--outfile",
-    binaryPath,
-  ]);
+  const env = { ...process.env };
+  if (target.scriptcTarget) {
+    env.SCRIPTC_TARGET = target.scriptcTarget;
+  } else {
+    delete env.SCRIPTC_TARGET;
+  }
+
+  await execFileAsync(
+    scriptcExecutable,
+    [
+      "build",
+      entryPoint,
+      "--optimization=release",
+      "--strip",
+      "--no-keep-llvm",
+      "-o",
+      binaryPath,
+    ],
+    { env },
+  );
   console.log(
     `Executable built at ${binaryPath} for ${target.os}/${target.arch}`,
   );

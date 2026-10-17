@@ -10,7 +10,7 @@
     "compile": "node --no-warnings --experimental-strip-types build-executable.ts",
     "lint": "oxfmt --check . && oxlint .",
     "fix": "oxfmt --write . && oxlint --fix .",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsgo --noEmit -p tsconfig.typecheck.json",
     "test:shell": "pnpm run test:shell:bash && pnpm run test:shell:zsh && pnpm run test:shell:fish",
     "test:shell:bash": "vitest run --root ../.. packages/cli/src/completions/phantom.bash.test.shell.ts",
     "test:shell:fish": "vitest run --root ../.. packages/cli/src/completions/phantom.fish.test.shell.ts",
@@ -25,7 +25,14 @@
     "@phantompane/preferences": "workspace:*",
     "@phantompane/process": "workspace:*",
     "@phantompane/projects": "workspace:*",
-    "@phantompane/utils": "workspace:*",
-    "@phantompane/tmux": "workspace:*"
+    "@phantompane/tmux": "workspace:*",
+    "@phantompane/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@scriptc/runtime-darwin-arm64": "0.3.5",
+    "@scriptc/runtime-darwin-x64": "0.3.5",
+    "@scriptc/runtime-linux-arm64-gnu": "0.3.5",
+    "@scriptc/runtime-linux-x64-gnu": "0.3.5",
+    "scriptc": "0.3.5"
   }
 }

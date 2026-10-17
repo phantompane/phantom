@@ -3,7 +3,6 @@ import { parseArgs } from "node:util";
 import { createContext, validateWorktreeExists } from "@phantompane/core";
 import { getGitRoot } from "@phantompane/git";
 import { getPhantomEnv } from "@phantompane/process";
-import { isErr } from "@phantompane/utils";
 import { exitCodes, exitWithError } from "../errors.ts";
 import { output } from "../output.ts";
 
@@ -73,7 +72,7 @@ export async function aiHandler(args: string[]): Promise<void> {
       worktreeName,
     );
 
-    if (isErr(validation)) {
+    if (!validation.ok) {
       exitWithError(validation.error.message, exitCodes.notFound);
     }
 

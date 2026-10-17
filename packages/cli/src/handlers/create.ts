@@ -5,7 +5,6 @@ import {
   WorktreeActionConflictError,
   WorktreeAlreadyExistsError,
 } from "@phantompane/core";
-import { isErr } from "@phantompane/utils";
 import {
   exitCodes,
   exitWithError,
@@ -62,19 +61,31 @@ export async function createHandler(args: string[]): Promise<void> {
         ? "horizontal"
         : undefined;
 
-  const result = await runCreateWorktree({
-    name: positionals[0],
-    base: values.base,
-    copyFiles: values["copy-file"],
+  const createOptions: Parameters<typeof runCreateWorktree>[0] = {
+    logger: output,
     action: {
       shell: values.shell ?? false,
-      exec: values.exec,
-      tmuxDirection,
     },
-    logger: output,
-  });
+  };
+  const name = positionals[0];
+  if (name !== undefined) {
+    createOptions.name = name;
+  }
+  if (values.base !== undefined) {
+    createOptions.base = values.base;
+  }
+  if (values["copy-file"] !== undefined) {
+    createOptions.copyFiles = values["copy-file"];
+  }
+  if (values.exec !== undefined && createOptions.action) {
+    createOptions.action.exec = values.exec;
+  }
+  if (tmuxDirection !== undefined && createOptions.action) {
+    createOptions.action.tmuxDirection = tmuxDirection;
+  }
+  const result = await runCreateWorktree(createOptions);
 
-  if (isErr(result)) {
+  if (!result.ok) {
     const exitCode =
       result.error instanceof WorktreeAlreadyExistsError ||
       result.error instanceof WorktreeActionConflictError ||

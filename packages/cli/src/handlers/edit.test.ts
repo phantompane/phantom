@@ -180,8 +180,8 @@ describe("editHandler", { concurrent: false }, () => {
     strictEqual(getGitRootMock.mock.calls.length, 1);
     strictEqual(validateWorktreeExistsMock.mock.calls.length, 1);
     const spawnCall = spawnMock.mock.calls[0];
-    strictEqual(spawnCall[0], "vim");
-    strictEqual(spawnCall[1][0], ".");
+    strictEqual(spawnCall[0], "vim .");
+    strictEqual(spawnCall[1].length, 0);
     strictEqual(spawnCall[2].cwd, "/repo/.git/phantom/worktrees/feature");
     strictEqual(spawnCall[2].shell, true);
     strictEqual(spawnCall[2].stdio, "inherit");
@@ -222,8 +222,8 @@ describe("editHandler", { concurrent: false }, () => {
     await editHandler(["docs", "README.md"]);
 
     const spawnCall = spawnMock.mock.calls[0];
-    strictEqual(spawnCall[0], "vim");
-    strictEqual(spawnCall[1][0], "README.md");
+    strictEqual(spawnCall[0], "vim README.md");
+    strictEqual(spawnCall[1].length, 0);
     strictEqual(spawnCall[2].cwd, "/repo/.git/phantom/worktrees/docs");
     strictEqual(exitMock.mock.calls[0][0], 0);
     strictEqual(
@@ -261,7 +261,7 @@ describe("editHandler", { concurrent: false }, () => {
     await editHandler(["feature"]);
 
     const spawnCall = spawnMock.mock.calls[0];
-    strictEqual(spawnCall[0], "pref-editor");
+    strictEqual(spawnCall[0], "pref-editor .");
     strictEqual(exitMock.mock.calls[0][0], 0);
   });
 });
