@@ -23,11 +23,16 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
 
+      # Trusted publishing authenticates with the GitHub OIDC token from
+      # `id-token: write`, not NODE_AUTH_TOKEN. `registry-url` only makes
+      # setup-node write `$RUNNER_TEMP/.npmrc` with
+      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`, which pnpm
+      # cannot expand. npm defaults to https://registry.npmjs.org, and both
+      # publish steps set NPM_CONFIG_REGISTRY.
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version-file: .node-version
-          registry-url: https://registry.npmjs.org
           cache: pnpm
 
       # Pin the 12 line, not `latest`, so a future npm major cannot land in a
