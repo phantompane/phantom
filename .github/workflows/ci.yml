@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # GITHUB_TOKEN can start this event. The run executes on the chosen ref.
+  # It does not satisfy required pull request checks; those only count runs
+  # from pull_request, push, and the other events listed in GitHub's docs.
+  workflow_dispatch:
 
 jobs:
   lint:

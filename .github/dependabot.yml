@@ -5,11 +5,13 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # pnpm-workspace.yaml minimumReleaseAge is 20160 minutes (14 days).
+    # A shorter cooldown makes Dependabot propose versions pnpm will refuse.
     cooldown:
-      default-days: 5
+      default-days: 14
       semver-major-days: 30
       semver-minor-days: 14
-      semver-patch-days: 7
+      semver-patch-days: 14
       include:
         - "*"
   - package-ecosystem: "github-actions"
