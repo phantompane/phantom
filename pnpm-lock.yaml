@@ -1,1 +1,204 @@
-LOCKFILE_RETRY
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+overrides:
+  shell-quote@<1.11.0: 1.12.0
+  brace-expansion@>=5: 5.0.12
+  brace-expansion@<2: 1.1.21
+
+importers:
+
+  .:
+    dependencies:
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.4
+        version: 26.6.4
+      '@typescript/native-preview':
+        specifier: 7.0.0-dev.20260707.2
+        version: 7.0.0-dev.20260707.2
+      oxfmt:
+        specifier: ^0.71.0
+        version: 0.71.0
+      oxlint:
+        specifier: ^1.86.0
+        version: 1.86.0
+      tsdown:
+        specifier: ^0.23.0
+        version: 0.23.0(@typescript/native-preview@7.0.0-dev.20260707.2)(@typescript/typescript6@6.0.2)(tsx@4.23.15)(unrun@0.2.37)
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+      turbo:
+        specifier: ^2.11.7
+        version: 2.11.7
+      typescript:
+        specifier: npm:@typescript/typescript6@^6.0.2
+        version: '@typescript/typescript6@6.0.2'
+      vitest:
+        specifier: ^5.0.3
+        version: 5.0.3(@types/node@26.6.4)(vite@8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  e2e: {}
+
+  packages/cli:
+    dependencies:
+      '@phantompane/core':
+        specifier: workspace:*
+        version: link:../core
+      '@phantompane/git':
+        specifier: workspace:*
+        version: link:../git
+      '@phantompane/mcp':
+        specifier: workspace:*
+        version: link:../mcp
+      '@phantompane/preferences':
+        specifier: workspace:*
+        version: link:../preferences
+      '@phantompane/process':
+        specifier: workspace:*
+        version: link:../process
+      '@phantompane/projects':
+        specifier: workspace:*
+        version: link:../projects
+      '@phantompane/tmux':
+        specifier: workspace:*
+        version: link:../tmux
+      '@phantompane/utils':
+        specifier: workspace:*
+        version: link:../utils
+    devDependencies:
+      '@scriptc/runtime-darwin-arm64':
+        specifier: 0.3.5
+        version: 0.3.5
+      '@scriptc/runtime-darwin-x64':
+        specifier: 0.3.5
+        version: 0.3.5
+      '@scriptc/runtime-linux-arm64-gnu':
+        specifier: 0.3.5
+        version: 0.3.5
+      '@scriptc/runtime-linux-x64-gnu':
+        specifier: 0.3.5
+        version: 0.3.5
+      scriptc:
+        specifier: 0.3.5
+        version: 0.3.5
+
+  packages/cli/dist: {}
+
+  packages/config:
+    dependencies:
+      '@phantompane/utils':
+        specifier: workspace:*
+        version: link:../utils
+
+  packages/core:
+    dependencies:
+      '@phantompane/config':
+        specifier: workspace:*
+        version: link:../config
+      '@phantompane/git':
+        specifier: workspace:*
+        version: link:../git
+      '@phantompane/github':
+        specifier: workspace:*
+        version: link:../github
+      '@phantompane/preferences':
+        specifier: workspace:*
+        version: link:../preferences
+      '@phantompane/process':
+        specifier: workspace:*
+        version: link:../process
+      '@phantompane/tmux':
+        specifier: workspace:*
+        version: link:../tmux
+      '@phantompane/utils':
+        specifier: workspace:*
+        version: link:../utils
+
+  packages/git:
+    dependencies:
+      '@phantompane/process':
+        specifier: workspace:*
+        version: link:../process
+      '@phantompane/utils':
+        specifier: workspace:*
+        version: link:../utils
+
+  packages/github:
+    dependencies:
+      '@octokit/rest':
+        specifier: ^22.0.1
+        version: 22.0.1
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+
+  packages/mcp:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.32.0
+        version: 1.32.0(zod@4.6.5)
+      '@phantompane/core':
+        specifier: workspace:*
+        version: link:../core
+      '@phantompane/git':
+        specifier: workspace:*
+        version: link:../git
+      '@phantompane/preferences':
+        specifier: workspace:*
+        version: link:../preferences
+      '@phantompane/process':
+        specifier: workspace:*
+        version: link:../process
+      '@phantompane/projects':
+        specifier: workspace:*
+        version: link:../projects
+      '@phantompane/utils':
+        specifier: workspace:*
+        version: link:../utils
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@modelcontextprotocol/inspector':
+        specifier: ^2.9.0
+        version: 2.9.0(@types/node@26.6.4)(@types/react@19.2.17)(esbuild@0.28.2)(jiti@2.7.0)(react-dom@18.3.1(react@19.3.0))(tsx@4.23.15)
+
+  packages/preferences:
+    dependencies:
+      '@phantompane/git':
+        specifier: workspace:*
+        version: link:../git
+
+  packages/process:
+    dependencies:
+      '@phantompane/utils':
+        specifier: workspace:*
+        version: link:../utils
+
+  packages/projects:
+    dependencies:
+      '@phantompane/git':
+        specifier: workspace:*
+        version: link:../git
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+
+  packages/tmux:
+    dependencies:
+      '@phantompane/process':
+        specifier: workspace:*
+        version: link:../process
+      '@phantompane/utils':
+        specifier: workspace:*
+        version: link:../utils
+
+  packages/utils: {}
