@@ -161,7 +161,14 @@ fn version_help_and_unknown_command() {
     let repo = Repo::new();
     let version = repo.phantom(&["--version"]);
     assert!(version.status.success());
-    assert_eq!(text(&version.stdout), "Phantom v6.3.2");
+    let version_line = text(&version.stdout);
+    assert!(
+        version_line.starts_with("Phantom v6.3.2+rust"),
+        "{version_line}"
+    );
+    assert_ne!(version_line, "Phantom v6.3.2");
+    let subcommand = repo.phantom(&["version"]);
+    assert_eq!(text(&subcommand.stdout), version_line);
 
     let help = repo.phantom(&["--help"]);
     assert!(help.status.success());

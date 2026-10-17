@@ -28,3 +28,30 @@ pub mod tmux;
 pub mod worktree;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub fn version_line() -> String {
+    let sha = option_env!("PHANTOM_GIT_SHA").filter(|sha| !sha.is_empty());
+    format_version(VERSION, sha)
+}
+
+fn format_version(version: &str, sha: Option<&str>) -> String {
+    match sha {
+        Some(sha) => format!("Phantom v{version}+rust ({sha})"),
+        None => format!("Phantom v{version}+rust"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_line_marks_the_rust_build() {
+        assert_eq!(format_version("6.3.2", None), "Phantom v6.3.2+rust");
+        assert_eq!(
+            format_version("6.3.2", Some("abc1234")),
+            "Phantom v6.3.2+rust (abc1234)"
+        );
+        assert_ne!(format_version("6.3.2", None), "Phantom v6.3.2");
+    }
+}
