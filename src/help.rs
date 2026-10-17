@@ -34,6 +34,8 @@ struct CommandHelp {
 struct CommandOption {
     name: String,
     short: Option<String>,
+    #[serde(default)]
+    aliases: Vec<String>,
     #[serde(rename = "type")]
     kind: String,
     description: String,
@@ -163,22 +165,24 @@ pub fn command_help(key: &str) -> Result<Option<String>> {
 }
 
 fn option_name(option: &CommandOption) -> String {
-    let mut parts = Vec::new();
+    let mut flags = Vec::new();
     if let Some(short) = &option.short {
-        parts.push(format!("-{short},"));
+        flags.push(format!("-{short}"));
     }
-    parts.push(format!("--{}", option.name));
+    flags.push(format!("--{}", option.name));
+    for alias in &option.aliases {
+        flags.push(format!("--{alias}"));
+    }
+    let mut rendered = flags.join(", ");
     if option.kind == "string" {
-        parts.push(
-            if option.multiple {
-                "<value>..."
-            } else {
-                "<value>"
-            }
-            .to_string(),
-        );
+        rendered.push(' ');
+        rendered.push_str(if option.multiple {
+            "<value>..."
+        } else {
+            "<value>"
+        });
     }
-    parts.join(" ")
+    rendered
 }
 
 fn wrap_text(text: &str, indent: usize) -> Vec<String> {
@@ -221,4 +225,39 @@ fn dim(text: &str) -> String {
 
 fn cyan(text: &str) -> String {
     format!("\u{1b}[36m{text}\u{1b}[0m")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_options_use_two_dashes() {
+        for key in [
+            "list",
+            "github checkout",
+            "gh checkout",
+            "exec",
+            "shell",
+            "delete",
+            "where",
+        ] {
+            let help = command_help(key).expect("help data").expect(key);
+            assert!(
+                !help.contains("----"),
+                "{key} rendered a four-dash option:\n{help}"
+            );
+        }
+        let list = command_help("list").expect("help").expect("list");
+        assert!(list.contains("--names"));
+        assert!(list.contains("--fzf"));
+        assert!(list.contains("--no-default"));
+        let checkout = command_help("github checkout")
+            .expect("help")
+            .expect("checkout");
+        assert!(checkout.contains("--base <value>"));
+        assert!(checkout.contains("-t, --tmux"));
+        assert!(checkout.contains("--tmux-vertical, --tmux-v"));
+        assert!(checkout.contains("--tmux-horizontal, --tmux-h"));
+    }
 }
