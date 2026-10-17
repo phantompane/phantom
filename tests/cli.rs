@@ -627,6 +627,55 @@ fn assert_phantom_env(worktree: &std::path::Path, name: &str) {
 }
 
 #[test]
+fn parent_cleanup_failure_still_deletes_the_branch() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "cursor/foo"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let root = repo.repo.join(".git/phantom/worktrees");
+    use std::os::unix::fs::PermissionsExt;
+    let _reset = ModeReset(&root);
+    let mut perms = fs::metadata(&root).expect("meta").permissions();
+    perms.set_mode(0o555);
+    fs::set_permissions(&root, perms).expect("chmod");
+
+    let deleted = repo.phantom(&["delete", "cursor/foo"]);
+    assert!(
+        deleted.status.success(),
+        "cleanup must not fail the delete\n{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    let combined = format!("{}\n{}", text(&deleted.stdout), text(&deleted.stderr));
+    assert!(
+        combined.contains("Warning:"),
+        "cleanup error should be a warning: {combined}"
+    );
+    let branch = repo
+        .command("git", &["branch", "--list", "cursor/foo"])
+        .output()
+        .expect("branch");
+    assert!(
+        text(&branch.stdout).is_empty(),
+        "branch should still be deleted: {}",
+        text(&branch.stdout)
+    );
+}
+
+struct ModeReset<'a>(&'a std::path::Path);
+
+impl Drop for ModeReset<'_> {
+    fn drop(&mut self) {
+        let Ok(metadata) = fs::metadata(self.0) else {
+            return;
+        };
+        let mut perms = metadata.permissions();
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(0o755);
+        let _ = fs::set_permissions(self.0, perms);
+    }
+}
+
+#[test]
 fn delete_removes_empty_parent_directories() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "cursor/foo"]);
