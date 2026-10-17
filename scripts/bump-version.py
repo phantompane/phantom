@@ -51,17 +51,22 @@ def bump(version: str, release_type: str) -> str:
     raise SystemExit(f"Unsupported release type '{release_type}'")
 
 
-def update_lockfile() -> None:
-    """Rewrite the phantom package entry in Cargo.lock to match Cargo.toml."""
+def update_lockfile(version: str) -> None:
+    """Rewrite the phantom package entry in Cargo.lock to match Cargo.toml.
+
+    `--offline` fails on a fresh runner: Cargo still resolves the index, and
+    an empty CARGO_HOME has no crates.io cache. `--precise` keeps every other
+    locked dependency where it is.
+    """
     try:
         completed = subprocess.run(
-            ["cargo", "update", "-p", "phantom", "--offline"],
+            ["cargo", "update", "-p", "phantom", "--precise", version],
             check=False,
         )
     except FileNotFoundError:
         raise SystemExit("cargo was not found; Cargo.lock was not updated") from None
     if completed.returncode != 0:
-        raise SystemExit("cargo update -p phantom --offline failed; Cargo.lock was not updated")
+        raise SystemExit("cargo update -p phantom failed; Cargo.lock was not updated")
 
 
 def main() -> None:
@@ -82,7 +87,7 @@ def main() -> None:
     current = match.group(1)
     updated = bump(current, release_type)
     path.write_text(text[: match.start(1)] + updated + text[match.end(1) :], encoding="utf-8")
-    update_lockfile()
+    update_lockfile(updated)
 
     output = Path(__import__("os").environ["GITHUB_OUTPUT"]) if "GITHUB_OUTPUT" in __import__("os").environ else None
     line = f"bump_type={release_type}\n"
