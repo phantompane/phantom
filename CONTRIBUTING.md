@@ -17,36 +17,23 @@ Thank you for your interest in contributing to Phantom! This guide will help you
 
 ### Prerequisites
 
-- Node.js 22+ and pnpm 10+
+- Stable Rust (`rust-toolchain.toml`)
+- bash, zsh, and fish if you run the shell completion tests
 
 ### Getting Started
 
 ```bash
-# Clone and setup
 git clone https://github.com/phantompane/phantom.git
 cd phantom
-pnpm install
-
-# run phantom in development mode
-pnpm phantom
+cargo run -- --help
 ```
 
 ### Development Workflow
 
 ```bash
-# Run tests
-pnpm test
-
-# Type checking
-pnpm typecheck
-
-# Linting
-pnpm lint
-# or
-pnpm fix
-
-# Run all checks before committing
-pnpm ready
+cargo test
+cargo fmt --all
+cargo clippy --all-targets -- -D warnings
 ```
 
 ## 📝 Development Guidelines
@@ -59,7 +46,7 @@ pnpm ready
 ### Code Style
 
 - Follow existing code conventions and patterns
-- Use TypeScript for all new code
+- Write new code in Rust. Non-test code returns `Result` and does not call `unwrap()`, `expect()`, or `panic!`
 - Follow the Single Responsibility Principle
 - Keep modules focused and testable
 
@@ -76,11 +63,9 @@ pnpm ready
 ### Running Tests
 
 ```bash
-# Run all tests
-pnpm test
-
-# Run specific test file
-pnpm test:file src/core/worktree/create.test.ts
+cargo test
+cargo test --test cli
+cargo test --test completion
 ```
 
 ### Writing Tests
@@ -97,16 +82,10 @@ pnpm test:file src/core/worktree/create.test.ts
 Always run the following command before committing:
 
 ```bash
-pnpm ready
+cargo fmt --all
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
-
-This command runs:
-
-- Formatting auto-fixes (`pnpm fix`)
-- Type checking (`pnpm typecheck`)
-- All tests (`pnpm test`)
-
-To run the non-mutating variant, use `pnpm ready:check`, which runs `turbo run lint typecheck test`.
 
 ### Security Best Practices
 
@@ -119,7 +98,7 @@ To run the non-mutating variant, use `pnpm ready:check`, which runs `turbo run l
 - Clear description of changes
 - Tests for new functionality
 - Documentation updates if applicable
-- All checks passing (`pnpm ready`)
+- All checks passing (`cargo fmt`, clippy, and `cargo test`)
 - Follow existing code style
 
 ## 📚 Documentation
@@ -152,7 +131,7 @@ To release a new version of Phantom:
    - Confirm version numbers and changelog/doc updates if any
    - Merge the PR once checks pass
 
-3. **Create GitHub release (publishes to npm)**
+3. **Create a GitHub release (builds release binaries)**
 
    ```bash
    # Create a release with automatically generated notes
@@ -168,7 +147,7 @@ To release a new version of Phantom:
      --target main
    ```
 
-   Publishing to npm is handled by `.github/workflows/npm-publish.yml` when the release is published. Releases from `pre*` bumps are published with the `next` dist-tag; all other releases use `latest`. Monitor the workflow run in GitHub Actions to ensure it completes successfully.
+   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `phantom-v<version>-<os>-<arch>.tar.gz` to the release. npm is not published. Monitor the workflow run in GitHub Actions.
 
 4. **Update release notes for clarity**
    - Review the auto-generated release notes using `gh release view v<version>`
@@ -216,9 +195,9 @@ To release a new version of Phantom:
    **Installation/Upgrade:**
 
    ```bash
-   npm install -g @phantompane/cli@latest
-   # or
-   brew upgrade phantom
+   # Download phantom-v<version>-<os>-<arch>.tar.gz from the GitHub release
+   # or build from the tag:
+   cargo install --path . --locked
    ```
 
    **Full Changelog**: https://github.com/phantompane/phantom/compare/v<previous>...v<version>

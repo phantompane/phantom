@@ -4,9 +4,7 @@
 
 **A powerful CLI tool for seamless parallel development with Git worktrees**
 
-[![npm version](https://img.shields.io/npm/v/@phantompane/cli.svg)](https://www.npmjs.com/package/@phantompane/cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/node/v/@phantompane/cli.svg)](https://nodejs.org)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/phantompane/phantom)
 
 [日本語](./README.ja.md) • [Installation](#-installation) • [Why Phantom?](#-why-phantom) • [Basic Usage](#-basic-usage) • [Documentation](#-documentation)
@@ -34,19 +32,15 @@ Phantom is a powerful CLI tool that dramatically boosts your development product
 
 ## 🚀 Installation
 
-### Using Homebrew (recommended)
+Phantom is a Rust binary. Download a release archive for your platform from [GitHub Releases](https://github.com/phantompane/phantom/releases), or build from source:
 
 ```bash
-brew install phantom
+cargo install --path .
 ```
 
-> **Note:** Shell completions for Fish and Zsh are installed automatically with Homebrew. For Bash completion, see the [Shell Completion](#shell-completion) section below.
+Release archives are `phantom-v<version>-<linux|darwin>-<x64|arm64>.tar.gz`. npm packages are no longer published.
 
-#### Using npm
-
-```bash
-npm install -g @phantompane/cli
-```
+> **Note:** For Bash completion, see the [Shell Completion](#shell-completion) section below. Fish and Zsh completions are printed by `phantom completion <shell>`.
 
 ## 🤔 Why Phantom?
 
@@ -90,7 +84,7 @@ Phantom provides perfect functionality as a command-line tool. Developers feel t
 
 Phantom supports full shell completion for Fish, Zsh, and Bash. Use tab key to complete commands and worktree names.
 
-When installed via Homebrew, completions for Fish and Zsh are installed automatically. For Bash, you need to manually set up the completion:
+For Bash, you need to set up completion manually:
 
 ```bash
 # Prerequisites: bash-completion v2 must be installed

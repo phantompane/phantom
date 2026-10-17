@@ -30,28 +30,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
       - name: Bump version
         id: bump
-        run: |
-          node --experimental-strip-types scripts/bump-version.ts \
-            --release-type "${{ inputs.release_type }}"
+        run: python3 scripts/bump-version.py --release-type "${{ inputs.release_type }}"
 
       - name: Read new version
         id: version
         run: |
-          version=$(node -p "require('./package.json').version")
+          version=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push changes

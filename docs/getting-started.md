@@ -13,16 +13,13 @@ This guide will help you get up and running with Phantom quickly.
 ## 📥 Installation
 
 ```bash
-# Using Homebrew (recommended)
-brew install phantom
+# From a GitHub release archive, or from source:
+cargo install --path .
 
-# Using npm
-npm install -g @phantompane/cli
-
-# Optional tools for better experience: fzf and tmux
+# Optional tools for a better experience: fzf and tmux
 ```
 
-> **Note:** When installed via Homebrew, shell completions for Fish and Zsh are set up automatically. For Bash users, you need bash-completion v2 installed first, then add this to your `.bashrc` or `.bash_profile`:
+> **Note:** For Bash users, you need bash-completion v2 installed first, then add this to your `.bashrc` or `.bash_profile`:
 >
 > ```bash
 > # Prerequisites: bash-completion v2 must be installed

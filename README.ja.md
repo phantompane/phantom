@@ -4,9 +4,7 @@
 
 **Git worktreeを使ったシームレスな並行開発のためのパワフルなCLIツール**
 
-[![npm version](https://img.shields.io/npm/v/@phantompane/cli.svg)](https://www.npmjs.com/package/@phantompane/cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/node/v/@phantompane/cli.svg)](https://nodejs.org)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/phantompane/phantom)
 
 [English](./README.md) • [インストール](#-インストール) • [なぜPhantom？](#-なぜphantom) • [基本的な使い方](#-基本的な使い方) • [ドキュメント](#-ドキュメント)
@@ -34,19 +32,13 @@ PhantomはGit worktreeをシンプルかつパワフルに操り、開発生産�
 
 ## 🚀 インストール
 
-### Homebrewを使用（推奨）
+[GitHub Releases](https://github.com/phantompane/phantom/releases) の `phantom-v<version>-<linux|darwin>-<x64|arm64>.tar.gz` を使うか、ソースからビルドします。npm パッケージは公開していません。
 
 ```bash
-brew install phantom
+cargo install --path .
 ```
 
-> **注意:** Homebrewでインストールした場合、FishとZshのシェル補完は自動的にインストールされます。Bashの補完については、下記の[シェル補完](#シェル補完)セクションを参照してください。
-
-#### npmを使用
-
-```bash
-npm install -g @phantompane/cli
-```
+Bash の補完は下記の[シェル補完](#シェル補完)を参照してください。
 
 ## 🤔 なぜPhantom？
 

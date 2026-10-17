@@ -159,7 +159,7 @@ An array of file paths or glob patterns to automatically copy from the current w
 
 **Glob Pattern Support:**
 
-Glob patterns allow you to match multiple files with a single pattern. Phantom uses the [`glob`](https://github.com/isaacs/node-glob#glob-primer) package for pattern matching, so refer to its documentation for the full pattern syntax.
+Glob patterns allow you to match multiple files with a single pattern. Phantom uses Unix glob syntax (`*`, `?`, `**`, and character classes).
 
 Phantom resolves `copyFiles` patterns with these options:
 

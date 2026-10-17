@@ -2,15 +2,15 @@
 .DS_Store
 Thumbs.db
 
-# Dependencies
+# Build output
+/target/
 node_modules
-.output
 .turbo
+__pycache__/
+*.pyc
+.output
 .worktrees
 .devenv*
 .pre-commit-config.yaml
 devenv.local.nix
 devenv.local.yaml
-
-# Rust prototype build output
-rust/target/

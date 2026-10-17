@@ -5,145 +5,77 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # GITHUB_TOKEN can start this event. The run executes on the chosen ref.
-  # It does not satisfy required pull request checks; those only count runs
-  # from pull_request, push, and the other events listed in GitHub's docs.
   workflow_dispatch:
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version-file: .node-version
-          cache: "pnpm"
-      - name: Install dependencies
-        run: pnpm install
-      - name: Run linting
-        run: pnpm lint
-
-  typecheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version-file: .node-version
-          cache: "pnpm"
-      - name: Install dependencies
-        run: pnpm install
-      - name: Run type checking
-        run: pnpm typecheck
-
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # 22: engines minimum (Maintenance LTS).
-        # 24: Active LTS line. Lint, typecheck, and shell jobs use the
-        # .node-version patch on this same major.
-        # latest: Current release line.
-        node-version: ["22", "24", "latest"]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: "pnpm"
-      - name: Install dependencies
-        run: pnpm install
-      - name: Run tests
-        run: pnpm test
-
-  test-e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version-file: .node-version
-          cache: "pnpm"
-      - name: Install dependencies
-        run: pnpm install
-      - name: Install phantom
-        run: |
-          pnpm --filter @phantompane/cli-private build
-          npm install --global ./packages/cli/dist
-      - name: Run e2e tests
-        run: pnpm test:e2e
-
-  test-shell-bash:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version-file: .node-version
-          cache: "pnpm"
-      - name: Install dependencies
-        run: pnpm install
-      - name: Run shell tests
-        run: pnpm test:shell:bash
-
-  test-shell-zsh:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version-file: .node-version
-          cache: "pnpm"
-      - name: Install dependencies
-        run: pnpm install
-      - name: Install zsh
-        run: sudo apt-get update && sudo apt-get install -y zsh
-      - name: Run shell tests
-        run: pnpm test:shell:zsh
-
-  test-shell-fish:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version-file: .node-version
-          cache: "pnpm"
-      - name: Install dependencies
-        run: pnpm install
-      - name: Install fish
-        run: sudo apt-get update && sudo apt-get install -y fish
-      - name: Run shell tests
-        run: pnpm test:shell:fish
-
-  # Experimental Rust port. This job is informational: it is not part of the
-  # required pull request checks configured for the TypeScript pipeline.
-  rust:
-    name: Rust (experimental)
+  fmt:
+    name: Rust fmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
-          components: rustfmt, clippy
+          components: rustfmt
       - name: Check formatting
-        working-directory: rust
         run: cargo fmt --all -- --check
+
+  clippy:
+    name: Rust clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+          components: clippy
       - name: Clippy
-        working-directory: rust
         run: cargo clippy --all-targets -- -D warnings
-      - name: Test
-        working-directory: rust
-        run: cargo test
-      - name: Build release binary
-        working-directory: rust
-        run: cargo build --release
+
+  test:
+    name: Rust test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - name: Unit and CLI tests
+        run: cargo test --lib --test cli
+
+  test-shell-bash:
+    name: Shell completion (bash)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - name: Bash completion
+        run: cargo test --test completion bash_completion
+
+  test-shell-zsh:
+    name: Shell completion (zsh)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Zsh completion
+        run: cargo test --test completion zsh_completion
+
+  test-shell-fish:
+    name: Shell completion (fish)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - name: Install fish
+        run: sudo apt-get update && sudo apt-get install -y fish
+      - name: Fish completion
+        run: cargo test --test completion fish_completion
