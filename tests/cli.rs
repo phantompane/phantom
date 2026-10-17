@@ -546,6 +546,51 @@ fn concurrent_project_add_processes_keep_every_record() {
 }
 
 #[test]
+fn create_and_attach_exec_export_phantom_env() {
+    let repo = Repo::new();
+    let script =
+        "printf '%s\\n' \"$PHANTOM\" \"$PHANTOM_NAME\" \"$PHANTOM_PATH\" > phantom-env.txt";
+    let created = repo.phantom(&["create", "feature/env", "--exec", script]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let worktree = repo.repo.join(".git/phantom/worktrees/feature/env");
+    assert_phantom_env(&worktree, "feature/env");
+
+    repo.git(&["branch", "attached-env"]);
+    let attached = repo.phantom(&["attach", "attached-env", "--exec", script]);
+    assert!(
+        attached.status.success(),
+        "{}\n{}",
+        text(&attached.stdout),
+        text(&attached.stderr)
+    );
+    assert_phantom_env(
+        &repo.repo.join(".git/phantom/worktrees/attached-env"),
+        "attached-env",
+    );
+
+    let execed = repo.phantom(&["exec", "feature/env", "--", "sh", "-c", script]);
+    assert!(execed.status.success(), "{}", text(&execed.stderr));
+    assert_phantom_env(&worktree, "feature/env");
+}
+
+fn assert_phantom_env(worktree: &std::path::Path, name: &str) {
+    let recorded = fs::read_to_string(worktree.join("phantom-env.txt")).expect("phantom env");
+    let mut lines = recorded.lines();
+    assert_eq!(lines.next(), Some("1"), "{recorded}");
+    assert_eq!(lines.next(), Some(name), "{recorded}");
+    assert_eq!(
+        lines.next(),
+        Some(worktree.to_string_lossy().as_ref()),
+        "{recorded}"
+    );
+}
+
+#[test]
 fn exec_preserves_the_child_exit_code() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "feature/exec"]);
