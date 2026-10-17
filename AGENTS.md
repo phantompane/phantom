@@ -45,6 +45,6 @@
 
 ## Releases
 
-- Version lives in `Cargo.toml`. `.github/workflows/version-bump.yml` bumps it from `next`, refreshes `Cargo.lock` with `cargo update -p phantom --offline`, and opens a PR against `next`.
+- Version lives in `Cargo.toml`. Dispatch `.github/workflows/version-bump.yml` from `next` (`gh workflow run version-bump.yml --ref next`). It checks out `next`, refreshes `Cargo.lock` with `cargo update -p phantom --precise <version>`, and opens a PR against `next`.
 - Merging a `chore(version): vX.Y.Z` PR into `next` tags that version.
 - Publishing a GitHub release builds linux/darwin x64/arm64 binaries and uploads them. npm is not published.

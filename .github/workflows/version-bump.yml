@@ -25,6 +25,13 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
+      - name: Require dispatch from next
+        if: github.ref != 'refs/heads/next'
+        run: |
+          echo "version-bump.yml updates the Rust line. Dispatch it from next:" >&2
+          echo "  gh workflow run version-bump.yml --ref next -f release_type=patch" >&2
+          exit 1
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
