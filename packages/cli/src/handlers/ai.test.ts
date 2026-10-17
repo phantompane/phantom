@@ -82,7 +82,7 @@ function resetMocks() {
   spawnMock.mockClear();
 }
 
-describe.sequential("aiHandler", () => {
+describe("aiHandler", { concurrent: false }, () => {
   it("errors when worktree name is missing", async () => {
     resetMocks();
 
