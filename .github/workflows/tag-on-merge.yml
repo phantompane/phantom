@@ -5,7 +5,8 @@ on:
     types:
       - closed
     branches:
-      - main
+      # Version tags are cut from next. main stays the TypeScript release.
+      - next
 
 permissions:
   contents: write

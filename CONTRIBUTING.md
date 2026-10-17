@@ -20,6 +20,8 @@ Thank you for your interest in contributing to Phantom! This guide will help you
 - Rust 1.99.1 (`rust-toolchain.toml`)
 - bash, zsh, and fish if you run the shell completion tests
 
+Development happens on `next`. Open pull requests against `next`. `main` remains the previous TypeScript version.
+
 Dependabot does not bump the Rust toolchain. The version is pinned in `rust-toolchain.toml`, in the `toolchain:` input of `.github/workflows/ci.yml`, `release-compile.yml`, and `version-bump.yml`, in `RUSTUP_TOOLCHAIN` in `release-compile.yml`, and in `languages.rust.channel` in `devenv.nix`. Update all of those together, then run the checks below on the new compiler. `Cargo.toml` `rust-version` is the MSRV (1.89, required by uuid 1.28) and changes only when that floor moves.
 
 ### Getting Started
@@ -27,6 +29,7 @@ Dependabot does not bump the Rust toolchain. The version is pinned in `rust-tool
 ```bash
 git clone https://github.com/phantompane/phantom.git
 cd phantom
+git checkout next
 cargo run --locked -- --help
 ```
 
@@ -140,13 +143,13 @@ To release a new version of Phantom:
    gh release create v<version> \
      --title "Phantom v<version>" \
      --generate-notes \
-     --target main
+     --target next
 
    # Example for v1.3.0:
    gh release create v1.3.0 \
      --title "Phantom v1.3.0" \
      --generate-notes \
-     --target main
+     --target next
    ```
 
    `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `phantom-v<version>-<os>-<arch>.tar.gz` to the release. npm is not published. Monitor the workflow run in GitHub Actions.

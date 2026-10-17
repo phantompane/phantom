@@ -3,6 +3,7 @@
 ## Project Structure & Module Organization
 
 - Phantom is a Rust CLI. The crate lives at the repository root (`Cargo.toml`, `src/`, `tests/`).
+- Development happens on `next`. `main` stays the previous TypeScript version.
 - Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `tmux`, `github`, `mcp`, `help`.
 - Shell completion scripts are embedded from `completions/`. Command help text is generated from `help-data.json`.
 - Project config example: `phantom.config.json`.
@@ -44,6 +45,6 @@
 
 ## Releases
 
-- Version lives in `Cargo.toml`. `.github/workflows/version-bump.yml` bumps it, refreshes `Cargo.lock` with `cargo update -p phantom --offline`, and opens a PR.
-- Merging a `chore(version): vX.Y.Z` PR tags that version.
+- Version lives in `Cargo.toml`. `.github/workflows/version-bump.yml` bumps it from `next`, refreshes `Cargo.lock` with `cargo update -p phantom --offline`, and opens a PR against `next`.
+- Merging a `chore(version): vX.Y.Z` PR into `next` tags that version.
 - Publishing a GitHub release builds linux/darwin x64/arm64 binaries and uploads them. npm is not published.
