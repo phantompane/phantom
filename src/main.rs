@@ -17,8 +17,9 @@ fn main() -> ExitCode {
     match phantom::cli::run(&args) {
         Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
         Err(error) => {
+            let code = u8::try_from(error.exit_code()).unwrap_or(1);
             eprintln!("Error: {error}");
-            ExitCode::from(1)
+            ExitCode::from(code)
         }
     }
 }

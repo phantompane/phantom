@@ -74,6 +74,42 @@ fn text(bytes: &[u8]) -> String {
 }
 
 #[test]
+fn outside_a_git_repository_is_a_phantom_error() {
+    let repo = Repo::new();
+    let outside = repo.root.join("outside");
+    fs::create_dir_all(&outside).expect("outside");
+    for args in [
+        &["list"][..],
+        &["create", "name"],
+        &["where", "name"],
+        &["delete", "name"],
+        &["exec", "name", "--", "true"],
+    ] {
+        let output = repo
+            .command(env!("CARGO_BIN_EXE_phantom"), args)
+            .current_dir(&outside)
+            .output()
+            .expect("phantom");
+        let stderr = text(&output.stderr);
+        assert!(
+            !stderr.to_ascii_lowercase().contains("fatal:"),
+            "{args:?} leaked git output: {stderr}"
+        );
+        assert!(
+            stderr.contains("Not a git repository"),
+            "{args:?} stderr: {stderr}"
+        );
+        assert_eq!(output.status.code(), Some(4), "{args:?} stderr: {stderr}");
+    }
+    let help = repo
+        .command(env!("CARGO_BIN_EXE_phantom"), &["--help"])
+        .current_dir(&outside)
+        .output()
+        .expect("help");
+    assert!(help.status.success());
+}
+
+#[test]
 fn version_help_and_unknown_command() {
     let repo = Repo::new();
     let version = repo.phantom(&["--version"]);

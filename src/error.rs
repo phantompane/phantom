@@ -2,6 +2,7 @@ pub const SUCCESS: i32 = 0;
 pub const GENERAL: i32 = 1;
 pub const NOT_FOUND: i32 = 2;
 pub const VALIDATION: i32 = 3;
+pub const NOT_REPOSITORY: i32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -13,6 +14,8 @@ pub enum Error {
     WorktreeAlreadyExists(String),
     #[error("Branch '{0}' not found")]
     BranchNotFound(String),
+    #[error("Not a git repository. Run phantom from inside a Git repository.")]
+    NotARepository,
     #[error("Cannot use --shell, --exec, and --tmux options together")]
     ActionConflict,
     #[error("The --tmux option can only be used inside a tmux session")]
@@ -40,6 +43,7 @@ impl Error {
         match self {
             Self::CommandFailed { code, .. } => *code,
             Self::Signaled(name) => 128 + i32::from(name == "SIGTERM").saturating_mul(14) + 1,
+            Self::NotARepository => NOT_REPOSITORY,
             _ => GENERAL,
         }
     }
