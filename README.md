@@ -194,6 +194,28 @@ A command that does not produce a result writes this object to stdout:
 
 `branchDeleted` is false for a detached HEAD, for `--keep-branch`, and when deleting the branch failed. A failed branch delete sets `branchError` and still exits 0. A fatal per-item failure sets `error` on that entry and the top-level `error` object, and exits nonzero.
 
+`gc --json` is a dry run unless `--apply` or `--force` is set. `applied` is true when a removal was requested. Each candidate names the worktree, why it matched (`merged`, `pullRequest`, `orphaned`, `olderThan`), and `action`: `wouldRemove`, `removed`, `skipped`, or `failed`. `detail` explains a skip or a failure. `branchDeleted` is null on a dry run and on a skip. A removal failure sets the top-level `error` object and exits 1, and the other candidates are still listed. An empty plan exits 0.
+
+```json
+{
+  "version": 1,
+  "applied": false,
+  "candidates": [
+    {
+      "name": "feature",
+      "path": "/repo/.git/ptm/worktrees/feature",
+      "branch": "feature",
+      "owner": "grok",
+      "reasons": ["merged"],
+      "action": "wouldRemove",
+      "detail": null,
+      "branchDeleted": null
+    }
+  ],
+  "error": null
+}
+```
+
 `github checkout --json`:
 
 ```json

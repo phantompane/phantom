@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 struct Repo {
@@ -145,6 +145,7 @@ fn outside_a_git_repository_is_a_phantom_error() {
         &["where", "name"],
         &["delete", "name"],
         &["exec", "name", "--", "true"],
+        &["gc"],
     ] {
         let output = repo
             .command(env!("CARGO_BIN_EXE_ptm"), args)
@@ -5076,6 +5077,7 @@ fn duplicate_metadata_paths_block_mutations() {
         vec!["attach", "side", "--json"],
         vec!["delete", "kept", "--json"],
         vec!["meta", "set", "kept", "--owner", "nope", "--json"],
+        vec!["gc", "--json"],
     ] {
         let output = repo.phantom(&args);
         assert!(
@@ -5091,4 +5093,329 @@ fn duplicate_metadata_paths_block_mutations() {
     assert!(repo.repo.join(".git/ptm/worktrees/kept").is_dir());
     assert!(!repo.repo.join(".git/ptm/worktrees/other").exists());
     assert!(!repo.repo.join(".git/ptm/worktrees/side").exists());
+}
+
+fn worktree_dir(repo: &Repo, name: &str) -> PathBuf {
+    repo.repo.join(".git/ptm/worktrees").join(name)
+}
+
+fn branch_listed(repo: &Repo, name: &str) -> bool {
+    let output = repo
+        .command("git", &["branch", "--list", name])
+        .output()
+        .expect("branch");
+    !text(&output.stdout).is_empty()
+}
+
+fn worktree_registered(repo: &Repo, name: &str) -> bool {
+    let output = repo
+        .command("git", &["worktree", "list", "--porcelain"])
+        .output()
+        .expect("worktrees");
+    text(&output.stdout).contains(&format!("worktrees/{name}\n"))
+        || text(&output.stdout).ends_with(&format!("worktrees/{name}"))
+}
+
+fn commit_in_worktree(repo: &Repo, name: &str) {
+    let dir = worktree_dir(repo, name);
+    fs::write(dir.join("note.txt"), "note\n").expect("note");
+    for args in [vec!["add", "note.txt"], vec!["commit", "-m", "note"]] {
+        let output = repo
+            .command("git", &args)
+            .current_dir(&dir)
+            .output()
+            .expect("commit");
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            text(&output.stderr)
+        );
+    }
+}
+
+fn age_metadata(repo: &Repo, name: &str) {
+    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let mut document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("json");
+    let records = document["worktrees"].as_array_mut().expect("records");
+    let record = records
+        .iter_mut()
+        .find(|record| {
+            record["path"].as_str().is_some_and(|path| {
+                Path::new(path).file_name().and_then(|part| part.to_str()) == Some(name)
+            })
+        })
+        .expect(name);
+    record["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+    fs::write(
+        &file,
+        serde_json::to_string_pretty(&document).expect("encode"),
+    )
+    .expect("rewrite");
+}
+
+#[test]
+fn gc_dry_run_keeps_a_merged_worktree_until_apply() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "feature"]).status.success());
+    let plan = repo.phantom(&["gc"]);
+    assert!(plan.status.success(), "{}", text(&plan.stderr));
+    let planned = text(&plan.stdout);
+    assert!(
+        planned.contains("would remove feature [merged]"),
+        "{planned}"
+    );
+    assert!(planned.contains("Re-run with --apply"), "{planned}");
+    assert!(worktree_dir(&repo, "feature").is_dir());
+    assert!(branch_listed(&repo, "feature"));
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let removed = text(&applied.stdout);
+    assert!(removed.contains("removed feature [merged]"), "{removed}");
+    assert!(!worktree_dir(&repo, "feature").is_dir());
+    assert!(!branch_listed(&repo, "feature"));
+    assert!(!worktree_registered(&repo, "feature"));
+
+    let again = repo.phantom(&["gc", "--apply"]);
+    assert!(again.status.success(), "{}", text(&again.stderr));
+    assert!(text(&again.stdout).contains("Nothing to clean up."));
+}
+
+#[test]
+fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
+    let repo = Repo::new();
+    assert!(repo
+        .phantom(&["create", "feature", "--owner", "grok"])
+        .status
+        .success());
+    let plan = repo.phantom(&["gc", "--json"]);
+    assert!(plan.status.success(), "{}", text(&plan.stderr));
+    assert!(text(&plan.stderr).is_empty(), "{}", text(&plan.stderr));
+    let document = json_value(&plan);
+    assert_eq!(document["version"], 1);
+    assert_eq!(document["applied"], false);
+    assert!(document["error"].is_null());
+    assert_eq!(document["candidates"][0]["name"], "feature");
+    assert_eq!(document["candidates"][0]["owner"], "grok");
+    assert_eq!(
+        document["candidates"][0]["reasons"],
+        serde_json::json!(["merged"])
+    );
+    assert_eq!(document["candidates"][0]["action"], "wouldRemove");
+    assert!(document["candidates"][0]["detail"].is_null());
+    assert!(document["candidates"][0]["branchDeleted"].is_null());
+    assert!(document["candidates"][0]["path"]
+        .as_str()
+        .unwrap()
+        .ends_with("/feature"));
+
+    let bad = repo.phantom(&["gc", "--older-than", "14", "--json"]);
+    assert_eq!(bad.status.code(), Some(3));
+    assert!(text(&bad.stderr).is_empty(), "{}", text(&bad.stderr));
+    let error = json_value(&bad);
+    assert_eq!(error["error"]["code"], "validation");
+    assert_eq!(error["error"]["exitCode"], 3);
+    assert!(worktree_dir(&repo, "feature").is_dir());
+}
+
+#[test]
+fn gc_skips_dirty_unpushed_current_and_other_agents() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "dirty"]).status.success());
+    fs::write(worktree_dir(&repo, "dirty").join("local.txt"), "x\n").expect("dirty");
+    assert!(repo.phantom(&["create", "wip"]).status.success());
+    commit_in_worktree(&repo, "wip");
+    assert!(repo.phantom(&["create", "here"]).status.success());
+    assert!(repo
+        .phantom(&["create", "bob", "--owner", "bob"])
+        .status
+        .success());
+    commit_in_worktree(&repo, "bob");
+    age_metadata(&repo, "bob");
+
+    let plan = repo.phantom(&["gc"]);
+    assert!(
+        plan.status.success(),
+        "{}\n{}",
+        text(&plan.stdout),
+        text(&plan.stderr)
+    );
+    let planned = text(&plan.stdout);
+    assert!(planned.contains("skip dirty [merged] dirty"), "{planned}");
+    assert!(planned.contains("would remove here [merged]"), "{planned}");
+    assert!(!planned.contains("wip"), "{planned}");
+    assert!(!planned.contains("bob"), "{planned}");
+    assert!(worktree_dir(&repo, "dirty").is_dir());
+
+    let aged = repo.phantom(&["gc", "--older-than", "14d"]);
+    assert!(aged.status.success(), "{}", text(&aged.stderr));
+    let aged_text = text(&aged.stdout);
+    assert!(
+        aged_text.contains("skip bob [olderThan] other agent"),
+        "{aged_text}"
+    );
+    assert!(!aged_text.contains("would remove dirty"), "{aged_text}");
+
+    let current = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["gc", "--apply"])
+        .current_dir(worktree_dir(&repo, "here"))
+        .output()
+        .expect("gc");
+    assert!(current.status.success(), "{}", text(&current.stderr));
+    let current_text = text(&current.stdout);
+    assert!(
+        current_text.contains("skip here [merged] current worktree"),
+        "{current_text}"
+    );
+    assert!(
+        current_text.contains("skip dirty [merged] dirty"),
+        "{current_text}"
+    );
+    assert!(worktree_dir(&repo, "here").is_dir());
+    assert!(worktree_dir(&repo, "dirty").is_dir());
+
+    let forced = repo.phantom(&["gc", "--force"]);
+    assert!(forced.status.success(), "{}", text(&forced.stderr));
+    let forced_text = text(&forced.stdout);
+    assert!(
+        forced_text.contains("removed dirty [merged]"),
+        "{forced_text}"
+    );
+    assert!(
+        forced_text.contains("removed here [merged]"),
+        "{forced_text}"
+    );
+    assert!(!worktree_dir(&repo, "dirty").is_dir());
+    assert!(!worktree_dir(&repo, "here").is_dir());
+    assert!(worktree_dir(&repo, "wip").is_dir());
+    assert!(worktree_dir(&repo, "bob").is_dir());
+}
+
+#[test]
+fn gc_drops_a_missing_directory_and_keeps_an_unpushed_branch() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "gone"]).status.success());
+    assert!(repo.phantom(&["create", "local"]).status.success());
+    commit_in_worktree(&repo, "local");
+    fs::remove_dir_all(worktree_dir(&repo, "gone")).expect("rm gone");
+    fs::remove_dir_all(worktree_dir(&repo, "local")).expect("rm local");
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let text = text(&applied.stdout);
+    assert!(text.contains("removed gone [merged, orphaned]"), "{text}");
+    assert!(
+        text.contains("removed local [orphaned] kept the branch because it has unpushed commits"),
+        "{text}"
+    );
+    assert!(!worktree_registered(&repo, "gone"));
+    assert!(!worktree_registered(&repo, "local"));
+    assert!(!branch_listed(&repo, "gone"));
+    assert!(branch_listed(&repo, "local"));
+}
+
+#[test]
+fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
+    let repo = Repo::new();
+    assert!(repo
+        .phantom(&["create", "topic", "--pr", "7"])
+        .status
+        .success());
+    commit_in_worktree(&repo, "topic");
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let gh = bin.join("gh");
+    fs::write(&gh, "#!/bin/sh\nprintf '%s\\n' '{\"state\":\"MERGED\"}'\n").expect("gh");
+    let mut perms = fs::metadata(&gh).expect("meta").permissions();
+    use std::os::unix::fs::PermissionsExt;
+    perms.set_mode(0o755);
+    fs::set_permissions(&gh, perms).expect("chmod");
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let plan = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["gc", "--pr", "--json"])
+        .env("PATH", &path)
+        .output()
+        .expect("gc");
+    assert!(plan.status.success(), "{}", text(&plan.stderr));
+    let document = json_value(&plan);
+    assert_eq!(
+        document["candidates"][0]["reasons"],
+        serde_json::json!(["pullRequest"])
+    );
+    assert_eq!(document["candidates"][0]["action"], "skipped");
+    assert_eq!(document["candidates"][0]["detail"], "unpushed");
+    assert!(worktree_dir(&repo, "topic").is_dir());
+
+    fs::create_dir_all(repo.home.join(".config/ptm")).expect("config dir");
+    fs::write(
+        repo.home.join(".config/ptm/config.toml"),
+        "keep-branch = true\n",
+    )
+    .expect("preference");
+    let forced = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["gc", "--pr", "--force", "--json"],
+        )
+        .env("PATH", &path)
+        .output()
+        .expect("force");
+    assert!(forced.status.success(), "{}", text(&forced.stderr));
+    let removed = json_value(&forced);
+    assert_eq!(removed["applied"], true);
+    assert_eq!(removed["candidates"][0]["action"], "removed");
+    assert_eq!(removed["candidates"][0]["branchDeleted"], false);
+    assert!(!worktree_dir(&repo, "topic").is_dir());
+    assert!(branch_listed(&repo, "topic"));
+}
+
+#[test]
+fn gc_runs_pre_delete_hooks_only_when_applying() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "feature"]).status.success());
+    assert!(repo.phantom(&["create", "other"]).status.success());
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npre-delete = [\"test \\\"$PTM_NAME\\\" != feature && touch \\\"$PTM_ROOT_PATH/hooked\\\"\"]\n",
+    )
+    .expect("hooks");
+
+    let plan = repo.phantom(&["gc"]);
+    assert!(plan.status.success(), "{}", text(&plan.stderr));
+    assert!(!repo.repo.join("hooked").exists());
+    assert!(worktree_dir(&repo, "feature").is_dir());
+
+    let applied = repo.phantom(&["gc", "--apply", "--json"]);
+    assert_eq!(applied.status.code(), Some(1), "{}", text(&applied.stdout));
+    assert!(
+        text(&applied.stderr).is_empty()
+            || text(&applied.stderr).contains("pre-delete")
+            || text(&applied.stderr).contains("Running")
+    );
+    let document = json_value(&applied);
+    assert_eq!(document["error"]["code"], "error");
+    assert_eq!(document["error"]["exitCode"], 1);
+    let failed = document["candidates"]
+        .as_array()
+        .expect("candidates")
+        .iter()
+        .find(|entry| entry["name"] == "feature")
+        .expect("feature");
+    assert_eq!(failed["action"], "failed");
+    let removed = document["candidates"]
+        .as_array()
+        .expect("candidates")
+        .iter()
+        .find(|entry| entry["name"] == "other")
+        .expect("other");
+    assert_eq!(removed["action"], "removed");
+    assert!(worktree_dir(&repo, "feature").is_dir());
+    assert!(!worktree_dir(&repo, "other").is_dir());
+    assert!(repo.repo.join("hooked").exists());
 }
