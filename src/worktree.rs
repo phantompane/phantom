@@ -107,7 +107,7 @@ pub fn list_worktrees(
 ) -> Result<Vec<WorktreeInfo>> {
     let git_root_string = context.git_root.to_string_lossy().to_string();
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
-    let stored = metadata::load(&context.git_root)?;
+    let stored = metadata::load(&context.git_root).unwrap_or_default();
     let mut infos = Vec::new();
     let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
@@ -275,6 +275,7 @@ pub struct CreateOutcome {
     pub copy_error: Option<String>,
     pub hooks_ran: bool,
     pub hook_failure: Option<HookFailure>,
+    pub metadata_error: Option<String>,
     pub exec: Option<ExecOutcome>,
 }
 
@@ -304,6 +305,9 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
         "Created worktree '{name}' at {}",
         created.path.display()
     ));
+    if let Some(error) = &created.metadata_error {
+        request.logger.warn(&format!("Warning: {error}"));
+    }
     if let Some(error) = &created.copy_error {
         request
             .logger
@@ -314,20 +318,26 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
     }
     let exec = run_action(&name, &created.path, action, &request.logger)?;
     if exec.is_some() {
-        metadata::touch(&context.git_root, &created.path)?;
+        if let Err(error) = metadata::touch(&context.git_root, &created.path) {
+            request
+                .logger
+                .warn(&format!("Warning: Failed to update lastUsedAt: {error}"));
+        }
     }
     let hook_code = created.hook_failure.as_ref().map(|failure| failure.code);
     let action_code = exec.as_ref().map(|item| item.exit_code);
+    let metadata_code = created.metadata_error.as_ref().map(|_| error::GENERAL);
     let worktree = worktree_at_path(&context, &created.path)?;
     Ok(CreateOutcome {
         name,
         path: created.path,
-        exit_code: combine_exit(action_code, hook_code),
+        exit_code: combine_exit(combine_exit(action_code, hook_code), metadata_code),
         worktree,
         base: base.to_string(),
         copy_error: created.copy_error,
         hooks_ran: created.hooks_ran,
         hook_failure: created.hook_failure,
+        metadata_error: created.metadata_error,
         exec,
     })
 }
@@ -337,6 +347,7 @@ pub struct CreatedWorktree {
     pub copy_error: Option<String>,
     pub hook_failure: Option<HookFailure>,
     pub hooks_ran: bool,
+    pub metadata_error: Option<String>,
 }
 
 pub struct AttachedWorktree {
@@ -344,6 +355,7 @@ pub struct AttachedWorktree {
     pub copy_error: Option<String>,
     pub hook_failure: Option<HookFailure>,
     pub hooks_ran: bool,
+    pub metadata_error: Option<String>,
 }
 
 pub struct AttachOutcome {
@@ -353,6 +365,7 @@ pub struct AttachOutcome {
     pub copy_error: Option<String>,
     pub hooks_ran: bool,
     pub hook_failure: Option<HookFailure>,
+    pub metadata_error: Option<String>,
     pub exec: Option<ExecOutcome>,
 }
 
@@ -391,6 +404,7 @@ pub fn create_worktree(
     metadata: &MetadataInput,
 ) -> Result<CreatedWorktree> {
     validate_worktree_name(name)?;
+    metadata::prepare(&context.git_root)?;
     fs::create_dir_all(&context.worktrees_directory)
         .map_err(|error| Error::msg(error.to_string()))?;
     ensure_absent(context, name)?;
@@ -400,7 +414,9 @@ pub fn create_worktree(
         &context.directory_name_separator,
     );
     git::add_worktree(&context.git_root, &path, name, base, true)?;
-    metadata::write(&context.git_root, &path, metadata)?;
+    let metadata_error = metadata::replace(&context.git_root, &path, metadata)
+        .err()
+        .map(|error| error.to_string());
     let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
         .err()
         .map(|error| error.to_string());
@@ -416,6 +432,7 @@ pub fn create_worktree(
         copy_error,
         hook_failure,
         hooks_ran,
+        metadata_error,
     })
 }
 
@@ -444,25 +461,34 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     request
         .logger
         .log(&format!("Attached worktree: {}", request.name));
+    if let Some(error) = &attached.metadata_error {
+        request.logger.warn(&format!("Warning: {error}"));
+    }
     if let Some(failure) = &attached.hook_failure {
         request.logger.warn(&failure.warning(&attached.path));
     }
     let exec = run_action(request.name, &attached.path, action, &request.logger)?;
     if exec.is_some() {
-        metadata::touch(&context.git_root, &attached.path)?;
+        if let Err(error) = metadata::touch(&context.git_root, &attached.path) {
+            request
+                .logger
+                .warn(&format!("Warning: Failed to update lastUsedAt: {error}"));
+        }
     }
     let hook_code = attached.hook_failure.as_ref().map(|failure| failure.code);
     let action_code = exec
         .as_ref()
         .and_then(|item| (!item.ok).then_some(item.exit_code));
+    let metadata_code = attached.metadata_error.as_ref().map(|_| error::GENERAL);
     let worktree = worktree_at_path(&context, &attached.path)?;
     Ok(AttachOutcome {
         path: attached.path,
-        exit_code: combine_exit(action_code, hook_code),
+        exit_code: combine_exit(combine_exit(action_code, hook_code), metadata_code),
         worktree,
         copy_error: attached.copy_error,
         hooks_ran: attached.hooks_ran,
         hook_failure: attached.hook_failure,
+        metadata_error: attached.metadata_error,
         exec,
     })
 }
@@ -476,6 +502,7 @@ pub fn attach_worktree(
     metadata: &MetadataInput,
 ) -> Result<AttachedWorktree> {
     validate_worktree_name(name)?;
+    metadata::prepare(&context.git_root)?;
     let path = paths::worktree_path(
         &context.worktrees_directory,
         name,
@@ -497,7 +524,9 @@ pub fn attach_worktree(
             error
         }
     })?;
-    metadata::write(&context.git_root, &path, metadata)?;
+    let metadata_error = metadata::replace(&context.git_root, &path, metadata)
+        .err()
+        .map(|error| error.to_string());
     let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
         .err()
         .map(|error| {
@@ -516,6 +545,7 @@ pub fn attach_worktree(
         copy_error,
         hook_failure,
         hooks_ran,
+        metadata_error,
     })
 }
 
@@ -558,6 +588,7 @@ pub fn delete_worktree(
     logger: &Logger,
 ) -> std::result::Result<DeleteOutcome, DeleteError> {
     let worktree = find_worktree(context, name, true, expected_path).map_err(DeleteError::bare)?;
+    metadata::prepare(&context.git_root).map_err(|error| DeleteError::kept(error, &worktree))?;
     let path = PathBuf::from(&worktree.path);
     if !paths::is_strictly_inside(&path, &context.worktrees_directory) {
         return Err(DeleteError::kept(
@@ -671,7 +702,9 @@ pub fn exec_in_worktree(
 ) -> Result<i32> {
     let worktree = find_worktree(context, name, false, None)?;
     let path = PathBuf::from(&worktree.path);
-    metadata::touch(&context.git_root, &path)?;
+    if let Err(error) = metadata::touch(&context.git_root, &path) {
+        eprintln!("Warning: {error}");
+    }
     let owned = ptm_env(&worktree.name, &path);
     let mut pairs = owned
         .iter()
@@ -1053,6 +1086,13 @@ pub struct WorktreeJson {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MetadataSaveOutcome {
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CopyFilesOutcome {
     pub ok: bool,
     pub error: Option<String>,
@@ -1104,6 +1144,7 @@ pub struct WorktreeChangeOutput {
     pub worktree: WorktreeJson,
     pub copy_files: CopyFilesOutcome,
     pub post_create: PostCreateOutcome,
+    pub metadata: MetadataSaveOutcome,
     pub exec: Option<ExecOutcome>,
 }
 
@@ -1144,6 +1185,13 @@ impl WorktreeInfo {
     }
 }
 
+pub fn metadata_save_outcome(error: Option<&str>) -> MetadataSaveOutcome {
+    MetadataSaveOutcome {
+        ok: error.is_none(),
+        error: error.map(ToOwned::to_owned),
+    }
+}
+
 pub fn copy_files_outcome(error: Option<&str>) -> CopyFilesOutcome {
     CopyFilesOutcome {
         ok: error.is_none(),
@@ -1179,6 +1227,7 @@ pub fn change_output(
     copy_error: Option<&str>,
     hooks_ran: bool,
     hook_failure: Option<&HookFailure>,
+    metadata_error: Option<&str>,
     exec: Option<ExecOutcome>,
 ) -> WorktreeChangeOutput {
     WorktreeChangeOutput {
@@ -1186,6 +1235,7 @@ pub fn change_output(
         worktree: worktree.to_json(base),
         copy_files: copy_files_outcome(copy_error),
         post_create: post_create_outcome(hooks_ran, hook_failure),
+        metadata: metadata_save_outcome(metadata_error),
         exec,
     }
 }

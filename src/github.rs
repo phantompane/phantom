@@ -18,6 +18,7 @@ pub struct Checkout {
     pub hook_failure: Option<worktree::HookFailure>,
     pub copy_error: Option<String>,
     pub hooks_ran: bool,
+    pub metadata_error: Option<String>,
     pub info: WorktreeInfo,
     pub base: Option<String>,
     pub subject: GithubSubject,
@@ -36,6 +37,7 @@ struct GithubCheckoutOutput {
     github: GithubSubjectOutput,
     copy_files: worktree::CopyFilesOutcome,
     post_create: worktree::PostCreateOutcome,
+    metadata: worktree::MetadataSaveOutcome,
 }
 
 #[derive(Serialize)]
@@ -66,6 +68,7 @@ impl Checkout {
             },
             copy_files: worktree::copy_files_outcome(self.copy_error.as_deref()),
             post_create: worktree::post_create_outcome(self.hooks_ran, self.hook_failure.as_ref()),
+            metadata: worktree::metadata_save_outcome(self.metadata_error.as_deref()),
         })
         .map_err(|error| Error::msg(error.to_string()))
     }
@@ -146,6 +149,7 @@ fn checkout_pull_request(
                 hook_failure: None,
                 copy_error: None,
                 hooks_ran: false,
+                metadata_error: None,
                 info,
                 base: None,
                 subject: GithubSubject::PullRequest {
@@ -188,6 +192,7 @@ fn checkout_pull_request(
         hook_failure: attached.hook_failure,
         copy_error: attached.copy_error,
         hooks_ran: attached.hooks_ran,
+        metadata_error: attached.metadata_error,
         info,
         base: Some(upstream),
         subject: GithubSubject::PullRequest {
@@ -219,6 +224,7 @@ fn checkout_issue(
             hook_failure: None,
             copy_error: None,
             hooks_ran: false,
+            metadata_error: None,
             info,
             base: None,
             subject: GithubSubject::Issue { number },
@@ -237,6 +243,7 @@ fn checkout_issue(
         hook_failure: created.hook_failure,
         copy_error: created.copy_error,
         hooks_ran: created.hooks_ran,
+        metadata_error: created.metadata_error,
         info,
         base: Some(base.to_string()),
         subject: GithubSubject::Issue { number },

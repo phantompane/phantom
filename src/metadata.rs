@@ -103,7 +103,34 @@ pub fn load(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>> {
     Ok(records)
 }
 
-/// Insert or patch the record for `path`. A new record gets both timestamps.
+/// Replace any record at `path`. Create, attach, and a first checkout use this
+/// so a worktree removed outside ptm does not keep the previous owner.
+pub fn replace(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<WorktreeMetadata> {
+    if save_injected() {
+        return Err(Error::msg(
+            "Failed to save worktree metadata: injected failure".to_string(),
+        ));
+    }
+    let key = path_key(path);
+    with_store(git_root, |store| {
+        store.worktrees.retain(|record| record.path != key);
+        let now = iso_now();
+        let mut metadata = WorktreeMetadata {
+            created_at: Some(now.clone()),
+            last_used_at: Some(now),
+            ..WorktreeMetadata::default()
+        };
+        apply_input(&mut metadata, input);
+        store.worktrees.push(StoredWorktree {
+            path: key,
+            metadata: metadata.clone(),
+        });
+        Ok((metadata, true))
+    })
+}
+
+/// Insert or patch the record for `path`. `meta set` and re-checkout use this.
+/// A new record gets both timestamps. An existing record keeps omitted fields.
 pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<WorktreeMetadata> {
     let key = path_key(path);
     with_store(git_root, |store| {
@@ -139,6 +166,54 @@ pub fn touch(git_root: &Path, path: &Path) -> Result<Option<WorktreeMetadata>> {
         record.metadata.last_used_at = Some(iso_now());
         Ok((Some(record.metadata.clone()), true))
     })
+}
+
+/// Lock the store, reject a corrupt file, and check that a new file can be
+/// created beside it. Call this before Git creates or removes a worktree.
+pub fn prepare(git_root: &Path) -> Result<()> {
+    let dir = metadata_dir(git_root);
+    fs::create_dir_all(&dir).map_err(|error| {
+        Error::msg(format!(
+            "Worktree metadata file {} is not writable: {error}",
+            metadata_file(git_root).display()
+        ))
+    })?;
+    let lock = open_lock(&dir)?;
+    lock.lock().map_err(|error| {
+        Error::msg(format!(
+            "Worktree metadata file {} is not writable: {error}",
+            metadata_file(git_root).display()
+        ))
+    })?;
+    let path = dir.join(FILE_NAME);
+    let probe = dir.join(format!(
+        ".{FILE_NAME}.probe-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    let checked = (|| {
+        read_store(&path)?;
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&probe)
+            .map_err(|error| {
+                Error::msg(format!(
+                    "Worktree metadata file {} is not writable: {error}",
+                    path.display()
+                ))
+            })?;
+        let _ = fs::remove_file(&probe);
+        Ok(())
+    })();
+    let _ = lock.unlock();
+    checked
+}
+
+/// `None` when the file is missing or valid. `Some` is a warning for readers.
+pub fn read_problem(git_root: &Path) -> Option<String> {
+    load(git_root).err().map(|error| error.to_string())
 }
 
 /// Drop the record for `path`. Missing records are already the end state.
@@ -290,22 +365,47 @@ fn metadata_dir(git_root: &Path) -> PathBuf {
     }
 }
 
-fn with_store<T>(git_root: &Path, body: impl FnOnce(&mut Store) -> Result<(T, bool)>) -> Result<T> {
-    let dir = metadata_dir(git_root);
-    fs::create_dir_all(&dir).map_err(|error| {
-        Error::msg(format!(
-            "Failed to create worktree metadata directory: {error}"
-        ))
-    })?;
-    let lock = OpenOptions::new()
+fn save_injected() -> bool {
+    #[cfg(debug_assertions)]
+    {
+        std::env::var("PTM_TEST_FAIL_METADATA_SAVE").ok().as_deref() == Some("1")
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        false
+    }
+}
+
+fn open_lock(dir: &Path) -> Result<File> {
+    OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(false)
         .mode(0o600)
         .open(dir.join(LOCK_NAME))
-        .map_err(|error| Error::msg(format!("Failed to lock worktree metadata: {error}")))?;
-    lock.lock()
-        .map_err(|error| Error::msg(format!("Failed to lock worktree metadata: {error}")))?;
+        .map_err(|error| {
+            Error::msg(format!(
+                "Worktree metadata file {} is not writable: {error}",
+                dir.join(FILE_NAME).display()
+            ))
+        })
+}
+
+fn with_store<T>(git_root: &Path, body: impl FnOnce(&mut Store) -> Result<(T, bool)>) -> Result<T> {
+    let dir = metadata_dir(git_root);
+    fs::create_dir_all(&dir).map_err(|error| {
+        Error::msg(format!(
+            "Worktree metadata file {} is not writable: {error}",
+            metadata_file(git_root).display()
+        ))
+    })?;
+    let lock = open_lock(&dir)?;
+    lock.lock().map_err(|error| {
+        Error::msg(format!(
+            "Worktree metadata file {} is not writable: {error}",
+            metadata_file(git_root).display()
+        ))
+    })?;
     let path = dir.join(FILE_NAME);
     let mut store = read_store(&path)?;
     let (value, dirty) = body(&mut store)?;
@@ -324,16 +424,22 @@ fn read_store(path: &Path) -> Result<Store> {
         }
         Err(error) => {
             return Err(Error::msg(format!(
-                "Failed to read worktree metadata: {error}"
+                "Worktree metadata file {} could not be read: {error}",
+                path.display()
             )));
         }
     };
-    let value: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|error| Error::msg(format!("Worktree metadata contains invalid JSON: {error}")))?;
+    let value: serde_json::Value = serde_json::from_str(&content).map_err(|error| {
+        Error::msg(format!(
+            "Worktree metadata file {} contains invalid JSON: {error}",
+            path.display()
+        ))
+    })?;
     if !value.is_object() {
-        return Err(Error::msg(
-            "Worktree metadata is not a JSON object".to_string(),
-        ));
+        return Err(Error::msg(format!(
+            "Worktree metadata file {} is not a JSON object",
+            path.display()
+        )));
     }
     let version = value
         .get("version")
@@ -341,11 +447,16 @@ fn read_store(path: &Path) -> Result<Store> {
         .unwrap_or(serde_json::Value::Null);
     if version.as_u64() != Some(u64::from(STORE_VERSION)) {
         return Err(Error::msg(format!(
-            "Unsupported worktree metadata version: {version}"
+            "Worktree metadata file {} has unsupported version: {version}",
+            path.display()
         )));
     }
-    serde_json::from_value(value)
-        .map_err(|error| Error::msg(format!("Worktree metadata has an invalid shape: {error}")))
+    serde_json::from_value(value).map_err(|error| {
+        Error::msg(format!(
+            "Worktree metadata file {} has an invalid shape: {error}",
+            path.display()
+        ))
+    })
 }
 
 fn write_store(path: &Path, dir: &Path, store: &Store) -> Result<()> {
@@ -504,9 +615,7 @@ mod tests {
 
         fs::write(&file, "{\n  \"version\": 2,\n  \"worktrees\": []\n}\n").expect("version");
         let error = load(&root).expect_err("version");
-        assert!(error
-            .to_string()
-            .contains("Unsupported worktree metadata version"));
+        assert!(error.to_string().contains("unsupported version"));
         assert!(fs::read_to_string(&file)
             .expect("kept")
             .contains("\"version\": 2"));
