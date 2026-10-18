@@ -3392,6 +3392,49 @@ fn clone_overlong_owner_is_validation() {
 }
 
 #[test]
+fn clone_overlong_name_with_existing_parent_is_validation() {
+    let repo = Repo::new();
+    let root = repo.root.join("clones");
+    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+
+    let host = root.join("github.com");
+    fs::create_dir_all(&host).expect("host");
+    let owner = "w".repeat(300);
+    assert_clone_validation(&repo, &format!("github.com/{owner}/widget"));
+    assert!(host.is_dir());
+    assert!(!host.join(&owner).exists());
+
+    let owner_dir = root.join("example.test").join("acme");
+    fs::create_dir_all(&owner_dir).expect("owner");
+    let repo_name = "w".repeat(300);
+    assert_clone_validation(&repo, &format!("example.test/acme/{repo_name}"));
+    assert!(owner_dir.is_dir());
+    assert!(!owner_dir.join(&repo_name).exists());
+}
+
+fn assert_clone_validation(repo: &Repo, source: &str) {
+    let output = repo.phantom(&["clone", source, "--json"]);
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "{source}\n{}\n{}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_str(&text(&output.stdout)).expect("json");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["error"]["code"], "validation");
+    assert_eq!(value["error"]["exitCode"], 3);
+    let message = value["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("File name too long"),
+        "{source}: {message}"
+    );
+    assert!(text(&output.stderr).is_empty(), "{}", text(&output.stderr));
+}
+
+#[test]
 fn clone_surfaces_unreadable_git_config_for_an_existing_checkout() {
     let repo = Repo::new();
     let bare = repo.root.join("bare.git");
