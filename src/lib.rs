@@ -28,7 +28,7 @@ pub mod worktree;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn version_line() -> String {
-    let sha = option_env!("PHANTOM_GIT_SHA").filter(|sha| !sha.is_empty());
+    let sha = option_env!("PTM_GIT_SHA").filter(|sha| !sha.is_empty());
     format_version(VERSION, sha)
 }
 
