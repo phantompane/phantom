@@ -444,10 +444,21 @@ fn copies_config_files_and_runs_post_create() {
 #[test]
 fn preferences_and_project_registry() {
     let repo = Repo::new();
-    let set = repo.phantom(&["preferences", "set", "keepBranch", "true"]);
+    let set = repo.phantom(&["preferences", "set", "keep-branch", "true"]);
     assert!(set.status.success(), "{}", text(&set.stderr));
-    assert!(text(&set.stdout).contains("Set phantom.keepBranch (global) to 'true'"));
-    let get = repo.phantom(&["preferences", "get", "keepBranch"]);
+    let set_stdout = text(&set.stdout);
+    assert!(set_stdout.contains("keep-branch"), "{set_stdout}");
+    assert!(set_stdout.contains("true"), "{set_stdout}");
+    assert!(
+        set_stdout.contains(
+            repo.home
+                .join(".config/ptm/config.toml")
+                .to_str()
+                .expect("path")
+        ),
+        "{set_stdout}"
+    );
+    let get = repo.phantom(&["preferences", "get", "keep-branch"]);
     assert_eq!(text(&get.stdout), "true");
 
     let added = repo.phantom(&["project", "add", "--json"]);
@@ -460,7 +471,7 @@ fn preferences_and_project_registry() {
         repo.repo.to_string_lossy().as_ref()
     );
 
-    repo.phantom(&["preferences", "set", "ghqDiscovery", "false"]);
+    repo.phantom(&["preferences", "set", "ghq-discovery", "false"]);
     let listed = repo.phantom(&["project", "list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let catalog: serde_json::Value = serde_json::from_str(&text(&listed.stdout)).expect("catalog");
@@ -498,7 +509,7 @@ fn project_registry_is_stored_under_xdg_state_home_ptm() {
         legacy_body
     );
 
-    let disabled = repo.phantom(&["preferences", "set", "ghqDiscovery", "false"]);
+    let disabled = repo.phantom(&["preferences", "set", "ghq-discovery", "false"]);
     assert!(disabled.status.success(), "{}", text(&disabled.stderr));
     let listed = repo.phantom(&["project", "list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
@@ -522,7 +533,7 @@ fn project_registry_defaults_to_home_local_state_ptm() {
     let legacy = repo.home.join(".local/state/phantom");
     write_legacy_registry(&legacy);
     let legacy_body = fs::read_to_string(legacy.join("projects.json")).expect("legacy");
-    let disabled = repo.phantom(&["preferences", "set", "ghqDiscovery", "false"]);
+    let disabled = repo.phantom(&["preferences", "set", "ghq-discovery", "false"]);
     assert!(disabled.status.success(), "{}", text(&disabled.stderr));
 
     let added = repo
@@ -571,6 +582,91 @@ fn write_legacy_registry(dir: &std::path::Path) {
 }
 
 #[test]
+fn preferences_file_uses_xdg_config_home() {
+    let repo = Repo::new();
+    let path = repo.home.join(".config/ptm/config.toml");
+    let gitconfig = fs::read_to_string(repo.home.join(".gitconfig")).expect("gitconfig");
+
+    let missing = repo.phantom(&["preferences", "get", "keep-branch"]);
+    assert!(missing.status.success(), "{}", text(&missing.stderr));
+    let missing_stdout = text(&missing.stdout);
+    assert!(missing_stdout.contains("is not set"), "{missing_stdout}");
+    assert!(
+        missing_stdout.contains(path.to_str().expect("path")),
+        "{missing_stdout}"
+    );
+    assert!(!path.exists());
+
+    let invalid_bool = repo.phantom(&["preferences", "set", "keep-branch", "yes"]);
+    assert_eq!(invalid_bool.status.code(), Some(3));
+    assert!(
+        text(&invalid_bool.stderr).contains("true"),
+        "{}",
+        text(&invalid_bool.stderr)
+    );
+    assert!(!path.exists());
+
+    let set = repo.phantom(&["preferences", "set", "directory-name-separator", "-"]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+    let written = fs::read_to_string(&path).expect("config");
+    assert!(
+        written.contains("directory-name-separator = \"-\""),
+        "{written}"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.home.join(".gitconfig")).expect("gitconfig"),
+        gitconfig
+    );
+
+    fs::write(
+        &path,
+        "# header\nkeep-branch = false # inline\n\n# separator\ndirectory-name-separator = \"-\"\n",
+    )
+    .expect("seed");
+    let updated = repo.phantom(&["preferences", "set", "keep-branch", "true"]);
+    assert!(updated.status.success(), "{}", text(&updated.stderr));
+    let written = fs::read_to_string(&path).expect("updated");
+    assert!(written.contains("# header"), "{written}");
+    assert!(written.contains("# inline"), "{written}");
+    assert!(written.contains("# separator"), "{written}");
+    assert!(written.contains("keep-branch = true"), "{written}");
+    assert!(
+        written.contains("directory-name-separator = \"-\""),
+        "{written}"
+    );
+
+    let removed = repo.phantom(&["preferences", "remove", "keep-branch"]);
+    assert!(removed.status.success(), "{}", text(&removed.stderr));
+    let written = fs::read_to_string(&path).expect("removed");
+    assert!(!written.contains("keep-branch"), "{written}");
+    assert!(written.contains("# separator"), "{written}");
+
+    fs::write(&path, "{\n").expect("invalid");
+    let invalid = repo.phantom(&["preferences", "get", "keep-branch"]);
+    assert_eq!(invalid.status.code(), Some(1));
+    let stderr = text(&invalid.stderr);
+    assert!(stderr.contains(path.to_str().expect("path")), "{stderr}");
+
+    fs::write(&path, "editor = \"code\"\n").expect("unknown");
+    let unknown = repo.phantom(&["preferences", "get", "ghq-discovery"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    let stderr = text(&unknown.stderr);
+    assert!(stderr.contains("editor"), "{stderr}");
+    assert!(stderr.contains(path.to_str().expect("path")), "{stderr}");
+
+    fs::remove_file(&path).expect("cleanup");
+    repo.git(&["config", "--global", "phantom.keepBranch", "true"]);
+    let ignored = repo.phantom(&["preferences", "get", "keep-branch"]);
+    assert!(ignored.status.success(), "{}", text(&ignored.stderr));
+    assert!(
+        text(&ignored.stdout).contains("is not set"),
+        "{}",
+        text(&ignored.stdout)
+    );
+    assert!(!path.exists());
+}
+
+#[test]
 fn keep_branch_preference_applies_to_delete() {
     let repo = Repo::new();
     repo.git(&[
@@ -581,7 +677,7 @@ fn keep_branch_preference_applies_to_delete() {
         ".git/phantom/worktrees/removable",
         "HEAD",
     ]);
-    repo.phantom(&["preferences", "set", "keepBranch", "true"]);
+    repo.phantom(&["preferences", "set", "keep-branch", "true"]);
     let deleted = repo.phantom(&["delete", "removable"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     assert!(text(&deleted.stdout).contains("kept its branch 'removable'"));
@@ -603,7 +699,7 @@ fn removed_ai_command_and_preference_are_unknown() {
     assert_eq!(preference.status.code(), Some(3));
     let stderr = text(&preference.stderr);
     assert!(stderr.contains("Unknown preference 'ai'"), "{stderr}");
-    assert!(stderr.contains("worktreesDirectory"), "{stderr}");
+    assert!(stderr.contains("worktrees-directory"), "{stderr}");
 }
 
 #[test]
@@ -617,7 +713,7 @@ fn removed_edit_command_and_editor_preference_are_unknown() {
     assert_eq!(preference.status.code(), Some(3));
     let stderr = text(&preference.stderr);
     assert!(stderr.contains("Unknown preference 'editor'"), "{stderr}");
-    assert!(stderr.contains("worktreesDirectory"), "{stderr}");
+    assert!(stderr.contains("worktrees-directory"), "{stderr}");
 }
 
 #[test]
@@ -852,7 +948,7 @@ fn copy_file_globs_ignore_brackets_in_the_repository_path() {
 #[test]
 fn concurrent_project_add_processes_keep_every_record() {
     let repo = Repo::new();
-    repo.phantom(&["preferences", "set", "ghqDiscovery", "false"]);
+    repo.phantom(&["preferences", "set", "ghq-discovery", "false"]);
     let mut children = Vec::new();
     for index in 0..6 {
         let path = repo.root.join(format!("project-{index}"));

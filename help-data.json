@@ -26,7 +26,7 @@
     },
     {
       "name": "preferences",
-      "description": "Manage phantom user preferences (git config)"
+      "description": "Manage user preferences"
     },
     {
       "name": "version",
@@ -277,22 +277,22 @@
     "preferences": {
       "name": "preferences",
       "usage": "ptm preferences <subcommand>",
-      "description": "Manage phantom user preferences stored in git config (global)",
+      "description": "Manage user preferences stored in $XDG_CONFIG_HOME/ptm/config.toml",
       "examples": [
         {
-          "command": "ptm preferences set worktreesDirectory ../phantom-worktrees",
-          "description": "Store a custom worktreesDirectory (relative to the Git repository root) for all commands"
+          "command": "ptm preferences set worktrees-directory ../phantom-worktrees",
+          "description": "Store a custom worktrees directory (relative to the Git repository root) for all commands"
         },
         {
-          "command": "ptm preferences set directoryNameSeparator \"-\"",
+          "command": "ptm preferences set directory-name-separator \"-\"",
           "description": "Store a separator for flattening worktree directory names while keeping branch names unchanged"
         },
         {
-          "command": "ptm preferences set keepBranch true",
+          "command": "ptm preferences set keep-branch true",
           "description": "Keep branches by default when deleting worktrees with ptm delete"
         },
         {
-          "command": "ptm preferences set ghqDiscovery false",
+          "command": "ptm preferences set ghq-discovery false",
           "description": "Disable automatic project discovery through ghq"
         }
       ],
@@ -302,94 +302,96 @@
         "  set <key>    Set a preference value",
         "  remove <key> Remove a preference value",
         "",
-        "Preferences are saved in git config with the 'phantom.' prefix (global scope).",
+        "Preferences are stored in $XDG_CONFIG_HOME/ptm/config.toml (default ~/.config/ptm/config.toml).",
+        "The file and directory are created on the first set. Comments and formatting are preserved.",
         "Supported keys:",
-        "  worktreesDirectory - path relative to the Git repo root for storing worktrees (defaults to .git/phantom/worktrees)",
-        "  directoryNameSeparator - replaces '/' in worktree directory names only (defaults to / for nested directories)",
-        "  keepBranch - keeps the branch when deleting a worktree (defaults to false)",
-        "  ghqDiscovery - discovers ghq-managed repositories as projects (defaults to true)"
+        "  worktrees-directory - path relative to the Git repo root for storing worktrees (defaults to .git/phantom/worktrees)",
+        "  directory-name-separator - replaces '/' in worktree directory names only (defaults to / for nested directories)",
+        "  keep-branch - keeps the branch when deleting a worktree (defaults to false)",
+        "  ghq-discovery - discovers ghq-managed repositories as projects (defaults to true)"
       ]
     },
     "preferences get": {
       "name": "preferences get",
       "usage": "ptm preferences get <key>",
-      "description": "Show a preference value (reads git config --global phantom.<key>)",
+      "description": "Show a preference value from $XDG_CONFIG_HOME/ptm/config.toml",
       "examples": [
         {
-          "command": "ptm preferences get worktreesDirectory",
+          "command": "ptm preferences get worktrees-directory",
           "description": "Show the preferred worktrees directory (relative to repo root)"
         },
         {
-          "command": "ptm preferences get directoryNameSeparator",
+          "command": "ptm preferences get directory-name-separator",
           "description": "Show the preferred worktree directory name separator"
         },
         {
-          "command": "ptm preferences get keepBranch",
+          "command": "ptm preferences get keep-branch",
           "description": "Show whether delete keeps branches by default"
         },
         {
-          "command": "ptm preferences get ghqDiscovery",
+          "command": "ptm preferences get ghq-discovery",
           "description": "Show whether ghq project discovery is enabled"
         }
       ],
       "notes": [
-        "Supported keys: worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery"
+        "Supported keys: worktrees-directory, directory-name-separator, keep-branch, ghq-discovery"
       ]
     },
     "preferences set": {
       "name": "preferences set",
       "usage": "ptm preferences set <key> <value>",
-      "description": "Set a preference value (writes git config --global phantom.<key>)",
+      "description": "Set a preference value in $XDG_CONFIG_HOME/ptm/config.toml",
       "examples": [
         {
-          "command": "ptm preferences set worktreesDirectory ../phantom-worktrees",
+          "command": "ptm preferences set worktrees-directory ../phantom-worktrees",
           "description": "Store worktrees in ../phantom-worktrees relative to the Git repository root"
         },
         {
-          "command": "ptm preferences set directoryNameSeparator \"-\"",
+          "command": "ptm preferences set directory-name-separator \"-\"",
           "description": "Flatten worktree directory names such as feature/test to feature-test"
         },
         {
-          "command": "ptm preferences set keepBranch true",
+          "command": "ptm preferences set keep-branch true",
           "description": "Keep branches when deleting worktrees by default"
         },
         {
-          "command": "ptm preferences set ghqDiscovery false",
+          "command": "ptm preferences set ghq-discovery false",
           "description": "Disable automatic project discovery through ghq"
         }
       ],
       "notes": [
-        "Supported keys: worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery",
-        "For worktreesDirectory, provide a path relative to the Git repository root; defaults to .git/phantom/worktrees when unset",
-        "For directoryNameSeparator, '/' keeps nested directories; any other string replaces '/' only in the directory path",
-        "For keepBranch, use true to preserve branches on delete or false to keep the default branch deletion behavior",
-        "For ghqDiscovery, use false to list only projects registered directly with Phantom"
+        "Supported keys: worktrees-directory, directory-name-separator, keep-branch, ghq-discovery",
+        "For worktrees-directory, provide a path relative to the Git repository root; defaults to .git/phantom/worktrees when unset",
+        "For directory-name-separator, '/' keeps nested directories; any other string replaces '/' only in the directory path",
+        "For keep-branch, use true to preserve branches on delete or false to keep the default branch deletion behavior",
+        "For ghq-discovery, use false to list only projects registered directly with Phantom",
+        "keep-branch and ghq-discovery are stored as TOML booleans. The other keys are strings."
       ]
     },
     "preferences remove": {
       "name": "preferences remove",
       "usage": "ptm preferences remove <key>",
-      "description": "Remove a preference value (git config --global --unset phantom.<key>)",
+      "description": "Remove a preference value from $XDG_CONFIG_HOME/ptm/config.toml",
       "examples": [
         {
-          "command": "ptm preferences remove worktreesDirectory",
+          "command": "ptm preferences remove worktrees-directory",
           "description": "Unset the custom worktrees directory preference"
         },
         {
-          "command": "ptm preferences remove directoryNameSeparator",
+          "command": "ptm preferences remove directory-name-separator",
           "description": "Restore nested worktree directories that follow branch slashes"
         },
         {
-          "command": "ptm preferences remove keepBranch",
+          "command": "ptm preferences remove keep-branch",
           "description": "Restore the default behavior of deleting branches with worktrees"
         },
         {
-          "command": "ptm preferences remove ghqDiscovery",
+          "command": "ptm preferences remove ghq-discovery",
           "description": "Restore the default behavior of discovering ghq projects"
         }
       ],
       "notes": [
-        "Supported keys: worktreesDirectory, directoryNameSeparator, keepBranch, ghqDiscovery"
+        "Supported keys: worktrees-directory, directory-name-separator, keep-branch, ghq-discovery"
       ]
     },
     "version": {
@@ -469,7 +471,7 @@
       ],
       "notes": [
         "Only one output format option can be used at a time.",
-        "Repositories managed by ghq are discovered automatically unless the ghqDiscovery preference is false.",
+        "Repositories managed by ghq are discovered automatically unless the ghq-discovery preference is false.",
         "ghq is optional; when it is not installed, only registered projects are listed."
       ]
     },
