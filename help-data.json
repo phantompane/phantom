@@ -30,7 +30,7 @@
     },
     {
       "name": "version",
-      "description": "Display phantom version information"
+      "description": "Display the Phantom version"
     },
     {
       "name": "mcp",
@@ -53,7 +53,7 @@
     "create": {
       "name": "create",
       "description": "Create a new Git worktree",
-      "usage": "phantom create [name] [options]",
+      "usage": "ptm create [name] [options]",
       "options": [
         {
           "name": "exec",
@@ -79,27 +79,27 @@
       "examples": [
         {
           "description": "Create a new worktree with an auto-generated name",
-          "command": "phantom create"
+          "command": "ptm create"
         },
         {
           "description": "Create a new worktree named 'feature-auth'",
-          "command": "phantom create feature-auth"
+          "command": "ptm create feature-auth"
         },
         {
           "description": "Create a worktree and run npm install",
-          "command": "phantom create new-feature --exec 'npm install'"
+          "command": "ptm create new-feature --exec 'npm install'"
         },
         {
           "description": "Create a worktree and copy environment files",
-          "command": "phantom create staging --copy-file .env --copy-file database.yml"
+          "command": "ptm create staging --copy-file .env --copy-file database.yml"
         },
         {
           "description": "Create a worktree from main branch",
-          "command": "phantom create feature-new --base main"
+          "command": "ptm create feature-new --base main"
         },
         {
           "description": "Create a worktree from remote branch",
-          "command": "phantom create hotfix --base origin/production"
+          "command": "ptm create hotfix --base origin/production"
         }
       ],
       "notes": [
@@ -111,7 +111,7 @@
     "attach": {
       "name": "attach",
       "description": "Attach to an existing branch by creating a new worktree",
-      "usage": "phantom attach <branch-name> [options]",
+      "usage": "ptm attach <branch-name> [options]",
       "options": [
         {
           "name": "exec",
@@ -131,15 +131,15 @@
       "examples": [
         {
           "description": "Attach to an existing branch",
-          "command": "phantom attach main"
+          "command": "ptm attach main"
         },
         {
           "description": "Attach to a branch and pull latest changes",
-          "command": "phantom attach develop --exec 'git pull'"
+          "command": "ptm attach develop --exec 'git pull'"
         },
         {
           "description": "Attach and copy shared environment files",
-          "command": "phantom attach feature-branch --copy-file .env --copy-file .npmrc"
+          "command": "ptm attach feature-branch --copy-file .env --copy-file .npmrc"
         }
       ],
       "notes": [
@@ -150,7 +150,7 @@
     "list": {
       "name": "list",
       "description": "List all Git worktrees",
-      "usage": "phantom list [options]",
+      "usage": "ptm list [options]",
       "options": [
         {
           "name": "no-default",
@@ -166,15 +166,15 @@
       "examples": [
         {
           "description": "List all worktrees",
-          "command": "phantom list"
+          "command": "ptm list"
         },
         {
           "description": "List only worktree names",
-          "command": "phantom list --names"
+          "command": "ptm list --names"
         },
         {
           "description": "List only non-default worktrees",
-          "command": "phantom list --no-default"
+          "command": "ptm list --no-default"
         }
       ],
       "notes": [
@@ -187,15 +187,15 @@
     "where": {
       "name": "where",
       "description": "Output the filesystem path of a specific worktree",
-      "usage": "phantom where <worktree-name>",
+      "usage": "ptm where <worktree-name>",
       "examples": [
         {
           "description": "Get the path of a worktree",
-          "command": "phantom where feature-auth"
+          "command": "ptm where feature-auth"
         },
         {
           "description": "Change directory to a worktree",
-          "command": "cd $(phantom where staging)"
+          "command": "cd $(ptm where staging)"
         }
       ],
       "notes": [
@@ -206,7 +206,7 @@
     "delete": {
       "name": "delete",
       "description": "Delete one or more Git worktrees",
-      "usage": "phantom delete <name...> [options]",
+      "usage": "ptm delete <name...> [options]",
       "options": [
         {
           "name": "force",
@@ -228,23 +228,23 @@
       "examples": [
         {
           "description": "Delete a worktree",
-          "command": "phantom delete feature-auth"
+          "command": "ptm delete feature-auth"
         },
         {
           "description": "Delete multiple worktrees in one command",
-          "command": "phantom delete feature-auth docs-cleanup spike-login"
+          "command": "ptm delete feature-auth docs-cleanup spike-login"
         },
         {
           "description": "Force delete a worktree with uncommitted changes",
-          "command": "phantom delete experimental --force"
+          "command": "ptm delete experimental --force"
         },
         {
           "description": "Delete the current worktree",
-          "command": "phantom delete --current"
+          "command": "ptm delete --current"
         },
         {
           "description": "Delete a worktree while keeping its branch",
-          "command": "phantom delete feature-auth --keep-branch"
+          "command": "ptm delete feature-auth --keep-branch"
         }
       ],
       "notes": [
@@ -257,19 +257,19 @@
     "exec": {
       "name": "exec",
       "description": "Execute a command in a worktree directory",
-      "usage": "phantom exec <worktree-name> <command> [args...]",
+      "usage": "ptm exec <worktree-name> <command> [args...]",
       "examples": [
         {
           "description": "Run npm test in a worktree",
-          "command": "phantom exec feature-auth npm test"
+          "command": "ptm exec feature-auth npm test"
         },
         {
           "description": "Check git status in a worktree",
-          "command": "phantom exec bugfix-123 git status"
+          "command": "ptm exec bugfix-123 git status"
         },
         {
           "description": "Run a complex command with arguments",
-          "command": "phantom exec staging npm run build -- --production"
+          "command": "ptm exec staging npm run build -- --production"
         }
       ],
       "notes": [
@@ -280,23 +280,23 @@
     },
     "preferences": {
       "name": "preferences",
-      "usage": "phantom preferences <subcommand>",
+      "usage": "ptm preferences <subcommand>",
       "description": "Manage phantom user preferences stored in git config (global)",
       "examples": [
         {
-          "command": "phantom preferences set worktreesDirectory ../phantom-worktrees",
+          "command": "ptm preferences set worktreesDirectory ../phantom-worktrees",
           "description": "Store a custom worktreesDirectory (relative to the Git repository root) for all commands"
         },
         {
-          "command": "phantom preferences set directoryNameSeparator \"-\"",
+          "command": "ptm preferences set directoryNameSeparator \"-\"",
           "description": "Store a separator for flattening worktree directory names while keeping branch names unchanged"
         },
         {
-          "command": "phantom preferences set keepBranch true",
-          "description": "Keep branches by default when deleting worktrees with phantom delete or MCP"
+          "command": "ptm preferences set keepBranch true",
+          "description": "Keep branches by default when deleting worktrees with ptm delete or MCP"
         },
         {
-          "command": "phantom preferences set ghqDiscovery false",
+          "command": "ptm preferences set ghqDiscovery false",
           "description": "Disable automatic project discovery through ghq"
         }
       ],
@@ -316,23 +316,23 @@
     },
     "preferences get": {
       "name": "preferences get",
-      "usage": "phantom preferences get <key>",
+      "usage": "ptm preferences get <key>",
       "description": "Show a preference value (reads git config --global phantom.<key>)",
       "examples": [
         {
-          "command": "phantom preferences get worktreesDirectory",
+          "command": "ptm preferences get worktreesDirectory",
           "description": "Show the preferred worktrees directory (relative to repo root)"
         },
         {
-          "command": "phantom preferences get directoryNameSeparator",
+          "command": "ptm preferences get directoryNameSeparator",
           "description": "Show the preferred worktree directory name separator"
         },
         {
-          "command": "phantom preferences get keepBranch",
+          "command": "ptm preferences get keepBranch",
           "description": "Show whether delete keeps branches by default"
         },
         {
-          "command": "phantom preferences get ghqDiscovery",
+          "command": "ptm preferences get ghqDiscovery",
           "description": "Show whether ghq project discovery is enabled"
         }
       ],
@@ -342,23 +342,23 @@
     },
     "preferences set": {
       "name": "preferences set",
-      "usage": "phantom preferences set <key> <value>",
+      "usage": "ptm preferences set <key> <value>",
       "description": "Set a preference value (writes git config --global phantom.<key>)",
       "examples": [
         {
-          "command": "phantom preferences set worktreesDirectory ../phantom-worktrees",
+          "command": "ptm preferences set worktreesDirectory ../phantom-worktrees",
           "description": "Store worktrees in ../phantom-worktrees relative to the Git repository root"
         },
         {
-          "command": "phantom preferences set directoryNameSeparator \"-\"",
+          "command": "ptm preferences set directoryNameSeparator \"-\"",
           "description": "Flatten worktree directory names such as feature/test to feature-test"
         },
         {
-          "command": "phantom preferences set keepBranch true",
+          "command": "ptm preferences set keepBranch true",
           "description": "Keep branches when deleting worktrees by default"
         },
         {
-          "command": "phantom preferences set ghqDiscovery false",
+          "command": "ptm preferences set ghqDiscovery false",
           "description": "Disable automatic project discovery through ghq"
         }
       ],
@@ -372,23 +372,23 @@
     },
     "preferences remove": {
       "name": "preferences remove",
-      "usage": "phantom preferences remove <key>",
+      "usage": "ptm preferences remove <key>",
       "description": "Remove a preference value (git config --global --unset phantom.<key>)",
       "examples": [
         {
-          "command": "phantom preferences remove worktreesDirectory",
+          "command": "ptm preferences remove worktreesDirectory",
           "description": "Unset the custom worktrees directory preference"
         },
         {
-          "command": "phantom preferences remove directoryNameSeparator",
+          "command": "ptm preferences remove directoryNameSeparator",
           "description": "Restore nested worktree directories that follow branch slashes"
         },
         {
-          "command": "phantom preferences remove keepBranch",
+          "command": "ptm preferences remove keepBranch",
           "description": "Restore the default behavior of deleting branches with worktrees"
         },
         {
-          "command": "phantom preferences remove ghqDiscovery",
+          "command": "ptm preferences remove ghqDiscovery",
           "description": "Restore the default behavior of discovering ghq projects"
         }
       ],
@@ -398,22 +398,22 @@
     },
     "version": {
       "name": "version",
-      "description": "Display phantom version information",
-      "usage": "phantom version",
+      "description": "Display the Phantom version",
+      "usage": "ptm version",
       "examples": [
         {
           "description": "Show version",
-          "command": "phantom version"
+          "command": "ptm version"
         }
       ],
       "notes": [
-        "Also accessible via 'phantom --version' or 'phantom -v'"
+        "Also accessible via 'ptm --version' or 'ptm -v'"
       ]
     },
     "mcp": {
       "name": "mcp",
       "description": "Manage MCP (Model Context Protocol) server for Phantom",
-      "usage": "phantom mcp <subcommand> [options]",
+      "usage": "ptm mcp <subcommand> [options]",
       "options": [
         {
           "name": "help",
@@ -425,7 +425,7 @@
       "examples": [
         {
           "description": "Start the MCP server",
-          "command": "phantom mcp serve"
+          "command": "ptm mcp serve"
         }
       ],
       "notes": [
@@ -438,19 +438,19 @@
     "project": {
       "name": "project",
       "description": "Manage and discover Git projects",
-      "usage": "phantom project <subcommand> [options]",
+      "usage": "ptm project <subcommand> [options]",
       "examples": [
         {
           "description": "Register the current Git repository",
-          "command": "phantom project add"
+          "command": "ptm project add"
         },
         {
           "description": "List available projects for an AI agent",
-          "command": "phantom project list --json"
+          "command": "ptm project list --json"
         },
         {
           "description": "Remove a project from the registry",
-          "command": "phantom project remove proj_550e8400-e29b-41d4-a716-446655440000"
+          "command": "ptm project remove proj_550e8400-e29b-41d4-a716-446655440000"
         }
       ],
       "notes": [
@@ -461,7 +461,7 @@
     "project add": {
       "name": "project add",
       "description": "Register a Git repository as a Phantom project",
-      "usage": "phantom project add [path] [options]",
+      "usage": "ptm project add [path] [options]",
       "options": [
         {
           "name": "json",
@@ -477,7 +477,7 @@
     "project list": {
       "name": "project list",
       "description": "List registered and discovered Phantom projects",
-      "usage": "phantom project list [options]",
+      "usage": "ptm project list [options]",
       "options": [
         {
           "name": "json",
@@ -504,7 +504,7 @@
     "project remove": {
       "name": "project remove",
       "description": "Remove a Git project from Phantom's registry",
-      "usage": "phantom project remove <id|name|path> [options]",
+      "usage": "ptm project remove <id|name|path> [options]",
       "options": [
         {
           "name": "json",
@@ -521,15 +521,15 @@
     },
     "github": {
       "name": "github",
-      "usage": "phantom github <subcommand> [options]",
+      "usage": "ptm github <subcommand> [options]",
       "description": "GitHub-specific commands for phantom",
       "examples": [
         {
-          "command": "phantom github checkout 123",
+          "command": "ptm github checkout 123",
           "description": "Create a worktree for PR or issue #123"
         },
         {
-          "command": "phantom gh checkout 456",
+          "command": "ptm gh checkout 456",
           "description": "Same as above, using the gh alias"
         }
       ],
@@ -546,7 +546,7 @@
     },
     "github checkout": {
       "name": "github checkout",
-      "usage": "phantom github checkout <number> [options]",
+      "usage": "ptm github checkout <number> [options]",
       "description": "Create a worktree for a GitHub PR or issue",
       "options": [
         {
@@ -557,15 +557,15 @@
       ],
       "examples": [
         {
-          "command": "phantom github checkout 123",
+          "command": "ptm github checkout 123",
           "description": "Create a worktree for PR #123 (checks out PR branch)"
         },
         {
-          "command": "phantom github checkout 456",
+          "command": "ptm github checkout 456",
           "description": "Create a worktree for issue #456 (creates new branch)"
         },
         {
-          "command": "phantom github checkout 789 --base develop",
+          "command": "ptm github checkout 789 --base develop",
           "description": "Create a worktree for issue #789 based on develop branch"
         }
       ],
@@ -581,15 +581,15 @@
     },
     "gh": {
       "name": "github",
-      "usage": "phantom github <subcommand> [options]",
+      "usage": "ptm github <subcommand> [options]",
       "description": "GitHub-specific commands for phantom",
       "examples": [
         {
-          "command": "phantom github checkout 123",
+          "command": "ptm github checkout 123",
           "description": "Create a worktree for PR or issue #123"
         },
         {
-          "command": "phantom gh checkout 456",
+          "command": "ptm gh checkout 456",
           "description": "Same as above, using the gh alias"
         }
       ],
@@ -606,7 +606,7 @@
     },
     "gh checkout": {
       "name": "github checkout",
-      "usage": "phantom github checkout <number> [options]",
+      "usage": "ptm github checkout <number> [options]",
       "description": "Create a worktree for a GitHub PR or issue",
       "options": [
         {
@@ -617,15 +617,15 @@
       ],
       "examples": [
         {
-          "command": "phantom github checkout 123",
+          "command": "ptm github checkout 123",
           "description": "Create a worktree for PR #123 (checks out PR branch)"
         },
         {
-          "command": "phantom github checkout 456",
+          "command": "ptm github checkout 456",
           "description": "Create a worktree for issue #456 (creates new branch)"
         },
         {
-          "command": "phantom github checkout 789 --base develop",
+          "command": "ptm github checkout 789 --base develop",
           "description": "Create a worktree for issue #789 based on develop branch"
         }
       ],

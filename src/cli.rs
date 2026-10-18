@@ -155,10 +155,7 @@ fn list(args: &[String]) -> Result<i32> {
 fn where_cmd(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &[], true)?;
     if parsed.positionals.is_empty() {
-        return fail(
-            &Error::msg("Usage: phantom where <worktree-name>"),
-            VALIDATION,
-        );
+        return fail(&Error::msg("Usage: ptm where <worktree-name>"), VALIDATION);
     }
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = match git::git_root(&cwd) {
@@ -254,7 +251,7 @@ fn exec(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &[], true)?;
     if parsed.positionals.len() < 2 {
         return fail(
-            &Error::msg("Usage: phantom exec <worktree-name> <command> [args...]"),
+            &Error::msg("Usage: ptm exec <worktree-name> <command> [args...]"),
             VALIDATION,
         );
     }
@@ -321,10 +318,7 @@ fn preferences_root(args: &[String]) -> Result<i32> {
 fn preferences_get(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &[], true)?;
     if parsed.positionals.len() != 1 {
-        return fail(
-            &Error::msg("Usage: phantom preferences get <key>"),
-            VALIDATION,
-        );
+        return fail(&Error::msg("Usage: ptm preferences get <key>"), VALIDATION);
     }
     let key = &parsed.positionals[0];
     if let Err(error) = preferences::require_key(key) {
@@ -347,7 +341,7 @@ fn preferences_get(args: &[String]) -> Result<i32> {
 fn preferences_set(args: &[String]) -> Result<i32> {
     if args.len() < 2 {
         return fail(
-            &Error::msg("Usage: phantom preferences set <key> <value>"),
+            &Error::msg("Usage: ptm preferences set <key> <value>"),
             VALIDATION,
         );
     }
@@ -377,7 +371,7 @@ fn preferences_remove(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &[], true)?;
     if parsed.positionals.len() != 1 {
         return fail(
-            &Error::msg("Usage: phantom preferences remove <key>"),
+            &Error::msg("Usage: ptm preferences remove <key>"),
             VALIDATION,
         );
     }
@@ -438,7 +432,7 @@ fn project_add(args: &[String]) -> Result<i32> {
     };
     if parsed.positionals.len() > 1 {
         return fail(
-            &Error::msg("Usage: phantom project add [path] [--json]"),
+            &Error::msg("Usage: ptm project add [path] [--json]"),
             VALIDATION,
         );
     }
@@ -544,7 +538,7 @@ fn project_remove(args: &[String]) -> Result<i32> {
     };
     if parsed.positionals.len() != 1 {
         return fail(
-            &Error::msg("Usage: phantom project remove <id|name|path> [--json]"),
+            &Error::msg("Usage: ptm project remove <id|name|path> [--json]"),
             VALIDATION,
         );
     }

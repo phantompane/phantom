@@ -14,7 +14,7 @@ pub enum Error {
     WorktreeAlreadyExists(String),
     #[error("Branch '{0}' not found")]
     BranchNotFound(String),
-    #[error("Not a git repository. Run phantom from inside a Git repository.")]
+    #[error("Not a git repository. Run ptm from inside a Git repository.")]
     NotARepository,
     #[error(
         "Worktree '{name}' has uncommitted changes ({files} files). Use --force to delete anyway."
