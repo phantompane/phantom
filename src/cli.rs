@@ -5,7 +5,7 @@ use crate::error::{Error, Result, GENERAL, NOT_FOUND, SUCCESS, VALIDATION};
 use crate::git;
 use crate::github;
 use crate::help;
-use crate::preferences::{self, Preferences};
+use crate::preferences;
 use crate::projects::{self, ProjectListEntry, ProjectRecord, ProjectRegistryStore};
 use crate::worktree::{self, ActionRequest, Logger};
 
@@ -322,10 +322,13 @@ fn preferences_get(args: &[String]) -> Result<i32> {
     };
     match preferences::preference_value(&loaded, key) {
         Some(value) => println!("{value}"),
-        None => println!(
-            "Preference '{key}' is not set (git config --global {})",
-            preferences::config_key(key)
-        ),
+        None => {
+            let path = match preferences::config_path() {
+                Ok(path) => path,
+                Err(error) => return fail(&error, GENERAL),
+            };
+            println!("Preference '{key}' is not set ({})", path.display());
+        }
     }
     Ok(SUCCESS)
 }
@@ -351,11 +354,11 @@ fn preferences_set(args: &[String]) -> Result<i32> {
     if let Some(message) = preferences::validate_preference_value(key, &value) {
         return fail(&Error::msg(message), VALIDATION);
     }
-    let config_key = preferences::config_key(key);
-    if let Err(error) = git::config_set_global(&config_key, &value) {
-        return fail(&error, GENERAL);
-    }
-    println!("Set {config_key} (global) to '{value}'");
+    let path = match preferences::set_preference(key, &value) {
+        Ok(path) => path,
+        Err(error) => return fail(&error, GENERAL),
+    };
+    println!("Set {key} to '{value}' in {}", path.display());
     Ok(SUCCESS)
 }
 
@@ -371,11 +374,11 @@ fn preferences_remove(args: &[String]) -> Result<i32> {
     if let Err(error) = preferences::require_key(key) {
         return fail(&error, VALIDATION);
     }
-    let config_key = preferences::config_key(key);
-    if let Err(error) = git::config_unset_global(&config_key) {
-        return fail(&error, GENERAL);
-    }
-    println!("Removed {config_key} from global git config");
+    let path = match preferences::remove_preference(key) {
+        Ok(path) => path,
+        Err(error) => return fail(&error, GENERAL),
+    };
+    println!("Removed {key} from {}", path.display());
     Ok(SUCCESS)
 }
 
@@ -458,7 +461,10 @@ fn project_list(args: &[String]) -> Result<i32> {
             VALIDATION,
         );
     }
-    let loaded = preferences::load_preferences().unwrap_or_else(|_| Preferences::default());
+    let loaded = match preferences::load_preferences() {
+        Ok(preferences) => preferences,
+        Err(error) => return fail(&error, GENERAL),
+    };
     let catalog = projects::list_catalog(loaded.ghq_discovery != Some(false))?;
     for warning in &catalog.warnings {
         eprintln!("Warning: {warning}");
