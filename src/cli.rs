@@ -26,9 +26,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         return Ok(SUCCESS);
     }
     match find(args, COMMANDS) {
-        Some((command, remaining))
-            if remaining.iter().any(|arg| arg == "-h" || arg == "--help") =>
-        {
+        Some((command, remaining)) if requests_help(command, remaining) => {
             match help::command_help(command.help_key)? {
                 Some(text) => println!("{text}"),
                 None => println!("Help not available for command '{}'", command.name),
@@ -59,22 +57,27 @@ fn create(args: &[String]) -> Result<i32> {
     let parsed = args::parse(
         args,
         &[
-            value_flag("exec", Some('x')),
+            remainder_flag("exec", Some('x')),
             Opt {
                 name: "copy-file",
                 short: None,
                 value: true,
                 multiple: true,
+                remainder: false,
             },
             value_flag("base", None),
         ],
         true,
     )?;
+    let action = match action_from(&parsed) {
+        Ok(action) => action,
+        Err(error) => return fail(&error, VALIDATION),
+    };
     match worktree::run_create(worktree::CreateRequest {
         name: parsed.positionals.first().map(String::as_str),
         base: parsed.value("base"),
         copy_files: &parsed.values("copy-file"),
-        action: action_from(&parsed),
+        action,
         logger: Logger::on(),
     }) {
         Ok(outcome) => Ok(outcome.exit_code.unwrap_or(SUCCESS)),
@@ -86,12 +89,13 @@ fn attach(args: &[String]) -> Result<i32> {
     let parsed = args::parse(
         args,
         &[
-            value_flag("exec", Some('x')),
+            remainder_flag("exec", Some('x')),
             Opt {
                 name: "copy-file",
                 short: None,
                 value: true,
                 multiple: true,
+                remainder: false,
             },
         ],
         true,
@@ -102,10 +106,14 @@ fn attach(args: &[String]) -> Result<i32> {
             VALIDATION,
         );
     };
+    let action = match action_from(&parsed) {
+        Ok(action) => action,
+        Err(error) => return fail(&error, VALIDATION),
+    };
     match worktree::run_attach(worktree::AttachRequest {
         name,
         copy_files: &parsed.values("copy-file"),
-        action: action_from(&parsed),
+        action,
         logger: Logger::on(),
     }) {
         Ok(outcome) => Ok(outcome.exit_code.unwrap_or(SUCCESS)),
@@ -241,7 +249,7 @@ fn delete(args: &[String]) -> Result<i32> {
 }
 
 fn exec(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &[], true)?;
+    let parsed = args::parse_with(args, &[], true, Some(1))?;
     if parsed.positionals.len() < 2 {
         return fail(
             &Error::msg("Usage: ptm exec <worktree-name> <command> [args...]"),
@@ -638,10 +646,58 @@ fn catalog_json(projects: &[ProjectListEntry], version: u32) -> serde_json::Valu
     })
 }
 
-fn action_from(parsed: &Parsed) -> ActionRequest {
-    ActionRequest {
-        exec: parsed.value("exec").map(str::to_string),
+fn action_from(parsed: &Parsed) -> Result<ActionRequest> {
+    if parsed.occurrences("exec") > 1 {
+        return Err(Error::msg("The --exec option can only be specified once"));
     }
+    let exec = parsed.values("exec");
+    Ok(ActionRequest {
+        exec: (!exec.is_empty()).then_some(exec),
+    })
+}
+
+fn requests_help(command: &Command, args: &[String]) -> bool {
+    match command.name {
+        // `ptm exec <name> <command> [args...]`: help flags after the name
+        // belong to the command.
+        "exec" => help_before_positionals(args, 1),
+        // `create`/`attach --exec <command> [args...]`: help flags after
+        // `--exec` belong to the command.
+        "create" | "attach" => help_before_trailing_exec(args),
+        _ => args.iter().any(|arg| is_help_flag(arg)),
+    }
+}
+
+fn help_before_positionals(args: &[String], limit: usize) -> bool {
+    let mut positionals = 0usize;
+    for arg in args {
+        if positionals >= limit || arg == "--" {
+            return false;
+        }
+        if is_help_flag(arg) {
+            return true;
+        }
+        if !arg.starts_with('-') {
+            positionals += 1;
+        }
+    }
+    false
+}
+
+fn help_before_trailing_exec(args: &[String]) -> bool {
+    for arg in args {
+        if arg == "--" || arg == "--exec" || arg == "-x" {
+            return false;
+        }
+        if is_help_flag(arg) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_help_flag(arg: &str) -> bool {
+    arg == "-h" || arg == "--help"
 }
 
 fn flag(name: &'static str, short: Option<char>) -> Opt {
@@ -650,6 +706,7 @@ fn flag(name: &'static str, short: Option<char>) -> Opt {
         short,
         value: false,
         multiple: false,
+        remainder: false,
     }
 }
 
@@ -659,6 +716,17 @@ fn value_flag(name: &'static str, short: Option<char>) -> Opt {
         short,
         value: true,
         multiple: false,
+        remainder: false,
+    }
+}
+
+fn remainder_flag(name: &'static str, short: Option<char>) -> Opt {
+    Opt {
+        name,
+        short,
+        value: true,
+        multiple: false,
+        remainder: true,
     }
 }
 
