@@ -101,7 +101,7 @@ pub fn scan_repository_root(root: &Path) -> Vec<String> {
     };
     for host in hosts.flatten() {
         let host_path = host.path();
-        if !is_directory(&host_path) {
+        if !is_project_directory(&host_path) {
             continue;
         }
         let Ok(owners) = fs::read_dir(&host_path) else {
@@ -109,7 +109,7 @@ pub fn scan_repository_root(root: &Path) -> Vec<String> {
         };
         for owner in owners.flatten() {
             let owner_path = owner.path();
-            if !is_directory(&owner_path) {
+            if !is_project_directory(&owner_path) {
                 continue;
             }
             let Ok(repos) = fs::read_dir(&owner_path) else {
@@ -117,7 +117,8 @@ pub fn scan_repository_root(root: &Path) -> Vec<String> {
             };
             for repo in repos.flatten() {
                 let repo_path = repo.path();
-                if !is_directory(&repo_path) || !repo_path.join(".git").exists() {
+                // Dot directories include in-progress `.ptm-clone-*` staging checkouts.
+                if !is_project_directory(&repo_path) || !repo_path.join(".git").exists() {
                     continue;
                 }
                 let canonical = fs::canonicalize(&repo_path).unwrap_or(repo_path);
@@ -349,7 +350,11 @@ fn clone_with_git(
     depth: Option<u32>,
 ) -> Result<()> {
     let destination = path_arg(destination)?;
-    let mut args = vec!["clone".to_string()];
+    let mut args = vec![
+        "clone".to_string(),
+        "--origin".to_string(),
+        "origin".to_string(),
+    ];
     if let Some(branch) = branch {
         args.push("--branch".to_string());
         args.push(branch.to_string());
@@ -766,6 +771,15 @@ fn is_directory(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn is_project_directory(path: &Path) -> bool {
+    !is_dot_name(path) && is_directory(path)
+}
+
+fn is_dot_name(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.as_encoded_bytes().starts_with(b"."))
+}
+
 fn invalid_source(input: &str) -> Error {
     let input = redact_userinfo(input);
     Error::validation(format!(
@@ -1114,9 +1128,27 @@ mod tests {
         fs::create_dir_all(root.join("github.com").join("owner").join("not-a-repo"))
             .expect("plain");
         fs::write(root.join("github.com").join("file"), "nope").expect("file");
+        let staging = root
+            .join("github.com")
+            .join("owner")
+            .join(".ptm-clone-1-abc");
+        fs::create_dir_all(staging.join(".git")).expect("staging");
+        fs::create_dir_all(root.join(".hidden").join("owner").join("repo").join(".git"))
+            .expect("hidden host");
+        fs::create_dir_all(
+            root.join("github.com")
+                .join(".owner")
+                .join("repo")
+                .join(".git"),
+        )
+        .expect("hidden owner");
         let found = scan_repository_root(&root);
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(found[0].ends_with("/github.com/owner/repo"), "{found:?}");
+        assert!(
+            found.iter().all(|path| !path.contains(".ptm-clone")),
+            "{found:?}"
+        );
         assert!(scan_repository_root(&root.join("missing")).is_empty());
         let _ = fs::remove_dir_all(root);
     }

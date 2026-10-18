@@ -3179,6 +3179,51 @@ fn clone_root_resolution_order() {
     assert_clone_landed(&from_home, &default_root);
 }
 
+#[test]
+fn clone_names_the_remote_origin_when_default_remote_name_is_upstream() {
+    let repo = Repo::new();
+    let bare = repo.root.join("bare.git");
+    repo.git(&[
+        "clone",
+        "--bare",
+        repo.repo.to_str().expect("repo"),
+        bare.to_str().expect("bare"),
+    ]);
+    append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
+    repo.git(&["config", "--global", "clone.defaultRemoteName", "upstream"]);
+    let root = repo.root.join("clones");
+    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+
+    let cloned = repo.phantom(&["clone", "example/widget", "--json"]);
+    assert!(
+        cloned.status.success(),
+        "{}\n{}",
+        text(&cloned.stdout),
+        text(&cloned.stderr)
+    );
+    let destination = canonical(&root.join("github.com/example/widget"));
+    let remotes = repo
+        .command("git", &["remote"])
+        .current_dir(&destination)
+        .output()
+        .expect("remote");
+    assert!(remotes.status.success(), "{}", text(&remotes.stderr));
+    assert_eq!(text(&remotes.stdout), "origin");
+
+    let again = repo.phantom(&["clone", "example/widget", "--update", "--json"]);
+    assert!(
+        again.status.success(),
+        "{}\n{}",
+        text(&again.stdout),
+        text(&again.stderr)
+    );
+    let again_json: serde_json::Value = serde_json::from_str(&text(&again.stdout)).expect("json");
+    assert_eq!(again_json["cloned"], false);
+    assert_eq!(again_json["updated"], true);
+    assert_eq!(again_json["path"], destination.to_string_lossy().as_ref());
+}
+
 fn append_instead_of(repo: &Repo, bare: &std::path::Path, url: &str) {
     let path = repo.home.join(".gitconfig");
     let mut body = fs::read_to_string(&path).unwrap_or_default();
