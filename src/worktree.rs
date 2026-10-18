@@ -170,7 +170,7 @@ fn recorded_head(head: Option<&str>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn directory_name(path: &Path, worktrees_directory: &Path) -> Option<String> {
+pub(crate) fn directory_name(path: &Path, worktrees_directory: &Path) -> Option<String> {
     if !paths::is_strictly_inside(path, worktrees_directory) {
         return None;
     }
