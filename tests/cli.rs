@@ -347,7 +347,7 @@ fn github_checkout_logs_the_post_create_hook() {
     let gh = bin.join("gh");
     fs::write(
         &gh,
-        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nif [ \"$1\" = \"api\" ]; then\n  printf '%s\\n' '{\"number\":7}'\n  exit 0\nfi\nprintf '%s\\n' \"unexpected gh: $*\" >&2\nexit 1\n",
+        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"url\":\"https://github.com/acme/demo\",\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nif [ \"$1\" = \"api\" ]; then\n  printf '%s\\n' '{\"number\":7}'\n  exit 0\nfi\nprintf '%s\\n' \"unexpected gh: $*\" >&2\nexit 1\n",
     )
     .expect("gh");
     use std::os::unix::fs::PermissionsExt;
@@ -1542,7 +1542,7 @@ fn fake_gh_for_topic_pr(repo: &Repo) -> String {
         &gh,
         r#"#!/bin/sh
 if [ "$1" = "repo" ]; then
-  printf '%s\n' '{"owner":{"login":"acme"},"name":"demo"}'
+  printf '%s\n' '{"url":"https://github.com/acme/demo","owner":{"login":"acme"},"name":"demo"}'
   exit 0
 fi
 case "$2" in
@@ -2467,7 +2467,7 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
     let gh = bin.join("gh");
     fs::write(
         &gh,
-        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":7}'\nexit 0\n",
+        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"url\":\"https://github.com/acme/demo\",\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":7}'\nexit 0\n",
     )
     .expect("gh");
     use std::os::unix::fs::PermissionsExt;
@@ -2512,7 +2512,7 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     let gh = bin.join("gh");
     fs::write(
         &gh,
-        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":7}'\nexit 0\n",
+        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"url\":\"https://github.com/acme/demo\",\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":7}'\nexit 0\n",
     )
     .expect("gh");
     use std::os::unix::fs::PermissionsExt;
@@ -3616,7 +3616,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
     let checkout_bin = repo.root.join("bin/gh");
     fs::write(
         &checkout_bin,
-        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":9}'\nexit 0\n",
+        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"url\":\"https://github.com/acme/demo\",\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":9}'\nexit 0\n",
     )
     .expect("gh");
     use std::os::unix::fs::PermissionsExt;
@@ -3891,7 +3891,7 @@ fn github_checkout_project_passes_the_selected_host() {
             "remote",
             "add",
             "origin",
-            "https://ghe.example.com/acme/tool.git",
+            "ssh://git@ghe.corp.example:2222/acme/tool.git",
         ],
     );
     let bin = repo.root.join("bin");
@@ -3900,7 +3900,7 @@ fn github_checkout_project_passes_the_selected_host() {
     let gh = bin.join("gh");
     fs::write(
         &gh,
-        "#!/bin/sh\nprintf '%s\\n' \"pwd=$(pwd)\" >> \"$PTM_GH_LOG\"\nprintf '%s\\n' \"$*\" >> \"$PTM_GH_LOG\"\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"owner\":{\"login\":\"acme\"},\"name\":\"tool\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":3}'\nexit 0\n",
+        "#!/bin/sh\nprintf '%s\\n' \"pwd=$(pwd)\" >> \"$PTM_GH_LOG\"\nprintf '%s\\n' \"$*\" >> \"$PTM_GH_LOG\"\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' \"$PTM_GH_REPO_JSON\"\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":3}'\nexit 0\n",
     )
     .expect("gh");
     use std::os::unix::fs::PermissionsExt;
@@ -3926,6 +3926,10 @@ fn github_checkout_project_passes_the_selected_host() {
         )
         .env("PATH", &path_env)
         .env("PTM_GH_LOG", &log)
+        .env(
+            "PTM_GH_REPO_JSON",
+            r#"{"url":"https://ghe.corp.example/acme/tool","owner":{"login":"acme"},"name":"tool"}"#,
+        )
         .output()
         .expect("checkout");
     assert!(
@@ -3938,11 +3942,169 @@ fn github_checkout_project_passes_the_selected_host() {
     assert!(tool.join(".git/phantom/worktrees/issues/3").is_dir());
     let recorded = fs::read_to_string(&log).expect("gh log");
     assert!(
-        recorded.contains("--hostname ghe.example.com"),
+        recorded.contains("--hostname ghe.corp.example"),
         "{recorded}"
     );
+    assert!(!recorded.contains(":2222"), "{recorded}");
     assert!(recorded.contains("repos/acme/tool/issues/3"), "{recorded}");
     let tool_pwd = canonical(&tool).to_string_lossy().to_string();
     assert!(recorded.contains(&format!("pwd={tool_pwd}")), "{recorded}");
     assert!(!recorded.contains(&format!("pwd={}", repo.repo.display())));
+
+    fs::write(&log, "").expect("truncate");
+    let local = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["github", "checkout", "4"])
+        .current_dir(&tool)
+        .env("PATH", &path_env)
+        .env("PTM_GH_LOG", &log)
+        .env(
+            "PTM_GH_REPO_JSON",
+            r#"{"url":"https://ghe.corp.example/acme/tool","owner":{"login":"acme"},"name":"tool"}"#,
+        )
+        .output()
+        .expect("local checkout");
+    assert!(
+        local.status.success(),
+        "{}\n{}",
+        text(&local.stdout),
+        text(&local.stderr)
+    );
+    let local_log = fs::read_to_string(&log).expect("local log");
+    assert!(
+        local_log.contains("--hostname ghe.corp.example"),
+        "{local_log}"
+    );
+    assert!(!local_log.contains(":2222"), "{local_log}");
+
+    let alias = repo.root.join("alias-tool");
+    fs::create_dir_all(&alias).expect("alias");
+    git_at(&repo, &alias, &["init", "-b", "main"]);
+    git_at(
+        &repo,
+        &alias,
+        &["config", "user.email", "phantom-rust@example.com"],
+    );
+    git_at(&repo, &alias, &["config", "user.name", "Phantom Rust"]);
+    fs::write(alias.join("README.md"), "alias\n").expect("readme");
+    git_at(&repo, &alias, &["add", "README.md"]);
+    git_at(&repo, &alias, &["commit", "-m", "initial"]);
+    git_at(&repo, &alias, &["remote", "add", "origin", "gh:acme/tool"]);
+    fs::write(&log, "").expect("truncate");
+    let aliased = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "github",
+                "checkout",
+                "-p",
+                alias.to_str().expect("alias"),
+                "5",
+            ],
+        )
+        .env("PATH", &path_env)
+        .env("PTM_GH_LOG", &log)
+        .env(
+            "PTM_GH_REPO_JSON",
+            r#"{"url":"https://github.com/acme/tool","owner":{"login":"acme"},"name":"tool"}"#,
+        )
+        .output()
+        .expect("alias checkout");
+    assert!(
+        aliased.status.success(),
+        "{}\n{}",
+        text(&aliased.stdout),
+        text(&aliased.stderr)
+    );
+    let alias_log = fs::read_to_string(&log).expect("alias log");
+    assert!(alias_log.contains("--hostname github.com"), "{alias_log}");
+    assert!(
+        !alias_log.contains("--hostname gh\n") && !alias_log.contains("--hostname gh "),
+        "{alias_log}"
+    );
+}
+
+#[test]
+fn relative_origin_is_not_a_github_project_name() {
+    let repo = Repo::new();
+    let path_env = silent_ghq_path(&repo);
+    let project = repo.root.join("ptm805local");
+    fs::create_dir_all(&project).expect("project");
+    git_at(&repo, &project, &["init", "-b", "main"]);
+    git_at(
+        &repo,
+        &project,
+        &["config", "user.email", "phantom-rust@example.com"],
+    );
+    git_at(&repo, &project, &["config", "user.name", "Phantom Rust"]);
+    fs::write(project.join("README.md"), "local\n").expect("readme");
+    git_at(&repo, &project, &["add", "README.md"]);
+    git_at(&repo, &project, &["commit", "-m", "initial"]);
+    git_at(
+        &repo,
+        &project,
+        &["remote", "add", "origin", "backups/widget.git"],
+    );
+    let added = repo.phantom(&["project", "add", project.to_str().expect("path"), "--json"]);
+    assert!(added.status.success(), "{}", text(&added.stderr));
+    let listed = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["project", "list", "--json"])
+        .env("PATH", &path_env)
+        .output()
+        .expect("list");
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let catalog = json_value(&listed);
+    let entry = catalog["projects"]
+        .as_array()
+        .expect("projects")
+        .iter()
+        .find(|project| project["name"] == "ptm805local")
+        .expect("project");
+    assert_eq!(entry["canonicalName"], "ptm805local");
+    assert!(!entry["canonicalName"]
+        .as_str()
+        .unwrap_or("")
+        .contains("github.com"));
+    let matched = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["where", "-p", "github.com/backups/widget", "main", "--json"],
+        )
+        .env("PATH", &path_env)
+        .output()
+        .expect("where");
+    assert_eq!(matched.status.code(), Some(2), "{}", text(&matched.stdout));
+    assert_eq!(json_value(&matched)["error"]["code"], "not_found");
+    let by_name = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["where", "-p", "ptm805local", "main"],
+        )
+        .env("PATH", &path_env)
+        .output()
+        .expect("name");
+    assert!(by_name.status.success(), "{}", text(&by_name.stderr));
+    assert!(same_dir(&text(&by_name.stdout), &project));
+
+    let git_dir = repo.phantom(&[
+        "where",
+        "-p",
+        repo.repo.join(".git").to_str().expect("git"),
+        "main",
+    ]);
+    assert!(
+        git_dir.status.success(),
+        "{}\n{}",
+        text(&git_dir.stdout),
+        text(&git_dir.stderr)
+    );
+    assert!(same_dir(&text(&git_dir.stdout), &repo.repo));
+    let objects = repo.phantom(&[
+        "where",
+        "-p",
+        repo.repo.join(".git/objects").to_str().expect("objects"),
+        "main",
+    ]);
+    assert!(objects.status.success(), "{}", text(&objects.stderr));
+    assert!(same_dir(&text(&objects.stdout), &repo.repo));
+    assert!(!text(&objects.stderr).contains("must be run in a work tree"));
 }

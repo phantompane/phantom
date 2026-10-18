@@ -648,8 +648,34 @@ fn resolve_directory_reference(reference: &str, cwd: &Path, home: &Path) -> Resu
             "Project path '{reference}' is not a directory"
         )));
     }
-    let root = git::git_root(&path)?;
-    Ok(fs::canonicalize(&root).unwrap_or(root))
+    match git::git_root(&path) {
+        Ok(root) => Ok(fs::canonicalize(&root).unwrap_or(root)),
+        Err(error) => match checkout_above_git_dir(&path) {
+            Some(checkout) => match git::git_root(&checkout) {
+                Ok(root) => Ok(fs::canonicalize(&root).unwrap_or(root)),
+                Err(_) => Err(Error::validation(format!(
+                    "Project path '{reference}' is inside a Git directory, not a checkout"
+                ))),
+            },
+            None => Err(error),
+        },
+    }
+}
+
+/// Parent of a `.git` directory when `path` is that directory or inside it.
+fn checkout_above_git_dir(path: &Path) -> Option<PathBuf> {
+    let mut current = path.to_path_buf();
+    loop {
+        if current.file_name().is_some_and(|name| name == ".git") && current.is_dir() {
+            return current
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .map(Path::to_path_buf);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
 }
 
 fn expand_tilde(reference: &str, home: &Path) -> Result<PathBuf> {
@@ -1511,6 +1537,20 @@ mod tests {
         assert_eq!(
             resolve_directory_reference(nested.to_str().expect("nested"), &dir, &home)
                 .expect("inside worktree"),
+            main
+        );
+        assert_eq!(
+            resolve_directory_reference(repo.join(".git").to_str().expect("git dir"), &dir, &home)
+                .expect(".git"),
+            main
+        );
+        assert_eq!(
+            resolve_directory_reference(
+                repo.join(".git/objects").to_str().expect("objects"),
+                &dir,
+                &home,
+            )
+            .expect("inside .git"),
             main
         );
         let missing = resolve_directory_reference("/no/such/ptm-project", &dir, &home);

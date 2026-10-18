@@ -80,9 +80,8 @@ pub fn checkout(
         Some(path) => path.to_path_buf(),
         None => std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?,
     };
-    let (owner, repo) = repo_info(&cwd)?;
-    let host = github_host(&cwd);
-    let issue = fetch_issue(&cwd, host.as_deref(), &owner, &repo, number)?;
+    let repo = repo_info(&cwd)?;
+    let issue = fetch_issue(&cwd, &repo.host, &repo.owner, &repo.name, number)?;
     let Some(issue) = issue else {
         return Err(Error::msg(format!(
             "GitHub issue or pull request #{number} not found or you don't have permission to access it."
@@ -236,8 +235,19 @@ fn post_commands(context: &context::Context) -> Vec<String> {
     crate::config::post_create_commands(context.config.as_ref()).to_vec()
 }
 
-fn repo_info(cwd: &Path) -> Result<(String, String)> {
-    let captured = process::raw("gh", &["repo", "view", "--json", "owner,name"], Some(cwd))?;
+struct RepoIdentity {
+    owner: String,
+    name: String,
+    /// Hostname for `gh api --hostname`, from `gh repo view`'s web `url`.
+    host: String,
+}
+
+fn repo_info(cwd: &Path) -> Result<RepoIdentity> {
+    let captured = process::raw(
+        "gh",
+        &["repo", "view", "--json", "url,owner,name"],
+        Some(cwd),
+    )?;
     if captured.code != 0 {
         return Err(Error::msg(format!(
             "Failed to get repository info: {}",
@@ -250,23 +260,71 @@ fn repo_info(cwd: &Path) -> Result<(String, String)> {
         .pointer("/owner/login")
         .and_then(Value::as_str)
         .ok_or_else(|| Error::msg("Failed to get repository info: missing owner"))?;
-    let repo = value
+    let name = value
         .get("name")
         .and_then(Value::as_str)
         .ok_or_else(|| Error::msg("Failed to get repository info: missing name"))?;
-    Ok((owner.to_string(), repo.to_string()))
+    let url = value
+        .get("url")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::msg("Failed to get repository info: missing url"))?;
+    Ok(RepoIdentity {
+        owner: owner.to_string(),
+        name: name.to_string(),
+        host: host_from_web_url(url)?,
+    })
 }
 
-/// Host for `gh api --hostname`, from the selected repository's `origin`.
-fn github_host(directory: &Path) -> Option<String> {
-    let name = crate::repository::canonical_name_from_origin(directory)?;
-    let host = name.split('/').next().filter(|host| !host.is_empty())?;
-    Some(host.to_string())
+/// Host only, with no port, from the web URL `gh repo view` returns.
+fn host_from_web_url(url: &str) -> Result<String> {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return Err(Error::msg(format!(
+            "Failed to get repository info: url '{url}' has no host"
+        )));
+    };
+    if !matches!(scheme, "http" | "https") {
+        return Err(Error::msg(format!(
+            "Failed to get repository info: url '{url}' is not an http(s) URL"
+        )));
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let hostport = match authority.rsplit_once('@') {
+        Some((_, host)) if !host.is_empty() => host,
+        Some(_) => {
+            return Err(Error::msg(format!(
+                "Failed to get repository info: url '{url}' has no host"
+            )))
+        }
+        None => authority,
+    };
+    let host = if let Some(inside) = hostport.strip_prefix('[') {
+        let end = inside.find(']').ok_or_else(|| {
+            Error::msg(format!(
+                "Failed to get repository info: url '{url}' has no host"
+            ))
+        })?;
+        &inside[..end]
+    } else if let Some((host, port)) = hostport.rsplit_once(':') {
+        if host.is_empty() || port.is_empty() || !port.chars().all(|char| char.is_ascii_digit()) {
+            return Err(Error::msg(format!(
+                "Failed to get repository info: url '{url}' has no host"
+            )));
+        }
+        host
+    } else {
+        hostport
+    };
+    if host.is_empty() {
+        return Err(Error::msg(format!(
+            "Failed to get repository info: url '{url}' has no host"
+        )));
+    }
+    Ok(host.to_ascii_lowercase())
 }
 
 fn fetch_issue(
     directory: &Path,
-    host: Option<&str>,
+    host: &str,
     owner: &str,
     repo: &str,
     number: &str,
@@ -300,7 +358,7 @@ fn fetch_issue(
 
 fn fetch_pull(
     directory: &Path,
-    host: Option<&str>,
+    host: &str,
     owner: &str,
     repo: &str,
     number: u64,
@@ -335,14 +393,9 @@ fn fetch_pull(
     })
 }
 
-fn gh_api(directory: &Path, host: Option<&str>, path: &str) -> Result<process::Captured> {
-    let mut args = vec!["api".to_string(), path.to_string()];
-    if let Some(host) = host {
-        args.push("--hostname".to_string());
-        args.push(host.to_string());
-    }
-    let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-    process::raw("gh", &refs, Some(directory))
+fn gh_api(directory: &Path, host: &str, path: &str) -> Result<process::Captured> {
+    let args = ["api", path, "--hostname", host];
+    process::raw("gh", &args, Some(directory))
 }
 
 fn is_not_found(captured: &process::Captured) -> bool {
@@ -356,5 +409,30 @@ fn first_detail(captured: &process::Captured) -> String {
         stderr.to_string()
     } else {
         captured.stdout.trim().to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_url_host_drops_the_port() {
+        assert_eq!(
+            host_from_web_url("https://ghe.corp.example/acme/tool").expect("host"),
+            "ghe.corp.example"
+        );
+        assert_eq!(
+            host_from_web_url("https://ghe.corp.example:8443/acme/tool").expect("port"),
+            "ghe.corp.example"
+        );
+        assert_eq!(
+            host_from_web_url("https://github.com/acme/tool").expect("github"),
+            "github.com"
+        );
+        assert_eq!(
+            host_from_web_url("https://GitHub.com/acme/tool").expect("case"),
+            "github.com"
+        );
     }
 }

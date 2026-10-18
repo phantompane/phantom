@@ -101,7 +101,8 @@ pub(crate) fn resolve_repository_root_quiet() -> Result<(PathBuf, Vec<String>)> 
 
 /// `host/owner/repo` for an `origin` URL this command understands.
 ///
-/// Filesystem paths and `file://` URLs are not names.
+/// Only http(s), ssh, and scp-style remotes are names. Local paths, relative
+/// paths, and `owner/repo` shorthand are not.
 pub(crate) fn canonical_name_from_origin(root: &Path) -> Option<String> {
     let url = origin_url(root).ok().flatten()?;
     canonical_remote_name(&url)
@@ -109,11 +110,19 @@ pub(crate) fn canonical_name_from_origin(root: &Path) -> Option<String> {
 
 pub(crate) fn canonical_remote_name(url: &str) -> Option<String> {
     let url = url.trim();
-    if url.is_empty() || url.starts_with('/') || url.starts_with('.') || url.starts_with('~') {
+    if !is_hosted_remote(url) {
         return None;
     }
     let spec = parse_clone_source(url).ok()?;
     Some(format!("{}/{}/{}", spec.host, spec.owner, spec.repo))
+}
+
+/// A remote git can talk to by scheme or scp-style `host:path`.
+fn is_hosted_remote(url: &str) -> bool {
+    if url.is_empty() || url.starts_with('/') || url.starts_with('.') || url.starts_with('~') {
+        return false;
+    }
+    url.contains("://") || url.contains(':')
 }
 
 /// Git checkouts located at `<root>/<host>/<owner>/<repo>`.
@@ -852,6 +861,13 @@ mod tests {
         assert_eq!(canonical_remote_name("/tmp/repo.git"), None);
         assert_eq!(canonical_remote_name("file:///tmp/repo.git"), None);
         assert_eq!(canonical_remote_name("./repo"), None);
+        assert_eq!(canonical_remote_name("backups/widget.git"), None);
+        assert_eq!(canonical_remote_name("github.com/acme/widget"), None);
+        assert_eq!(canonical_remote_name("acme/widget"), None);
+        assert_eq!(
+            canonical_remote_name("ssh://git@ghe.corp.example:2222/acme/tool.git").as_deref(),
+            Some("ghe.corp.example:2222/acme/tool")
+        );
     }
 
     #[test]
