@@ -5,31 +5,23 @@ use serde::Deserialize;
 
 use crate::error::{Error, Result};
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PhantomConfig {
-    pub worktrees_directory: Option<String>,
-    pub directory_name_separator: Option<String>,
-    pub post_create: Option<PostCreate>,
-    pub pre_delete: Option<PreDelete>,
+const FILE_NAME: &str = ".ptm.toml";
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PtmConfig {
+    pub hooks: Hooks,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PostCreate {
-    #[serde(default)]
-    pub commands: Option<Vec<String>>,
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Hooks {
+    pub post_create: Vec<String>,
+    pub pre_delete: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreDelete {
-    #[serde(default)]
-    pub commands: Option<Vec<String>>,
-}
-
-pub fn load_config(git_root: &Path) -> Result<Option<PhantomConfig>> {
-    let path = git_root.join("phantom.config.json");
+pub fn load_config(git_root: &Path) -> Result<Option<PtmConfig>> {
+    let path = git_root.join(FILE_NAME);
     let content = match fs::read_to_string(&path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -40,71 +32,27 @@ pub fn load_config(git_root: &Path) -> Result<Option<PhantomConfig>> {
             )));
         }
     };
-    validate_config(&content)
+    parse_config(&content)
         .map(Some)
         .map_err(|error| Error::msg(format!("{}: {error}", path.display())))
 }
 
-pub fn validate_config(content: &str) -> Result<PhantomConfig> {
-    let value: serde_json::Value = serde_json::from_str(content)
-        .map_err(|error| Error::msg(format!("Failed to parse phantom.config.json: {error}")))?;
-    validate_value(&value, "")?;
-    serde_json::from_value(value)
-        .map_err(|error| Error::msg(format!("Invalid phantom.config.json: {error}")))
-}
-
-fn validate_value(value: &serde_json::Value, path: &str) -> Result<()> {
-    let object = value.as_object().ok_or_else(|| {
-        Error::msg(format!(
-            "Invalid phantom.config.json: {}",
-            if path.is_empty() {
-                "Expected object".to_string()
-            } else {
-                format!("{path}: Expected object")
-            }
-        ))
-    })?;
-    for (key, child) in object {
-        let child_path = if path.is_empty() {
-            key.clone()
-        } else {
-            format!("{path}.{key}")
-        };
-        match key.as_str() {
-            "worktreesDirectory" | "directoryNameSeparator" => {
-                if !child.is_string() {
-                    return Err(Error::msg(format!(
-                        "Invalid phantom.config.json: {child_path}: Expected string"
-                    )));
-                }
-            }
-            "postCreate" | "preDelete" => validate_hooks(child, &child_path)?,
-            _ => {}
-        }
+pub fn post_create_commands(config: Option<&PtmConfig>) -> &[String] {
+    match config {
+        Some(config) => &config.hooks.post_create,
+        None => &[],
     }
-    Ok(())
 }
 
-fn validate_hooks(value: &serde_json::Value, path: &str) -> Result<()> {
-    let object = value.as_object().ok_or_else(|| {
-        Error::msg(format!(
-            "Invalid phantom.config.json: {path}: Expected object"
-        ))
-    })?;
-    for (key, child) in object {
-        if key == "commands" && !is_string_array(child) {
-            return Err(Error::msg(format!(
-                "Invalid phantom.config.json: {path}.{key}: Expected array"
-            )));
-        }
+pub fn pre_delete_commands(config: Option<&PtmConfig>) -> &[String] {
+    match config {
+        Some(config) => &config.hooks.pre_delete,
+        None => &[],
     }
-    Ok(())
 }
 
-fn is_string_array(value: &serde_json::Value) -> bool {
-    value
-        .as_array()
-        .is_some_and(|items| items.iter().all(serde_json::Value::is_string))
+fn parse_config(content: &str) -> Result<PtmConfig> {
+    toml::from_str(content).map_err(|error| Error::msg(format!("Invalid {FILE_NAME}: {error}")))
 }
 
 #[cfg(test)]
@@ -112,25 +60,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_project_config() {
-        let config = validate_config(
-            r#"{"worktreesDirectory":"../phantom-worktrees","postCreate":{"commands":["pnpm install"]}}"#,
+    fn parses_project_hooks() {
+        let config = parse_config(
+            r#"
+# repository hooks
+[hooks]
+post-create = ["pnpm install"]
+pre-delete = ["./scripts/teardown.sh"]
+"#,
         )
         .expect("config");
+        assert_eq!(config.hooks.post_create, vec!["pnpm install".to_string()]);
         assert_eq!(
-            config.worktrees_directory.as_deref(),
-            Some("../phantom-worktrees")
-        );
-        assert_eq!(
-            config.post_create.and_then(|post| post.commands),
-            Some(vec!["pnpm install".to_string()])
+            config.hooks.pre_delete,
+            vec!["./scripts/teardown.sh".to_string()]
         );
     }
 
     #[test]
-    fn rejects_bad_commands() {
-        let error = validate_config(r#"{"postCreate":{"commands":[1]}}"#).expect_err("invalid");
-        assert!(error.to_string().contains("commands"));
+    fn missing_hooks_are_empty() {
+        let config = parse_config("").expect("empty");
+        assert!(config.hooks.post_create.is_empty());
+        assert!(config.hooks.pre_delete.is_empty());
+
+        let config = parse_config("[hooks]\npost-create = [\"pnpm install\"]\n").expect("partial");
+        assert_eq!(config.hooks.post_create, vec!["pnpm install".to_string()]);
+        assert!(config.hooks.pre_delete.is_empty());
+        assert!(post_create_commands(None).is_empty());
+        assert!(pre_delete_commands(None).is_empty());
+    }
+
+    #[test]
+    fn rejects_unknown_keys_and_wrong_types() {
+        let error = parse_config("worktreesDirectory = \"../phantom-worktrees\"\n")
+            .expect_err("project directory");
+        let message = error.to_string();
+        assert!(message.contains(FILE_NAME), "{message}");
+        assert!(message.contains("worktreesDirectory"), "{message}");
+
+        let error =
+            parse_config("directoryNameSeparator = \"-\"\n").expect_err("project separator");
+        assert!(
+            error.to_string().contains("directoryNameSeparator"),
+            "{error}"
+        );
+
+        let error = parse_config("[hooks]\ncopy-files = [\".env\"]\n").expect_err("copy files");
+        let message = error.to_string();
+        assert!(message.contains("copy-files"), "{message}");
+
+        let error = parse_config("[hooks]\npost-create = \"pnpm install\"\n").expect_err("type");
+        let message = error.to_string();
+        assert!(
+            message.contains("invalid type") || message.contains("post-create"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -146,24 +130,26 @@ mod tests {
         fs::create_dir_all(&root).expect("root");
         assert!(load_config(&root).expect("missing").is_none());
 
-        fs::write(root.join("phantom.config.json"), "{").expect("json");
-        let error = load_config(&root).expect_err("invalid json");
+        fs::write(root.join(FILE_NAME), "[\n").expect("toml");
+        let error = load_config(&root).expect_err("invalid toml");
         let message = error.to_string();
-        assert!(message.contains("phantom.config.json"), "{message}");
+        assert!(message.contains(FILE_NAME), "{message}");
         assert!(
-            message.contains("parse") || message.contains("expected"),
+            message.contains("parse")
+                || message.contains("expected")
+                || message.contains("invalid"),
             "{message}"
         );
 
         fs::write(
-            root.join("phantom.config.json"),
-            r#"{"postCreate":{"commands":[1]}}"#,
+            root.join(FILE_NAME),
+            "[hooks]\npostCreate = [\"pnpm install\"]\n",
         )
         .expect("schema");
-        let error = load_config(&root).expect_err("invalid schema");
+        let error = load_config(&root).expect_err("unknown key");
         let message = error.to_string();
-        assert!(message.contains("phantom.config.json"), "{message}");
-        assert!(message.contains("commands"), "{message}");
+        assert!(message.contains(FILE_NAME), "{message}");
+        assert!(message.contains("postCreate"), "{message}");
 
         let _ = fs::remove_dir_all(root);
     }

@@ -4,6 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
+use crate::config;
 use crate::context::{self, Context};
 use crate::error::{Error, Result};
 use crate::git::{self, GitWorktree};
@@ -221,18 +222,13 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
             &context.directory_name_separator,
         )?,
     };
-    let commands = context
-        .config
-        .as_ref()
-        .and_then(|config| config.post_create.as_ref())
-        .and_then(|post| post.commands.clone())
-        .unwrap_or_default();
+    let commands = config::post_create_commands(context.config.as_ref());
     let created = create_worktree(
         &context,
         &name,
         request.base.unwrap_or("HEAD"),
         request.copy_files,
-        &commands,
+        commands,
         &request.logger,
     )?;
     request.logger.log(&format!(
@@ -340,17 +336,12 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = git::git_root(&cwd)?;
     let context = context::create(&git_root)?;
-    let commands = context
-        .config
-        .as_ref()
-        .and_then(|config| config.post_create.as_ref())
-        .and_then(|post| post.commands.clone())
-        .unwrap_or_default();
+    let commands = config::post_create_commands(context.config.as_ref());
     let attached = attach_worktree(
         &context,
         request.name,
         request.copy_files,
-        &commands,
+        commands,
         &request.logger,
     )?;
     request
@@ -441,19 +432,14 @@ pub fn delete_worktree(
             files: changed,
         });
     }
-    let commands = context
-        .config
-        .as_ref()
-        .and_then(|config| config.pre_delete.as_ref())
-        .and_then(|pre| pre.commands.clone())
-        .unwrap_or_default();
+    let commands = config::pre_delete_commands(context.config.as_ref());
     if !commands.is_empty() {
         println!("\nRunning pre-delete commands...");
         let _ = run_hook_commands(
             &context.git_root,
             &context.worktrees_directory,
             name,
-            &commands,
+            commands,
             false,
             &Logger::on(),
         )?;
@@ -607,13 +593,14 @@ fn run_hook_commands(
             println!("Executing pre-delete command: {command}");
         }
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let root_path = git_root.display().to_string();
         let code = match exec_in_worktree(
             git_root,
             worktrees_directory,
             name,
             &shell,
             &["-c", command],
-            &[],
+            &[("PTM_ROOT_PATH", root_path.as_str())],
         ) {
             Ok(code) => code,
             Err(error) => {

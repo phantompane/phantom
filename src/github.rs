@@ -143,12 +143,7 @@ fn checkout_issue(
 }
 
 fn post_commands(context: &context::Context) -> Vec<String> {
-    context
-        .config
-        .as_ref()
-        .and_then(|config| config.post_create.as_ref())
-        .and_then(|post| post.commands.clone())
-        .unwrap_or_default()
+    crate::config::post_create_commands(context.config.as_ref()).to_vec()
 }
 
 fn repo_info(cwd: &Path) -> Result<(String, String)> {
