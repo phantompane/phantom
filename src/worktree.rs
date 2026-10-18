@@ -1,6 +1,8 @@
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
 use crate::context::{self, Context};
 use crate::error::{Error, Result};
@@ -219,13 +221,6 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
             &context.directory_name_separator,
         )?,
     };
-    let configured = context
-        .config
-        .as_ref()
-        .and_then(|config| config.post_create.as_ref())
-        .and_then(|post| post.copy_files.clone())
-        .unwrap_or_default();
-    let files = merge_files(&configured, request.copy_files);
     let commands = context
         .config
         .as_ref()
@@ -236,7 +231,7 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
         &context,
         &name,
         request.base.unwrap_or("HEAD"),
-        &files,
+        request.copy_files,
         &commands,
         &request.logger,
     )?;
@@ -310,13 +305,9 @@ pub fn create_worktree(
         &context.directory_name_separator,
     );
     git::add_worktree(&context.git_root, &path, name, base, true)?;
-    let copy_error = if copy_files.is_empty() {
-        None
-    } else {
-        copy_files_into(&context.git_root, &path, copy_files)
-            .err()
-            .map(|error| error.to_string())
-    };
+    let copy_error = copy_included_files(&source_checkout(&context.git_root), &path, copy_files)
+        .err()
+        .map(|error| error.to_string());
     let hook_failure = if commands.is_empty() {
         None
     } else {
@@ -349,20 +340,19 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = git::git_root(&cwd)?;
     let context = context::create(&git_root)?;
-    let configured = context
-        .config
-        .as_ref()
-        .and_then(|config| config.post_create.as_ref())
-        .and_then(|post| post.copy_files.clone())
-        .unwrap_or_default();
-    let files = merge_files(&configured, request.copy_files);
     let commands = context
         .config
         .as_ref()
         .and_then(|config| config.post_create.as_ref())
         .and_then(|post| post.commands.clone())
         .unwrap_or_default();
-    let attached = attach_worktree(&context, request.name, &files, &commands, &request.logger)?;
+    let attached = attach_worktree(
+        &context,
+        request.name,
+        request.copy_files,
+        &commands,
+        &request.logger,
+    )?;
     request
         .logger
         .log(&format!("Attached phantom: {}", request.name));
@@ -406,10 +396,9 @@ pub fn attach_worktree(
             error
         }
     })?;
-    if !copy_files.is_empty() {
-        if let Err(error) = copy_files_into(&context.git_root, &path, copy_files) {
-            logger.warn(&format!("Warning: Failed to copy some files: {error}"));
-        }
+    if let Err(error) = copy_included_files(&source_checkout(&context.git_root), &path, copy_files)
+    {
+        logger.warn(&format!("Warning: Failed to copy some files: {error}"));
     }
     let hook_failure = if commands.is_empty() {
         None
@@ -670,300 +659,173 @@ fn remove_empty_parents(path: &Path, root: &Path) -> Option<String> {
     None
 }
 
-fn merge_files(configured: &[String], requested: &[String]) -> Vec<String> {
-    let mut files = Vec::new();
-    for file in configured.iter().chain(requested.iter()) {
-        if !files.contains(file) {
-            files.push(file.clone());
-        }
-    }
-    files
+fn source_checkout(fallback: &Path) -> PathBuf {
+    let Ok(cwd) = std::env::current_dir() else {
+        return fallback.to_path_buf();
+    };
+    git::top_level(&cwd).unwrap_or_else(|_| fallback.to_path_buf())
 }
 
-fn copy_files_into(source_root: &Path, target_root: &Path, patterns: &[String]) -> Result<()> {
-    for file in resolve_patterns(source_root, patterns)? {
-        let source = source_root.join(&file);
-        let target = target_root.join(&file);
-        match fs::metadata(&source) {
-            Ok(metadata) if metadata.is_file() => {
-                if let Some(parent) = target.parent() {
-                    fs::create_dir_all(parent)
-                        .map_err(|error| Error::msg(format!("Failed to copy {file}: {error}")))?;
-                }
-                fs::copy(&source, &target)
-                    .map_err(|error| Error::msg(format!("Failed to copy {file}: {error}")))?;
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(Error::msg(format!("Failed to copy {file}: {error}"))),
+/// Copy gitignored files matched by `.worktreeinclude` and extra gitignore patterns.
+///
+/// Existing files are left in place. Symlinks are skipped and are not followed.
+fn copy_included_files(source: &Path, target: &Path, extra: &[String]) -> Result<()> {
+    let Some(matcher) = include_matcher(source, extra)? else {
+        return Ok(());
+    };
+    for listed in gitignored_paths(source)? {
+        let Some(relative) = normal_relative(&listed) else {
+            continue;
+        };
+        if !matcher
+            .matched_path_or_any_parents(relative, false)
+            .is_ignore()
+        {
+            continue;
         }
+        copy_one(source, target, relative)?;
     }
     Ok(())
 }
 
-fn resolve_patterns(source_root: &Path, patterns: &[String]) -> Result<Vec<String>> {
-    let mut files = Vec::new();
-    for pattern in patterns {
-        let normalized = pattern.replace('\\', "/");
-        for alternative in expand_braces(&normalized) {
-            if !has_magic(&alternative) {
-                if !files.contains(&alternative) {
-                    files.push(alternative);
-                }
-                continue;
-            }
-            collect_pattern(source_root, &alternative, &mut files)?;
+fn include_matcher(source: &Path, extra: &[String]) -> Result<Option<Gitignore>> {
+    let include_path = source.join(".worktreeinclude");
+    let has_file = match fs::symlink_metadata(&include_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(Error::msg(
+                "Failed to read .worktreeinclude: refusing to follow a symlink",
+            ));
+        }
+        Ok(metadata) if metadata.is_file() => true,
+        Ok(_) => {
+            return Err(Error::msg(
+                "Failed to read .worktreeinclude: expected a file",
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(Error::msg(format!(
+                "Failed to read .worktreeinclude: {error}"
+            )));
+        }
+    };
+    if !has_file && extra.is_empty() {
+        return Ok(None);
+    }
+    let mut builder = GitignoreBuilder::new(source);
+    if has_file {
+        if let Some(error) = builder.add(&include_path) {
+            return Err(Error::msg(format!(
+                "Failed to read .worktreeinclude: {error}"
+            )));
         }
     }
-    Ok(files)
+    for pattern in extra {
+        let pattern = pattern.replace('\\', "/");
+        builder
+            .add_line(Some(include_path.clone()), &pattern)
+            .map_err(|error| Error::msg(format!("Invalid copy pattern '{pattern}': {error}")))?;
+    }
+    builder.build().map(Some).map_err(|error| {
+        if has_file {
+            Error::msg(format!("Failed to read .worktreeinclude: {error}"))
+        } else {
+            Error::msg(format!("Invalid copy pattern: {error}"))
+        }
+    })
 }
 
-fn collect_pattern(root: &Path, pattern: &str, files: &mut Vec<String>) -> Result<()> {
-    let segments = pattern
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
-    let prefix_len = segments
-        .iter()
-        .position(|segment| *segment == "**" || segment_has_magic(segment))
-        .unwrap_or(segments.len());
-    let start = root.join(segments[..prefix_len].join("/"));
-    let rest = &segments[prefix_len..];
-    if rest.is_empty() {
+fn gitignored_paths(source: &Path) -> Result<Vec<String>> {
+    let stdout = git::output(
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+        ],
+        Some(source),
+        false,
+    )
+    .map_err(|error| Error::msg(format!("Failed to list gitignored files: {error}")))?;
+    Ok(stdout
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(ToOwned::to_owned)
+        .collect())
+}
+
+fn normal_relative(path: &str) -> Option<&Path> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty() || path.is_absolute() {
+        return None;
+    }
+    path.components()
+        .all(|component| matches!(component, Component::Normal(_)))
+        .then_some(path)
+}
+
+fn copy_one(source_root: &Path, target_root: &Path, relative: &Path) -> Result<()> {
+    let source = source_root.join(relative);
+    let metadata = match fs::symlink_metadata(&source) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(copy_error(relative, error)),
+    };
+    // Skip symlinks instead of following them out of the repository.
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Ok(());
     }
-    let max_dir_depth = if rest.contains(&"**") {
-        None
-    } else {
-        Some(rest.len().saturating_sub(1))
-    };
-    walk_matching(root, &start, 0, max_dir_depth, pattern, files)
+    let target = target_root.join(relative);
+    match fs::symlink_metadata(&target) {
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(copy_error(relative, error)),
+    }
+    ensure_real_parents(target_root, relative)?;
+    fs::copy(&source, &target).map_err(|error| copy_error(relative, error))?;
+    Ok(())
 }
 
-fn walk_matching(
-    root: &Path,
-    dir: &Path,
-    depth: usize,
-    max_dir_depth: Option<usize>,
-    pattern: &str,
-    files: &mut Vec<String>,
-) -> Result<()> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        // A literal prefix can name a file, or pass through a file. That is no match.
-        Err(error)
-            if error.kind() == std::io::ErrorKind::NotFound
-                || error.kind() == std::io::ErrorKind::NotADirectory =>
-        {
-            return Ok(());
-        }
-        Err(error) => return Err(Error::msg(format!("Failed to resolve pattern: {error}"))),
+fn ensure_real_parents(root: &Path, relative: &Path) -> Result<()> {
+    let Some(parent) = relative
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
+        return Ok(());
     };
-    for entry in entries {
-        let entry =
-            entry.map_err(|error| Error::msg(format!("Failed to resolve pattern: {error}")))?;
-        let path = entry.path();
-        let relative = match path.strip_prefix(root) {
-            Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
-            Err(_) => continue,
-        };
-        if relative.split('/').any(|segment| segment == ".git") {
-            continue;
-        }
-        let file_type = match entry.file_type() {
-            Ok(file_type) => file_type,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(Error::msg(format!("Failed to resolve pattern: {error}"))),
-        };
-        // file_type does not follow symlinks, so a directory link is not a directory.
-        if file_type.is_dir() {
-            let descend = match max_dir_depth {
-                Some(limit) => depth < limit,
-                None => true,
-            };
-            if descend {
-                walk_matching(root, &path, depth + 1, max_dir_depth, pattern, files)?;
+    let mut current = root.to_path_buf();
+    for component in parent.components() {
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::msg(format!(
+                    "Failed to copy {}: refusing to follow a symlink",
+                    relative.display()
+                )));
             }
-            continue;
-        }
-        if copyable_file(&path) && glob_matches(pattern, &relative) && !files.contains(&relative) {
-            files.push(relative);
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => {
+                return Err(Error::msg(format!(
+                    "Failed to copy {}: parent is not a directory",
+                    relative.display()
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if let Err(error) = fs::create_dir(&current) {
+                    if error.kind() != std::io::ErrorKind::AlreadyExists {
+                        return Err(copy_error(relative, error));
+                    }
+                }
+            }
+            Err(error) => return Err(copy_error(relative, error)),
         }
     }
     Ok(())
 }
 
-fn copyable_file(path: &Path) -> bool {
-    match fs::metadata(path) {
-        Ok(metadata) => metadata.is_file(),
-        Err(_) => false,
-    }
-}
-
-fn segment_has_magic(segment: &str) -> bool {
-    segment
-        .chars()
-        .any(|char| matches!(char, '*' | '?' | '[' | '{'))
-}
-
-fn has_magic(pattern: &str) -> bool {
-    pattern
-        .chars()
-        .any(|char| matches!(char, '*' | '?' | '[' | '{'))
-}
-
-fn expand_braces(pattern: &str) -> Vec<String> {
-    let chars = pattern.chars().collect::<Vec<_>>();
-    let Some(open) = chars.iter().position(|char| *char == '{') else {
-        return vec![pattern.to_string()];
-    };
-    let Some(close) = matching_brace(&chars, open) else {
-        return vec![pattern.to_string()];
-    };
-    let prefix = chars[..open].iter().collect::<String>();
-    let body = chars[open + 1..close].iter().collect::<String>();
-    let suffix = chars[close + 1..].iter().collect::<String>();
-    let mut expanded = Vec::new();
-    for alternative in split_brace_alternatives(&body) {
-        for alternative in expand_braces(&alternative) {
-            for suffix in expand_braces(&suffix) {
-                expanded.push(format!("{prefix}{alternative}{suffix}"));
-            }
-        }
-    }
-    if expanded.is_empty() {
-        vec![pattern.to_string()]
-    } else {
-        expanded
-    }
-}
-
-fn matching_brace(chars: &[char], open: usize) -> Option<usize> {
-    let mut depth = 0;
-    for (index, char) in chars.iter().enumerate().skip(open) {
-        if *char == '{' {
-            depth += 1;
-        } else if *char == '}' {
-            depth -= 1;
-            if depth == 0 {
-                return Some(index);
-            }
-        }
-    }
-    None
-}
-
-fn split_brace_alternatives(body: &str) -> Vec<String> {
-    let mut alternatives = Vec::new();
-    let mut current = String::new();
-    let mut depth = 0_i32;
-    for char in body.chars() {
-        match char {
-            '{' => {
-                depth += 1;
-                current.push(char);
-            }
-            '}' => {
-                depth = depth.saturating_sub(1);
-                current.push(char);
-            }
-            ',' if depth == 0 => {
-                alternatives.push(std::mem::take(&mut current));
-            }
-            _ => current.push(char),
-        }
-    }
-    alternatives.push(current);
-    alternatives
-}
-
-fn glob_matches(pattern: &str, path: &str) -> bool {
-    let pattern_segments = pattern.split('/').collect::<Vec<_>>();
-    let path_segments = path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
-    match_segments(&pattern_segments, &path_segments)
-}
-
-fn match_segments(pattern: &[&str], path: &[&str]) -> bool {
-    let Some(head) = pattern.first() else {
-        return path.is_empty();
-    };
-    if *head == "**" {
-        if match_segments(&pattern[1..], path) {
-            return true;
-        }
-        return !path.is_empty() && match_segments(pattern, &path[1..]);
-    }
-    let Some(segment) = path.first() else {
-        return false;
-    };
-    segment_matches(head, segment) && match_segments(&pattern[1..], &path[1..])
-}
-
-fn segment_matches(pattern: &str, text: &str) -> bool {
-    match_atom(pattern.as_bytes(), text.as_bytes())
-}
-
-fn match_atom(pattern: &[u8], text: &[u8]) -> bool {
-    if pattern.is_empty() {
-        return text.is_empty();
-    }
-    match pattern[0] {
-        b'*' => {
-            if match_atom(&pattern[1..], text) {
-                return true;
-            }
-            !text.is_empty() && match_atom(pattern, &text[1..])
-        }
-        b'?' => !text.is_empty() && match_atom(&pattern[1..], &text[1..]),
-        b'[' => {
-            let Some(end) = pattern.iter().skip(1).position(|byte| *byte == b']') else {
-                return !text.is_empty()
-                    && pattern[0] == text[0]
-                    && match_atom(&pattern[1..], &text[1..]);
-            };
-            let class = &pattern[1..end + 1];
-            let rest = &pattern[end + 2..];
-            if text.is_empty() {
-                return false;
-            }
-            class_matches(class, text[0]) && match_atom(rest, &text[1..])
-        }
-        byte => !text.is_empty() && byte == text[0] && match_atom(&pattern[1..], &text[1..]),
-    }
-}
-
-fn class_matches(class: &[u8], byte: u8) -> bool {
-    if class.is_empty() {
-        return false;
-    }
-    let (negated, class) = if class[0] == b'!' || class[0] == b'^' {
-        (true, &class[1..])
-    } else {
-        (false, class)
-    };
-    let mut matched = false;
-    let mut index = 0;
-    while index < class.len() {
-        if index + 2 < class.len() && class[index + 1] == b'-' {
-            let start = class[index];
-            let end = class[index + 2];
-            if byte >= start && byte <= end {
-                matched = true;
-                break;
-            }
-            index += 3;
-        } else {
-            if class[index] == byte {
-                matched = true;
-                break;
-            }
-            index += 1;
-        }
-    }
-    matched != negated
+fn copy_error(relative: &Path, error: impl std::fmt::Display) -> Error {
+    Error::msg(format!("Failed to copy {}: {error}", relative.display()))
 }
 
 #[cfg(test)]
@@ -1011,136 +873,149 @@ mod tests {
     }
 
     #[test]
-    fn matches_v6_copy_globs() {
-        let root = std::env::temp_dir().join(format!(
-            "phantom-glob-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
-        fs::create_dir_all(root.join("config/db")).expect("dirs");
-        fs::create_dir_all(root.join("nested/deep")).expect("nested");
-        fs::write(root.join(".env"), "a").expect("env");
-        fs::write(root.join("local.env"), "b").expect("local");
-        fs::write(root.join("config.json"), "c").expect("json");
-        fs::write(root.join("readme.md"), "d").expect("md");
-        fs::write(root.join("config/db/database.local.yml"), "e").expect("yml");
-        fs::create_dir_all(root.join(".git")).expect("gitdir");
-        fs::write(root.join("nested/deep/file.txt"), "f").expect("txt");
-        fs::write(root.join(".git/config"), "g").expect("git");
+    fn copies_only_matching_gitignored_files() {
+        let repo = CopyRepo::new();
+        fs::write(repo.root.join("tracked.env"), "committed\n").expect("tracked");
+        repo.git(&["add", "tracked.env"]);
+        repo.git(&["commit", "-m", "track env"]);
+        fs::write(repo.root.join(".gitignore"), "*.env\n*.log\nvendor/\n").expect("gitignore");
+        fs::write(
+            repo.root.join(".worktreeinclude"),
+            "*.env\nnested/**\n!nested/skip.env\nvendor/\n!vendor/skip.json\n",
+        )
+        .expect("include");
+        fs::create_dir_all(repo.root.join("nested/deep")).expect("nested");
+        fs::create_dir_all(repo.root.join("vendor")).expect("vendor");
+        fs::write(repo.root.join("secret.env"), "secret\n").expect("secret");
+        fs::write(repo.root.join("nested/deep/inner.env"), "inner\n").expect("inner");
+        fs::write(repo.root.join("nested/skip.env"), "skip\n").expect("skip");
+        fs::write(repo.root.join("nested/deep/note.txt"), "note\n").expect("note");
+        fs::write(repo.root.join("notes.log"), "log\n").expect("log");
+        fs::write(repo.root.join("vendor/config.json"), "config\n").expect("config");
+        fs::write(repo.root.join("vendor/skip.json"), "skipped\n").expect("vendor skip");
+        fs::write(repo.root.join("tracked.env"), "dirty\n").expect("dirty");
 
-        let braces = resolve_patterns(&root, &["*.{env,json}".to_string()]).expect("braces");
-        assert!(braces.contains(&"local.env".to_string()));
-        assert!(braces.contains(&"config.json".to_string()));
-        assert!(!braces.contains(&"readme.md".to_string()));
+        let target = repo.root.join("target-copy");
+        fs::create_dir_all(target.join("vendor")).expect("target vendor");
+        fs::write(target.join("secret.env"), "already\n").expect("existing");
+        copy_included_files(&repo.root, &target, &["notes.log".to_string()]).expect("copy");
 
-        let dot = resolve_patterns(&root, &["*.env".to_string()]).expect("dot");
-        assert!(dot.contains(&".env".to_string()));
-
-        let recursive =
-            resolve_patterns(&root, &["config/**/*.local.yml".to_string()]).expect("recursive");
-        assert_eq!(recursive, vec!["config/db/database.local.yml".to_string()]);
-
-        let directory = resolve_patterns(&root, &["nested/**".to_string()]).expect("dir");
-        assert_eq!(directory, vec!["nested/deep/file.txt".to_string()]);
-
-        let _ = fs::remove_dir_all(root);
+        assert_eq!(read(&target.join("secret.env")), "already\n");
+        assert_eq!(read(&target.join("nested/deep/inner.env")), "inner\n");
+        assert_eq!(read(&target.join("vendor/config.json")), "config\n");
+        assert_eq!(read(&target.join("notes.log")), "log\n");
+        assert!(!target.join("nested/skip.env").exists());
+        assert!(!target.join("nested/deep/note.txt").exists());
+        assert!(!target.join("vendor/skip.json").exists());
+        assert!(!target.join("tracked.env").exists());
+        assert!(!target.join("README.md").exists());
     }
 
     #[test]
-    fn copy_globs_skip_directory_symlinks_and_unrelated_trees() {
-        let root = std::env::temp_dir().join(format!(
-            "phantom-glob-link-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
-        let outside = std::env::temp_dir().join(format!(
-            "phantom-glob-outside-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
-        fs::create_dir_all(root.join("keep")).expect("keep");
-        fs::create_dir_all(root.join("nested")).expect("nested");
-        fs::create_dir_all(root.join("deep/a")).expect("deep");
+    fn skips_symlinks_instead_of_following_them() {
+        let repo = CopyRepo::new();
+        let outside = repo.root.join("outside-tree");
         fs::create_dir_all(&outside).expect("outside");
-        fs::write(root.join(".env"), "a").expect("env");
-        fs::write(root.join("real.env"), "b").expect("real");
-        fs::write(root.join("nested/.env"), "c").expect("nested env");
-        fs::write(root.join("keep/note.txt"), "d").expect("note");
-        fs::write(root.join("deep/a/file.txt"), "e").expect("deep file");
-        fs::write(outside.join("secret.txt"), "no").expect("secret");
-        std::os::unix::fs::symlink(&root, root.join("cycle")).expect("cycle");
-        std::os::unix::fs::symlink(root.join("nested"), root.join("nested/again")).expect("again");
-        std::os::unix::fs::symlink(&outside, root.join("outside")).expect("outside link");
-        std::os::unix::fs::symlink(root.join("real.env"), root.join("link.env"))
+        fs::write(outside.join("secret.env"), "nope\n").expect("outside secret");
+        fs::write(repo.root.join("real.env"), "real\n").expect("real");
+        std::os::unix::fs::symlink(repo.root.join("real.env"), repo.root.join("link.env"))
             .expect("file link");
+        std::os::unix::fs::symlink(&outside, repo.root.join("outside")).expect("dir link");
+        fs::write(repo.root.join(".gitignore"), "*.env\noutside\n").expect("gitignore");
+        fs::write(repo.root.join(".worktreeinclude"), "*\n").expect("include");
 
-        let all = resolve_patterns(&root, &["**".to_string()]).expect("all");
-        assert!(all.contains(&".env".to_string()));
-        assert!(all.contains(&"keep/note.txt".to_string()));
-        assert!(all.contains(&"link.env".to_string()));
-        assert!(!all.iter().any(|path| path.contains("secret")));
-        assert!(!all.iter().any(|path| path.starts_with("outside/")));
-        assert!(!all.iter().any(|path| path.starts_with("cycle/")));
-        assert!(!all.iter().any(|path| path.starts_with("nested/again/")));
+        let target = repo.root.join("target-copy");
+        fs::create_dir_all(&target).expect("target");
+        copy_included_files(&repo.root, &target, &[]).expect("copy");
 
-        let root_env = resolve_patterns(&root, &["*.env".to_string()]).expect("root env");
-        assert!(root_env.contains(&".env".to_string()));
-        assert!(root_env.contains(&"link.env".to_string()));
-        assert!(!root_env.iter().any(|path| path.contains('/')));
-
-        let prefixed = resolve_patterns(&root, &["keep/*.txt".to_string()]).expect("prefix");
-        assert_eq!(prefixed, vec!["keep/note.txt".to_string()]);
-
-        let _ = fs::remove_dir_all(&root);
-        let _ = fs::remove_dir_all(&outside);
+        assert_eq!(read(&target.join("real.env")), "real\n");
+        assert!(!target.join("link.env").exists());
+        assert!(!target.join("outside").exists());
+        assert!(!target.join("secret.env").exists());
+        assert!(!target.join("outside/secret.env").exists());
     }
 
     #[test]
-    fn glob_prefix_that_is_a_file_matches_nothing() {
-        let root = std::env::temp_dir().join(format!(
-            "phantom-glob-file-prefix-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&root).expect("root");
-        fs::write(root.join("config"), "not a directory").expect("file");
-        fs::write(root.join("other.json"), "{}").expect("json");
+    fn symlinked_worktreeinclude_is_not_followed() {
+        let repo = CopyRepo::new();
+        let elsewhere = repo.root.join("elsewhere");
+        fs::create_dir_all(&elsewhere).expect("elsewhere");
+        fs::write(elsewhere.join("include"), "*.env\n").expect("include");
+        std::os::unix::fs::symlink(
+            elsewhere.join("include"),
+            repo.root.join(".worktreeinclude"),
+        )
+        .expect("symlink include");
+        fs::write(repo.root.join(".gitignore"), "*.env\n").expect("gitignore");
+        fs::write(repo.root.join("secret.env"), "secret\n").expect("secret");
+        let target = repo.root.join("target-copy");
+        fs::create_dir_all(&target).expect("target");
 
-        let files = resolve_patterns(&root, &["config/*.json".to_string()]).expect("prefix file");
-        assert!(files.is_empty());
-
-        let _ = fs::remove_dir_all(&root);
+        let error = copy_included_files(&repo.root, &target, &[]).expect_err("symlink include");
+        assert!(error.to_string().contains("symlink"), "{error}");
+        assert!(!target.join("secret.env").exists());
     }
 
-    #[test]
-    fn glob_intermediate_component_that_is_a_file_matches_nothing() {
-        let root = std::env::temp_dir().join(format!(
-            "phantom-glob-file-mid-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&root).expect("root");
-        fs::write(root.join("config"), "not a directory").expect("file");
+    struct CopyRepo {
+        root: PathBuf,
+    }
 
-        let files =
-            resolve_patterns(&root, &["config/local/*.json".to_string()]).expect("mid file");
-        assert!(files.is_empty());
+    impl CopyRepo {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "phantom-include-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("clock")
+                    .as_nanos()
+            ));
+            fs::create_dir_all(root.join(".home")).expect("home");
+            fs::create_dir_all(root.join(".template")).expect("template");
+            let repo = Self { root };
+            repo.git(&["init", "-b", "main"]);
+            repo.git(&["config", "user.email", "phantom@example.com"]);
+            repo.git(&["config", "user.name", "Phantom"]);
+            fs::write(repo.root.join(".git-exclude"), "").expect("exclude");
+            repo.git(&[
+                "config",
+                "core.excludesFile",
+                repo.root
+                    .join(".git-exclude")
+                    .to_str()
+                    .expect("exclude path"),
+            ]);
+            fs::write(repo.root.join("README.md"), "readme\n").expect("readme");
+            repo.git(&["add", "README.md"]);
+            repo.git(&["commit", "-m", "init"]);
+            repo
+        }
 
-        let _ = fs::remove_dir_all(&root);
+        fn git(&self, args: &[&str]) {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&self.root)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("HOME", self.root.join(".home"))
+                .env("GIT_TEMPLATE_DIR", self.root.join(".template"))
+                .output()
+                .expect("git");
+            assert!(
+                output.status.success(),
+                "git {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    impl Drop for CopyRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn read(path: &Path) -> String {
+        fs::read_to_string(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
     }
 }
