@@ -1,7 +1,5 @@
 # Rust 1.99.1 is pinned in rust-toolchain.toml. Do not pin it here.
-
-[tools]
-python = "3.12"
+# This file only defines task aliases. It does not install tools.
 
 [tasks.fmt]
 description = "Check formatting"
