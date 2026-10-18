@@ -341,6 +341,7 @@ mod tests {
             "preferences",
             "version",
             "project",
+            "clone",
             "github",
             "gh",
         ];

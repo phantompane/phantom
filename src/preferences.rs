@@ -11,6 +11,7 @@ pub const SUPPORTED_KEYS: &[&str] = &[
     "directory-name-separator",
     "keep-branch",
     "ghq-discovery",
+    "root",
 ];
 
 const NEW_FILE_COMMENT: &str =
@@ -22,6 +23,7 @@ pub struct Preferences {
     pub directory_name_separator: Option<String>,
     pub keep_branch: Option<bool>,
     pub ghq_discovery: Option<bool>,
+    pub root: Option<String>,
 }
 
 pub fn is_preference_key(value: &str) -> bool {
@@ -34,6 +36,7 @@ pub fn preference_value(preferences: &Preferences, key: &str) -> Option<String> 
         "directory-name-separator" => preferences.directory_name_separator.clone(),
         "keep-branch" => preferences.keep_branch.map(|value| value.to_string()),
         "ghq-discovery" => preferences.ghq_discovery.map(|value| value.to_string()),
+        "root" => preferences.root.clone(),
         _ => None,
     }
 }
@@ -41,9 +44,16 @@ pub fn preference_value(preferences: &Preferences, key: &str) -> Option<String> 
 pub fn validate_preference_value(key: &str, value: &str) -> Option<String> {
     if is_bool_key(key) && value != "true" && value != "false" {
         Some(format!("Preference '{key}' must be 'true' or 'false'"))
+    } else if key == "root" && !is_root_preference(value) {
+        Some("Preference 'root' must be an absolute path or start with ~/".to_string())
     } else {
         None
     }
+}
+
+fn is_root_preference(value: &str) -> bool {
+    let value = value.trim();
+    value == "~" || value.starts_with("~/") || Path::new(value).is_absolute()
 }
 
 pub fn config_path() -> Result<PathBuf> {
@@ -148,6 +158,7 @@ fn preferences_from(document: &DocumentMut, path: &Path) -> Result<Preferences> 
             }
             "keep-branch" => preferences.keep_branch = Some(require_bool(path, key, item)?),
             "ghq-discovery" => preferences.ghq_discovery = Some(require_bool(path, key, item)?),
+            "root" => preferences.root = Some(require_string(path, key, item)?),
             _ => return Err(unknown_file_key(path, key)),
         }
     }
@@ -393,5 +404,20 @@ directory-name-separator = \"/\"
         assert!(message.contains("keepBranch"), "{message}");
         assert!(message.contains("keep-branch"), "{message}");
         assert!(message.contains("worktrees-directory"), "{message}");
+    }
+
+    #[test]
+    fn root_preference_is_an_absolute_or_tilde_path() {
+        let xdg = xdg_config("root");
+        let path = xdg.join("ptm").join("config.toml");
+        let error = set_preference_at(&path, "root", "relative").expect_err("relative");
+        assert!(error.to_string().contains("absolute"), "{error}");
+        assert!(!path.exists());
+
+        set_preference_at(&path, "root", "~/ghq").expect("set");
+        let loaded = load_preferences_from(&path).expect("load");
+        assert_eq!(loaded.root.as_deref(), Some("~/ghq"));
+        assert_eq!(preference_value(&loaded, "root").as_deref(), Some("~/ghq"));
+        let _ = fs::remove_dir_all(xdg);
     }
 }
