@@ -23,11 +23,13 @@ pub struct WorktreeInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionKind {
-    Exec(String),
+    /// One string is a shell command (`$SHELL -c`). Several strings are the
+    /// program and its arguments, executed directly.
+    Exec(Vec<String>),
 }
 
 pub struct ActionRequest {
-    pub exec: Option<String>,
+    pub exec: Option<Vec<String>>,
 }
 
 pub struct Logger {
@@ -525,7 +527,9 @@ pub fn exec_in_worktree(
 pub fn resolve_action(request: &ActionRequest) -> Result<Option<ActionKind>> {
     let mut actions = Vec::new();
     if let Some(command) = &request.exec {
-        actions.push(ActionKind::Exec(command.clone()));
+        if !command.is_empty() {
+            actions.push(ActionKind::Exec(command.clone()));
+        }
     }
     Ok(actions.into_iter().next())
 }
@@ -542,21 +546,34 @@ fn run_action(
     };
     match action {
         ActionKind::Exec(command) => {
+            if command.is_empty() {
+                return Err(Error::msg("No command specified"));
+            }
+            let shown = command.join(" ");
             logger.log(&format!(
-                "\nExecuting command in worktree '{name}': {command}"
+                "\nExecuting command in worktree '{name}': {shown}"
             ));
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
             let env = ptm_env(name, path);
             let pairs = env
                 .iter()
                 .map(|(key, value)| (key.as_str(), value.as_str()))
                 .collect::<Vec<_>>();
-            let code = process::inherit(&shell, &["-c", &command], Some(path), &pairs)?;
+            let (program, program_args, reported) = if command.len() == 1 {
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+                let args = vec!["-c".to_string(), command[0].clone()];
+                (shell.clone(), args, shell)
+            } else {
+                let program = command[0].clone();
+                let args = command[1..].to_vec();
+                (program.clone(), args, program)
+            };
+            let arg_refs = program_args.iter().map(String::as_str).collect::<Vec<_>>();
+            let code = process::inherit(&program, &arg_refs, Some(path), &pairs)?;
             if code == 0 {
                 Ok(return_success_code.then_some(code))
             } else {
                 Err(Error::CommandFailed {
-                    command: shell,
+                    command: reported,
                     code,
                 })
             }

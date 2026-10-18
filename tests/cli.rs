@@ -1620,6 +1620,213 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
 }
 
 #[test]
+fn exec_passes_command_options_through() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "feature/exec-flags"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+
+    let direct = repo.phantom(&[
+        "exec",
+        "feature/exec-flags",
+        "git",
+        "branch",
+        "--show-current",
+    ]);
+    assert!(
+        direct.status.success(),
+        "{}\n{}",
+        text(&direct.stdout),
+        text(&direct.stderr)
+    );
+    assert_eq!(text(&direct.stdout), "feature/exec-flags");
+
+    let separated = repo.phantom(&[
+        "exec",
+        "feature/exec-flags",
+        "--",
+        "git",
+        "branch",
+        "--show-current",
+    ]);
+    assert!(separated.status.success(), "{}", text(&separated.stderr));
+    assert_eq!(text(&separated.stdout), "feature/exec-flags");
+
+    let nested = repo.phantom(&[
+        "exec",
+        "feature/exec-flags",
+        "sh",
+        "-c",
+        "printf '%s\\n' \"$@\"",
+        "sh",
+        "--show-current",
+        "-n",
+        "--",
+        "--keep",
+        "--help",
+    ]);
+    assert!(
+        nested.status.success(),
+        "{}\n{}",
+        text(&nested.stdout),
+        text(&nested.stderr)
+    );
+    assert_eq!(
+        text(&nested.stdout),
+        "--show-current\n-n\n--\n--keep\n--help"
+    );
+    assert!(!text(&nested.stdout).contains("ptm exec <worktree-name>"));
+
+    let help = repo.phantom(&["exec", "--help"]);
+    assert!(help.status.success(), "{}", text(&help.stderr));
+    assert!(text(&help.stdout).contains("ptm exec <worktree-name> <command> [args...]"));
+
+    let early = repo.phantom(&["exec", "--show-current", "feature/exec-flags", "true"]);
+    assert_eq!(early.status.code(), Some(1));
+    assert!(text(&early.stderr).contains("Unknown option '--show-current'"));
+}
+
+#[test]
+fn create_and_attach_exec_pass_command_options_through() {
+    let repo = Repo::new();
+    let created = repo.phantom(&[
+        "create",
+        "feature/exec-args",
+        "--base",
+        "main",
+        "--exec",
+        "git",
+        "branch",
+        "--show-current",
+    ]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let created_text = text(&created.stdout);
+    assert!(
+        created_text.contains(
+            "Executing command in worktree 'feature/exec-args': git branch --show-current"
+        ),
+        "{created_text}"
+    );
+    assert!(
+        created_text.lines().any(|line| line == "feature/exec-args"),
+        "{created_text}"
+    );
+
+    let env_exec = repo.phantom(&[
+        "create",
+        "feature/exec-env-args",
+        "--exec",
+        "sh",
+        "-c",
+        "printf '%s\\n' \"$PTM_NAME\"",
+    ]);
+    assert!(
+        env_exec.status.success(),
+        "{}\n{}",
+        text(&env_exec.stdout),
+        text(&env_exec.stderr)
+    );
+    assert!(
+        text(&env_exec.stdout)
+            .lines()
+            .any(|line| line == "feature/exec-env-args"),
+        "{}",
+        text(&env_exec.stdout)
+    );
+
+    let short = repo.phantom(&[
+        "create",
+        "feature/exec-short",
+        "-x",
+        "git",
+        "status",
+        "--short",
+    ]);
+    assert!(
+        short.status.success(),
+        "{}\n{}",
+        text(&short.stdout),
+        text(&short.stderr)
+    );
+    assert!(text(&short.stdout).contains("git status --short"));
+
+    let missing = repo.phantom(&["create", "feature/missing-exec", "--exec"]);
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(text(&missing.stderr).contains("Option '--exec <value>' argument missing"));
+
+    repo.git(&["branch", "attached-exec-flags"]);
+    let attached = repo.phantom(&[
+        "attach",
+        "attached-exec-flags",
+        "--exec",
+        "git",
+        "branch",
+        "--show-current",
+    ]);
+    assert!(
+        attached.status.success(),
+        "{}\n{}",
+        text(&attached.stdout),
+        text(&attached.stderr)
+    );
+    assert!(
+        text(&attached.stdout)
+            .lines()
+            .any(|line| line == "attached-exec-flags"),
+        "{}",
+        text(&attached.stdout)
+    );
+
+    let help_arg = repo.phantom(&[
+        "create",
+        "feature/exec-help",
+        "--exec",
+        "sh",
+        "-c",
+        "printf '%s\\n' --help",
+    ]);
+    assert!(
+        help_arg.status.success(),
+        "{}\n{}",
+        text(&help_arg.stdout),
+        text(&help_arg.stderr)
+    );
+    assert!(
+        text(&help_arg.stdout).lines().any(|line| line == "--help"),
+        "{}",
+        text(&help_arg.stdout)
+    );
+    assert!(!text(&help_arg.stdout).contains("ptm create [name]"));
+
+    let option_after = repo.phantom(&[
+        "create",
+        "feature/exec-base",
+        "--exec",
+        "git",
+        "status",
+        "--base",
+    ]);
+    assert!(!option_after.status.success());
+    let combined = format!(
+        "{}\n{}",
+        text(&option_after.stdout),
+        text(&option_after.stderr)
+    );
+    assert!(
+        !combined.contains("Option '--base <value>' argument missing"),
+        "{combined}"
+    );
+    assert!(
+        combined.contains("failed with exit code") || combined.contains("unknown"),
+        "{combined}"
+    );
+}
+
+#[test]
 fn exec_preserves_the_child_exit_code() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "feature/exec"]);
