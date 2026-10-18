@@ -1940,6 +1940,71 @@ fn json_reports_detached_head_and_copy_errors() {
 }
 
 #[test]
+fn project_parse_errors_keep_the_validation_exit_code() {
+    let repo = Repo::new();
+    let cases: &[&[&str]] = &[
+        &["project", "add", "--unknown"],
+        &["project", "list", "--unknown"],
+        &["project", "remove", "--unknown"],
+        &["project", "add", "--unknown", "--json"],
+        &["project", "list", "--unknown", "--json"],
+        &["project", "remove", "--unknown", "--json"],
+    ];
+    for args in cases {
+        let output = repo.phantom(args);
+        assert_eq!(
+            output.status.code(),
+            Some(3),
+            "{args:?}\nstdout:\n{}\nstderr:\n{}",
+            text(&output.stdout),
+            text(&output.stderr)
+        );
+        if args.contains(&"--json") {
+            let value = json_value(&output);
+            assert_eq!(value["version"], 1, "{args:?} {value}");
+            assert_eq!(value["error"]["code"], "validation", "{args:?} {value}");
+            assert_eq!(value["error"]["exitCode"], 3, "{args:?} {value}");
+            assert!(
+                text(&output.stderr).is_empty(),
+                "{args:?} stderr: {}",
+                text(&output.stderr)
+            );
+        } else {
+            assert!(
+                text(&output.stderr).contains("Unknown option"),
+                "{args:?} {}",
+                text(&output.stderr)
+            );
+        }
+    }
+}
+
+#[test]
+fn json_unborn_head_is_null() {
+    let repo = Repo::new();
+    repo.git(&["update-ref", "-d", "HEAD"]);
+    let listed = repo.phantom(&["list", "--json"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let listed_json = json_value(&listed);
+    let worktrees = listed_json["worktrees"].as_array().expect("worktrees");
+    assert_eq!(worktrees.len(), 1, "{listed_json}");
+    assert_eq!(worktrees[0]["name"], "main");
+    assert_eq!(worktrees[0]["branch"], "main");
+    assert_eq!(worktrees[0]["default"], true);
+    assert!(
+        worktrees[0]["head"].is_null(),
+        "unborn HEAD should be null, got {}",
+        worktrees[0]["head"]
+    );
+
+    let located = repo.phantom(&["where", "main", "--json"]);
+    assert!(located.status.success(), "{}", text(&located.stderr));
+    let located_json = json_value(&located);
+    assert!(located_json["worktree"]["head"].is_null(), "{located_json}");
+    assert_eq!(located_json["worktree"]["branch"], "main");
+}
+
+#[test]
 fn github_checkout_json_reports_issue_and_existing_pull_request() {
     let repo = Repo::new();
     let bin = repo.root.join("bin");

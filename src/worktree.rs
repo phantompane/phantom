@@ -141,10 +141,16 @@ fn info_from_git(worktree: &GitWorktree, cwd: &Path, context: &Context) -> Workt
         },
         branch,
         is_clean: git::is_clean(&path),
-        head: worktree.head.clone(),
+        head: recorded_head(worktree.head.as_deref()),
         is_default: worktree.path == context.git_root.to_string_lossy(),
         detached,
     }
+}
+
+/// Git reports an unborn HEAD as an all-zero SHA. That is not a commit.
+fn recorded_head(head: Option<&str>) -> Option<String> {
+    head.filter(|sha| !sha.is_empty() && sha.bytes().any(|byte| byte != b'0'))
+        .map(ToOwned::to_owned)
 }
 
 fn directory_name(path: &Path, worktrees_directory: &Path) -> Option<String> {
@@ -1100,6 +1106,26 @@ mod tests {
             is_default: false,
             detached: branch == "(detached HEAD)",
         }
+    }
+
+    #[test]
+    fn unborn_head_is_not_a_commit_sha() {
+        assert_eq!(recorded_head(None), None);
+        assert_eq!(recorded_head(Some("")), None);
+        assert_eq!(
+            recorded_head(Some("0000000000000000000000000000000000000000")),
+            None
+        );
+        assert_eq!(
+            recorded_head(Some(
+                "0000000000000000000000000000000000000000000000000000000000000000"
+            )),
+            None
+        );
+        assert_eq!(
+            recorded_head(Some("0123456789abcdef0123456789abcdef01234567")).as_deref(),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
     }
 
     #[test]

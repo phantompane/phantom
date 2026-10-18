@@ -558,7 +558,7 @@ fn project_add(args: &[String]) -> Result<i32> {
     let json = wants_json(args);
     let parsed = match args::parse(args, &[flag("json", None)], true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, VALIDATION, json),
     };
     let json = parsed.flag("json");
     if parsed.positionals.len() > 1 {
@@ -610,7 +610,7 @@ fn project_list(args: &[String]) -> Result<i32> {
         false,
     ) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, VALIDATION, json),
     };
     let json = parsed.flag("json");
     let modes = [
@@ -679,7 +679,7 @@ fn project_remove(args: &[String]) -> Result<i32> {
     let json = wants_json(args);
     let parsed = match args::parse(args, &[flag("json", None)], true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, VALIDATION, json),
     };
     let json = parsed.flag("json");
     if parsed.positionals.len() != 1 {
