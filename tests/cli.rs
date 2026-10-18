@@ -50,7 +50,12 @@ impl Repo {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
-            .env("XDG_STATE_HOME", self.root.join("state"));
+            .env("XDG_STATE_HOME", self.root.join("state"))
+            .env_remove("GHQ_ROOT")
+            .env_remove("GIT_CONFIG_GLOBAL")
+            .env_remove("GIT_CONFIG_SYSTEM")
+            .env_remove("GIT_CONFIG_COUNT")
+            .env_remove("GIT_CONFIG_PARAMETERS");
         // Parallel `git init` hardlinks the shared template and can fail with
         // "File exists" on the hook samples. Give each repo an empty template.
         if program.ends_with("git") && args.first() == Some(&"init") {
@@ -2023,6 +2028,8 @@ fn argument_errors_are_validation_for_every_command() {
         &["exec", "--bogus", "name", "true"],
         &["preferences", "get", "--bogus"],
         &["version", "extra"],
+        &["clone", "--bogus", "owner/repo"],
+        &["clone", "owner/repo", "--json", "--depth"],
     ];
     for args in cases {
         let output = repo.phantom(args);
@@ -2889,4 +2896,372 @@ fn exec_preserves_the_child_exit_code() {
     let output = repo.phantom(&["exec", "feature/exec", "--", "sh", "-c", "exit 4"]);
     assert_eq!(output.status.code(), Some(4));
     assert!(text(&output.stderr).contains("failed with exit code 4"));
+}
+
+#[test]
+fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
+    let repo = Repo::new();
+    repo.git(&["branch", "feature"]);
+    let bare = repo.root.join("bare.git");
+    repo.git(&[
+        "clone",
+        "--bare",
+        repo.repo.to_str().expect("repo"),
+        bare.to_str().expect("bare"),
+    ]);
+    let root = repo.root.join("clones");
+    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+    append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
+
+    let help = repo.phantom(&["clone", "--help"]);
+    assert!(help.status.success(), "{}", text(&help.stderr));
+    let help_text = text(&help.stdout);
+    assert!(help_text.contains("ptm clone"));
+    assert!(help_text.contains("--update"));
+    assert!(help_text.contains("--branch <value>"));
+    assert!(help_text.contains("~/ghq"));
+
+    let missing = repo.phantom(&["clone", "--json"]);
+    assert_eq!(missing.status.code(), Some(3));
+    let missing_json: serde_json::Value =
+        serde_json::from_str(&text(&missing.stdout)).expect("usage json");
+    assert_eq!(missing_json["version"], 1);
+    assert_eq!(missing_json["error"]["code"], "validation");
+    assert_eq!(missing_json["error"]["exitCode"], 3);
+
+    let bad_depth = repo.phantom(&["clone", "example/widget", "--depth", "0", "--json"]);
+    assert_eq!(
+        bad_depth.status.code(),
+        Some(3),
+        "{}",
+        text(&bad_depth.stdout)
+    );
+    let bad_depth_json: serde_json::Value =
+        serde_json::from_str(&text(&bad_depth.stdout)).expect("depth json");
+    assert_eq!(bad_depth_json["error"]["code"], "validation");
+
+    let bad_url = repo.phantom(&["clone", "not a repo", "--json"]);
+    assert_eq!(bad_url.status.code(), Some(3));
+    let bad_url_json: serde_json::Value =
+        serde_json::from_str(&text(&bad_url.stdout)).expect("url json");
+    assert_eq!(bad_url_json["error"]["code"], "validation");
+    assert!(bad_url_json["error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("not a repo"));
+
+    let cloned = repo.phantom(&[
+        "clone",
+        "example/widget",
+        "--branch",
+        "feature",
+        "--depth",
+        "1",
+        "--json",
+    ]);
+    assert!(
+        cloned.status.success(),
+        "{}\n{}",
+        text(&cloned.stdout),
+        text(&cloned.stderr)
+    );
+    assert!(
+        text(&cloned.stderr).contains("Cloning into"),
+        "git progress should stay on stderr: {}",
+        text(&cloned.stderr)
+    );
+    assert!(!text(&cloned.stdout).contains("Cloning into"));
+    let value: serde_json::Value = serde_json::from_str(&text(&cloned.stdout)).expect("clone json");
+    let destination = canonical(&root.join("github.com/example/widget"));
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["path"], destination.to_string_lossy().as_ref());
+    assert_eq!(value["host"], "github.com");
+    assert_eq!(value["owner"], "example");
+    assert_eq!(value["repo"], "widget");
+    assert_eq!(value["remoteUrl"], "https://github.com/example/widget.git");
+    assert_eq!(value["cloned"], true);
+    assert_eq!(value["updated"], false);
+    assert!(value.get("project").is_none());
+    let branch = repo
+        .command("git", &["branch", "--show-current"])
+        .current_dir(&destination)
+        .output()
+        .expect("branch");
+    assert_eq!(text(&branch.stdout), "feature");
+    let shallow = repo
+        .command("git", &["rev-parse", "--is-shallow-repository"])
+        .current_dir(&destination)
+        .output()
+        .expect("shallow");
+    assert_eq!(text(&shallow.stdout), "true");
+
+    fs::write(destination.join("local.txt"), "keep\n").expect("marker");
+    let again = repo.phantom(&["clone", "git@github.com:example/widget.git"]);
+    assert!(again.status.success(), "{}", text(&again.stderr));
+    let again_text = text(&again.stdout);
+    assert!(
+        again_text.contains(&destination.to_string_lossy().to_string()),
+        "{again_text}"
+    );
+    assert!(again_text.contains("Already cloned"), "{again_text}");
+    assert_eq!(
+        fs::read_to_string(destination.join("local.txt")).expect("marker"),
+        "keep\n"
+    );
+    let listed = repo.phantom(&["project", "list", "--json"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let catalog: serde_json::Value = serde_json::from_str(&text(&listed.stdout)).expect("catalog");
+    let registered = catalog["projects"]
+        .as_array()
+        .expect("projects")
+        .iter()
+        .find(|project| project["rootPath"] == value["path"])
+        .expect("registered project");
+    assert_eq!(registered["source"], "registry");
+
+    let updated = repo.phantom(&[
+        "clone",
+        "https://github.com/example/widget.git",
+        "--update",
+        "--json",
+    ]);
+    assert!(
+        updated.status.success(),
+        "{}\n{}",
+        text(&updated.stdout),
+        text(&updated.stderr)
+    );
+    let updated_json: serde_json::Value =
+        serde_json::from_str(&text(&updated.stdout)).expect("update json");
+    assert_eq!(updated_json["cloned"], false);
+    assert_eq!(updated_json["updated"], true);
+    assert_eq!(updated_json["path"], value["path"]);
+    assert_eq!(
+        fs::read_to_string(destination.join("local.txt")).expect("marker"),
+        "keep\n"
+    );
+
+    let created = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "topic"])
+        .current_dir(&destination)
+        .output()
+        .expect("worktree");
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    assert!(destination.join(".git/phantom/worktrees/topic").is_dir());
+
+    let mismatch_path = root.join("github.com/example/other");
+    fs::create_dir_all(&mismatch_path).expect("mismatch dir");
+    let init = repo
+        .command("git", &["init", "-b", "main"])
+        .current_dir(&mismatch_path)
+        .output()
+        .expect("init");
+    assert!(init.status.success(), "{}", text(&init.stderr));
+    let remote = repo
+        .command(
+            "git",
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/example/different.git",
+            ],
+        )
+        .current_dir(&mismatch_path)
+        .output()
+        .expect("remote");
+    assert!(remote.status.success(), "{}", text(&remote.stderr));
+    let mismatch = repo.phantom(&["clone", "example/other", "--json"]);
+    assert_eq!(
+        mismatch.status.code(),
+        Some(3),
+        "{}\n{}",
+        text(&mismatch.stdout),
+        text(&mismatch.stderr)
+    );
+    let mismatch_json: serde_json::Value =
+        serde_json::from_str(&text(&mismatch.stdout)).expect("mismatch json");
+    assert_eq!(mismatch_json["version"], 1);
+    assert_eq!(mismatch_json["error"]["code"], "validation");
+    assert_eq!(mismatch_json["error"]["exitCode"], 3);
+    let message = mismatch_json["error"]["message"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(message.contains("does not match"), "{message}");
+    assert!(message.contains("different.git"), "{message}");
+
+    let empty = root.join("github.com/example/empty");
+    fs::create_dir_all(&empty).expect("empty");
+    let not_repo = repo.phantom(&["clone", "example/empty"]);
+    assert_eq!(
+        not_repo.status.code(),
+        Some(3),
+        "{}",
+        text(&not_repo.stderr)
+    );
+    assert!(text(&not_repo.stderr).contains("not a Git repository"));
+
+    let removed = repo.phantom(&["project", "remove", "widget"]);
+    assert!(removed.status.success(), "{}", text(&removed.stderr));
+    let discovered = repo.phantom(&["project", "list", "--json"]);
+    assert!(discovered.status.success(), "{}", text(&discovered.stderr));
+    let discovered_json: serde_json::Value =
+        serde_json::from_str(&text(&discovered.stdout)).expect("discovered");
+    let found = discovered_json["projects"]
+        .as_array()
+        .expect("projects")
+        .iter()
+        .find(|project| project["rootPath"] == value["path"])
+        .expect("scanned project");
+    assert_eq!(found["source"], "ghq");
+}
+
+#[test]
+fn clone_root_resolution_order() {
+    let repo = Repo::new();
+    let bare = repo.root.join("bare.git");
+    repo.git(&[
+        "clone",
+        "--bare",
+        repo.repo.to_str().expect("repo"),
+        bare.to_str().expect("bare"),
+    ]);
+    append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
+
+    let config_root = repo.root.join("from-config");
+    let git_root = repo.home.join("from-git");
+    let second_root = repo.root.join("second-root");
+    let env_root = repo.root.join("from-env");
+    let default_root = repo.home.join("ghq");
+    let invalid = repo.phantom(&["preferences", "set", "root", "relative/path"]);
+    assert_eq!(invalid.status.code(), Some(3), "{}", text(&invalid.stderr));
+    assert!(text(&invalid.stderr).contains("absolute"));
+    let set = repo.phantom(&[
+        "preferences",
+        "set",
+        "root",
+        config_root.to_str().expect("config root"),
+    ]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+    repo.git(&["config", "--global", "--add", "ghq.root", "~/from-git"]);
+    repo.git(&[
+        "config",
+        "--global",
+        "--add",
+        "ghq.root",
+        second_root.to_str().expect("second"),
+    ]);
+
+    let first = clone_widget(&repo, Some(&env_root));
+    assert_clone_landed(&first, &config_root);
+    assert!(!git_root.join("github.com/example/widget").exists());
+    assert!(!env_root.join("github.com/example/widget").exists());
+    assert!(!second_root.join("github.com/example/widget").exists());
+
+    let removed = repo.phantom(&["preferences", "remove", "root"]);
+    assert!(removed.status.success(), "{}", text(&removed.stderr));
+    let from_git = clone_widget(&repo, Some(&env_root));
+    assert_clone_landed(&from_git, &git_root);
+    assert!(!second_root.join("github.com/example/widget").exists());
+    assert!(!env_root.join("github.com/example/widget").exists());
+
+    repo.git(&["config", "--global", "--unset-all", "ghq.root"]);
+    let from_env = clone_widget(&repo, Some(&env_root));
+    assert_clone_landed(&from_env, &env_root);
+
+    let from_home = clone_widget(&repo, None);
+    assert_clone_landed(&from_home, &default_root);
+}
+
+#[test]
+fn clone_names_the_remote_origin_when_default_remote_name_is_upstream() {
+    let repo = Repo::new();
+    let bare = repo.root.join("bare.git");
+    repo.git(&[
+        "clone",
+        "--bare",
+        repo.repo.to_str().expect("repo"),
+        bare.to_str().expect("bare"),
+    ]);
+    append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
+    repo.git(&["config", "--global", "clone.defaultRemoteName", "upstream"]);
+    let root = repo.root.join("clones");
+    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+
+    let cloned = repo.phantom(&["clone", "example/widget", "--json"]);
+    assert!(
+        cloned.status.success(),
+        "{}\n{}",
+        text(&cloned.stdout),
+        text(&cloned.stderr)
+    );
+    let destination = canonical(&root.join("github.com/example/widget"));
+    let remotes = repo
+        .command("git", &["remote"])
+        .current_dir(&destination)
+        .output()
+        .expect("remote");
+    assert!(remotes.status.success(), "{}", text(&remotes.stderr));
+    assert_eq!(text(&remotes.stdout), "origin");
+
+    let again = repo.phantom(&["clone", "example/widget", "--update", "--json"]);
+    assert!(
+        again.status.success(),
+        "{}\n{}",
+        text(&again.stdout),
+        text(&again.stderr)
+    );
+    let again_json: serde_json::Value = serde_json::from_str(&text(&again.stdout)).expect("json");
+    assert_eq!(again_json["cloned"], false);
+    assert_eq!(again_json["updated"], true);
+    assert_eq!(again_json["path"], destination.to_string_lossy().as_ref());
+}
+
+fn append_instead_of(repo: &Repo, bare: &std::path::Path, url: &str) {
+    let path = repo.home.join(".gitconfig");
+    let mut body = fs::read_to_string(&path).unwrap_or_default();
+    // file:// makes `--depth` apply. A plain path is a local clone and Git ignores depth.
+    body.push_str(&format!(
+        "\n[url \"file://{}\"]\n\tinsteadOf = {url}\n",
+        bare.display()
+    ));
+    fs::write(path, body).expect("gitconfig");
+}
+
+fn clone_widget(repo: &Repo, ghq_root: Option<&std::path::Path>) -> std::process::Output {
+    let mut command = repo.command(
+        env!("CARGO_BIN_EXE_ptm"),
+        &["clone", "example/widget", "--json"],
+    );
+    if let Some(root) = ghq_root {
+        command.env("GHQ_ROOT", root);
+    }
+    command.output().expect("clone")
+}
+
+fn assert_clone_landed(output: &std::process::Output, root: &std::path::Path) {
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_str(&text(&output.stdout)).expect("json");
+    let expected = canonical(&root.join("github.com/example/widget"));
+    assert_eq!(value["path"], expected.to_string_lossy().as_ref());
+    assert_eq!(value["cloned"], true);
+    assert_eq!(value["host"], "github.com");
+    assert_eq!(value["owner"], "example");
+    assert_eq!(value["repo"], "widget");
+}
+
+fn canonical(path: &std::path::Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }

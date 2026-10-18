@@ -480,32 +480,26 @@ pub fn list_catalog_with(
         .collect::<Vec<_>>();
     let mut warnings = Vec::new();
     if include_ghq {
-        match discover_ghq() {
-            Ok(Some(paths)) => {
-                let mut known = registered
-                    .iter()
-                    .map(|project| project.root_path.clone())
-                    .collect::<std::collections::BTreeSet<_>>();
-                for path in paths {
-                    let Ok(root) = resolve_project_root(Path::new(&path)) else {
-                        continue;
-                    };
-                    let root = root.to_string_lossy().to_string();
-                    if !known.insert(root.clone()) {
-                        continue;
-                    }
-                    let name = Path::new(&root)
-                        .file_name()
-                        .map(|name| name.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    projects.push(ProjectListEntry::Ghq {
-                        name,
-                        root_path: root,
-                    });
-                }
+        let mut known = registered
+            .iter()
+            .map(|project| project.root_path.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        for path in discover_repository_paths(&mut warnings) {
+            let Ok(root) = resolve_project_root(Path::new(&path)) else {
+                continue;
+            };
+            let root = root.to_string_lossy().to_string();
+            if !known.insert(root.clone()) {
+                continue;
             }
-            Ok(None) => {}
-            Err(error) => warnings.push(error.to_string()),
+            let name = Path::new(&root)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            projects.push(ProjectListEntry::Ghq {
+                name,
+                root_path: root,
+            });
         }
     }
     projects.sort_by(|left, right| {
@@ -538,6 +532,22 @@ pub fn resolve_project_root(input: &Path) -> Result<PathBuf> {
     let resolved = fs::canonicalize(input).map_err(|error| Error::Projects(error.to_string()))?;
     let git_root = git::git_root(&resolved)?;
     fs::canonicalize(git_root).map_err(|error| Error::Projects(error.to_string()))
+}
+
+fn discover_repository_paths(warnings: &mut Vec<String>) -> Vec<String> {
+    let mut paths = Vec::new();
+    match crate::repository::resolve_repository_root() {
+        Ok(root) => paths.extend(crate::repository::scan_repository_root(&root)),
+        Err(error) => warnings.push(format!(
+            "Failed to discover repositories under the clone root: {error}"
+        )),
+    }
+    match discover_ghq() {
+        Ok(Some(listed)) => paths.extend(listed),
+        Ok(None) => {}
+        Err(error) => warnings.push(error.to_string()),
+    }
+    paths
 }
 
 fn discover_ghq() -> Result<Option<Vec<String>>> {
