@@ -586,6 +586,7 @@ pub fn resolve_project_root(input: &Path) -> Result<PathBuf> {
 ///
 /// A ref that starts with `/`, `.`, or `~` is a directory anywhere inside a
 /// repository, including a linked worktree, and resolves to the main checkout.
+/// A linked worktree's `.git` file resolves the same way as that worktree.
 /// Any other ref matches the canonical `host/owner/repo` name of a registered
 /// or discovered project, that project's directory name, or an unambiguous
 /// path-segment suffix (`owner/repo`, `repo`).
@@ -644,13 +645,33 @@ fn resolve_directory_reference(reference: &str, cwd: &Path, home: &Path) -> Resu
         Err(error) => return Err(Error::msg(error.to_string())),
     };
     if !metadata.is_dir() {
+        if let Some(checkout) = linked_worktree_checkout(&path, &metadata) {
+            return resolve_checkout_path(&checkout, reference, false);
+        }
         return Err(Error::validation(format!(
             "Project path '{reference}' is not a directory"
         )));
     }
-    match git::git_root(&path) {
+    resolve_checkout_path(&path, reference, true)
+}
+
+fn linked_worktree_checkout(path: &Path, metadata: &fs::Metadata) -> Option<PathBuf> {
+    if !(metadata.is_file() && path.file_name().is_some_and(|name| name == ".git")) {
+        return None;
+    }
+    let contents = fs::read_to_string(path).ok()?;
+    if !contents.starts_with("gitdir:") {
+        return None;
+    }
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+}
+
+fn resolve_checkout_path(path: &Path, reference: &str, walk_git_dir: bool) -> Result<PathBuf> {
+    match git::git_root(path) {
         Ok(root) => Ok(fs::canonicalize(&root).unwrap_or(root)),
-        Err(error) => match checkout_above_git_dir(&path) {
+        Err(error) if walk_git_dir => match checkout_above_git_dir(path) {
             Some(checkout) => match git::git_root(&checkout) {
                 Ok(root) => Ok(fs::canonicalize(&root).unwrap_or(root)),
                 Err(_) => Err(Error::validation(format!(
@@ -659,6 +680,7 @@ fn resolve_directory_reference(reference: &str, cwd: &Path, home: &Path) -> Resu
             },
             None => Err(error),
         },
+        Err(error) => Err(error),
     }
 }
 
@@ -1544,6 +1566,22 @@ mod tests {
                 .expect(".git"),
             main
         );
+        let gitfile = worktree.join(".git");
+        assert!(gitfile.is_file(), "a linked worktree .git is a file");
+        assert_eq!(
+            resolve_directory_reference(gitfile.to_str().expect("git file"), &dir, &home)
+                .expect("worktree .git file"),
+            main
+        );
+        let notes = worktree.join("notes");
+        fs::create_dir_all(&notes).expect("notes");
+        let stray = notes.join(".git");
+        fs::write(&stray, "hello\n").expect("stray git file");
+        let stray_ref = resolve_directory_reference(stray.to_str().expect("stray"), &dir, &home);
+        let stray_ref = stray_ref.expect_err("stray .git file");
+        assert!(matches!(stray_ref, Error::Validation(_)));
+        assert_eq!(stray_ref.exit_code(), crate::error::VALIDATION);
+        assert!(stray_ref.to_string().contains("not a directory"));
         assert_eq!(
             resolve_directory_reference(
                 repo.join(".git/objects").to_str().expect("objects"),
