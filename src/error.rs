@@ -22,6 +22,10 @@ pub enum Error {
     WorktreeAlreadyExists(String),
     #[error("Branch '{0}' not found")]
     BranchNotFound(String),
+    #[error("Project '{0}' not found")]
+    ProjectNotFound(String),
+    #[error("Path '{0}' does not exist")]
+    PathNotFound(String),
     #[error("Not a git repository. Run ptm from inside a Git repository.")]
     NotARepository,
     #[error(
@@ -54,6 +58,7 @@ impl Error {
             Self::CommandFailed { code, .. } => *code,
             Self::Signaled(name) => 128 + signal_number(name),
             Self::NotARepository => NOT_REPOSITORY,
+            Self::ProjectNotFound(_) | Self::PathNotFound(_) => NOT_FOUND,
             Self::Validation(_) => VALIDATION,
             _ => GENERAL,
         }
@@ -72,7 +77,9 @@ impl Error {
 
     pub fn json_code(&self, exit_code: i32) -> &'static str {
         match self {
-            Self::WorktreeNotFound(_) => "not_found",
+            Self::WorktreeNotFound(_) | Self::ProjectNotFound(_) | Self::PathNotFound(_) => {
+                "not_found"
+            }
             Self::WorktreeAlreadyExists(_) => "already_exists",
             Self::BranchNotFound(_) => "branch_not_found",
             Self::NotARepository => "not_repository",
@@ -146,6 +153,14 @@ mod tests {
             Error::BranchNotFound("topic".to_string()).json_code(NOT_FOUND),
             "branch_not_found"
         );
+        let project = Error::ProjectNotFound("widget".to_string());
+        assert_eq!(project.exit_code(), NOT_FOUND);
+        assert_eq!(project.json_code(NOT_FOUND), "not_found");
+        assert_eq!(project.to_string(), "Project 'widget' not found");
+        let missing_path = Error::PathNotFound("/no/such".to_string());
+        assert_eq!(missing_path.exit_code(), NOT_FOUND);
+        assert_eq!(missing_path.json_code(NOT_FOUND), "not_found");
+        assert_eq!(missing_path.to_string(), "Path '/no/such' does not exist");
         assert_eq!(
             Error::NotARepository.json_code(NOT_REPOSITORY),
             "not_repository"

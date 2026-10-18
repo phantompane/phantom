@@ -53,8 +53,15 @@
     "create": {
       "name": "create",
       "description": "Create a new Git worktree",
-      "usage": "ptm create [name] [options]",
+      "usage": "ptm create [--project <ref>] [name] [options]",
       "options": [
+        {
+          "name": "project",
+          "short": "p",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A --project after --exec is part of that command. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--project github.com/owner/repo"
+        },
         {
           "name": "exec",
           "short": "x",
@@ -122,8 +129,15 @@
     "attach": {
       "name": "attach",
       "description": "Attach to an existing branch by creating a new worktree",
-      "usage": "ptm attach <branch-name> [options]",
+      "usage": "ptm attach [--project <ref>] <branch-name> [options]",
       "options": [
+        {
+          "name": "project",
+          "short": "p",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A --project after --exec is part of that command. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--project github.com/owner/repo"
+        },
         {
           "name": "exec",
           "short": "x",
@@ -172,8 +186,15 @@
     "list": {
       "name": "list",
       "description": "List all Git worktrees",
-      "usage": "ptm list [options]",
+      "usage": "ptm list [--project <ref>] [options]",
       "options": [
+        {
+          "name": "project",
+          "short": "p",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--project ~/src/repo"
+        },
         {
           "name": "no-default",
           "type": "boolean",
@@ -215,8 +236,15 @@
     "where": {
       "name": "where",
       "description": "Output the filesystem path of a specific worktree",
-      "usage": "ptm where <worktree-name> [options]",
+      "usage": "ptm where [--project <ref>] <worktree-name> [options]",
       "options": [
+        {
+          "name": "project",
+          "short": "p",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--project owner/repo"
+        },
         {
           "name": "json",
           "type": "boolean",
@@ -242,8 +270,15 @@
     "delete": {
       "name": "delete",
       "description": "Delete one or more Git worktrees",
-      "usage": "ptm delete <name...> [options]",
+      "usage": "ptm delete [--project <ref>] <name...> [options]",
       "options": [
+        {
+          "name": "project",
+          "short": "p",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--project owner/repo"
+        },
         {
           "name": "force",
           "short": "f",
@@ -301,7 +336,16 @@
     "exec": {
       "name": "exec",
       "description": "Execute a command in a worktree directory",
-      "usage": "ptm exec <worktree-name> <command> [args...]",
+      "usage": "ptm exec [--project <ref>] <worktree-name> <command> [args...]",
+      "options": [
+        {
+          "name": "project",
+          "short": "p",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. Put this before the worktree name. Everything after the worktree name is passed to the command, including options such as --project. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--project owner/repo"
+        }
+      ],
       "examples": [
         {
           "description": "Run npm test in a worktree",
@@ -316,13 +360,17 @@
           "command": "ptm exec feature git branch --show-current"
         },
         {
+          "description": "Run in another project and pass --project through to the command",
+          "command": "ptm exec --project owner/repo feature pwd --project y"
+        },
+        {
           "description": "Run a complex command with arguments",
           "command": "ptm exec staging npm run build -- --production"
         }
       ],
       "notes": [
         "The command is executed with the worktree directory as the working directory",
-        "All arguments after the worktree name are passed to the command, including options. A -- before the command is accepted but not required",
+        "Put --project before the worktree name. All arguments after the worktree name are passed to the command, including options. A -- before the command is accepted but not required",
         "The exit code of the executed command is preserved",
         "The command receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path)"
       ]
@@ -589,6 +637,7 @@
       "notes": [
         "Only one output format option can be used at a time.",
         "Repositories under the clone root are discovered automatically, and ghq list is consulted when ghq is installed, unless the ghq-discovery preference is false.",
+        "--json includes canonicalName: host/owner/repo from the origin URL, or from a checkout at <root>/<host>/<owner>/<repo>, or the directory name when neither is available.",
         "The clone root is the root preference, then the first git config ghq.root value, then $GHQ_ROOT, then ~/ghq.",
         "ghq is optional. Checkouts under the clone root are still discovered when it is not installed."
       ]
@@ -638,9 +687,16 @@
     },
     "github checkout": {
       "name": "github checkout",
-      "usage": "ptm github checkout <number> [options]",
+      "usage": "ptm github checkout [--project <ref>] <number> [options]",
       "description": "Create a worktree for a GitHub PR or issue",
       "options": [
+        {
+          "name": "project",
+          "short": "p",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--project owner/repo"
+        },
         {
           "name": "base",
           "type": "string",
@@ -704,9 +760,16 @@
     },
     "gh checkout": {
       "name": "github checkout",
-      "usage": "ptm github checkout <number> [options]",
+      "usage": "ptm gh checkout [--project <ref>] <number> [options]",
       "description": "Create a worktree for a GitHub PR or issue",
       "options": [
+        {
+          "name": "project",
+          "short": "p",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--project owner/repo"
+        },
         {
           "name": "base",
           "type": "string",
