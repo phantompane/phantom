@@ -37,7 +37,7 @@ impl Repo {
     }
 
     fn phantom(&self, args: &[&str]) -> std::process::Output {
-        self.command(env!("CARGO_BIN_EXE_phantom"), args)
+        self.command(env!("CARGO_BIN_EXE_ptm"), args)
             .output()
             .expect("phantom")
     }
@@ -86,7 +86,7 @@ fn phantom_color(
     no_color: Option<&str>,
     force_color: Option<&str>,
 ) -> std::process::Output {
-    let mut command = repo.command(env!("CARGO_BIN_EXE_phantom"), args);
+    let mut command = repo.command(env!("CARGO_BIN_EXE_ptm"), args);
     command.env_remove("NO_COLOR").env_remove("FORCE_COLOR");
     if let Some(value) = no_color {
         command.env("NO_COLOR", value);
@@ -140,7 +140,7 @@ fn outside_a_git_repository_is_a_phantom_error() {
         &["exec", "name", "--", "true"],
     ] {
         let output = repo
-            .command(env!("CARGO_BIN_EXE_phantom"), args)
+            .command(env!("CARGO_BIN_EXE_ptm"), args)
             .current_dir(&outside)
             .output()
             .expect("phantom");
@@ -150,13 +150,13 @@ fn outside_a_git_repository_is_a_phantom_error() {
             "{args:?} leaked git output: {stderr}"
         );
         assert!(
-            stderr.contains("Not a git repository"),
+            stderr.contains("Not a git repository. Run ptm from inside a Git repository."),
             "{args:?} stderr: {stderr}"
         );
         assert_eq!(output.status.code(), Some(4), "{args:?} stderr: {stderr}");
     }
     let help = repo
-        .command(env!("CARGO_BIN_EXE_phantom"), &["--help"])
+        .command(env!("CARGO_BIN_EXE_ptm"), &["--help"])
         .current_dir(&outside)
         .output()
         .expect("help");
@@ -179,7 +179,22 @@ fn version_help_and_unknown_command() {
 
     let help = repo.phantom(&["--help"]);
     assert!(help.status.success());
-    assert!(text(&help.stdout).contains("Phantom - Git Worktree Manager"));
+    let help_text = text(&help.stdout);
+    assert!(help_text.contains("Phantom - Git Worktree Manager"));
+    assert!(help_text.contains("ptm <command> [options]"));
+    assert!(help_text.contains("Run 'ptm <command> --help'"));
+    assert!(!help_text.contains("phantom <command>"));
+
+    let where_help = repo.phantom(&["where", "--help"]);
+    assert!(where_help.status.success());
+    let where_text = text(&where_help.stdout);
+    assert!(where_text.contains("ptm where"));
+    assert!(where_text.contains("ptm where <worktree-name>"));
+    assert!(!where_text.contains("phantom where"));
+
+    let missing_where = repo.phantom(&["where"]);
+    assert_eq!(missing_where.status.code(), Some(3));
+    assert!(text(&missing_where.stderr).contains("Usage: ptm where <worktree-name>"));
 
     let unknown = repo.phantom(&["nope"]);
     assert_eq!(unknown.status.code(), Some(1));
@@ -327,7 +342,7 @@ fn github_checkout_logger_follows_the_caller() {
     );
 
     let cli = repo
-        .command(env!("CARGO_BIN_EXE_phantom"), &["github", "checkout", "7"])
+        .command(env!("CARGO_BIN_EXE_ptm"), &["github", "checkout", "7"])
         .env("PATH", &path)
         .output()
         .expect("cli");
@@ -378,7 +393,7 @@ fn mcp_tool(
     tool: &str,
     arguments: serde_json::Value,
 ) -> McpOutput {
-    let mut command = repo.command(env!("CARGO_BIN_EXE_phantom"), &["mcp", "serve"]);
+    let mut command = repo.command(env!("CARGO_BIN_EXE_ptm"), &["mcp", "serve"]);
     command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -668,7 +683,7 @@ fn project_add_from_a_linked_worktree_is_idempotent() {
     ]);
     let again = repo
         .command(
-            env!("CARGO_BIN_EXE_phantom"),
+            env!("CARGO_BIN_EXE_ptm"),
             &["project", "add", linked.to_str().expect("path"), "--json"],
         )
         .current_dir(&linked)
@@ -701,10 +716,7 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
         std::env::var("PATH").unwrap_or_default()
     );
     let discovered = repo
-        .command(
-            env!("CARGO_BIN_EXE_phantom"),
-            &["project", "list", "--json"],
-        )
+        .command(env!("CARGO_BIN_EXE_ptm"), &["project", "list", "--json"])
         .env("PATH", &path)
         .env("PHANTOM_TEST_GHQ_PROJECT", &repo.repo)
         .output()
@@ -725,16 +737,13 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
     .expect("fail");
     fs::set_permissions(&ghq, perms).expect("chmod");
     let added = repo
-        .command(env!("CARGO_BIN_EXE_phantom"), &["project", "add", "--json"])
+        .command(env!("CARGO_BIN_EXE_ptm"), &["project", "add", "--json"])
         .env("PATH", &path)
         .output()
         .expect("add");
     assert!(added.status.success(), "{}", text(&added.stderr));
     let warned = repo
-        .command(
-            env!("CARGO_BIN_EXE_phantom"),
-            &["project", "list", "--json"],
-        )
+        .command(env!("CARGO_BIN_EXE_ptm"), &["project", "list", "--json"])
         .env("PATH", &path)
         .output()
         .expect("warn");
@@ -810,7 +819,7 @@ fn copy_file_globs_ignore_brackets_in_the_repository_path() {
     git(&["add", "README.md"]);
     git(&["commit", "-m", "initial"]);
     fs::write(repo_dir.join("kept.env"), "kept\n").expect("kept");
-    let output = Command::new(env!("CARGO_BIN_EXE_phantom"))
+    let output = Command::new(env!("CARGO_BIN_EXE_ptm"))
         .args(["create", "copied", "--copy-file", "*.env"])
         .current_dir(&repo_dir)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -844,7 +853,7 @@ fn concurrent_project_add_processes_keep_every_record() {
         assert!(init.status.success(), "{}", text(&init.stderr));
         let child = repo
             .command(
-                env!("CARGO_BIN_EXE_phantom"),
+                env!("CARGO_BIN_EXE_ptm"),
                 &["project", "add", path.to_str().expect("path"), "--json"],
             )
             .stdout(std::process::Stdio::piped())
@@ -1230,7 +1239,7 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
         "HEAD",
     ]);
     let output = repo
-        .command(env!("CARGO_BIN_EXE_phantom"), &["github", "checkout", "7"])
+        .command(env!("CARGO_BIN_EXE_ptm"), &["github", "checkout", "7"])
         .env("PATH", &path)
         .output()
         .expect("checkout");
@@ -1258,7 +1267,7 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
         "HEAD",
     ]);
     let again = matching
-        .command(env!("CARGO_BIN_EXE_phantom"), &["github", "checkout", "7"])
+        .command(env!("CARGO_BIN_EXE_ptm"), &["github", "checkout", "7"])
         .env("PATH", &matching_path)
         .output()
         .expect("again");

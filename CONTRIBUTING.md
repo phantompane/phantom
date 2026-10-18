@@ -34,6 +34,8 @@ mise install
 cargo run --locked -- --help
 ```
 
+The built binary is `ptm` (`ptm --help`, `ptm create`). The Cargo package name stays `phantom`. There is no `phantom` binary alias.
+
 ### Development Workflow
 
 ```bash
@@ -155,7 +157,7 @@ To release a new version of Phantom:
      --target next
    ```
 
-   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `phantom-v<version>-<os>-<arch>.tar.gz` to the release. npm is not published. Monitor the workflow run in GitHub Actions.
+   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `ptm-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains the `ptm` binary. npm is not published. Monitor the workflow run in GitHub Actions.
 
 4. **Update release notes for clarity**
    - Review the auto-generated release notes using `gh release view v<version>`
