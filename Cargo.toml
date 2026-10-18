@@ -8,7 +8,7 @@ description = "Rust prototype of the phantom Git worktree manager"
 license = "MIT"
 
 [[bin]]
-name = "phantom"
+name = "ptm"
 path = "src/main.rs"
 
 [dependencies]

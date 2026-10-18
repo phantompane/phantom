@@ -71,7 +71,7 @@ pub fn main_help() -> Result<String> {
     ));
     lines.push(String::new());
     lines.push(bold("USAGE"));
-    lines.push("  phantom <command> [options]".to_string());
+    lines.push("  ptm <command> [options]".to_string());
     lines.push(String::new());
     lines.push(bold("COMMANDS"));
     let max_name = file
@@ -102,7 +102,7 @@ pub fn main_help() -> Result<String> {
     ));
     lines.push(String::new());
     lines.push(dim(
-        "Run 'phantom <command> --help' for more information on a command.",
+        "Run 'ptm <command> --help' for more information on a command.",
     ));
     Ok(lines.join("\n"))
 }
@@ -114,7 +114,7 @@ pub fn command_help(key: &str) -> Result<Option<String>> {
         return Ok(None);
     };
     let mut lines = Vec::new();
-    lines.push(bold(&format!("phantom {}", help.name)));
+    lines.push(bold(&format!("ptm {}", help.name)));
     lines.push(dim(&help.description));
     lines.push(String::new());
     lines.push(bold("USAGE"));
@@ -280,6 +280,50 @@ mod tests {
             .expect("help")
             .expect("checkout");
         assert!(checkout.contains("--base <value>"));
+    }
+
+    #[test]
+    fn rendered_help_names_the_ptm_command() {
+        let main = main_help().expect("main help");
+        assert!(main.contains("ptm <command> [options]"));
+        assert!(main.contains("Run 'ptm <command> --help'"));
+        assert!(!mentions_phantom_command(&main), "{main}");
+        let file = data().expect("help data");
+        assert!(!file.helps.is_empty());
+        for key in file.helps.keys() {
+            let help = command_help(key).expect("render").expect(key);
+            assert!(
+                help.contains("ptm "),
+                "{key} help does not name ptm:\n{help}"
+            );
+            assert!(
+                !mentions_phantom_command(&help),
+                "{key} still tells the user to run phantom:\n{help}"
+            );
+        }
+    }
+
+    fn mentions_phantom_command(help: &str) -> bool {
+        const COMMANDS: &[&str] = &[
+            "<command>",
+            "--version",
+            "-v",
+            "create",
+            "attach",
+            "list",
+            "where",
+            "delete",
+            "exec",
+            "preferences",
+            "version",
+            "mcp",
+            "project",
+            "github",
+            "gh",
+        ];
+        help.split("phantom ")
+            .skip(1)
+            .any(|rest| COMMANDS.iter().any(|command| rest.starts_with(command)))
     }
 
     #[test]
