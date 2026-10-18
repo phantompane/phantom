@@ -3220,6 +3220,208 @@ fn clone_names_the_remote_origin_when_default_remote_name_is_upstream() {
     assert_eq!(again_json["path"], destination.to_string_lossy().as_ref());
 }
 
+#[test]
+fn clone_lowercases_remote_url_host() {
+    let repo = Repo::new();
+    let bare = repo.root.join("bare.git");
+    repo.git(&[
+        "clone",
+        "--bare",
+        repo.repo.to_str().expect("repo"),
+        bare.to_str().expect("bare"),
+    ]);
+    append_instead_of(&repo, &bare, "https://GitHub.com/example/widget.git");
+    append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
+    let root = repo.root.join("clones");
+    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+
+    let cloned = repo.phantom(&["clone", "https://GitHub.com/example/widget.git", "--json"]);
+    assert!(
+        cloned.status.success(),
+        "{}\n{}",
+        text(&cloned.stdout),
+        text(&cloned.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_str(&text(&cloned.stdout)).expect("json");
+    assert_eq!(value["host"], "github.com");
+    assert_eq!(value["remoteUrl"], "https://github.com/example/widget.git");
+    assert_eq!(
+        value["path"],
+        canonical(&root.join("github.com/example/widget"))
+            .to_string_lossy()
+            .as_ref()
+    );
+}
+
+#[test]
+fn clone_overlong_owner_is_validation() {
+    let repo = Repo::new();
+    let root = repo.root.join("clones");
+    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+    let owner = "o".repeat(256);
+    let source = format!("example.com/{owner}/widget");
+    let output = repo.phantom(&["clone", &source, "--json"]);
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "{}\n{}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_str(&text(&output.stdout)).expect("json");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["error"]["code"], "validation");
+    assert_eq!(value["error"]["exitCode"], 3);
+    let message = value["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("Failed to create"), "{message}");
+    assert!(text(&output.stderr).is_empty(), "{}", text(&output.stderr));
+    assert!(!root.join("example.com").exists());
+}
+
+#[test]
+fn clone_surfaces_unreadable_git_config_for_an_existing_checkout() {
+    let repo = Repo::new();
+    let bare = repo.root.join("bare.git");
+    repo.git(&[
+        "clone",
+        "--bare",
+        repo.repo.to_str().expect("repo"),
+        bare.to_str().expect("bare"),
+    ]);
+    append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
+    let root = repo.root.join("clones");
+    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+    let cloned = repo.phantom(&["clone", "example/widget", "--json"]);
+    assert!(
+        cloned.status.success(),
+        "{}\n{}",
+        text(&cloned.stdout),
+        text(&cloned.stderr)
+    );
+
+    let broken = repo.root.join("broken.gitconfig");
+    fs::write(&broken, "[[[[ not valid\n").expect("config");
+    let again = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["clone", "example/widget", "--json"],
+        )
+        .env("GIT_CONFIG_GLOBAL", &broken)
+        .output()
+        .expect("clone");
+    assert_eq!(
+        again.status.code(),
+        Some(1),
+        "{}\n{}",
+        text(&again.stdout),
+        text(&again.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_str(&text(&again.stdout)).expect("json");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["error"]["code"], "error");
+    assert_eq!(value["error"]["exitCode"], 1);
+    let message = value["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("bad config line"),
+        "git's error should be in the message: {message}"
+    );
+    assert!(
+        !message.contains("not a Git repository"),
+        "config failure was reported as a missing repository: {message}"
+    );
+    assert!(text(&again.stderr).is_empty(), "{}", text(&again.stderr));
+}
+
+#[test]
+fn clone_removes_stale_staging_directories() {
+    let repo = Repo::new();
+    let bare = repo.root.join("bare.git");
+    repo.git(&[
+        "clone",
+        "--bare",
+        repo.repo.to_str().expect("repo"),
+        bare.to_str().expect("bare"),
+    ]);
+    append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
+    let root = repo.root.join("clones");
+    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+    let owner = root.join("github.com").join("example");
+    fs::create_dir_all(&owner).expect("owner");
+    let dead_pid = unused_pid();
+    let dead = owner.join(format!(".ptm-clone-{dead_pid}-{}", uuid_token()));
+    fs::create_dir_all(dead.join(".git")).expect("dead");
+    fs::write(dead.join("payload.txt"), "stale").expect("payload");
+    let live = owner.join(format!(
+        ".ptm-clone-{}-{}",
+        std::process::id(),
+        uuid_token()
+    ));
+    fs::create_dir_all(&live).expect("live");
+    fs::write(live.join("payload.txt"), "live").expect("live");
+
+    let cloned = repo.phantom(&["clone", "example/widget", "--json"]);
+    assert!(
+        cloned.status.success(),
+        "{}\n{}",
+        text(&cloned.stdout),
+        text(&cloned.stderr)
+    );
+    assert!(!dead.exists(), "stale staging directory remained");
+    assert_eq!(
+        fs::read_to_string(live.join("payload.txt")).expect("live"),
+        "live"
+    );
+    assert!(owner.join("widget").join(".git").exists());
+}
+
+#[test]
+fn clone_rejects_file_urls() {
+    let repo = Repo::new();
+    let output = repo.phantom(&["clone", "file:///tmp/repo.git", "--json"]);
+    assert_eq!(output.status.code(), Some(3), "{}", text(&output.stdout));
+    let value: serde_json::Value = serde_json::from_str(&text(&output.stdout)).expect("json");
+    assert_eq!(value["error"]["code"], "validation");
+    assert_eq!(value["error"]["exitCode"], 3);
+    let message = value["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("file"), "{message}");
+    assert!(message.contains("https"), "{message}");
+}
+
+fn unused_pid() -> u32 {
+    for pid in 1_000_000..1_001_000 {
+        let alive = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(true);
+        if !alive {
+            return pid;
+        }
+    }
+    panic!("no unused pid");
+}
+
+fn uuid_token() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    format!(
+        "{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}",
+        (nanos & 0xffff_ffff) as u32,
+        ((nanos >> 32) & 0xffff) as u32,
+        ((nanos >> 48) & 0xfff) as u32,
+        std::process::id() & 0xfff,
+        nanos & 0xffff_ffff_ffff
+    )
+}
+
 fn append_instead_of(repo: &Repo, bare: &std::path::Path, url: &str) {
     let path = repo.home.join(".gitconfig");
     let mut body = fs::read_to_string(&path).unwrap_or_default();
