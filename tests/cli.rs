@@ -185,10 +185,21 @@ fn version_help_and_unknown_command() {
     let help = repo.phantom(&["--help"]);
     assert!(help.status.success());
     let help_text = text(&help.stdout);
-    assert!(help_text.contains("Phantom - Git Worktree Manager"));
+    assert!(help_text.contains("ptm - Git Worktree Manager"));
+    assert!(!help_text.contains("Phantom"), "{help_text}");
     assert!(help_text.contains("ptm <command> [options]"));
     assert!(help_text.contains("Run 'ptm <command> --help'"));
     assert!(!help_text.contains("phantom <command>"));
+
+    for args in [["version", "--help"], ["project", "--help"]] {
+        let command_help = repo.phantom(&args);
+        assert!(command_help.status.success(), "{args:?}");
+        let command_text = text(&command_help.stdout);
+        assert!(
+            !command_text.contains("Phantom"),
+            "{args:?} still names Phantom:\n{command_text}"
+        );
+    }
 
     let where_help = repo.phantom(&["where", "--help"]);
     assert!(where_help.status.success());

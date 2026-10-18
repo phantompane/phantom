@@ -64,7 +64,7 @@ fn data() -> Result<&'static HelpFile> {
 pub fn main_help() -> Result<String> {
     let file = data()?;
     let mut lines = Vec::new();
-    lines.push(bold("Phantom - Git Worktree Manager"));
+    lines.push(bold("ptm - Git Worktree Manager"));
     lines.push(String::new());
     lines.push(dim(
         "A CLI tool for managing Git worktrees with enhanced functionality",
@@ -295,8 +295,10 @@ mod tests {
     #[test]
     fn rendered_help_names_the_ptm_command() {
         let main = main_help().expect("main help");
+        assert!(main.contains("ptm - Git Worktree Manager"));
         assert!(main.contains("ptm <command> [options]"));
         assert!(main.contains("Run 'ptm <command> --help'"));
+        assert!(!main.contains("Phantom"), "{main}");
         assert!(!mentions_phantom_command(&main), "{main}");
         let file = data().expect("help data");
         assert!(!file.helps.is_empty());
@@ -305,6 +307,10 @@ mod tests {
             assert!(
                 help.contains("ptm "),
                 "{key} help does not name ptm:\n{help}"
+            );
+            assert!(
+                !help.contains("Phantom"),
+                "{key} still names Phantom:\n{help}"
             );
             assert!(
                 !mentions_phantom_command(&help),
