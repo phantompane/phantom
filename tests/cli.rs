@@ -4974,6 +4974,85 @@ fn exec_command_json_flag_does_not_switch_ptm_to_json() {
 }
 
 #[test]
+fn separate_git_dir_creates_the_default_worktree_in_the_common_dir() {
+    let root =
+        std::env::temp_dir().join(format!("ptm-sep-default-{}-{}", std::process::id(), uuid()));
+    let home = root.join("home");
+    let checkout = root.join("checkout");
+    let sep = root.join("sep.git");
+    let template = root.join("git-template");
+    fs::create_dir_all(home.join(".config/git")).expect("home");
+    fs::create_dir_all(&template).expect("git template");
+    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    fs::create_dir_all(&checkout).expect("checkout");
+    let init = std::process::Command::new("git")
+        .args([
+            "init",
+            "--separate-git-dir",
+            sep.to_str().expect("sep"),
+            "-b",
+            "main",
+        ])
+        .current_dir(&checkout)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TEMPLATE_DIR", &template)
+        .env("HOME", &home)
+        .output()
+        .expect("init");
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&checkout)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &home)
+            .output()
+            .expect("git");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["config", "user.name", "Phantom Rust"]);
+    git(&["config", "user.email", "phantom-rust@example.com"]);
+    fs::write(checkout.join("README.md"), "# sep\n").expect("readme");
+    git(&["add", "README.md"]);
+    git(&["commit", "-m", "initial"]);
+    assert!(checkout.join(".git").is_file(), ".git is a gitdir file");
+
+    let created = std::process::Command::new(env!("CARGO_BIN_EXE_ptm"))
+        .args(["create", "feature", "--json"])
+        .current_dir(&checkout)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env_remove("PTM_AGENT_ID")
+        .output()
+        .expect("ptm");
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let created_json = json_value(&created);
+    assert_eq!(created_json["version"], 1);
+    let worktree = sep.join("ptm").join("worktrees").join("feature");
+    assert_worktree_object(&created_json["worktree"], "feature", &worktree);
+    assert!(worktree.is_dir());
+    assert!(checkout.join(".git").is_file(), ".git stayed a gitdir file");
+    assert!(!checkout.join(".git").join("ptm").exists());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn separate_git_dir_writes_metadata_in_the_common_dir() {
     let root = std::env::temp_dir().join(format!("ptm-sep-{}-{}", std::process::id(), uuid()));
     let home = root.join("home");
