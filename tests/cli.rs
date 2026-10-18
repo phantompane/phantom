@@ -4548,7 +4548,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     assert_eq!(updated_json["worktree"]["links"]["issue"]["number"], 12);
     assert_eq!(updated_json["worktree"]["createdAt"], created_at);
 
-    let file = repo.repo.join(".git/phantom/worktrees.json");
+    let file = repo.repo.join(".git/ptm/worktrees.json");
     let mut document: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("store json");
     let records = document["worktrees"].as_array_mut().expect("records");

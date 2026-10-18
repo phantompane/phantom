@@ -80,7 +80,7 @@ pub fn path_key(path: &Path) -> String {
 }
 
 pub fn metadata_file(git_root: &Path) -> PathBuf {
-    phantom_dir(git_root).join(FILE_NAME)
+    metadata_dir(git_root).join(FILE_NAME)
 }
 
 /// Records for every path in the store. A missing file is an empty map.
@@ -280,12 +280,18 @@ fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
     }
 }
 
-fn phantom_dir(git_root: &Path) -> PathBuf {
-    git_root.join(".git").join("phantom")
+/// Parent of the default worktrees directory. A custom `worktrees-directory`
+/// does not move this file.
+fn metadata_dir(git_root: &Path) -> PathBuf {
+    let worktrees = paths::worktrees_directory(git_root, None);
+    match worktrees.parent() {
+        Some(parent) => parent.to_path_buf(),
+        None => git_root.join(".git").join("ptm"),
+    }
 }
 
 fn with_store<T>(git_root: &Path, body: impl FnOnce(&mut Store) -> Result<(T, bool)>) -> Result<T> {
-    let dir = phantom_dir(git_root);
+    let dir = metadata_dir(git_root);
     fs::create_dir_all(&dir).map_err(|error| {
         Error::msg(format!(
             "Failed to create worktree metadata directory: {error}"
@@ -489,7 +495,7 @@ mod tests {
     #[test]
     fn corrupt_or_unknown_version_is_not_overwritten() {
         let root = root();
-        fs::create_dir_all(phantom_dir(&root)).expect("dir");
+        fs::create_dir_all(metadata_dir(&root)).expect("dir");
         let file = metadata_file(&root);
         fs::write(&file, "{not json").expect("corrupt");
         let error = write(&root, &root.join("wt"), &MetadataInput::default()).expect_err("write");
