@@ -35,8 +35,8 @@ pub fn version_line() -> String {
 
 fn format_version(version: &str, sha: Option<&str>) -> String {
     match sha {
-        Some(sha) => format!("Phantom v{version}+rust ({sha})"),
-        None => format!("Phantom v{version}+rust"),
+        Some(sha) => format!("ptm v{version}+rust ({sha})"),
+        None => format!("ptm v{version}+rust"),
     }
 }
 
@@ -48,15 +48,12 @@ mod tests {
     fn version_line_marks_the_rust_build() {
         assert_eq!(
             format_version("7.0.0-alpha.2", None),
-            "Phantom v7.0.0-alpha.2+rust"
+            "ptm v7.0.0-alpha.2+rust"
         );
         assert_eq!(
             format_version("7.0.0-alpha.2", Some("abc1234")),
-            "Phantom v7.0.0-alpha.2+rust (abc1234)"
+            "ptm v7.0.0-alpha.2+rust (abc1234)"
         );
-        assert_ne!(
-            format_version("7.0.0-alpha.2", None),
-            "Phantom v7.0.0-alpha.2"
-        );
+        assert_ne!(format_version("7.0.0-alpha.2", None), "ptm v7.0.0-alpha.2");
     }
 }
