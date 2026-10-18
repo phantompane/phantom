@@ -1827,6 +1827,92 @@ fn create_and_attach_exec_pass_command_options_through() {
 }
 
 #[test]
+fn repeated_exec_options_are_rejected() {
+    let repo = Repo::new();
+    let message = "The --exec option can only be specified once";
+
+    let created = repo.phantom(&["create", "a", "--exec=echo", "--exec=true"]);
+    assert_eq!(created.status.code(), Some(3), "{}", text(&created.stderr));
+    assert!(
+        text(&created.stderr).contains(message),
+        "{}",
+        text(&created.stderr)
+    );
+    assert_eq!(text(&created.stdout), "");
+    assert!(!repo.repo.join(".git/phantom/worktrees/a").exists());
+
+    let quoted = repo.phantom(&["create", "b", "--exec=echo one", "--exec=echo two"]);
+    assert_eq!(quoted.status.code(), Some(3), "{}", text(&quoted.stderr));
+    assert!(
+        text(&quoted.stderr).contains(message),
+        "{}",
+        text(&quoted.stderr)
+    );
+    assert!(!repo.repo.join(".git/phantom/worktrees/b").exists());
+
+    let mixed = repo.phantom(&["create", "c", "-xecho", "--exec=true"]);
+    assert_eq!(mixed.status.code(), Some(3), "{}", text(&mixed.stderr));
+    assert!(text(&mixed.stderr).contains(message));
+
+    repo.git(&["branch", "attached-repeat"]);
+    let attached = repo.phantom(&["attach", "attached-repeat", "--exec=echo", "--exec=true"]);
+    assert_eq!(
+        attached.status.code(),
+        Some(3),
+        "{}",
+        text(&attached.stderr)
+    );
+    assert!(
+        text(&attached.stderr).contains(message),
+        "{}",
+        text(&attached.stderr)
+    );
+    assert_eq!(text(&attached.stdout), "");
+    assert!(!repo
+        .repo
+        .join(".git/phantom/worktrees/attached-repeat")
+        .exists());
+
+    let attached_short = repo.phantom(&["attach", "attached-repeat", "-xecho", "-xtrue"]);
+    assert_eq!(
+        attached_short.status.code(),
+        Some(3),
+        "{}",
+        text(&attached_short.stderr)
+    );
+    assert!(text(&attached_short.stderr).contains(message));
+
+    let trailing = repo.phantom(&["create", "kept", "--exec", "echo", "--exec"]);
+    assert!(
+        trailing.status.success(),
+        "{}\n{}",
+        text(&trailing.stdout),
+        text(&trailing.stderr)
+    );
+    assert!(
+        text(&trailing.stdout).lines().any(|line| line == "--exec"),
+        "{}",
+        text(&trailing.stdout)
+    );
+
+    let trailing_attach =
+        repo.phantom(&["attach", "attached-repeat", "--exec", "echo", "--exec=true"]);
+    assert!(
+        trailing_attach.status.success(),
+        "{}\n{}",
+        text(&trailing_attach.stdout),
+        text(&trailing_attach.stderr)
+    );
+    assert!(
+        text(&trailing_attach.stdout)
+            .lines()
+            .any(|line| line == "--exec=true"),
+        "{}",
+        text(&trailing_attach.stdout)
+    );
+}
+
+#[test]
 fn exec_preserves_the_child_exit_code() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "feature/exec"]);

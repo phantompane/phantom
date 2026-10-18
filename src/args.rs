@@ -17,6 +17,9 @@ pub struct Opt {
 pub struct Parsed {
     pub positionals: Vec<String>,
     flags: Vec<(String, Option<String>)>,
+    /// One entry each time an option appears. Remainder arguments belong to
+    /// that single appearance and are not extra entries.
+    option_occurrences: Vec<String>,
 }
 
 impl Parsed {
@@ -38,6 +41,13 @@ impl Parsed {
             .filter(|(flag, _)| flag == name)
             .filter_map(|(_, value)| value.clone())
             .collect()
+    }
+
+    pub fn occurrences(&self, name: &str) -> usize {
+        self.option_occurrences
+            .iter()
+            .filter(|flag| flag.as_str() == name)
+            .count()
     }
 }
 
@@ -87,6 +97,7 @@ pub fn parse_with(
                 .find(|spec| spec.name == name)
                 .ok_or_else(|| Error::msg(unknown_option(&format!("--{option}"))))?;
             index += 1;
+            parsed.option_occurrences.push(spec.name.to_string());
             if spec.value {
                 if spec.remainder && inline.is_none() {
                     push_remainder(
@@ -126,6 +137,7 @@ pub fn parse_with(
                 .ok_or_else(|| Error::msg(unknown_option(arg)))?;
             let attached = short.chars().skip(1).collect::<String>();
             index += 1;
+            parsed.option_occurrences.push(spec.name.to_string());
             if spec.value {
                 if spec.remainder && attached.is_empty() {
                     push_remainder(
@@ -382,6 +394,42 @@ mod tests {
         assert_eq!(
             missing.to_string(),
             "Option '--exec <value>' argument missing"
+        );
+        assert_eq!(parsed.occurrences("exec"), 1);
+        assert_eq!(short.occurrences("exec"), 1);
+        assert_eq!(inline.occurrences("exec"), 1);
+    }
+
+    #[test]
+    fn repeated_exec_options_are_separate_occurrences() {
+        let options = [Opt {
+            name: "exec",
+            short: Some('x'),
+            value: true,
+            multiple: false,
+            remainder: true,
+        }];
+        let repeated =
+            parse(&args(&["a", "--exec=echo", "--exec=true"]), &options, true).expect("parse");
+        assert_eq!(repeated.occurrences("exec"), 2);
+        assert_eq!(
+            repeated.values("exec"),
+            ["echo", "true"].map(str::to_string)
+        );
+
+        let mixed = parse(&args(&["a", "--exec=echo", "-xtrue"]), &options, true).expect("parse");
+        assert_eq!(mixed.occurrences("exec"), 2);
+
+        let trailing = parse(
+            &args(&["a", "--exec", "echo", "--exec", "true"]),
+            &options,
+            true,
+        )
+        .expect("parse");
+        assert_eq!(trailing.occurrences("exec"), 1);
+        assert_eq!(
+            trailing.values("exec"),
+            ["echo", "--exec", "true"].map(str::to_string)
         );
     }
 }

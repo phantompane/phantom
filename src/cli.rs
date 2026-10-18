@@ -69,11 +69,15 @@ fn create(args: &[String]) -> Result<i32> {
         ],
         true,
     )?;
+    let action = match action_from(&parsed) {
+        Ok(action) => action,
+        Err(error) => return fail(&error, VALIDATION),
+    };
     match worktree::run_create(worktree::CreateRequest {
         name: parsed.positionals.first().map(String::as_str),
         base: parsed.value("base"),
         copy_files: &parsed.values("copy-file"),
-        action: action_from(&parsed),
+        action,
         logger: Logger::on(),
     }) {
         Ok(outcome) => Ok(outcome.exit_code.unwrap_or(SUCCESS)),
@@ -102,10 +106,14 @@ fn attach(args: &[String]) -> Result<i32> {
             VALIDATION,
         );
     };
+    let action = match action_from(&parsed) {
+        Ok(action) => action,
+        Err(error) => return fail(&error, VALIDATION),
+    };
     match worktree::run_attach(worktree::AttachRequest {
         name,
         copy_files: &parsed.values("copy-file"),
-        action: action_from(&parsed),
+        action,
         logger: Logger::on(),
     }) {
         Ok(outcome) => Ok(outcome.exit_code.unwrap_or(SUCCESS)),
@@ -638,11 +646,14 @@ fn catalog_json(projects: &[ProjectListEntry], version: u32) -> serde_json::Valu
     })
 }
 
-fn action_from(parsed: &Parsed) -> ActionRequest {
-    let exec = parsed.values("exec");
-    ActionRequest {
-        exec: (!exec.is_empty()).then_some(exec),
+fn action_from(parsed: &Parsed) -> Result<ActionRequest> {
+    if parsed.occurrences("exec") > 1 {
+        return Err(Error::msg("The --exec option can only be specified once"));
     }
+    let exec = parsed.values("exec");
+    Ok(ActionRequest {
+        exec: (!exec.is_empty()).then_some(exec),
+    })
 }
 
 fn requests_help(command: &Command, args: &[String]) -> bool {
