@@ -18,8 +18,6 @@ pub struct PhantomConfig {
 #[serde(rename_all = "camelCase")]
 pub struct PostCreate {
     #[serde(default)]
-    pub copy_files: Option<Vec<String>>,
-    #[serde(default)]
     pub commands: Option<Vec<String>>,
 }
 
@@ -94,7 +92,7 @@ fn validate_hooks(value: &serde_json::Value, path: &str) -> Result<()> {
         ))
     })?;
     for (key, child) in object {
-        if matches!(key.as_str(), "copyFiles" | "commands") && !is_string_array(child) {
+        if key == "commands" && !is_string_array(child) {
             return Err(Error::msg(format!(
                 "Invalid phantom.config.json: {path}.{key}: Expected array"
             )));
@@ -116,7 +114,7 @@ mod tests {
     #[test]
     fn parses_project_config() {
         let config = validate_config(
-            r#"{"worktreesDirectory":"../phantom-worktrees","postCreate":{"copyFiles":[".env"],"commands":["pnpm install"]}}"#,
+            r#"{"worktreesDirectory":"../phantom-worktrees","postCreate":{"commands":["pnpm install"]}}"#,
         )
         .expect("config");
         assert_eq!(
@@ -124,15 +122,15 @@ mod tests {
             Some("../phantom-worktrees")
         );
         assert_eq!(
-            config.post_create.and_then(|post| post.copy_files),
-            Some(vec![".env".to_string()])
+            config.post_create.and_then(|post| post.commands),
+            Some(vec!["pnpm install".to_string()])
         );
     }
 
     #[test]
-    fn rejects_bad_copy_files() {
-        let error = validate_config(r#"{"postCreate":{"copyFiles":[1]}}"#).expect_err("invalid");
-        assert!(error.to_string().contains("copyFiles"));
+    fn rejects_bad_commands() {
+        let error = validate_config(r#"{"postCreate":{"commands":[1]}}"#).expect_err("invalid");
+        assert!(error.to_string().contains("commands"));
     }
 
     #[test]
@@ -159,13 +157,13 @@ mod tests {
 
         fs::write(
             root.join("phantom.config.json"),
-            r#"{"postCreate":{"copyFiles":[1]}}"#,
+            r#"{"postCreate":{"commands":[1]}}"#,
         )
         .expect("schema");
         let error = load_config(&root).expect_err("invalid schema");
         let message = error.to_string();
         assert!(message.contains("phantom.config.json"), "{message}");
-        assert!(message.contains("copyFiles"), "{message}");
+        assert!(message.contains("commands"), "{message}");
 
         let _ = fs::remove_dir_all(root);
     }

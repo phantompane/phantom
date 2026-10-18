@@ -16,3 +16,17 @@ directory-name-separator = "-"
 keep-branch = false
 ghq-discovery = true
 ```
+
+## Copying gitignored files
+
+`ptm create` and `ptm attach` read `.worktreeinclude` from the root of the source checkout. The file uses gitignore syntax. A file is copied only when a pattern matches it and Git ignores it, so tracked files are never duplicated.
+
+```text
+.env
+.env.local
+config/secrets.json
+```
+
+Files that already exist in the new worktree are left unchanged. Symlinks are skipped and are not followed. A `.worktreeinclude` that is itself a symlink is not read.
+
+`--copy-file` adds extra gitignore patterns for that command.

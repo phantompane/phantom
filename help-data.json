@@ -62,8 +62,8 @@
           "name": "copy-file",
           "type": "string",
           "multiple": true,
-          "description": "Copy specified files from the current worktree to the new one. Can be used multiple times",
-          "example": "--copy-file .env --copy-file config.local.json"
+          "description": "Extra gitignore pattern of files to copy from the current checkout. Can be used multiple times. Only gitignored matches are copied",
+          "example": "--copy-file .env --copy-file config/secrets.json"
         },
         {
           "name": "base",
@@ -101,7 +101,10 @@
       "notes": [
         "If name is omitted, a random human-readable name is generated automatically",
         "The worktree name will be used as the branch name",
-        "File copying can also be configured in phantom.config.json"
+        "Gitignored files matching .worktreeinclude at the checkout root are copied into the new worktree",
+        ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
+        "Files that already exist in the new worktree are left unchanged",
+        "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read"
       ]
     },
     "attach": {
@@ -120,7 +123,7 @@
           "name": "copy-file",
           "type": "string",
           "multiple": true,
-          "description": "Copy specified files from the current worktree before attaching. Can be used multiple times",
+          "description": "Extra gitignore pattern of files to copy from the current checkout. Can be used multiple times. Only gitignored matches are copied",
           "example": "--copy-file .env --copy-file .npmrc"
         }
       ],
@@ -140,7 +143,11 @@
       ],
       "notes": [
         "The branch must already exist locally",
-        "To work with remote branches, first checkout the branch with git"
+        "To work with remote branches, first checkout the branch with git",
+        "Gitignored files matching .worktreeinclude at the checkout root are copied into the new worktree",
+        ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
+        "Files that already exist in the new worktree are left unchanged",
+        "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read"
       ]
     },
     "list": {

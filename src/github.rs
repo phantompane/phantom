@@ -84,9 +84,8 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Res
     if let Err(error) = git::set_upstream(&git_root, &worktree_name, &upstream) {
         eprintln!("Warning: Could not set upstream branch: {error}");
     }
-    let files = copy_files(&context);
     let commands = post_commands(&context);
-    let attached = worktree::attach_worktree(&context, &worktree_name, &files, &commands, logger)?;
+    let attached = worktree::attach_worktree(&context, &worktree_name, &[], &commands, logger)?;
     let message = if pull.fork {
         format!(
             "Checked out PR #{} from fork {}",
@@ -125,13 +124,12 @@ fn checkout_issue(
             hook_failure: None,
         });
     }
-    let files = copy_files(&context);
     let commands = post_commands(&context);
     let created = worktree::create_worktree(
         &context,
         &name,
         base.unwrap_or("HEAD"),
-        &files,
+        &[],
         &commands,
         logger,
     )?;
@@ -142,15 +140,6 @@ fn checkout_issue(
         already_exists: false,
         hook_failure: created.hook_failure,
     })
-}
-
-fn copy_files(context: &context::Context) -> Vec<String> {
-    context
-        .config
-        .as_ref()
-        .and_then(|config| config.post_create.as_ref())
-        .and_then(|post| post.copy_files.clone())
-        .unwrap_or_default()
 }
 
 fn post_commands(context: &context::Context) -> Vec<String> {
