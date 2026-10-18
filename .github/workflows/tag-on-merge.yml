@@ -1,5 +1,9 @@
 name: Tag on merge
 
+# Version pull requests are opened by hand against next.
+# Merging a pull request titled `chore(version): vX.Y.Z` creates that git tag.
+# This workflow does not edit Cargo.toml.
+
 on:
   pull_request:
     types:

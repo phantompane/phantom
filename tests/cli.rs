@@ -170,10 +170,10 @@ fn version_help_and_unknown_command() {
     assert!(version.status.success());
     let version_line = text(&version.stdout);
     assert!(
-        version_line.starts_with("Phantom v6.3.2+rust"),
+        version_line.starts_with("Phantom v7.0.0-alpha.1+rust"),
         "{version_line}"
     );
-    assert_ne!(version_line, "Phantom v6.3.2");
+    assert_ne!(version_line, "Phantom v7.0.0-alpha.1");
     let subcommand = repo.phantom(&["version"]);
     assert_eq!(text(&subcommand.stdout), version_line);
 

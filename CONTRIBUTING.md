@@ -17,12 +17,12 @@ Thank you for your interest in contributing to Phantom! This guide will help you
 
 ### Prerequisites
 
-- Rust 1.99.1 (`rust-toolchain.toml`). mise does not install Rust.
-- [mise](https://mise.jdx.dev/) for the other tools in `mise.toml` (`mise install`: Python 3.12)
+- Rust 1.99.1 (`rust-toolchain.toml`).
+- [mise](https://mise.jdx.dev/) is optional. `mise.toml` only aliases `fmt`, `clippy`, and `test`. It does not install Rust or other tools.
 
 Development happens on `next`. Open pull requests against `next`. `main` remains the previous TypeScript version.
 
-Dependabot does not bump the Rust toolchain. The version is pinned in `rust-toolchain.toml`, in the `toolchain:` input of `.github/workflows/ci.yml`, `release-compile.yml`, and `version-bump.yml`, and in `RUSTUP_TOOLCHAIN` in `release-compile.yml`. Update all of those together, then run the checks below on the new compiler. `Cargo.toml` `rust-version` is the MSRV (1.89, required by uuid 1.28) and changes only when that floor moves.
+Dependabot does not bump the Rust toolchain. The version is pinned in `rust-toolchain.toml`, in the `toolchain:` input of `.github/workflows/ci.yml` and `release-compile.yml`, and in `RUSTUP_TOOLCHAIN` in `release-compile.yml`. Update all of those together, then run the checks below on the new compiler. `Cargo.toml` `rust-version` is the MSRV (1.89, required by uuid 1.28) and changes only when that floor moves.
 
 ### Getting Started
 
@@ -30,7 +30,6 @@ Dependabot does not bump the Rust toolchain. The version is pinned in `rust-tool
 git clone https://github.com/phantompane/phantom.git
 cd phantom
 git checkout next
-mise install
 cargo run --locked -- --help
 ```
 
@@ -122,24 +121,21 @@ When contributing documentation:
 
 To release a new version of Phantom:
 
-1. **Bump version**
+1. **Open a version pull request against `next`**
+
+   Change the version by hand in a dedicated pull request. Do not bump it in a feature pull request. Edit `version` in `Cargo.toml` and the `phantom` package entry in `Cargo.lock` so they match.
 
    ```bash
-   # Dispatch the workflow that lives on next. The default branch is main,
-   # which still has the TypeScript workflow, so --ref next is required.
-   # release_type: patch | minor | major | prepatch | preminor | premajor | prerelease
-   gh workflow run version-bump.yml --ref next -f release_type=patch
-
-   # Example: start a prerelease minor bump
-   gh workflow run version-bump.yml --ref next -f release_type=preminor
-
-   # Wait for the workflow to finish and create the PR for you
-   gh run watch --exit-status --workflow=version-bump.yml
+   # After editing Cargo.toml, refresh only the phantom entry in Cargo.lock:
+   cargo update -p phantom --precise <version>
    ```
 
-2. **Review the version bump PR created by the workflow**
-   - Confirm version numbers and changelog/doc updates if any
-   - Merge the PR once checks pass
+   Title the pull request `chore(version): vX.Y.Z`, for example `chore(version): v7.0.0-alpha.1`. `.github/workflows/tag-on-merge.yml` creates that git tag when the pull request merges into `next`. `ci.yml` and `release-compile.yml` do not bump the version.
+
+2. **Review and merge the version pull request**
+   - Confirm `Cargo.toml` and `Cargo.lock` show the same version
+   - Merge once checks pass
+   - The merge tags `vX.Y.Z` on `next`. Publishing a GitHub release is a separate step
 
 3. **Create a GitHub release (builds release binaries)**
 
