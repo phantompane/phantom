@@ -3,10 +3,11 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use serde::Serialize;
 
 use crate::config;
 use crate::context::{self, Context};
-use crate::error::{Error, Result};
+use crate::error::{self, Error, JsonErrorBody, Result};
 use crate::git::{self, GitWorktree};
 use crate::names;
 use crate::paths;
@@ -19,6 +20,9 @@ pub struct WorktreeInfo {
     pub path_to_display: String,
     pub branch: String,
     pub is_clean: bool,
+    pub head: Option<String>,
+    pub is_default: bool,
+    pub detached: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,16 +38,32 @@ pub struct ActionRequest {
 
 pub struct Logger {
     pub enabled: bool,
+    /// When set, progress lines go to stderr so stdout can stay a JSON document.
+    pub json: bool,
 }
 
 impl Logger {
     pub fn on() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            json: false,
+        }
+    }
+
+    pub fn json() -> Self {
+        Self {
+            enabled: true,
+            json: true,
+        }
     }
 
     fn log(&self, message: &str) {
         if self.enabled {
-            println!("{message}");
+            if self.json {
+                eprintln!("{message}");
+            } else {
+                println!("{message}");
+            }
         }
     }
 
@@ -57,18 +77,23 @@ impl Logger {
 
 pub fn validate_worktree_name(name: &str) -> Result<()> {
     if name.trim().is_empty() {
-        return Err(Error::msg("Worktree name cannot be empty"));
+        return Err(Error::Validation(
+            "Worktree name cannot be empty".to_string(),
+        ));
     }
     if !name
         .chars()
         .all(|char| char.is_ascii_alphanumeric() || matches!(char, '-' | '_' | '.' | '/'))
     {
-        return Err(Error::msg(
-            "Worktree name can only contain letters, numbers, hyphens, underscores, dots, and slashes",
+        return Err(Error::Validation(
+            "Worktree name can only contain letters, numbers, hyphens, underscores, dots, and slashes"
+                .to_string(),
         ));
     }
     if name.contains("..") {
-        return Err(Error::msg("Worktree name cannot contain consecutive dots"));
+        return Err(Error::Validation(
+            "Worktree name cannot contain consecutive dots".to_string(),
+        ));
     }
     Ok(())
 }
@@ -106,15 +131,10 @@ fn info_from_git(worktree: &GitWorktree, cwd: &Path, context: &Context) -> Workt
         Some(branch) if branch != "(detached HEAD)" => branch.to_string(),
         _ => "(detached HEAD)".to_string(),
     };
+    let detached = branch == "(detached HEAD)";
     let path = PathBuf::from(&worktree.path);
     let directory_name = directory_name(&path, &context.worktrees_directory);
-    let name = directory_name.unwrap_or_else(|| {
-        if branch == "(detached HEAD)" {
-            short_head
-        } else {
-            branch.clone()
-        }
-    });
+    let name = directory_name.unwrap_or_else(|| if detached { short_head } else { branch.clone() });
     let relative = paths::relative(cwd, &path);
     WorktreeInfo {
         name,
@@ -126,7 +146,16 @@ fn info_from_git(worktree: &GitWorktree, cwd: &Path, context: &Context) -> Workt
         },
         branch,
         is_clean: git::is_clean(&path),
+        head: recorded_head(worktree.head.as_deref()),
+        is_default: worktree.path == context.git_root.to_string_lossy(),
+        detached,
     }
+}
+
+/// Git reports an unborn HEAD as an all-zero SHA. That is not a commit.
+fn recorded_head(head: Option<&str>) -> Option<String> {
+    head.filter(|sha| !sha.is_empty() && sha.bytes().any(|byte| byte != b'0'))
+        .map(ToOwned::to_owned)
 }
 
 fn directory_name(path: &Path, worktrees_directory: &Path) -> Option<String> {
@@ -173,6 +202,23 @@ fn select_worktree(worktrees: Vec<WorktreeInfo>, name: &str) -> Result<WorktreeI
     }
 }
 
+/// The worktree Git has registered at `path`, independent of its branch or directory name.
+pub fn worktree_at_path(git_root: &Path, path: &Path) -> Result<WorktreeInfo> {
+    let wanted = paths::normalize(path);
+    list_worktrees(git_root, false, true)?
+        .into_iter()
+        .find(|worktree| {
+            let listed = Path::new(&worktree.path);
+            listed == path || paths::normalize(listed) == wanted
+        })
+        .ok_or_else(|| {
+            Error::msg(format!(
+                "Worktree at {} is no longer registered",
+                path.display()
+            ))
+        })
+}
+
 pub fn find_worktree(
     git_root: &Path,
     name: &str,
@@ -209,6 +255,12 @@ pub struct CreateOutcome {
     pub name: String,
     pub path: PathBuf,
     pub exit_code: Option<i32>,
+    pub worktree: WorktreeInfo,
+    pub base: String,
+    pub copy_error: Option<String>,
+    pub hooks_ran: bool,
+    pub hook_failure: Option<HookFailure>,
+    pub exec: Option<ExecOutcome>,
 }
 
 pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
@@ -224,11 +276,12 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
             &context.directory_name_separator,
         )?,
     };
+    let base = request.base.unwrap_or("HEAD");
     let commands = config::post_create_commands(context.config.as_ref());
     let created = create_worktree(
         &context,
         &name,
-        request.base.unwrap_or("HEAD"),
+        base,
         request.copy_files,
         commands,
         &request.logger,
@@ -242,15 +295,23 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
             .logger
             .warn(&format!("\nWarning: Failed to copy some files: {error}"));
     }
-    let hook_code = created.hook_failure.as_ref().map(|failure| {
+    if let Some(failure) = &created.hook_failure {
         request.logger.warn(&failure.warning(&created.path));
-        failure.code
-    });
-    let action_code = run_action(&name, &created.path, action, &request.logger, true)?;
+    }
+    let exec = run_action(&name, &created.path, action, &request.logger)?;
+    let hook_code = created.hook_failure.as_ref().map(|failure| failure.code);
+    let action_code = exec.as_ref().map(|item| item.exit_code);
+    let worktree = worktree_at_path(&context.git_root, &created.path)?;
     Ok(CreateOutcome {
         name,
         path: created.path,
         exit_code: combine_exit(action_code, hook_code),
+        worktree,
+        base: base.to_string(),
+        copy_error: created.copy_error,
+        hooks_ran: created.hooks_ran,
+        hook_failure: created.hook_failure,
+        exec,
     })
 }
 
@@ -258,29 +319,47 @@ pub struct CreatedWorktree {
     pub path: PathBuf,
     pub copy_error: Option<String>,
     pub hook_failure: Option<HookFailure>,
+    pub hooks_ran: bool,
 }
 
 pub struct AttachedWorktree {
     pub path: PathBuf,
+    pub copy_error: Option<String>,
     pub hook_failure: Option<HookFailure>,
+    pub hooks_ran: bool,
 }
 
 pub struct AttachOutcome {
     pub path: PathBuf,
     pub exit_code: Option<i32>,
+    pub worktree: WorktreeInfo,
+    pub copy_error: Option<String>,
+    pub hooks_ran: bool,
+    pub hook_failure: Option<HookFailure>,
+    pub exec: Option<ExecOutcome>,
 }
 
 #[derive(Debug, Clone)]
 pub struct HookFailure {
     pub command: String,
     pub code: i32,
+    pub signal: Option<String>,
+    pub error: Option<String>,
 }
 
 impl HookFailure {
     pub fn warning(&self, path: &Path) -> String {
+        let reason = if let Some(signal) = &self.signal {
+            format!("terminated by signal {signal} (exit code {})", self.code)
+        } else if let Some(error) = &self.error {
+            format!("failed to start: {error}")
+        } else {
+            format!("failed with exit code {}", self.code)
+        };
         format!(
-            "Warning: Post-create command failed with exit code {}: {}\nThe worktree was created at {}",
-            self.code, self.command, path.display()
+            "Warning: Post-create command {reason}: {}\nThe worktree was created at {}",
+            self.command,
+            path.display()
         )
     }
 }
@@ -306,9 +385,8 @@ pub fn create_worktree(
     let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
         .err()
         .map(|error| error.to_string());
-    let hook_failure = if commands.is_empty() {
-        None
-    } else {
+    let hooks_ran = !commands.is_empty();
+    let hook_failure = if hooks_ran {
         logger.log("\nRunning post-create commands...");
         run_hook_commands(
             &context.git_root,
@@ -319,11 +397,14 @@ pub fn create_worktree(
             logger,
             &context.source_checkout,
         )?
+    } else {
+        None
     };
     Ok(CreatedWorktree {
         path,
         copy_error,
         hook_failure,
+        hooks_ran,
     })
 }
 
@@ -350,14 +431,23 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     request
         .logger
         .log(&format!("Attached worktree: {}", request.name));
-    let hook_code = attached.hook_failure.as_ref().map(|failure| {
+    if let Some(failure) = &attached.hook_failure {
         request.logger.warn(&failure.warning(&attached.path));
-        failure.code
-    });
-    let action_code = run_action(request.name, &attached.path, action, &request.logger, false)?;
+    }
+    let exec = run_action(request.name, &attached.path, action, &request.logger)?;
+    let hook_code = attached.hook_failure.as_ref().map(|failure| failure.code);
+    let action_code = exec
+        .as_ref()
+        .and_then(|item| (!item.ok).then_some(item.exit_code));
+    let worktree = worktree_at_path(&context.git_root, &attached.path)?;
     Ok(AttachOutcome {
         path: attached.path,
         exit_code: combine_exit(action_code, hook_code),
+        worktree,
+        copy_error: attached.copy_error,
+        hooks_ran: attached.hooks_ran,
+        hook_failure: attached.hook_failure,
+        exec,
     })
 }
 
@@ -390,12 +480,14 @@ pub fn attach_worktree(
             error
         }
     })?;
-    if let Err(error) = copy_included_files(&context.source_checkout, &path, copy_files) {
-        logger.warn(&format!("Warning: Failed to copy some files: {error}"));
-    }
-    let hook_failure = if commands.is_empty() {
-        None
-    } else {
+    let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
+        .err()
+        .map(|error| {
+            logger.warn(&format!("Warning: Failed to copy some files: {error}"));
+            error.to_string()
+        });
+    let hooks_ran = !commands.is_empty();
+    let hook_failure = if hooks_ran {
         logger.log("\nRunning post-create commands...");
         run_hook_commands(
             &context.git_root,
@@ -406,12 +498,43 @@ pub fn attach_worktree(
             logger,
             &context.source_checkout,
         )?
+    } else {
+        None
     };
-    Ok(AttachedWorktree { path, hook_failure })
+    Ok(AttachedWorktree {
+        path,
+        copy_error,
+        hook_failure,
+        hooks_ran,
+    })
 }
 
 pub struct DeleteOutcome {
     pub message: String,
+    pub worktree: WorktreeInfo,
+    pub branch_deleted: bool,
+    pub branch_error: Option<String>,
+}
+
+pub struct DeleteError {
+    pub error: Error,
+    pub worktree: Option<Box<WorktreeInfo>>,
+}
+
+impl DeleteError {
+    fn bare(error: Error) -> Self {
+        Self {
+            error,
+            worktree: None,
+        }
+    }
+
+    fn kept(error: Error, worktree: &WorktreeInfo) -> Self {
+        Self {
+            error,
+            worktree: Some(Box::new(worktree.clone())),
+        }
+    }
 }
 
 pub fn delete_worktree(
@@ -420,53 +543,80 @@ pub fn delete_worktree(
     force: bool,
     keep_branch: bool,
     expected_path: Option<&Path>,
-) -> Result<DeleteOutcome> {
-    let worktree = find_worktree(&context.git_root, name, true, expected_path)?;
+    logger: &Logger,
+) -> std::result::Result<DeleteOutcome, DeleteError> {
+    let worktree =
+        find_worktree(&context.git_root, name, true, expected_path).map_err(DeleteError::bare)?;
     let path = PathBuf::from(&worktree.path);
     if !paths::is_strictly_inside(&path, &context.worktrees_directory) {
-        return Err(Error::msg(format!(
-            "Worktree '{name}' is outside the managed worktree directory and cannot be deleted."
-        )));
+        return Err(DeleteError::kept(
+            Error::msg(format!(
+                "Worktree '{name}' is outside the managed worktree directory and cannot be deleted."
+            )),
+            &worktree,
+        ));
     }
     let changed = git::status_count(&path).unwrap_or(0);
     if changed > 0 && !force {
-        return Err(Error::Uncommitted {
-            name: name.to_string(),
-            files: changed,
-        });
+        return Err(DeleteError::kept(
+            Error::Uncommitted {
+                name: name.to_string(),
+                files: changed,
+            },
+            &worktree,
+        ));
     }
     let commands = config::pre_delete_commands(context.config.as_ref());
     if !commands.is_empty() {
-        println!("\nRunning pre-delete commands...");
-        let _ = run_hook_commands(
+        logger.log("\nRunning pre-delete commands...");
+        if let Err(error) = run_hook_commands(
             &context.git_root,
             &context.worktrees_directory,
             name,
             commands,
             false,
-            &Logger::on(),
+            logger,
             &context.source_checkout,
-        )?;
+        ) {
+            return Err(DeleteError::kept(error, &worktree));
+        }
     }
-    git::remove_worktree(&context.git_root, &path, force)?;
+    if let Err(error) = git::remove_worktree(&context.git_root, &path, force) {
+        return Err(DeleteError::kept(error, &worktree));
+    }
     let cleanup_warning = remove_empty_parents(&path, &context.worktrees_directory);
-    let message = if worktree.branch == "(detached HEAD)" {
-        format!("Deleted worktree '{name}'")
+    let (message, branch_deleted, branch_error) = if worktree.branch == "(detached HEAD)" {
+        (format!("Deleted worktree '{name}'"), false, None)
     } else if keep_branch {
-        format!(
-            "Deleted worktree '{name}' and kept its branch '{}'",
-            worktree.branch
+        (
+            format!(
+                "Deleted worktree '{name}' and kept its branch '{}'",
+                worktree.branch
+            ),
+            false,
+            None,
         )
     } else {
         match git::delete_branch(&context.git_root, &worktree.branch) {
-            Ok(()) => format!(
-                "Deleted worktree '{name}' and its branch '{}'",
-                worktree.branch
+            Ok(()) => (
+                format!(
+                    "Deleted worktree '{name}' and its branch '{}'",
+                    worktree.branch
+                ),
+                true,
+                None,
             ),
-            Err(error) => format!(
-                "Deleted worktree '{name}'\nNote: Branch '{}' could not be deleted: {error}",
-                worktree.branch
-            ),
+            Err(error) => {
+                let branch_error = error.to_string();
+                (
+                    format!(
+                        "Deleted worktree '{name}'\nNote: Branch '{}' could not be deleted: {branch_error}",
+                        worktree.branch
+                    ),
+                    false,
+                    Some(branch_error),
+                )
+            }
         }
     };
     let message = if changed > 0 {
@@ -479,7 +629,12 @@ pub fn delete_worktree(
     } else {
         message
     };
-    Ok(DeleteOutcome { message })
+    Ok(DeleteOutcome {
+        message,
+        worktree,
+        branch_deleted,
+        branch_error,
+    })
 }
 
 pub fn current_worktree_name(git_root: &Path) -> Result<Option<String>> {
@@ -506,6 +661,7 @@ pub fn exec_in_worktree(
     command: &str,
     args: &[&str],
     env: &[(&str, &str)],
+    redirect_stdout_to_stderr: bool,
 ) -> Result<i32> {
     let worktree = find_worktree(git_root, name, false, None)?;
     let path = PathBuf::from(&worktree.path);
@@ -521,7 +677,13 @@ pub fn exec_in_worktree(
             pairs.push((key, value));
         }
     }
-    process::inherit(command, args, Some(&path), &pairs)
+    process::inherit(
+        command,
+        args,
+        Some(&path),
+        &pairs,
+        redirect_stdout_to_stderr,
+    )
 }
 
 pub fn resolve_action(request: &ActionRequest) -> Result<Option<ActionKind>> {
@@ -539,8 +701,7 @@ fn run_action(
     path: &Path,
     action: Option<ActionKind>,
     logger: &Logger,
-    return_success_code: bool,
-) -> Result<Option<i32>> {
+) -> Result<Option<ExecOutcome>> {
     let Some(action) = action else {
         return Ok(None);
     };
@@ -568,14 +729,30 @@ fn run_action(
                 (program.clone(), args, program)
             };
             let arg_refs = program_args.iter().map(String::as_str).collect::<Vec<_>>();
-            let code = process::inherit(&program, &arg_refs, Some(path), &pairs)?;
-            if code == 0 {
-                Ok(return_success_code.then_some(code))
-            } else {
-                Err(Error::CommandFailed {
-                    command: reported,
-                    code,
-                })
+            match process::inherit(&program, &arg_refs, Some(path), &pairs, logger.json) {
+                Ok(code) => Ok(Some(ExecOutcome {
+                    ok: code == 0,
+                    command: shown,
+                    exit_code: code,
+                    signal: None,
+                    error: None,
+                    shell: reported,
+                })),
+                Err(error @ (Error::Signaled(_) | Error::Spawn { .. })) => Ok(Some(ExecOutcome {
+                    ok: false,
+                    command: shown,
+                    exit_code: error.exit_code(),
+                    signal: match &error {
+                        Error::Signaled(signal) => Some(signal.clone()),
+                        _ => None,
+                    },
+                    error: match &error {
+                        Error::Spawn { .. } => Some(error.to_string()),
+                        _ => None,
+                    },
+                    shell: reported,
+                })),
+                Err(error) => Err(error),
             }
         }
     }
@@ -587,6 +764,21 @@ pub fn ptm_env(name: &str, path: &Path) -> Vec<(String, String)> {
         ("PTM_NAME".to_string(), name.to_string()),
         ("PTM_PATH".to_string(), path.display().to_string()),
     ]
+}
+
+fn hook_failure_from_start(command: &str, error: &Error) -> HookFailure {
+    HookFailure {
+        command: command.to_string(),
+        code: error.exit_code(),
+        signal: match error {
+            Error::Signaled(signal) => Some(signal.clone()),
+            _ => None,
+        },
+        error: match error {
+            Error::Spawn { .. } => Some(error.to_string()),
+            _ => None,
+        },
+    }
 }
 
 fn combine_exit(action: Option<i32>, hook: Option<i32>) -> Option<i32> {
@@ -611,7 +803,7 @@ fn run_hook_commands(
         if post {
             logger.log(&format!("Executing: {command}"));
         } else {
-            println!("Executing pre-delete command: {command}");
+            logger.log(&format!("Executing pre-delete command: {command}"));
         }
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let code = match exec_in_worktree(
@@ -621,13 +813,14 @@ fn run_hook_commands(
             &shell,
             &["-c", command],
             &[("PTM_ROOT_PATH", root_path.as_str())],
+            logger.json,
         ) {
             Ok(code) => code,
             Err(error) => {
-                let label = if post { "post-create" } else { "pre-delete" };
-                return Err(Error::msg(format!(
-                    "Failed to execute {label} command \"{command}\": {error}"
-                )));
+                if post {
+                    return Ok(Some(hook_failure_from_start(command, &error)));
+                }
+                return Err(error);
             }
         };
         if code != 0 {
@@ -635,6 +828,8 @@ fn run_hook_commands(
                 return Ok(Some(HookFailure {
                     command: command.clone(),
                     code,
+                    signal: None,
+                    error: None,
                 }));
             }
             return Err(Error::msg(format!(
@@ -828,6 +1023,177 @@ fn copy_error(relative: &Path, error: impl std::fmt::Display) -> Error {
     Error::msg(format!("Failed to copy {}: {error}", relative.display()))
 }
 
+/// Machine-readable worktree. Field names are camelCase, matching `project list --json`.
+///
+/// `base` is set when the command that produced the object knows the starting
+/// commit-ish (create, and GitHub issue/PR checkout). List, where, attach, and
+/// delete leave it null. Later metadata (#774) and cleanup (#775) can add
+/// fields such as `owner`, `purpose`, `createdAt`, `lastUsedAt`, `links`,
+/// `prunable`, and `locked` without a version bump. Parsers must ignore unknown fields.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeJson {
+    pub name: String,
+    pub path: String,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub base: Option<String>,
+    pub dirty: bool,
+    #[serde(rename = "default")]
+    pub is_default: bool,
+    pub detached: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyFilesOutcome {
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostCreateOutcome {
+    pub ran: bool,
+    pub ok: bool,
+    pub command: Option<String>,
+    pub exit_code: Option<i32>,
+    pub signal: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecOutcome {
+    pub ok: bool,
+    pub command: String,
+    pub exit_code: i32,
+    /// Set when the process was terminated by a signal.
+    pub signal: Option<String>,
+    /// Set when the program or shell failed to start.
+    pub error: Option<String>,
+    #[serde(skip)]
+    pub shell: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeListOutput {
+    pub version: u32,
+    pub worktrees: Vec<WorktreeJson>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeRefOutput {
+    pub version: u32,
+    pub worktree: WorktreeJson,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeChangeOutput {
+    pub version: u32,
+    pub worktree: WorktreeJson,
+    pub copy_files: CopyFilesOutcome,
+    pub post_create: PostCreateOutcome,
+    pub exec: Option<ExecOutcome>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletedEntry {
+    pub worktree: Option<WorktreeJson>,
+    pub branch_deleted: bool,
+    pub branch_error: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteOutput {
+    pub version: u32,
+    pub deleted: Vec<DeletedEntry>,
+    pub error: Option<JsonErrorBody>,
+}
+
+impl WorktreeInfo {
+    pub fn to_json(&self, base: Option<String>) -> WorktreeJson {
+        WorktreeJson {
+            name: self.name.clone(),
+            path: absolute_path(&self.path),
+            branch: if self.detached {
+                None
+            } else {
+                Some(self.branch.clone())
+            },
+            head: self.head.clone(),
+            base,
+            dirty: !self.is_clean,
+            is_default: self.is_default,
+            detached: self.detached,
+        }
+    }
+}
+
+pub fn copy_files_outcome(error: Option<&str>) -> CopyFilesOutcome {
+    CopyFilesOutcome {
+        ok: error.is_none(),
+        error: error.map(ToOwned::to_owned),
+    }
+}
+
+pub fn post_create_outcome(ran: bool, failure: Option<&HookFailure>) -> PostCreateOutcome {
+    if let Some(failure) = failure {
+        PostCreateOutcome {
+            ran: true,
+            ok: false,
+            command: Some(failure.command.clone()),
+            exit_code: Some(failure.code),
+            signal: failure.signal.clone(),
+            error: failure.error.clone(),
+        }
+    } else {
+        PostCreateOutcome {
+            ran,
+            ok: true,
+            command: None,
+            exit_code: ran.then_some(0),
+            signal: None,
+            error: None,
+        }
+    }
+}
+
+pub fn change_output(
+    worktree: &WorktreeInfo,
+    base: Option<String>,
+    copy_error: Option<&str>,
+    hooks_ran: bool,
+    hook_failure: Option<&HookFailure>,
+    exec: Option<ExecOutcome>,
+) -> WorktreeChangeOutput {
+    WorktreeChangeOutput {
+        version: error::JSON_VERSION,
+        worktree: worktree.to_json(base),
+        copy_files: copy_files_outcome(copy_error),
+        post_create: post_create_outcome(hooks_ran, hook_failure),
+        exec,
+    }
+}
+
+fn absolute_path(path: &str) -> String {
+    let path = Path::new(path);
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(path)
+    } else {
+        path.to_path_buf()
+    };
+    paths::normalize(&absolute).to_string_lossy().into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -839,7 +1205,56 @@ mod tests {
             path_to_display: name.to_string(),
             branch: branch.to_string(),
             is_clean: true,
+            head: Some("abc1234".to_string()),
+            is_default: false,
+            detached: branch == "(detached HEAD)",
         }
+    }
+
+    #[test]
+    fn unborn_head_is_not_a_commit_sha() {
+        assert_eq!(recorded_head(None), None);
+        assert_eq!(recorded_head(Some("")), None);
+        assert_eq!(
+            recorded_head(Some("0000000000000000000000000000000000000000")),
+            None
+        );
+        assert_eq!(
+            recorded_head(Some(
+                "0000000000000000000000000000000000000000000000000000000000000000"
+            )),
+            None
+        );
+        assert_eq!(
+            recorded_head(Some("0123456789abcdef0123456789abcdef01234567")).as_deref(),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+    }
+
+    #[test]
+    fn worktree_json_is_camel_case_and_nulls_a_detached_branch() {
+        let mut info = sample("next", "(detached HEAD)");
+        info.detached = true;
+        info.is_clean = false;
+        info.head = Some("0123456789abcdef".to_string());
+        let value = serde_json::to_value(info.to_json(None)).expect("json");
+        assert_eq!(value["name"], "next");
+        assert_eq!(value["path"], "/worktrees/next");
+        assert!(value["branch"].is_null());
+        assert_eq!(value["head"], "0123456789abcdef");
+        assert!(value["base"].is_null());
+        assert_eq!(value["dirty"], true);
+        assert_eq!(value["default"], false);
+        assert_eq!(value["detached"], true);
+        assert!(value.get("isDefault").is_none());
+        assert!(value.get("is_clean").is_none());
+
+        let branched = sample("feature", "feature");
+        let value = serde_json::to_value(branched.to_json(Some("HEAD".to_string()))).expect("json");
+        assert_eq!(value["branch"], "feature");
+        assert_eq!(value["base"], "HEAD");
+        assert_eq!(value["dirty"], false);
+        assert_eq!(value["detached"], false);
     }
 
     #[test]

@@ -71,12 +71,17 @@ pub fn inherit(
     args: &[&str],
     cwd: Option<&Path>,
     env: &[(&str, &str)],
+    redirect_stdout_to_stderr: bool,
 ) -> Result<i32> {
     let mut cmd = Command::new(command);
     cmd.args(args)
         .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    if redirect_stdout_to_stderr {
+        cmd.stdout(Stdio::from(std::io::stderr()));
+    } else {
+        cmd.stdout(Stdio::inherit());
+    }
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }

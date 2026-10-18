@@ -216,7 +216,7 @@ fn removed_tmux_options_are_unknown() {
         let output = repo.phantom(&args);
         assert_eq!(
             output.status.code(),
-            Some(1),
+            Some(3),
             "{args:?} {}",
             text(&output.stderr)
         );
@@ -276,7 +276,7 @@ fn create_list_where_delete_and_attach() {
     assert!(text(&deleted.stdout).contains("and its branch 'feature/add-tests'"));
     assert!(!worktree.exists());
     let missing_delete = repo.phantom(&["delete", "missing-worktree"]);
-    assert_eq!(missing_delete.status.code(), Some(3));
+    assert_eq!(missing_delete.status.code(), Some(2));
 }
 
 #[test]
@@ -913,7 +913,7 @@ fn removed_shell_command_and_flag_are_unknown() {
         let output = repo.phantom(&args);
         assert_eq!(
             output.status.code(),
-            Some(1),
+            Some(3),
             "{args:?} {}",
             text(&output.stderr)
         );
@@ -938,7 +938,7 @@ fn removed_fzf_option_is_unknown() {
         let output = repo.phantom(&args);
         assert_eq!(
             output.status.code(),
-            Some(1),
+            Some(3),
             "{args:?} {}",
             text(&output.stderr)
         );
@@ -1619,6 +1619,975 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
     );
 }
 
+fn json_value(output: &std::process::Output) -> serde_json::Value {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(stdout.trim()).unwrap_or_else(|error| {
+        panic!(
+            "stdout is not JSON ({error})\nstdout:\n{stdout}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+fn paths_match(json_path: &str, expected: &std::path::Path) -> bool {
+    let left = std::path::Path::new(json_path);
+    left == expected || fs::canonicalize(left).ok() == fs::canonicalize(expected).ok()
+}
+
+fn full_head(repo: &Repo) -> String {
+    let output = repo
+        .command("git", &["rev-parse", "HEAD"])
+        .output()
+        .expect("head");
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    text(&output.stdout)
+}
+
+fn assert_worktree_object(value: &serde_json::Value, name: &str, path: &std::path::Path) {
+    assert_eq!(value["name"], name);
+    assert!(
+        paths_match(value["path"].as_str().unwrap_or(""), path),
+        "path {} != {}",
+        value["path"],
+        path.display()
+    );
+    assert!(value["path"].as_str().unwrap_or("").starts_with('/'));
+    assert_eq!(value["default"], false);
+    assert!(value.get("rootPath").is_none());
+    assert!(value.get("is_clean").is_none());
+}
+
+#[test]
+fn worktree_json_covers_list_where_create_attach_and_delete() {
+    let repo = Repo::new();
+    let head = full_head(&repo);
+    let empty = repo.phantom(&["list", "--json", "--no-default"]);
+    assert!(empty.status.success(), "{}", text(&empty.stderr));
+    let empty_json = json_value(&empty);
+    assert_eq!(empty_json["version"], 1);
+    assert_eq!(empty_json["worktrees"].as_array().map(Vec::len), Some(0));
+    assert!(text(&empty.stderr).is_empty(), "{}", text(&empty.stderr));
+
+    let created = repo.phantom(&["create", "feature/json", "--json", "--base", "HEAD"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let created_json = json_value(&created);
+    assert_eq!(created_json["version"], 1);
+    assert_worktree_object(
+        &created_json["worktree"],
+        "feature/json",
+        &repo.repo.join(".git/phantom/worktrees/feature/json"),
+    );
+    assert_eq!(created_json["worktree"]["branch"], "feature/json");
+    assert_eq!(created_json["worktree"]["head"], head);
+    assert_eq!(created_json["worktree"]["base"], "HEAD");
+    assert_eq!(created_json["worktree"]["dirty"], false);
+    assert_eq!(created_json["worktree"]["detached"], false);
+    assert_eq!(created_json["copyFiles"]["ok"], true);
+    assert!(created_json["copyFiles"]["error"].is_null());
+    assert_eq!(created_json["postCreate"]["ran"], false);
+    assert_eq!(created_json["postCreate"]["ok"], true);
+    assert!(created_json["postCreate"]["command"].is_null());
+    assert!(created_json["postCreate"]["exitCode"].is_null());
+    assert!(created_json["exec"].is_null());
+    assert!(!text(&created.stdout).contains("Created worktree"));
+
+    let duplicate = repo.phantom(&["create", "feature/json", "--json"]);
+    assert_eq!(duplicate.status.code(), Some(3));
+    let duplicate_json = json_value(&duplicate);
+    assert_eq!(duplicate_json["error"]["code"], "already_exists");
+    assert_eq!(duplicate_json["error"]["exitCode"], 3);
+    assert!(
+        text(&duplicate.stderr).is_empty(),
+        "{}",
+        text(&duplicate.stderr)
+    );
+
+    let both = repo.phantom(&["list", "--json", "--names"]);
+    assert_eq!(both.status.code(), Some(3));
+    assert_eq!(json_value(&both)["error"]["code"], "validation");
+
+    let listed = repo.phantom(&["list", "--json"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let listed_json = json_value(&listed);
+    let worktrees = listed_json["worktrees"].as_array().expect("worktrees");
+    assert!(worktrees
+        .iter()
+        .any(|entry| entry["default"] == true && entry["branch"] == "main"));
+    let feature = worktrees
+        .iter()
+        .find(|entry| entry["name"] == "feature/json")
+        .expect("feature");
+    assert_eq!(feature["head"], head);
+    assert_eq!(feature["dirty"], false);
+    assert!(feature["base"].is_null());
+
+    let worktree = repo.repo.join(".git/phantom/worktrees/feature/json");
+    fs::write(worktree.join("README.md"), "dirty\n").expect("dirty");
+    let dirty = repo.phantom(&["list", "--json", "--no-default"]);
+    let dirty_json = json_value(&dirty);
+    assert_eq!(dirty_json["worktrees"][0]["dirty"], true);
+    assert_eq!(dirty_json["worktrees"].as_array().map(Vec::len), Some(1));
+
+    let located = repo.phantom(&["where", "feature/json", "--json"]);
+    assert!(located.status.success(), "{}", text(&located.stderr));
+    let located_json = json_value(&located);
+    assert_eq!(located_json["version"], 1);
+    assert_worktree_object(&located_json["worktree"], "feature/json", &worktree);
+    assert!(!text(&located.stdout).contains("feature/json ("));
+
+    let missing = repo.phantom(&["where", "missing-worktree", "--json"]);
+    assert_eq!(missing.status.code(), Some(2));
+    let missing_json = json_value(&missing);
+    assert_eq!(missing_json["version"], 1);
+    assert_eq!(missing_json["error"]["code"], "not_found");
+    assert_eq!(missing_json["error"]["exitCode"], 2);
+    assert!(missing_json["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("missing-worktree"));
+    assert!(
+        text(&missing.stderr).is_empty(),
+        "{}",
+        text(&missing.stderr)
+    );
+
+    repo.git(&["branch", "existing-json"]);
+    let attached = repo.phantom(&["attach", "existing-json", "--json"]);
+    assert!(attached.status.success(), "{}", text(&attached.stderr));
+    let attached_json = json_value(&attached);
+    assert_worktree_object(
+        &attached_json["worktree"],
+        "existing-json",
+        &repo.repo.join(".git/phantom/worktrees/existing-json"),
+    );
+    assert!(attached_json["worktree"]["base"].is_null());
+    assert_eq!(attached_json["worktree"]["branch"], "existing-json");
+    assert_eq!(attached_json["copyFiles"]["ok"], true);
+    assert!(attached_json["exec"].is_null());
+
+    let kept = repo.phantom(&["delete", "existing-json", "--keep-branch", "--json"]);
+    assert!(kept.status.success(), "{}", text(&kept.stderr));
+    let kept_json = json_value(&kept);
+    assert!(kept_json["error"].is_null());
+    assert_eq!(kept_json["deleted"][0]["branchDeleted"], false);
+    assert!(kept_json["deleted"][0]["branchError"].is_null());
+    assert!(kept_json["deleted"][0]["error"].is_null());
+    assert_eq!(kept_json["deleted"][0]["worktree"]["name"], "existing-json");
+    let branch = repo
+        .command("git", &["branch", "--list", "existing-json"])
+        .output()
+        .expect("branch");
+    assert!(text(&branch.stdout).contains("existing-json"));
+
+    fs::write(worktree.join("README.md"), "# phantom\n").expect("restore");
+    repo.git(&["branch", "second-json"]);
+    assert!(repo.phantom(&["attach", "second-json"]).status.success());
+    let partial = repo.phantom(&["delete", "feature/json", "missing-json", "--json"]);
+    assert_eq!(partial.status.code(), Some(2), "{}", text(&partial.stderr));
+    let partial_json = json_value(&partial);
+    assert_eq!(
+        partial_json["deleted"][0]["worktree"]["name"],
+        "feature/json"
+    );
+    assert_eq!(partial_json["deleted"][0]["branchDeleted"], true);
+    assert!(partial_json["deleted"][1]["worktree"].is_null());
+    assert!(partial_json["deleted"][1]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("missing-json"));
+    assert_eq!(partial_json["error"]["code"], "not_found");
+    assert_eq!(partial_json["error"]["exitCode"], 2);
+    assert!(!text(&partial.stdout).contains("Deleted worktree"));
+    let gone = repo
+        .command("git", &["branch", "--list", "feature/json"])
+        .output()
+        .expect("branch");
+    assert!(text(&gone.stdout).is_empty(), "{}", text(&gone.stdout));
+
+    let outside = repo.root.join("outside");
+    fs::create_dir_all(&outside).expect("outside");
+    let not_repo = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["list", "--json"])
+        .current_dir(&outside)
+        .output()
+        .expect("list");
+    assert_eq!(not_repo.status.code(), Some(4));
+    let not_repo_json = json_value(&not_repo);
+    assert_eq!(not_repo_json["error"]["code"], "not_repository");
+    assert_eq!(not_repo_json["error"]["exitCode"], 4);
+    assert!(
+        text(&not_repo.stderr).is_empty(),
+        "{}",
+        text(&not_repo.stderr)
+    );
+
+    let project_modes = repo.phantom(&["project", "list", "--json", "--names"]);
+    assert_eq!(project_modes.status.code(), Some(3));
+    assert_eq!(json_value(&project_modes)["error"]["code"], "validation");
+    assert_eq!(json_value(&project_modes)["version"], 1);
+}
+
+#[test]
+fn json_mode_keeps_hook_and_exec_output_off_stdout() {
+    let repo = Repo::new();
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"echo HOOK_STDOUT_MARKER\"]\npre-delete = [\"echo PRE_DELETE_MARKER\"]\n",
+    )
+    .expect("hooks");
+    let created = repo.phantom(&[
+        "create",
+        "feature/hooks-json",
+        "--json",
+        "--exec",
+        "echo EXEC_MARKER",
+    ]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let created_json = json_value(&created);
+    assert!(!text(&created.stdout).contains("HOOK_STDOUT_MARKER"));
+    assert!(text(&created.stderr)
+        .lines()
+        .any(|line| line == "HOOK_STDOUT_MARKER"));
+    assert!(text(&created.stderr)
+        .lines()
+        .any(|line| line == "EXEC_MARKER"));
+    assert_eq!(created_json["postCreate"]["ran"], true);
+    assert_eq!(created_json["postCreate"]["ok"], true);
+    assert_eq!(created_json["postCreate"]["exitCode"], 0);
+    assert_eq!(created_json["exec"]["ok"], true);
+    assert_eq!(created_json["exec"]["exitCode"], 0);
+    assert_eq!(created_json["exec"]["command"], "echo EXEC_MARKER");
+
+    let deleted = repo.phantom(&["delete", "--force", "feature/hooks-json", "--json"]);
+    assert!(deleted.status.success(), "{}", text(&deleted.stderr));
+    assert!(!text(&deleted.stdout).contains("PRE_DELETE_MARKER"));
+    assert!(text(&deleted.stderr).contains("PRE_DELETE_MARKER"));
+    assert_eq!(json_value(&deleted)["deleted"][0]["branchDeleted"], true);
+
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"echo HOOK_FAIL_MARKER\", \"exit 7\"]\n",
+    )
+    .expect("failing hook");
+    let failed = repo.phantom(&["create", "feature/hook-fail", "--json"]);
+    assert_eq!(failed.status.code(), Some(7), "{}", text(&failed.stderr));
+    let failed_json = json_value(&failed);
+    assert_eq!(failed_json["postCreate"]["ok"], false);
+    assert_eq!(failed_json["postCreate"]["exitCode"], 7);
+    assert_eq!(failed_json["postCreate"]["command"], "exit 7");
+    assert_eq!(failed_json["worktree"]["name"], "feature/hook-fail");
+    assert!(!text(&failed.stdout).contains("HOOK_FAIL_MARKER"));
+    assert!(text(&failed.stderr).contains("HOOK_FAIL_MARKER"));
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/feature/hook-fail/README.md")
+        .is_file());
+
+    fs::write(repo.repo.join(".ptm.toml"), "").expect("clear hooks");
+    let exec_failed = repo.phantom(&[
+        "create",
+        "feature/exec-fail",
+        "--json",
+        "--exec",
+        "echo EXEC_FAIL; exit 3",
+    ]);
+    assert_eq!(exec_failed.status.code(), Some(3));
+    let exec_json = json_value(&exec_failed);
+    assert_eq!(exec_json["exec"]["ok"], false);
+    assert_eq!(exec_json["exec"]["exitCode"], 3);
+    assert_eq!(exec_json["worktree"]["branch"], "feature/exec-fail");
+    assert!(text(&exec_failed.stderr)
+        .lines()
+        .any(|line| line == "EXEC_FAIL"));
+    assert!(!text(&exec_failed.stderr).contains("failed with exit code"));
+}
+
+#[test]
+fn json_reports_detached_head_and_copy_errors() {
+    let repo = Repo::new();
+    let detached = repo.repo.join(".git/phantom/worktrees/next");
+    repo.git(&[
+        "worktree",
+        "add",
+        "--detach",
+        detached.to_str().expect("path"),
+        "HEAD",
+    ]);
+    let listed = repo.phantom(&["list", "--json", "--no-default"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let entry = &json_value(&listed)["worktrees"][0];
+    assert_eq!(entry["name"], "next");
+    assert!(entry["branch"].is_null());
+    assert_eq!(entry["detached"], true);
+    assert_eq!(entry["head"], full_head(&repo));
+    assert_eq!(entry["default"], false);
+
+    std::os::unix::fs::symlink("elsewhere", repo.repo.join(".worktreeinclude")).expect("symlink");
+    let created = repo.phantom(&["create", "feature/copy", "--json"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let created_json = json_value(&created);
+    assert_eq!(created_json["copyFiles"]["ok"], false);
+    assert!(created_json["copyFiles"]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("symlink"));
+    assert_eq!(created_json["worktree"]["name"], "feature/copy");
+}
+
+#[test]
+fn project_parse_errors_keep_the_validation_exit_code() {
+    let repo = Repo::new();
+    let cases: &[&[&str]] = &[
+        &["project", "add", "--unknown"],
+        &["project", "list", "--unknown"],
+        &["project", "remove", "--unknown"],
+        &["project", "add", "--unknown", "--json"],
+        &["project", "list", "--unknown", "--json"],
+        &["project", "remove", "--unknown", "--json"],
+    ];
+    for args in cases {
+        let output = repo.phantom(args);
+        assert_eq!(
+            output.status.code(),
+            Some(3),
+            "{args:?}\nstdout:\n{}\nstderr:\n{}",
+            text(&output.stdout),
+            text(&output.stderr)
+        );
+        if args.contains(&"--json") {
+            let value = json_value(&output);
+            assert_eq!(value["version"], 1, "{args:?} {value}");
+            assert_eq!(value["error"]["code"], "validation", "{args:?} {value}");
+            assert_eq!(value["error"]["exitCode"], 3, "{args:?} {value}");
+            assert!(
+                text(&output.stderr).is_empty(),
+                "{args:?} stderr: {}",
+                text(&output.stderr)
+            );
+        } else {
+            assert!(
+                text(&output.stderr).contains("Unknown option"),
+                "{args:?} {}",
+                text(&output.stderr)
+            );
+        }
+    }
+}
+
+#[test]
+fn json_unborn_head_is_null() {
+    let repo = Repo::new();
+    repo.git(&["update-ref", "-d", "HEAD"]);
+    let listed = repo.phantom(&["list", "--json"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let listed_json = json_value(&listed);
+    let worktrees = listed_json["worktrees"].as_array().expect("worktrees");
+    assert_eq!(worktrees.len(), 1, "{listed_json}");
+    assert_eq!(worktrees[0]["name"], "main");
+    assert_eq!(worktrees[0]["branch"], "main");
+    assert_eq!(worktrees[0]["default"], true);
+    assert!(
+        worktrees[0]["head"].is_null(),
+        "unborn HEAD should be null, got {}",
+        worktrees[0]["head"]
+    );
+
+    let located = repo.phantom(&["where", "main", "--json"]);
+    assert!(located.status.success(), "{}", text(&located.stderr));
+    let located_json = json_value(&located);
+    assert!(located_json["worktree"]["head"].is_null(), "{located_json}");
+    assert_eq!(located_json["worktree"]["branch"], "main");
+}
+
+#[test]
+fn argument_errors_are_validation_for_every_command() {
+    let repo = Repo::new();
+    let cases: &[&[&str]] = &[
+        &["create", "topic", "--base"],
+        &["create", "topic", "--json", "--base"],
+        &["list", "--unknown"],
+        &["list", "--json", "--unknown"],
+        &["where", "--bogus"],
+        &["where", "--json", "--bogus"],
+        &["delete", "--bogus", "x"],
+        &["delete", "--json", "--bogus", "x"],
+        &["attach", "--zzz", "b"],
+        &["attach", "--json", "--zzz", "b"],
+        &["github", "checkout", "--bogus", "1"],
+        &["gh", "checkout", "1", "--json", "--base"],
+        &["exec", "--bogus", "name", "true"],
+        &["preferences", "get", "--bogus"],
+        &["version", "extra"],
+    ];
+    for args in cases {
+        let output = repo.phantom(args);
+        assert_eq!(
+            output.status.code(),
+            Some(3),
+            "{args:?}\nstdout:\n{}\nstderr:\n{}",
+            text(&output.stdout),
+            text(&output.stderr)
+        );
+        let detail = format!("{}\n{}", text(&output.stdout), text(&output.stderr));
+        assert!(
+            detail.contains("Unknown option")
+                || detail.contains("argument missing")
+                || detail.contains("Unexpected argument"),
+            "{args:?} {detail}"
+        );
+        if args.contains(&"--json") {
+            let value = json_value(&output);
+            assert_eq!(value["error"]["code"], "validation", "{args:?} {value}");
+            assert_eq!(value["error"]["exitCode"], 3, "{args:?} {value}");
+            assert!(
+                text(&output.stderr).is_empty(),
+                "{args:?} stderr: {}",
+                text(&output.stderr)
+            );
+        }
+    }
+}
+
+#[test]
+fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
+    let repo = Repo::new();
+    for args in [
+        &["create", "a/../x"][..],
+        &["create", "a/../x", "--json"],
+        &["attach", "a/../x"],
+        &["attach", "a/../x", "--json"],
+    ] {
+        let output = repo.phantom(args);
+        assert_eq!(
+            output.status.code(),
+            Some(3),
+            "{args:?}\n{}\n{}",
+            text(&output.stdout),
+            text(&output.stderr)
+        );
+        if args.contains(&"--json") {
+            let value = json_value(&output);
+            assert_eq!(value["error"]["code"], "validation", "{args:?} {value}");
+            assert_eq!(value["error"]["exitCode"], 3, "{args:?} {value}");
+            assert!(value.get("worktree").is_none(), "{args:?} {value}");
+            assert!(text(&output.stderr).is_empty(), "{args:?}");
+        } else {
+            assert!(
+                text(&output.stderr).contains("consecutive dots"),
+                "{args:?} {}",
+                text(&output.stderr)
+            );
+        }
+    }
+    assert!(!repo.repo.join(".git/phantom/worktrees/a/../x").exists());
+
+    let missing_delete = repo.phantom(&["delete", "nope"]);
+    assert_eq!(missing_delete.status.code(), Some(2));
+    let missing_json = repo.phantom(&["delete", "nope", "--json"]);
+    assert_eq!(missing_json.status.code(), Some(2));
+    let missing_value = json_value(&missing_json);
+    assert_eq!(missing_value["error"]["code"], "not_found");
+    assert_eq!(missing_value["error"]["exitCode"], 2);
+    assert_eq!(repo.phantom(&["where", "nope"]).status.code(), Some(2));
+    assert_eq!(
+        repo.phantom(&["exec", "nope", "true"]).status.code(),
+        Some(2)
+    );
+}
+
+#[test]
+fn json_exec_signal_and_spawn_failure_return_the_worktree() {
+    let repo = Repo::new();
+    let signaled = repo.phantom(&["create", "sig", "--json", "--exec", "kill -TERM $$"]);
+    assert_eq!(
+        signaled.status.code(),
+        Some(143),
+        "{}\n{}",
+        text(&signaled.stdout),
+        text(&signaled.stderr)
+    );
+    let signaled_json = json_value(&signaled);
+    assert!(signaled_json.get("error").is_none(), "{signaled_json}");
+    assert_eq!(signaled_json["worktree"]["name"], "sig");
+    assert_eq!(signaled_json["exec"]["ok"], false);
+    assert_eq!(signaled_json["exec"]["command"], "kill -TERM $$");
+    assert_eq!(signaled_json["exec"]["exitCode"], 143);
+    assert_eq!(signaled_json["exec"]["signal"], "SIGTERM");
+    assert!(signaled_json["exec"]["error"].is_null());
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/sig/README.md")
+        .is_file());
+
+    repo.git(&["branch", "attach-sig"]);
+    let attached = repo.phantom(&["attach", "attach-sig", "--json", "--exec", "kill -TERM $$"]);
+    assert_eq!(
+        attached.status.code(),
+        Some(143),
+        "{}",
+        text(&attached.stderr)
+    );
+    let attached_json = json_value(&attached);
+    assert_eq!(attached_json["worktree"]["name"], "attach-sig");
+    assert_eq!(attached_json["exec"]["ok"], false);
+    assert_eq!(attached_json["exec"]["signal"], "SIGTERM");
+    assert!(attached_json.get("error").is_none(), "{attached_json}");
+
+    let human = repo.phantom(&["create", "sig-human", "--exec", "kill -TERM $$"]);
+    assert_eq!(human.status.code(), Some(143));
+    assert!(text(&human.stdout).contains("Created worktree 'sig-human'"));
+    assert!(text(&human.stderr).contains("SIGTERM"));
+
+    let spawned = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["create", "spawn", "--json", "--exec", "true"],
+        )
+        .env("SHELL", "/no/such/ptm-shell")
+        .output()
+        .expect("spawn");
+    assert_eq!(
+        spawned.status.code(),
+        Some(1),
+        "{}\n{}",
+        text(&spawned.stdout),
+        text(&spawned.stderr)
+    );
+    let spawned_json = json_value(&spawned);
+    assert!(spawned_json.get("error").is_none(), "{spawned_json}");
+    assert_eq!(spawned_json["worktree"]["name"], "spawn");
+    assert_eq!(spawned_json["exec"]["ok"], false);
+    assert_eq!(spawned_json["exec"]["exitCode"], 1);
+    assert!(spawned_json["exec"]["signal"].is_null());
+    let spawn_error = spawned_json["exec"]["error"].as_str().unwrap_or("");
+    assert!(
+        spawn_error.contains("ENOENT") && spawn_error.contains("/no/such/ptm-shell"),
+        "{spawn_error}"
+    );
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/spawn/README.md")
+        .is_file());
+
+    repo.git(&["branch", "attach-spawn"]);
+    let attach_spawn = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["attach", "attach-spawn", "--json", "--exec", "true"],
+        )
+        .env("SHELL", "/no/such/ptm-shell")
+        .output()
+        .expect("attach spawn");
+    assert_eq!(attach_spawn.status.code(), Some(1));
+    let attach_json = json_value(&attach_spawn);
+    assert_eq!(attach_json["worktree"]["name"], "attach-spawn");
+    assert_eq!(attach_json["exec"]["ok"], false);
+    assert!(attach_json["exec"]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("ENOENT"));
+    assert!(attach_json.get("error").is_none(), "{attach_json}");
+
+    let interrupted = repo.phantom(&["create", "sigint", "--json", "--exec", "kill -INT $$"]);
+    assert_eq!(
+        interrupted.status.code(),
+        Some(130),
+        "{}\n{}",
+        text(&interrupted.stdout),
+        text(&interrupted.stderr)
+    );
+    let interrupted_json = json_value(&interrupted);
+    assert_eq!(interrupted_json["exec"]["signal"], "SIGINT");
+    assert_eq!(interrupted_json["exec"]["exitCode"], 130);
+    assert!(
+        interrupted_json.get("error").is_none(),
+        "{interrupted_json}"
+    );
+}
+
+#[test]
+fn json_post_create_signal_and_spawn_return_the_worktree() {
+    let repo = Repo::new();
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"kill -TERM $$\"]\n",
+    )
+    .expect("hooks");
+    let created = repo.phantom(&["create", "h", "--json"]);
+    assert_eq!(
+        created.status.code(),
+        Some(143),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let created_json = json_value(&created);
+    assert!(created_json.get("error").is_none(), "{created_json}");
+    assert_eq!(created_json["worktree"]["name"], "h");
+    assert_eq!(created_json["postCreate"]["ok"], false);
+    assert_eq!(created_json["postCreate"]["command"], "kill -TERM $$");
+    assert_eq!(created_json["postCreate"]["exitCode"], 143);
+    assert_eq!(created_json["postCreate"]["signal"], "SIGTERM");
+    assert!(created_json["postCreate"]["error"].is_null());
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/h/README.md")
+        .is_file());
+
+    repo.git(&["branch", "attach-hook"]);
+    let attached = repo.phantom(&["attach", "attach-hook", "--json"]);
+    assert_eq!(
+        attached.status.code(),
+        Some(143),
+        "{}",
+        text(&attached.stderr)
+    );
+    let attached_json = json_value(&attached);
+    assert!(attached_json.get("error").is_none(), "{attached_json}");
+    assert_eq!(attached_json["worktree"]["name"], "attach-hook");
+    assert_eq!(attached_json["postCreate"]["ok"], false);
+    assert_eq!(attached_json["postCreate"]["signal"], "SIGTERM");
+    assert_eq!(attached_json["postCreate"]["exitCode"], 143);
+
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"true\"]\n",
+    )
+    .expect("spawn hook");
+    let spawned = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["create", "hook-spawn", "--json"],
+        )
+        .env("SHELL", "/nonexistent")
+        .output()
+        .expect("hook spawn");
+    assert_eq!(
+        spawned.status.code(),
+        Some(1),
+        "{}\n{}",
+        text(&spawned.stdout),
+        text(&spawned.stderr)
+    );
+    let spawned_json = json_value(&spawned);
+    assert!(spawned_json.get("error").is_none(), "{spawned_json}");
+    assert_eq!(spawned_json["worktree"]["name"], "hook-spawn");
+    assert_eq!(spawned_json["postCreate"]["ok"], false);
+    assert_eq!(spawned_json["postCreate"]["exitCode"], 1);
+    assert!(spawned_json["postCreate"]["signal"].is_null());
+    let spawn_error = spawned_json["postCreate"]["error"].as_str().unwrap_or("");
+    assert!(
+        spawn_error.contains("ENOENT") && spawn_error.contains("/nonexistent"),
+        "{spawn_error}"
+    );
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/hook-spawn/README.md")
+        .is_file());
+
+    repo.git(&["branch", "attach-hook-spawn"]);
+    let attach_spawn = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["attach", "attach-hook-spawn", "--json"],
+        )
+        .env("SHELL", "/nonexistent")
+        .output()
+        .expect("attach hook spawn");
+    assert_eq!(attach_spawn.status.code(), Some(1));
+    let attach_json = json_value(&attach_spawn);
+    assert_eq!(attach_json["postCreate"]["ok"], false);
+    assert!(attach_json["postCreate"]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("ENOENT"));
+    assert!(attach_json.get("error").is_none(), "{attach_json}");
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/attach-hook-spawn/README.md")
+        .is_file());
+
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npre-delete = [\"kill -TERM $$\"]\n",
+    )
+    .expect("pre-delete signal");
+    let deleted = repo.phantom(&["delete", "--force", "h", "--json"]);
+    assert_eq!(
+        deleted.status.code(),
+        Some(143),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    let deleted_json = json_value(&deleted);
+    assert_eq!(deleted_json["error"]["code"], "signaled");
+    assert_eq!(deleted_json["error"]["exitCode"], 143);
+    assert_eq!(deleted_json["deleted"][0]["worktree"]["name"], "h");
+    assert!(paths_match(
+        deleted_json["deleted"][0]["worktree"]["path"]
+            .as_str()
+            .unwrap_or(""),
+        &repo.repo.join(".git/phantom/worktrees/h")
+    ));
+    assert!(repo.repo.join(".git/phantom/worktrees/h").is_dir());
+
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npre-delete = [\"true\"]\n",
+    )
+    .expect("pre-delete spawn");
+    let pre_spawn = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["delete", "--force", "attach-hook", "--json"],
+        )
+        .env("SHELL", "/nonexistent")
+        .output()
+        .expect("pre-delete spawn");
+    assert_eq!(pre_spawn.status.code(), Some(1));
+    let pre_json = json_value(&pre_spawn);
+    assert_eq!(pre_json["error"]["code"], "spawn");
+    assert_eq!(pre_json["error"]["exitCode"], 1);
+    assert_eq!(pre_json["deleted"][0]["worktree"]["name"], "attach-hook");
+    assert!(paths_match(
+        pre_json["deleted"][0]["worktree"]["path"]
+            .as_str()
+            .unwrap_or(""),
+        &repo.repo.join(".git/phantom/worktrees/attach-hook")
+    ));
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/attach-hook")
+        .is_dir());
+}
+
+#[test]
+fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
+    let repo = Repo::new();
+    let set = repo.phantom(&["preferences", "set", "directory-name-separator", "-"]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+
+    let created = repo.phantom(&[
+        "create",
+        "feature/topic",
+        "--exec",
+        "git checkout -q --detach",
+    ]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    assert!(!text(&created.stderr).contains("not found"));
+    assert!(text(&created.stdout).contains("Created worktree 'feature/topic'"));
+    let directory = repo.repo.join(".git/phantom/worktrees/feature-topic");
+    assert!(directory.join("README.md").is_file());
+    let abbrev = repo
+        .command("git", &["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&directory)
+        .output()
+        .expect("abbrev");
+    assert_eq!(text(&abbrev.stdout), "HEAD");
+
+    let json_created = repo.phantom(&[
+        "create",
+        "feature/json-topic",
+        "--json",
+        "--exec",
+        "git checkout -q --detach",
+    ]);
+    assert!(
+        json_created.status.success(),
+        "{}\n{}",
+        text(&json_created.stdout),
+        text(&json_created.stderr)
+    );
+    let json_value_created = json_value(&json_created);
+    assert!(
+        json_value_created.get("error").is_none(),
+        "{json_value_created}"
+    );
+    assert_eq!(json_value_created["exec"]["ok"], true);
+    assert_eq!(json_value_created["worktree"]["name"], "feature-json-topic");
+    assert_eq!(json_value_created["worktree"]["detached"], true);
+    assert!(json_value_created["worktree"]["branch"].is_null());
+    assert!(paths_match(
+        json_value_created["worktree"]["path"]
+            .as_str()
+            .unwrap_or(""),
+        &repo.repo.join(".git/phantom/worktrees/feature-json-topic")
+    ));
+
+    repo.git(&["branch", "feature/attached"]);
+    let attached = repo.phantom(&[
+        "attach",
+        "feature/attached",
+        "--json",
+        "--exec",
+        "git checkout -q --detach",
+    ]);
+    assert!(
+        attached.status.success(),
+        "{}\n{}",
+        text(&attached.stdout),
+        text(&attached.stderr)
+    );
+    let attached_json = json_value(&attached);
+    assert!(attached_json.get("error").is_none(), "{attached_json}");
+    assert_eq!(attached_json["worktree"]["name"], "feature-attached");
+    assert_eq!(attached_json["worktree"]["detached"], true);
+    assert!(paths_match(
+        attached_json["worktree"]["path"].as_str().unwrap_or(""),
+        &repo.repo.join(".git/phantom/worktrees/feature-attached")
+    ));
+
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"git checkout -q --detach\"]\n",
+    )
+    .expect("detach hook");
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let gh = bin.join("gh");
+    fs::write(
+        &gh,
+        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":7}'\nexit 0\n",
+    )
+    .expect("gh");
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(&gh).expect("meta").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&gh, perms).expect("chmod");
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let checkout = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["github", "checkout", "7", "--json"],
+        )
+        .env("PATH", &path)
+        .output()
+        .expect("checkout");
+    assert!(
+        checkout.status.success(),
+        "{}\n{}",
+        text(&checkout.stdout),
+        text(&checkout.stderr)
+    );
+    let checkout_json = json_value(&checkout);
+    assert!(checkout_json.get("error").is_none(), "{checkout_json}");
+    assert_eq!(checkout_json["worktree"]["name"], "issues-7");
+    assert_eq!(checkout_json["worktree"]["detached"], true);
+    assert_eq!(checkout_json["postCreate"]["ok"], true);
+    assert!(paths_match(
+        checkout_json["worktree"]["path"].as_str().unwrap_or(""),
+        &repo.repo.join(".git/phantom/worktrees/issues-7")
+    ));
+}
+
+#[test]
+fn github_checkout_json_reports_issue_and_existing_pull_request() {
+    let repo = Repo::new();
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let gh = bin.join("gh");
+    fs::write(
+        &gh,
+        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":7}'\nexit 0\n",
+    )
+    .expect("gh");
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(&gh).expect("meta").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&gh, perms).expect("chmod");
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let checkout = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["github", "checkout", "7", "--json"],
+        )
+        .env("PATH", &path)
+        .output()
+        .expect("checkout");
+    assert!(
+        checkout.status.success(),
+        "{}\n{}",
+        text(&checkout.stdout),
+        text(&checkout.stderr)
+    );
+    let checkout_json = json_value(&checkout);
+    assert_eq!(checkout_json["version"], 1);
+    assert_eq!(checkout_json["github"]["kind"], "issue");
+    assert_eq!(checkout_json["github"]["number"], 7);
+    assert!(checkout_json["github"]["headRef"].is_null());
+    assert_eq!(checkout_json["github"]["alreadyExists"], false);
+    assert_worktree_object(
+        &checkout_json["worktree"],
+        "issues/7",
+        &repo.repo.join(".git/phantom/worktrees/issues/7"),
+    );
+    assert_eq!(checkout_json["worktree"]["branch"], "issues/7");
+    assert_eq!(checkout_json["worktree"]["base"], "HEAD");
+    assert!(!text(&checkout.stdout).contains("Created worktree"));
+
+    let missing = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["github", "checkout", "--json"])
+        .env("PATH", &path)
+        .output()
+        .expect("missing");
+    assert_eq!(missing.status.code(), Some(3));
+    assert_eq!(json_value(&missing)["error"]["code"], "validation");
+
+    let matching = Repo::new();
+    let matching_path = fake_gh_for_topic_pr(&matching);
+    let checked_out = matching.repo.join(".git/phantom/worktrees/topic");
+    matching.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic",
+        checked_out.to_str().expect("path"),
+        "HEAD",
+    ]);
+    let again = matching
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["gh", "checkout", "7", "--json"],
+        )
+        .env("PATH", &matching_path)
+        .output()
+        .expect("again");
+    assert!(
+        again.status.success(),
+        "{}\n{}",
+        text(&again.stdout),
+        text(&again.stderr)
+    );
+    let again_json = json_value(&again);
+    assert_eq!(again_json["github"]["kind"], "pullRequest");
+    assert_eq!(again_json["github"]["number"], 7);
+    assert_eq!(again_json["github"]["headRef"], "topic");
+    assert_eq!(again_json["github"]["alreadyExists"], true);
+    assert!(again_json["worktree"]["base"].is_null());
+    assert_eq!(again_json["postCreate"]["ran"], false);
+    assert_worktree_object(&again_json["worktree"], "topic", &checked_out);
+    assert!(!text(&again.stdout).contains("already checked out"));
+}
+
 #[test]
 fn exec_passes_command_options_through() {
     let repo = Repo::new();
@@ -1681,7 +2650,7 @@ fn exec_passes_command_options_through() {
     assert!(text(&help.stdout).contains("ptm exec <worktree-name> <command> [args...]"));
 
     let early = repo.phantom(&["exec", "--show-current", "feature/exec-flags", "true"]);
-    assert_eq!(early.status.code(), Some(1));
+    assert_eq!(early.status.code(), Some(3));
     assert!(text(&early.stderr).contains("Unknown option '--show-current'"));
 }
 
@@ -1755,7 +2724,7 @@ fn create_and_attach_exec_pass_command_options_through() {
     assert!(text(&short.stdout).contains("git status --short"));
 
     let missing = repo.phantom(&["create", "feature/missing-exec", "--exec"]);
-    assert_eq!(missing.status.code(), Some(1));
+    assert_eq!(missing.status.code(), Some(3));
     assert!(text(&missing.stderr).contains("Option '--exec <value>' argument missing"));
 
     repo.git(&["branch", "attached-exec-flags"]);

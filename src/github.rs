@@ -1,12 +1,13 @@
 use std::path::Path;
 
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::context;
-use crate::error::{Error, Result};
+use crate::error::{self, Error, Result};
 use crate::git;
 use crate::process;
-use crate::worktree::{self, Logger};
+use crate::worktree::{self, Logger, WorktreeInfo};
 
 pub struct Checkout {
     pub message: String,
@@ -14,6 +15,59 @@ pub struct Checkout {
     pub path: std::path::PathBuf,
     pub already_exists: bool,
     pub hook_failure: Option<worktree::HookFailure>,
+    pub copy_error: Option<String>,
+    pub hooks_ran: bool,
+    pub info: WorktreeInfo,
+    pub base: Option<String>,
+    pub subject: GithubSubject,
+}
+
+pub enum GithubSubject {
+    PullRequest { number: u64, head_ref: String },
+    Issue { number: u64 },
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GithubCheckoutOutput {
+    version: u32,
+    worktree: worktree::WorktreeJson,
+    github: GithubSubjectOutput,
+    copy_files: worktree::CopyFilesOutcome,
+    post_create: worktree::PostCreateOutcome,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GithubSubjectOutput {
+    kind: &'static str,
+    number: u64,
+    head_ref: Option<String>,
+    already_exists: bool,
+}
+
+impl Checkout {
+    pub fn to_json(&self) -> Result<Value> {
+        let (kind, number, head_ref) = match &self.subject {
+            GithubSubject::PullRequest { number, head_ref } => {
+                ("pullRequest", *number, Some(head_ref.clone()))
+            }
+            GithubSubject::Issue { number } => ("issue", *number, None),
+        };
+        serde_json::to_value(GithubCheckoutOutput {
+            version: error::JSON_VERSION,
+            worktree: self.info.to_json(self.base.clone()),
+            github: GithubSubjectOutput {
+                kind,
+                number,
+                head_ref,
+                already_exists: self.already_exists,
+            },
+            copy_files: worktree::copy_files_outcome(self.copy_error.as_deref()),
+            post_create: worktree::post_create_outcome(self.hooks_ran, self.hook_failure.as_ref()),
+        })
+        .map_err(|error| Error::msg(error.to_string()))
+    }
 }
 
 pub fn checkout(number: &str, base: Option<&str>, logger: &Logger) -> Result<Checkout> {
@@ -65,12 +119,21 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Res
     };
     if let Ok(existing) = worktree::find_worktree(&context.git_root, &worktree_name, false, None) {
         if existing.branch == worktree_name {
+            let path = existing.path.clone().into();
             return Ok(Checkout {
                 message: format!("PR #{} is already checked out", pull.number),
                 worktree: worktree_name,
-                path: existing.path.into(),
+                path,
                 already_exists: true,
                 hook_failure: None,
+                copy_error: None,
+                hooks_ran: false,
+                info: existing,
+                base: None,
+                subject: GithubSubject::PullRequest {
+                    number: pull.number,
+                    head_ref: pull.head_ref.clone(),
+                },
             });
         }
     }
@@ -97,12 +160,21 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Res
             pull.number, pull.head_ref
         )
     };
+    let info = worktree::worktree_at_path(&context.git_root, &attached.path)?;
     Ok(Checkout {
         message,
         worktree: worktree_name,
         path: attached.path,
         already_exists: false,
         hook_failure: attached.hook_failure,
+        copy_error: attached.copy_error,
+        hooks_ran: attached.hooks_ran,
+        info,
+        base: Some(upstream),
+        subject: GithubSubject::PullRequest {
+            number: pull.number,
+            head_ref: pull.head_ref.clone(),
+        },
     })
 }
 
@@ -116,29 +188,35 @@ fn checkout_issue(
     let context = context::create(&git_root)?;
     let name = format!("issues/{number}");
     if let Ok(existing) = worktree::find_worktree(&context.git_root, &name, false, None) {
+        let path = existing.path.clone().into();
         return Ok(Checkout {
             message: format!("Issue #{number} is already checked out"),
             worktree: name,
-            path: existing.path.into(),
+            path,
             already_exists: true,
             hook_failure: None,
+            copy_error: None,
+            hooks_ran: false,
+            info: existing,
+            base: None,
+            subject: GithubSubject::Issue { number },
         });
     }
     let commands = post_commands(&context);
-    let created = worktree::create_worktree(
-        &context,
-        &name,
-        base.unwrap_or("HEAD"),
-        &[],
-        &commands,
-        logger,
-    )?;
+    let base = base.unwrap_or("HEAD");
+    let created = worktree::create_worktree(&context, &name, base, &[], &commands, logger)?;
+    let info = worktree::worktree_at_path(&context.git_root, &created.path)?;
     Ok(Checkout {
         message: format!("Created worktree '{name}' at {}", created.path.display()),
         worktree: name,
         path: created.path,
         already_exists: false,
         hook_failure: created.hook_failure,
+        copy_error: created.copy_error,
+        hooks_ran: created.hooks_ran,
+        info,
+        base: Some(base.to_string()),
+        subject: GithubSubject::Issue { number },
     })
 }
 
