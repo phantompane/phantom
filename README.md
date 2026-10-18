@@ -85,7 +85,7 @@ A command that does not produce a result writes this object to stdout:
 
 `delete --json` is the exception that can include both deleted entries and a top-level `error`. Entries that were removed stay in `deleted`. The failed name has `worktree: null` and a string `error`. The process still exits nonzero.
 
-`create` and `attach` still print the result object when the worktree exists but a post-create hook or `--exec` fails, including when `--exec` is killed by a signal or the shell or program fails to start. The process exits with that command's status. `postCreate.ok` or `exec.ok` is false. That is not the error envelope.
+`create` and `attach` still print the result object when the worktree exists but a post-create hook or `--exec` fails, including when that command is killed by a signal or the shell fails to start. The process exits with that command's status. `postCreate.ok` or `exec.ok` is false. That is not the error envelope. A pre-delete hook that exits nonzero, is signaled, or fails to start still aborts deletion.
 
 ### Worktree object
 
@@ -127,12 +127,12 @@ The object is intentionally open. Ownership and purpose metadata (owner, purpose
   "version": 1,
   "worktree": {},
   "copyFiles": { "ok": true, "error": null },
-  "postCreate": { "ran": false, "ok": true, "command": null, "exitCode": null },
+  "postCreate": { "ran": false, "ok": true, "command": null, "exitCode": null, "signal": null, "error": null },
   "exec": null
 }
 ```
 
-`copyFiles.ok` is false when copying `.worktreeinclude` matches fails. The worktree is still created. `postCreate.ran` is false when no hook is configured. On success, `exitCode` is 0 and `command` is null. On failure, `command` is the hook that failed and `exitCode` is its status. `exec` is null when `--exec` was not passed. Otherwise it is `{ "ok": true, "command": "npm test", "exitCode": 0, "signal": null, "error": null }`. `signal` is the signal name when the process was killed, and `exitCode` is `128` plus the signal number (`143` for `SIGTERM`). `error` is set when the shell or program failed to start. `ok` is false in both cases, and the worktree object is still returned.
+`copyFiles.ok` is false when copying `.worktreeinclude` matches fails. The worktree is still created. `postCreate.ran` is false when no hook is configured. On success, `exitCode` is 0 and `command`, `signal`, and `error` are null. On failure, `command` is the hook that failed and `exitCode` is its status. `exec` is null when `--exec` was not passed. Otherwise it is `{ "ok": true, "command": "npm test", "exitCode": 0, "signal": null, "error": null }`. For both `postCreate` and `exec`, `signal` is the signal name when the process was killed, and `exitCode` is `128` plus the signal number (`143` for `SIGTERM`, `130` for `SIGINT`, `137` for `SIGKILL`, `129` for `SIGHUP`). `error` is set when the shell or program failed to start. `ok` is false in both cases, and the worktree object is still returned.
 
 `attach` leaves `worktree.base` null. `create` sets it to the requested base (`HEAD` when omitted).
 
@@ -168,7 +168,7 @@ The object is intentionally open. Ownership and purpose metadata (owner, purpose
     "alreadyExists": false
   },
   "copyFiles": { "ok": true, "error": null },
-  "postCreate": { "ran": false, "ok": true, "command": null, "exitCode": null }
+  "postCreate": { "ran": false, "ok": true, "command": null, "exitCode": null, "signal": null, "error": null }
 }
 ```
 

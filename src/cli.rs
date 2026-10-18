@@ -363,7 +363,7 @@ fn delete(args: &[String]) -> Result<i32> {
                 let code = match &error {
                     Error::WorktreeNotFound(_) => NOT_FOUND,
                     Error::Uncommitted { .. } => VALIDATION,
-                    _ => GENERAL,
+                    other => other.exit_code(),
                 };
                 if json {
                     deleted.push(worktree::DeletedEntry {

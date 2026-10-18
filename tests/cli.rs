@@ -2143,6 +2143,165 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
         .unwrap_or("")
         .contains("ENOENT"));
     assert!(attach_json.get("error").is_none(), "{attach_json}");
+
+    let interrupted = repo.phantom(&["create", "sigint", "--json", "--exec", "kill -INT $$"]);
+    assert_eq!(
+        interrupted.status.code(),
+        Some(130),
+        "{}\n{}",
+        text(&interrupted.stdout),
+        text(&interrupted.stderr)
+    );
+    let interrupted_json = json_value(&interrupted);
+    assert_eq!(interrupted_json["exec"]["signal"], "SIGINT");
+    assert_eq!(interrupted_json["exec"]["exitCode"], 130);
+    assert!(
+        interrupted_json.get("error").is_none(),
+        "{interrupted_json}"
+    );
+}
+
+#[test]
+fn json_post_create_signal_and_spawn_return_the_worktree() {
+    let repo = Repo::new();
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"kill -TERM $$\"]\n",
+    )
+    .expect("hooks");
+    let created = repo.phantom(&["create", "h", "--json"]);
+    assert_eq!(
+        created.status.code(),
+        Some(143),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let created_json = json_value(&created);
+    assert!(created_json.get("error").is_none(), "{created_json}");
+    assert_eq!(created_json["worktree"]["name"], "h");
+    assert_eq!(created_json["postCreate"]["ok"], false);
+    assert_eq!(created_json["postCreate"]["command"], "kill -TERM $$");
+    assert_eq!(created_json["postCreate"]["exitCode"], 143);
+    assert_eq!(created_json["postCreate"]["signal"], "SIGTERM");
+    assert!(created_json["postCreate"]["error"].is_null());
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/h/README.md")
+        .is_file());
+
+    repo.git(&["branch", "attach-hook"]);
+    let attached = repo.phantom(&["attach", "attach-hook", "--json"]);
+    assert_eq!(
+        attached.status.code(),
+        Some(143),
+        "{}",
+        text(&attached.stderr)
+    );
+    let attached_json = json_value(&attached);
+    assert!(attached_json.get("error").is_none(), "{attached_json}");
+    assert_eq!(attached_json["worktree"]["name"], "attach-hook");
+    assert_eq!(attached_json["postCreate"]["ok"], false);
+    assert_eq!(attached_json["postCreate"]["signal"], "SIGTERM");
+    assert_eq!(attached_json["postCreate"]["exitCode"], 143);
+
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"true\"]\n",
+    )
+    .expect("spawn hook");
+    let spawned = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["create", "hook-spawn", "--json"],
+        )
+        .env("SHELL", "/nonexistent")
+        .output()
+        .expect("hook spawn");
+    assert_eq!(
+        spawned.status.code(),
+        Some(1),
+        "{}\n{}",
+        text(&spawned.stdout),
+        text(&spawned.stderr)
+    );
+    let spawned_json = json_value(&spawned);
+    assert!(spawned_json.get("error").is_none(), "{spawned_json}");
+    assert_eq!(spawned_json["worktree"]["name"], "hook-spawn");
+    assert_eq!(spawned_json["postCreate"]["ok"], false);
+    assert_eq!(spawned_json["postCreate"]["exitCode"], 1);
+    assert!(spawned_json["postCreate"]["signal"].is_null());
+    let spawn_error = spawned_json["postCreate"]["error"].as_str().unwrap_or("");
+    assert!(
+        spawn_error.contains("ENOENT") && spawn_error.contains("/nonexistent"),
+        "{spawn_error}"
+    );
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/hook-spawn/README.md")
+        .is_file());
+
+    repo.git(&["branch", "attach-hook-spawn"]);
+    let attach_spawn = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["attach", "attach-hook-spawn", "--json"],
+        )
+        .env("SHELL", "/nonexistent")
+        .output()
+        .expect("attach hook spawn");
+    assert_eq!(attach_spawn.status.code(), Some(1));
+    let attach_json = json_value(&attach_spawn);
+    assert_eq!(attach_json["postCreate"]["ok"], false);
+    assert!(attach_json["postCreate"]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("ENOENT"));
+    assert!(attach_json.get("error").is_none(), "{attach_json}");
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/attach-hook-spawn/README.md")
+        .is_file());
+
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npre-delete = [\"kill -TERM $$\"]\n",
+    )
+    .expect("pre-delete signal");
+    let deleted = repo.phantom(&["delete", "--force", "h", "--json"]);
+    assert_eq!(
+        deleted.status.code(),
+        Some(143),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    let deleted_json = json_value(&deleted);
+    assert_eq!(deleted_json["error"]["code"], "signaled");
+    assert_eq!(deleted_json["error"]["exitCode"], 143);
+    assert!(repo.repo.join(".git/phantom/worktrees/h").is_dir());
+
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npre-delete = [\"true\"]\n",
+    )
+    .expect("pre-delete spawn");
+    let pre_spawn = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["delete", "--force", "attach-hook", "--json"],
+        )
+        .env("SHELL", "/nonexistent")
+        .output()
+        .expect("pre-delete spawn");
+    assert_eq!(pre_spawn.status.code(), Some(1));
+    let pre_json = json_value(&pre_spawn);
+    assert_eq!(pre_json["error"]["code"], "spawn");
+    assert_eq!(pre_json["error"]["exitCode"], 1);
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/attach-hook")
+        .is_dir());
 }
 
 #[test]

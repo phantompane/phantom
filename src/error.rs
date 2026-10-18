@@ -46,7 +46,7 @@ impl Error {
     pub fn exit_code(&self) -> i32 {
         match self {
             Self::CommandFailed { code, .. } => *code,
-            Self::Signaled(name) => 128 + i32::from(name == "SIGTERM").saturating_mul(14) + 1,
+            Self::Signaled(name) => 128 + signal_number(name),
             Self::NotARepository => NOT_REPOSITORY,
             Self::Validation(_) => VALIDATION,
             _ => GENERAL,
@@ -103,6 +103,22 @@ pub struct JsonErrorBody {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Conventional status for a process killed by `number`: `128` plus that signal.
+fn signal_number(name: &str) -> i32 {
+    match name {
+        "SIGHUP" => 1,
+        "SIGINT" => 2,
+        "SIGQUIT" => 3,
+        "SIGKILL" => 9,
+        "SIGPIPE" => 13,
+        "SIGTERM" => 15,
+        other => other
+            .strip_prefix("SIG")
+            .and_then(|rest| rest.parse().ok())
+            .unwrap_or(0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,6 +157,15 @@ mod tests {
             "validation"
         );
         assert_eq!(Error::msg("boom").json_code(GENERAL), "error");
+        assert_eq!(Error::Signaled("SIGTERM".to_string()).exit_code(), 143);
+        assert_eq!(Error::Signaled("SIGINT".to_string()).exit_code(), 130);
+        assert_eq!(Error::Signaled("SIGKILL".to_string()).exit_code(), 137);
+        assert_eq!(Error::Signaled("SIGHUP".to_string()).exit_code(), 129);
+        assert_eq!(Error::Signaled("SIG13".to_string()).exit_code(), 141);
+        let signaled = Error::Signaled("SIGINT".to_string());
+        let signaled_json = signaled.to_json(signaled.exit_code());
+        assert_eq!(signaled_json.error.code, "signaled");
+        assert_eq!(signaled_json.error.exit_code, 130);
         let value = serde_json::to_value(document).expect("json");
         assert_eq!(value["error"]["exitCode"], NOT_FOUND);
         assert!(value["error"].get("exit_code").is_none());

@@ -326,13 +326,23 @@ pub struct AttachOutcome {
 pub struct HookFailure {
     pub command: String,
     pub code: i32,
+    pub signal: Option<String>,
+    pub error: Option<String>,
 }
 
 impl HookFailure {
     pub fn warning(&self, path: &Path) -> String {
+        let reason = if let Some(signal) = &self.signal {
+            format!("terminated by signal {signal} (exit code {})", self.code)
+        } else if let Some(error) = &self.error {
+            format!("failed to start: {error}")
+        } else {
+            format!("failed with exit code {}", self.code)
+        };
         format!(
-            "Warning: Post-create command failed with exit code {}: {}\nThe worktree was created at {}",
-            self.code, self.command, path.display()
+            "Warning: Post-create command {reason}: {}\nThe worktree was created at {}",
+            self.command,
+            path.display()
         )
     }
 }
@@ -707,6 +717,21 @@ pub fn ptm_env(name: &str, path: &Path) -> Vec<(String, String)> {
     ]
 }
 
+fn hook_failure_from_start(command: &str, error: &Error) -> HookFailure {
+    HookFailure {
+        command: command.to_string(),
+        code: error.exit_code(),
+        signal: match error {
+            Error::Signaled(signal) => Some(signal.clone()),
+            _ => None,
+        },
+        error: match error {
+            Error::Spawn { .. } => Some(error.to_string()),
+            _ => None,
+        },
+    }
+}
+
 fn combine_exit(action: Option<i32>, hook: Option<i32>) -> Option<i32> {
     match (action, hook) {
         (Some(code), _) if code != 0 => Some(code),
@@ -743,10 +768,10 @@ fn run_hook_commands(
         ) {
             Ok(code) => code,
             Err(error) => {
-                let label = if post { "post-create" } else { "pre-delete" };
-                return Err(Error::msg(format!(
-                    "Failed to execute {label} command \"{command}\": {error}"
-                )));
+                if post {
+                    return Ok(Some(hook_failure_from_start(command, &error)));
+                }
+                return Err(error);
             }
         };
         if code != 0 {
@@ -754,6 +779,8 @@ fn run_hook_commands(
                 return Ok(Some(HookFailure {
                     command: command.clone(),
                     code,
+                    signal: None,
+                    error: None,
                 }));
             }
             return Err(Error::msg(format!(
@@ -982,6 +1009,8 @@ pub struct PostCreateOutcome {
     pub ok: bool,
     pub command: Option<String>,
     pub exit_code: Option<i32>,
+    pub signal: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1072,6 +1101,8 @@ pub fn post_create_outcome(ran: bool, failure: Option<&HookFailure>) -> PostCrea
             ok: false,
             command: Some(failure.command.clone()),
             exit_code: Some(failure.code),
+            signal: failure.signal.clone(),
+            error: failure.error.clone(),
         }
     } else {
         PostCreateOutcome {
@@ -1079,6 +1110,8 @@ pub fn post_create_outcome(ran: bool, failure: Option<&HookFailure>) -> PostCrea
             ok: true,
             command: None,
             exit_code: ran.then_some(0),
+            signal: None,
+            error: None,
         }
     }
 }
