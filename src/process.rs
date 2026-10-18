@@ -13,8 +13,20 @@ pub struct Captured {
 }
 
 pub fn raw(command: &str, args: &[&str], cwd: Option<&Path>) -> Result<Captured> {
+    raw_with_env(command, args, cwd, &[])
+}
+
+pub fn raw_with_env(
+    command: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[(&str, &str)],
+) -> Result<Captured> {
     let mut cmd = Command::new(command);
     cmd.args(args);
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
