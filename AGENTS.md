@@ -43,7 +43,7 @@
 ## Security & Configuration Tips
 
 - Never commit tokens or GitHub credentials. `github checkout` uses the `gh` CLI (`GH_TOKEN` / `GH_HOST`).
-- Keep worktrees under `.git/phantom/worktrees/` unless overridden with the `worktreesDirectory` preference. Avoid leaking local paths in logs.
+- Keep worktrees under `.git/ptm/worktrees/` unless overridden with the `worktreesDirectory` preference. Avoid leaking local paths in logs.
 - Reuse `validate_worktree_name` rather than re-implementing name parsing.
 
 ## Releases

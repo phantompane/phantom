@@ -1507,7 +1507,7 @@ mod tests {
         fs::write(repo.join("README.md"), "hi\n").expect("readme");
         git_ok(&repo, &["add", "README.md"]);
         git_ok(&repo, &["commit", "-m", "initial"]);
-        let worktree = repo.join(".git/phantom/worktrees/feature");
+        let worktree = repo.join(".git/ptm/worktrees/feature");
         git_ok(
             &repo,
             &[
