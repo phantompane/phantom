@@ -33,7 +33,7 @@ ptm clone aku11i/phantom --update
 
 If that path is already the same repository, `ptm` registers it and prints the path instead of cloning again. `--update` fetches `origin` in that case. If the path exists but is a different repository, the command exits with a validation error. `--branch` and `--depth` apply only to a new clone.
 
-Authentication is left to Git. `ptm` does not call `gh`. Git's progress is written to stderr. Worktrees for the cloned repository stay under its `.git/phantom/worktrees` directory.
+Authentication is left to Git. `ptm` does not call `gh`. Git's progress is written to stderr. Worktrees for the cloned repository stay under its `.git/ptm/worktrees` directory.
 
 ## Targeting a project
 
@@ -125,7 +125,7 @@ A command that does not produce a result writes this object to stdout:
 ```json
 {
   "name": "feature/add-tests",
-  "path": "/repo/.git/phantom/worktrees/feature/add-tests",
+  "path": "/repo/.git/ptm/worktrees/feature/add-tests",
   "branch": "feature/add-tests",
   "head": "0123456789abcdef0123456789abcdef01234567",
   "base": "HEAD",
