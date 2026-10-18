@@ -43,4 +43,17 @@ pre-delete = ["./scripts/teardown.sh"]
 
 `ptm create` and `ptm attach` run `post-create` in the new worktree. `ptm delete` runs `pre-delete` in the worktree before removing it. Commands run in order and stop at the first failure. Unknown keys are rejected.
 
-Each hook receives the existing worktree environment variables plus `PTM_ROOT_PATH`, the path of that source checkout.
+Each hook receives:
+
+- `PTM` — `1`
+- `PTM_NAME` — worktree name
+- `PTM_PATH` — absolute path of the worktree directory
+- `PTM_ROOT_PATH` — path of the source checkout
+
+## Worktree environment
+
+`ptm exec` and `--exec` export:
+
+- `PTM` — `1`
+- `PTM_NAME` — worktree name
+- `PTM_PATH` — absolute path of the worktree directory

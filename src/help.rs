@@ -303,6 +303,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn help_names_worktrees_and_ptm_env() {
+        let main = main_help().expect("main help");
+        assert!(main.contains("Create a new Git worktree"));
+        assert!(main.contains("List all Git worktrees"));
+        assert!(main.contains("Delete a Git worktree"));
+        assert!(main.contains("GitHub-specific commands for worktrees"));
+        assert!(!main.contains("(phantom)"));
+        assert!(!main.contains("(phantoms)"));
+        for key in ["create", "attach", "delete", "exec"] {
+            let help = command_help(key).expect("render").expect(key);
+            assert!(help.contains("PTM_NAME"), "{key}:\n{help}");
+            assert!(help.contains("PTM_PATH"), "{key}:\n{help}");
+            assert!(!help.contains("PHANTOM"), "{key}:\n{help}");
+        }
+        for key in ["create", "attach", "delete"] {
+            let help = command_help(key).expect("render").expect(key);
+            assert!(help.contains("PTM_ROOT_PATH"), "{key}:\n{help}");
+        }
+        let exec = command_help("exec").expect("render").expect("exec");
+        assert!(!exec.contains("PTM_ROOT_PATH"), "{exec}");
+    }
+
     fn mentions_phantom_command(help: &str) -> bool {
         const COMMANDS: &[&str] = &[
             "<command>",

@@ -55,18 +55,18 @@ impl Logger {
 
 pub fn validate_worktree_name(name: &str) -> Result<()> {
     if name.trim().is_empty() {
-        return Err(Error::msg("Phantom name cannot be empty"));
+        return Err(Error::msg("Worktree name cannot be empty"));
     }
     if !name
         .chars()
         .all(|char| char.is_ascii_alphanumeric() || matches!(char, '-' | '_' | '.' | '/'))
     {
         return Err(Error::msg(
-            "Phantom name can only contain letters, numbers, hyphens, underscores, dots, and slashes",
+            "Worktree name can only contain letters, numbers, hyphens, underscores, dots, and slashes",
         ));
     }
     if name.contains("..") {
-        return Err(Error::msg("Phantom name cannot contain consecutive dots"));
+        return Err(Error::msg("Worktree name cannot contain consecutive dots"));
     }
     Ok(())
 }
@@ -347,7 +347,7 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     )?;
     request
         .logger
-        .log(&format!("Attached phantom: {}", request.name));
+        .log(&format!("Attached worktree: {}", request.name));
     let hook_code = attached.hook_failure.as_ref().map(|failure| {
         request.logger.warn(&failure.warning(&attached.path));
         failure.code
@@ -423,7 +423,7 @@ pub fn delete_worktree(
     let path = PathBuf::from(&worktree.path);
     if !paths::is_strictly_inside(&path, &context.worktrees_directory) {
         return Err(Error::msg(format!(
-            "Worktree '{name}' is not managed by Phantom and cannot be deleted."
+            "Worktree '{name}' is outside the managed worktree directory and cannot be deleted."
         )));
     }
     let changed = git::status_count(&path).unwrap_or(0);
@@ -507,7 +507,7 @@ pub fn exec_in_worktree(
 ) -> Result<i32> {
     let worktree = find_worktree(git_root, name, false, None)?;
     let path = PathBuf::from(&worktree.path);
-    let owned = phantom_env(&worktree.name, &path);
+    let owned = ptm_env(&worktree.name, &path);
     let mut pairs = owned
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -546,7 +546,7 @@ fn run_action(
                 "\nExecuting command in worktree '{name}': {command}"
             ));
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-            let env = phantom_env(name, path);
+            let env = ptm_env(name, path);
             let pairs = env
                 .iter()
                 .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -564,11 +564,11 @@ fn run_action(
     }
 }
 
-pub fn phantom_env(name: &str, path: &Path) -> Vec<(String, String)> {
+pub fn ptm_env(name: &str, path: &Path) -> Vec<(String, String)> {
     vec![
-        ("PHANTOM".to_string(), "1".to_string()),
-        ("PHANTOM_NAME".to_string(), name.to_string()),
-        ("PHANTOM_PATH".to_string(), path.display().to_string()),
+        ("PTM".to_string(), "1".to_string()),
+        ("PTM_NAME".to_string(), name.to_string()),
+        ("PTM_PATH".to_string(), path.display().to_string()),
     ]
 }
 
@@ -849,10 +849,37 @@ mod tests {
 
     #[test]
     fn rejects_invalid_names() {
-        assert!(validate_worktree_name("").is_err());
+        assert_eq!(
+            validate_worktree_name("").expect_err("empty").to_string(),
+            "Worktree name cannot be empty"
+        );
         assert!(validate_worktree_name("feature/test").is_ok());
-        assert!(validate_worktree_name("has space").is_err());
-        assert!(validate_worktree_name("bad..name").is_err());
+        assert_eq!(
+            validate_worktree_name("has space")
+                .expect_err("space")
+                .to_string(),
+            "Worktree name can only contain letters, numbers, hyphens, underscores, dots, and slashes"
+        );
+        assert_eq!(
+            validate_worktree_name("bad..name")
+                .expect_err("dots")
+                .to_string(),
+            "Worktree name cannot contain consecutive dots"
+        );
+    }
+
+    #[test]
+    fn ptm_env_exports_ptm_variables() {
+        let env = ptm_env("feature/env", Path::new("/worktrees/feature/env"));
+        assert_eq!(
+            env,
+            vec![
+                ("PTM".to_string(), "1".to_string()),
+                ("PTM_NAME".to_string(), "feature/env".to_string()),
+                ("PTM_PATH".to_string(), "/worktrees/feature/env".to_string()),
+            ]
+        );
+        assert!(env.iter().all(|(key, _)| !key.starts_with("PHANTOM")));
     }
 
     #[test]

@@ -258,7 +258,7 @@ fn create_list_where_delete_and_attach() {
     repo.git(&["branch", "existing-feature"]);
     let attached = repo.phantom(&["attach", "existing-feature"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
-    assert!(text(&attached.stdout).contains("Attached phantom: existing-feature"));
+    assert!(text(&attached.stdout).contains("Attached worktree: existing-feature"));
     let missing_branch = repo.phantom(&["attach", "missing-branch"]);
     assert_eq!(missing_branch.status.code(), Some(2));
 
@@ -417,7 +417,7 @@ fn post_create_failure_reports_the_created_worktree() {
     let attached_path = repo.repo.join(".git/phantom/worktrees/existing-hook");
     assert!(attached_path.join("README.md").is_file());
     assert!(
-        text(&attached.stdout).contains("Attached phantom: existing-hook"),
+        text(&attached.stdout).contains("Attached worktree: existing-hook"),
         "{}",
         text(&attached.stdout)
     );
@@ -465,6 +465,9 @@ fn hooks_run_in_order_stop_on_failure_and_export_root_path() {
         r#"[hooks]
 post-create = [
   "printf '%s' \"$PTM_ROOT_PATH\" > root-path.txt",
+  "printf '%s' \"$PTM\" > ptm-flag.txt",
+  "printf '%s' \"$PTM_NAME\" > ptm-name.txt",
+  "printf '%s' \"$PTM_PATH\" > ptm-path.txt",
   "printf '%s' \"$PHANTOM\" > phantom-flag.txt",
   "printf '%s' \"$PHANTOM_NAME\" > phantom-name.txt",
   "printf '%s' \"$PHANTOM_PATH\" > phantom-path.txt",
@@ -490,16 +493,28 @@ pre-delete = [
         repo.repo.display().to_string()
     );
     assert_eq!(
-        fs::read_to_string(worktree.join("phantom-flag.txt")).expect("flag"),
+        fs::read_to_string(worktree.join("ptm-flag.txt")).expect("flag"),
         "1"
     );
     assert_eq!(
-        fs::read_to_string(worktree.join("phantom-name.txt")).expect("name"),
+        fs::read_to_string(worktree.join("ptm-name.txt")).expect("name"),
         "feature/hooks-order"
     );
     assert_eq!(
-        fs::read_to_string(worktree.join("phantom-path.txt")).expect("path"),
+        fs::read_to_string(worktree.join("ptm-path.txt")).expect("path"),
         worktree.display().to_string()
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("phantom-flag.txt")).expect("old flag"),
+        ""
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("phantom-name.txt")).expect("old name"),
+        ""
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("phantom-path.txt")).expect("old path"),
+        ""
     );
     assert_eq!(
         text(&fs::read(worktree.join("hook-cwd.txt")).expect("cwd")),
@@ -979,7 +994,7 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
     let ghq = bin.join("ghq");
     fs::write(
         &ghq,
-        "#!/bin/sh\nif [ \"$1\" != \"list\" ] || [ \"$2\" != \"--full-path\" ]; then\n  exit 2\nfi\nprintf \"%s\\n\" \"$PHANTOM_TEST_GHQ_PROJECT\"\n",
+        "#!/bin/sh\nif [ \"$1\" != \"list\" ] || [ \"$2\" != \"--full-path\" ]; then\n  exit 2\nfi\nprintf \"%s\\n\" \"$PTM_TEST_GHQ_PROJECT\"\n",
     )
     .expect("ghq");
     use std::os::unix::fs::PermissionsExt;
@@ -994,7 +1009,7 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
     let discovered = repo
         .command(env!("CARGO_BIN_EXE_ptm"), &["project", "list", "--json"])
         .env("PATH", &path)
-        .env("PHANTOM_TEST_GHQ_PROJECT", &repo.repo)
+        .env("PTM_TEST_GHQ_PROJECT", &repo.repo)
         .output()
         .expect("list");
     assert!(discovered.status.success(), "{}", text(&discovered.stderr));
@@ -1225,10 +1240,9 @@ fn concurrent_project_add_processes_keep_every_record() {
 }
 
 #[test]
-fn create_and_attach_exec_export_phantom_env() {
+fn create_and_attach_exec_export_ptm_env() {
     let repo = Repo::new();
-    let script =
-        "printf '%s\\n' \"$PHANTOM\" \"$PHANTOM_NAME\" \"$PHANTOM_PATH\" > phantom-env.txt";
+    let script = "printf '%s\\n' \"$PTM\" \"$PTM_NAME\" \"$PTM_PATH\" \"$PHANTOM\" \"$PHANTOM_NAME\" \"$PHANTOM_PATH\" > ptm-env.txt";
     let created = repo.phantom(&["create", "feature/env", "--exec", script]);
     assert!(
         created.status.success(),
@@ -1237,7 +1251,7 @@ fn create_and_attach_exec_export_phantom_env() {
         text(&created.stderr)
     );
     let worktree = repo.repo.join(".git/phantom/worktrees/feature/env");
-    assert_phantom_env(&worktree, "feature/env");
+    assert_ptm_env(&worktree, "feature/env");
 
     repo.git(&["branch", "attached-env"]);
     let attached = repo.phantom(&["attach", "attached-env", "--exec", script]);
@@ -1247,18 +1261,18 @@ fn create_and_attach_exec_export_phantom_env() {
         text(&attached.stdout),
         text(&attached.stderr)
     );
-    assert_phantom_env(
+    assert_ptm_env(
         &repo.repo.join(".git/phantom/worktrees/attached-env"),
         "attached-env",
     );
 
     let execed = repo.phantom(&["exec", "feature/env", "--", "sh", "-c", script]);
     assert!(execed.status.success(), "{}", text(&execed.stderr));
-    assert_phantom_env(&worktree, "feature/env");
+    assert_ptm_env(&worktree, "feature/env");
 }
 
-fn assert_phantom_env(worktree: &std::path::Path, name: &str) {
-    let recorded = fs::read_to_string(worktree.join("phantom-env.txt")).expect("phantom env");
+fn assert_ptm_env(worktree: &std::path::Path, name: &str) {
+    let recorded = fs::read_to_string(worktree.join("ptm-env.txt")).expect("ptm env");
     let mut lines = recorded.lines();
     assert_eq!(lines.next(), Some("1"), "{recorded}");
     assert_eq!(lines.next(), Some(name), "{recorded}");
@@ -1267,6 +1281,9 @@ fn assert_phantom_env(worktree: &std::path::Path, name: &str) {
         Some(worktree.to_string_lossy().as_ref()),
         "{recorded}"
     );
+    assert_eq!(lines.next(), Some(""), "{recorded}");
+    assert_eq!(lines.next(), Some(""), "{recorded}");
+    assert_eq!(lines.next(), Some(""), "{recorded}");
 }
 
 #[test]
