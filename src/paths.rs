@@ -54,7 +54,7 @@ pub fn worktrees_directory(git_root: &Path, configured: Option<&str>) -> PathBuf
     match configured.filter(|value| !value.is_empty()) {
         Some(directory) if Path::new(directory).is_absolute() => normalize(Path::new(directory)),
         Some(directory) => normalize(&git_root.join(directory)),
-        None => normalize(&git_root.join(".git").join("phantom").join("worktrees")),
+        None => normalize(&git_root.join(".git").join("ptm").join("worktrees")),
     }
 }
 
@@ -117,11 +117,32 @@ mod tests {
         assert_eq!(
             relative(
                 Path::new("/repo"),
-                Path::new("/repo/.git/phantom/worktrees/listed")
+                Path::new("/repo/.git/ptm/worktrees/listed")
             ),
-            ".git/phantom/worktrees/listed"
+            ".git/ptm/worktrees/listed"
         );
         assert_eq!(relative(Path::new("/repo/a"), Path::new("/repo/b")), "../b");
+    }
+
+    #[test]
+    fn unset_worktrees_directory_is_git_ptm_worktrees() {
+        let root = Path::new("/repo");
+        assert_eq!(
+            worktrees_directory(root, None),
+            PathBuf::from("/repo/.git/ptm/worktrees")
+        );
+        assert_eq!(
+            worktrees_directory(root, Some("")),
+            PathBuf::from("/repo/.git/ptm/worktrees")
+        );
+        assert_eq!(
+            worktrees_directory(root, Some("/var/wt")),
+            PathBuf::from("/var/wt")
+        );
+        assert_eq!(
+            worktrees_directory(root, Some("custom/trees")),
+            PathBuf::from("/repo/custom/trees")
+        );
     }
 
     #[test]
