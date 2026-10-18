@@ -18,7 +18,6 @@ pub mod error;
 pub mod git;
 pub mod github;
 pub mod help;
-pub mod mcp;
 pub mod names;
 pub mod paths;
 pub mod preferences;
