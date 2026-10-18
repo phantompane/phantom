@@ -1,6 +1,6 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -440,6 +440,12 @@ pub enum ProjectListEntry {
     Registry {
         id: String,
         name: String,
+        /// `host/owner/repo` when the checkout or its `origin` URL identifies one.
+        #[serde(rename = "canonicalName")]
+        canonical_name: String,
+        /// Every name `--project` may match. The first is `canonical_name`.
+        #[serde(skip)]
+        match_names: Vec<String>,
         #[serde(rename = "rootPath")]
         root_path: String,
         #[serde(rename = "createdAt")]
@@ -448,6 +454,10 @@ pub enum ProjectListEntry {
     #[serde(rename = "ghq")]
     Ghq {
         name: String,
+        #[serde(rename = "canonicalName")]
+        canonical_name: String,
+        #[serde(skip)]
+        match_names: Vec<String>,
         #[serde(rename = "rootPath")]
         root_path: String,
     },
@@ -469,22 +479,18 @@ pub fn list_catalog_with(
     include_ghq: bool,
 ) -> Result<ProjectCatalog> {
     let registered = store.list()?;
+    let mut warnings = Vec::new();
+    let clone_root = clone_root_for_names(include_ghq, &mut warnings);
     let mut projects = registered
         .iter()
-        .map(|project| ProjectListEntry::Registry {
-            id: project.id.clone(),
-            name: project.name.clone(),
-            root_path: project.root_path.clone(),
-            created_at: project.created_at.clone(),
-        })
+        .map(|project| registry_entry(project, clone_root.as_deref()))
         .collect::<Vec<_>>();
-    let mut warnings = Vec::new();
     if include_ghq {
         let mut known = registered
             .iter()
             .map(|project| project.root_path.clone())
             .collect::<std::collections::BTreeSet<_>>();
-        for path in discover_repository_paths(&mut warnings) {
+        for path in discover_repository_paths(clone_root.as_deref(), &mut warnings) {
             let Ok(root) = resolve_project_root(Path::new(&path)) else {
                 continue;
             };
@@ -492,14 +498,7 @@ pub fn list_catalog_with(
             if !known.insert(root.clone()) {
                 continue;
             }
-            let name = Path::new(&root)
-                .file_name()
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_default();
-            projects.push(ProjectListEntry::Ghq {
-                name,
-                root_path: root,
-            });
+            projects.push(ghq_entry(&root, clone_root.as_deref()));
         }
     }
     projects.sort_by(|left, right| {
@@ -512,6 +511,55 @@ pub fn list_catalog_with(
         projects,
         warnings,
     })
+}
+
+fn clone_root_for_names(include_ghq: bool, warnings: &mut Vec<String>) -> Option<PathBuf> {
+    match crate::repository::resolve_repository_root_quiet() {
+        Ok((root, root_warnings)) => {
+            if include_ghq {
+                for warning in root_warnings {
+                    eprintln!("Warning: {warning}");
+                }
+            }
+            Some(root)
+        }
+        Err(error) => {
+            if include_ghq {
+                warnings.push(format!(
+                    "Failed to discover repositories under the clone root: {error}"
+                ));
+            }
+            None
+        }
+    }
+}
+
+fn registry_entry(project: &ProjectRecord, clone_root: Option<&Path>) -> ProjectListEntry {
+    let names = names_for_root(Path::new(&project.root_path), clone_root);
+    let canonical_name = names.first().cloned().unwrap_or_default();
+    ProjectListEntry::Registry {
+        id: project.id.clone(),
+        name: project.name.clone(),
+        canonical_name,
+        match_names: names,
+        root_path: project.root_path.clone(),
+        created_at: project.created_at.clone(),
+    }
+}
+
+fn ghq_entry(root: &str, clone_root: Option<&Path>) -> ProjectListEntry {
+    let names = names_for_root(Path::new(root), clone_root);
+    let canonical_name = names.first().cloned().unwrap_or_default();
+    let name = Path::new(root)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    ProjectListEntry::Ghq {
+        name,
+        canonical_name,
+        match_names: names,
+        root_path: root.to_string(),
+    }
 }
 
 fn entry_name(entry: &ProjectListEntry) -> &str {
@@ -534,13 +582,237 @@ pub fn resolve_project_root(input: &Path) -> Result<PathBuf> {
     fs::canonicalize(git_root).map_err(|error| Error::Projects(error.to_string()))
 }
 
-fn discover_repository_paths(warnings: &mut Vec<String>) -> Vec<String> {
+/// Repository selected by `--project <ref>`.
+///
+/// A ref that starts with `/`, `.`, or `~` is a directory anywhere inside a
+/// repository, including a linked worktree, and resolves to the main checkout.
+/// Any other ref matches the canonical `host/owner/repo` name of a registered
+/// or discovered project, or an unambiguous path-segment suffix (`owner/repo`,
+/// `repo`).
+pub fn resolve_project_ref(reference: &str) -> Result<PathBuf> {
+    let reference = reference.trim();
+    if reference.is_empty() {
+        return Err(Error::validation(
+            "Option '--project <value>' requires a project name or path".to_string(),
+        ));
+    }
+    if is_path_reference(reference) {
+        let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
+        let home = home_dir()?;
+        return resolve_directory_reference(reference, &cwd, &home);
+    }
+    let include_ghq = preferences_include_discovery()?;
+    let catalog = list_catalog(include_ghq)?;
+    for warning in &catalog.warnings {
+        eprintln!("Warning: {warning}");
+    }
+    select_named_project(reference, &candidates(&catalog))
+}
+
+fn preferences_include_discovery() -> Result<bool> {
+    Ok(crate::preferences::load_preferences()?.ghq_discovery != Some(false))
+}
+
+fn home_dir() -> Result<PathBuf> {
+    match std::env::var_os("HOME") {
+        Some(value) if !value.is_empty() => Ok(PathBuf::from(value)),
+        _ => Err(Error::msg("HOME is not set".to_string())),
+    }
+}
+
+fn is_path_reference(reference: &str) -> bool {
+    reference.starts_with('/') || reference.starts_with('.') || reference.starts_with('~')
+}
+
+fn resolve_directory_reference(reference: &str, cwd: &Path, home: &Path) -> Result<PathBuf> {
+    let expanded = expand_tilde(reference, home)?;
+    let path = if expanded.is_absolute() {
+        expanded
+    } else {
+        cwd.join(expanded)
+    };
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(Error::ProjectNotFound(reference.to_string()));
+        }
+        Err(error) => return Err(Error::msg(error.to_string())),
+    };
+    if !metadata.is_dir() {
+        return Err(Error::validation(format!(
+            "Project path '{reference}' is not a directory"
+        )));
+    }
+    let root = git::git_root(&path)?;
+    Ok(fs::canonicalize(&root).unwrap_or(root))
+}
+
+fn expand_tilde(reference: &str, home: &Path) -> Result<PathBuf> {
+    if reference == "~" {
+        return Ok(home.to_path_buf());
+    }
+    if let Some(rest) = reference.strip_prefix("~/") {
+        return Ok(home.join(rest));
+    }
+    if reference.starts_with('~') {
+        return Err(Error::validation(format!(
+            "Project path '{reference}' must be an absolute path, a relative path starting with ., or start with ~/."
+        )));
+    }
+    Ok(PathBuf::from(reference))
+}
+
+struct ProjectCandidate {
+    root: PathBuf,
+    canonical_name: String,
+    names: Vec<String>,
+}
+
+fn candidates(catalog: &ProjectCatalog) -> Vec<ProjectCandidate> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut projects = Vec::new();
+    for entry in &catalog.projects {
+        let stored = PathBuf::from(entry_path(entry));
+        let root = fs::canonicalize(&stored).unwrap_or(stored);
+        let key = root.to_string_lossy().to_string();
+        if !seen.insert(key) {
+            continue;
+        }
+        let names = entry_match_names(entry);
+        projects.push(ProjectCandidate {
+            root,
+            canonical_name: entry_canonical_name(entry).to_string(),
+            names,
+        });
+    }
+    projects
+}
+
+fn select_named_project(reference: &str, projects: &[ProjectCandidate]) -> Result<PathBuf> {
+    let mut matches = projects
+        .iter()
+        .filter(|project| {
+            project
+                .names
+                .iter()
+                .any(|name| name_matches(reference, name))
+        })
+        .collect::<Vec<_>>();
+    matches.sort_by(|left, right| {
+        left.canonical_name
+            .cmp(&right.canonical_name)
+            .then(left.root.cmp(&right.root))
+    });
+    match matches.as_slice() {
+        [] => Err(Error::ProjectNotFound(reference.to_string())),
+        [project] => Ok(project.root.clone()),
+        many => Err(Error::validation(ambiguous_project_message(
+            reference, many,
+        ))),
+    }
+}
+
+fn ambiguous_project_message(reference: &str, matches: &[&ProjectCandidate]) -> String {
+    let mut lines = vec![format!("Project '{reference}' matches multiple projects:")];
+    for project in matches {
+        lines.push(format!(
+            "  {} ({})",
+            project.canonical_name,
+            project.root.display()
+        ));
+    }
+    lines.join("\n")
+}
+
+fn name_matches(query: &str, canonical: &str) -> bool {
+    let Some(query_segments) = name_segments(query) else {
+        return false;
+    };
+    let Some(canonical_segments) = name_segments(canonical) else {
+        return false;
+    };
+    if query_segments.len() > canonical_segments.len() {
+        return false;
+    }
+    canonical_segments[canonical_segments.len() - query_segments.len()..] == query_segments[..]
+}
+
+fn name_segments(value: &str) -> Option<Vec<&str>> {
+    if value.is_empty() {
+        return None;
+    }
+    let segments = value.split('/').collect::<Vec<_>>();
+    if segments.iter().any(|segment| segment.is_empty()) {
+        return None;
+    }
+    Some(segments)
+}
+
+fn entry_canonical_name(entry: &ProjectListEntry) -> &str {
+    match entry {
+        ProjectListEntry::Registry { canonical_name, .. }
+        | ProjectListEntry::Ghq { canonical_name, .. } => canonical_name,
+    }
+}
+
+fn entry_match_names(entry: &ProjectListEntry) -> Vec<String> {
+    match entry {
+        ProjectListEntry::Registry { match_names, .. }
+        | ProjectListEntry::Ghq { match_names, .. } => match_names.clone(),
+    }
+}
+
+/// Names `--project` matches for this checkout.
+///
+/// The first name is canonical: the `origin` URL when it parses as
+/// `host/owner/repo`, otherwise the `<root>/<host>/<owner>/<repo>` location,
+/// otherwise the directory name. A location that differs from the remote is
+/// kept as an additional name.
+fn names_for_root(root: &Path, clone_root: Option<&Path>) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Some(remote) = crate::repository::canonical_name_from_origin(root) {
+        names.push(remote);
+    }
+    if let Some(located) = name_from_location(root, clone_root) {
+        if !names.iter().any(|name| name == &located) {
+            names.push(located);
+        }
+    }
+    if names.is_empty() {
+        if let Some(name) = root
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .filter(|name| !name.is_empty())
+        {
+            names.push(name);
+        }
+    }
+    names
+}
+
+fn name_from_location(root: &Path, clone_root: Option<&Path>) -> Option<String> {
+    let clone_root = clone_root?;
+    let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let clone_root = fs::canonicalize(clone_root).unwrap_or_else(|_| clone_root.to_path_buf());
+    let relative = root.strip_prefix(&clone_root).ok()?;
+    let segments = relative
+        .components()
+        .map(|component| match component {
+            Component::Normal(part) => Some(part.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if segments.len() != 3 {
+        return None;
+    }
+    let host = segments[0].to_ascii_lowercase();
+    Some(format!("{host}/{}/{}", segments[1], segments[2]))
+}
+
+fn discover_repository_paths(clone_root: Option<&Path>, warnings: &mut Vec<String>) -> Vec<String> {
     let mut paths = Vec::new();
-    match crate::repository::resolve_repository_root() {
-        Ok(root) => paths.extend(crate::repository::scan_repository_root(&root)),
-        Err(error) => warnings.push(format!(
-            "Failed to discover repositories under the clone root: {error}"
-        )),
+    if let Some(root) = clone_root {
+        paths.extend(crate::repository::scan_repository_root(root));
     }
     match discover_ghq() {
         Ok(Some(listed)) => paths.extend(listed),
@@ -1020,5 +1292,217 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert!(elapsed > timeout, "elapsed {elapsed}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn candidate(root: &str, canonical: &str, names: &[&str]) -> ProjectCandidate {
+        ProjectCandidate {
+            root: PathBuf::from(root),
+            canonical_name: canonical.to_string(),
+            names: names.iter().copied().map(str::to_string).collect(),
+        }
+    }
+
+    #[test]
+    fn name_suffixes_match_one_project_and_reject_partial_segments() {
+        let projects = [candidate(
+            "/src/github.com/acme/widget",
+            "github.com/acme/widget",
+            &["github.com/acme/widget"],
+        )];
+        assert_eq!(
+            select_named_project("github.com/acme/widget", &projects)
+                .expect("full")
+                .as_os_str(),
+            "/src/github.com/acme/widget"
+        );
+        assert_eq!(
+            select_named_project("acme/widget", &projects)
+                .expect("owner/repo")
+                .as_os_str(),
+            "/src/github.com/acme/widget"
+        );
+        assert_eq!(
+            select_named_project("widget", &projects)
+                .expect("repo")
+                .as_os_str(),
+            "/src/github.com/acme/widget"
+        );
+        assert!(matches!(
+            select_named_project("acme", &projects),
+            Err(Error::ProjectNotFound(_))
+        ));
+        assert!(matches!(
+            select_named_project("idget", &projects),
+            Err(Error::ProjectNotFound(_))
+        ));
+        assert!(matches!(
+            select_named_project("github.com/acme", &projects),
+            Err(Error::ProjectNotFound(_))
+        ));
+        assert!(matches!(
+            select_named_project("com/acme/widget", &projects),
+            Err(Error::ProjectNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn ambiguous_names_list_every_candidate() {
+        let projects = [
+            candidate(
+                "/src/github.com/other/widget",
+                "github.com/other/widget",
+                &["github.com/other/widget"],
+            ),
+            candidate(
+                "/src/github.com/acme/widget",
+                "github.com/acme/widget",
+                &["github.com/acme/widget"],
+            ),
+        ];
+        let error = select_named_project("widget", &projects).expect_err("ambiguous");
+        assert!(matches!(error, Error::Validation(_)));
+        assert_eq!(error.exit_code(), crate::error::VALIDATION);
+        let message = error.to_string();
+        assert!(message.starts_with("Project 'widget' matches multiple projects:\n"));
+        let acme = message.find("github.com/acme/widget").expect("acme");
+        let other = message.find("github.com/other/widget").expect("other");
+        assert!(acme < other, "{message}");
+        assert!(message.contains("/src/github.com/acme/widget"), "{message}");
+        assert!(
+            message.contains("/src/github.com/other/widget"),
+            "{message}"
+        );
+        assert_eq!(
+            select_named_project("acme/widget", &projects)
+                .expect("unique suffix")
+                .as_os_str(),
+            "/src/github.com/acme/widget"
+        );
+    }
+
+    #[test]
+    fn remote_and_location_names_both_match_the_same_checkout() {
+        let dir = std::env::temp_dir().join(format!("phantom-names-{}", uuid::Uuid::new_v4()));
+        let clone_root = dir.join("clones");
+        let repo = clone_root.join("github.com/acme/placed");
+        fs::create_dir_all(&repo).expect("repo");
+        git_ok(&repo, &["init", "-b", "main"]);
+        git_ok(
+            &repo,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://gitlab.com/other/renamed.git",
+            ],
+        );
+        let names = names_for_root(&repo, Some(&clone_root));
+        assert_eq!(names[0], "gitlab.com/other/renamed");
+        assert!(names.iter().any(|name| name == "github.com/acme/placed"));
+        let canonical = fs::canonicalize(&repo).expect("canonical");
+        let projects = [ProjectCandidate {
+            root: canonical.clone(),
+            canonical_name: names[0].clone(),
+            names: names.clone(),
+        }];
+        assert_eq!(
+            select_named_project("other/renamed", &projects).expect("remote"),
+            canonical
+        );
+        assert_eq!(
+            select_named_project("acme/placed", &projects).expect("location"),
+            canonical
+        );
+        assert_eq!(
+            select_named_project("placed", &projects).expect("location suffix"),
+            canonical
+        );
+        let bare = dir.join("loose");
+        fs::create_dir_all(&bare).expect("loose");
+        assert_eq!(
+            names_for_root(&bare, Some(&clone_root)),
+            vec!["loose".to_string()]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn directory_references_resolve_to_the_main_checkout() {
+        let dir = std::env::temp_dir().join(format!("phantom-path-ref-{}", uuid::Uuid::new_v4()));
+        let home = dir.join("home");
+        let repo = home.join("repo");
+        fs::create_dir_all(&repo).expect("repo");
+        git_ok(&repo, &["init", "-b", "main"]);
+        git_ok(&repo, &["config", "user.email", "phantom-rust@example.com"]);
+        git_ok(&repo, &["config", "user.name", "Phantom Rust"]);
+        fs::write(repo.join("README.md"), "hi\n").expect("readme");
+        git_ok(&repo, &["add", "README.md"]);
+        git_ok(&repo, &["commit", "-m", "initial"]);
+        let worktree = repo.join(".git/phantom/worktrees/feature");
+        git_ok(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "feature",
+                worktree.to_str().expect("worktree"),
+                "HEAD",
+            ],
+        );
+        let nested = worktree.join("nested");
+        fs::create_dir_all(&nested).expect("nested");
+        let main = fs::canonicalize(&repo).expect("main");
+        assert_eq!(
+            resolve_directory_reference(repo.to_str().expect("abs"), &dir, &home).expect("abs"),
+            main
+        );
+        assert_eq!(
+            resolve_directory_reference("./repo", &home, &home).expect("relative"),
+            main
+        );
+        assert_eq!(
+            resolve_directory_reference("~/repo", &dir, &home).expect("tilde"),
+            main
+        );
+        assert_eq!(
+            resolve_directory_reference(nested.to_str().expect("nested"), &dir, &home)
+                .expect("inside worktree"),
+            main
+        );
+        let missing = resolve_directory_reference("/no/such/ptm-project", &dir, &home);
+        assert!(matches!(missing, Err(Error::ProjectNotFound(_))));
+        let file = resolve_directory_reference(
+            repo.join("README.md").to_str().expect("file"),
+            &dir,
+            &home,
+        );
+        assert!(matches!(file, Err(Error::Validation(_))));
+        assert!(file
+            .expect_err("file")
+            .to_string()
+            .contains("not a directory"));
+        let outside = resolve_directory_reference(home.to_str().expect("home"), &dir, &home);
+        assert!(matches!(outside, Err(Error::NotARepository)));
+        let other = expand_tilde("~other/repo", &home);
+        assert!(matches!(other, Err(Error::Validation(_))));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn git_ok(cwd: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .expect("git");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

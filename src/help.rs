@@ -277,6 +277,10 @@ mod tests {
         assert!(list.contains("--names"));
         assert!(list.contains("--no-default"));
         assert!(list.contains("--json"));
+        assert!(list.contains("-p, --project <value>"));
+        let exec = command_help("exec").expect("help").expect("exec");
+        assert!(exec.contains("--project <value>"));
+        assert!(exec.contains("pwd --project y"));
         let checkout = command_help("github checkout")
             .expect("help")
             .expect("checkout");

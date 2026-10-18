@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::{self, PtmConfig};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::git;
 use crate::paths;
 use crate::preferences::{self, Preferences};
@@ -18,7 +18,27 @@ pub struct Context {
 }
 
 pub fn create(git_root: &Path) -> Result<Context> {
-    let source_checkout = git::source_checkout(git_root);
+    assemble(git_root, git::source_checkout(git_root))
+}
+
+/// Context for a repository selected with `--project`.
+///
+/// Hooks and included files are read from that repository's main checkout.
+pub fn create_at(git_root: &Path) -> Result<Context> {
+    assemble(git_root, git_root.to_path_buf())
+}
+
+/// Open `repository` when `--project` selected one, otherwise the current directory.
+pub fn open(repository: Option<&Path>) -> Result<Context> {
+    if let Some(root) = repository {
+        return create_at(root);
+    }
+    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
+    let git_root = git::git_root(&cwd)?;
+    create(&git_root)
+}
+
+fn assemble(git_root: &Path, source_checkout: PathBuf) -> Result<Context> {
     let config = config::load_config(&source_checkout)?;
     let preferences = preferences::load_preferences()?;
     let separator = preferences

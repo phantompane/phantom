@@ -70,8 +70,16 @@ impl Checkout {
     }
 }
 
-pub fn checkout(number: &str, base: Option<&str>, logger: &Logger) -> Result<Checkout> {
-    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
+pub fn checkout(
+    number: &str,
+    base: Option<&str>,
+    logger: &Logger,
+    repository: Option<&Path>,
+) -> Result<Checkout> {
+    let cwd = match repository {
+        Some(path) => path.to_path_buf(),
+        None => std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?,
+    };
     let (owner, repo) = repo_info(&cwd)?;
     let issue = fetch_issue(&owner, &repo, number)?;
     let Some(issue) = issue else {
@@ -86,9 +94,9 @@ pub fn checkout(number: &str, base: Option<&str>, logger: &Logger) -> Result<Che
                 pull.head_ref
             )));
         }
-        checkout_pull_request(&cwd, &pull, logger)
+        checkout_pull_request(&pull, logger, repository)
     } else {
-        checkout_issue(&cwd, issue.number, base, logger)
+        checkout_issue(issue.number, base, logger, repository)
     }
 }
 
@@ -104,9 +112,13 @@ struct PullRequest {
     head_repo: String,
 }
 
-fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Result<Checkout> {
-    let git_root = git::git_root(cwd)?;
-    let context = context::create(&git_root)?;
+fn checkout_pull_request(
+    pull: &PullRequest,
+    logger: &Logger,
+    repository: Option<&Path>,
+) -> Result<Checkout> {
+    let context = context::open(repository)?;
+    let git_root = &context.git_root;
     let worktree_name = if pull.fork {
         let owner = pull.head_repo.split('/').next().unwrap_or("");
         if owner.is_empty() {
@@ -143,8 +155,8 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Res
         format!("origin/{}", pull.head_ref)
     };
     let refspec = format!("{}:{worktree_name}", upstream.trim_start_matches("origin/"));
-    git::fetch(&git_root, "origin", &refspec)?;
-    if let Err(error) = git::set_upstream(&git_root, &worktree_name, &upstream) {
+    git::fetch(git_root, "origin", &refspec)?;
+    if let Err(error) = git::set_upstream(git_root, &worktree_name, &upstream) {
         eprintln!("Warning: Could not set upstream branch: {error}");
     }
     let commands = post_commands(&context);
@@ -179,13 +191,12 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Res
 }
 
 fn checkout_issue(
-    cwd: &Path,
     number: u64,
     base: Option<&str>,
     logger: &Logger,
+    repository: Option<&Path>,
 ) -> Result<Checkout> {
-    let git_root = git::git_root(cwd)?;
-    let context = context::create(&git_root)?;
+    let context = context::open(repository)?;
     let name = format!("issues/{number}");
     if let Ok(existing) = worktree::find_worktree(&context.git_root, &name, false, None) {
         let path = existing.path.clone().into();

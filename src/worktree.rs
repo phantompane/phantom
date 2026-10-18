@@ -249,6 +249,8 @@ pub struct CreateRequest<'a> {
     pub copy_files: &'a [String],
     pub action: ActionRequest,
     pub logger: Logger,
+    /// Main checkout selected with `--project`. `None` uses the current directory.
+    pub repository: Option<&'a Path>,
 }
 
 pub struct CreateOutcome {
@@ -265,9 +267,7 @@ pub struct CreateOutcome {
 
 pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
     let action = resolve_action(&request.action)?;
-    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
-    let git_root = git::git_root(&cwd)?;
-    let context = context::create(&git_root)?;
+    let context = context::open(request.repository)?;
     let name = match request.name {
         Some(name) => name.to_string(),
         None => names::generate_unique_name(
@@ -413,13 +413,13 @@ pub struct AttachRequest<'a> {
     pub copy_files: &'a [String],
     pub action: ActionRequest,
     pub logger: Logger,
+    /// Main checkout selected with `--project`. `None` uses the current directory.
+    pub repository: Option<&'a Path>,
 }
 
 pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action = resolve_action(&request.action)?;
-    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
-    let git_root = git::git_root(&cwd)?;
-    let context = context::create(&git_root)?;
+    let context = context::open(request.repository)?;
     let commands = config::post_create_commands(context.config.as_ref());
     let attached = attach_worktree(
         &context,
