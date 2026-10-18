@@ -7,6 +7,7 @@ use crate::github;
 use crate::help;
 use crate::preferences;
 use crate::projects::{self, ProjectListEntry, ProjectRecord, ProjectRegistryStore};
+use crate::repository;
 use crate::worktree::{self, ActionRequest, Logger};
 
 struct Command {
@@ -549,6 +550,49 @@ fn version(args: &[String]) -> Result<i32> {
     args::parse(args, &[], false)?;
     println!("{}", crate::version_line());
     Ok(SUCCESS)
+}
+
+fn clone_cmd(args: &[String]) -> Result<i32> {
+    let json = wants_json(args);
+    let parsed = match args::parse(
+        args,
+        &[
+            value_flag("branch", None),
+            value_flag("depth", None),
+            flag("update", None),
+            flag("json", None),
+        ],
+        true,
+    ) {
+        Ok(parsed) => parsed,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let json = parsed.flag("json");
+    if parsed.positionals.len() != 1 {
+        return fail_with(
+            &Error::validation(
+                "Usage: ptm clone <url|host/owner/repo|owner/repo> [--branch <branch>] [--depth <n>] [--update] [--json]",
+            ),
+            VALIDATION,
+            json,
+        );
+    }
+    match repository::clone_repository(&repository::CloneRequest {
+        source: &parsed.positionals[0],
+        branch: parsed.value("branch"),
+        depth: parsed.value("depth"),
+        update: parsed.flag("update"),
+    }) {
+        Ok(result) => {
+            if json {
+                emit_json(&result)
+            } else {
+                println!("{}", repository::human_clone_message(&result));
+                Ok(SUCCESS)
+            }
+        }
+        Err(error) => fail_with(&error, error.exit_code(), json),
+    }
 }
 
 fn project_root(args: &[String]) -> Result<i32> {
@@ -1112,6 +1156,12 @@ static COMMANDS: &[Command] = &[
         name: "version",
         help_key: "version",
         run: version,
+        children: &[],
+    },
+    Command {
+        name: "clone",
+        help_key: "clone",
+        run: clone_cmd,
         children: &[],
     },
     Command {

@@ -15,7 +15,25 @@ worktrees-directory = "../phantom-worktrees"
 directory-name-separator = "-"
 keep-branch = false
 ghq-discovery = true
+root = "~/ghq"
 ```
+
+`root` is where `ptm clone` places repositories. It is an absolute path or a path starting with `~/`. When `root` is unset, `ptm clone` uses the first `git config ghq.root` value, then `$GHQ_ROOT`, then `~/ghq`. `project list` scans that same directory.
+
+## Cloning repositories
+
+`ptm clone` clones a Git repository into `<root>/<host>/<owner>/<repo>` and registers it. `owner/repo` uses `github.com`. The command accepts `https` and `http` URLs, `ssh://` URLs, scp-style `git@host:owner/repo` paths, `host/owner/repo`, and `owner/repo`.
+
+```bash
+ptm clone aku11i/phantom
+ptm clone git@github.com:aku11i/phantom.git --branch next
+ptm clone github.com/aku11i/phantom --depth 1
+ptm clone aku11i/phantom --update
+```
+
+If that path is already the same repository, `ptm` registers it and prints the path instead of cloning again. `--update` fetches `origin` in that case. If the path exists but is a different repository, the command exits with a validation error. `--branch` and `--depth` apply only to a new clone.
+
+Authentication is left to Git. `ptm` does not call `gh`. Git's progress is written to stderr. Worktrees for the cloned repository stay under its `.git/phantom/worktrees` directory.
 
 ## Copying gitignored files
 
@@ -199,3 +217,22 @@ The object is intentionally open. Ownership and purpose metadata (owner, purpose
 ```
 
 `project add --json` and `project remove --json` still return `{ "status", "project" }`. Their errors use the version 1 error object above.
+
+### Clone
+
+`clone --json` uses schema version 1. `path` is the absolute Git root. `remoteUrl` is the URL passed to `git clone` (`https://github.com/<owner>/<repo>.git` for `owner/repo` and `host/owner/repo`). `cloned` is true when this command created the checkout. `updated` is true only when `--update` fetched an existing checkout. Git's progress stays on stderr.
+
+```json
+{
+  "version": 1,
+  "path": "/home/phantom/ghq/github.com/aku11i/phantom",
+  "host": "github.com",
+  "owner": "aku11i",
+  "repo": "phantom",
+  "remoteUrl": "https://github.com/aku11i/phantom.git",
+  "cloned": true,
+  "updated": false
+}
+```
+
+A failed clone uses the version 1 error object. A destination that is not the expected repository is `validation` / exit code 3. A Git failure is `command_failed` with Git's exit code.
