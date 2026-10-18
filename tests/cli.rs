@@ -175,10 +175,10 @@ fn version_help_and_unknown_command() {
     assert!(version.status.success());
     let version_line = text(&version.stdout);
     assert!(
-        version_line.starts_with("Phantom v7.0.0-alpha.2+rust"),
+        version_line.starts_with("ptm v7.0.0-alpha.2+rust"),
         "{version_line}"
     );
-    assert_ne!(version_line, "Phantom v7.0.0-alpha.2");
+    assert_ne!(version_line, "ptm v7.0.0-alpha.2");
     let subcommand = repo.phantom(&["version"]);
     assert_eq!(text(&subcommand.stdout), version_line);
 
@@ -204,6 +204,117 @@ fn version_help_and_unknown_command() {
     let unknown = repo.phantom(&["nope"]);
     assert_eq!(unknown.status.code(), Some(1));
     assert!(text(&unknown.stderr).contains("Unknown command 'nope'"));
+}
+
+#[test]
+fn linked_worktree_git_file_and_insteadof_canonical_name() {
+    let repo = Repo::new();
+    let worktree = repo.root.join("linked");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        worktree.to_str().expect("worktree"),
+        "HEAD",
+    ]);
+    let gitfile = worktree.join(".git");
+    assert!(gitfile.is_file(), "{}", gitfile.display());
+    let from_worktree = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["list", "-p", worktree.to_str().expect("worktree"), "--json"],
+        )
+        .output()
+        .expect("list worktree");
+    assert!(
+        from_worktree.status.success(),
+        "{}",
+        text(&from_worktree.stderr)
+    );
+    let from_gitfile = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["list", "-p", gitfile.to_str().expect("git file"), "--json"],
+        )
+        .output()
+        .expect("list git file");
+    assert!(
+        from_gitfile.status.success(),
+        "stderr: {}",
+        text(&from_gitfile.stderr)
+    );
+    assert_eq!(
+        default_worktree_path(&json_value(&from_gitfile)),
+        default_worktree_path(&json_value(&from_worktree))
+    );
+    assert!(same_dir(
+        &default_worktree_path(&json_value(&from_gitfile)),
+        &repo.repo
+    ));
+
+    let project = repo.root.join("aliased");
+    fs::create_dir_all(&project).expect("project");
+    git_at(&repo, &project, &["init", "-b", "main"]);
+    git_at(
+        &repo,
+        &project,
+        &["config", "user.email", "phantom-rust@example.com"],
+    );
+    git_at(&repo, &project, &["config", "user.name", "Phantom Rust"]);
+    fs::write(project.join("README.md"), "hi\n").expect("readme");
+    git_at(&repo, &project, &["add", "README.md"]);
+    git_at(&repo, &project, &["commit", "-m", "initial"]);
+    git_at(
+        &repo,
+        &project,
+        &["remote", "add", "origin", "gh:zed/aliased"],
+    );
+    git_at(
+        &repo,
+        &project,
+        &["config", "url.https://github.com/.insteadOf", "gh:"],
+    );
+    let added = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "project",
+                "add",
+                project.to_str().expect("project"),
+                "--json",
+            ],
+        )
+        .output()
+        .expect("project add");
+    assert!(added.status.success(), "{}", text(&added.stderr));
+    let catalog = repo.phantom(&["project", "list", "--json"]);
+    assert!(catalog.status.success(), "{}", text(&catalog.stderr));
+    let catalog = json_value(&catalog);
+    let entry = catalog["projects"]
+        .as_array()
+        .expect("projects")
+        .iter()
+        .find(|project_entry| {
+            project_entry["rootPath"]
+                .as_str()
+                .is_some_and(|path| same_dir(path, &project))
+        })
+        .expect("registered project");
+    assert_eq!(entry["source"], "registry");
+    assert_eq!(entry["canonicalName"], "github.com/zed/aliased");
+}
+
+fn default_worktree_path(value: &serde_json::Value) -> String {
+    value["worktrees"]
+        .as_array()
+        .expect("worktrees")
+        .iter()
+        .find(|item| item["default"] == true)
+        .expect("default worktree")["path"]
+        .as_str()
+        .expect("path")
+        .to_string()
 }
 
 #[test]

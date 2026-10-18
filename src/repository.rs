@@ -101,9 +101,16 @@ pub(crate) fn resolve_repository_root_quiet() -> Result<(PathBuf, Vec<String>)> 
 
 /// `host/owner/repo` for an `origin` URL this command understands.
 ///
-/// Only http(s), ssh, and scp-style remotes are names. Local paths, relative
-/// paths, and `owner/repo` shorthand are not.
+/// `git remote get-url` applies `insteadOf`.
 pub(crate) fn canonical_name_from_origin(root: &Path) -> Option<String> {
+    if let Some(name) = expanded_origin_url(root)
+        .ok()
+        .flatten()
+        .as_deref()
+        .and_then(canonical_remote_name)
+    {
+        return Some(name);
+    }
     let url = origin_url(root).ok().flatten()?;
     canonical_remote_name(&url)
 }
@@ -452,14 +459,23 @@ fn repository_toplevel(path: &Path) -> Result<Option<PathBuf>> {
 }
 
 fn origin_url(path: &Path) -> Result<Option<String>> {
-    let arg = path_arg(path)?;
     // `remote get-url` expands insteadOf. Compare the URL Git stored.
-    match process::raw_with_env(
-        "git",
-        &["-C", &arg, "config", "--get", "remote.origin.url"],
-        None,
-        &[("LC_ALL", "C")],
-    ) {
+    read_origin(path, false)
+}
+
+fn expanded_origin_url(path: &Path) -> Result<Option<String>> {
+    read_origin(path, true)
+}
+
+fn read_origin(path: &Path, expand_instead_of: bool) -> Result<Option<String>> {
+    let arg = path_arg(path)?;
+    let mut args = vec!["-C", arg.as_str()];
+    if expand_instead_of {
+        args.extend(["remote", "get-url", "origin"]);
+    } else {
+        args.extend(["config", "--get", "remote.origin.url"]);
+    }
+    match process::raw_with_env("git", &args, None, &[("LC_ALL", "C")]) {
         Ok(captured) if captured.code == 0 => {
             let url = captured.stdout.trim();
             if url.is_empty() {
@@ -970,6 +986,89 @@ mod tests {
 
     fn spec(input: &str) -> RepoSpec {
         parse_clone_source(input).unwrap_or_else(|error| panic!("{input}: {error}"))
+    }
+
+    #[test]
+    fn canonical_name_applies_insteadof_without_taking_userinfo() {
+        let root = temp_dir("insteadof-name");
+        let repo = root.join("repo");
+        fs::create_dir_all(&repo).expect("repo");
+        git(&["init", "-b", "main"], Some(&repo));
+        git(&["remote", "add", "origin", "gh:zed/aliased"], Some(&repo));
+        git(
+            &["config", "url.https://github.com/.insteadOf", "gh:"],
+            Some(&repo),
+        );
+        assert_eq!(
+            canonical_name_from_origin(&repo).as_deref(),
+            Some("github.com/zed/aliased")
+        );
+
+        git(
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://github.com/example/widget.git",
+            ],
+            Some(&repo),
+        );
+        git(
+            &["config", "--unset-all", "url.https://github.com/.insteadOf"],
+            Some(&repo),
+        );
+        let mirror = format!("file://{}", root.join("bare").display());
+        git(
+            &[
+                "config",
+                &format!("url.{mirror}.insteadOf"),
+                "https://github.com/example/widget.git",
+            ],
+            Some(&repo),
+        );
+        assert_eq!(
+            canonical_name_from_origin(&repo).as_deref(),
+            Some("github.com/example/widget"),
+            "a file:// transport rewrite keeps the stored hosted name"
+        );
+
+        git(
+            &["config", "--unset-all", &format!("url.{mirror}.insteadOf")],
+            Some(&repo),
+        );
+        git(
+            &[
+                "config",
+                "url.https://user:token@github.com/.insteadOf",
+                "https://github.com/",
+            ],
+            Some(&repo),
+        );
+        let named = canonical_name_from_origin(&repo).expect("credential rewrite");
+        assert_eq!(named, "github.com/example/widget");
+        assert!(!named.contains("token"));
+
+        git(
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://user:secret@github.com/example/widget.git",
+            ],
+            Some(&repo),
+        );
+        let secret_mirror = format!("file://{}", root.join("mirror").display());
+        git(
+            &[
+                "config",
+                &format!("url.{secret_mirror}.insteadOf"),
+                "https://user:secret@github.com/example/widget.git",
+            ],
+            Some(&repo),
+        );
+        ensure_matching_repository(&repo, &spec("https://github.com/example/widget.git"))
+            .expect("stored origin still matches");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
