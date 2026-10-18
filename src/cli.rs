@@ -1258,7 +1258,12 @@ fn bubble(error: Error, json: bool) -> Result<i32> {
 
 fn wants_json(args: &[String]) -> bool {
     args.iter()
-        .take_while(|arg| arg.as_str() != "--")
+        .take_while(|arg| {
+            let arg = arg.as_str();
+            // `--exec` / `-x` are remainder options. Everything after them,
+            // including `--json`, belongs to the command.
+            arg != "--" && arg != "--exec" && arg != "-x"
+        })
         .any(|arg| arg == "--json")
 }
 

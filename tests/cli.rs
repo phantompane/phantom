@@ -4898,3 +4898,23 @@ fn owner_flag_rejects_a_value_that_looks_like_an_option() {
     assert_eq!(json_value(&created)["error"]["code"], "validation");
     assert!(!repo.repo.join(".git/ptm/worktrees/feature").exists());
 }
+
+#[test]
+fn exec_command_json_flag_does_not_switch_ptm_to_json() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "topic", "--exec", "npm", "test", "--json"]);
+    let stdout = text(&created.stdout);
+    assert!(
+        stdout.contains("Created worktree 'topic'"),
+        "{stdout}\n{}",
+        text(&created.stderr)
+    );
+    assert!(
+        stdout.contains("Executing command in worktree 'topic': npm test --json"),
+        "{stdout}"
+    );
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&stdout).is_err(),
+        "stdout should stay human logs, not a JSON document:\n{stdout}"
+    );
+}
