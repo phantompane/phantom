@@ -1691,6 +1691,41 @@ esac
     )
 }
 
+fn publish_pr_topic(repo: &Repo) {
+    let origin = repo.root.join("origin.git");
+    let init = repo
+        .command(
+            "git",
+            &[
+                "init",
+                "--bare",
+                "-b",
+                "main",
+                origin.to_str().expect("origin"),
+            ],
+        )
+        .output()
+        .expect("bare");
+    assert!(init.status.success(), "{}", text(&init.stderr));
+    repo.git(&["remote", "add", "origin", origin.to_str().expect("origin")]);
+    repo.git(&["checkout", "-b", "topic"]);
+    fs::write(repo.repo.join("topic.txt"), "topic\n").expect("topic");
+    repo.git(&["add", "topic.txt"]);
+    repo.git(&["commit", "-m", "topic"]);
+    repo.git(&["push", "origin", "main", "topic"]);
+    repo.git(&["checkout", "main"]);
+    repo.git(&["branch", "-D", "topic"]);
+}
+
+fn local_branch(repo: &Repo, name: &str) -> String {
+    let listed = repo
+        .command("git", &["branch", "--list", name])
+        .output()
+        .expect("branch");
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    text(&listed.stdout)
+}
+
 #[test]
 fn pr_checkout_requires_the_branch_not_only_the_directory() {
     let repo = Repo::new();
@@ -4786,6 +4821,126 @@ fn github_recheckout_keeps_the_original_owner() {
         json_value(&listed)["worktrees"].as_array().map(Vec::len),
         Some(1)
     );
+}
+
+#[test]
+fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
+    let corrupt = Repo::new();
+    publish_pr_topic(&corrupt);
+    let corrupt_path = fake_gh_for_topic_pr(&corrupt);
+    let file = corrupt.repo.join(".git/ptm/worktrees.json");
+    fs::create_dir_all(file.parent().expect("dir")).expect("dir");
+    fs::write(&file, "{not json").expect("corrupt");
+    let refused = corrupt
+        .command(env!("CARGO_BIN_EXE_ptm"), &["github", "checkout", "7"])
+        .env("PATH", &corrupt_path)
+        .output()
+        .expect("checkout");
+    assert_eq!(refused.status.code(), Some(1), "{}", text(&refused.stdout));
+    assert!(
+        text(&refused.stdout).is_empty(),
+        "{}",
+        text(&refused.stdout)
+    );
+    let stderr = text(&refused.stderr);
+    assert!(stderr.contains("worktrees.json"), "{stderr}");
+    assert!(stderr.contains("invalid JSON"), "{stderr}");
+    assert_eq!(fs::read_to_string(&file).expect("kept"), "{not json");
+    assert!(
+        local_branch(&corrupt, "topic").is_empty(),
+        "corrupt store left {}",
+        local_branch(&corrupt, "topic")
+    );
+    assert!(!corrupt.repo.join(".git/ptm/worktrees/topic").exists());
+
+    let locked = Repo::new();
+    publish_pr_topic(&locked);
+    let locked_path = fake_gh_for_topic_pr(&locked);
+    let metadata_dir = locked.repo.join(".git/ptm");
+    fs::create_dir_all(&metadata_dir).expect("dir");
+    let store = "{\n  \"version\": 1,\n  \"worktrees\": []\n}\n";
+    fs::write(metadata_dir.join("worktrees.json"), store).expect("store");
+    let mut perms = fs::metadata(&metadata_dir).expect("meta").permissions();
+    use std::os::unix::fs::PermissionsExt;
+    perms.set_mode(0o555);
+    fs::set_permissions(&metadata_dir, perms).expect("chmod");
+    let _restore = ModeReset(&metadata_dir);
+    let unwritable = locked
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["github", "checkout", "7", "--json"],
+        )
+        .env("PATH", &locked_path)
+        .output()
+        .expect("checkout");
+    assert_eq!(
+        unwritable.status.code(),
+        Some(1),
+        "{}",
+        text(&unwritable.stdout)
+    );
+    let unwritable_json = json_value(&unwritable);
+    assert_eq!(unwritable_json["error"]["code"], "error");
+    assert_eq!(unwritable_json["error"]["exitCode"], 1);
+    assert!(unwritable_json["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("not writable"));
+    assert!(
+        text(&unwritable.stderr).is_empty(),
+        "{}",
+        text(&unwritable.stderr)
+    );
+    assert!(
+        local_branch(&locked, "topic").is_empty(),
+        "unwritable store left {}",
+        local_branch(&locked, "topic")
+    );
+    assert!(!locked.repo.join(".git/ptm/worktrees/topic").exists());
+    drop(_restore);
+    assert_eq!(
+        fs::read_to_string(metadata_dir.join("worktrees.json")).expect("kept"),
+        store
+    );
+
+    let ready = Repo::new();
+    publish_pr_topic(&ready);
+    let ready_path = fake_gh_for_topic_pr(&ready);
+    let checked_out = ready
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["github", "checkout", "7", "--json"],
+        )
+        .env("PATH", &ready_path)
+        .output()
+        .expect("checkout");
+    assert!(
+        checked_out.status.success(),
+        "{}\n{}",
+        text(&checked_out.stdout),
+        text(&checked_out.stderr)
+    );
+    let checked_out_json = json_value(&checked_out);
+    assert!(
+        checked_out_json.get("error").is_none(),
+        "{checked_out_json}"
+    );
+    assert_eq!(checked_out_json["github"]["kind"], "pullRequest");
+    assert_eq!(checked_out_json["github"]["headRef"], "topic");
+    assert_eq!(checked_out_json["github"]["alreadyExists"], false);
+    assert_eq!(checked_out_json["metadata"]["ok"], true);
+    assert!(ready.repo.join(".git/ptm/worktrees/topic").is_dir());
+    assert!(
+        local_branch(&ready, "topic").contains("topic"),
+        "{}",
+        local_branch(&ready, "topic")
+    );
+    let upstream = ready
+        .command("git", &["rev-parse", "--abbrev-ref", "topic@{upstream}"])
+        .output()
+        .expect("upstream");
+    assert!(upstream.status.success(), "{}", text(&upstream.stderr));
+    assert_eq!(text(&upstream.stdout), "origin/topic");
 }
 
 #[test]
