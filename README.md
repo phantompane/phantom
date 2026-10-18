@@ -220,7 +220,7 @@ The object is intentionally open. Ownership and purpose metadata (owner, purpose
 
 ### Clone
 
-`clone --json` uses schema version 1. `path` is the absolute Git root. `host` is lowercased and includes a port when the URL has one. `remoteUrl` is the clone URL with `user:password` removed (`https://github.com/<owner>/<repo>.git` for `owner/repo` and `host/owner/repo`). `cloned` is true when this command created the checkout. `updated` is true only when `--update` fetched an existing checkout. Git's progress stays on stderr.
+`clone --json` uses schema version 1. `path` is the absolute Git root. `host` is lowercased and includes a port when the URL has one. `remoteUrl` is the clone URL with `http` and `https` userinfo removed, including a token used as the username (`https://github.com/<owner>/<repo>.git` for `owner/repo` and `host/owner/repo`). `ssh` and scp-style URLs keep the login name. `cloned` is true when this command created the checkout. `updated` is true only when `--update` fetched an existing checkout. Git's progress stays on stderr.
 
 ```json
 {

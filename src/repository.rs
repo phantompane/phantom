@@ -180,49 +180,51 @@ fn place_clone(
     if destination_exists(destination)? {
         return adopt_existing(destination, spec, update);
     }
-    let parent = destination.parent().ok_or_else(|| {
-        Error::validation(format!(
-            "Cannot create clone destination {}",
-            destination.display()
-        ))
-    })?;
-    fs::create_dir_all(parent)
-        .map_err(|error| Error::msg(format!("Failed to create {}: {error}", parent.display())))?;
-    let Some(repo_name) = destination.file_name() else {
+    let created_parents = create_missing_parents(destination)?;
+    let Some(parent) = destination.parent() else {
+        remove_created_parents(&created_parents);
         return Err(Error::validation(format!(
             "Cannot create clone destination {}",
             destination.display()
         )));
     };
-    // Staging lives beside the destination so the final rename stays on one
-    // filesystem. Only this directory is deleted if clone or publish fails.
+    // The staging directory is the checkout. Renaming it onto the destination
+    // stays on one filesystem. POSIX rename fails when the destination is a
+    // non-empty directory, which is the racing clone we must not delete.
     let staging = parent.join(format!(
         ".ptm-clone-{}-{}",
         std::process::id(),
         uuid::Uuid::new_v4()
     ));
-    fs::create_dir(&staging)
-        .map_err(|error| Error::msg(format!("Failed to create {}: {error}", staging.display())))?;
-    let temporary = staging.join(repo_name);
-    if let Err(error) = clone_with_git(&spec.clone_url, &temporary, branch, depth) {
+    if let Err(error) = fs::create_dir(&staging) {
+        remove_created_parents(&created_parents);
+        return Err(Error::msg(format!(
+            "Failed to create {}: {error}",
+            staging.display()
+        )));
+    }
+    if let Err(error) = clone_with_git(&spec.clone_url, &staging, branch, depth) {
         remove_staging(&staging);
+        remove_created_parents(&created_parents);
         return Err(error);
     }
-    publish_clone(&staging, &temporary, destination, spec, update)
+    match publish_clone(&staging, destination, spec, update) {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            remove_created_parents(&created_parents);
+            Err(error)
+        }
+    }
 }
 
 fn publish_clone(
     staging: &Path,
-    temporary: &Path,
     destination: &Path,
     spec: &RepoSpec,
     update: bool,
 ) -> Result<(bool, bool)> {
-    match rename_noreplace(temporary, destination) {
-        Ok(()) => {
-            let _ = fs::remove_dir(staging);
-            Ok((true, false))
-        }
+    match fs::rename(staging, destination) {
+        Ok(()) => Ok((true, false)),
         Err(error) if destination_appeared(&error) => {
             remove_staging(staging);
             adopt_existing(destination, spec, update)
@@ -233,6 +235,44 @@ fn publish_clone(
                 "Failed to move clone into {}: {error}",
                 destination.display()
             )))
+        }
+    }
+}
+
+/// Directories between the clone root and the destination that did not exist.
+/// Listed deepest first so cleanup removes the leaf first.
+fn create_missing_parents(destination: &Path) -> Result<Vec<PathBuf>> {
+    let mut missing = Vec::new();
+    let mut cursor = destination.parent().map(Path::to_path_buf);
+    while let Some(dir) = cursor {
+        if destination_exists(&dir)? {
+            break;
+        }
+        cursor = dir.parent().map(Path::to_path_buf);
+        missing.push(dir);
+    }
+    let mut created = Vec::new();
+    for dir in missing.iter().rev() {
+        match fs::create_dir(dir) {
+            Ok(()) => created.push(dir.clone()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                remove_created_parents(&created);
+                return Err(Error::msg(format!(
+                    "Failed to create {}: {error}",
+                    dir.display()
+                )));
+            }
+        }
+    }
+    created.reverse();
+    Ok(created)
+}
+
+fn remove_created_parents(created_deepest_first: &[PathBuf]) {
+    for dir in created_deepest_first {
+        if fs::remove_dir(dir).is_err() {
+            break;
         }
     }
 }
@@ -433,6 +473,12 @@ fn parse_scheme_url(input: &str, scheme: &str, rest: &str) -> Result<RepoSpec> {
 }
 
 fn parse_scp(input: &str, left: &str, path: &str) -> Result<RepoSpec> {
+    if path.starts_with('/') {
+        return Err(Error::validation(format!(
+            "Invalid repository '{}'. An scp-style path must be owner/repo, not an absolute path.",
+            redact_userinfo(input)
+        )));
+    }
     if left.is_empty() || path.is_empty() || left.contains('/') {
         return Err(invalid_source(input));
     }
@@ -595,23 +641,44 @@ fn spec_from_urls(host: String, owner: String, repo: String, clone_url: &str) ->
     }
 }
 
-/// Drop `user:password` userinfo. A bare username such as `git@host` stays.
+/// Hide credentials in text we print.
+///
+/// `http` and `https` lose all userinfo, including a token used as the
+/// username. `ssh` and scp-style URLs keep the login name and drop a password.
 fn redact_userinfo(value: &str) -> String {
     if let Some((scheme, rest)) = value.split_once("://") {
         let (authority, path) = match rest.split_once('/') {
             Some((authority, path)) => (authority, format!("/{path}")),
             None => (rest, String::new()),
         };
-        if let Some((userinfo, host)) = authority.rsplit_once('@') {
-            if userinfo.contains(':') {
+        if matches!(scheme, "http" | "https") {
+            if let Some((_, host)) = authority.rsplit_once('@') {
                 return format!("{scheme}://{host}{path}");
             }
+            return value.to_string();
+        }
+        if let Some((userinfo, host)) = authority.rsplit_once('@') {
+            let username = userinfo
+                .split_once(':')
+                .map(|(user, _)| user)
+                .unwrap_or(userinfo);
+            if username.is_empty() {
+                return format!("{scheme}://{host}{path}");
+            }
+            return format!("{scheme}://{username}@{host}{path}");
         }
         return value.to_string();
     }
     if let Some((userinfo, rest)) = value.rsplit_once('@') {
-        if userinfo.contains(':') && !rest.is_empty() {
-            return rest.to_string();
+        if !rest.is_empty() {
+            let username = userinfo
+                .split_once(':')
+                .map(|(user, _)| user)
+                .unwrap_or(userinfo);
+            if username.is_empty() {
+                return rest.to_string();
+            }
+            return format!("{username}@{rest}");
         }
     }
     value.to_string()
@@ -713,86 +780,11 @@ fn invalid_path(input: &str) -> Error {
     ))
 }
 
-fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
-    let from = c_path(from)?;
-    let to = c_path(to)?;
-    let rc = unsafe { rename_exclusive(from.as_ptr(), to.as_ptr()) };
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
-}
-
-fn c_path(path: &Path) -> std::io::Result<std::ffi::CString> {
-    use std::os::unix::ffi::OsStrExt;
-    std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "path contains an interior NUL",
-        )
-    })
-}
-
 fn destination_appeared(error: &std::io::Error) -> bool {
     matches!(
         error.kind(),
         std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::DirectoryNotEmpty
     )
-}
-
-/// `rename` that fails when `to` already exists, so a racing clone is left intact.
-///
-/// # Safety
-/// `from` and `to` are NUL-terminated paths. `AT_FDCWD` addresses the process cwd.
-unsafe fn rename_exclusive(from: *const std::ffi::c_char, to: *const std::ffi::c_char) -> i32 {
-    unsafe {
-        #[cfg(target_os = "linux")]
-        {
-            renameat2(AT_FDCWD_LINUX, from, AT_FDCWD_LINUX, to, RENAME_NOREPLACE)
-        }
-        #[cfg(target_os = "macos")]
-        {
-            renameatx_np(AT_FDCWD_MACOS, from, AT_FDCWD_MACOS, to, RENAME_EXCL)
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        {
-            let _ = (from, to);
-            -1
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-const AT_FDCWD_LINUX: i32 = -100;
-#[cfg(target_os = "linux")]
-const RENAME_NOREPLACE: u32 = 1;
-
-#[cfg(target_os = "linux")]
-unsafe extern "C" {
-    fn renameat2(
-        olddirfd: i32,
-        oldpath: *const std::ffi::c_char,
-        newdirfd: i32,
-        newpath: *const std::ffi::c_char,
-        flags: u32,
-    ) -> i32;
-}
-
-#[cfg(target_os = "macos")]
-const AT_FDCWD_MACOS: i32 = -2;
-#[cfg(target_os = "macos")]
-const RENAME_EXCL: u32 = 4;
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" {
-    fn renameatx_np(
-        fromfd: i32,
-        from: *const std::ffi::c_char,
-        tofd: i32,
-        to: *const std::ffi::c_char,
-        flags: u32,
-    ) -> i32;
 }
 
 #[cfg(test)]
@@ -1138,39 +1130,63 @@ mod tests {
             "https://user:secret@github.com/aku11i/phantom.git"
         );
         assert!(!parsed.remote_url.contains("secret"));
+        let token = spec("https://ghp_SECRET123@example.com/acme/widget");
+        assert_eq!(token.remote_url, "https://example.com/acme/widget");
+        assert_eq!(
+            token.clone_url,
+            "https://ghp_SECRET123@example.com/acme/widget"
+        );
+        assert!(!token.remote_url.contains("ghp_SECRET123"));
         let ssh = spec("git@github.com:aku11i/phantom.git");
         assert_eq!(ssh.remote_url, "git@github.com:aku11i/phantom.git");
         assert_eq!(ssh.clone_url, ssh.remote_url);
+        let ssh_password = spec("ssh://git:secret@github.com/aku11i/phantom.git");
+        assert_eq!(
+            ssh_password.remote_url,
+            "ssh://git@github.com/aku11i/phantom.git"
+        );
+        assert!(ssh_password.clone_url.contains("secret"));
+        assert!(!ssh_password.remote_url.contains("secret"));
 
-        let error = parse_clone_source("https://user:secret@github.com/only").expect_err("path");
+        let error = parse_clone_source("https://ghp_SECRET123@example.com/only").expect_err("path");
         let message = error.to_string();
-        assert!(!message.contains("secret"), "{message}");
-        assert!(message.contains("github.com"), "{message}");
+        assert!(!message.contains("ghp_SECRET123"), "{message}");
+        assert!(message.contains("example.com"), "{message}");
         let file_url = parse_clone_source("file:///tmp/repo.git").expect_err("file");
         assert!(file_url.to_string().contains("file"), "{file_url}");
+        let absolute =
+            parse_clone_source("git@example.com:/acme/widget.git").expect_err("absolute");
+        let absolute_message = absolute.to_string();
+        assert!(absolute_message.contains("absolute"), "{absolute_message}");
+        assert!(!same_repository(
+            &spec("git@example.com:acme/widget.git"),
+            "git@example.com:/acme/widget.git"
+        ));
     }
 
     #[test]
-    fn rename_noreplace_moves_a_directory_and_refuses_to_replace() {
+    fn rename_replaces_an_empty_directory_and_keeps_a_non_empty_one() {
         let root = temp_dir("rename");
         let source = root.join("source");
         fs::create_dir(&source).expect("source");
         fs::write(source.join("file.txt"), "moved").expect("file");
-        let destination = root.join("dest");
-        rename_noreplace(&source, &destination).expect("rename");
+        let empty = root.join("empty");
+        fs::create_dir(&empty).expect("empty");
+        fs::rename(&source, &empty).expect("replace empty");
         assert!(!source.exists());
         assert_eq!(
-            fs::read_to_string(destination.join("file.txt")).expect("moved"),
+            fs::read_to_string(empty.join("file.txt")).expect("moved"),
             "moved"
         );
 
         let again = root.join("again");
         fs::create_dir(&again).expect("again");
-        let error = rename_noreplace(&again, &destination).expect_err("exists");
+        fs::write(again.join("new.txt"), "temp").expect("new");
+        let error = fs::rename(&again, &empty).expect_err("non-empty");
         assert!(destination_appeared(&error), "{error}");
         assert!(again.exists());
         assert_eq!(
-            fs::read_to_string(destination.join("file.txt")).expect("kept"),
+            fs::read_to_string(empty.join("file.txt")).expect("kept"),
             "moved"
         );
         let _ = fs::remove_dir_all(root);
@@ -1222,9 +1238,8 @@ mod tests {
         );
         fs::write(destination.join("keep.txt"), "safe").expect("keep");
         let staging = root.join(".ptm-clone-test");
-        let temporary = staging.join("widget");
-        fs::create_dir_all(&temporary).expect("temp");
-        fs::write(temporary.join("new.txt"), "temp").expect("new");
+        fs::create_dir_all(&staging).expect("temp");
+        fs::write(staging.join("new.txt"), "temp").expect("new");
         let spec = RepoSpec {
             host: "github.com".into(),
             owner: "example".into(),
@@ -1233,7 +1248,7 @@ mod tests {
             remote_url: "https://github.com/example/widget.git".into(),
         };
         let (cloned, updated) =
-            publish_clone(&staging, &temporary, &destination, &spec, false).expect("publish");
+            publish_clone(&staging, &destination, &spec, false).expect("publish");
         assert!(!cloned);
         assert!(!updated);
         assert_eq!(
@@ -1254,10 +1269,9 @@ mod tests {
             None,
         );
         let staging = root.join(".ptm-clone-mismatch");
-        let temporary = staging.join("widget");
-        fs::create_dir_all(&temporary).expect("temp");
-        let error =
-            publish_clone(&staging, &temporary, &destination, &spec, false).expect_err("mismatch");
+        fs::create_dir_all(&staging).expect("temp");
+        fs::write(staging.join("new.txt"), "temp").expect("new");
+        let error = publish_clone(&staging, &destination, &spec, false).expect_err("mismatch");
         let message = error.to_string();
         assert!(message.contains("does not match"), "{message}");
         assert!(!message.contains("secret"), "{message}");
@@ -1297,6 +1311,31 @@ mod tests {
             .filter(|name| name.to_string_lossy().starts_with(".ptm-clone-"))
             .collect::<Vec<_>>();
         assert!(leftovers.is_empty(), "{leftovers:?}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_clone_removes_empty_parents_it_created() {
+        let root = temp_dir("parents");
+        let existing = root.join("github.com").join("other");
+        fs::create_dir_all(&existing).expect("existing");
+        fs::write(existing.join("keep.txt"), "safe").expect("keep");
+        let destination = root.join("example.net:8443").join("acme").join("widget");
+        let spec = RepoSpec {
+            host: "example.net:8443".into(),
+            owner: "acme".into(),
+            repo: "widget".into(),
+            clone_url: root.join("missing.git").to_string_lossy().into_owned(),
+            remote_url: "https://example.net:8443/acme/widget.git".into(),
+        };
+        let error = place_clone(&destination, &spec, None, None, false).expect_err("clone");
+        assert!(error.to_string().contains("git clone"), "{error}");
+        assert!(!root.join("example.net:8443").exists());
+        assert_eq!(
+            fs::read_to_string(existing.join("keep.txt")).expect("kept"),
+            "safe"
+        );
+        assert!(root.join("github.com").is_dir());
         let _ = fs::remove_dir_all(root);
     }
 

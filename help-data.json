@@ -503,7 +503,7 @@
         "The repository is placed at <root>/<host>/<owner>/<repo>. The host is lowercased, and a URL port is part of that directory (example.net:9443).",
         "The root is the root key in $XDG_CONFIG_HOME/ptm/config.toml, otherwise the first git config ghq.root value, otherwise $GHQ_ROOT, otherwise ~/ghq. A configured root is used without reading git config. A git config read failure warns and falls through to $GHQ_ROOT or ~/ghq.",
         "When that path is already the same repository root, ptm registers it and prints the path instead of cloning again. --update fetches origin in that case.",
-        "remoteUrl omits user:password credentials. file:// URLs are rejected.",
+        "remoteUrl omits http and https userinfo, including a token used as the username. ssh and scp-style URLs keep the login name. file:// URLs and absolute scp-style paths are rejected.",
         "--branch and --depth apply only when cloning. updated is true only when an existing repository was fetched.",
         "If the path exists but is not that repository, the command exits with a validation error.",
         "The project is always registered. Worktrees still live under the repository's .git/phantom/worktrees directory.",
