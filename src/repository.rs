@@ -117,7 +117,7 @@ pub fn scan_repository_root(root: &Path) -> Vec<String> {
             };
             for repo in repos.flatten() {
                 let repo_path = repo.path();
-                // Dot directories include in-progress `.ptm-clone-*` staging checkouts.
+                // `.ptm-clone-*` is an in-progress staging checkout, not a project.
                 if !is_project_directory(&repo_path) || !repo_path.join(".git").exists() {
                     continue;
                 }
@@ -258,6 +258,9 @@ fn create_missing_parents(destination: &Path) -> Result<Vec<PathBuf>> {
             Ok(()) => created.push(dir.clone()),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => {
+                // `created` is shallowest-first while directories are being made.
+                // Cleanup matches the returned list and removes the leaf first.
+                created.reverse();
                 remove_created_parents(&created);
                 return Err(Error::msg(format!(
                     "Failed to create {}: {error}",
@@ -772,12 +775,12 @@ fn is_directory(path: &Path) -> bool {
 }
 
 fn is_project_directory(path: &Path) -> bool {
-    !is_dot_name(path) && is_directory(path)
+    !is_staging_directory(path) && is_directory(path)
 }
 
-fn is_dot_name(path: &Path) -> bool {
+fn is_staging_directory(path: &Path) -> bool {
     path.file_name()
-        .is_some_and(|name| name.as_encoded_bytes().starts_with(b"."))
+        .is_some_and(|name| name.as_encoded_bytes().starts_with(b".ptm-clone-"))
 }
 
 fn invalid_source(input: &str) -> Error {
@@ -1133,22 +1136,43 @@ mod tests {
             .join("owner")
             .join(".ptm-clone-1-abc");
         fs::create_dir_all(staging.join(".git")).expect("staging");
-        fs::create_dir_all(root.join(".hidden").join("owner").join("repo").join(".git"))
-            .expect("hidden host");
-        fs::create_dir_all(
-            root.join("github.com")
-                .join(".owner")
-                .join("repo")
-                .join(".git"),
-        )
-        .expect("hidden owner");
+        for path in [
+            root.join("github.com").join("acme").join(".dotfiles"),
+            root.join("github.com").join(".org").join("repo"),
+            root.join("github.com").join("org").join(".github"),
+        ] {
+            fs::create_dir_all(path.join(".git")).expect("dot repo");
+        }
         let found = scan_repository_root(&root);
-        assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].ends_with("/github.com/owner/repo"), "{found:?}");
+        assert!(
+            found
+                .iter()
+                .any(|path| path.ends_with("/github.com/owner/repo")),
+            "{found:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .any(|path| path.ends_with("/github.com/acme/.dotfiles")),
+            "{found:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .any(|path| path.ends_with("/github.com/.org/repo")),
+            "{found:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .any(|path| path.ends_with("/github.com/org/.github")),
+            "{found:?}"
+        );
         assert!(
             found.iter().all(|path| !path.contains(".ptm-clone")),
             "{found:?}"
         );
+        assert_eq!(found.len(), 4, "{found:?}");
         assert!(scan_repository_root(&root.join("missing")).is_empty());
         let _ = fs::remove_dir_all(root);
     }
@@ -1368,6 +1392,25 @@ mod tests {
             "safe"
         );
         assert!(root.join("github.com").is_dir());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_parent_creation_removes_dirs_deepest_first() {
+        let root = temp_dir("mkdir-fail");
+        let too_long = "x".repeat(256);
+        let destination = root
+            .join("example.com")
+            .join("acme")
+            .join(too_long)
+            .join("widget");
+        let error = create_missing_parents(&destination).expect_err("mkdir");
+        assert!(error.to_string().contains("example.com"), "{error}");
+        assert!(
+            !root.join("example.com").exists(),
+            "shallow parent was left behind"
+        );
+        assert!(root.is_dir());
         let _ = fs::remove_dir_all(root);
     }
 
