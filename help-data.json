@@ -455,6 +455,7 @@
       ],
       "notes": [
         "Available subcommands: add, list, remove",
+        "The project registry is stored in $XDG_STATE_HOME/ptm (default ~/.local/state/ptm).",
         "Removing a project only updates Phantom's registry; it never deletes the Git repository."
       ]
     },

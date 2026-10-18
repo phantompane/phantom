@@ -559,6 +559,95 @@ fn preferences_and_project_registry() {
 }
 
 #[test]
+fn project_registry_is_stored_under_xdg_state_home_ptm() {
+    let repo = Repo::new();
+    let legacy = repo.root.join("state/phantom");
+    write_legacy_registry(&legacy);
+    let legacy_body = fs::read_to_string(legacy.join("projects.json")).expect("legacy");
+
+    let added = repo.phantom(&["project", "add", "--json"]);
+    assert!(added.status.success(), "{}", text(&added.stderr));
+    let registry = fs::read_to_string(repo.root.join("state/ptm/projects.json")).expect("registry");
+    assert!(registry.contains("\"name\": \"repo\""));
+    assert!(!registry.contains("proj_550e8400-e29b-41d4-a716-446655440000"));
+    assert_eq!(
+        fs::read_to_string(legacy.join("projects.json")).expect("legacy unchanged"),
+        legacy_body
+    );
+
+    let disabled = repo.phantom(&["preferences", "set", "ghqDiscovery", "false"]);
+    assert!(disabled.status.success(), "{}", text(&disabled.stderr));
+    let listed = repo.phantom(&["project", "list", "--json"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let catalog: serde_json::Value = serde_json::from_str(&text(&listed.stdout)).expect("catalog");
+    assert_eq!(catalog["projects"].as_array().map(Vec::len), Some(1));
+    assert_eq!(catalog["projects"][0]["name"], "repo");
+    assert_eq!(catalog["projects"][0]["source"], "registry");
+
+    let help = repo.phantom(&["project", "--help"]);
+    assert!(help.status.success(), "{}", text(&help.stderr));
+    let help_text = text(&help.stdout);
+    assert!(help_text.contains("$XDG_STATE_HOME/ptm"));
+    assert!(help_text.contains("~/.local/state/ptm"));
+    assert!(!help_text.contains("XDG_STATE_HOME/phantom"));
+    assert!(!help_text.contains(".local/state/phantom"));
+}
+
+#[test]
+fn project_registry_defaults_to_home_local_state_ptm() {
+    let repo = Repo::new();
+    let legacy = repo.home.join(".local/state/phantom");
+    write_legacy_registry(&legacy);
+    let legacy_body = fs::read_to_string(legacy.join("projects.json")).expect("legacy");
+    let disabled = repo.phantom(&["preferences", "set", "ghqDiscovery", "false"]);
+    assert!(disabled.status.success(), "{}", text(&disabled.stderr));
+
+    let added = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["project", "add", "--json"])
+        .env_remove("XDG_STATE_HOME")
+        .output()
+        .expect("add");
+    assert!(added.status.success(), "{}", text(&added.stderr));
+    let registry =
+        fs::read_to_string(repo.home.join(".local/state/ptm/projects.json")).expect("registry");
+    assert!(registry.contains("\"name\": \"repo\""));
+    assert!(!registry.contains("proj_550e8400-e29b-41d4-a716-446655440000"));
+    assert_eq!(
+        fs::read_to_string(legacy.join("projects.json")).expect("legacy unchanged"),
+        legacy_body
+    );
+
+    let listed = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["project", "list", "--names"])
+        .env("XDG_STATE_HOME", "relative/state")
+        .output()
+        .expect("list");
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    assert_eq!(text(&listed.stdout), "repo");
+    assert!(!repo.repo.join("relative").exists());
+}
+
+fn write_legacy_registry(dir: &std::path::Path) {
+    fs::create_dir_all(dir).expect("legacy dir");
+    fs::write(
+        dir.join("projects.json"),
+        r#"{
+  "version": 1,
+  "projects": [
+    {
+      "id": "proj_550e8400-e29b-41d4-a716-446655440000",
+      "name": "legacy",
+      "rootPath": "/tmp/legacy",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    }
+  ]
+}
+"#,
+    )
+    .expect("legacy registry");
+}
+
+#[test]
 fn keep_branch_preference_applies_to_delete() {
     let repo = Repo::new();
     repo.git(&[

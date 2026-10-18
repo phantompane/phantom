@@ -579,11 +579,18 @@ fn parse_ghq_paths(stdout: &str) -> Vec<String> {
 
 pub fn default_data_dir() -> Result<PathBuf> {
     let home = std::env::var("HOME").map_err(|_| Error::Projects("HOME is not set".to_string()))?;
-    let base = match std::env::var("XDG_STATE_HOME") {
-        Ok(state) if Path::new(&state).is_absolute() => PathBuf::from(state),
+    Ok(resolve_data_dir(
+        &home,
+        std::env::var("XDG_STATE_HOME").ok().as_deref(),
+    ))
+}
+
+fn resolve_data_dir(home: &str, xdg_state_home: Option<&str>) -> PathBuf {
+    let base = match xdg_state_home {
+        Some(state) if Path::new(state).is_absolute() => PathBuf::from(state),
         _ => PathBuf::from(home).join(".local").join("state"),
     };
-    Ok(base.join("phantom"))
+    base.join("ptm")
 }
 
 fn empty_registry() -> RegistryState {
@@ -843,6 +850,29 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_data_dir_uses_xdg_state_home_ptm() {
+        assert_eq!(
+            resolve_data_dir("/home/user", Some("/var/state")),
+            PathBuf::from("/var/state/ptm")
+        );
+    }
+
+    #[test]
+    fn default_data_dir_falls_back_to_home_local_state_ptm() {
+        let fallback = PathBuf::from("/home/user/.local/state/ptm");
+        assert_eq!(resolve_data_dir("/home/user", None), fallback);
+        assert_eq!(resolve_data_dir("/home/user", Some("")), fallback);
+        assert_eq!(
+            resolve_data_dir("/home/user", Some("relative/state")),
+            fallback
+        );
+        assert_eq!(
+            resolve_data_dir("/home/user", Some("relative/phantom")),
+            fallback
+        );
+    }
 
     #[test]
     fn registry_add_is_idempotent_under_the_lock() {
