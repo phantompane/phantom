@@ -202,6 +202,23 @@ fn select_worktree(worktrees: Vec<WorktreeInfo>, name: &str) -> Result<WorktreeI
     }
 }
 
+/// The worktree Git has registered at `path`, independent of its branch or directory name.
+pub fn worktree_at_path(git_root: &Path, path: &Path) -> Result<WorktreeInfo> {
+    let wanted = paths::normalize(path);
+    list_worktrees(git_root, false, true)?
+        .into_iter()
+        .find(|worktree| {
+            let listed = Path::new(&worktree.path);
+            listed == path || paths::normalize(listed) == wanted
+        })
+        .ok_or_else(|| {
+            Error::msg(format!(
+                "Worktree at {} is no longer registered",
+                path.display()
+            ))
+        })
+}
+
 pub fn find_worktree(
     git_root: &Path,
     name: &str,
@@ -284,7 +301,7 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
     let exec = run_action(&name, &created.path, action, &request.logger)?;
     let hook_code = created.hook_failure.as_ref().map(|failure| failure.code);
     let action_code = exec.as_ref().map(|item| item.exit_code);
-    let worktree = find_worktree(&context.git_root, &name, false, None)?;
+    let worktree = worktree_at_path(&context.git_root, &created.path)?;
     Ok(CreateOutcome {
         name,
         path: created.path,
@@ -422,7 +439,7 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action_code = exec
         .as_ref()
         .and_then(|item| (!item.ok).then_some(item.exit_code));
-    let worktree = find_worktree(&context.git_root, request.name, false, None)?;
+    let worktree = worktree_at_path(&context.git_root, &attached.path)?;
     Ok(AttachOutcome {
         path: attached.path,
         exit_code: combine_exit(action_code, hook_code),
@@ -499,6 +516,27 @@ pub struct DeleteOutcome {
     pub branch_error: Option<String>,
 }
 
+pub struct DeleteError {
+    pub error: Error,
+    pub worktree: Option<Box<WorktreeInfo>>,
+}
+
+impl DeleteError {
+    fn bare(error: Error) -> Self {
+        Self {
+            error,
+            worktree: None,
+        }
+    }
+
+    fn kept(error: Error, worktree: &WorktreeInfo) -> Self {
+        Self {
+            error,
+            worktree: Some(Box::new(worktree.clone())),
+        }
+    }
+}
+
 pub fn delete_worktree(
     context: &Context,
     name: &str,
@@ -506,25 +544,32 @@ pub fn delete_worktree(
     keep_branch: bool,
     expected_path: Option<&Path>,
     logger: &Logger,
-) -> Result<DeleteOutcome> {
-    let worktree = find_worktree(&context.git_root, name, true, expected_path)?;
+) -> std::result::Result<DeleteOutcome, DeleteError> {
+    let worktree =
+        find_worktree(&context.git_root, name, true, expected_path).map_err(DeleteError::bare)?;
     let path = PathBuf::from(&worktree.path);
     if !paths::is_strictly_inside(&path, &context.worktrees_directory) {
-        return Err(Error::msg(format!(
-            "Worktree '{name}' is outside the managed worktree directory and cannot be deleted."
-        )));
+        return Err(DeleteError::kept(
+            Error::msg(format!(
+                "Worktree '{name}' is outside the managed worktree directory and cannot be deleted."
+            )),
+            &worktree,
+        ));
     }
     let changed = git::status_count(&path).unwrap_or(0);
     if changed > 0 && !force {
-        return Err(Error::Uncommitted {
-            name: name.to_string(),
-            files: changed,
-        });
+        return Err(DeleteError::kept(
+            Error::Uncommitted {
+                name: name.to_string(),
+                files: changed,
+            },
+            &worktree,
+        ));
     }
     let commands = config::pre_delete_commands(context.config.as_ref());
     if !commands.is_empty() {
         logger.log("\nRunning pre-delete commands...");
-        let _ = run_hook_commands(
+        if let Err(error) = run_hook_commands(
             &context.git_root,
             &context.worktrees_directory,
             name,
@@ -532,9 +577,13 @@ pub fn delete_worktree(
             false,
             logger,
             &context.source_checkout,
-        )?;
+        ) {
+            return Err(DeleteError::kept(error, &worktree));
+        }
     }
-    git::remove_worktree(&context.git_root, &path, force)?;
+    if let Err(error) = git::remove_worktree(&context.git_root, &path, force) {
+        return Err(DeleteError::kept(error, &worktree));
+    }
     let cleanup_warning = remove_empty_parents(&path, &context.worktrees_directory);
     let (message, branch_deleted, branch_error) = if worktree.branch == "(detached HEAD)" {
         (format!("Deleted worktree '{name}'"), false, None)

@@ -359,15 +359,19 @@ fn delete(args: &[String]) -> Result<i32> {
                     error: None,
                 });
             }
-            Err(error) => {
-                let code = match &error {
+            Err(failure) => {
+                let error = &failure.error;
+                let code = match error {
                     Error::WorktreeNotFound(_) => NOT_FOUND,
                     Error::Uncommitted { .. } => VALIDATION,
                     other => other.exit_code(),
                 };
                 if json {
                     deleted.push(worktree::DeletedEntry {
-                        worktree: None,
+                        worktree: failure
+                            .worktree
+                            .as_ref()
+                            .map(|worktree| worktree.to_json(None)),
                         branch_deleted: false,
                         branch_error: None,
                         error: Some(error.to_string()),
@@ -379,7 +383,7 @@ fn delete(args: &[String]) -> Result<i32> {
                     })?;
                     return Ok(code);
                 }
-                return fail(&error, code);
+                return fail(error, code);
             }
         }
     }

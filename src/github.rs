@@ -160,7 +160,7 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Res
             pull.number, pull.head_ref
         )
     };
-    let info = worktree::find_worktree(&context.git_root, &worktree_name, false, None)?;
+    let info = worktree::worktree_at_path(&context.git_root, &attached.path)?;
     Ok(Checkout {
         message,
         worktree: worktree_name,
@@ -205,7 +205,7 @@ fn checkout_issue(
     let commands = post_commands(&context);
     let base = base.unwrap_or("HEAD");
     let created = worktree::create_worktree(&context, &name, base, &[], &commands, logger)?;
-    let info = worktree::find_worktree(&context.git_root, &name, false, None)?;
+    let info = worktree::worktree_at_path(&context.git_root, &created.path)?;
     Ok(Checkout {
         message: format!("Created worktree '{name}' at {}", created.path.display()),
         worktree: name,
