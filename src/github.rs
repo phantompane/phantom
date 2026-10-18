@@ -457,11 +457,11 @@ pub enum PullRequestStatus {
     Unavailable,
 }
 
-/// `gh pr view <number> --json state`. A missing `gh`, a non-zero exit, or an
-/// unreadable body is `Unavailable` so cleanup can continue.
-pub fn pull_request_state(cwd: &Path, number: u64) -> PullRequestStatus {
-    let number = number.to_string();
-    let Ok(captured) = process::raw("gh", &["pr", "view", &number, "--json", "state"], Some(cwd))
+/// `gh pr view <target> --json state`. `target` is a pull request URL or a
+/// number in the repository `gh` resolves from `cwd`. A missing `gh`, a
+/// non-zero exit, or an unreadable body is `Unavailable`.
+pub fn pull_request_state(cwd: &Path, target: &str) -> PullRequestStatus {
+    let Ok(captured) = process::raw("gh", &["pr", "view", target, "--json", "state"], Some(cwd))
     else {
         return PullRequestStatus::Unavailable;
     };
@@ -482,6 +482,29 @@ pub fn pull_request_state(cwd: &Path, number: u64) -> PullRequestStatus {
         Some("MERGED") => PullRequestStatus::Merged,
         _ => PullRequestStatus::Unavailable,
     }
+}
+
+/// `owner/repo` from `gh repo view` when that command can name the checkout.
+pub fn current_repo_name(cwd: &Path) -> Option<String> {
+    let Ok(captured) = process::raw(
+        "gh",
+        &["repo", "view", "--json", "nameWithOwner"],
+        Some(cwd),
+    ) else {
+        return None;
+    };
+    if captured.code != 0 {
+        return None;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(&captured.stdout) else {
+        return None;
+    };
+    value
+        .get("nameWithOwner")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn gh_api(directory: &Path, host: &str, path: &str) -> Result<process::Captured> {

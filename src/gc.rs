@@ -8,7 +8,7 @@ use crate::context::Context;
 use crate::error::{self, Error, JsonErrorBody, Result};
 use crate::git::{self};
 use crate::github::{self, PullRequestStatus};
-use crate::metadata::{self, WorktreeMetadata};
+use crate::metadata::{self, WorktreeLink, WorktreeMetadata};
 use crate::paths;
 use crate::process;
 use crate::worktree::{self, Logger};
@@ -160,6 +160,7 @@ pub fn selection_from_flags(
 
 pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Report> {
     let facts = gather(context, &request.policy)?;
+    warn_unavailable_pull_requests(&facts, &request.policy);
     let verdicts = classify(&facts, &request.policy);
     let mut candidates = Vec::with_capacity(verdicts.len());
     let mut first_failure = None;
@@ -231,18 +232,22 @@ struct WorktreeFacts {
 #[derive(Clone, Copy)]
 enum Hold {
     Protected,
+    DefaultBranch,
     Locked,
     OtherAgent,
     StatusUnknown,
     Dirty,
     Unpushed,
+    PrUnavailable,
 }
 
 impl Hold {
     fn detail(self) -> &'static str {
         match self {
             Self::Protected => "current worktree",
+            Self::DefaultBranch => "default branch",
             Self::Locked => "locked",
+            Self::PrUnavailable => "pr status unavailable",
             Self::OtherAgent => "other agent",
             Self::StatusUnknown => "status unknown",
             Self::Dirty => "dirty",
@@ -356,6 +361,13 @@ fn classify(facts: &[WorktreeFacts], policy: &Policy) -> Vec<Verdict> {
             .map(|row| row.reason)
             .collect::<Vec<_>>();
         if reasons.is_empty() {
+            if policy.selection.pull_request && facts.pr == PullRequestState::Unavailable {
+                verdicts.push(Verdict::Skip {
+                    subject: facts.subject.clone(),
+                    reasons: vec![Reason::PullRequest],
+                    hold: Hold::PrUnavailable,
+                });
+            }
             continue;
         }
         if let Some(hold) = hold(facts, policy, &reasons) {
@@ -383,7 +395,10 @@ impl Selection {
 }
 
 fn hold(facts: &WorktreeFacts, policy: &Policy, reasons: &[Reason]) -> Option<Hold> {
-    if facts.is_default || facts.is_current {
+    if facts.is_default {
+        return Some(Hold::DefaultBranch);
+    }
+    if facts.is_current {
         return Some(Hold::Protected);
     }
     if facts.locked {
@@ -491,7 +506,7 @@ fn observe_listed(
     current: Option<&Path>,
     worktree: &git::GitWorktree,
     record: Option<&WorktreeMetadata>,
-    pull_requests: &mut BTreeMap<u64, PullRequestStatus>,
+    pull_requests: &mut BTreeMap<String, PullRequestStatus>,
 ) -> WorktreeFacts {
     let path = PathBuf::from(&worktree.path);
     let directory = directory_state(&path);
@@ -506,7 +521,14 @@ fn observe_listed(
         None => false,
     };
     let merged = match (&branch, base) {
-        (Some(branch), Some(base)) => is_ancestor(&context.git_root, branch, base),
+        (Some(branch), Some(base)) => {
+            is_ancestor(&context.git_root, branch, base)
+                && !still_at_creation_point(&context.git_root, branch)
+        }
+        _ => false,
+    };
+    let is_default = match (&branch, base) {
+        (Some(branch), Some(base)) => branch == local_default_name(base),
         _ => false,
     };
     let unpushed = unpushed_tip(
@@ -536,7 +558,7 @@ fn observe_listed(
         directory,
         prunable: worktree.prunable,
         branch_missing,
-        is_default: false,
+        is_default,
         is_current: current.is_some_and(|current| {
             paths::normalize(current) == paths::normalize(Path::new(&worktree.path))
         }),
@@ -547,7 +569,7 @@ fn observe_listed(
         pr: pull_state(
             policy,
             &context.git_root,
-            metadata.links.pr.as_ref().and_then(|link| link.number),
+            metadata.links.pr.as_ref(),
             pull_requests,
         ),
         last_used_at: metadata.last_used_at.as_deref().and_then(parse_time),
@@ -560,7 +582,7 @@ fn observe_record(
     policy: &Policy,
     path: &Path,
     record: &WorktreeMetadata,
-    pull_requests: &mut BTreeMap<u64, PullRequestStatus>,
+    pull_requests: &mut BTreeMap<String, PullRequestStatus>,
 ) -> WorktreeFacts {
     WorktreeFacts {
         subject: Subject {
@@ -582,7 +604,7 @@ fn observe_record(
         pr: pull_state(
             policy,
             &context.git_root,
-            record.links.pr.as_ref().and_then(|link| link.number),
+            record.links.pr.as_ref(),
             pull_requests,
         ),
         last_used_at: record.last_used_at.as_deref().and_then(parse_time),
@@ -590,26 +612,71 @@ fn observe_record(
     }
 }
 
+fn warn_unavailable_pull_requests(facts: &[WorktreeFacts], policy: &Policy) {
+    if !policy.selection.pull_request {
+        return;
+    }
+    for facts in facts {
+        if facts.pr == PullRequestState::Unavailable {
+            eprintln!(
+                "Warning: pull request status unavailable for {}",
+                facts.subject.name
+            );
+        }
+    }
+}
+
+struct PullRequestQuery {
+    key: String,
+    view: String,
+}
+
 fn pull_state(
     policy: &Policy,
     git_root: &Path,
-    number: Option<u64>,
-    pull_requests: &mut BTreeMap<u64, PullRequestStatus>,
+    link: Option<&WorktreeLink>,
+    pull_requests: &mut BTreeMap<String, PullRequestStatus>,
 ) -> PullRequestState {
     if !policy.selection.pull_request {
         return PullRequestState::Unlinked;
     }
-    let Some(number) = number else {
+    let Some(link) = link else {
         return PullRequestState::Unlinked;
     };
+    if link.number.is_none() && link.url.as_deref().unwrap_or("").is_empty() {
+        return PullRequestState::Unlinked;
+    }
+    let Some(query) = pull_request_query(git_root, link) else {
+        return PullRequestState::Unavailable;
+    };
     let status = pull_requests
-        .entry(number)
-        .or_insert_with(|| github::pull_request_state(git_root, number));
+        .entry(query.key)
+        .or_insert_with(|| github::pull_request_state(git_root, &query.view));
     match *status {
         PullRequestStatus::Open => PullRequestState::Open,
         PullRequestStatus::Closed | PullRequestStatus::Merged => PullRequestState::ClosedOrMerged,
         PullRequestStatus::Unavailable => PullRequestState::Unavailable,
     }
+}
+
+fn pull_request_query(git_root: &Path, link: &WorktreeLink) -> Option<PullRequestQuery> {
+    if let Some(url) = link
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+    {
+        return Some(PullRequestQuery {
+            key: url.to_string(),
+            view: url.to_string(),
+        });
+    }
+    let number = link.number?;
+    let repo = github::current_repo_name(git_root)?;
+    Some(PullRequestQuery {
+        key: format!("{repo}#{number}"),
+        view: number.to_string(),
+    })
 }
 
 fn display_name(path: &Path, worktrees_directory: &Path, branch: Option<&str>) -> String {
@@ -680,6 +747,40 @@ fn verify_commit(git_root: &Path, name: &str) -> Result<bool> {
     Ok(captured.code == 0)
 }
 
+fn local_default_name(base: &str) -> &str {
+    base.strip_prefix("origin/").unwrap_or(base)
+}
+
+fn still_at_creation_point(git_root: &Path, branch: &str) -> bool {
+    let spec = format!("{branch}^{{commit}}");
+    let Ok(tip) = git(git_root, &["rev-parse", "--verify", "--quiet", &spec]) else {
+        return false;
+    };
+    if tip.code != 0 {
+        return false;
+    }
+    let tip_sha = tip.stdout.trim();
+    if tip_sha.is_empty() {
+        return false;
+    }
+    let Ok(reflog) = git(git_root, &["reflog", "show", "--format=%H", branch]) else {
+        return false;
+    };
+    if reflog.code != 0 {
+        return false;
+    }
+    let Some(oldest) = reflog
+        .stdout
+        .lines()
+        .next_back()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    else {
+        return false;
+    };
+    oldest == tip_sha
+}
+
 fn is_ancestor(git_root: &Path, tip: &str, base: &str) -> bool {
     let Ok(captured) = git(git_root, &["merge-base", "--is-ancestor", tip, base]) else {
         return false;
@@ -695,20 +796,12 @@ fn unpushed_tip(
 ) -> Option<bool> {
     let base = base.as_deref()?;
     let tip = branch.or_else(|| head.filter(|sha| sha.bytes().any(|byte| byte != b'0')))?;
-    // A branch name can match the worktree directory, so the revision has to
-    // be separated from paths.
+    // `--not` stays in effect for `--remotes`, so those commits are excluded.
+    // A second `--not` would include them again. The trailing `--` keeps a
+    // branch name that matches a worktree directory from being read as a path.
     let Ok(captured) = git(
         git_root,
-        &[
-            "rev-list",
-            "--count",
-            tip,
-            "--not",
-            base,
-            "--not",
-            "--remotes",
-            "--",
-        ],
+        &["rev-list", "--count", tip, "--not", base, "--remotes", "--"],
     ) else {
         return None;
     };
@@ -1254,6 +1347,17 @@ mod tests {
         assert!(matches!(
             classify(&[closed], &policy()).as_slice(),
             [Verdict::Remove(Removal::Delete { .. })]
+        ));
+
+        let mut unavailable = feature();
+        unavailable.merged = false;
+        unavailable.pr = PullRequestState::Unavailable;
+        assert!(matches!(
+            classify(&[unavailable], &policy()).as_slice(),
+            [Verdict::Skip {
+                hold: Hold::PrUnavailable,
+                ..
+            }]
         ));
 
         let mut mine = feature();

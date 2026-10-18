@@ -5116,10 +5116,16 @@ fn worktree_registered(repo: &Repo, name: &str) -> bool {
         || text(&output.stdout).ends_with(&format!("worktrees/{name}"))
 }
 
+fn land_branch(repo: &Repo, name: &str) {
+    commit_in_worktree(repo, name);
+    repo.git(&["merge", "--ff-only", name]);
+}
+
 fn commit_in_worktree(repo: &Repo, name: &str) {
     let dir = worktree_dir(repo, name);
-    fs::write(dir.join("note.txt"), "note\n").expect("note");
-    for args in [vec!["add", "note.txt"], vec!["commit", "-m", "note"]] {
+    let file = format!("{name}.txt");
+    fs::write(dir.join(&file), format!("{name}\n")).expect("note");
+    for args in [vec!["add", &file], vec!["commit", "-m", &file]] {
         let output = repo
             .command("git", &args)
             .current_dir(&dir)
@@ -5127,8 +5133,9 @@ fn commit_in_worktree(repo: &Repo, name: &str) {
             .expect("commit");
         assert!(
             output.status.success(),
-            "git {args:?}: {}",
-            text(&output.stderr)
+            "git {args:?}: stderr={} stdout={}",
+            text(&output.stderr),
+            text(&output.stdout)
         );
     }
 }
@@ -5158,6 +5165,7 @@ fn age_metadata(repo: &Repo, name: &str) {
 fn gc_dry_run_keeps_a_merged_worktree_until_apply() {
     let repo = Repo::new();
     assert!(repo.phantom(&["create", "feature"]).status.success());
+    land_branch(&repo, "feature");
     let plan = repo.phantom(&["gc"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let planned = text(&plan.stdout);
@@ -5189,6 +5197,7 @@ fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
         .phantom(&["create", "feature", "--owner", "grok"])
         .status
         .success());
+    land_branch(&repo, "feature");
     let plan = repo.phantom(&["gc", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     assert!(text(&plan.stderr).is_empty(), "{}", text(&plan.stderr));
@@ -5223,10 +5232,12 @@ fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
 fn gc_skips_dirty_unpushed_current_and_other_agents() {
     let repo = Repo::new();
     assert!(repo.phantom(&["create", "dirty"]).status.success());
+    land_branch(&repo, "dirty");
     fs::write(worktree_dir(&repo, "dirty").join("local.txt"), "x\n").expect("dirty");
     assert!(repo.phantom(&["create", "wip"]).status.success());
     commit_in_worktree(&repo, "wip");
     assert!(repo.phantom(&["create", "here"]).status.success());
+    land_branch(&repo, "here");
     assert!(repo
         .phantom(&["create", "bob", "--owner", "bob"])
         .status
@@ -5296,6 +5307,7 @@ fn gc_skips_dirty_unpushed_current_and_other_agents() {
 fn gc_drops_a_missing_directory_and_keeps_an_unpushed_branch() {
     let repo = Repo::new();
     assert!(repo.phantom(&["create", "gone"]).status.success());
+    land_branch(&repo, "gone");
     assert!(repo.phantom(&["create", "local"]).status.success());
     commit_in_worktree(&repo, "local");
     fs::remove_dir_all(worktree_dir(&repo, "gone")).expect("rm gone");
@@ -5319,7 +5331,12 @@ fn gc_drops_a_missing_directory_and_keeps_an_unpushed_branch() {
 fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
     let repo = Repo::new();
     assert!(repo
-        .phantom(&["create", "topic", "--pr", "7"])
+        .phantom(&[
+            "create",
+            "topic",
+            "--pr",
+            "https://github.com/acme/demo/pull/7",
+        ])
         .status
         .success());
     commit_in_worktree(&repo, "topic");
@@ -5379,7 +5396,9 @@ fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
 fn gc_runs_pre_delete_hooks_only_when_applying() {
     let repo = Repo::new();
     assert!(repo.phantom(&["create", "feature"]).status.success());
+    land_branch(&repo, "feature");
     assert!(repo.phantom(&["create", "other"]).status.success());
+    land_branch(&repo, "other");
     fs::write(
         repo.repo.join(".ptm.toml"),
         "[hooks]\npre-delete = [\"test \\\"$PTM_NAME\\\" != feature && touch \\\"$PTM_ROOT_PATH/hooked\\\"\"]\n",
@@ -5418,4 +5437,187 @@ fn gc_runs_pre_delete_hooks_only_when_applying() {
     assert!(worktree_dir(&repo, "feature").is_dir());
     assert!(!worktree_dir(&repo, "other").is_dir());
     assert!(repo.repo.join("hooked").exists());
+}
+
+fn gh_path(repo: &Repo, body: &str) -> String {
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let gh = bin.join("gh");
+    fs::write(&gh, body).expect("gh");
+    let mut perms = fs::metadata(&gh).expect("meta").permissions();
+    use std::os::unix::fs::PermissionsExt;
+    perms.set_mode(0o755);
+    fs::set_permissions(&gh, perms).expect("chmod");
+    format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
+#[test]
+fn gc_apply_removes_a_merged_worktree_when_another_remote_branch_is_ahead() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "feature"]).status.success());
+    land_branch(&repo, "feature");
+    let bare = repo.root.join("origin.git");
+    repo.git(&["init", "--bare", bare.to_str().expect("bare")]);
+    repo.git(&["remote", "add", "origin", bare.to_str().expect("bare")]);
+    repo.git(&["push", "origin", "main"]);
+    repo.git(&["checkout", "-b", "ahead"]);
+    fs::write(repo.repo.join("ahead.txt"), "ahead\n").expect("ahead");
+    repo.git(&["add", "ahead.txt"]);
+    repo.git(&["commit", "-m", "ahead"]);
+    repo.git(&["push", "origin", "ahead"]);
+    repo.git(&["checkout", "main"]);
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let output = text(&applied.stdout);
+    assert!(output.contains("removed feature [merged]"), "{output}");
+    assert!(!output.contains("unpushed"), "{output}");
+    assert!(!worktree_dir(&repo, "feature").is_dir());
+    assert!(!branch_listed(&repo, "feature"));
+    assert!(branch_listed(&repo, "main"));
+    assert!(branch_listed(&repo, "ahead"));
+}
+
+#[test]
+fn gc_does_not_remove_a_worktree_checked_out_on_the_default_branch() {
+    let repo = Repo::new();
+    fs::write(repo.repo.join("second.txt"), "second\n").expect("second");
+    repo.git(&["add", "second.txt"]);
+    repo.git(&["commit", "-m", "second"]);
+    let bare = repo.root.join("origin.git");
+    repo.git(&["init", "--bare", bare.to_str().expect("bare")]);
+    repo.git(&["remote", "add", "origin", bare.to_str().expect("bare")]);
+    repo.git(&["push", "origin", "main"]);
+    repo.git(&["remote", "set-head", "origin", "main"]);
+    repo.git(&["checkout", "-b", "dev"]);
+    let attached = repo.phantom(&["attach", "main"]);
+    assert!(
+        attached.status.success(),
+        "{}\n{}",
+        text(&attached.stdout),
+        text(&attached.stderr)
+    );
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let output = text(&applied.stdout);
+    assert!(
+        output.contains("skip main [merged] default branch"),
+        "{output}"
+    );
+    assert!(worktree_dir(&repo, "main").is_dir());
+    assert!(branch_listed(&repo, "main"));
+    assert!(branch_listed(&repo, "dev"));
+}
+
+#[test]
+fn gc_keeps_a_worktree_still_at_its_creation_point() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "fresh"]).status.success());
+    assert!(repo
+        .phantom(&["create", "theirs", "--owner", "other"])
+        .status
+        .success());
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let output = text(&applied.stdout);
+    assert!(output.contains("Nothing to clean up."), "{output}");
+    assert!(worktree_dir(&repo, "fresh").is_dir());
+    assert!(worktree_dir(&repo, "theirs").is_dir());
+    assert!(branch_listed(&repo, "fresh"));
+    assert!(branch_listed(&repo, "theirs"));
+
+    age_metadata(&repo, "fresh");
+    let aged = repo.phantom(&["gc", "--older-than", "14d", "--apply"]);
+    assert!(aged.status.success(), "{}", text(&aged.stderr));
+    let aged_text = text(&aged.stdout);
+    assert!(
+        aged_text.contains("removed fresh [olderThan]"),
+        "{aged_text}"
+    );
+    assert!(!worktree_dir(&repo, "fresh").is_dir());
+    assert!(worktree_dir(&repo, "theirs").is_dir());
+    assert!(branch_listed(&repo, "theirs"));
+}
+
+#[test]
+fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
+    let repo = Repo::new();
+    assert!(repo
+        .phantom(&[
+            "create",
+            "alpha",
+            "--pr",
+            "https://github.com/acme/alpha/pull/7",
+        ])
+        .status
+        .success());
+    assert!(repo
+        .phantom(&[
+            "create",
+            "beta",
+            "--pr",
+            "https://github.com/acme/beta/pull/7",
+        ])
+        .status
+        .success());
+    assert!(repo
+        .phantom(&["create", "local", "--pr", "4"])
+        .status
+        .success());
+    let log = repo.root.join("gh.log");
+    let path = gh_path(
+        &repo,
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = repo ]; then\nexit 1\nfi\nprintf '%s\\n' '{{\"state\":\"MERGED\"}}'\nexit 0\n",
+            log.display()
+        ),
+    );
+
+    let applied = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["gc", "--pr", "--apply", "--json"],
+        )
+        .env("PATH", &path)
+        .output()
+        .expect("gc");
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let document = json_value(&applied);
+    let candidates = document["candidates"].as_array().expect("candidates");
+    let alpha = candidates
+        .iter()
+        .find(|entry| entry["name"] == "alpha")
+        .expect("alpha");
+    assert_eq!(alpha["reasons"], serde_json::json!(["pullRequest"]));
+    assert_eq!(alpha["action"], "removed");
+    let beta = candidates
+        .iter()
+        .find(|entry| entry["name"] == "beta")
+        .expect("beta");
+    assert_eq!(beta["action"], "removed");
+    let local = candidates
+        .iter()
+        .find(|entry| entry["name"] == "local")
+        .expect("local");
+    assert_eq!(local["action"], "skipped");
+    assert_eq!(local["detail"], "pr status unavailable");
+    assert!(worktree_dir(&repo, "local").is_dir());
+    assert!(!worktree_dir(&repo, "alpha").is_dir());
+    assert!(text(&applied.stderr).contains("pull request status unavailable for local"));
+    let logged = fs::read_to_string(&log).expect("gh log");
+    assert!(
+        logged.contains("https://github.com/acme/alpha/pull/7"),
+        "{logged}"
+    );
+    assert!(
+        logged.contains("https://github.com/acme/beta/pull/7"),
+        "{logged}"
+    );
+    assert!(!logged.contains("pr view 4"), "{logged}");
 }

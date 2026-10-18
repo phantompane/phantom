@@ -480,7 +480,9 @@
       ],
       "notes": [
         "gc is a dry run until --apply or --force. A second apply removes nothing",
-        "The current worktree and the primary checkout are never removed",
+        "The current worktree, the primary checkout, and any worktree checked out on the default branch are never removed. The default branch is origin/HEAD when that ref exists, otherwise main, otherwise master",
+        "A branch that still points at the commit it was created from is not merged. It can still match --older-than or --orphaned",
+        "A stored pull request URL is passed to gh pr view. A number with no URL is checked only when gh can name the current repository. When gh is missing or cannot answer, gc reports that the pull request status is unavailable",
         "Another agent's worktree is removed only when it is merged, its pull request is closed or merged, it is orphaned, or --owner names that agent",
         "Dirty worktrees and worktrees with commits that are not on the default branch or a remote are skipped unless --force",
         "Live removals run [hooks] pre-delete from .ptm.toml and then the same deletion as ptm delete. A hook failure skips that worktree and continues",
