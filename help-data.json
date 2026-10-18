@@ -104,7 +104,8 @@
         "Gitignored files matching .worktreeinclude at the checkout root are copied into the new worktree",
         ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
         "Files that already exist in the new worktree are left unchanged",
-        "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read"
+        "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
+        ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] post-create commands run in the new worktree, in order, and stop at the first failure. PTM_ROOT_PATH is the source checkout path"
       ]
     },
     "attach": {
@@ -254,7 +255,8 @@
         "By default, deletion will fail if the worktree has uncommitted changes",
         "You can pass multiple worktree names to delete them at once",
         "The associated branch will also be deleted if it's not checked out elsewhere",
-        "Use --keep-branch to delete only the worktree and preserve the branch"
+        "Use --keep-branch to delete only the worktree and preserve the branch",
+        ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] pre-delete commands run in the worktree before it is removed, in order, and stop at the first failure. PTM_ROOT_PATH is the source checkout path"
       ]
     },
     "exec": {

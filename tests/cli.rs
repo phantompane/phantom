@@ -282,45 +282,59 @@ fn create_list_where_delete_and_attach() {
 #[test]
 fn invalid_config_names_the_file_and_the_problem() {
     let repo = Repo::new();
-    fs::write(repo.repo.join("phantom.config.json"), "{").expect("config");
-    let created = repo.phantom(&["create", "feature/bad-json"]);
+    fs::write(repo.repo.join(".ptm.toml"), "[\n").expect("config");
+    let created = repo.phantom(&["create", "feature/bad-toml"]);
     let stderr = text(&created.stderr);
     assert!(
         !created.status.success(),
-        "invalid JSON should fail, stdout: {}",
+        "invalid TOML should fail, stdout: {}",
         text(&created.stdout)
     );
     assert!(
-        stderr.contains("phantom.config.json"),
+        stderr.contains(".ptm.toml"),
         "stderr should name the file: {stderr}"
     );
     assert!(
-        stderr.contains("parse") || stderr.contains("expected"),
-        "stderr should describe the JSON problem: {stderr}"
+        stderr.contains("parse") || stderr.contains("expected") || stderr.contains("invalid"),
+        "stderr should describe the TOML problem: {stderr}"
     );
     assert!(!repo
         .repo
-        .join(".git/phantom/worktrees/feature/bad-json")
+        .join(".git/phantom/worktrees/feature/bad-toml")
         .exists());
 
     fs::write(
-        repo.repo.join("phantom.config.json"),
-        r#"{"postCreate":{"commands":[1]}}"#,
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = \"pnpm install\"\n",
     )
     .expect("schema");
-    let created = repo.phantom(&["where", "feature/bad-json"]);
+    let created = repo.phantom(&["where", "feature/bad-toml"]);
     let stderr = text(&created.stderr);
     assert!(!created.status.success(), "{}", text(&created.stdout));
-    assert!(stderr.contains("phantom.config.json"), "{stderr}");
-    assert!(stderr.contains("commands"), "{stderr}");
+    assert!(stderr.contains(".ptm.toml"), "{stderr}");
+    assert!(
+        stderr.contains("post-create") || stderr.contains("invalid type"),
+        "{stderr}"
+    );
+
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "worktreesDirectory = \".phantom\"\n",
+    )
+    .expect("unknown");
+    let created = repo.phantom(&["where", "feature/bad-toml"]);
+    let stderr = text(&created.stderr);
+    assert!(!created.status.success(), "{}", text(&created.stdout));
+    assert!(stderr.contains(".ptm.toml"), "{stderr}");
+    assert!(stderr.contains("worktreesDirectory"), "{stderr}");
 }
 
 #[test]
 fn github_checkout_logs_the_post_create_hook() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join("phantom.config.json"),
-        r#"{"postCreate":{"commands":["true"]}}"#,
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"true\"]\n",
     )
     .expect("config");
     let bin = repo.root.join("bin");
@@ -363,8 +377,8 @@ fn github_checkout_logs_the_post_create_hook() {
 fn post_create_failure_reports_the_created_worktree() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join("phantom.config.json"),
-        r#"{"postCreate":{"commands":["phantom-missing-post-create-bin"]}}"#,
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"phantom-missing-post-create-bin\"]\n",
     )
     .expect("config");
     let created = repo.phantom(&["create", "feature/hooks"]);
@@ -422,8 +436,8 @@ fn copies_worktreeinclude_files_and_runs_post_create() {
     fs::write(repo.repo.join(".env.local"), "API_KEY=test-value\n").expect("env");
     fs::write(repo.repo.join(".worktreeinclude"), ".env.local\n").expect("include");
     fs::write(
-        repo.repo.join("phantom.config.json"),
-        r#"{"postCreate":{"commands":["touch post-create.txt"]}}"#,
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"touch post-create.txt\"]\n",
     )
     .expect("config");
     let created = repo.phantom(&["create", "feature/config"]);
@@ -441,6 +455,158 @@ fn copies_worktreeinclude_files_and_runs_post_create() {
     assert!(text(&created.stdout).contains("Running post-create commands"));
     assert!(text(&created.stdout).contains("Executing: touch post-create.txt"));
     assert!(worktree.join("post-create.txt").is_file());
+}
+
+#[test]
+fn hooks_run_in_order_stop_on_failure_and_export_root_path() {
+    let repo = Repo::new();
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        r#"[hooks]
+post-create = [
+  "printf '%s' \"$PTM_ROOT_PATH\" > root-path.txt",
+  "printf '%s' \"$PHANTOM\" > phantom-flag.txt",
+  "printf '%s' \"$PHANTOM_NAME\" > phantom-name.txt",
+  "printf '%s' \"$PHANTOM_PATH\" > phantom-path.txt",
+  "pwd > hook-cwd.txt",
+  "touch first.txt",
+  "false",
+  "touch skipped.txt",
+]
+pre-delete = [
+  "touch pre-first.txt",
+  "exit 9",
+  "touch pre-skipped.txt",
+]
+"#,
+    )
+    .expect("toml");
+
+    let created = repo.phantom(&["create", "feature/hooks-order"]);
+    let worktree = repo.repo.join(".git/phantom/worktrees/feature/hooks-order");
+    assert_eq!(created.status.code(), Some(1), "{}", text(&created.stderr));
+    assert_eq!(
+        fs::read_to_string(worktree.join("root-path.txt")).expect("root path"),
+        repo.repo.display().to_string()
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("phantom-flag.txt")).expect("flag"),
+        "1"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("phantom-name.txt")).expect("name"),
+        "feature/hooks-order"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("phantom-path.txt")).expect("path"),
+        worktree.display().to_string()
+    );
+    assert_eq!(
+        text(&fs::read(worktree.join("hook-cwd.txt")).expect("cwd")),
+        worktree.display().to_string()
+    );
+    assert!(worktree.join("first.txt").is_file());
+    assert!(!worktree.join("skipped.txt").exists());
+
+    let deleted = repo.phantom(&["delete", "--force", "feature/hooks-order"]);
+    let stderr = text(&deleted.stderr);
+    assert!(!deleted.status.success(), "{}", text(&deleted.stdout));
+    assert!(stderr.contains("exit code 9"), "{stderr}");
+    assert!(
+        worktree.exists(),
+        "pre-delete failure should keep the worktree"
+    );
+    assert!(worktree.join("pre-first.txt").is_file());
+    assert!(!worktree.join("pre-skipped.txt").exists());
+}
+
+#[test]
+fn hooks_follow_the_source_checkout_when_run_from_a_worktree() {
+    let repo = Repo::new();
+    let source_created = repo.phantom(&["create", "feature/source"]);
+    assert!(
+        source_created.status.success(),
+        "{}\n{}",
+        text(&source_created.stdout),
+        text(&source_created.stderr)
+    );
+    let source = repo.repo.join(".git/phantom/worktrees/feature/source");
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"touch from-main.txt\"]\npre-delete = [\"touch pre-from-main.txt\"]\n",
+    )
+    .expect("main hooks");
+    fs::write(
+        source.join(".ptm.toml"),
+        r#"[hooks]
+post-create = ["printf '%s' \"$PTM_ROOT_PATH\" > root-path.txt"]
+pre-delete = ["printf '%s' \"$PTM_ROOT_PATH\" > \"$PTM_ROOT_PATH/pre-root.txt\""]
+"#,
+    )
+    .expect("source hooks");
+    let toplevel = repo
+        .command("git", &["rev-parse", "--show-toplevel"])
+        .current_dir(&source)
+        .output()
+        .expect("toplevel");
+    assert!(toplevel.status.success(), "{}", text(&toplevel.stderr));
+    let source_path = text(&toplevel.stdout);
+    assert_ne!(source_path, repo.repo.display().to_string());
+
+    let created = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "feature/child"])
+        .current_dir(&source)
+        .output()
+        .expect("create");
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let child = repo.repo.join(".git/phantom/worktrees/feature/child");
+    assert_eq!(
+        fs::read_to_string(child.join("root-path.txt")).expect("root path"),
+        source_path
+    );
+    assert!(!child.join("from-main.txt").exists());
+
+    let deleted = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["delete", "--force", "feature/child"],
+        )
+        .current_dir(&source)
+        .output()
+        .expect("delete");
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(PathBuf::from(&source_path).join("pre-root.txt")).expect("pre-delete"),
+        source_path
+    );
+    assert!(!child.join("pre-from-main.txt").exists());
+}
+
+#[test]
+fn phantom_config_json_is_not_read() {
+    let repo = Repo::new();
+    fs::write(repo.repo.join("phantom.config.json"), "{").expect("json");
+    let created = repo.phantom(&["create", "feature/no-json"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/feature/no-json/README.md")
+        .is_file());
 }
 
 #[test]

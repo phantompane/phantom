@@ -6,7 +6,7 @@
 - Development happens on `next`. `main` stays the previous TypeScript version.
 - Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `github`, `help`.
 - Command help text is generated from `help-data.json`.
-- Project config example: `phantom.config.json`.
+- Project hooks live in `.ptm.toml` in the source checkout, the checkout where the command runs (`[hooks] post-create` and `pre-delete`). `PTM_ROOT_PATH` is that checkout.
 - Principles: single responsibility, a centralized git executor, and `Result` for every fallible path.
 
 ## Build, Test, and Development Commands
@@ -26,7 +26,7 @@
 - Rust 2021. `rustfmt` is the formatter.
 - Non-test code must not use `unwrap()`, `expect()`, or `panic!`. Propagate errors with `Result` and `thiserror`. The crate denies `clippy::unwrap_used`, `clippy::expect_used`, and `clippy::panic` outside tests.
 - Use PascalCase for types, camelCase for functions and variables, and snake_case for modules.
-- Keep CLI flags and config keys consistent with `phantom.config.json`.
+- Keep CLI flags and config keys consistent with `.ptm.toml` and `ptm preferences`.
 - All files, issues, and pull requests must be written in English. Follow existing patterns.
 
 ## Testing Guidelines
@@ -43,7 +43,7 @@
 ## Security & Configuration Tips
 
 - Never commit tokens or GitHub credentials. `github checkout` uses the `gh` CLI (`GH_TOKEN` / `GH_HOST`).
-- Keep worktrees under `.git/phantom/worktrees/` unless overridden in `phantom.config.json`. Avoid leaking local paths in logs.
+- Keep worktrees under `.git/phantom/worktrees/` unless overridden with the `worktreesDirectory` preference. Avoid leaking local paths in logs.
 - Reuse `validate_worktree_name` rather than re-implementing name parsing.
 
 ## Releases
