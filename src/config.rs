@@ -52,7 +52,8 @@ pub fn pre_delete_commands(config: Option<&PtmConfig>) -> &[String] {
 }
 
 fn parse_config(content: &str) -> Result<PtmConfig> {
-    toml::from_str(content).map_err(|error| Error::msg(format!("Invalid {FILE_NAME}: {error}")))
+    toml_edit::de::from_str(content)
+        .map_err(|error| Error::msg(format!("Invalid {FILE_NAME}: {error}")))
 }
 
 #[cfg(test)]

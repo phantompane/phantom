@@ -71,6 +71,16 @@ pub fn top_level(cwd: &Path) -> Result<PathBuf> {
     )?))
 }
 
+/// Checkout the command is running in: `git rev-parse --show-toplevel` of the
+/// current directory. `.ptm.toml` and `.worktreeinclude` are read from here,
+/// and hooks receive this path as `PTM_ROOT_PATH`.
+pub fn source_checkout(fallback: &Path) -> PathBuf {
+    let Ok(cwd) = std::env::current_dir() else {
+        return fallback.to_path_buf();
+    };
+    top_level(&cwd).unwrap_or_else(|_| fallback.to_path_buf())
+}
+
 pub fn branch_exists(git_root: &Path, name: &str) -> Result<bool> {
     let stdout = output(&["branch", "--list", name], Some(git_root), true)
         .map_err(|error| Error::msg(format!("Failed to check branch existence: {error}")))?;

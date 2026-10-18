@@ -521,6 +521,78 @@ pre-delete = [
 }
 
 #[test]
+fn hooks_follow_the_source_checkout_when_run_from_a_worktree() {
+    let repo = Repo::new();
+    let source_created = repo.phantom(&["create", "feature/source"]);
+    assert!(
+        source_created.status.success(),
+        "{}\n{}",
+        text(&source_created.stdout),
+        text(&source_created.stderr)
+    );
+    let source = repo.repo.join(".git/phantom/worktrees/feature/source");
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"touch from-main.txt\"]\npre-delete = [\"touch pre-from-main.txt\"]\n",
+    )
+    .expect("main hooks");
+    fs::write(
+        source.join(".ptm.toml"),
+        r#"[hooks]
+post-create = ["printf '%s' \"$PTM_ROOT_PATH\" > root-path.txt"]
+pre-delete = ["printf '%s' \"$PTM_ROOT_PATH\" > \"$PTM_ROOT_PATH/pre-root.txt\""]
+"#,
+    )
+    .expect("source hooks");
+    let toplevel = repo
+        .command("git", &["rev-parse", "--show-toplevel"])
+        .current_dir(&source)
+        .output()
+        .expect("toplevel");
+    assert!(toplevel.status.success(), "{}", text(&toplevel.stderr));
+    let source_path = text(&toplevel.stdout);
+    assert_ne!(source_path, repo.repo.display().to_string());
+
+    let created = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "feature/child"])
+        .current_dir(&source)
+        .output()
+        .expect("create");
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let child = repo.repo.join(".git/phantom/worktrees/feature/child");
+    assert_eq!(
+        fs::read_to_string(child.join("root-path.txt")).expect("root path"),
+        source_path
+    );
+    assert!(!child.join("from-main.txt").exists());
+
+    let deleted = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["delete", "--force", "feature/child"],
+        )
+        .current_dir(&source)
+        .output()
+        .expect("delete");
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(PathBuf::from(&source_path).join("pre-root.txt")).expect("pre-delete"),
+        source_path
+    );
+    assert!(!child.join("pre-from-main.txt").exists());
+}
+
+#[test]
 fn phantom_config_json_is_not_read() {
     let repo = Repo::new();
     fs::write(repo.repo.join("phantom.config.json"), "{").expect("json");

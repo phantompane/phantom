@@ -6,7 +6,7 @@
 - Development happens on `next`. `main` stays the previous TypeScript version.
 - Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `github`, `help`.
 - Command help text is generated from `help-data.json`.
-- Project hooks live in `.ptm.toml` at the repository root (`[hooks] post-create` and `pre-delete`).
+- Project hooks live in `.ptm.toml` in the source checkout, the checkout where the command runs (`[hooks] post-create` and `pre-delete`). `PTM_ROOT_PATH` is that checkout.
 - Principles: single responsibility, a centralized git executor, and `Result` for every fallible path.
 
 ## Build, Test, and Development Commands

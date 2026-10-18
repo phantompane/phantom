@@ -33,7 +33,7 @@ Files that already exist in the new worktree are left unchanged. Symlinks are sk
 
 ## Project hooks
 
-A repository can define hooks in `.ptm.toml` at the repository root:
+`.ptm.toml` is read from the source checkout: the checkout where the command runs (`git rev-parse --show-toplevel`). `.worktreeinclude` is read from that same checkout.
 
 ```toml
 [hooks]
@@ -43,4 +43,4 @@ pre-delete = ["./scripts/teardown.sh"]
 
 `ptm create` and `ptm attach` run `post-create` in the new worktree. `ptm delete` runs `pre-delete` in the worktree before removing it. Commands run in order and stop at the first failure. Unknown keys are rejected.
 
-Each hook receives the existing worktree environment variables plus `PTM_ROOT_PATH`, the path of the source checkout.
+Each hook receives the existing worktree environment variables plus `PTM_ROOT_PATH`, the path of that source checkout.

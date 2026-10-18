@@ -301,7 +301,7 @@ pub fn create_worktree(
         &context.directory_name_separator,
     );
     git::add_worktree(&context.git_root, &path, name, base, true)?;
-    let copy_error = copy_included_files(&source_checkout(&context.git_root), &path, copy_files)
+    let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
         .err()
         .map(|error| error.to_string());
     let hook_failure = if commands.is_empty() {
@@ -315,6 +315,7 @@ pub fn create_worktree(
             commands,
             true,
             logger,
+            &context.source_checkout,
         )?
     };
     Ok(CreatedWorktree {
@@ -387,8 +388,7 @@ pub fn attach_worktree(
             error
         }
     })?;
-    if let Err(error) = copy_included_files(&source_checkout(&context.git_root), &path, copy_files)
-    {
+    if let Err(error) = copy_included_files(&context.source_checkout, &path, copy_files) {
         logger.warn(&format!("Warning: Failed to copy some files: {error}"));
     }
     let hook_failure = if commands.is_empty() {
@@ -402,6 +402,7 @@ pub fn attach_worktree(
             commands,
             true,
             logger,
+            &context.source_checkout,
         )?
     };
     Ok(AttachedWorktree { path, hook_failure })
@@ -442,6 +443,7 @@ pub fn delete_worktree(
             commands,
             false,
             &Logger::on(),
+            &context.source_checkout,
         )?;
     }
     git::remove_worktree(&context.git_root, &path, force)?;
@@ -585,7 +587,9 @@ fn run_hook_commands(
     commands: &[String],
     post: bool,
     logger: &Logger,
+    source_checkout: &Path,
 ) -> Result<Option<HookFailure>> {
+    let root_path = source_checkout.display().to_string();
     for command in commands {
         if post {
             logger.log(&format!("Executing: {command}"));
@@ -593,7 +597,6 @@ fn run_hook_commands(
             println!("Executing pre-delete command: {command}");
         }
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        let root_path = git_root.display().to_string();
         let code = match exec_in_worktree(
             git_root,
             worktrees_directory,
@@ -644,13 +647,6 @@ fn remove_empty_parents(path: &Path, root: &Path) -> Option<String> {
         }
     }
     None
-}
-
-fn source_checkout(fallback: &Path) -> PathBuf {
-    let Ok(cwd) = std::env::current_dir() else {
-        return fallback.to_path_buf();
-    };
-    git::top_level(&cwd).unwrap_or_else(|_| fallback.to_path_buf())
 }
 
 /// Copy gitignored files matched by `.worktreeinclude` and extra gitignore patterns.
