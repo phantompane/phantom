@@ -1,5 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
+use crate::error::{Error, Result};
+
 pub fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
@@ -65,6 +67,39 @@ pub fn worktree_path(directory: &Path, name: &str, separator: &str) -> PathBuf {
     normalize(&directory.join(directory_name))
 }
 
+/// `$XDG_CONFIG_HOME/ptm/config.toml`, or `~/.config/ptm/config.toml` when
+/// `XDG_CONFIG_HOME` is unset, empty, or relative.
+pub fn user_config_file(home: &Path, xdg_config_home: Option<&Path>) -> PathBuf {
+    let config_home = match xdg_config_home {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        _ => home.join(".config"),
+    };
+    ptm_config_file(&config_home)
+}
+
+pub fn user_config_path() -> Result<PathBuf> {
+    if let Some(xdg) = absolute_xdg_config_home() {
+        return Ok(ptm_config_file(&xdg));
+    }
+    let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) else {
+        return Err(Error::msg("HOME is not set"));
+    };
+    Ok(user_config_file(Path::new(&home), None))
+}
+
+fn ptm_config_file(config_home: &Path) -> PathBuf {
+    config_home.join("ptm").join("config.toml")
+}
+
+fn absolute_xdg_config_home() -> Option<PathBuf> {
+    let value = std::env::var_os("XDG_CONFIG_HOME")?;
+    if value.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(value);
+    path.is_absolute().then_some(path)
+}
+
 pub fn is_strictly_inside(path: &Path, directory: &Path) -> bool {
     let relative_path = relative(directory, path);
     !relative_path.is_empty()
@@ -93,5 +128,27 @@ mod tests {
     fn flattens_directory_names() {
         let path = worktree_path(Path::new("/tmp/worktrees"), "feature/test", "-");
         assert_eq!(path, PathBuf::from("/tmp/worktrees/feature-test"));
+    }
+
+    #[test]
+    fn user_config_file_follows_xdg_config_home() {
+        let home = Path::new("/home/phantom");
+        let xdg = Path::new("/tmp/xdg");
+        assert_eq!(
+            user_config_file(home, Some(xdg)),
+            PathBuf::from("/tmp/xdg/ptm/config.toml")
+        );
+        assert_eq!(
+            user_config_file(home, None),
+            PathBuf::from("/home/phantom/.config/ptm/config.toml")
+        );
+        assert_eq!(
+            user_config_file(home, Some(Path::new("relative"))),
+            PathBuf::from("/home/phantom/.config/ptm/config.toml")
+        );
+        assert_eq!(
+            user_config_file(home, Some(Path::new(""))),
+            PathBuf::from("/home/phantom/.config/ptm/config.toml")
+        );
     }
 }

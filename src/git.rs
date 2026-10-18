@@ -140,36 +140,6 @@ pub fn set_upstream(git_root: &Path, branch: &str, upstream: &str) -> Result<()>
     )
 }
 
-pub fn config_get_regexp_global(pattern: &str) -> Result<String> {
-    match process::capture(
-        "git",
-        &["config", "--global", "--null", "--get-regexp", pattern],
-        None,
-        false,
-    ) {
-        Ok(captured) => Ok(captured
-            .stdout
-            .trim_matches(['\n', '\r', ' ', '\t'])
-            .to_string()),
-        Err(error) => {
-            let message = error.to_string();
-            if message.is_empty() {
-                Ok(String::new())
-            } else {
-                Err(error)
-            }
-        }
-    }
-}
-
-pub fn config_set_global(key: &str, value: &str) -> Result<()> {
-    run(&["config", "--global", key, value], None)
-}
-
-pub fn config_unset_global(key: &str) -> Result<()> {
-    run(&["config", "--global", "--unset", key], None)
-}
-
 pub fn parse_worktrees(stdout: &str) -> Vec<GitWorktree> {
     let mut worktrees = Vec::new();
     let mut current: Option<GitWorktree> = None;
