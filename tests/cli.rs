@@ -276,7 +276,7 @@ fn create_list_where_delete_and_attach() {
     assert!(text(&deleted.stdout).contains("and its branch 'feature/add-tests'"));
     assert!(!worktree.exists());
     let missing_delete = repo.phantom(&["delete", "missing-worktree"]);
-    assert_eq!(missing_delete.status.code(), Some(3));
+    assert_eq!(missing_delete.status.code(), Some(2));
 }
 
 #[test]
@@ -1783,7 +1783,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     repo.git(&["branch", "second-json"]);
     assert!(repo.phantom(&["attach", "second-json"]).status.success());
     let partial = repo.phantom(&["delete", "feature/json", "missing-json", "--json"]);
-    assert_eq!(partial.status.code(), Some(3), "{}", text(&partial.stderr));
+    assert_eq!(partial.status.code(), Some(2), "{}", text(&partial.stderr));
     let partial_json = json_value(&partial);
     assert_eq!(
         partial_json["deleted"][0]["worktree"]["name"],
@@ -1796,7 +1796,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
         .unwrap_or("")
         .contains("missing-json"));
     assert_eq!(partial_json["error"]["code"], "not_found");
-    assert_eq!(partial_json["error"]["exitCode"], 3);
+    assert_eq!(partial_json["error"]["exitCode"], 2);
     assert!(!text(&partial.stdout).contains("Deleted worktree"));
     let gone = repo
         .command("git", &["branch", "--list", "feature/json"])
@@ -2002,6 +2002,147 @@ fn json_unborn_head_is_null() {
     let located_json = json_value(&located);
     assert!(located_json["worktree"]["head"].is_null(), "{located_json}");
     assert_eq!(located_json["worktree"]["branch"], "main");
+}
+
+#[test]
+fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
+    let repo = Repo::new();
+    for args in [
+        &["create", "a/../x"][..],
+        &["create", "a/../x", "--json"],
+        &["attach", "a/../x"],
+        &["attach", "a/../x", "--json"],
+    ] {
+        let output = repo.phantom(args);
+        assert_eq!(
+            output.status.code(),
+            Some(3),
+            "{args:?}\n{}\n{}",
+            text(&output.stdout),
+            text(&output.stderr)
+        );
+        if args.contains(&"--json") {
+            let value = json_value(&output);
+            assert_eq!(value["error"]["code"], "validation", "{args:?} {value}");
+            assert_eq!(value["error"]["exitCode"], 3, "{args:?} {value}");
+            assert!(value.get("worktree").is_none(), "{args:?} {value}");
+            assert!(text(&output.stderr).is_empty(), "{args:?}");
+        } else {
+            assert!(
+                text(&output.stderr).contains("consecutive dots"),
+                "{args:?} {}",
+                text(&output.stderr)
+            );
+        }
+    }
+    assert!(!repo.repo.join(".git/phantom/worktrees/a/../x").exists());
+
+    let missing_delete = repo.phantom(&["delete", "nope"]);
+    assert_eq!(missing_delete.status.code(), Some(2));
+    let missing_json = repo.phantom(&["delete", "nope", "--json"]);
+    assert_eq!(missing_json.status.code(), Some(2));
+    let missing_value = json_value(&missing_json);
+    assert_eq!(missing_value["error"]["code"], "not_found");
+    assert_eq!(missing_value["error"]["exitCode"], 2);
+    assert_eq!(repo.phantom(&["where", "nope"]).status.code(), Some(2));
+    assert_eq!(
+        repo.phantom(&["exec", "nope", "true"]).status.code(),
+        Some(2)
+    );
+}
+
+#[test]
+fn json_exec_signal_and_spawn_failure_return_the_worktree() {
+    let repo = Repo::new();
+    let signaled = repo.phantom(&["create", "sig", "--json", "--exec", "kill -TERM $$"]);
+    assert_eq!(
+        signaled.status.code(),
+        Some(143),
+        "{}\n{}",
+        text(&signaled.stdout),
+        text(&signaled.stderr)
+    );
+    let signaled_json = json_value(&signaled);
+    assert!(signaled_json.get("error").is_none(), "{signaled_json}");
+    assert_eq!(signaled_json["worktree"]["name"], "sig");
+    assert_eq!(signaled_json["exec"]["ok"], false);
+    assert_eq!(signaled_json["exec"]["command"], "kill -TERM $$");
+    assert_eq!(signaled_json["exec"]["exitCode"], 143);
+    assert_eq!(signaled_json["exec"]["signal"], "SIGTERM");
+    assert!(signaled_json["exec"]["error"].is_null());
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/sig/README.md")
+        .is_file());
+
+    repo.git(&["branch", "attach-sig"]);
+    let attached = repo.phantom(&["attach", "attach-sig", "--json", "--exec", "kill -TERM $$"]);
+    assert_eq!(
+        attached.status.code(),
+        Some(143),
+        "{}",
+        text(&attached.stderr)
+    );
+    let attached_json = json_value(&attached);
+    assert_eq!(attached_json["worktree"]["name"], "attach-sig");
+    assert_eq!(attached_json["exec"]["ok"], false);
+    assert_eq!(attached_json["exec"]["signal"], "SIGTERM");
+    assert!(attached_json.get("error").is_none(), "{attached_json}");
+
+    let human = repo.phantom(&["create", "sig-human", "--exec", "kill -TERM $$"]);
+    assert_eq!(human.status.code(), Some(143));
+    assert!(text(&human.stdout).contains("Created worktree 'sig-human'"));
+    assert!(text(&human.stderr).contains("SIGTERM"));
+
+    let spawned = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["create", "spawn", "--json", "--exec", "true"],
+        )
+        .env("SHELL", "/no/such/ptm-shell")
+        .output()
+        .expect("spawn");
+    assert_eq!(
+        spawned.status.code(),
+        Some(1),
+        "{}\n{}",
+        text(&spawned.stdout),
+        text(&spawned.stderr)
+    );
+    let spawned_json = json_value(&spawned);
+    assert!(spawned_json.get("error").is_none(), "{spawned_json}");
+    assert_eq!(spawned_json["worktree"]["name"], "spawn");
+    assert_eq!(spawned_json["exec"]["ok"], false);
+    assert_eq!(spawned_json["exec"]["exitCode"], 1);
+    assert!(spawned_json["exec"]["signal"].is_null());
+    let spawn_error = spawned_json["exec"]["error"].as_str().unwrap_or("");
+    assert!(
+        spawn_error.contains("ENOENT") && spawn_error.contains("/no/such/ptm-shell"),
+        "{spawn_error}"
+    );
+    assert!(repo
+        .repo
+        .join(".git/phantom/worktrees/spawn/README.md")
+        .is_file());
+
+    repo.git(&["branch", "attach-spawn"]);
+    let attach_spawn = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["attach", "attach-spawn", "--json", "--exec", "true"],
+        )
+        .env("SHELL", "/no/such/ptm-shell")
+        .output()
+        .expect("attach spawn");
+    assert_eq!(attach_spawn.status.code(), Some(1));
+    let attach_json = json_value(&attach_spawn);
+    assert_eq!(attach_json["worktree"]["name"], "attach-spawn");
+    assert_eq!(attach_json["exec"]["ok"], false);
+    assert!(attach_json["exec"]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("ENOENT"));
+    assert!(attach_json.get("error").is_none(), "{attach_json}");
 }
 
 #[test]

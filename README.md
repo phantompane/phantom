@@ -81,11 +81,11 @@ A command that does not produce a result writes this object to stdout:
 }
 ```
 
-`code` is the stable machine code. `exitCode` is the process status, which still follows the existing command codes (`1` general, `2` not found for `where`, `3` validation — including a missing worktree on `delete` — `4` not a repository). `code` values include `not_found`, `already_exists`, `branch_not_found`, `not_repository`, `uncommitted`, `validation`, `command_failed`, `spawn`, `signaled`, `projects`, and `error`.
+`code` is the stable machine code. `exitCode` is the process status: `1` general, `2` not found (`where`, `delete`, and `exec`), `3` validation (including an invalid worktree name), `4` not a repository. `code` values include `not_found`, `already_exists`, `branch_not_found`, `not_repository`, `uncommitted`, `validation`, `command_failed`, `spawn`, `signaled`, `projects`, and `error`.
 
 `delete --json` is the exception that can include both deleted entries and a top-level `error`. Entries that were removed stay in `deleted`. The failed name has `worktree: null` and a string `error`. The process still exits nonzero.
 
-`create` and `attach` still print the result object when the worktree exists but a post-create hook or `--exec` fails. The process exits with that command's status. `postCreate.ok` or `exec.ok` is false. That is not the error envelope.
+`create` and `attach` still print the result object when the worktree exists but a post-create hook or `--exec` fails, including when `--exec` is killed by a signal or the shell or program fails to start. The process exits with that command's status. `postCreate.ok` or `exec.ok` is false. That is not the error envelope.
 
 ### Worktree object
 
@@ -132,7 +132,7 @@ The object is intentionally open. Ownership and purpose metadata (owner, purpose
 }
 ```
 
-`copyFiles.ok` is false when copying `.worktreeinclude` matches fails. The worktree is still created. `postCreate.ran` is false when no hook is configured. On success, `exitCode` is 0 and `command` is null. On failure, `command` is the hook that failed and `exitCode` is its status. `exec` is null when `--exec` was not passed. Otherwise it is `{ "ok": true, "command": "npm test", "exitCode": 0 }`.
+`copyFiles.ok` is false when copying `.worktreeinclude` matches fails. The worktree is still created. `postCreate.ran` is false when no hook is configured. On success, `exitCode` is 0 and `command` is null. On failure, `command` is the hook that failed and `exitCode` is its status. `exec` is null when `--exec` was not passed. Otherwise it is `{ "ok": true, "command": "npm test", "exitCode": 0, "signal": null, "error": null }`. `signal` is the signal name when the process was killed, and `exitCode` is `128` plus the signal number (`143` for `SIGTERM`). `error` is set when the shell or program failed to start. `ok` is false in both cases, and the worktree object is still returned.
 
 `attach` leaves `worktree.base` null. `create` sets it to the requested base (`HEAD` when omitted).
 

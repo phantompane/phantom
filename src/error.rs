@@ -14,6 +14,8 @@ pub const JSON_VERSION: u32 = 1;
 pub enum Error {
     #[error("{0}")]
     Message(String),
+    #[error("{0}")]
+    Validation(String),
     #[error("Worktree '{0}' not found")]
     WorktreeNotFound(String),
     #[error("Worktree '{0}' already exists")]
@@ -46,6 +48,7 @@ impl Error {
             Self::CommandFailed { code, .. } => *code,
             Self::Signaled(name) => 128 + i32::from(name == "SIGTERM").saturating_mul(14) + 1,
             Self::NotARepository => NOT_REPOSITORY,
+            Self::Validation(_) => VALIDATION,
             _ => GENERAL,
         }
     }
@@ -72,6 +75,7 @@ impl Error {
             Self::Signaled(_) => "signaled",
             Self::Spawn { .. } => "spawn",
             Self::Projects(_) => "projects",
+            Self::Validation(_) => "validation",
             Self::Message(_) => match exit_code {
                 NOT_FOUND => "not_found",
                 VALIDATION => "validation",

@@ -361,7 +361,8 @@ fn delete(args: &[String]) -> Result<i32> {
             }
             Err(error) => {
                 let code = match &error {
-                    Error::WorktreeNotFound(_) | Error::Uncommitted { .. } => VALIDATION,
+                    Error::WorktreeNotFound(_) => NOT_FOUND,
+                    Error::Uncommitted { .. } => VALIDATION,
                     _ => GENERAL,
                 };
                 if json {
@@ -412,7 +413,12 @@ fn exec(args: &[String]) -> Result<i32> {
     };
     let name = parsed.positionals[0].clone();
     if let Err(error) = worktree::find_worktree(&context.git_root, &name, false, None) {
-        return fail(&error, GENERAL);
+        let code = if matches!(error, Error::WorktreeNotFound(_)) {
+            NOT_FOUND
+        } else {
+            error.exit_code()
+        };
+        return fail(&error, code);
     }
     let command = command_args[0].as_str();
     let rest = command_args[1..]
@@ -951,13 +957,17 @@ fn finish_mutation(
         return Ok(exit_code.unwrap_or(SUCCESS));
     }
     if let Some(exec) = exec.filter(|exec| !exec.ok) {
-        return fail(
-            &Error::CommandFailed {
+        let error = if let Some(signal) = &exec.signal {
+            Error::Signaled(signal.clone())
+        } else if let Some(message) = &exec.error {
+            Error::msg(message.clone())
+        } else {
+            Error::CommandFailed {
                 command: exec.shell.clone(),
                 code: exec.exit_code,
-            },
-            exec.exit_code,
-        );
+            }
+        };
+        return fail(&error, exec.exit_code);
     }
     Ok(exit_code.unwrap_or(SUCCESS))
 }

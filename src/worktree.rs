@@ -77,18 +77,23 @@ impl Logger {
 
 pub fn validate_worktree_name(name: &str) -> Result<()> {
     if name.trim().is_empty() {
-        return Err(Error::msg("Worktree name cannot be empty"));
+        return Err(Error::Validation(
+            "Worktree name cannot be empty".to_string(),
+        ));
     }
     if !name
         .chars()
         .all(|char| char.is_ascii_alphanumeric() || matches!(char, '-' | '_' | '.' | '/'))
     {
-        return Err(Error::msg(
-            "Worktree name can only contain letters, numbers, hyphens, underscores, dots, and slashes",
+        return Err(Error::Validation(
+            "Worktree name can only contain letters, numbers, hyphens, underscores, dots, and slashes"
+                .to_string(),
         ));
     }
     if name.contains("..") {
-        return Err(Error::msg("Worktree name cannot contain consecutive dots"));
+        return Err(Error::Validation(
+            "Worktree name cannot contain consecutive dots".to_string(),
+        ));
     }
     Ok(())
 }
@@ -665,19 +670,31 @@ fn run_action(
                 (program.clone(), args, program)
             };
             let arg_refs = program_args.iter().map(String::as_str).collect::<Vec<_>>();
-            let code = process::inherit(
-                &program,
-                &arg_refs,
-                Some(path),
-                &pairs,
-                logger.json,
-            )?;
-            Ok(Some(ExecOutcome {
-                ok: code == 0,
-                command: shown,
-                exit_code: code,
-                shell: reported,
-            }))
+            match process::inherit(&program, &arg_refs, Some(path), &pairs, logger.json) {
+                Ok(code) => Ok(Some(ExecOutcome {
+                    ok: code == 0,
+                    command: shown,
+                    exit_code: code,
+                    signal: None,
+                    error: None,
+                    shell: reported,
+                })),
+                Err(error @ (Error::Signaled(_) | Error::Spawn { .. })) => Ok(Some(ExecOutcome {
+                    ok: false,
+                    command: shown,
+                    exit_code: error.exit_code(),
+                    signal: match &error {
+                        Error::Signaled(signal) => Some(signal.clone()),
+                        _ => None,
+                    },
+                    error: match &error {
+                        Error::Spawn { .. } => Some(error.to_string()),
+                        _ => None,
+                    },
+                    shell: reported,
+                })),
+                Err(error) => Err(error),
+            }
         }
     }
 }
@@ -973,6 +990,10 @@ pub struct ExecOutcome {
     pub ok: bool,
     pub command: String,
     pub exit_code: i32,
+    /// Set when the process was terminated by a signal.
+    pub signal: Option<String>,
+    /// Set when the program or shell failed to start.
+    pub error: Option<String>,
     #[serde(skip)]
     pub shell: String,
 }
