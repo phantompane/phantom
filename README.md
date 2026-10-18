@@ -57,3 +57,145 @@ Each hook receives:
 - `PTM` — `1`
 - `PTM_NAME` — worktree name
 - `PTM_PATH` — absolute path of the worktree directory
+
+## Machine-readable JSON
+
+`--json` prints one pretty-printed JSON document to **stdout** and exits nonzero on failure. Field names are camelCase, the same convention as `project list --json` (`rootPath`, `createdAt`). Parsers must ignore unknown fields. Adding a field does not change `version`. Removing, renaming, or changing the meaning of a field does.
+
+Worktree commands and every `--json` error use schema version **1**. `project list --json` keeps its own catalog version (currently 2).
+
+In `--json` mode, stdout is only that document. Progress lines, warnings, hook command output, and `--exec` output go to **stderr**. `--json` cannot be combined with `list --names`. `list --names` stays available for the one-name-per-line human format.
+
+### Errors
+
+A command that does not produce a result writes this object to stdout:
+
+```json
+{
+  "version": 1,
+  "error": {
+    "message": "Worktree 'topic' not found",
+    "code": "not_found",
+    "exitCode": 2
+  }
+}
+```
+
+`code` is the stable machine code. `exitCode` is the process status, which still follows the existing command codes (`1` general, `2` not found for `where`, `3` validation — including a missing worktree on `delete` — `4` not a repository). `code` values include `not_found`, `already_exists`, `branch_not_found`, `not_repository`, `uncommitted`, `validation`, `command_failed`, `spawn`, `signaled`, `projects`, and `error`.
+
+`delete --json` is the exception that can include both deleted entries and a top-level `error`. Entries that were removed stay in `deleted`. The failed name has `worktree: null` and a string `error`. The process still exits nonzero.
+
+`create` and `attach` still print the result object when the worktree exists but a post-create hook or `--exec` fails. The process exits with that command's status. `postCreate.ok` or `exec.ok` is false. That is not the error envelope.
+
+### Worktree object
+
+`list`, `where`, `create`, `attach`, `delete`, and `github checkout` share this object. `path` is absolute. `head` is the full HEAD SHA, or null when Git has no HEAD. `branch` is null when HEAD is detached (`detached` is true). `base` is the commit-ish this command started from, when it knows one, and null otherwise. `dirty` is true when `git status --porcelain` reports any change. `default` is true for the repository's primary checkout.
+
+```json
+{
+  "name": "feature/add-tests",
+  "path": "/repo/.git/phantom/worktrees/feature/add-tests",
+  "branch": "feature/add-tests",
+  "head": "0123456789abcdef0123456789abcdef01234567",
+  "base": "HEAD",
+  "dirty": false,
+  "default": false,
+  "detached": false
+}
+```
+
+The object is intentionally open. Ownership and purpose metadata (owner, purpose, createdAt, lastUsedAt, links) and cleanup details (prunable, locked) can be added later without a new version.
+
+### Commands
+
+`list --json`:
+
+```json
+{ "version": 1, "worktrees": [] }
+```
+
+`where --json` and the result of a create, attach, or checkout use the worktree object. `where` returns:
+
+```json
+{ "version": 1, "worktree": {} }
+```
+
+`create --json` and `attach --json`:
+
+```json
+{
+  "version": 1,
+  "worktree": {},
+  "copyFiles": { "ok": true, "error": null },
+  "postCreate": { "ran": false, "ok": true, "command": null, "exitCode": null },
+  "exec": null
+}
+```
+
+`copyFiles.ok` is false when copying `.worktreeinclude` matches fails. The worktree is still created. `postCreate.ran` is false when no hook is configured. On success, `exitCode` is 0 and `command` is null. On failure, `command` is the hook that failed and `exitCode` is its status. `exec` is null when `--exec` was not passed. Otherwise it is `{ "ok": true, "command": "npm test", "exitCode": 0 }`.
+
+`attach` leaves `worktree.base` null. `create` sets it to the requested base (`HEAD` when omitted).
+
+`delete --json`:
+
+```json
+{
+  "version": 1,
+  "deleted": [
+    {
+      "worktree": {},
+      "branchDeleted": true,
+      "branchError": null,
+      "error": null
+    }
+  ],
+  "error": null
+}
+```
+
+`branchDeleted` is false for a detached HEAD, for `--keep-branch`, and when deleting the branch failed. A failed branch delete sets `branchError` and still exits 0. A fatal per-item failure sets `error` on that entry and the top-level `error` object, and exits nonzero.
+
+`github checkout --json`:
+
+```json
+{
+  "version": 1,
+  "worktree": {},
+  "github": {
+    "kind": "pullRequest",
+    "number": 123,
+    "headRef": "feature/add-logging",
+    "alreadyExists": false
+  },
+  "copyFiles": { "ok": true, "error": null },
+  "postCreate": { "ran": false, "ok": true, "command": null, "exitCode": null }
+}
+```
+
+`github.kind` is `pullRequest` or `issue`. `headRef` is the pull request head ref, and null for an issue. `worktree.base` is the fetched upstream for a new pull request, the requested base for a new issue, and null when the worktree already existed.
+
+### Project list
+
+`project list --json` is unchanged. It uses camelCase and absolute `rootPath` values. Warnings stay on stderr.
+
+```json
+{
+  "version": 2,
+  "projects": [
+    {
+      "source": "registry",
+      "id": "proj_550e8400-e29b-41d4-a716-446655440000",
+      "name": "repo",
+      "rootPath": "/abs/repo",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "source": "ghq",
+      "name": "repo",
+      "rootPath": "/abs/ghq/repo"
+    }
+  ]
+}
+```
+
+`project add --json` and `project remove --json` still return `{ "status", "project" }`. Their errors use the version 1 error object above.
