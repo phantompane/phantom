@@ -22,7 +22,7 @@ root = "~/ghq"
 
 ## Cloning repositories
 
-`ptm clone` clones a Git repository into `<root>/<host>/<owner>/<repo>` and registers it. `owner/repo` uses `github.com`. The command accepts `https` and `http` URLs, `ssh://` URLs, scp-style `git@host:owner/repo` paths, `host/owner/repo`, and `owner/repo`. The host directory is lowercased, and a URL port is part of it (`example.net:9443`). `file://` URLs are rejected.
+`ptm clone` clones a Git repository into `<root>/<host>/<owner>/<repo>` and registers it. `owner/repo` uses `github.com`. The command accepts `https` and `http` URLs, `ssh://` URLs, scp-style `git@host:owner/repo` paths, `host/owner/repo`, and `owner/repo`. The host directory is lowercased, and a URL port is part of it (`example.net:9443`). `file://` URLs are rejected. A local path has no host, owner, and repository to place under that layout. A clone that exits early can leave a hidden `.ptm-clone-<pid>-<uuid>` directory beside the destination. A later clone in that directory removes it when the recorded process is no longer running.
 
 ```bash
 ptm clone aku11i/phantom
@@ -235,7 +235,7 @@ The object is intentionally open. Ownership and purpose metadata (owner, purpose
 
 ### Clone
 
-`clone --json` uses schema version 1. `path` is the absolute Git root. `host` is lowercased and includes a port when the URL has one. `remoteUrl` is the clone URL with `http` and `https` userinfo removed, including a token used as the username (`https://github.com/<owner>/<repo>.git` for `owner/repo` and `host/owner/repo`). `ssh` and scp-style URLs keep the login name. `cloned` is true when this command created the checkout. `updated` is true only when `--update` fetched an existing checkout. Git's progress stays on stderr.
+`clone --json` uses schema version 1. `path` is the absolute Git root. `host` is lowercased and includes a port when the URL has one. `remoteUrl` is the clone URL with that same lowercased host. `http` and `https` userinfo is removed, including a token used as the username (`https://github.com/<owner>/<repo>.git` for `owner/repo` and `host/owner/repo`). `ssh` and scp-style URLs keep the login name. `cloned` is true when this command created the checkout. `updated` is true only when `--update` fetched an existing checkout. Git's progress stays on stderr.
 
 ```json
 {
@@ -250,4 +250,4 @@ The object is intentionally open. Ownership and purpose metadata (owner, purpose
 }
 ```
 
-A failed clone uses the version 1 error object. A destination that is not the expected repository is `validation` / exit code 3. A Git failure is `command_failed` with Git's exit code.
+A failed clone uses the version 1 error object. A destination that is not the expected repository is `validation` / exit code 3. A path component the filesystem rejects, such as a name longer than the filename limit, is also `validation` / exit code 3. If Git cannot read its configuration while inspecting an existing checkout, the error includes Git's message and uses exit code 1. A Git failure during clone or fetch is `command_failed` with Git's exit code.

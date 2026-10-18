@@ -211,6 +211,7 @@ fn place_clone(
     update: bool,
 ) -> Result<(bool, bool)> {
     if destination_exists(destination)? {
+        reap_stale_staging(destination.parent(), destination);
         return adopt_existing(destination, spec, update);
     }
     let created_parents = create_missing_parents(destination)?;
@@ -221,6 +222,7 @@ fn place_clone(
             destination.display()
         )));
     };
+    reap_stale_staging(Some(parent), destination);
     // The staging directory is the checkout. Renaming it onto the destination
     // stays on one filesystem. POSIX rename fails when the destination is a
     // non-empty directory, which is the racing clone we must not delete.
@@ -231,10 +233,10 @@ fn place_clone(
     ));
     if let Err(error) = fs::create_dir(&staging) {
         remove_created_parents(&created_parents);
-        return Err(Error::msg(format!(
-            "Failed to create {}: {error}",
-            staging.display()
-        )));
+        return Err(io_failure(
+            &error,
+            format!("Failed to create {}: {error}", staging.display()),
+        ));
     }
     if let Err(error) = clone_with_git(&spec.clone_url, &staging, branch, depth) {
         remove_staging(&staging);
@@ -264,10 +266,13 @@ fn publish_clone(
         }
         Err(error) => {
             remove_staging(staging);
-            Err(Error::msg(format!(
-                "Failed to move clone into {}: {error}",
-                destination.display()
-            )))
+            Err(io_failure(
+                &error,
+                format!(
+                    "Failed to move clone into {}: {error}",
+                    destination.display()
+                ),
+            ))
         }
     }
 }
@@ -294,10 +299,10 @@ fn create_missing_parents(destination: &Path) -> Result<Vec<PathBuf>> {
                 // Cleanup matches the returned list and removes the leaf first.
                 created.reverse();
                 remove_created_parents(&created);
-                return Err(Error::msg(format!(
-                    "Failed to create {}: {error}",
-                    dir.display()
-                )));
+                return Err(io_failure(
+                    &error,
+                    format!("Failed to create {}: {error}", dir.display()),
+                ));
             }
         }
     }
@@ -430,23 +435,30 @@ fn run_git_visible(args: &[String], command: &str) -> Result<()> {
 
 fn repository_toplevel(path: &Path) -> Result<Option<PathBuf>> {
     let arg = path_arg(path)?;
-    match process::raw("git", &["-C", &arg, "rev-parse", "--show-toplevel"], None) {
+    match process::raw_with_env(
+        "git",
+        &["-C", &arg, "rev-parse", "--show-toplevel"],
+        None,
+        &[("LC_ALL", "C")],
+    ) {
         Ok(captured) if captured.code == 0 => {
             let toplevel = PathBuf::from(captured.stdout.trim());
             Ok(Some(fs::canonicalize(&toplevel).unwrap_or(toplevel)))
         }
-        Ok(_) => Ok(None),
+        Ok(captured) if git_missing_repository(&captured.stderr) => Ok(None),
+        Ok(captured) => Err(git_inspect_error(path, &captured.stderr, captured.code)),
         Err(error) => Err(error),
     }
 }
 
 fn origin_url(path: &Path) -> Result<Option<String>> {
-    let path = path_arg(path)?;
+    let arg = path_arg(path)?;
     // `remote get-url` expands insteadOf. Compare the URL Git stored.
-    match process::raw(
+    match process::raw_with_env(
         "git",
-        &["-C", &path, "config", "--get", "remote.origin.url"],
+        &["-C", &arg, "config", "--get", "remote.origin.url"],
         None,
+        &[("LC_ALL", "C")],
     ) {
         Ok(captured) if captured.code == 0 => {
             let url = captured.stdout.trim();
@@ -456,7 +468,8 @@ fn origin_url(path: &Path) -> Result<Option<String>> {
                 Ok(Some(url.to_string()))
             }
         }
-        Ok(_) => Ok(None),
+        Ok(captured) if captured.stderr.trim().is_empty() => Ok(None),
+        Ok(captured) => Err(git_inspect_error(path, &captured.stderr, captured.code)),
         Err(error) => Err(error),
     }
 }
@@ -628,7 +641,14 @@ fn path_segments(path: &str) -> Option<Vec<&str>> {
 
 fn validate_repo_name(input: &str, repo: &str) -> Result<String> {
     let repo = repo.strip_suffix(".git").unwrap_or(repo);
-    validate_component(input, repo, "repository")
+    let repo = validate_component(input, repo, "repository")?;
+    if staging_owner_pid(std::ffi::OsStr::new(&repo)).is_some() {
+        return Err(Error::validation(format!(
+            "Invalid repository '{repo}' in '{}'. That name is reserved for an in-progress clone.",
+            redact_userinfo(input)
+        )));
+    }
+    Ok(repo)
 }
 
 fn validate_host(input: &str, host: &str) -> Result<()> {
@@ -672,13 +692,35 @@ fn same_repository(expected: &RepoSpec, actual_url: &str) -> bool {
 }
 
 fn spec_from_urls(host: String, owner: String, repo: String, clone_url: &str) -> RepoSpec {
+    let clone_url = with_canonical_host(clone_url, &host);
     RepoSpec {
         host,
         owner,
         repo,
-        remote_url: redact_userinfo(clone_url),
-        clone_url: clone_url.to_string(),
+        remote_url: redact_userinfo(&clone_url),
+        clone_url,
     }
+}
+
+fn with_canonical_host(url: &str, host: &str) -> String {
+    if let Some((scheme, rest)) = url.split_once("://") {
+        let (authority, path) = match rest.split_once('/') {
+            Some((authority, path)) => (authority, format!("/{path}")),
+            None => (rest, String::new()),
+        };
+        let authority = match authority.rsplit_once('@') {
+            Some((userinfo, _)) => format!("{userinfo}@{host}"),
+            None => host.to_string(),
+        };
+        return format!("{scheme}://{authority}{path}");
+    }
+    if let Some((left, path)) = url.split_once(':') {
+        return match left.rsplit_once('@') {
+            Some((userinfo, _)) => format!("{userinfo}@{host}:{path}"),
+            None => format!("{host}:{path}"),
+        };
+    }
+    url.to_string()
 }
 
 /// Hide credentials in text we print.
@@ -815,6 +857,92 @@ fn is_staging_directory(path: &Path) -> bool {
         .is_some_and(|name| name.as_encoded_bytes().starts_with(b".ptm-clone-"))
 }
 
+fn reap_stale_staging(parent: Option<&Path>, keep: &Path) {
+    let Some(parent) = parent else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == keep {
+            continue;
+        }
+        let Some(pid) = staging_owner_pid(&entry.file_name()) else {
+            continue;
+        };
+        if process_is_alive(pid) {
+            // A live pid may be a different process that reused it.
+            // Leave the directory so this clone does not delete that checkout.
+            continue;
+        }
+        let _ = fs::remove_dir_all(path);
+    }
+}
+
+fn staging_owner_pid(name: &std::ffi::OsStr) -> Option<u32> {
+    let name = name.to_str()?;
+    let rest = name.strip_prefix(".ptm-clone-")?;
+    let (pid, id) = rest.split_once('-')?;
+    let pid = pid.parse::<u32>().ok()?;
+    if pid == 0 {
+        return None;
+    }
+    uuid::Uuid::parse_str(id).ok()?;
+    Some(pid)
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    let Ok(pid) = i32::try_from(pid) else {
+        return true;
+    };
+    if pid <= 0 {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        // SAFETY: signal 0 does not deliver a signal. It only reports whether `pid` exists.
+        let status = unsafe { kill(pid, 0) };
+        // EPERM means the process exists and belongs to another user.
+        status == 0 || std::io::Error::last_os_error().raw_os_error() == Some(1)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
+fn git_missing_repository(stderr: &str) -> bool {
+    stderr.lines().any(|line| {
+        let line = line.trim().to_ascii_lowercase();
+        let line = line.strip_prefix("fatal:").map(str::trim).unwrap_or(&line);
+        line.starts_with("not a git repository")
+    })
+}
+
+fn git_inspect_error(path: &Path, stderr: &str, code: i32) -> Error {
+    let detail = stderr.trim();
+    let detail = if detail.is_empty() {
+        format!("git exited with status {code}")
+    } else {
+        detail.to_string()
+    };
+    Error::msg(format!("Failed to inspect {}: {detail}", path.display()))
+}
+
+fn io_failure(error: &std::io::Error, message: String) -> Error {
+    if error.kind() == std::io::ErrorKind::InvalidFilename {
+        Error::validation(message)
+    } else {
+        Error::msg(message)
+    }
+}
+
 fn invalid_source(input: &str) -> Error {
     let input = redact_userinfo(input);
     Error::validation(format!(
@@ -927,7 +1055,21 @@ mod tests {
                 "github.com",
                 "aku11i",
                 "phantom",
-                "https://GitHub.com/aku11i/phantom.git",
+                "https://github.com/aku11i/phantom.git",
+            ),
+            (
+                "git@GitHub.com:aku11i/phantom.git",
+                "github.com",
+                "aku11i",
+                "phantom",
+                "git@github.com:aku11i/phantom.git",
+            ),
+            (
+                "ssh://git@GitHub.com:22/aku11i/phantom.git",
+                "github.com:22",
+                "aku11i",
+                "phantom",
+                "ssh://git@github.com:22/aku11i/phantom.git",
             ),
             (
                 "git@github.com:aku11i/phantom.git",
@@ -1261,6 +1403,24 @@ mod tests {
         );
         assert!(ssh_password.clone_url.contains("secret"));
         assert!(!ssh_password.remote_url.contains("secret"));
+        let mixed_host = spec("https://user:secret@GitHub.com/aku11i/phantom.git");
+        assert_eq!(
+            mixed_host.remote_url,
+            "https://github.com/aku11i/phantom.git"
+        );
+        assert_eq!(
+            mixed_host.clone_url,
+            "https://user:secret@github.com/aku11i/phantom.git"
+        );
+        let empty_user = spec("https://@GitHub.com/aku11i/phantom.git");
+        assert_eq!(empty_user.host, "github.com");
+        assert_eq!(
+            empty_user.clone_url,
+            "https://@github.com/aku11i/phantom.git"
+        );
+        let empty_scp = spec("@GitHub.com:aku11i/phantom.git");
+        assert_eq!(empty_scp.host, "github.com");
+        assert_eq!(empty_scp.clone_url, "@github.com:aku11i/phantom.git");
 
         let error = parse_clone_source("https://ghp_SECRET123@example.com/only").expect_err("path");
         let message = error.to_string();
@@ -1463,6 +1623,8 @@ mod tests {
             .join(too_long)
             .join("widget");
         let error = create_missing_parents(&destination).expect_err("mkdir");
+        assert!(matches!(error, Error::Validation(_)), "{error}");
+        assert_eq!(error.exit_code(), 3, "{error}");
         assert!(error.to_string().contains("example.com"), "{error}");
         assert!(
             !root.join("example.com").exists(),
@@ -1470,6 +1632,138 @@ mod tests {
         );
         assert!(root.is_dir());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn place_clone_removes_dead_staging_dirs_and_keeps_live_ones() {
+        let root = temp_dir("stale");
+        let owner = root.join("github.com").join("example");
+        fs::create_dir_all(&owner).expect("owner");
+        let sibling = owner.join("keep");
+        fs::create_dir_all(&sibling).expect("sibling");
+        fs::write(sibling.join("keep.txt"), "safe").expect("keep");
+        let dead = owner.join(format!(
+            ".ptm-clone-{}-{}",
+            unused_pid(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(dead.join(".git")).expect("dead");
+        fs::write(dead.join("keep.txt"), "stale").expect("stale");
+        let live = owner.join(format!(
+            ".ptm-clone-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&live).expect("live");
+        fs::write(live.join("keep.txt"), "live").expect("live");
+        let malformed = owner.join(".ptm-clone-not-a-pid");
+        fs::create_dir_all(&malformed).expect("malformed");
+        let destination = owner.join("widget");
+        let spec = RepoSpec {
+            host: "github.com".into(),
+            owner: "example".into(),
+            repo: "widget".into(),
+            clone_url: root.join("missing.git").to_string_lossy().into_owned(),
+            remote_url: "https://github.com/example/widget.git".into(),
+        };
+        let error = place_clone(&destination, &spec, None, None, false).expect_err("clone");
+        assert!(error.to_string().contains("git clone"), "{error}");
+        assert!(!dead.exists(), "dead staging directory was left behind");
+        assert_eq!(
+            fs::read_to_string(live.join("keep.txt")).expect("live kept"),
+            "live"
+        );
+        assert!(malformed.is_dir(), "unparsed staging name was removed");
+        assert_eq!(
+            fs::read_to_string(sibling.join("keep.txt")).expect("sibling"),
+            "safe"
+        );
+
+        git(
+            &["init", "-b", "main", destination.to_str().expect("path")],
+            None,
+        );
+        git(
+            &[
+                "-C",
+                destination.to_str().expect("path"),
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/example/widget.git",
+            ],
+            None,
+        );
+        let dead_again = owner.join(format!(
+            ".ptm-clone-{}-{}",
+            unused_pid(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dead_again).expect("dead again");
+        fs::write(dead_again.join("keep.txt"), "stale").expect("stale again");
+        let adopted = place_clone(&destination, &spec, None, None, false).expect("adopt");
+        assert_eq!(adopted, (false, false));
+        assert!(!dead_again.exists(), "adopt left a dead staging directory");
+        assert!(live.is_dir());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reserved_staging_name_is_rejected_and_a_plain_dot_name_is_kept() {
+        let reserved = format!("example.com/acme/.ptm-clone-9-{}", uuid::Uuid::nil());
+        let error = parse_clone_source(&reserved).expect_err("reserved");
+        assert!(matches!(error, Error::Validation(_)), "{error}");
+        assert_eq!(error.exit_code(), 3, "{error}");
+        assert!(error.to_string().contains("reserved"), "{error}");
+        let kept = spec("example.com/acme/.ptm-clone-notes");
+        assert_eq!(kept.repo, ".ptm-clone-notes");
+    }
+
+    #[test]
+    fn git_config_failure_is_not_classified_as_a_missing_repository() {
+        assert!(git_missing_repository(
+            "fatal: not a git repository (or any of the parent directories): .git"
+        ));
+        assert!(git_missing_repository(
+            "fatal: not a git repository: '/tmp/repo'"
+        ));
+        assert!(!git_missing_repository(
+            "fatal: bad config line 1 in file /tmp/not a git repository/config"
+        ));
+    }
+
+    #[test]
+    fn reap_keeps_the_destination_and_removes_a_dead_sibling() {
+        let root = temp_dir("keep-dest");
+        let dead_pid = unused_pid();
+        let destination = root.join(format!(".ptm-clone-{dead_pid}-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(destination.join(".git")).expect("dest");
+        fs::write(destination.join("keep.txt"), "safe").expect("keep");
+        let sibling = root.join(format!(".ptm-clone-{dead_pid}-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&sibling).expect("sibling");
+        reap_stale_staging(Some(&root), &destination);
+        assert_eq!(
+            fs::read_to_string(destination.join("keep.txt")).expect("kept"),
+            "safe"
+        );
+        assert!(!sibling.exists(), "dead sibling remained");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn unused_pid() -> u32 {
+        for pid in 1_000_000..1_001_000 {
+            let alive = std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(true);
+            if !alive {
+                return pid;
+            }
+        }
+        panic!("no unused pid");
     }
 
     fn temp_dir(label: &str) -> PathBuf {
