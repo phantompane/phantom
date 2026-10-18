@@ -226,14 +226,7 @@ fn delete(args: &[String]) -> Result<i32> {
         parsed.positionals.clone()
     };
     for name in names {
-        match worktree::delete_worktree(
-            &context,
-            &name,
-            parsed.flag("force"),
-            keep_branch,
-            None,
-            worktree::HookOutput::Inherit,
-        ) {
+        match worktree::delete_worktree(&context, &name, parsed.flag("force"), keep_branch, None) {
             Ok(outcome) => println!("{}", outcome.message),
             Err(error) => {
                 let code = match &error {
@@ -281,7 +274,6 @@ fn exec(args: &[String]) -> Result<i32> {
         command,
         &rest,
         &[],
-        false,
     ) {
         Ok(0) => Ok(SUCCESS),
         Ok(code) => fail(
@@ -390,25 +382,6 @@ fn preferences_remove(args: &[String]) -> Result<i32> {
 fn version(args: &[String]) -> Result<i32> {
     args::parse(args, &[], false)?;
     println!("{}", crate::version_line());
-    Ok(SUCCESS)
-}
-
-fn mcp(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &[flag("help", Some('h'))], true)?;
-    if parsed.flag("help") || parsed.positionals.is_empty() {
-        if let Some(text) = help::command_help("mcp")? {
-            println!("{text}");
-        }
-        return Ok(SUCCESS);
-    }
-    if parsed.positionals[0] != "serve" {
-        eprintln!("Unknown subcommand: {}", parsed.positionals[0]);
-        return Ok(GENERAL);
-    }
-    if let Err(error) = crate::mcp::serve() {
-        eprintln!("Failed to start MCP server: {error}");
-        return Ok(GENERAL);
-    }
     Ok(SUCCESS)
 }
 
@@ -629,12 +602,7 @@ fn github_checkout(args: &[String]) -> Result<i32> {
             VALIDATION,
         );
     };
-    let checkout = match github::checkout(
-        number,
-        parsed.value("base"),
-        &Logger::on(),
-        worktree::HookOutput::Inherit,
-    ) {
+    let checkout = match github::checkout(number, parsed.value("base"), &Logger::on()) {
         Ok(checkout) => checkout,
         Err(error) => return fail(&error, error.exit_code()),
     };
@@ -811,12 +779,6 @@ static COMMANDS: &[Command] = &[
         name: "version",
         help_key: "version",
         run: version,
-        children: &[],
-    },
-    Command {
-        name: "mcp",
-        help_key: "mcp",
-        run: mcp,
         children: &[],
     },
     Command {

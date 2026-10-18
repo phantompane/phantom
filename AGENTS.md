@@ -4,7 +4,7 @@
 
 - Phantom is a Rust CLI. The crate lives at the repository root (`Cargo.toml`, `src/`, `tests/`).
 - Development happens on `next`. `main` stays the previous TypeScript version.
-- Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `github`, `mcp`, `help`.
+- Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `github`, `help`.
 - Command help text is generated from `help-data.json`.
 - Project config example: `phantom.config.json`.
 - Principles: single responsibility, a centralized git executor, and `Result` for every fallible path.

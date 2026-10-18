@@ -316,7 +316,6 @@ mod tests {
             "exec",
             "preferences",
             "version",
-            "mcp",
             "project",
             "github",
             "gh",

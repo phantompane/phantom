@@ -33,10 +33,6 @@
       "description": "Display the Phantom version"
     },
     {
-      "name": "mcp",
-      "description": "Manage MCP server for AI assistants"
-    },
-    {
       "name": "project",
       "description": "Manage and discover Git projects"
     },
@@ -293,7 +289,7 @@
         },
         {
           "command": "ptm preferences set keepBranch true",
-          "description": "Keep branches by default when deleting worktrees with ptm delete or MCP"
+          "description": "Keep branches by default when deleting worktrees with ptm delete"
         },
         {
           "command": "ptm preferences set ghqDiscovery false",
@@ -408,31 +404,6 @@
       ],
       "notes": [
         "Also accessible via 'ptm --version' or 'ptm -v'"
-      ]
-    },
-    "mcp": {
-      "name": "mcp",
-      "description": "Manage MCP (Model Context Protocol) server for Phantom",
-      "usage": "ptm mcp <subcommand> [options]",
-      "options": [
-        {
-          "name": "help",
-          "short": "h",
-          "type": "boolean",
-          "description": "Show help message"
-        }
-      ],
-      "examples": [
-        {
-          "description": "Start the MCP server",
-          "command": "ptm mcp serve"
-        }
-      ],
-      "notes": [
-        "Subcommands:",
-        "  serve    Start the MCP server with stdio transport",
-        "",
-        "The MCP server allows AI assistants to manage Git worktrees through the Model Context Protocol."
       ]
     },
     "project": {
