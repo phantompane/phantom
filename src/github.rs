@@ -165,6 +165,7 @@ fn checkout_pull_request(
         format!("origin/{}", pull.head_ref)
     };
     let refspec = format!("{}:{worktree_name}", upstream.trim_start_matches("origin/"));
+    metadata::prepare(git_root)?;
     git::fetch(git_root, "origin", &refspec)?;
     if let Err(error) = git::set_upstream(git_root, &worktree_name, &upstream) {
         eprintln!("Warning: Could not set upstream branch: {error}");
