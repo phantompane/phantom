@@ -59,7 +59,7 @@
           "name": "project",
           "short": "p",
           "type": "string",
-          "description": "Repository to operate on instead of the current directory. Place this before the worktree name and before --exec. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name or an unambiguous suffix such as owner/repo or repo",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A --project after --exec is part of that command. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
           "example": "--project github.com/owner/repo"
         },
         {
@@ -135,7 +135,7 @@
           "name": "project",
           "short": "p",
           "type": "string",
-          "description": "Repository to operate on instead of the current directory. Place this before the branch name and before --exec. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name or an unambiguous suffix such as owner/repo or repo",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A --project after --exec is part of that command. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
           "example": "--project github.com/owner/repo"
         },
         {
@@ -192,7 +192,7 @@
           "name": "project",
           "short": "p",
           "type": "string",
-          "description": "Repository to operate on instead of the current directory. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name or an unambiguous suffix such as owner/repo or repo",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
           "example": "--project ~/src/repo"
         },
         {
@@ -242,7 +242,7 @@
           "name": "project",
           "short": "p",
           "type": "string",
-          "description": "Repository to operate on instead of the current directory. Place this before the worktree name. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name or an unambiguous suffix such as owner/repo or repo",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
           "example": "--project owner/repo"
         },
         {
@@ -276,7 +276,7 @@
           "name": "project",
           "short": "p",
           "type": "string",
-          "description": "Repository to operate on instead of the current directory. Place this before the worktree names. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name or an unambiguous suffix such as owner/repo or repo",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
           "example": "--project owner/repo"
         },
         {
@@ -342,7 +342,7 @@
           "name": "project",
           "short": "p",
           "type": "string",
-          "description": "Repository to operate on instead of the current directory. Place this before the worktree name. Everything after the worktree name is passed to the command, including options such as --project. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name or an unambiguous suffix such as owner/repo or repo",
+          "description": "Repository to operate on instead of the current directory. Put this before the worktree name. Everything after the worktree name is passed to the command, including options such as --project. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
           "example": "--project owner/repo"
         }
       ],
@@ -694,7 +694,7 @@
           "name": "project",
           "short": "p",
           "type": "string",
-          "description": "Repository to operate on instead of the current directory. Place this before the PR or issue number. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name or an unambiguous suffix such as owner/repo or repo",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
           "example": "--project owner/repo"
         },
         {
@@ -767,7 +767,7 @@
           "name": "project",
           "short": "p",
           "type": "string",
-          "description": "Repository to operate on instead of the current directory. Place this before the PR or issue number. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name or an unambiguous suffix such as owner/repo or repo",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
           "example": "--project owner/repo"
         },
         {

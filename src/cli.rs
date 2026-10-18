@@ -82,7 +82,7 @@ fn create(args: &[String]) -> Result<i32> {
     };
     let repository = match selected_repository(&parsed) {
         Ok(repository) => repository,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_project(&error, args, &parsed, json),
     };
     match worktree::run_create(worktree::CreateRequest {
         name: parsed.positionals.first().map(String::as_str),
@@ -148,7 +148,7 @@ fn attach(args: &[String]) -> Result<i32> {
     };
     let repository = match selected_repository(&parsed) {
         Ok(repository) => repository,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_project(&error, args, &parsed, json),
     };
     match worktree::run_attach(worktree::AttachRequest {
         name,
@@ -199,11 +199,10 @@ fn list(args: &[String]) -> Result<i32> {
     }
     let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_project(&error, args, &parsed, json),
     };
-    let git_root = context.git_root;
     let exclude_default = parsed.flag("no-default");
-    let worktrees = match worktree::list_worktrees(&git_root, exclude_default, false) {
+    let worktrees = match worktree::list_worktrees(&context, exclude_default, false) {
         Ok(worktrees) => worktrees,
         Err(error) => return fail_with(&error, GENERAL, json),
     };
@@ -218,7 +217,7 @@ fn list(args: &[String]) -> Result<i32> {
     }
     if worktrees.is_empty() {
         if !parsed.flag("names") {
-            let available = worktree::list_worktrees(&git_root, false, false).unwrap_or_default();
+            let available = worktree::list_worktrees(&context, false, false).unwrap_or_default();
             let message = if exclude_default && !available.is_empty() {
                 "No sub worktrees found"
             } else {
@@ -255,10 +254,10 @@ fn where_cmd(args: &[String]) -> Result<i32> {
     }
     let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_project(&error, args, &parsed, json),
     };
     let name = &parsed.positionals[0];
-    match worktree::find_worktree(&context.git_root, name, false, None) {
+    match worktree::find_worktree(&context, name, false, None) {
         Ok(worktree) => {
             if json {
                 emit_json(&worktree::WorktreeRefOutput {
@@ -311,13 +310,12 @@ fn delete(args: &[String]) -> Result<i32> {
     }
     let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_project(&error, args, &parsed, json),
     };
-    let git_root = &context.git_root;
     let keep_branch =
         parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false);
     let names = if delete_current {
-        match worktree::current_worktree_name(git_root) {
+        match worktree::current_worktree_name(&context) {
             Ok(Some(name)) => vec![name],
             Ok(None) => {
                 return fail_with(
@@ -404,10 +402,10 @@ fn exec(args: &[String]) -> Result<i32> {
     let command_args = parsed.positionals[1..].to_vec();
     let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail(&error, error.exit_code()),
+        Err(error) => return fail_project(&error, args, &parsed, false),
     };
     let name = parsed.positionals[0].clone();
-    if let Err(error) = worktree::find_worktree(&context.git_root, &name, false, None) {
+    if let Err(error) = worktree::find_worktree(&context, &name, false, None) {
         let code = if matches!(error, Error::WorktreeNotFound(_)) {
             NOT_FOUND
         } else {
@@ -420,15 +418,7 @@ fn exec(args: &[String]) -> Result<i32> {
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
-    match worktree::exec_in_worktree(
-        &context.git_root,
-        &context.worktrees_directory,
-        &name,
-        command,
-        &rest,
-        &[],
-        false,
-    ) {
+    match worktree::exec_in_worktree(&context, &name, command, &rest, &[], false) {
         Ok(0) => Ok(SUCCESS),
         Ok(code) => fail(
             &Error::CommandFailed {
@@ -844,7 +834,7 @@ fn github_checkout(args: &[String]) -> Result<i32> {
     };
     let repository = match selected_repository(&parsed) {
         Ok(repository) => repository,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_project(&error, args, &parsed, json),
     };
     let checkout = match github::checkout(
         number,
@@ -913,12 +903,25 @@ fn requests_help(command: &Command, args: &[String]) -> bool {
 
 fn help_before_positionals(args: &[String], limit: usize) -> bool {
     let mut positionals = 0usize;
+    let mut skip_value = false;
     for arg in args {
         if positionals >= limit || arg == "--" {
             return false;
         }
+        if skip_value {
+            // The project value is not the worktree name, even when it is `--help`.
+            skip_value = false;
+            continue;
+        }
         if is_help_flag(arg) {
             return true;
+        }
+        if arg == "--project" || arg == "-p" {
+            skip_value = true;
+            continue;
+        }
+        if arg.starts_with("--project=") || (arg.starts_with("-p") && arg.len() > 2) {
+            continue;
         }
         if !arg.starts_with('-') {
             positionals += 1;
@@ -962,6 +965,18 @@ fn selected_repository(parsed: &Parsed) -> Result<Option<std::path::PathBuf>> {
 fn command_context(parsed: &Parsed) -> Result<crate::context::Context> {
     let repository = selected_repository(parsed)?;
     crate::context::open(repository.as_deref())
+}
+
+/// `--project --json` consumes `--json` as the value, but the user still asked for JSON.
+fn fail_project(error: &Error, args: &[String], parsed: &Parsed, json: bool) -> Result<i32> {
+    let option_like = parsed
+        .value("project")
+        .is_some_and(|value| value.starts_with('-'));
+    fail_with(
+        error,
+        error.exit_code(),
+        json || (option_like && wants_json(args)),
+    )
 }
 
 fn flag(name: &'static str, short: Option<char>) -> Opt {

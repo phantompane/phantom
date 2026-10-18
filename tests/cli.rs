@@ -3583,7 +3583,13 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         &repo.home,
     );
     assert_eq!(absent.status.code(), Some(2), "{}", text(&absent.stdout));
-    assert_eq!(json_value(&absent)["error"]["code"], "not_found");
+    let absent_json = json_value(&absent);
+    assert_eq!(absent_json["error"]["code"], "not_found");
+    assert_eq!(absent_json["error"]["exitCode"], 2);
+    assert_eq!(
+        absent_json["error"]["message"],
+        "Path '/no/such/ptm805-path' does not exist"
+    );
 
     let repeated = run(
         &[
@@ -3726,4 +3732,217 @@ fn exec_project_option_passes_later_options_to_the_command() {
     assert_eq!(missing.status.code(), Some(2), "{}", text(&missing.stderr));
     assert!(text(&missing.stderr).contains("Project 'no-such-ptm805' not found"));
     assert!(!text(&missing.stderr).contains("unrecognized option"));
+}
+
+#[test]
+fn project_option_ignores_the_callers_config_and_matches_directory_names() {
+    let repo = Repo::new();
+    let path_env = silent_ghq_path(&repo);
+    let tool = repo.root.join("tool");
+    fs::create_dir_all(&tool).expect("tool");
+    git_at(&repo, &tool, &["init", "-b", "main"]);
+    git_at(
+        &repo,
+        &tool,
+        &["config", "user.email", "phantom-rust@example.com"],
+    );
+    git_at(&repo, &tool, &["config", "user.name", "Phantom Rust"]);
+    fs::write(tool.join("README.md"), "tool\n").expect("readme");
+    git_at(&repo, &tool, &["add", "README.md"]);
+    git_at(&repo, &tool, &["commit", "-m", "initial"]);
+    let feature = tool.join(".git/phantom/worktrees/h1");
+    git_at(
+        &repo,
+        &tool,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "h1",
+            feature.to_str().expect("h1"),
+            "HEAD",
+        ],
+    );
+    let localname = repo.root.join("localname");
+    fs::create_dir_all(&localname).expect("localname");
+    git_at(&repo, &localname, &["init", "-b", "main"]);
+    git_at(
+        &repo,
+        &localname,
+        &["config", "user.email", "phantom-rust@example.com"],
+    );
+    git_at(&repo, &localname, &["config", "user.name", "Phantom Rust"]);
+    fs::write(localname.join("README.md"), "local\n").expect("readme");
+    git_at(&repo, &localname, &["add", "README.md"]);
+    git_at(&repo, &localname, &["commit", "-m", "initial"]);
+    git_at(
+        &repo,
+        &localname,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/ptm805renamed.git",
+        ],
+    );
+    for path in [&tool, &localname] {
+        let added = repo.phantom(&["project", "add", path.to_str().expect("path"), "--json"]);
+        assert!(added.status.success(), "{}", text(&added.stderr));
+    }
+    fs::write(repo.repo.join(".ptm.toml"), "not = [\n").expect("invalid config");
+
+    let run = |args: &[&str]| {
+        repo.command(env!("CARGO_BIN_EXE_ptm"), args)
+            .env("PATH", &path_env)
+            .output()
+            .expect("ptm")
+    };
+    let listed = run(&["list", "-p", "tool"]);
+    assert!(
+        listed.status.success(),
+        "{}\n{}",
+        text(&listed.stdout),
+        text(&listed.stderr)
+    );
+    assert!(!text(&listed.stderr).contains("Invalid .ptm.toml"));
+    assert!(
+        text(&listed.stdout).contains("h1"),
+        "{}",
+        text(&listed.stdout)
+    );
+    let located = run(&["where", "-p", "tool", "h1"]);
+    assert!(located.status.success(), "{}", text(&located.stderr));
+    assert!(same_dir(&text(&located.stdout), &feature));
+    let created = run(&["create", "-p", "tool", "z1"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    assert!(tool.join(".git/phantom/worktrees/z1").is_dir());
+    assert!(!text(&created.stderr).contains("Invalid .ptm.toml"));
+    assert!(!repo.repo.join(".git/phantom/worktrees/z1").exists());
+
+    let by_directory = run(&["where", "-p", "localname", "main"]);
+    assert!(
+        by_directory.status.success(),
+        "{}",
+        text(&by_directory.stderr)
+    );
+    assert!(same_dir(&text(&by_directory.stdout), &localname));
+    let by_suffix = run(&["where", "--project", "ptm805renamed", "main"]);
+    assert!(by_suffix.status.success(), "{}", text(&by_suffix.stderr));
+    assert!(same_dir(&text(&by_suffix.stdout), &localname));
+
+    let option_json = run(&["list", "-p", "--json"]);
+    assert_eq!(
+        option_json.status.code(),
+        Some(3),
+        "{}",
+        text(&option_json.stdout)
+    );
+    let option_body = json_value(&option_json);
+    assert_eq!(option_body["error"]["code"], "validation");
+    assert_eq!(option_body["error"]["exitCode"], 3);
+    assert!(option_body["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("looks like an option"));
+    let option_later = run(&["where", "--json", "-p", "--bogus", "main"]);
+    assert_eq!(option_later.status.code(), Some(3));
+    assert_eq!(json_value(&option_later)["error"]["code"], "validation");
+    let option_human = run(&["where", "-p", "--nope", "main"]);
+    assert_eq!(
+        option_human.status.code(),
+        Some(3),
+        "{}",
+        text(&option_human.stderr)
+    );
+    assert!(text(&option_human.stderr).contains("looks like an option"));
+    assert!(!text(&option_human.stdout).contains("\"version\""));
+
+    let help = run(&["exec", "--project", "tool", "--help"]);
+    assert!(help.status.success(), "{}", text(&help.stderr));
+    assert!(text(&help.stdout).contains("ptm exec"));
+    assert!(!text(&help.stderr).contains("Unknown option"));
+}
+
+#[test]
+fn github_checkout_project_passes_the_selected_host() {
+    let repo = Repo::new();
+    fs::write(repo.repo.join(".ptm.toml"), "not = [\n").expect("invalid config");
+    let tool = repo.root.join("ghe-tool");
+    fs::create_dir_all(&tool).expect("tool");
+    git_at(&repo, &tool, &["init", "-b", "main"]);
+    git_at(
+        &repo,
+        &tool,
+        &["config", "user.email", "phantom-rust@example.com"],
+    );
+    git_at(&repo, &tool, &["config", "user.name", "Phantom Rust"]);
+    fs::write(tool.join("README.md"), "ghe\n").expect("readme");
+    git_at(&repo, &tool, &["add", "README.md"]);
+    git_at(&repo, &tool, &["commit", "-m", "initial"]);
+    git_at(
+        &repo,
+        &tool,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://ghe.example.com/acme/tool.git",
+        ],
+    );
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let log = repo.root.join("gh.log");
+    let gh = bin.join("gh");
+    fs::write(
+        &gh,
+        "#!/bin/sh\nprintf '%s\\n' \"pwd=$(pwd)\" >> \"$PTM_GH_LOG\"\nprintf '%s\\n' \"$*\" >> \"$PTM_GH_LOG\"\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"owner\":{\"login\":\"acme\"},\"name\":\"tool\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":3}'\nexit 0\n",
+    )
+    .expect("gh");
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(&gh).expect("meta").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&gh, perms).expect("chmod");
+    let path_env = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let checkout = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "github",
+                "checkout",
+                "-p",
+                tool.to_str().expect("tool"),
+                "3",
+                "--json",
+            ],
+        )
+        .env("PATH", &path_env)
+        .env("PTM_GH_LOG", &log)
+        .output()
+        .expect("checkout");
+    assert!(
+        checkout.status.success(),
+        "{}\n{}",
+        text(&checkout.stdout),
+        text(&checkout.stderr)
+    );
+    assert!(!text(&checkout.stderr).contains("Invalid .ptm.toml"));
+    assert!(tool.join(".git/phantom/worktrees/issues/3").is_dir());
+    let recorded = fs::read_to_string(&log).expect("gh log");
+    assert!(
+        recorded.contains("--hostname ghe.example.com"),
+        "{recorded}"
+    );
+    assert!(recorded.contains("repos/acme/tool/issues/3"), "{recorded}");
+    let tool_pwd = canonical(&tool).to_string_lossy().to_string();
+    assert!(recorded.contains(&format!("pwd={tool_pwd}")), "{recorded}");
+    assert!(!recorded.contains(&format!("pwd={}", repo.repo.display())));
 }

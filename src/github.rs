@@ -81,7 +81,8 @@ pub fn checkout(
         None => std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?,
     };
     let (owner, repo) = repo_info(&cwd)?;
-    let issue = fetch_issue(&owner, &repo, number)?;
+    let host = github_host(&cwd);
+    let issue = fetch_issue(&cwd, host.as_deref(), &owner, &repo, number)?;
     let Some(issue) = issue else {
         return Err(Error::msg(format!(
             "GitHub issue or pull request #{number} not found or you don't have permission to access it."
@@ -129,7 +130,7 @@ fn checkout_pull_request(
     } else {
         pull.head_ref.clone()
     };
-    if let Ok(existing) = worktree::find_worktree(&context.git_root, &worktree_name, false, None) {
+    if let Ok(existing) = worktree::find_worktree(&context, &worktree_name, false, None) {
         if existing.branch == worktree_name {
             let path = existing.path.clone().into();
             return Ok(Checkout {
@@ -172,7 +173,7 @@ fn checkout_pull_request(
             pull.number, pull.head_ref
         )
     };
-    let info = worktree::worktree_at_path(&context.git_root, &attached.path)?;
+    let info = worktree::worktree_at_path(&context, &attached.path)?;
     Ok(Checkout {
         message,
         worktree: worktree_name,
@@ -198,7 +199,7 @@ fn checkout_issue(
 ) -> Result<Checkout> {
     let context = context::open(repository)?;
     let name = format!("issues/{number}");
-    if let Ok(existing) = worktree::find_worktree(&context.git_root, &name, false, None) {
+    if let Ok(existing) = worktree::find_worktree(&context, &name, false, None) {
         let path = existing.path.clone().into();
         return Ok(Checkout {
             message: format!("Issue #{number} is already checked out"),
@@ -216,7 +217,7 @@ fn checkout_issue(
     let commands = post_commands(&context);
     let base = base.unwrap_or("HEAD");
     let created = worktree::create_worktree(&context, &name, base, &[], &commands, logger)?;
-    let info = worktree::worktree_at_path(&context.git_root, &created.path)?;
+    let info = worktree::worktree_at_path(&context, &created.path)?;
     Ok(Checkout {
         message: format!("Created worktree '{name}' at {}", created.path.display()),
         worktree: name,
@@ -256,7 +257,20 @@ fn repo_info(cwd: &Path) -> Result<(String, String)> {
     Ok((owner.to_string(), repo.to_string()))
 }
 
-fn fetch_issue(owner: &str, repo: &str, number: &str) -> Result<Option<Issue>> {
+/// Host for `gh api --hostname`, from the selected repository's `origin`.
+fn github_host(directory: &Path) -> Option<String> {
+    let name = crate::repository::canonical_name_from_origin(directory)?;
+    let host = name.split('/').next().filter(|host| !host.is_empty())?;
+    Some(host.to_string())
+}
+
+fn fetch_issue(
+    directory: &Path,
+    host: Option<&str>,
+    owner: &str,
+    repo: &str,
+    number: &str,
+) -> Result<Option<Issue>> {
     let parsed = number.parse::<u64>().ok().filter(|value| *value > 0);
     let Some(parsed) = parsed else {
         return Err(Error::msg(format!(
@@ -264,7 +278,7 @@ fn fetch_issue(owner: &str, repo: &str, number: &str) -> Result<Option<Issue>> {
         )));
     };
     let path = format!("repos/{owner}/{repo}/issues/{parsed}");
-    let captured = process::raw("gh", &["api", &path], None)?;
+    let captured = gh_api(directory, host, &path)?;
     if captured.code != 0 {
         if is_not_found(&captured) {
             return Ok(None);
@@ -274,7 +288,7 @@ fn fetch_issue(owner: &str, repo: &str, number: &str) -> Result<Option<Issue>> {
     let value: Value =
         serde_json::from_str(&captured.stdout).map_err(|error| Error::msg(error.to_string()))?;
     let pull_request = if value.get("pull_request").is_some() {
-        Some(fetch_pull(owner, repo, parsed)?)
+        Some(fetch_pull(directory, host, owner, repo, parsed)?)
     } else {
         None
     };
@@ -284,9 +298,15 @@ fn fetch_issue(owner: &str, repo: &str, number: &str) -> Result<Option<Issue>> {
     }))
 }
 
-fn fetch_pull(owner: &str, repo: &str, number: u64) -> Result<PullRequest> {
+fn fetch_pull(
+    directory: &Path,
+    host: Option<&str>,
+    owner: &str,
+    repo: &str,
+    number: u64,
+) -> Result<PullRequest> {
     let path = format!("repos/{owner}/{repo}/pulls/{number}");
-    let captured = process::raw("gh", &["api", &path], None)?;
+    let captured = gh_api(directory, host, &path)?;
     if captured.code != 0 {
         return Err(Error::msg(first_detail(&captured).to_string()));
     }
@@ -313,6 +333,16 @@ fn fetch_pull(owner: &str, repo: &str, number: u64) -> Result<PullRequest> {
         head_ref,
         head_repo,
     })
+}
+
+fn gh_api(directory: &Path, host: Option<&str>, path: &str) -> Result<process::Captured> {
+    let mut args = vec!["api".to_string(), path.to_string()];
+    if let Some(host) = host {
+        args.push("--hostname".to_string());
+        args.push(host.to_string());
+    }
+    let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    process::raw("gh", &refs, Some(directory))
 }
 
 fn is_not_found(captured: &process::Captured) -> bool {

@@ -99,15 +99,14 @@ pub fn validate_worktree_name(name: &str) -> Result<()> {
 }
 
 pub fn list_worktrees(
-    git_root: &Path,
+    context: &Context,
     exclude_default: bool,
     include_prunable: bool,
 ) -> Result<Vec<WorktreeInfo>> {
-    let context = context::create(git_root)?;
-    let git_root_string = git_root.to_string_lossy().to_string();
+    let git_root_string = context.git_root.to_string_lossy().to_string();
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let mut infos = Vec::new();
-    let listed = git::list_worktrees(git_root)
+    let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
     for worktree in listed {
         if !include_prunable && worktree.prunable {
@@ -116,7 +115,7 @@ pub fn list_worktrees(
         if exclude_default && worktree.path == git_root_string {
             continue;
         }
-        infos.push(info_from_git(&worktree, &cwd, &context));
+        infos.push(info_from_git(&worktree, &cwd, context));
     }
     Ok(infos)
 }
@@ -203,9 +202,9 @@ fn select_worktree(worktrees: Vec<WorktreeInfo>, name: &str) -> Result<WorktreeI
 }
 
 /// The worktree Git has registered at `path`, independent of its branch or directory name.
-pub fn worktree_at_path(git_root: &Path, path: &Path) -> Result<WorktreeInfo> {
+pub fn worktree_at_path(context: &Context, path: &Path) -> Result<WorktreeInfo> {
     let wanted = paths::normalize(path);
-    list_worktrees(git_root, false, true)?
+    list_worktrees(context, false, true)?
         .into_iter()
         .find(|worktree| {
             let listed = Path::new(&worktree.path);
@@ -220,20 +219,20 @@ pub fn worktree_at_path(git_root: &Path, path: &Path) -> Result<WorktreeInfo> {
 }
 
 pub fn find_worktree(
-    git_root: &Path,
+    context: &Context,
     name: &str,
     exclude_default: bool,
     expected_path: Option<&Path>,
 ) -> Result<WorktreeInfo> {
-    let worktrees = list_worktrees(git_root, exclude_default, true)?
+    let worktrees = list_worktrees(context, exclude_default, true)?
         .into_iter()
         .filter(|worktree| expected_path.is_none_or(|path| Path::new(&worktree.path) == path))
         .collect();
     select_worktree(worktrees, name)
 }
 
-pub fn ensure_absent(git_root: &Path, name: &str) -> Result<()> {
-    if list_worktrees(git_root, false, true)?
+pub fn ensure_absent(context: &Context, name: &str) -> Result<()> {
+    if list_worktrees(context, false, true)?
         .iter()
         .any(|worktree| same_worktree(worktree, name))
     {
@@ -301,7 +300,7 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
     let exec = run_action(&name, &created.path, action, &request.logger)?;
     let hook_code = created.hook_failure.as_ref().map(|failure| failure.code);
     let action_code = exec.as_ref().map(|item| item.exit_code);
-    let worktree = worktree_at_path(&context.git_root, &created.path)?;
+    let worktree = worktree_at_path(&context, &created.path)?;
     Ok(CreateOutcome {
         name,
         path: created.path,
@@ -375,7 +374,7 @@ pub fn create_worktree(
     validate_worktree_name(name)?;
     fs::create_dir_all(&context.worktrees_directory)
         .map_err(|error| Error::msg(error.to_string()))?;
-    ensure_absent(&context.git_root, name)?;
+    ensure_absent(context, name)?;
     let path = paths::worktree_path(
         &context.worktrees_directory,
         name,
@@ -388,15 +387,7 @@ pub fn create_worktree(
     let hooks_ran = !commands.is_empty();
     let hook_failure = if hooks_ran {
         logger.log("\nRunning post-create commands...");
-        run_hook_commands(
-            &context.git_root,
-            &context.worktrees_directory,
-            name,
-            commands,
-            true,
-            logger,
-            &context.source_checkout,
-        )?
+        run_hook_commands(context, name, commands, true, logger)?
     } else {
         None
     };
@@ -439,7 +430,7 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action_code = exec
         .as_ref()
         .and_then(|item| (!item.ok).then_some(item.exit_code));
-    let worktree = worktree_at_path(&context.git_root, &attached.path)?;
+    let worktree = worktree_at_path(&context, &attached.path)?;
     Ok(AttachOutcome {
         path: attached.path,
         exit_code: combine_exit(action_code, hook_code),
@@ -489,15 +480,7 @@ pub fn attach_worktree(
     let hooks_ran = !commands.is_empty();
     let hook_failure = if hooks_ran {
         logger.log("\nRunning post-create commands...");
-        run_hook_commands(
-            &context.git_root,
-            &context.worktrees_directory,
-            name,
-            commands,
-            true,
-            logger,
-            &context.source_checkout,
-        )?
+        run_hook_commands(context, name, commands, true, logger)?
     } else {
         None
     };
@@ -545,8 +528,7 @@ pub fn delete_worktree(
     expected_path: Option<&Path>,
     logger: &Logger,
 ) -> std::result::Result<DeleteOutcome, DeleteError> {
-    let worktree =
-        find_worktree(&context.git_root, name, true, expected_path).map_err(DeleteError::bare)?;
+    let worktree = find_worktree(context, name, true, expected_path).map_err(DeleteError::bare)?;
     let path = PathBuf::from(&worktree.path);
     if !paths::is_strictly_inside(&path, &context.worktrees_directory) {
         return Err(DeleteError::kept(
@@ -569,15 +551,7 @@ pub fn delete_worktree(
     let commands = config::pre_delete_commands(context.config.as_ref());
     if !commands.is_empty() {
         logger.log("\nRunning pre-delete commands...");
-        if let Err(error) = run_hook_commands(
-            &context.git_root,
-            &context.worktrees_directory,
-            name,
-            commands,
-            false,
-            logger,
-            &context.source_checkout,
-        ) {
+        if let Err(error) = run_hook_commands(context, name, commands, false, logger) {
             return Err(DeleteError::kept(error, &worktree));
         }
     }
@@ -637,17 +611,17 @@ pub fn delete_worktree(
     })
 }
 
-pub fn current_worktree_name(git_root: &Path) -> Result<Option<String>> {
+pub fn current_worktree_name(context: &Context) -> Result<Option<String>> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let top = match git::top_level(&cwd) {
         Ok(top) => top,
         Err(_) => return Ok(None),
     };
-    if paths::normalize(&top) == paths::normalize(git_root) {
+    if paths::normalize(&top) == paths::normalize(&context.git_root) {
         return Ok(None);
     }
     let top = paths::normalize(&top);
-    Ok(list_worktrees(git_root, true, true)?
+    Ok(list_worktrees(context, true, true)?
         .into_iter()
         .find_map(|worktree| {
             (paths::normalize(Path::new(&worktree.path)) == top).then_some(worktree.name)
@@ -655,15 +629,14 @@ pub fn current_worktree_name(git_root: &Path) -> Result<Option<String>> {
 }
 
 pub fn exec_in_worktree(
-    git_root: &Path,
-    _worktrees_directory: &Path,
+    context: &Context,
     name: &str,
     command: &str,
     args: &[&str],
     env: &[(&str, &str)],
     redirect_stdout_to_stderr: bool,
 ) -> Result<i32> {
-    let worktree = find_worktree(git_root, name, false, None)?;
+    let worktree = find_worktree(context, name, false, None)?;
     let path = PathBuf::from(&worktree.path);
     let owned = ptm_env(&worktree.name, &path);
     let mut pairs = owned
@@ -790,15 +763,13 @@ fn combine_exit(action: Option<i32>, hook: Option<i32>) -> Option<i32> {
 }
 
 fn run_hook_commands(
-    git_root: &Path,
-    worktrees_directory: &Path,
+    context: &Context,
     name: &str,
     commands: &[String],
     post: bool,
     logger: &Logger,
-    source_checkout: &Path,
 ) -> Result<Option<HookFailure>> {
-    let root_path = source_checkout.display().to_string();
+    let root_path = context.source_checkout.display().to_string();
     for command in commands {
         if post {
             logger.log(&format!("Executing: {command}"));
@@ -807,8 +778,7 @@ fn run_hook_commands(
         }
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let code = match exec_in_worktree(
-            git_root,
-            worktrees_directory,
+            context,
             name,
             &shell,
             &["-c", command],

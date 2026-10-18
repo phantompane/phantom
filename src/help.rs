@@ -278,9 +278,14 @@ mod tests {
         assert!(list.contains("--no-default"));
         assert!(list.contains("--json"));
         assert!(list.contains("-p, --project <value>"));
+        assert!(!list.contains("Put this before the worktree name"));
         let exec = command_help("exec").expect("help").expect("exec");
         assert!(exec.contains("--project <value>"));
+        assert!(exec.contains("Put this before the worktree name"));
         assert!(exec.contains("pwd --project y"));
+        let where_help = command_help("where").expect("help").expect("where");
+        assert!(!where_help.contains("Put this before the worktree name"));
+        assert!(where_help.contains("may appear with the other options"));
         let checkout = command_help("github checkout")
             .expect("help")
             .expect("checkout");

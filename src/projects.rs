@@ -587,14 +587,19 @@ pub fn resolve_project_root(input: &Path) -> Result<PathBuf> {
 /// A ref that starts with `/`, `.`, or `~` is a directory anywhere inside a
 /// repository, including a linked worktree, and resolves to the main checkout.
 /// Any other ref matches the canonical `host/owner/repo` name of a registered
-/// or discovered project, or an unambiguous path-segment suffix (`owner/repo`,
-/// `repo`).
+/// or discovered project, that project's directory name, or an unambiguous
+/// path-segment suffix (`owner/repo`, `repo`).
 pub fn resolve_project_ref(reference: &str) -> Result<PathBuf> {
     let reference = reference.trim();
     if reference.is_empty() {
         return Err(Error::validation(
             "Option '--project <value>' requires a project name or path".to_string(),
         ));
+    }
+    if reference.starts_with('-') {
+        return Err(Error::validation(format!(
+            "Option '--project <value>' received '{reference}', which looks like an option"
+        )));
     }
     if is_path_reference(reference) {
         let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
@@ -634,7 +639,7 @@ fn resolve_directory_reference(reference: &str, cwd: &Path, home: &Path) -> Resu
     let metadata = match fs::metadata(&path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(Error::ProjectNotFound(reference.to_string()));
+            return Err(Error::PathNotFound(reference.to_string()));
         }
         Err(error) => return Err(Error::msg(error.to_string())),
     };
@@ -767,27 +772,30 @@ fn entry_match_names(entry: &ProjectListEntry) -> Vec<String> {
 /// The first name is canonical: the `origin` URL when it parses as
 /// `host/owner/repo`, otherwise the `<root>/<host>/<owner>/<repo>` location,
 /// otherwise the directory name. A location that differs from the remote is
-/// kept as an additional name.
+/// kept as an additional name, and so is the directory name shown by
+/// `project list`.
 fn names_for_root(root: &Path, clone_root: Option<&Path>) -> Vec<String> {
     let mut names = Vec::new();
     if let Some(remote) = crate::repository::canonical_name_from_origin(root) {
         names.push(remote);
     }
     if let Some(located) = name_from_location(root, clone_root) {
-        if !names.iter().any(|name| name == &located) {
-            names.push(located);
-        }
+        push_unique(&mut names, located);
     }
-    if names.is_empty() {
-        if let Some(name) = root
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .filter(|name| !name.is_empty())
-        {
-            names.push(name);
-        }
+    if let Some(name) = root
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.is_empty())
+    {
+        push_unique(&mut names, name);
     }
     names
+}
+
+fn push_unique(names: &mut Vec<String>, name: String) {
+    if !names.iter().any(|existing| existing == &name) {
+        names.push(name);
+    }
 }
 
 fn name_from_location(root: &Path, clone_root: Option<&Path>) -> Option<String> {
@@ -1381,6 +1389,40 @@ mod tests {
     }
 
     #[test]
+    fn directory_name_matches_alongside_canonical_names() {
+        let projects = [
+            candidate(
+                "/work/localname",
+                "github.com/acme/widget",
+                &["github.com/acme/widget", "localname"],
+            ),
+            candidate(
+                "/src/github.com/other/localname",
+                "github.com/other/localname",
+                &["github.com/other/localname"],
+            ),
+        ];
+        assert_eq!(
+            select_named_project("widget", &projects[..1])
+                .expect("suffix")
+                .as_os_str(),
+            "/work/localname"
+        );
+        assert_eq!(
+            select_named_project("localname", &projects[..1])
+                .expect("directory name")
+                .as_os_str(),
+            "/work/localname"
+        );
+        let error = select_named_project("localname", &projects).expect_err("ambiguous");
+        assert!(matches!(error, Error::Validation(_)));
+        assert_eq!(error.exit_code(), crate::error::VALIDATION);
+        let message = error.to_string();
+        assert!(message.contains("github.com/acme/widget"), "{message}");
+        assert!(message.contains("github.com/other/localname"), "{message}");
+    }
+
+    #[test]
     fn remote_and_location_names_both_match_the_same_checkout() {
         let dir = std::env::temp_dir().join(format!("phantom-names-{}", uuid::Uuid::new_v4()));
         let clone_root = dir.join("clones");
@@ -1423,6 +1465,7 @@ mod tests {
             names_for_root(&bare, Some(&clone_root)),
             vec!["loose".to_string()]
         );
+        assert!(names.iter().any(|name| name == "placed"));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1471,7 +1514,16 @@ mod tests {
             main
         );
         let missing = resolve_directory_reference("/no/such/ptm-project", &dir, &home);
-        assert!(matches!(missing, Err(Error::ProjectNotFound(_))));
+        let missing = missing.expect_err("missing path");
+        assert!(matches!(missing, Error::PathNotFound(_)));
+        assert_eq!(missing.exit_code(), crate::error::NOT_FOUND);
+        assert_eq!(
+            missing.to_string(),
+            "Path '/no/such/ptm-project' does not exist"
+        );
+        let option = resolve_project_ref("--json").expect_err("option");
+        assert!(matches!(option, Error::Validation(_)));
+        assert!(option.to_string().contains("--json"));
         let file = resolve_directory_reference(
             repo.join("README.md").to_str().expect("file"),
             &dir,

@@ -37,7 +37,7 @@ Authentication is left to Git. `ptm` does not call `gh`. Git's progress is writt
 
 ## Targeting a project
 
-Worktree commands (`create`, `attach`, `list`, `where`, `delete`, `exec`, and `github checkout`) accept `--project <ref>` (`-p`) so they can run against a repository other than the current directory. Put it before the worktree name. `ptm exec` passes everything after the worktree name to the command, so this runs `pwd --project y` inside the `feature` worktree of `owner/repo`:
+Worktree commands (`create`, `attach`, `list`, `where`, `delete`, `exec`, and `github checkout`) accept `--project <ref>` (`-p`) so they can run against a repository other than the current directory. Those commands accept it anywhere their other options are accepted. `ptm exec` is the exception: it parses ptm options only before the worktree name, and passes everything after that name to the command. This runs `pwd --project y` inside the `feature` worktree of `owner/repo`:
 
 ```bash
 ptm exec --project owner/repo feature pwd --project y
@@ -46,7 +46,7 @@ ptm list --project ~/src/foo --json
 
 A ref that starts with `/`, `.`, or `~` is a directory. It can be anywhere inside the repository, including a linked worktree, and resolves to the main checkout. Hooks and `.worktreeinclude` are read from that main checkout.
 
-Any other ref is matched against registered projects and discovered checkouts (the same set as `project list`, including when `ghq-discovery` is false). The canonical name is `host/owner/repo`: from the `origin` URL when that parses, otherwise from a checkout stored at `<root>/<host>/<owner>/<repo>`. `owner/repo` and `repo` match when only one project has that suffix. A location name that differs from the remote also matches. Several matches is a validation error (exit code 3) that lists the candidates. No match is not found (exit code 2).
+Any other ref is matched against registered projects and discovered checkouts (the same set as `project list`, including when `ghq-discovery` is false). The canonical name is `host/owner/repo`: from the `origin` URL when that parses, otherwise from a checkout stored at `<root>/<host>/<owner>/<repo>`. `owner/repo` and `repo` match when only one project has that suffix. The directory name shown by `project list` matches too, including when it differs from the canonical name. A location name that differs from the remote also matches. Several matches is a validation error (exit code 3) that lists the candidates. No match is not found (exit code 2). A path that does not exist is not found and says the path does not exist. A `--project` value that starts with `-` is a validation error.
 
 ## Copying gitignored files
 
