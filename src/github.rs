@@ -136,8 +136,7 @@ fn checkout_pull_request(
     metadata.pr = Some(subject_link(repo, pull.number, "pull"));
     if let Ok(existing) = worktree::find_worktree(&context, &worktree_name, false, None) {
         if existing.branch == worktree_name {
-            metadata::write(&context.git_root, Path::new(&existing.path), &metadata)?;
-            let info = worktree::worktree_at_path(&context, Path::new(&existing.path))?;
+            let info = record_existing_checkout(&context, Path::new(&existing.path), &metadata)?;
             let path = info.path.clone().into();
             return Ok(Checkout {
                 message: format!("PR #{} is already checked out", pull.number),
@@ -210,8 +209,7 @@ fn checkout_issue(
     let name = format!("issues/{number}");
     metadata.issue = Some(subject_link(repo, number, "issues"));
     if let Ok(existing) = worktree::find_worktree(&context, &name, false, None) {
-        metadata::write(&context.git_root, Path::new(&existing.path), &metadata)?;
-        let info = worktree::worktree_at_path(&context, Path::new(&existing.path))?;
+        let info = record_existing_checkout(&context, Path::new(&existing.path), &metadata)?;
         let path = info.path.clone().into();
         return Ok(Checkout {
             message: format!("Issue #{number} is already checked out"),
@@ -243,6 +241,33 @@ fn checkout_issue(
         base: Some(base.to_string()),
         subject: GithubSubject::Issue { number },
     })
+}
+
+/// An existing record keeps its owner, purpose, and createdAt. Links are
+/// updated and lastUsedAt moves. A worktree with no record yet is a first
+/// checkout and stores the owner.
+fn record_existing_checkout(
+    context: &context::Context,
+    path: &Path,
+    metadata: &MetadataInput,
+) -> Result<worktree::WorktreeInfo> {
+    let key = metadata::path_key(path);
+    let known = metadata::load(&context.git_root)?.contains_key(&key);
+    if known {
+        metadata::write(
+            &context.git_root,
+            path,
+            &MetadataInput {
+                pr: metadata.pr.clone(),
+                issue: metadata.issue.clone(),
+                ..MetadataInput::default()
+            },
+        )?;
+        metadata::touch(&context.git_root, path)?;
+    } else {
+        metadata::write(&context.git_root, path, metadata)?;
+    }
+    worktree::worktree_at_path(context, path)
 }
 
 fn subject_link(repo: &RepoIdentity, number: u64, kind: &str) -> WorktreeLink {

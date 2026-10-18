@@ -373,6 +373,27 @@ fn delete(args: &[String]) -> Result<i32> {
             &logger,
         ) {
             Ok(outcome) => {
+                if let Some(metadata_error) = outcome.metadata_error {
+                    let error = Error::msg(metadata_error);
+                    if !json {
+                        println!("{}", outcome.message);
+                    }
+                    deleted.push(worktree::DeletedEntry {
+                        worktree: Some(outcome.worktree.to_json(None)),
+                        branch_deleted: outcome.branch_deleted,
+                        branch_error: outcome.branch_error.clone(),
+                        error: Some(error.to_string()),
+                    });
+                    if json {
+                        emit_json(&worktree::DeleteOutput {
+                            version: crate::error::JSON_VERSION,
+                            deleted,
+                            error: Some(error.to_json(GENERAL).error),
+                        })?;
+                        return Ok(GENERAL);
+                    }
+                    return fail(&error, GENERAL);
+                }
                 if !json {
                     println!("{}", outcome.message);
                 }

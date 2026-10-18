@@ -524,6 +524,8 @@ pub struct DeleteOutcome {
     pub worktree: WorktreeInfo,
     pub branch_deleted: bool,
     pub branch_error: Option<String>,
+    /// Set when Git already removed the worktree and the metadata record could not.
+    pub metadata_error: Option<String>,
 }
 
 pub struct DeleteError {
@@ -585,9 +587,9 @@ pub fn delete_worktree(
     if let Err(error) = git::remove_worktree(&context.git_root, &path, force) {
         return Err(DeleteError::kept(error, &worktree));
     }
-    if let Err(error) = metadata::remove(&context.git_root, &path) {
-        return Err(DeleteError::bare(error));
-    }
+    let metadata_error = metadata::remove(&context.git_root, &path)
+        .err()
+        .map(|error| error.to_string());
     let cleanup_warning = remove_empty_parents(&path, &context.worktrees_directory);
     let (message, branch_deleted, branch_error) = if worktree.branch == "(detached HEAD)" {
         (format!("Deleted worktree '{name}'"), false, None)
@@ -638,6 +640,7 @@ pub fn delete_worktree(
         worktree,
         branch_deleted,
         branch_error,
+        metadata_error,
     })
 }
 
