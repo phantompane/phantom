@@ -18,11 +18,11 @@ ghq-discovery = true
 root = "~/ghq"
 ```
 
-`root` is where `ptm clone` places repositories. It is an absolute path or a path starting with `~/`. When `root` is unset, `ptm clone` uses the first `git config ghq.root` value, then `$GHQ_ROOT`, then `~/ghq`. `project list` scans that same directory.
+`root` is where `ptm clone` places repositories. It is an absolute path or a path starting with `~/`. When `root` is unset, `ptm clone` uses the first `git config ghq.root` value, then `$GHQ_ROOT`, then `~/ghq`. A configured `root` is used without reading git config. If reading `ghq.root` fails, `ptm` warns and continues with `$GHQ_ROOT` or `~/ghq`. `project list` scans that same directory.
 
 ## Cloning repositories
 
-`ptm clone` clones a Git repository into `<root>/<host>/<owner>/<repo>` and registers it. `owner/repo` uses `github.com`. The command accepts `https` and `http` URLs, `ssh://` URLs, scp-style `git@host:owner/repo` paths, `host/owner/repo`, and `owner/repo`.
+`ptm clone` clones a Git repository into `<root>/<host>/<owner>/<repo>` and registers it. `owner/repo` uses `github.com`. The command accepts `https` and `http` URLs, `ssh://` URLs, scp-style `git@host:owner/repo` paths, `host/owner/repo`, and `owner/repo`. The host directory is lowercased, and a URL port is part of it (`example.net:9443`). `file://` URLs are rejected.
 
 ```bash
 ptm clone aku11i/phantom
@@ -220,7 +220,7 @@ The object is intentionally open. Ownership and purpose metadata (owner, purpose
 
 ### Clone
 
-`clone --json` uses schema version 1. `path` is the absolute Git root. `remoteUrl` is the URL passed to `git clone` (`https://github.com/<owner>/<repo>.git` for `owner/repo` and `host/owner/repo`). `cloned` is true when this command created the checkout. `updated` is true only when `--update` fetched an existing checkout. Git's progress stays on stderr.
+`clone --json` uses schema version 1. `path` is the absolute Git root. `host` is lowercased and includes a port when the URL has one. `remoteUrl` is the clone URL with `user:password` removed (`https://github.com/<owner>/<repo>.git` for `owner/repo` and `host/owner/repo`). `cloned` is true when this command created the checkout. `updated` is true only when `--update` fetched an existing checkout. Git's progress stays on stderr.
 
 ```json
 {
