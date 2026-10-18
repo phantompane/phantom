@@ -35,6 +35,19 @@ If that path is already the same repository, `ptm` registers it and prints the p
 
 Authentication is left to Git. `ptm` does not call `gh`. Git's progress is written to stderr. Worktrees for the cloned repository stay under its `.git/phantom/worktrees` directory.
 
+## Targeting a project
+
+Worktree commands (`create`, `attach`, `list`, `where`, `delete`, `exec`, and `github checkout`) accept `--project <ref>` (`-p`) so they can run against a repository other than the current directory. Those commands accept it anywhere their other options are accepted. `ptm exec` is the exception: it parses ptm options only before the worktree name, and passes everything after that name to the command. This runs `pwd --project y` inside the `feature` worktree of `owner/repo`:
+
+```bash
+ptm exec --project owner/repo feature pwd --project y
+ptm list --project ~/src/foo --json
+```
+
+A ref that starts with `/`, `.`, or `~` is a directory. It can be anywhere inside the repository, including a linked worktree, and resolves to the main checkout. Hooks and `.worktreeinclude` are read from that main checkout.
+
+Any other ref is matched against registered projects and discovered checkouts (the same set as `project list`, including when `ghq-discovery` is false). The canonical name is `host/owner/repo`: from the `origin` URL when it is an http(s), ssh, or scp-style remote, otherwise from a checkout stored at `<root>/<host>/<owner>/<repo>`. A local or relative origin, including `backups/widget.git`, is not a host-based name. `owner/repo` and `repo` match when only one project has that suffix. The directory name shown by `project list` matches too, including when it differs from the canonical name. A location name that differs from the remote also matches. Several matches is a validation error (exit code 3) that lists the candidates. No match is not found (exit code 2). A path that does not exist is not found and says the path does not exist. A `--project` value that starts with `-` is a validation error.
+
 ## Copying gitignored files
 
 `ptm create` and `ptm attach` read `.worktreeinclude` from the root of the source checkout. The file uses gitignore syntax. A file is copied only when a pattern matches it and Git ignores it, so tracked files are never duplicated.
@@ -99,7 +112,7 @@ A command that does not produce a result writes this object to stdout:
 }
 ```
 
-`code` is the stable machine code. `exitCode` is the process status: `1` general, `2` not found (`where`, `delete`, and `exec`), `3` validation (an invalid worktree name, or an unknown or incomplete option on any command), `4` not a repository. `code` values include `not_found`, `already_exists`, `branch_not_found`, `not_repository`, `uncommitted`, `validation`, `command_failed`, `spawn`, `signaled`, `projects`, and `error`.
+`code` is the stable machine code. `exitCode` is the process status: `1` general, `2` not found (`where`, `delete`, and `exec`, and a `--project` name or path that matches nothing), `3` validation (an invalid worktree name, an unknown or incomplete option on any command, or a `--project` name that matches more than one project), `4` not a repository. `code` values include `not_found`, `already_exists`, `branch_not_found`, `not_repository`, `uncommitted`, `validation`, `command_failed`, `spawn`, `signaled`, `projects`, and `error`.
 
 `delete --json` is the exception that can include both deleted entries and a top-level `error`. Entries that were removed stay in `deleted`. The failed name has `worktree: null` and a string `error`. The process still exits nonzero.
 
@@ -194,7 +207,7 @@ The object is intentionally open. Ownership and purpose metadata (owner, purpose
 
 ### Project list
 
-`project list --json` is unchanged. It uses camelCase and absolute `rootPath` values. Warnings stay on stderr.
+`project list --json` keeps catalog version 2. It uses camelCase and absolute `rootPath` values. Each project includes `canonicalName` (`host/owner/repo` from `origin`, otherwise from a `<root>/<host>/<owner>/<repo>` checkout, otherwise the directory name). `name` stays the directory name. Warnings stay on stderr. Parsers must ignore unknown fields, so adding `canonicalName` does not change `version`.
 
 ```json
 {
@@ -203,14 +216,16 @@ The object is intentionally open. Ownership and purpose metadata (owner, purpose
     {
       "source": "registry",
       "id": "proj_550e8400-e29b-41d4-a716-446655440000",
-      "name": "repo",
-      "rootPath": "/abs/repo",
+      "name": "phantom",
+      "canonicalName": "github.com/aku11i/phantom",
+      "rootPath": "/home/phantom/ghq/github.com/aku11i/phantom",
       "createdAt": "2026-01-01T00:00:00.000Z"
     },
     {
       "source": "ghq",
       "name": "repo",
-      "rootPath": "/abs/ghq/repo"
+      "canonicalName": "github.com/owner/repo",
+      "rootPath": "/home/phantom/ghq/github.com/owner/repo"
     }
   ]
 }

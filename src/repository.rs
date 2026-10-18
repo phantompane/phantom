@@ -76,6 +76,15 @@ pub fn human_clone_message(result: &CloneResult) -> String {
 /// Order: `root` in the user config, the first `git config ghq.root` value,
 /// `$GHQ_ROOT`, then `~/ghq`. `project list` scans this same directory.
 pub fn resolve_repository_root() -> Result<PathBuf> {
+    let (root, warnings) = resolve_repository_root_quiet()?;
+    for warning in warnings {
+        eprintln!("Warning: {warning}");
+    }
+    Ok(root)
+}
+
+/// Same root as [`resolve_repository_root`], without printing warnings.
+pub(crate) fn resolve_repository_root_quiet() -> Result<(PathBuf, Vec<String>)> {
     let home = home_dir()?;
     let config_root = preferences::load_preferences()?.root;
     let ghq_root = std::env::var("GHQ_ROOT").ok();
@@ -87,10 +96,33 @@ pub fn resolve_repository_root() -> Result<PathBuf> {
         &home,
         &mut warnings,
     )?;
-    for warning in warnings {
-        eprintln!("Warning: {warning}");
+    Ok((root, warnings))
+}
+
+/// `host/owner/repo` for an `origin` URL this command understands.
+///
+/// Only http(s), ssh, and scp-style remotes are names. Local paths, relative
+/// paths, and `owner/repo` shorthand are not.
+pub(crate) fn canonical_name_from_origin(root: &Path) -> Option<String> {
+    let url = origin_url(root).ok().flatten()?;
+    canonical_remote_name(&url)
+}
+
+pub(crate) fn canonical_remote_name(url: &str) -> Option<String> {
+    let url = url.trim();
+    if !is_hosted_remote(url) {
+        return None;
     }
-    Ok(root)
+    let spec = parse_clone_source(url).ok()?;
+    Some(format!("{}/{}/{}", spec.host, spec.owner, spec.repo))
+}
+
+/// A remote git can talk to by scheme or scp-style `host:path`.
+fn is_hosted_remote(url: &str) -> bool {
+    if url.is_empty() || url.starts_with('/') || url.starts_with('.') || url.starts_with('~') {
+        return false;
+    }
+    url.contains("://") || url.contains(':')
 }
 
 /// Git checkouts located at `<root>/<host>/<owner>/<repo>`.
@@ -810,6 +842,32 @@ mod tests {
 
     fn spec(input: &str) -> RepoSpec {
         parse_clone_source(input).unwrap_or_else(|error| panic!("{input}: {error}"))
+    }
+
+    #[test]
+    fn canonical_remote_name_uses_host_owner_repo() {
+        assert_eq!(
+            canonical_remote_name("https://github.com/aku11i/phantom.git").as_deref(),
+            Some("github.com/aku11i/phantom")
+        );
+        assert_eq!(
+            canonical_remote_name("git@github.com:aku11i/phantom.git").as_deref(),
+            Some("github.com/aku11i/phantom")
+        );
+        assert_eq!(
+            canonical_remote_name("ssh://git@github.com/aku11i/phantom.git").as_deref(),
+            Some("github.com/aku11i/phantom")
+        );
+        assert_eq!(canonical_remote_name("/tmp/repo.git"), None);
+        assert_eq!(canonical_remote_name("file:///tmp/repo.git"), None);
+        assert_eq!(canonical_remote_name("./repo"), None);
+        assert_eq!(canonical_remote_name("backups/widget.git"), None);
+        assert_eq!(canonical_remote_name("github.com/acme/widget"), None);
+        assert_eq!(canonical_remote_name("acme/widget"), None);
+        assert_eq!(
+            canonical_remote_name("ssh://git@ghe.corp.example:2222/acme/tool.git").as_deref(),
+            Some("ghe.corp.example:2222/acme/tool")
+        );
     }
 
     #[test]

@@ -70,10 +70,18 @@ impl Checkout {
     }
 }
 
-pub fn checkout(number: &str, base: Option<&str>, logger: &Logger) -> Result<Checkout> {
-    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
-    let (owner, repo) = repo_info(&cwd)?;
-    let issue = fetch_issue(&owner, &repo, number)?;
+pub fn checkout(
+    number: &str,
+    base: Option<&str>,
+    logger: &Logger,
+    repository: Option<&Path>,
+) -> Result<Checkout> {
+    let cwd = match repository {
+        Some(path) => path.to_path_buf(),
+        None => std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?,
+    };
+    let repo = repo_info(&cwd)?;
+    let issue = fetch_issue(&cwd, &repo.host, &repo.owner, &repo.name, number)?;
     let Some(issue) = issue else {
         return Err(Error::msg(format!(
             "GitHub issue or pull request #{number} not found or you don't have permission to access it."
@@ -86,9 +94,9 @@ pub fn checkout(number: &str, base: Option<&str>, logger: &Logger) -> Result<Che
                 pull.head_ref
             )));
         }
-        checkout_pull_request(&cwd, &pull, logger)
+        checkout_pull_request(&pull, logger, repository)
     } else {
-        checkout_issue(&cwd, issue.number, base, logger)
+        checkout_issue(issue.number, base, logger, repository)
     }
 }
 
@@ -104,9 +112,13 @@ struct PullRequest {
     head_repo: String,
 }
 
-fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Result<Checkout> {
-    let git_root = git::git_root(cwd)?;
-    let context = context::create(&git_root)?;
+fn checkout_pull_request(
+    pull: &PullRequest,
+    logger: &Logger,
+    repository: Option<&Path>,
+) -> Result<Checkout> {
+    let context = context::open(repository)?;
+    let git_root = &context.git_root;
     let worktree_name = if pull.fork {
         let owner = pull.head_repo.split('/').next().unwrap_or("");
         if owner.is_empty() {
@@ -117,7 +129,7 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Res
     } else {
         pull.head_ref.clone()
     };
-    if let Ok(existing) = worktree::find_worktree(&context.git_root, &worktree_name, false, None) {
+    if let Ok(existing) = worktree::find_worktree(&context, &worktree_name, false, None) {
         if existing.branch == worktree_name {
             let path = existing.path.clone().into();
             return Ok(Checkout {
@@ -143,8 +155,8 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Res
         format!("origin/{}", pull.head_ref)
     };
     let refspec = format!("{}:{worktree_name}", upstream.trim_start_matches("origin/"));
-    git::fetch(&git_root, "origin", &refspec)?;
-    if let Err(error) = git::set_upstream(&git_root, &worktree_name, &upstream) {
+    git::fetch(git_root, "origin", &refspec)?;
+    if let Err(error) = git::set_upstream(git_root, &worktree_name, &upstream) {
         eprintln!("Warning: Could not set upstream branch: {error}");
     }
     let commands = post_commands(&context);
@@ -160,7 +172,7 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Res
             pull.number, pull.head_ref
         )
     };
-    let info = worktree::worktree_at_path(&context.git_root, &attached.path)?;
+    let info = worktree::worktree_at_path(&context, &attached.path)?;
     Ok(Checkout {
         message,
         worktree: worktree_name,
@@ -179,15 +191,14 @@ fn checkout_pull_request(cwd: &Path, pull: &PullRequest, logger: &Logger) -> Res
 }
 
 fn checkout_issue(
-    cwd: &Path,
     number: u64,
     base: Option<&str>,
     logger: &Logger,
+    repository: Option<&Path>,
 ) -> Result<Checkout> {
-    let git_root = git::git_root(cwd)?;
-    let context = context::create(&git_root)?;
+    let context = context::open(repository)?;
     let name = format!("issues/{number}");
-    if let Ok(existing) = worktree::find_worktree(&context.git_root, &name, false, None) {
+    if let Ok(existing) = worktree::find_worktree(&context, &name, false, None) {
         let path = existing.path.clone().into();
         return Ok(Checkout {
             message: format!("Issue #{number} is already checked out"),
@@ -205,7 +216,7 @@ fn checkout_issue(
     let commands = post_commands(&context);
     let base = base.unwrap_or("HEAD");
     let created = worktree::create_worktree(&context, &name, base, &[], &commands, logger)?;
-    let info = worktree::worktree_at_path(&context.git_root, &created.path)?;
+    let info = worktree::worktree_at_path(&context, &created.path)?;
     Ok(Checkout {
         message: format!("Created worktree '{name}' at {}", created.path.display()),
         worktree: name,
@@ -224,8 +235,19 @@ fn post_commands(context: &context::Context) -> Vec<String> {
     crate::config::post_create_commands(context.config.as_ref()).to_vec()
 }
 
-fn repo_info(cwd: &Path) -> Result<(String, String)> {
-    let captured = process::raw("gh", &["repo", "view", "--json", "owner,name"], Some(cwd))?;
+struct RepoIdentity {
+    owner: String,
+    name: String,
+    /// Hostname for `gh api --hostname`, from `gh repo view`'s web `url`.
+    host: String,
+}
+
+fn repo_info(cwd: &Path) -> Result<RepoIdentity> {
+    let captured = process::raw(
+        "gh",
+        &["repo", "view", "--json", "url,owner,name"],
+        Some(cwd),
+    )?;
     if captured.code != 0 {
         return Err(Error::msg(format!(
             "Failed to get repository info: {}",
@@ -238,14 +260,75 @@ fn repo_info(cwd: &Path) -> Result<(String, String)> {
         .pointer("/owner/login")
         .and_then(Value::as_str)
         .ok_or_else(|| Error::msg("Failed to get repository info: missing owner"))?;
-    let repo = value
+    let name = value
         .get("name")
         .and_then(Value::as_str)
         .ok_or_else(|| Error::msg("Failed to get repository info: missing name"))?;
-    Ok((owner.to_string(), repo.to_string()))
+    let url = value
+        .get("url")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::msg("Failed to get repository info: missing url"))?;
+    Ok(RepoIdentity {
+        owner: owner.to_string(),
+        name: name.to_string(),
+        host: host_from_web_url(url)?,
+    })
 }
 
-fn fetch_issue(owner: &str, repo: &str, number: &str) -> Result<Option<Issue>> {
+/// Host only, with no port, from the web URL `gh repo view` returns.
+fn host_from_web_url(url: &str) -> Result<String> {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return Err(Error::msg(format!(
+            "Failed to get repository info: url '{url}' has no host"
+        )));
+    };
+    if !matches!(scheme, "http" | "https") {
+        return Err(Error::msg(format!(
+            "Failed to get repository info: url '{url}' is not an http(s) URL"
+        )));
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let hostport = match authority.rsplit_once('@') {
+        Some((_, host)) if !host.is_empty() => host,
+        Some(_) => {
+            return Err(Error::msg(format!(
+                "Failed to get repository info: url '{url}' has no host"
+            )))
+        }
+        None => authority,
+    };
+    let host = if let Some(inside) = hostport.strip_prefix('[') {
+        let end = inside.find(']').ok_or_else(|| {
+            Error::msg(format!(
+                "Failed to get repository info: url '{url}' has no host"
+            ))
+        })?;
+        &inside[..end]
+    } else if let Some((host, port)) = hostport.rsplit_once(':') {
+        if host.is_empty() || port.is_empty() || !port.chars().all(|char| char.is_ascii_digit()) {
+            return Err(Error::msg(format!(
+                "Failed to get repository info: url '{url}' has no host"
+            )));
+        }
+        host
+    } else {
+        hostport
+    };
+    if host.is_empty() {
+        return Err(Error::msg(format!(
+            "Failed to get repository info: url '{url}' has no host"
+        )));
+    }
+    Ok(host.to_ascii_lowercase())
+}
+
+fn fetch_issue(
+    directory: &Path,
+    host: &str,
+    owner: &str,
+    repo: &str,
+    number: &str,
+) -> Result<Option<Issue>> {
     let parsed = number.parse::<u64>().ok().filter(|value| *value > 0);
     let Some(parsed) = parsed else {
         return Err(Error::msg(format!(
@@ -253,7 +336,7 @@ fn fetch_issue(owner: &str, repo: &str, number: &str) -> Result<Option<Issue>> {
         )));
     };
     let path = format!("repos/{owner}/{repo}/issues/{parsed}");
-    let captured = process::raw("gh", &["api", &path], None)?;
+    let captured = gh_api(directory, host, &path)?;
     if captured.code != 0 {
         if is_not_found(&captured) {
             return Ok(None);
@@ -263,7 +346,7 @@ fn fetch_issue(owner: &str, repo: &str, number: &str) -> Result<Option<Issue>> {
     let value: Value =
         serde_json::from_str(&captured.stdout).map_err(|error| Error::msg(error.to_string()))?;
     let pull_request = if value.get("pull_request").is_some() {
-        Some(fetch_pull(owner, repo, parsed)?)
+        Some(fetch_pull(directory, host, owner, repo, parsed)?)
     } else {
         None
     };
@@ -273,9 +356,15 @@ fn fetch_issue(owner: &str, repo: &str, number: &str) -> Result<Option<Issue>> {
     }))
 }
 
-fn fetch_pull(owner: &str, repo: &str, number: u64) -> Result<PullRequest> {
+fn fetch_pull(
+    directory: &Path,
+    host: &str,
+    owner: &str,
+    repo: &str,
+    number: u64,
+) -> Result<PullRequest> {
     let path = format!("repos/{owner}/{repo}/pulls/{number}");
-    let captured = process::raw("gh", &["api", &path], None)?;
+    let captured = gh_api(directory, host, &path)?;
     if captured.code != 0 {
         return Err(Error::msg(first_detail(&captured).to_string()));
     }
@@ -304,6 +393,11 @@ fn fetch_pull(owner: &str, repo: &str, number: u64) -> Result<PullRequest> {
     })
 }
 
+fn gh_api(directory: &Path, host: &str, path: &str) -> Result<process::Captured> {
+    let args = ["api", path, "--hostname", host];
+    process::raw("gh", &args, Some(directory))
+}
+
 fn is_not_found(captured: &process::Captured) -> bool {
     let detail = format!("{} {}", captured.stderr, captured.stdout).to_ascii_lowercase();
     detail.contains("404") || detail.contains("not found")
@@ -315,5 +409,30 @@ fn first_detail(captured: &process::Captured) -> String {
         stderr.to_string()
     } else {
         captured.stdout.trim().to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_url_host_drops_the_port() {
+        assert_eq!(
+            host_from_web_url("https://ghe.corp.example/acme/tool").expect("host"),
+            "ghe.corp.example"
+        );
+        assert_eq!(
+            host_from_web_url("https://ghe.corp.example:8443/acme/tool").expect("port"),
+            "ghe.corp.example"
+        );
+        assert_eq!(
+            host_from_web_url("https://github.com/acme/tool").expect("github"),
+            "github.com"
+        );
+        assert_eq!(
+            host_from_web_url("https://GitHub.com/acme/tool").expect("case"),
+            "github.com"
+        );
     }
 }

@@ -2,7 +2,6 @@ use std::path::Path;
 
 use crate::args::{self, Opt, Parsed};
 use crate::error::{Error, Result, GENERAL, NOT_FOUND, SUCCESS, VALIDATION};
-use crate::git;
 use crate::github;
 use crate::help;
 use crate::preferences;
@@ -59,6 +58,7 @@ fn create(args: &[String]) -> Result<i32> {
     let parsed = match args::parse(
         args,
         &[
+            project_flag(),
             remainder_flag("exec", Some('x')),
             Opt {
                 name: "copy-file",
@@ -80,12 +80,17 @@ fn create(args: &[String]) -> Result<i32> {
         Ok(action) => action,
         Err(error) => return fail_with(&error, VALIDATION, json),
     };
+    let repository = match selected_repository(&parsed) {
+        Ok(repository) => repository,
+        Err(error) => return fail_project(&error, args, &parsed, json),
+    };
     match worktree::run_create(worktree::CreateRequest {
         name: parsed.positionals.first().map(String::as_str),
         base: parsed.value("base"),
         copy_files: &parsed.values("copy-file"),
         action,
         logger: logger_for(json),
+        repository: repository.as_deref(),
     }) {
         Ok(outcome) => finish_change(json, &outcome),
         Err(error) => fail_with(&error, create_code(&error), json),
@@ -113,6 +118,7 @@ fn attach(args: &[String]) -> Result<i32> {
     let parsed = match args::parse(
         args,
         &[
+            project_flag(),
             remainder_flag("exec", Some('x')),
             Opt {
                 name: "copy-file",
@@ -140,11 +146,16 @@ fn attach(args: &[String]) -> Result<i32> {
         Ok(action) => action,
         Err(error) => return fail_with(&error, VALIDATION, json),
     };
+    let repository = match selected_repository(&parsed) {
+        Ok(repository) => repository,
+        Err(error) => return fail_project(&error, args, &parsed, json),
+    };
     match worktree::run_attach(worktree::AttachRequest {
         name,
         copy_files: &parsed.values("copy-file"),
         action,
         logger: logger_for(json),
+        repository: repository.as_deref(),
     }) {
         Ok(outcome) => finish_mutation(
             json,
@@ -168,6 +179,7 @@ fn list(args: &[String]) -> Result<i32> {
     let parsed = match args::parse(
         args,
         &[
+            project_flag(),
             flag("no-default", None),
             flag("names", None),
             flag("json", None),
@@ -185,16 +197,12 @@ fn list(args: &[String]) -> Result<i32> {
             true,
         );
     }
-    let cwd = match std::env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(error) => return fail_with(&Error::msg(error.to_string()), GENERAL, json),
-    };
-    let git_root = match git::git_root(&cwd) {
-        Ok(root) => root,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+    let context = match command_context(&parsed) {
+        Ok(context) => context,
+        Err(error) => return fail_project(&error, args, &parsed, json),
     };
     let exclude_default = parsed.flag("no-default");
-    let worktrees = match worktree::list_worktrees(&git_root, exclude_default, false) {
+    let worktrees = match worktree::list_worktrees(&context, exclude_default, false) {
         Ok(worktrees) => worktrees,
         Err(error) => return fail_with(&error, GENERAL, json),
     };
@@ -209,7 +217,7 @@ fn list(args: &[String]) -> Result<i32> {
     }
     if worktrees.is_empty() {
         if !parsed.flag("names") {
-            let available = worktree::list_worktrees(&git_root, false, false).unwrap_or_default();
+            let available = worktree::list_worktrees(&context, false, false).unwrap_or_default();
             let message = if exclude_default && !available.is_empty() {
                 "No sub worktrees found"
             } else {
@@ -232,7 +240,7 @@ fn list(args: &[String]) -> Result<i32> {
 
 fn where_cmd(args: &[String]) -> Result<i32> {
     let json = wants_json(args);
-    let parsed = match args::parse(args, &[flag("json", None)], true) {
+    let parsed = match args::parse(args, &[project_flag(), flag("json", None)], true) {
         Ok(parsed) => parsed,
         Err(error) => return fail_with(&error, error.exit_code(), json),
     };
@@ -244,20 +252,12 @@ fn where_cmd(args: &[String]) -> Result<i32> {
             json,
         );
     }
-    let cwd = match std::env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(error) => return fail_with(&Error::msg(error.to_string()), GENERAL, json),
-    };
-    let git_root = match git::git_root(&cwd) {
-        Ok(root) => root,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
-    };
-    let context = match crate::context::create(&git_root) {
+    let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_with(&error, GENERAL, json),
+        Err(error) => return fail_project(&error, args, &parsed, json),
     };
     let name = &parsed.positionals[0];
-    match worktree::find_worktree(&context.git_root, name, false, None) {
+    match worktree::find_worktree(&context, name, false, None) {
         Ok(worktree) => {
             if json {
                 emit_json(&worktree::WorktreeRefOutput {
@@ -279,6 +279,7 @@ fn delete(args: &[String]) -> Result<i32> {
     let parsed = match args::parse(
         args,
         &[
+            project_flag(),
             flag("force", Some('f')),
             flag("keep-branch", None),
             flag("current", None),
@@ -307,22 +308,14 @@ fn delete(args: &[String]) -> Result<i32> {
             json,
         );
     }
-    let cwd = match std::env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(error) => return fail_with(&Error::msg(error.to_string()), GENERAL, json),
-    };
-    let git_root = match git::git_root(&cwd) {
-        Ok(root) => root,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
-    };
-    let context = match crate::context::create(&git_root) {
+    let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_with(&error, GENERAL, json),
+        Err(error) => return fail_project(&error, args, &parsed, json),
     };
     let keep_branch =
         parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false);
     let names = if delete_current {
-        match worktree::current_worktree_name(&git_root) {
+        match worktree::current_worktree_name(&context) {
             Ok(Some(name)) => vec![name],
             Ok(None) => {
                 return fail_with(
@@ -399,7 +392,7 @@ fn delete(args: &[String]) -> Result<i32> {
 }
 
 fn exec(args: &[String]) -> Result<i32> {
-    let parsed = args::parse_with(args, &[], true, Some(1))?;
+    let parsed = args::parse_with(args, &[project_flag()], true, Some(1))?;
     if parsed.positionals.len() < 2 {
         return fail(
             &Error::msg("Usage: ptm exec <worktree-name> <command> [args...]"),
@@ -407,17 +400,12 @@ fn exec(args: &[String]) -> Result<i32> {
         );
     }
     let command_args = parsed.positionals[1..].to_vec();
-    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
-    let git_root = match git::git_root(&cwd) {
-        Ok(root) => root,
-        Err(error) => return fail(&error, error.exit_code()),
-    };
-    let context = match crate::context::create(&git_root) {
+    let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail(&error, GENERAL),
+        Err(error) => return fail_project(&error, args, &parsed, false),
     };
     let name = parsed.positionals[0].clone();
-    if let Err(error) = worktree::find_worktree(&context.git_root, &name, false, None) {
+    if let Err(error) = worktree::find_worktree(&context, &name, false, None) {
         let code = if matches!(error, Error::WorktreeNotFound(_)) {
             NOT_FOUND
         } else {
@@ -430,15 +418,7 @@ fn exec(args: &[String]) -> Result<i32> {
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
-    match worktree::exec_in_worktree(
-        &context.git_root,
-        &context.worktrees_directory,
-        &name,
-        command,
-        &rest,
-        &[],
-        false,
-    ) {
+    match worktree::exec_in_worktree(&context, &name, command, &rest, &[], false) {
         Ok(0) => Ok(SUCCESS),
         Ok(code) => fail(
             &Error::CommandFailed {
@@ -717,7 +697,11 @@ fn project_list(args: &[String]) -> Result<i32> {
             {
                 println!("{root_path}");
             }
-            ProjectListEntry::Ghq { name, root_path } => println!("{name} ({root_path}) [ghq]"),
+            ProjectListEntry::Ghq {
+                name, root_path, ..
+            } => {
+                println!("{name} ({root_path}) [ghq]")
+            }
             ProjectListEntry::Registry {
                 id,
                 name,
@@ -832,7 +816,11 @@ fn github_root(args: &[String]) -> Result<i32> {
 
 fn github_checkout(args: &[String]) -> Result<i32> {
     let json = wants_json(args);
-    let parsed = match args::parse(args, &[value_flag("base", None), flag("json", None)], true) {
+    let parsed = match args::parse(
+        args,
+        &[project_flag(), value_flag("base", None), flag("json", None)],
+        true,
+    ) {
         Ok(parsed) => parsed,
         Err(error) => return fail_with(&error, error.exit_code(), json),
     };
@@ -844,7 +832,16 @@ fn github_checkout(args: &[String]) -> Result<i32> {
             json,
         );
     };
-    let checkout = match github::checkout(number, parsed.value("base"), &logger_for(json)) {
+    let repository = match selected_repository(&parsed) {
+        Ok(repository) => repository,
+        Err(error) => return fail_project(&error, args, &parsed, json),
+    };
+    let checkout = match github::checkout(
+        number,
+        parsed.value("base"),
+        &logger_for(json),
+        repository.as_deref(),
+    ) {
         Ok(checkout) => checkout,
         Err(error) => return fail_with(&error, error.exit_code(), json),
     };
@@ -906,12 +903,25 @@ fn requests_help(command: &Command, args: &[String]) -> bool {
 
 fn help_before_positionals(args: &[String], limit: usize) -> bool {
     let mut positionals = 0usize;
+    let mut skip_value = false;
     for arg in args {
         if positionals >= limit || arg == "--" {
             return false;
         }
+        if skip_value {
+            // The project value is not the worktree name, even when it is `--help`.
+            skip_value = false;
+            continue;
+        }
         if is_help_flag(arg) {
             return true;
+        }
+        if arg == "--project" || arg == "-p" {
+            skip_value = true;
+            continue;
+        }
+        if arg.starts_with("--project=") || (arg.starts_with("-p") && arg.len() > 2) {
+            continue;
         }
         if !arg.starts_with('-') {
             positionals += 1;
@@ -934,6 +944,39 @@ fn help_before_trailing_exec(args: &[String]) -> bool {
 
 fn is_help_flag(arg: &str) -> bool {
     arg == "-h" || arg == "--help"
+}
+
+fn project_flag() -> Opt {
+    value_flag("project", Some('p'))
+}
+
+fn selected_repository(parsed: &Parsed) -> Result<Option<std::path::PathBuf>> {
+    if parsed.occurrences("project") > 1 {
+        return Err(Error::validation(
+            "The --project option can only be specified once".to_string(),
+        ));
+    }
+    match parsed.value("project") {
+        Some(reference) => projects::resolve_project_ref(reference).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn command_context(parsed: &Parsed) -> Result<crate::context::Context> {
+    let repository = selected_repository(parsed)?;
+    crate::context::open(repository.as_deref())
+}
+
+/// `--project --json` consumes `--json` as the value, but the user still asked for JSON.
+fn fail_project(error: &Error, args: &[String], parsed: &Parsed, json: bool) -> Result<i32> {
+    let option_like = parsed
+        .value("project")
+        .is_some_and(|value| value.starts_with('-'));
+    fail_with(
+        error,
+        error.exit_code(),
+        json || (option_like && wants_json(args)),
+    )
 }
 
 fn flag(name: &'static str, short: Option<char>) -> Opt {
