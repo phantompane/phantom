@@ -142,13 +142,13 @@ To release a new version of Phantom:
    ```bash
    # Create a release with automatically generated notes
    gh release create v<version> \
-     --title "Phantom v<version>" \
+     --title "ptm v<version>" \
      --generate-notes \
      --target next
 
    # Example for v1.3.0:
    gh release create v1.3.0 \
-     --title "Phantom v1.3.0" \
+     --title "ptm v1.3.0" \
      --generate-notes \
      --target next
    ```

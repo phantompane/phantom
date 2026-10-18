@@ -30,7 +30,7 @@
     },
     {
       "name": "version",
-      "description": "Display the Phantom version"
+      "description": "Display the ptm version"
     },
     {
       "name": "clone",
@@ -470,7 +470,7 @@
         "For worktrees-directory, provide a path relative to the Git repository root; defaults to .git/ptm/worktrees when unset",
         "For directory-name-separator, '/' keeps nested directories; any other string replaces '/' only in the directory path",
         "For keep-branch, use true to preserve branches on delete or false to keep the default branch deletion behavior",
-        "For ghq-discovery, use false to list only projects registered directly with Phantom",
+        "For ghq-discovery, use false to list only projects registered directly with ptm",
         "For root, provide an absolute path or a path starting with ~/. ptm clone uses it as the repository root",
         "keep-branch and ghq-discovery are stored as TOML booleans. The other keys are strings."
       ]
@@ -561,7 +561,7 @@
     },
     "version": {
       "name": "version",
-      "description": "Display the Phantom version",
+      "description": "Display the ptm version",
       "usage": "ptm version",
       "examples": [
         {
@@ -594,12 +594,12 @@
       "notes": [
         "Available subcommands: add, list, remove",
         "The project registry is stored in $XDG_STATE_HOME/ptm (default ~/.local/state/ptm).",
-        "Removing a project only updates Phantom's registry; it never deletes the Git repository."
+        "Removing a project only updates ptm's registry; it never deletes the Git repository."
       ]
     },
     "project add": {
       "name": "project add",
-      "description": "Register a Git repository as a Phantom project",
+      "description": "Register a Git repository as a ptm project",
       "usage": "ptm project add [path] [options]",
       "options": [
         {
@@ -615,7 +615,7 @@
     },
     "project list": {
       "name": "project list",
-      "description": "List registered and discovered Phantom projects",
+      "description": "List registered and discovered ptm projects",
       "usage": "ptm project list [options]",
       "options": [
         {
@@ -644,7 +644,7 @@
     },
     "project remove": {
       "name": "project remove",
-      "description": "Remove a Git project from Phantom's registry",
+      "description": "Remove a Git project from ptm's registry",
       "usage": "ptm project remove <id|name|path> [options]",
       "options": [
         {
