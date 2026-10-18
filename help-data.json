@@ -55,7 +55,7 @@
           "name": "exec",
           "short": "x",
           "type": "string",
-          "description": "Execute a command in the new worktree after creation",
+          "description": "Execute a command in the new worktree after creation. Arguments after --exec are the command and are passed through, including options. Put the worktree name and other options before --exec",
           "example": "--exec 'npm install'"
         },
         {
@@ -118,7 +118,7 @@
           "name": "exec",
           "short": "x",
           "type": "string",
-          "description": "Execute a command in the worktree after attaching",
+          "description": "Execute a command in the worktree after attaching. Arguments after --exec are the command and are passed through, including options. Put the branch name and other options before --exec",
           "example": "--exec 'git pull'"
         },
         {
@@ -276,13 +276,17 @@
           "command": "ptm exec bugfix-123 git status"
         },
         {
+          "description": "Pass the command's own options through",
+          "command": "ptm exec feature git branch --show-current"
+        },
+        {
           "description": "Run a complex command with arguments",
           "command": "ptm exec staging npm run build -- --production"
         }
       ],
       "notes": [
         "The command is executed with the worktree directory as the working directory",
-        "All arguments after the worktree name are passed to the command",
+        "All arguments after the worktree name are passed to the command, including options. A -- before the command is accepted but not required",
         "The exit code of the executed command is preserved",
         "The command receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path)"
       ]
