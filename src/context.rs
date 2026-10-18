@@ -46,11 +46,13 @@ fn assemble(git_root: &Path, source_checkout: PathBuf) -> Result<Context> {
         .clone()
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "/".to_string());
+    let common_dir = git::git_common_dir(git_root)?;
     Ok(Context {
         git_root: git_root.to_path_buf(),
         source_checkout,
         worktrees_directory: paths::worktrees_directory(
             git_root,
+            &common_dir,
             preferences.worktrees_directory.as_deref(),
         ),
         directory_name_separator: separator,
