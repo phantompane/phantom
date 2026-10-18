@@ -305,14 +305,14 @@ fn invalid_config_names_the_file_and_the_problem() {
 
     fs::write(
         repo.repo.join("phantom.config.json"),
-        r#"{"postCreate":{"copyFiles":[1]}}"#,
+        r#"{"postCreate":{"commands":[1]}}"#,
     )
     .expect("schema");
     let created = repo.phantom(&["where", "feature/bad-json"]);
     let stderr = text(&created.stderr);
     assert!(!created.status.success(), "{}", text(&created.stdout));
     assert!(stderr.contains("phantom.config.json"), "{stderr}");
-    assert!(stderr.contains("copyFiles"), "{stderr}");
+    assert!(stderr.contains("commands"), "{stderr}");
 }
 
 #[test]
@@ -416,12 +416,14 @@ fn post_create_failure_reports_the_created_worktree() {
 }
 
 #[test]
-fn copies_config_files_and_runs_post_create() {
+fn copies_worktreeinclude_files_and_runs_post_create() {
     let repo = Repo::new();
+    fs::write(repo.repo.join(".gitignore"), ".env.local\n").expect("gitignore");
     fs::write(repo.repo.join(".env.local"), "API_KEY=test-value\n").expect("env");
+    fs::write(repo.repo.join(".worktreeinclude"), ".env.local\n").expect("include");
     fs::write(
         repo.repo.join("phantom.config.json"),
-        r#"{"postCreate":{"copyFiles":[".env.local"],"commands":["touch post-create.txt"]}}"#,
+        r#"{"postCreate":{"commands":["touch post-create.txt"]}}"#,
     )
     .expect("config");
     let created = repo.phantom(&["create", "feature/config"]);
@@ -863,36 +865,109 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
 }
 
 #[test]
-fn copy_file_globs_match_v6() {
+fn worktreeinclude_copies_only_matching_gitignored_files() {
     let repo = Repo::new();
-    fs::write(repo.repo.join("local.env"), "env\n").expect("env");
-    fs::write(repo.repo.join("config.json"), "{}\n").expect("json");
-    fs::write(repo.repo.join("readme.md"), "md\n").expect("md");
+    fs::write(repo.repo.join("tracked.env"), "committed\n").expect("tracked");
+    repo.git(&["add", "tracked.env"]);
+    repo.git(&["commit", "-m", "track env"]);
+    fs::write(
+        repo.repo.join(".gitignore"),
+        "*.env\n*.log\nfrom-config.local\n",
+    )
+    .expect("gitignore");
+    fs::write(
+        repo.repo.join(".worktreeinclude"),
+        "*.env\nnested/**\n!nested/skip.env\n",
+    )
+    .expect("include");
+    fs::write(
+        repo.repo.join("phantom.config.json"),
+        r#"{"postCreate":{"copyFiles":["from-config.local"]}}"#,
+    )
+    .expect("legacy config");
     fs::create_dir_all(repo.repo.join("nested/deep")).expect("nested");
-    fs::write(repo.repo.join("nested/deep/file.txt"), "nested\n").expect("nested file");
-    let created = repo.phantom(&[
-        "create",
-        "copied",
-        "--copy-file",
-        "*.{env,json}",
-        "--copy-file",
-        "nested/**",
-    ]);
-    assert!(created.status.success(), "{}", text(&created.stderr));
+    fs::write(repo.repo.join("secret.env"), "secret\n").expect("secret");
+    fs::write(repo.repo.join("nested/deep/inner.env"), "inner\n").expect("inner");
+    fs::write(repo.repo.join("nested/skip.env"), "skip\n").expect("skip");
+    fs::write(repo.repo.join("nested/deep/note.txt"), "note\n").expect("note");
+    fs::write(repo.repo.join("notes.log"), "log\n").expect("log");
+    fs::write(repo.repo.join("other.log"), "other\n").expect("other");
+    fs::write(repo.repo.join("from-config.local"), "config\n").expect("legacy");
+    fs::write(repo.repo.join("tracked.env"), "dirty\n").expect("dirty");
+
+    let created = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["create", "copied", "--copy-file", "notes.log"],
+        )
+        .current_dir(repo.repo.join("nested"))
+        .output()
+        .expect("phantom");
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
     let worktree = repo.repo.join(".git/phantom/worktrees/copied");
+    assert_eq!(read_copy(&worktree.join("secret.env")), "secret\n");
     assert_eq!(
-        fs::read_to_string(worktree.join("local.env")).expect("env"),
-        "env\n"
+        read_copy(&worktree.join("nested/deep/inner.env")),
+        "inner\n"
+    );
+    assert_eq!(read_copy(&worktree.join("notes.log")), "log\n");
+    assert_eq!(read_copy(&worktree.join("tracked.env")), "committed\n");
+    assert!(!worktree.join("nested/skip.env").exists());
+    assert!(!worktree.join("nested/deep/note.txt").exists());
+    assert!(!worktree.join("other.log").exists());
+    assert!(!worktree.join("from-config.local").exists());
+
+    repo.git(&["branch", "attached"]);
+    let attached = repo.phantom(&["attach", "attached"]);
+    assert!(attached.status.success(), "{}", text(&attached.stderr));
+    let attached_path = repo.repo.join(".git/phantom/worktrees/attached");
+    assert_eq!(read_copy(&attached_path.join("secret.env")), "secret\n");
+    assert!(!attached_path.join("nested/skip.env").exists());
+    assert!(!attached_path.join("other.log").exists());
+}
+
+#[test]
+fn copies_gitignored_files_from_the_checkout_the_command_runs_in() {
+    let repo = Repo::new();
+    fs::write(repo.repo.join(".gitignore"), "*.env\n").expect("gitignore");
+    fs::write(repo.repo.join(".worktreeinclude"), "*.env\n").expect("include");
+    fs::write(repo.repo.join("secret.env"), "from-main\n").expect("main env");
+    repo.git(&["add", ".gitignore", ".worktreeinclude"]);
+    repo.git(&["commit", "-m", "include"]);
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "source",
+        ".git/phantom/worktrees/source",
+    ]);
+    let source = repo.repo.join(".git/phantom/worktrees/source");
+    fs::write(source.join("secret.env"), "from-source\n").expect("source env");
+
+    let created = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "copied"])
+        .current_dir(&source)
+        .output()
+        .expect("phantom");
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
     );
     assert_eq!(
-        fs::read_to_string(worktree.join("config.json")).expect("json"),
-        "{}\n"
+        read_copy(&repo.repo.join(".git/phantom/worktrees/copied/secret.env")),
+        "from-source\n"
     );
-    assert!(fs::read_to_string(worktree.join("readme.md")).is_err());
-    assert_eq!(
-        fs::read_to_string(worktree.join("nested/deep/file.txt")).expect("nested"),
-        "nested\n"
-    );
+}
+
+fn read_copy(path: &std::path::Path) -> String {
+    fs::read_to_string(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
 }
 
 #[test]
@@ -926,6 +1001,7 @@ fn copy_file_globs_ignore_brackets_in_the_repository_path() {
     fs::write(repo_dir.join("README.md"), "#\n").expect("readme");
     git(&["add", "README.md"]);
     git(&["commit", "-m", "initial"]);
+    fs::write(repo_dir.join(".gitignore"), "*.env\n").expect("gitignore");
     fs::write(repo_dir.join("kept.env"), "kept\n").expect("kept");
     let output = Command::new(env!("CARGO_BIN_EXE_ptm"))
         .args(["create", "copied", "--copy-file", "*.env"])
