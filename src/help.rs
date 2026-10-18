@@ -276,6 +276,7 @@ mod tests {
         let list = command_help("list").expect("help").expect("list");
         assert!(list.contains("--names"));
         assert!(list.contains("--no-default"));
+        assert!(list.contains("--json"));
         let checkout = command_help("github checkout")
             .expect("help")
             .expect("checkout");

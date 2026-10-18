@@ -54,7 +54,8 @@ fn find<'a>(args: &'a [String], commands: &'a [Command]) -> Option<(&'a Command,
 }
 
 fn create(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(
+    let json = wants_json(args);
+    let parsed = match args::parse(
         args,
         &[
             remainder_flag("exec", Some('x')),
@@ -66,27 +67,49 @@ fn create(args: &[String]) -> Result<i32> {
                 remainder: false,
             },
             value_flag("base", None),
+            flag("json", None),
         ],
         true,
-    )?;
+    ) {
+        Ok(parsed) => parsed,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let json = parsed.flag("json");
     let action = match action_from(&parsed) {
         Ok(action) => action,
-        Err(error) => return fail(&error, VALIDATION),
+        Err(error) => return fail_with(&error, VALIDATION, json),
     };
     match worktree::run_create(worktree::CreateRequest {
         name: parsed.positionals.first().map(String::as_str),
         base: parsed.value("base"),
         copy_files: &parsed.values("copy-file"),
         action,
-        logger: Logger::on(),
+        logger: logger_for(json),
     }) {
-        Ok(outcome) => Ok(outcome.exit_code.unwrap_or(SUCCESS)),
-        Err(error) => fail(&error, create_code(&error)),
+        Ok(outcome) => finish_change(json, &outcome),
+        Err(error) => fail_with(&error, create_code(&error), json),
     }
 }
 
+fn finish_change(json: bool, outcome: &worktree::CreateOutcome) -> Result<i32> {
+    finish_mutation(
+        json,
+        &worktree::change_output(
+            &outcome.worktree,
+            Some(outcome.base.clone()),
+            outcome.copy_error.as_deref(),
+            outcome.hooks_ran,
+            outcome.hook_failure.as_ref(),
+            outcome.exec.clone(),
+        ),
+        outcome.exec.as_ref(),
+        outcome.exit_code,
+    )
+}
+
 fn attach(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(
+    let json = wants_json(args);
+    let parsed = match args::parse(
         args,
         &[
             remainder_flag("exec", Some('x')),
@@ -97,46 +120,92 @@ fn attach(args: &[String]) -> Result<i32> {
                 multiple: true,
                 remainder: false,
             },
+            flag("json", None),
         ],
         true,
-    )?;
+    ) {
+        Ok(parsed) => parsed,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let json = parsed.flag("json");
     let Some(name) = parsed.positionals.first() else {
-        return fail(
+        return fail_with(
             &Error::msg("Missing required argument: branch name"),
             VALIDATION,
+            json,
         );
     };
     let action = match action_from(&parsed) {
         Ok(action) => action,
-        Err(error) => return fail(&error, VALIDATION),
+        Err(error) => return fail_with(&error, VALIDATION, json),
     };
     match worktree::run_attach(worktree::AttachRequest {
         name,
         copy_files: &parsed.values("copy-file"),
         action,
-        logger: Logger::on(),
+        logger: logger_for(json),
     }) {
-        Ok(outcome) => Ok(outcome.exit_code.unwrap_or(SUCCESS)),
-        Err(error) => fail(&error, attach_code(&error)),
+        Ok(outcome) => finish_mutation(
+            json,
+            &worktree::change_output(
+                &outcome.worktree,
+                None,
+                outcome.copy_error.as_deref(),
+                outcome.hooks_ran,
+                outcome.hook_failure.as_ref(),
+                outcome.exec.clone(),
+            ),
+            outcome.exec.as_ref(),
+            outcome.exit_code,
+        ),
+        Err(error) => fail_with(&error, attach_code(&error), json),
     }
 }
 
 fn list(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(
+    let json = wants_json(args);
+    let parsed = match args::parse(
         args,
-        &[flag("no-default", None), flag("names", None)],
+        &[
+            flag("no-default", None),
+            flag("names", None),
+            flag("json", None),
+        ],
         false,
-    )?;
-    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
+    ) {
+        Ok(parsed) => parsed,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let json = parsed.flag("json");
+    if json && parsed.flag("names") {
+        return fail_with(
+            &Error::msg("Only one of --json or --names can be specified"),
+            VALIDATION,
+            true,
+        );
+    }
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(error) => return fail_with(&Error::msg(error.to_string()), GENERAL, json),
+    };
     let git_root = match git::git_root(&cwd) {
         Ok(root) => root,
-        Err(error) => return fail(&error, error.exit_code()),
+        Err(error) => return fail_with(&error, error.exit_code(), json),
     };
     let exclude_default = parsed.flag("no-default");
     let worktrees = match worktree::list_worktrees(&git_root, exclude_default, false) {
         Ok(worktrees) => worktrees,
-        Err(error) => return fail(&error, GENERAL),
+        Err(error) => return fail_with(&error, GENERAL, json),
     };
+    if json {
+        return emit_json(&worktree::WorktreeListOutput {
+            version: crate::error::JSON_VERSION,
+            worktrees: worktrees
+                .iter()
+                .map(|worktree| worktree.to_json(None))
+                .collect(),
+        });
+    }
     if worktrees.is_empty() {
         if !parsed.flag("names") {
             let available = worktree::list_worktrees(&git_root, false, false).unwrap_or_default();
@@ -161,89 +230,169 @@ fn list(args: &[String]) -> Result<i32> {
 }
 
 fn where_cmd(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &[], true)?;
+    let json = wants_json(args);
+    let parsed = match args::parse(args, &[flag("json", None)], true) {
+        Ok(parsed) => parsed,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let json = parsed.flag("json");
     if parsed.positionals.is_empty() {
-        return fail(&Error::msg("Usage: ptm where <worktree-name>"), VALIDATION);
+        return fail_with(
+            &Error::msg("Usage: ptm where <worktree-name>"),
+            VALIDATION,
+            json,
+        );
     }
-    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(error) => return fail_with(&Error::msg(error.to_string()), GENERAL, json),
+    };
     let git_root = match git::git_root(&cwd) {
         Ok(root) => root,
-        Err(error) => return fail(&error, error.exit_code()),
+        Err(error) => return fail_with(&error, error.exit_code(), json),
     };
-    let context = crate::context::create(&git_root)?;
+    let context = match crate::context::create(&git_root) {
+        Ok(context) => context,
+        Err(error) => return fail_with(&error, GENERAL, json),
+    };
     let name = &parsed.positionals[0];
     match worktree::find_worktree(&context.git_root, name, false, None) {
         Ok(worktree) => {
-            println!("{}", worktree.path);
-            Ok(SUCCESS)
+            if json {
+                emit_json(&worktree::WorktreeRefOutput {
+                    version: crate::error::JSON_VERSION,
+                    worktree: worktree.to_json(None),
+                })
+            } else {
+                println!("{}", worktree.path);
+                Ok(SUCCESS)
+            }
         }
-        Err(error @ Error::WorktreeNotFound(_)) => fail(&error, NOT_FOUND),
-        Err(error) => fail(&error, GENERAL),
+        Err(error @ Error::WorktreeNotFound(_)) => fail_with(&error, NOT_FOUND, json),
+        Err(error) => fail_with(&error, GENERAL, json),
     }
 }
 
 fn delete(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(
+    let json = wants_json(args);
+    let parsed = match args::parse(
         args,
         &[
             flag("force", Some('f')),
             flag("keep-branch", None),
             flag("current", None),
+            flag("json", None),
         ],
         true,
-    )?;
+    ) {
+        Ok(parsed) => parsed,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let json = parsed.flag("json");
     let delete_current = parsed.flag("current");
     if parsed.positionals.is_empty() && !delete_current {
-        return fail(
+        return fail_with(
             &Error::msg(
                 "Please provide at least one worktree name to delete, or use --current to delete the current worktree",
             ),
             VALIDATION,
+            json,
         );
     }
     if !parsed.positionals.is_empty() && delete_current {
-        return fail(
+        return fail_with(
             &Error::msg("Cannot specify --current with a worktree name"),
             VALIDATION,
+            json,
         );
     }
-    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(error) => return fail_with(&Error::msg(error.to_string()), GENERAL, json),
+    };
     let git_root = match git::git_root(&cwd) {
         Ok(root) => root,
-        Err(error) => return fail(&error, error.exit_code()),
+        Err(error) => return fail_with(&error, error.exit_code(), json),
     };
     let context = match crate::context::create(&git_root) {
         Ok(context) => context,
-        Err(error) => return fail(&error, GENERAL),
+        Err(error) => return fail_with(&error, GENERAL, json),
     };
     let keep_branch =
         parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false);
     let names = if delete_current {
-        match worktree::current_worktree_name(&git_root)? {
-            Some(name) => vec![name],
-            None => {
-                return fail(
+        match worktree::current_worktree_name(&git_root) {
+            Ok(Some(name)) => vec![name],
+            Ok(None) => {
+                return fail_with(
                     &Error::msg(
                         "Not in a worktree directory. The --current option can only be used from within a worktree.",
                     ),
                     VALIDATION,
+                    json,
                 );
             }
+            Err(error) => return fail_with(&error, GENERAL, json),
         }
     } else {
         parsed.positionals.clone()
     };
+    let logger = logger_for(json);
+    let mut deleted = Vec::new();
     for name in names {
-        match worktree::delete_worktree(&context, &name, parsed.flag("force"), keep_branch, None) {
-            Ok(outcome) => println!("{}", outcome.message),
-            Err(error) => {
-                let code = match &error {
-                    Error::WorktreeNotFound(_) | Error::Uncommitted { .. } => VALIDATION,
-                    _ => GENERAL,
+        match worktree::delete_worktree(
+            &context,
+            &name,
+            parsed.flag("force"),
+            keep_branch,
+            None,
+            &logger,
+        ) {
+            Ok(outcome) => {
+                if !json {
+                    println!("{}", outcome.message);
+                }
+                deleted.push(worktree::DeletedEntry {
+                    worktree: Some(outcome.worktree.to_json(None)),
+                    branch_deleted: outcome.branch_deleted,
+                    branch_error: outcome.branch_error,
+                    error: None,
+                });
+            }
+            Err(failure) => {
+                let error = &failure.error;
+                let code = match error {
+                    Error::WorktreeNotFound(_) => NOT_FOUND,
+                    Error::Uncommitted { .. } => VALIDATION,
+                    other => other.exit_code(),
                 };
-                return fail(&error, code);
+                if json {
+                    deleted.push(worktree::DeletedEntry {
+                        worktree: failure
+                            .worktree
+                            .as_ref()
+                            .map(|worktree| worktree.to_json(None)),
+                        branch_deleted: false,
+                        branch_error: None,
+                        error: Some(error.to_string()),
+                    });
+                    emit_json(&worktree::DeleteOutput {
+                        version: crate::error::JSON_VERSION,
+                        deleted,
+                        error: Some(error.to_json(code).error),
+                    })?;
+                    return Ok(code);
+                }
+                return fail(error, code);
             }
         }
+    }
+    if json {
+        return emit_json(&worktree::DeleteOutput {
+            version: crate::error::JSON_VERSION,
+            deleted,
+            error: None,
+        });
     }
     Ok(SUCCESS)
 }
@@ -268,7 +417,12 @@ fn exec(args: &[String]) -> Result<i32> {
     };
     let name = parsed.positionals[0].clone();
     if let Err(error) = worktree::find_worktree(&context.git_root, &name, false, None) {
-        return fail(&error, GENERAL);
+        let code = if matches!(error, Error::WorktreeNotFound(_)) {
+            NOT_FOUND
+        } else {
+            error.exit_code()
+        };
+        return fail(&error, code);
     }
     let command = command_args[0].as_str();
     let rest = command_args[1..]
@@ -282,6 +436,7 @@ fn exec(args: &[String]) -> Result<i32> {
         command,
         &rest,
         &[],
+        false,
     ) {
         Ok(0) => Ok(SUCCESS),
         Ok(code) => fail(
@@ -410,31 +565,42 @@ fn project_root(args: &[String]) -> Result<i32> {
 }
 
 fn project_add(args: &[String]) -> Result<i32> {
+    let json = wants_json(args);
     let parsed = match args::parse(args, &[flag("json", None)], true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail(&error, VALIDATION),
+        Err(error) => return fail_with(&error, VALIDATION, json),
     };
+    let json = parsed.flag("json");
     if parsed.positionals.len() > 1 {
-        return fail(
+        return fail_with(
             &Error::msg("Usage: ptm project add [path] [--json]"),
             VALIDATION,
+            json,
         );
     }
-    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(error) => return bubble(Error::msg(error.to_string()), json),
+    };
     let input = parsed
         .positionals
         .first()
         .map(Path::new)
         .unwrap_or(cwd.as_path());
-    let root = projects::resolve_project_root(input)?;
-    let store = ProjectRegistryStore::default_store()?;
-    let (project, added) = store.add(&root)?;
-    if parsed.flag("json") {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&project_add_json(added, &project))
-                .map_err(|error| Error::msg(error.to_string()))?
-        );
+    let root = match projects::resolve_project_root(input) {
+        Ok(root) => root,
+        Err(error) => return bubble(error, json),
+    };
+    let store = match ProjectRegistryStore::default_store() {
+        Ok(store) => store,
+        Err(error) => return bubble(error, json),
+    };
+    let (project, added) = match store.add(&root) {
+        Ok(added) => added,
+        Err(error) => return bubble(error, json),
+    };
+    if json {
+        return emit_json(&project_add_json(added, &project));
     } else if added {
         println!("Added project '{}' ({})", project.name, project.root_path);
     } else {
@@ -447,14 +613,16 @@ fn project_add(args: &[String]) -> Result<i32> {
 }
 
 fn project_list(args: &[String]) -> Result<i32> {
+    let json = wants_json(args);
     let parsed = match args::parse(
         args,
         &[flag("json", None), flag("names", None), flag("paths", None)],
         false,
     ) {
         Ok(parsed) => parsed,
-        Err(error) => return fail(&error, VALIDATION),
+        Err(error) => return fail_with(&error, VALIDATION, json),
     };
+    let json = parsed.flag("json");
     let modes = [
         parsed.flag("json"),
         parsed.flag("names"),
@@ -464,26 +632,25 @@ fn project_list(args: &[String]) -> Result<i32> {
     .filter(|enabled| **enabled)
     .count();
     if modes > 1 {
-        return fail(
+        return fail_with(
             &Error::msg("Only one of --json, --names, or --paths can be specified"),
             VALIDATION,
+            json,
         );
     }
     let loaded = match preferences::load_preferences() {
         Ok(preferences) => preferences,
-        Err(error) => return fail(&error, GENERAL),
+        Err(error) => return fail_with(&error, GENERAL, json),
     };
-    let catalog = projects::list_catalog(loaded.ghq_discovery != Some(false))?;
+    let catalog = match projects::list_catalog(loaded.ghq_discovery != Some(false)) {
+        Ok(catalog) => catalog,
+        Err(error) => return bubble(error, json),
+    };
     for warning in &catalog.warnings {
         eprintln!("Warning: {warning}");
     }
-    if parsed.flag("json") {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&catalog_json(&catalog.projects, catalog.version))
-                .map_err(|error| Error::msg(error.to_string()))?
-        );
-        return Ok(SUCCESS);
+    if json {
+        return emit_json(&catalog_json(&catalog.projects, catalog.version));
     }
     if catalog.projects.is_empty() {
         if !parsed.flag("names") && !parsed.flag("paths") {
@@ -519,44 +686,55 @@ fn project_list(args: &[String]) -> Result<i32> {
 }
 
 fn project_remove(args: &[String]) -> Result<i32> {
+    let json = wants_json(args);
     let parsed = match args::parse(args, &[flag("json", None)], true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail(&error, VALIDATION),
+        Err(error) => return fail_with(&error, VALIDATION, json),
     };
+    let json = parsed.flag("json");
     if parsed.positionals.len() != 1 {
-        return fail(
+        return fail_with(
             &Error::msg("Usage: ptm project remove <id|name|path> [--json]"),
             VALIDATION,
+            json,
         );
     }
     let identifier = &parsed.positionals[0];
-    let store = ProjectRegistryStore::default_store()?;
-    let projects = store.list()?;
+    let store = match ProjectRegistryStore::default_store() {
+        Ok(store) => store,
+        Err(error) => return bubble(error, json),
+    };
+    let projects = match store.list() {
+        Ok(projects) => projects,
+        Err(error) => return bubble(error, json),
+    };
     let project = match find_project(&projects, identifier) {
         Ok(Some(project)) => project,
         Ok(None) => {
-            return fail(
+            return fail_with(
                 &Error::msg(format!("Project '{identifier}' not found")),
                 NOT_FOUND,
+                json,
             )
         }
-        Err(error) => return fail(&error, VALIDATION),
+        Err(error) => return fail_with(&error, VALIDATION, json),
     };
-    let Some(removed) = store.remove(&project.id)? else {
-        return fail(
-            &Error::msg(format!("Project '{identifier}' not found")),
-            NOT_FOUND,
-        );
+    let removed = match store.remove(&project.id) {
+        Ok(Some(removed)) => removed,
+        Ok(None) => {
+            return fail_with(
+                &Error::msg(format!("Project '{identifier}' not found")),
+                NOT_FOUND,
+                json,
+            )
+        }
+        Err(error) => return bubble(error, json),
     };
-    if parsed.flag("json") {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "status": "removed",
-                "project": removed,
-            }))
-            .map_err(|error| Error::msg(error.to_string()))?
-        );
+    if json {
+        return emit_json(&serde_json::json!({
+            "status": "removed",
+            "project": removed,
+        }));
     } else {
         println!("Removed project '{}' ({})", removed.name, removed.root_path);
     }
@@ -609,18 +787,32 @@ fn github_root(args: &[String]) -> Result<i32> {
 }
 
 fn github_checkout(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &[value_flag("base", None)], true)?;
+    let json = wants_json(args);
+    let parsed = match args::parse(args, &[value_flag("base", None), flag("json", None)], true) {
+        Ok(parsed) => parsed,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let json = parsed.flag("json");
     let Some(number) = parsed.positionals.first() else {
-        return fail(
+        return fail_with(
             &Error::msg("Please specify a PR or issue number"),
             VALIDATION,
+            json,
         );
     };
-    let checkout = match github::checkout(number, parsed.value("base"), &Logger::on()) {
+    let checkout = match github::checkout(number, parsed.value("base"), &logger_for(json)) {
         Ok(checkout) => checkout,
-        Err(error) => return fail(&error, error.exit_code()),
+        Err(error) => return fail_with(&error, error.exit_code(), json),
     };
-    println!("{}", checkout.message);
+    if json {
+        let document = match checkout.to_json() {
+            Ok(document) => document,
+            Err(error) => return fail_with(&error, GENERAL, true),
+        };
+        emit_json(&document)?;
+    } else {
+        println!("{}", checkout.message);
+    }
     if let Some(failure) = &checkout.hook_failure {
         let _ = std::io::Write::flush(&mut std::io::stdout());
         eprintln!("{}", failure.warning(&checkout.path));
@@ -731,6 +923,17 @@ fn remainder_flag(name: &'static str, short: Option<char>) -> Opt {
 }
 
 fn fail(error: &Error, code: i32) -> Result<i32> {
+    fail_with(error, code, false)
+}
+
+fn fail_with(error: &Error, code: i32, json: bool) -> Result<i32> {
+    if json {
+        match serde_json::to_string_pretty(&error.to_json(code)) {
+            Ok(text) => println!("{text}"),
+            Err(render) => eprintln!("{error}\n{render}"),
+        }
+        return Ok(code);
+    }
     let message = error.to_string();
     if message.is_empty() {
         eprintln!();
@@ -738,6 +941,62 @@ fn fail(error: &Error, code: i32) -> Result<i32> {
         eprintln!("{message}");
     }
     Ok(code)
+}
+
+fn emit_json(value: &impl serde::Serialize) -> Result<i32> {
+    let text =
+        serde_json::to_string_pretty(value).map_err(|error| Error::msg(error.to_string()))?;
+    println!("{text}");
+    Ok(SUCCESS)
+}
+
+fn finish_mutation(
+    json: bool,
+    document: &worktree::WorktreeChangeOutput,
+    exec: Option<&worktree::ExecOutcome>,
+    exit_code: Option<i32>,
+) -> Result<i32> {
+    if json {
+        emit_json(document)?;
+        return Ok(exit_code.unwrap_or(SUCCESS));
+    }
+    if let Some(exec) = exec.filter(|exec| !exec.ok) {
+        let error = if let Some(signal) = &exec.signal {
+            Error::Signaled(signal.clone())
+        } else if let Some(message) = &exec.error {
+            Error::msg(message.clone())
+        } else {
+            Error::CommandFailed {
+                command: exec.shell.clone(),
+                code: exec.exit_code,
+            }
+        };
+        return fail(&error, exec.exit_code);
+    }
+    Ok(exit_code.unwrap_or(SUCCESS))
+}
+
+fn bubble(error: Error, json: bool) -> Result<i32> {
+    if json {
+        let code = error.exit_code();
+        fail_with(&error, code, true)
+    } else {
+        Err(error)
+    }
+}
+
+fn wants_json(args: &[String]) -> bool {
+    args.iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| arg == "--json")
+}
+
+fn logger_for(json: bool) -> Logger {
+    if json {
+        Logger::json()
+    } else {
+        Logger::on()
+    }
 }
 
 fn create_code(error: &Error) -> i32 {

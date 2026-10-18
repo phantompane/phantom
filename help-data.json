@@ -70,6 +70,11 @@
           "type": "string",
           "description": "Branch or commit to create the new worktree from (defaults to HEAD)",
           "example": "--base main, --base origin/release, --base feature"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook and --exec output go to stderr"
         }
       ],
       "examples": [
@@ -106,7 +111,8 @@
         "Files that already exist in the new worktree are left unchanged",
         "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
         ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] post-create commands run in the new worktree, in order, and stop at the first failure",
-        "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)"
+        "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
+        "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README"
       ]
     },
     "attach": {
@@ -127,6 +133,11 @@
           "multiple": true,
           "description": "Extra gitignore pattern of files to copy from the current checkout. Can be used multiple times. Only gitignored matches are copied",
           "example": "--copy-file .env --copy-file .npmrc"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook and --exec output go to stderr"
         }
       ],
       "examples": [
@@ -150,7 +161,8 @@
         ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
         "Files that already exist in the new worktree are left unchanged",
         "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
-        "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)"
+        "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
+        "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README"
       ]
     },
     "list": {
@@ -167,6 +179,11 @@
           "name": "names",
           "type": "boolean",
           "description": "Output only worktree names (for scripts and automation)"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout"
         }
       ],
       "examples": [
@@ -187,13 +204,21 @@
         "Shows all worktrees with their paths and associated branches",
         "The default worktree is included unless --no-default is set",
         "The main worktree is marked as '(bare)' if using a bare repository",
-        "Use --names for scripts and automation"
+        "Use --names for scripts and automation",
+        "--json cannot be combined with --names. The JSON schema is documented in the README"
       ]
     },
     "where": {
       "name": "where",
       "description": "Output the filesystem path of a specific worktree",
-      "usage": "ptm where <worktree-name>",
+      "usage": "ptm where <worktree-name> [options]",
+      "options": [
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Print a versioned JSON object for the worktree to stdout. Errors are JSON on stdout"
+        }
+      ],
       "examples": [
         {
           "description": "Get the path of a worktree",
@@ -206,7 +231,8 @@
       ],
       "notes": [
         "Outputs only the path, making it suitable for use in scripts",
-        "Exits with an error code if the worktree doesn't exist"
+        "Exits with an error code if the worktree doesn't exist",
+        "--json prints the worktree object instead of the bare path. The schema is documented in the README"
       ]
     },
     "delete": {
@@ -229,6 +255,11 @@
           "name": "keep-branch",
           "type": "boolean",
           "description": "Delete the worktree but keep its branch"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook output goes to stderr"
         }
       ],
       "examples": [
@@ -259,7 +290,8 @@
         "The associated branch will also be deleted if it's not checked out elsewhere",
         "Use --keep-branch to delete only the worktree and preserve the branch",
         ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] pre-delete commands run in the worktree before it is removed, in order, and stop at the first failure",
-        "Pre-delete hooks receive PTM=1, PTM_NAME (the worktree name), PTM_PATH (the absolute worktree path), and PTM_ROOT_PATH (the source checkout path)"
+        "Pre-delete hooks receive PTM=1, PTM_NAME (the worktree name), PTM_PATH (the absolute worktree path), and PTM_ROOT_PATH (the source checkout path)",
+        "--json reports each deleted worktree, whether its branch was deleted, and per-item errors. The schema is documented in the README"
       ]
     },
     "exec": {
@@ -544,6 +576,11 @@
           "name": "base",
           "type": "string",
           "description": "Base branch for new issue branches (issues only, default: repository HEAD)"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Print a versioned JSON object to stdout, including the worktree and PR or issue info. Errors are JSON on stdout. Hook output goes to stderr"
         }
       ],
       "examples": [
@@ -567,7 +604,8 @@
         "",
         "Requirements:",
         "  - GitHub CLI (gh) must be installed",
-        "  - Must be authenticated with 'gh auth login'"
+        "  - Must be authenticated with 'gh auth login'",
+        "--json includes github.kind, github.number, and github.headRef. The schema is documented in the README"
       ]
     },
     "gh": {
@@ -604,6 +642,11 @@
           "name": "base",
           "type": "string",
           "description": "Base branch for new issue branches (issues only, default: repository HEAD)"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Print a versioned JSON object to stdout, including the worktree and PR or issue info. Errors are JSON on stdout. Hook output goes to stderr"
         }
       ],
       "examples": [
@@ -627,7 +670,8 @@
         "",
         "Requirements:",
         "  - GitHub CLI (gh) must be installed",
-        "  - Must be authenticated with 'gh auth login'"
+        "  - Must be authenticated with 'gh auth login'",
+        "--json includes github.kind, github.number, and github.headRef. The schema is documented in the README"
       ]
     }
   }

@@ -95,7 +95,7 @@ pub fn parse_with(
             let spec = options
                 .iter()
                 .find(|spec| spec.name == name)
-                .ok_or_else(|| Error::msg(unknown_option(&format!("--{option}"))))?;
+                .ok_or_else(|| Error::validation(unknown_option(&format!("--{option}"))))?;
             index += 1;
             parsed.option_occurrences.push(spec.name.to_string());
             if spec.value {
@@ -113,14 +113,17 @@ pub fn parse_with(
                     value.to_string()
                 } else {
                     let next = args.get(index).ok_or_else(|| {
-                        Error::msg(format!("Option '--{} <value>' argument missing", spec.name))
+                        Error::validation(format!(
+                            "Option '--{} <value>' argument missing",
+                            spec.name
+                        ))
                     })?;
                     index += 1;
                     next.clone()
                 };
                 parsed.flags.push((spec.name.to_string(), Some(value)));
             } else if inline.is_some() {
-                return Err(Error::msg(unknown_option(&format!("--{option}"))));
+                return Err(Error::validation(unknown_option(&format!("--{option}"))));
             } else {
                 parsed.flags.push((spec.name.to_string(), None));
             }
@@ -130,11 +133,11 @@ pub fn parse_with(
             let flag = short
                 .chars()
                 .next()
-                .ok_or_else(|| Error::msg(unknown_option(arg)))?;
+                .ok_or_else(|| Error::validation(unknown_option(arg)))?;
             let spec = options
                 .iter()
                 .find(|spec| spec.short == Some(flag))
-                .ok_or_else(|| Error::msg(unknown_option(arg)))?;
+                .ok_or_else(|| Error::validation(unknown_option(arg)))?;
             let attached = short.chars().skip(1).collect::<String>();
             index += 1;
             parsed.option_occurrences.push(spec.name.to_string());
@@ -151,7 +154,7 @@ pub fn parse_with(
                 }
                 let value = if attached.is_empty() {
                     let next = args.get(index).ok_or_else(|| {
-                        Error::msg(format!("Option '-{flag} <value>' argument missing"))
+                        Error::validation(format!("Option '-{flag} <value>' argument missing"))
                     })?;
                     index += 1;
                     next.clone()
@@ -160,7 +163,7 @@ pub fn parse_with(
                 };
                 parsed.flags.push((spec.name.to_string(), Some(value)));
             } else if !attached.is_empty() {
-                return Err(Error::msg(unknown_option(arg)));
+                return Err(Error::validation(unknown_option(arg)));
             } else {
                 parsed.flags.push((spec.name.to_string(), None));
             }
@@ -201,7 +204,7 @@ fn push_remainder(
     }
     let values = &args[*index..];
     if values.is_empty() {
-        return Err(Error::msg(missing.to_string()));
+        return Err(Error::validation(missing.to_string()));
     }
     for value in values {
         parsed
@@ -214,7 +217,7 @@ fn push_remainder(
 
 fn push_positional(parsed: &mut Parsed, arg: &str, allow_positionals: bool) -> Result<()> {
     if !allow_positionals {
-        return Err(Error::msg(format!(
+        return Err(Error::validation(format!(
             "Unexpected argument '{arg}'. This command does not take positional arguments"
         )));
     }
@@ -288,6 +291,9 @@ mod tests {
             error.to_string(),
             "Unknown option '--nope'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--nope\"'"
         );
+        assert!(matches!(error, Error::Validation(_)));
+        assert_eq!(error.exit_code(), crate::error::VALIDATION);
+        assert_eq!(error.json_code(error.exit_code()), "validation");
     }
 
     #[test]
