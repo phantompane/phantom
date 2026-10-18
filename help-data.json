@@ -25,6 +25,10 @@
       "description": "Execute a command in a worktree directory"
     },
     {
+      "name": "meta",
+      "description": "Record who owns a worktree and why it exists"
+    },
+    {
       "name": "preferences",
       "description": "Manage user preferences"
     },
@@ -83,6 +87,30 @@
           "example": "--base main, --base origin/release, --base feature"
         },
         {
+          "name": "owner",
+          "type": "string",
+          "description": "Who created the worktree. When omitted, PTM_AGENT_ID is used if that environment variable is set",
+          "example": "--owner grok"
+        },
+        {
+          "name": "purpose",
+          "type": "string",
+          "description": "Free-text description of the task this worktree is for",
+          "example": "--purpose 'fix the flaky checkout test'"
+        },
+        {
+          "name": "pr",
+          "type": "string",
+          "description": "Pull request number or http(s) URL to link to the worktree",
+          "example": "--pr 774"
+        },
+        {
+          "name": "issue",
+          "type": "string",
+          "description": "Issue number or http(s) URL to link to the worktree",
+          "example": "--issue 12"
+        },
+        {
           "name": "json",
           "type": "boolean",
           "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook and --exec output go to stderr"
@@ -123,7 +151,8 @@
         "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
         ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] post-create commands run in the new worktree, in order, and stop at the first failure",
         "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
-        "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README"
+        "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
+        "Owner, purpose, and links are stored in ptm/worktrees.json under the Git common directory. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty. where and exec refresh lastUsedAt"
       ]
     },
     "attach": {
@@ -153,6 +182,30 @@
           "example": "--copy-file .env --copy-file .npmrc"
         },
         {
+          "name": "owner",
+          "type": "string",
+          "description": "Who created the worktree. When omitted, PTM_AGENT_ID is used if that environment variable is set",
+          "example": "--owner grok"
+        },
+        {
+          "name": "purpose",
+          "type": "string",
+          "description": "Free-text description of the task this worktree is for",
+          "example": "--purpose 'review the pull request'"
+        },
+        {
+          "name": "pr",
+          "type": "string",
+          "description": "Pull request number or http(s) URL to link to the worktree",
+          "example": "--pr 774"
+        },
+        {
+          "name": "issue",
+          "type": "string",
+          "description": "Issue number or http(s) URL to link to the worktree",
+          "example": "--issue 12"
+        },
+        {
           "name": "json",
           "type": "boolean",
           "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook and --exec output go to stderr"
@@ -180,7 +233,8 @@
         "Files that already exist in the new worktree are left unchanged",
         "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
         "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
-        "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README"
+        "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
+        "Owner, purpose, and links are stored in ptm/worktrees.json under the Git common directory. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty"
       ]
     },
     "list": {
@@ -204,6 +258,12 @@
           "name": "names",
           "type": "boolean",
           "description": "Output only worktree names (for scripts and automation)"
+        },
+        {
+          "name": "owner",
+          "type": "string",
+          "description": "Show only worktrees recorded for this owner",
+          "example": "--owner grok"
         },
         {
           "name": "json",
@@ -230,7 +290,8 @@
         "The default worktree is included unless --no-default is set",
         "The main worktree is marked as '(bare)' if using a bare repository",
         "Use --names for scripts and automation",
-        "--json cannot be combined with --names. The JSON schema is documented in the README"
+        "--json cannot be combined with --names. The JSON schema is documented in the README",
+        "--owner filters by the recorded owner. Worktrees with no owner are omitted. The human list prints [owner] and the purpose when they are set"
       ]
     },
     "where": {
@@ -264,7 +325,8 @@
       "notes": [
         "Outputs only the path, making it suitable for use in scripts",
         "Exits with an error code if the worktree doesn't exist",
-        "--json prints the worktree object instead of the bare path. The schema is documented in the README"
+        "--json prints the worktree object instead of the bare path. The schema is documented in the README",
+        "where updates lastUsedAt when the worktree already has a metadata record"
       ]
     },
     "delete": {
@@ -372,7 +434,83 @@
         "The command is executed with the worktree directory as the working directory",
         "Put --project before the worktree name. All arguments after the worktree name are passed to the command, including options. A -- before the command is accepted but not required",
         "The exit code of the executed command is preserved",
-        "The command receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path)"
+        "The command receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path)",
+        "exec updates lastUsedAt when the worktree already has a metadata record"
+      ]
+    },
+    "meta": {
+      "name": "meta",
+      "usage": "ptm meta <subcommand>",
+      "description": "Show or update worktree ownership and purpose",
+      "examples": [
+        {
+          "command": "ptm meta set feature-auth --owner grok --purpose 'fix the flake'",
+          "description": "Record the owner and purpose of an existing worktree"
+        }
+      ],
+      "notes": [
+        "Subcommands:",
+        "  set <name>   Set owner, purpose, or links on a worktree",
+        "",
+        "Records live in ptm/worktrees.json under the Git common directory inside the repository. delete removes the record for the worktree."
+      ]
+    },
+    "meta set": {
+      "name": "meta set",
+      "usage": "ptm meta set [--project <ref>] <worktree-name> [options]",
+      "description": "Set owner, purpose, or links on an existing worktree",
+      "options": [
+        {
+          "name": "project",
+          "short": "p",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--project owner/repo"
+        },
+        {
+          "name": "owner",
+          "type": "string",
+          "description": "Replace the recorded owner. PTM_AGENT_ID is not applied by meta set",
+          "example": "--owner grok"
+        },
+        {
+          "name": "purpose",
+          "type": "string",
+          "description": "Replace the recorded purpose",
+          "example": "--purpose 'fix the flake'"
+        },
+        {
+          "name": "pr",
+          "type": "string",
+          "description": "Replace the linked pull request. A number or an http(s) URL",
+          "example": "--pr 774"
+        },
+        {
+          "name": "issue",
+          "type": "string",
+          "description": "Replace the linked issue. A number or an http(s) URL",
+          "example": "--issue 12"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Print the updated worktree object to stdout. Errors are JSON on stdout"
+        }
+      ],
+      "examples": [
+        {
+          "command": "ptm meta set feature-auth --purpose 'land the fix'",
+          "description": "Change the purpose and leave the owner and links as they are"
+        },
+        {
+          "command": "ptm meta set feature-auth --pr https://github.com/phantompane/phantom/pull/774 --json",
+          "description": "Link a pull request and print the worktree object"
+        }
+      ],
+      "notes": [
+        "At least one of --owner, --purpose, --pr, or --issue is required",
+        "Omitted fields keep their current values. A worktree with no record yet gets createdAt and lastUsedAt",
+        "The worktree must already exist. A missing name exits 2"
       ]
     },
     "preferences": {
@@ -703,6 +841,18 @@
           "description": "Base branch for new issue branches (issues only, default: repository HEAD)"
         },
         {
+          "name": "owner",
+          "type": "string",
+          "description": "Who created the worktree. When omitted, PTM_AGENT_ID is used if that environment variable is set",
+          "example": "--owner grok"
+        },
+        {
+          "name": "purpose",
+          "type": "string",
+          "description": "Free-text description of the task this worktree is for",
+          "example": "--purpose 'review the pull request'"
+        },
+        {
           "name": "json",
           "type": "boolean",
           "description": "Print a versioned JSON object to stdout, including the worktree and PR or issue info. Errors are JSON on stdout. Hook output goes to stderr"
@@ -726,6 +876,7 @@
         "For same-repo PRs: Worktree name matches the PR branch (e.g., 'feature/add-logging')",
         "For fork PRs: Worktree name is '{owner}/{branch}' (e.g., 'aku11i/feature/add-logging')",
         "For Issues: Creates worktree named 'issues/{number}' with a new branch",
+        "The pull request or issue number and URL are stored on the worktree. --owner and --purpose are recorded the same way as ptm create",
         "",
         "Requirements:",
         "  - GitHub CLI (gh) must be installed",
@@ -776,6 +927,18 @@
           "description": "Base branch for new issue branches (issues only, default: repository HEAD)"
         },
         {
+          "name": "owner",
+          "type": "string",
+          "description": "Who created the worktree. When omitted, PTM_AGENT_ID is used if that environment variable is set",
+          "example": "--owner grok"
+        },
+        {
+          "name": "purpose",
+          "type": "string",
+          "description": "Free-text description of the task this worktree is for",
+          "example": "--purpose 'review the pull request'"
+        },
+        {
           "name": "json",
           "type": "boolean",
           "description": "Print a versioned JSON object to stdout, including the worktree and PR or issue info. Errors are JSON on stdout. Hook output goes to stderr"
@@ -799,6 +962,7 @@
         "For same-repo PRs: Worktree name matches the PR branch (e.g., 'feature/add-logging')",
         "For fork PRs: Worktree name is '{owner}/{branch}' (e.g., 'aku11i/feature/add-logging')",
         "For Issues: Creates worktree named 'issues/{number}' with a new branch",
+        "The pull request or issue number and URL are stored on the worktree. --owner and --purpose are recorded the same way as ptm create",
         "",
         "Requirements:",
         "  - GitHub CLI (gh) must be installed",

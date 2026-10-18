@@ -52,6 +52,8 @@ impl Repo {
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env_remove("GHQ_ROOT")
+            .env_remove("PTM_AGENT_ID")
+            .env_remove("PHANTOM_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
             .env_remove("GIT_CONFIG_COUNT")
@@ -2664,6 +2666,13 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     );
     assert_eq!(checkout_json["worktree"]["branch"], "issues/7");
     assert_eq!(checkout_json["worktree"]["base"], "HEAD");
+    assert_eq!(checkout_json["worktree"]["links"]["issue"]["number"], 7);
+    assert_eq!(
+        checkout_json["worktree"]["links"]["issue"]["url"],
+        "https://github.com/acme/demo/issues/7"
+    );
+    assert!(checkout_json["worktree"]["links"]["pr"].is_null());
+    assert!(checkout_json["worktree"]["createdAt"].is_string());
     assert!(!text(&checkout.stdout).contains("Created worktree"));
 
     let missing = repo
@@ -2707,6 +2716,12 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     assert!(again_json["worktree"]["base"].is_null());
     assert_eq!(again_json["postCreate"]["ran"], false);
     assert_worktree_object(&again_json["worktree"], "topic", &checked_out);
+    assert_eq!(again_json["worktree"]["links"]["pr"]["number"], 7);
+    assert_eq!(
+        again_json["worktree"]["links"]["pr"]["url"],
+        "https://github.com/acme/demo/pull/7"
+    );
+    assert!(again_json["worktree"]["links"]["issue"].is_null());
     assert!(!text(&again.stdout).contains("already checked out"));
 }
 
@@ -4465,4 +4480,615 @@ fn relative_origin_is_not_a_github_project_name() {
     assert!(objects.status.success(), "{}", text(&objects.stderr));
     assert!(same_dir(&text(&objects.stdout), &repo.repo));
     assert!(!text(&objects.stderr).contains("must be run in a work tree"));
+}
+
+#[test]
+fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
+    let repo = Repo::new();
+    let help = repo.phantom(&["meta", "--help"]);
+    assert!(help.status.success(), "{}", text(&help.stderr));
+    assert!(text(&help.stdout).contains("meta set"));
+
+    let plain = repo.phantom(&["create", "plain", "--json"]);
+    assert!(plain.status.success(), "{}", text(&plain.stderr));
+    let plain_json = json_value(&plain);
+    assert!(plain_json["worktree"]["owner"].is_null());
+    assert!(plain_json["worktree"]["purpose"].is_null());
+    assert!(plain_json["worktree"]["createdAt"].is_string());
+    assert_eq!(
+        plain_json["worktree"]["createdAt"],
+        plain_json["worktree"]["lastUsedAt"]
+    );
+    assert!(plain_json["worktree"]["links"]["pr"].is_null());
+
+    let ignored = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "legacy", "--json"])
+        .env("PHANTOM_AGENT_ID", "phantom-v6")
+        .output()
+        .expect("legacy env");
+    assert!(ignored.status.success(), "{}", text(&ignored.stderr));
+    assert!(json_value(&ignored)["worktree"]["owner"].is_null());
+
+    let created = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "create",
+                "feature",
+                "--json",
+                "--purpose",
+                "fix the flake",
+                "--pr",
+                "774",
+                "--owner",
+                "from-flag",
+            ],
+        )
+        .env("PTM_AGENT_ID", "from-env")
+        .output()
+        .expect("create");
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let created_json = json_value(&created);
+    assert_eq!(created_json["version"], 1);
+    assert_eq!(created_json["worktree"]["owner"], "from-flag");
+    assert_eq!(created_json["worktree"]["purpose"], "fix the flake");
+    assert_eq!(created_json["worktree"]["links"]["pr"]["number"], 774);
+    assert!(created_json["worktree"]["links"]["pr"]["url"].is_null());
+    assert!(created_json["worktree"]["createdAt"].is_string());
+    let created_at = created_json["worktree"]["createdAt"]
+        .as_str()
+        .expect("created")
+        .to_string();
+
+    let from_env = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["create", "env-owned", "--json"],
+        )
+        .env("PTM_AGENT_ID", "from-env")
+        .output()
+        .expect("env");
+    assert!(from_env.status.success(), "{}", text(&from_env.stderr));
+    assert_eq!(json_value(&from_env)["worktree"]["owner"], "from-env");
+
+    let listed = repo.phantom(&["list", "--owner", "from-flag"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let listed_text = text(&listed.stdout);
+    assert!(listed_text.contains("feature"));
+    assert!(listed_text.contains("[from-flag]"));
+    assert!(listed_text.contains("fix the flake"));
+    assert!(!listed_text.contains("plain"));
+    assert!(!listed_text.contains("env-owned"));
+
+    let listed_json = json_value(&repo.phantom(&["list", "--json", "--owner", "from-env"]));
+    assert_eq!(listed_json["worktrees"].as_array().map(Vec::len), Some(1));
+    assert_eq!(listed_json["worktrees"][0]["name"], "env-owned");
+
+    let none = repo.phantom(&["list", "--names", "--owner", "nobody"]);
+    assert!(none.status.success(), "{}", text(&none.stderr));
+    assert!(text(&none.stdout).is_empty());
+    let none_human = repo.phantom(&["list", "--owner", "nobody"]);
+    assert!(text(&none_human.stdout).contains("No worktrees found for owner 'nobody'"));
+
+    let invalid = repo.phantom(&["create", "nope", "--owner", " "]);
+    assert_eq!(invalid.status.code(), Some(3));
+    let invalid_json = repo.phantom(&["meta", "set", "feature", "--pr", "not-a-link", "--json"]);
+    assert_eq!(invalid_json.status.code(), Some(3));
+    assert_eq!(json_value(&invalid_json)["error"]["code"], "validation");
+    assert_eq!(json_value(&invalid_json)["error"]["exitCode"], 3);
+
+    let missing = repo.phantom(&["meta", "set", "missing", "--owner", "grok", "--json"]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert_eq!(json_value(&missing)["error"]["code"], "not_found");
+
+    let unset = repo.phantom(&["meta", "set", "feature", "--json"]);
+    assert_eq!(unset.status.code(), Some(3));
+
+    let updated = repo.phantom(&[
+        "meta",
+        "set",
+        "feature",
+        "--purpose",
+        "land the fix",
+        "--issue",
+        "https://github.com/phantompane/phantom/issues/12",
+        "--json",
+    ]);
+    assert!(updated.status.success(), "{}", text(&updated.stderr));
+    let updated_json = json_value(&updated);
+    assert_eq!(updated_json["worktree"]["owner"], "from-flag");
+    assert_eq!(updated_json["worktree"]["purpose"], "land the fix");
+    assert_eq!(updated_json["worktree"]["links"]["pr"]["number"], 774);
+    assert_eq!(updated_json["worktree"]["links"]["issue"]["number"], 12);
+    assert_eq!(updated_json["worktree"]["createdAt"], created_at);
+
+    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let mut document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("store json");
+    let records = document["worktrees"].as_array_mut().expect("records");
+    let feature = records
+        .iter_mut()
+        .find(|record| record["path"].as_str().unwrap_or("").ends_with("/feature"))
+        .expect("feature record");
+    feature["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+    fs::write(
+        &file,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&document).expect("encode")
+        ),
+    )
+    .expect("rewrite");
+
+    let located = repo.phantom(&["where", "feature", "--json"]);
+    assert!(located.status.success(), "{}", text(&located.stderr));
+    let located_json = json_value(&located);
+    assert_eq!(located_json["worktree"]["createdAt"], created_at);
+    assert_ne!(
+        located_json["worktree"]["lastUsedAt"],
+        "2000-01-01T00:00:00.000Z"
+    );
+    let human_where = repo.phantom(&["where", "feature"]);
+    assert!(
+        text(&human_where.stdout).starts_with('/'),
+        "{}",
+        text(&human_where.stdout)
+    );
+
+    document =
+        serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("store json");
+    let records = document["worktrees"].as_array_mut().expect("records");
+    let feature = records
+        .iter_mut()
+        .find(|record| record["path"].as_str().unwrap_or("").ends_with("/feature"))
+        .expect("feature record");
+    feature["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+    fs::write(
+        &file,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&document).expect("encode")
+        ),
+    )
+    .expect("rewrite");
+    let ran = repo.phantom(&["exec", "feature", "true"]);
+    assert!(ran.status.success(), "{}", text(&ran.stderr));
+    let after_exec = json_value(&repo.phantom(&["list", "--json", "--owner", "from-flag"]));
+    assert_ne!(
+        after_exec["worktrees"][0]["lastUsedAt"],
+        "2000-01-01T00:00:00.000Z"
+    );
+
+    repo.git(&["branch", "side"]);
+    let attached = repo.phantom(&[
+        "attach",
+        "side",
+        "--json",
+        "--owner",
+        "reviewer",
+        "--pr",
+        "https://github.com/phantompane/phantom/pull/12",
+    ]);
+    assert!(attached.status.success(), "{}", text(&attached.stderr));
+    let attached_json = json_value(&attached);
+    assert_eq!(attached_json["worktree"]["owner"], "reviewer");
+    assert_eq!(attached_json["worktree"]["links"]["pr"]["number"], 12);
+    assert!(attached_json["worktree"]["base"].is_null());
+
+    let deleted = repo.phantom(&["delete", "feature", "--keep-branch", "--json"]);
+    assert!(deleted.status.success(), "{}", text(&deleted.stderr));
+    let deleted_json = json_value(&deleted);
+    assert_eq!(deleted_json["deleted"][0]["worktree"]["owner"], "from-flag");
+    let after_delete = repo.phantom(&["list", "--json", "--owner", "from-flag"]);
+    assert_eq!(
+        json_value(&after_delete)["worktrees"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    let store: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("store json");
+    assert!(store["worktrees"]
+        .as_array()
+        .expect("records")
+        .iter()
+        .all(|record| !record["path"].as_str().unwrap_or("").ends_with("/feature")));
+
+    fs::write(&file, "{not json").expect("corrupt");
+    let broken = repo.phantom(&["list", "--json"]);
+    assert!(broken.status.success(), "{}", text(&broken.stderr));
+    let broken_json = json_value(&broken);
+    assert_eq!(broken_json["version"], 1);
+    assert!(broken_json.get("error").is_none());
+    assert!(text(&broken.stderr).contains("invalid JSON"));
+    assert!(text(&broken.stderr).contains("worktrees.json"));
+    assert!(!text(&broken.stdout).contains("invalid JSON"));
+    assert_eq!(fs::read_to_string(&file).expect("kept"), "{not json");
+    let refused = repo.phantom(&["create", "after-corrupt", "--json"]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(json_value(&refused)["error"]["code"], "error");
+    assert!(json_value(&refused)["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("worktrees.json"));
+    assert!(!repo.repo.join(".git/ptm/worktrees/after-corrupt").exists());
+    assert_eq!(fs::read_to_string(&file).expect("kept"), "{not json");
+}
+
+#[test]
+fn github_recheckout_keeps_the_original_owner() {
+    let repo = Repo::new();
+    let created = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "create",
+                "topic",
+                "--owner",
+                "creator",
+                "--purpose",
+                "original task",
+                "--json",
+            ],
+        )
+        .output()
+        .expect("create");
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let created_at = json_value(&created)["worktree"]["createdAt"]
+        .as_str()
+        .expect("created")
+        .to_string();
+    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let mut document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("json");
+    document["worktrees"][0]["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+    fs::write(
+        &file,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&document).expect("encode")
+        ),
+    )
+    .expect("rewrite");
+
+    let path = fake_gh_for_topic_pr(&repo);
+    let again = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "github",
+                "checkout",
+                "7",
+                "--json",
+                "--purpose",
+                "stolen",
+                "--owner",
+                "intruder",
+            ],
+        )
+        .env("PATH", &path)
+        .env("PTM_AGENT_ID", "intruder")
+        .output()
+        .expect("checkout");
+    assert!(again.status.success(), "{}", text(&again.stderr));
+    let again_json = json_value(&again);
+    assert_eq!(again_json["github"]["alreadyExists"], true);
+    assert_eq!(again_json["worktree"]["owner"], "creator");
+    assert_eq!(again_json["worktree"]["purpose"], "original task");
+    assert_eq!(again_json["worktree"]["createdAt"], created_at);
+    assert_ne!(
+        again_json["worktree"]["lastUsedAt"],
+        "2000-01-01T00:00:00.000Z"
+    );
+    assert_eq!(again_json["worktree"]["links"]["pr"]["number"], 7);
+    let listed = repo.phantom(&["list", "--json", "--owner", "creator"]);
+    assert_eq!(
+        json_value(&listed)["worktrees"].as_array().map(Vec::len),
+        Some(1)
+    );
+}
+
+#[test]
+fn delete_refuses_when_metadata_is_not_writable() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "doomed", "--owner", "creator", "--json"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let metadata_dir = repo.repo.join(".git/ptm");
+    let store = fs::read_to_string(metadata_dir.join("worktrees.json")).expect("store");
+    use std::os::unix::fs::PermissionsExt;
+    let mut locked = fs::metadata(&metadata_dir).expect("meta").permissions();
+    locked.set_mode(0o555);
+    fs::set_permissions(&metadata_dir, locked).expect("chmod");
+    let _restore = ModeReset(&metadata_dir);
+    let deleted = repo.phantom(&["delete", "doomed", "--keep-branch", "--json"]);
+    assert_eq!(deleted.status.code(), Some(1), "{}", text(&deleted.stdout));
+    let deleted_json = json_value(&deleted);
+    assert!(deleted_json["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("worktrees.json"));
+    assert_eq!(deleted_json["error"]["exitCode"], 1);
+    assert!(repo.repo.join(".git/ptm/worktrees/doomed").is_dir());
+    drop(_restore);
+    assert_eq!(
+        fs::read_to_string(metadata_dir.join("worktrees.json")).expect("kept"),
+        store
+    );
+}
+
+#[test]
+fn create_replaces_a_record_left_by_git_worktree_remove() {
+    let repo = Repo::new();
+    let created = repo.phantom(&[
+        "create",
+        "feature",
+        "--owner",
+        "first",
+        "--purpose",
+        "old task",
+        "--json",
+    ]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let created_at = json_value(&created)["worktree"]["createdAt"]
+        .as_str()
+        .expect("created")
+        .to_string();
+    let path = repo.repo.join(".git/ptm/worktrees/feature");
+    repo.git(&["worktree", "remove", path.to_str().expect("path")]);
+    repo.git(&["branch", "-D", "feature"]);
+    let again = repo.phantom(&[
+        "create",
+        "feature",
+        "--owner",
+        "second",
+        "--purpose",
+        "new task",
+        "--json",
+    ]);
+    assert!(again.status.success(), "{}", text(&again.stderr));
+    let again_json = json_value(&again);
+    assert_eq!(again_json["worktree"]["owner"], "second");
+    assert_eq!(again_json["worktree"]["purpose"], "new task");
+    assert_ne!(again_json["worktree"]["createdAt"], created_at);
+    assert_eq!(again_json["metadata"]["ok"], true);
+    let listed = repo.phantom(&["list", "--names", "--owner", "first"]);
+    assert!(text(&listed.stdout).is_empty(), "{}", text(&listed.stdout));
+    assert_eq!(
+        json_value(&repo.phantom(&["list", "--json", "--owner", "second"]))["worktrees"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+}
+
+#[test]
+fn metadata_save_failure_after_create_still_runs_hooks() {
+    let repo = Repo::new();
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        "[hooks]\npost-create = [\"touch hook-ran\"]\n",
+    )
+    .expect("hooks");
+    let created = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["create", "feature", "--owner", "creator", "--json"],
+        )
+        .env("PTM_TEST_FAIL_METADATA_SAVE", "1")
+        .output()
+        .expect("create");
+    assert_eq!(created.status.code(), Some(1), "{}", text(&created.stdout));
+    let created_json = json_value(&created);
+    assert!(created_json.get("error").is_none(), "{created_json}");
+    assert_eq!(created_json["worktree"]["name"], "feature");
+    assert!(created_json["worktree"]["owner"].is_null());
+    assert_eq!(created_json["metadata"]["ok"], false);
+    assert!(created_json["metadata"]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("injected"));
+    assert_eq!(created_json["postCreate"]["ok"], true);
+    assert_eq!(created_json["copyFiles"]["ok"], true);
+    assert!(repo
+        .repo
+        .join(".git/ptm/worktrees/feature/hook-ran")
+        .is_file());
+    assert!(text(&created.stderr).contains("Warning"));
+    assert!(text(&created.stderr).contains("injected"));
+    assert!(!text(&created.stdout).contains("Warning"));
+}
+
+#[test]
+fn readers_warn_on_corrupt_metadata_and_still_run() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "feature", "--owner", "creator"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let file = repo.repo.join(".git/ptm/worktrees.json");
+    fs::write(&file, "{not json").expect("corrupt");
+
+    let listed = repo.phantom(&["list", "--json", "--no-default"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let listed_json = json_value(&listed);
+    assert_eq!(listed_json["worktrees"][0]["name"], "feature");
+    assert!(listed_json["worktrees"][0]["owner"].is_null());
+    assert!(text(&listed.stderr).contains("worktrees.json"));
+    assert!(!text(&listed.stdout).contains("Warning"));
+
+    let located = repo.phantom(&["where", "feature", "--json"]);
+    assert!(located.status.success(), "{}", text(&located.stderr));
+    assert!(json_value(&located)["worktree"]["owner"].is_null());
+    assert!(text(&located.stderr).contains("invalid JSON"));
+    let human = repo.phantom(&["where", "feature"]);
+    assert!(human.status.success());
+    assert!(text(&human.stdout).starts_with('/'));
+
+    let ran = repo.phantom(&["exec", "feature", "true"]);
+    assert!(ran.status.success(), "{}", text(&ran.stderr));
+    assert!(text(&ran.stderr).contains("invalid JSON"));
+
+    assert_eq!(fs::read_to_string(&file).expect("kept"), "{not json");
+}
+
+#[test]
+fn owner_flag_rejects_a_value_that_looks_like_an_option() {
+    let repo = Repo::new();
+    let listed = repo.phantom(&["list", "--owner", "--json"]);
+    assert_eq!(listed.status.code(), Some(3), "{}", text(&listed.stdout));
+    let listed_json = json_value(&listed);
+    assert_eq!(listed_json["error"]["code"], "validation");
+    assert_eq!(listed_json["error"]["exitCode"], 3);
+    assert!(listed_json["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("looks like an option"));
+    assert!(listed_json["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("--json"));
+    assert!(text(&listed.stderr).is_empty(), "{}", text(&listed.stderr));
+
+    let created = repo.phantom(&["create", "feature", "--purpose", "--json"]);
+    assert_eq!(created.status.code(), Some(3));
+    assert_eq!(json_value(&created)["error"]["code"], "validation");
+    assert!(!repo.repo.join(".git/ptm/worktrees/feature").exists());
+}
+
+#[test]
+fn exec_command_json_flag_does_not_switch_ptm_to_json() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "topic", "--exec", "npm", "test", "--json"]);
+    let stdout = text(&created.stdout);
+    assert!(
+        stdout.contains("Created worktree 'topic'"),
+        "{stdout}\n{}",
+        text(&created.stderr)
+    );
+    assert!(
+        stdout.contains("Executing command in worktree 'topic': npm test --json"),
+        "{stdout}"
+    );
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&stdout).is_err(),
+        "stdout should stay human logs, not a JSON document:\n{stdout}"
+    );
+}
+
+#[test]
+fn separate_git_dir_writes_metadata_in_the_common_dir() {
+    let root = std::env::temp_dir().join(format!("ptm-sep-{}-{}", std::process::id(), uuid()));
+    let home = root.join("home");
+    let checkout = root.join("checkout");
+    let sep = root.join("sep.git");
+    let worktrees = root.join("worktrees");
+    fs::create_dir_all(home.join(".config/git")).expect("home");
+    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    fs::create_dir_all(&checkout).expect("checkout");
+    let init = std::process::Command::new("git")
+        .args([
+            "init",
+            "--separate-git-dir",
+            sep.to_str().expect("sep"),
+            "-b",
+            "main",
+        ])
+        .current_dir(&checkout)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", &home)
+        .output()
+        .expect("init");
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&checkout)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &home)
+            .output()
+            .expect("git");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["config", "user.name", "Phantom Rust"]);
+    git(&["config", "user.email", "phantom-rust@example.com"]);
+    fs::write(checkout.join("README.md"), "# sep\n").expect("readme");
+    git(&["add", "README.md"]);
+    git(&["commit", "-m", "initial"]);
+    assert!(checkout.join(".git").is_file(), ".git is a gitdir file");
+
+    let ptm = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_ptm"))
+            .args(args)
+            .current_dir(&checkout)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env_remove("PTM_AGENT_ID")
+            .output()
+            .expect("ptm")
+    };
+    let pref = ptm(&[
+        "preferences",
+        "set",
+        "worktrees-directory",
+        worktrees.to_str().expect("worktrees"),
+    ]);
+    assert!(pref.status.success(), "{}", text(&pref.stderr));
+    let created = ptm(&["create", "feature", "--owner", "sep", "--json"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    assert!(worktrees.join("feature").is_dir());
+    let store = sep.join("ptm").join("worktrees.json");
+    let document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&store).expect("common store")).expect("json");
+    assert!(document["worktrees"]
+        .as_array()
+        .expect("records")
+        .iter()
+        .any(|record| record["owner"] == "sep"));
+    assert!(!checkout.join(".git").join("ptm").exists());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn duplicate_metadata_paths_block_mutations() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "kept", "--owner", "creator"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    repo.git(&["branch", "side"]);
+    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let body = "{\n  \"version\": 1,\n  \"worktrees\": [\n    {\"path\": \"/tmp/one\", \"owner\": \"a\"},\n    {\"path\": \"/tmp/one\", \"owner\": \"b\"}\n  ]\n}\n";
+    fs::write(&file, body).expect("duplicate");
+    for args in [
+        vec!["create", "other", "--json"],
+        vec!["attach", "side", "--json"],
+        vec!["delete", "kept", "--json"],
+        vec!["meta", "set", "kept", "--owner", "nope", "--json"],
+    ] {
+        let output = repo.phantom(&args);
+        assert!(
+            !output.status.success(),
+            "{args:?}\n{}\n{}",
+            text(&output.stdout),
+            text(&output.stderr)
+        );
+        let message = format!("{}{}", text(&output.stdout), text(&output.stderr));
+        assert!(message.contains("duplicate path"), "{args:?}\n{message}");
+        assert_eq!(fs::read_to_string(&file).expect("kept"), body, "{args:?}");
+    }
+    assert!(repo.repo.join(".git/ptm/worktrees/kept").is_dir());
+    assert!(!repo.repo.join(".git/ptm/worktrees/other").exists());
+    assert!(!repo.repo.join(".git/ptm/worktrees/side").exists());
 }

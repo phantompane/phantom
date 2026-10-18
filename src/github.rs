@@ -6,6 +6,7 @@ use serde_json::Value;
 use crate::context;
 use crate::error::{self, Error, Result};
 use crate::git;
+use crate::metadata::{self, MetadataInput, WorktreeLink};
 use crate::process;
 use crate::worktree::{self, Logger, WorktreeInfo};
 
@@ -17,6 +18,7 @@ pub struct Checkout {
     pub hook_failure: Option<worktree::HookFailure>,
     pub copy_error: Option<String>,
     pub hooks_ran: bool,
+    pub metadata_error: Option<String>,
     pub info: WorktreeInfo,
     pub base: Option<String>,
     pub subject: GithubSubject,
@@ -35,6 +37,7 @@ struct GithubCheckoutOutput {
     github: GithubSubjectOutput,
     copy_files: worktree::CopyFilesOutcome,
     post_create: worktree::PostCreateOutcome,
+    metadata: worktree::MetadataSaveOutcome,
 }
 
 #[derive(Serialize)]
@@ -65,6 +68,7 @@ impl Checkout {
             },
             copy_files: worktree::copy_files_outcome(self.copy_error.as_deref()),
             post_create: worktree::post_create_outcome(self.hooks_ran, self.hook_failure.as_ref()),
+            metadata: worktree::metadata_save_outcome(self.metadata_error.as_deref()),
         })
         .map_err(|error| Error::msg(error.to_string()))
     }
@@ -75,6 +79,7 @@ pub fn checkout(
     base: Option<&str>,
     logger: &Logger,
     repository: Option<&Path>,
+    metadata: MetadataInput,
 ) -> Result<Checkout> {
     let cwd = match repository {
         Some(path) => path.to_path_buf(),
@@ -94,9 +99,9 @@ pub fn checkout(
                 pull.head_ref
             )));
         }
-        checkout_pull_request(&pull, logger, repository)
+        checkout_pull_request(&pull, &repo, logger, repository, metadata)
     } else {
-        checkout_issue(issue.number, base, logger, repository)
+        checkout_issue(issue.number, base, &repo, logger, repository, metadata)
     }
 }
 
@@ -114,8 +119,10 @@ struct PullRequest {
 
 fn checkout_pull_request(
     pull: &PullRequest,
+    repo: &RepoIdentity,
     logger: &Logger,
     repository: Option<&Path>,
+    mut metadata: MetadataInput,
 ) -> Result<Checkout> {
     let context = context::open(repository)?;
     let git_root = &context.git_root;
@@ -129,9 +136,11 @@ fn checkout_pull_request(
     } else {
         pull.head_ref.clone()
     };
+    metadata.pr = Some(subject_link(repo, pull.number, "pull"));
     if let Ok(existing) = worktree::find_worktree(&context, &worktree_name, false, None) {
         if existing.branch == worktree_name {
-            let path = existing.path.clone().into();
+            let info = record_existing_checkout(&context, Path::new(&existing.path), &metadata)?;
+            let path = info.path.clone().into();
             return Ok(Checkout {
                 message: format!("PR #{} is already checked out", pull.number),
                 worktree: worktree_name,
@@ -140,7 +149,8 @@ fn checkout_pull_request(
                 hook_failure: None,
                 copy_error: None,
                 hooks_ran: false,
-                info: existing,
+                metadata_error: None,
+                info,
                 base: None,
                 subject: GithubSubject::PullRequest {
                     number: pull.number,
@@ -160,7 +170,8 @@ fn checkout_pull_request(
         eprintln!("Warning: Could not set upstream branch: {error}");
     }
     let commands = post_commands(&context);
-    let attached = worktree::attach_worktree(&context, &worktree_name, &[], &commands, logger)?;
+    let attached =
+        worktree::attach_worktree(&context, &worktree_name, &[], &commands, logger, &metadata)?;
     let message = if pull.fork {
         format!(
             "Checked out PR #{} from fork {}",
@@ -181,6 +192,7 @@ fn checkout_pull_request(
         hook_failure: attached.hook_failure,
         copy_error: attached.copy_error,
         hooks_ran: attached.hooks_ran,
+        metadata_error: attached.metadata_error,
         info,
         base: Some(upstream),
         subject: GithubSubject::PullRequest {
@@ -193,13 +205,17 @@ fn checkout_pull_request(
 fn checkout_issue(
     number: u64,
     base: Option<&str>,
+    repo: &RepoIdentity,
     logger: &Logger,
     repository: Option<&Path>,
+    mut metadata: MetadataInput,
 ) -> Result<Checkout> {
     let context = context::open(repository)?;
     let name = format!("issues/{number}");
+    metadata.issue = Some(subject_link(repo, number, "issues"));
     if let Ok(existing) = worktree::find_worktree(&context, &name, false, None) {
-        let path = existing.path.clone().into();
+        let info = record_existing_checkout(&context, Path::new(&existing.path), &metadata)?;
+        let path = info.path.clone().into();
         return Ok(Checkout {
             message: format!("Issue #{number} is already checked out"),
             worktree: name,
@@ -208,14 +224,16 @@ fn checkout_issue(
             hook_failure: None,
             copy_error: None,
             hooks_ran: false,
-            info: existing,
+            metadata_error: None,
+            info,
             base: None,
             subject: GithubSubject::Issue { number },
         });
     }
     let commands = post_commands(&context);
     let base = base.unwrap_or("HEAD");
-    let created = worktree::create_worktree(&context, &name, base, &[], &commands, logger)?;
+    let created =
+        worktree::create_worktree(&context, &name, base, &[], &commands, logger, &metadata)?;
     let info = worktree::worktree_at_path(&context, &created.path)?;
     Ok(Checkout {
         message: format!("Created worktree '{name}' at {}", created.path.display()),
@@ -225,10 +243,48 @@ fn checkout_issue(
         hook_failure: created.hook_failure,
         copy_error: created.copy_error,
         hooks_ran: created.hooks_ran,
+        metadata_error: created.metadata_error,
         info,
         base: Some(base.to_string()),
         subject: GithubSubject::Issue { number },
     })
+}
+
+/// An existing record keeps its owner, purpose, and createdAt. Links are
+/// updated and lastUsedAt moves. A worktree with no record yet is a first
+/// checkout and stores the owner.
+fn record_existing_checkout(
+    context: &context::Context,
+    path: &Path,
+    metadata: &MetadataInput,
+) -> Result<worktree::WorktreeInfo> {
+    let key = metadata::path_key(path);
+    let known = metadata::load(&context.git_root)?.contains_key(&key);
+    if known {
+        metadata::write(
+            &context.git_root,
+            path,
+            &MetadataInput {
+                pr: metadata.pr.clone(),
+                issue: metadata.issue.clone(),
+                ..MetadataInput::default()
+            },
+        )?;
+        metadata::touch(&context.git_root, path)?;
+    } else {
+        metadata::write(&context.git_root, path, metadata)?;
+    }
+    worktree::worktree_at_path(context, path)
+}
+
+fn subject_link(repo: &RepoIdentity, number: u64, kind: &str) -> WorktreeLink {
+    WorktreeLink {
+        number: Some(number),
+        url: Some(format!(
+            "https://{}/{}/{}/{kind}/{number}",
+            repo.host, repo.owner, repo.name
+        )),
+    }
 }
 
 fn post_commands(context: &context::Context) -> Vec<String> {

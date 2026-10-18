@@ -131,11 +131,19 @@ A command that does not produce a result writes this object to stdout:
   "base": "HEAD",
   "dirty": false,
   "default": false,
-  "detached": false
+  "detached": false,
+  "owner": "grok",
+  "purpose": "fix the flaky checkout test",
+  "createdAt": "2026-10-18T11:46:00.000Z",
+  "lastUsedAt": "2026-10-18T11:46:00.000Z",
+  "links": {
+    "pr": { "number": 774, "url": null },
+    "issue": null
+  }
 }
 ```
 
-The object is intentionally open. Ownership and purpose metadata (owner, purpose, createdAt, lastUsedAt, links) and cleanup details (prunable, locked) can be added later without a new version.
+`owner`, `purpose`, `createdAt`, `lastUsedAt`, and `links` come from `ptm/worktrees.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `ptm create`, `ptm attach`, and `ptm github checkout` write a record. `owner` is `--owner` or `PTM_AGENT_ID`, and null when neither is set. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `github checkout` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `where` and `exec` refresh `lastUsedAt` when a record already exists. A failure to update it is a warning on stderr and does not change the exit code. `delete` removes the record after Git removes the worktree. `create` and `attach` replace any record already stored at that path. `meta set` and a second `github checkout` of a worktree that already exists patch the record. `create --json` and `attach --json` include `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the worktree exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 1. The stdout document is the result object, not the error envelope. A corrupt `worktrees.json` makes `list`, `where`, and `exec` continue with null metadata fields and a stderr warning. `create`, `attach`, `delete`, `meta set`, and `github checkout` refuse and leave the file unchanged. `ptm meta set` patches the fields you pass and leaves the others. A worktree Git created outside `ptm`, including the default checkout, has null metadata fields until `meta set` or `github checkout` records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
 
 ### Commands
 

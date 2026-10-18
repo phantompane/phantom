@@ -37,8 +37,19 @@ fn repository_error(error: Error) -> Error {
     }
 }
 
+fn git_common_dir_text(cwd: &Path) -> Result<String> {
+    output(&["rev-parse", "--git-common-dir"], Some(cwd), true)
+}
+
+/// Absolute path from `git rev-parse --git-common-dir`.
+///
+/// Linked worktrees and `git init --separate-git-dir` share this directory.
+pub fn git_common_dir(cwd: &Path) -> Result<PathBuf> {
+    Ok(normalize(&cwd.join(git_common_dir_text(cwd)?)))
+}
+
 pub fn git_root(cwd: &Path) -> Result<PathBuf> {
-    let common = output(&["rev-parse", "--git-common-dir"], Some(cwd), true)?;
+    let common = git_common_dir_text(cwd)?;
     if common.ends_with("/.git") || common == ".git" {
         let parent = Path::new(&common)
             .parent()
