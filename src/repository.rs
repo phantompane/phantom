@@ -494,10 +494,10 @@ fn destination_exists(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(Error::msg(format!(
-            "Failed to inspect {}: {error}",
-            path.display()
-        ))),
+        Err(error) => Err(io_failure(
+            &error,
+            format!("Failed to inspect {}: {error}", path.display()),
+        )),
     }
 }
 
