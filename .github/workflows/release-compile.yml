@@ -60,6 +60,8 @@ jobs:
       - name: Build
         run: cargo build --locked --release --target ${{ matrix.target }}
 
+      # The archive name uses the version already committed in Cargo.toml.
+      # Nothing in this workflow bumps that version.
       - name: Package
         shell: bash
         run: |

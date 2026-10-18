@@ -45,11 +45,17 @@ mod tests {
 
     #[test]
     fn version_line_marks_the_rust_build() {
-        assert_eq!(format_version("6.3.2", None), "Phantom v6.3.2+rust");
         assert_eq!(
-            format_version("6.3.2", Some("abc1234")),
-            "Phantom v6.3.2+rust (abc1234)"
+            format_version("7.0.0-alpha.1", None),
+            "Phantom v7.0.0-alpha.1+rust"
         );
-        assert_ne!(format_version("6.3.2", None), "Phantom v6.3.2");
+        assert_eq!(
+            format_version("7.0.0-alpha.1", Some("abc1234")),
+            "Phantom v7.0.0-alpha.1+rust (abc1234)"
+        );
+        assert_ne!(
+            format_version("7.0.0-alpha.1", None),
+            "Phantom v7.0.0-alpha.1"
+        );
     }
 }
