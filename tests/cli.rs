@@ -316,7 +316,7 @@ fn invalid_config_names_the_file_and_the_problem() {
 }
 
 #[test]
-fn github_checkout_logger_follows_the_caller() {
+fn github_checkout_logs_the_post_create_hook() {
     let repo = Repo::new();
     fs::write(
         repo.repo.join("phantom.config.json"),
@@ -357,83 +357,6 @@ fn github_checkout_logger_follows_the_caller() {
         "CLI checkout should log the hook:\n{}",
         text(&cli.stdout)
     );
-
-    let mcp = mcp_tool(
-        &repo,
-        &[("PATH", path.as_str())],
-        "phantom_github_checkout",
-        serde_json::json!({"number": "8"}),
-    );
-    assert!(
-        !mcp.stdout.contains("Running post-create"),
-        "MCP stdout must stay JSON-RPC:\n{}",
-        mcp.stdout
-    );
-    assert!(
-        !mcp.stdout.contains("Executing:"),
-        "MCP stdout must stay JSON-RPC:\n{}",
-        mcp.stdout
-    );
-    assert!(
-        mcp.stdout.contains("issues/8"),
-        "MCP should still return the checkout:\n{}\n{}",
-        mcp.stdout,
-        mcp.stderr
-    );
-}
-
-struct McpOutput {
-    stdout: String,
-    stderr: String,
-}
-
-fn mcp_tool(
-    repo: &Repo,
-    env: &[(&str, &str)],
-    tool: &str,
-    arguments: serde_json::Value,
-) -> McpOutput {
-    let mut command = repo.command(env!("CARGO_BIN_EXE_ptm"), &["mcp", "serve"]);
-    command
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    for (key, value) in env {
-        command.env(key, value);
-    }
-    let mut child = command.spawn().expect("mcp");
-    let mut stdin = child.stdin.take().expect("stdin");
-    let call = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "tools/call",
-        "params": {"name": tool, "arguments": arguments}
-    });
-    use std::io::Write;
-    writeln!(
-        stdin,
-        r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"test","version":"0"}}}}}}"#
-    )
-    .expect("init");
-    writeln!(
-        stdin,
-        r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#
-    )
-    .expect("initialized");
-    writeln!(stdin, "{call}").expect("call");
-    drop(stdin);
-    let pid = child.id();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(8));
-        let _ = std::process::Command::new("kill")
-            .arg(pid.to_string())
-            .status();
-    });
-    let output = child.wait_with_output().expect("wait");
-    McpOutput {
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-    }
 }
 
 #[test]
@@ -969,76 +892,44 @@ impl Drop for ModeReset<'_> {
 }
 
 #[test]
-fn mcp_hooks_do_not_write_to_stdout() {
+fn removed_mcp_command_is_unknown() {
     let repo = Repo::new();
-    fs::write(
-        repo.repo.join("phantom.config.json"),
-        r#"{"postCreate":{"commands":["printf 'HOOK_STDOUT\\n'"]},"preDelete":{"commands":["printf 'PRE_STDOUT\\n'"]}}"#,
-    )
-    .expect("config");
+    for args in [vec!["mcp"], vec!["mcp", "serve"], vec!["mcp", "--help"]] {
+        let output = repo.phantom(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{args:?}\n{}\n{}",
+            text(&output.stdout),
+            text(&output.stderr)
+        );
+        let stderr = text(&output.stderr);
+        assert!(
+            stderr.contains("Unknown command"),
+            "{args:?} produced {stderr}"
+        );
+    }
 
-    let cli = repo.phantom(&["create", "cli-hooks"]);
-    assert!(cli.status.success(), "{}", text(&cli.stderr));
+    let help = repo.phantom(&["--help"]);
+    assert!(help.status.success(), "{}", text(&help.stderr));
     assert!(
-        text(&cli.stdout).contains("HOOK_STDOUT"),
-        "CLI hooks stay on stdout:\n{}",
-        text(&cli.stdout)
-    );
-
-    let created = mcp_tool(
-        &repo,
-        &[],
-        "phantom_create_worktree",
-        serde_json::json!({"name": "mcp-hooks"}),
-    );
-    assert!(
-        !created.stdout.contains("HOOK_STDOUT"),
-        "post-create output leaked onto MCP stdout:\n{}",
-        created.stdout
-    );
-    assert!(
-        !created.stdout.contains("Running post-create") && !created.stdout.contains("Executing:"),
-        "hook status leaked onto MCP stdout:\n{}",
-        created.stdout
-    );
-    assert!(
-        created.stderr.contains("HOOK_STDOUT"),
-        "hook output should be on stderr:\n{}",
-        created.stderr
-    );
-    assert!(
-        created.stdout.contains("mcp-hooks"),
-        "create tool should still return JSON:\n{}\n{}",
-        created.stdout,
-        created.stderr
+        !text(&help.stdout).to_ascii_lowercase().contains("mcp"),
+        "top-level help should not mention MCP:\n{}",
+        text(&help.stdout)
     );
 
-    let deleted = mcp_tool(
-        &repo,
-        &[],
-        "phantom_delete_worktree",
-        serde_json::json!({"name": "mcp-hooks"}),
+    let preferences = repo.phantom(&["preferences", "--help"]);
+    assert!(
+        preferences.status.success(),
+        "{}",
+        text(&preferences.stderr)
     );
     assert!(
-        !deleted.stdout.contains("PRE_STDOUT"),
-        "pre-delete output leaked onto MCP stdout:\n{}",
-        deleted.stdout
-    );
-    assert!(
-        !deleted.stdout.contains("pre-delete"),
-        "pre-delete status leaked onto MCP stdout:\n{}",
-        deleted.stdout
-    );
-    assert!(
-        deleted.stderr.contains("PRE_STDOUT"),
-        "pre-delete output should be on stderr:\n{}",
-        deleted.stderr
-    );
-    assert!(
-        deleted.stdout.contains("deleted"),
-        "delete tool should still return JSON:\n{}\n{}",
-        deleted.stdout,
-        deleted.stderr
+        !text(&preferences.stdout)
+            .to_ascii_lowercase()
+            .contains("mcp"),
+        "preferences help should not mention MCP:\n{}",
+        text(&preferences.stdout)
     );
 }
 
