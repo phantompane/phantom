@@ -4918,3 +4918,123 @@ fn exec_command_json_flag_does_not_switch_ptm_to_json() {
         "stdout should stay human logs, not a JSON document:\n{stdout}"
     );
 }
+
+#[test]
+fn separate_git_dir_writes_metadata_in_the_common_dir() {
+    let root = std::env::temp_dir().join(format!("ptm-sep-{}-{}", std::process::id(), uuid()));
+    let home = root.join("home");
+    let checkout = root.join("checkout");
+    let sep = root.join("sep.git");
+    let worktrees = root.join("worktrees");
+    fs::create_dir_all(home.join(".config/git")).expect("home");
+    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    fs::create_dir_all(&checkout).expect("checkout");
+    let init = std::process::Command::new("git")
+        .args([
+            "init",
+            "--separate-git-dir",
+            sep.to_str().expect("sep"),
+            "-b",
+            "main",
+        ])
+        .current_dir(&checkout)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", &home)
+        .output()
+        .expect("init");
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&checkout)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &home)
+            .output()
+            .expect("git");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["config", "user.name", "Phantom Rust"]);
+    git(&["config", "user.email", "phantom-rust@example.com"]);
+    fs::write(checkout.join("README.md"), "# sep\n").expect("readme");
+    git(&["add", "README.md"]);
+    git(&["commit", "-m", "initial"]);
+    assert!(checkout.join(".git").is_file(), ".git is a gitdir file");
+
+    let ptm = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_ptm"))
+            .args(args)
+            .current_dir(&checkout)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env_remove("PTM_AGENT_ID")
+            .output()
+            .expect("ptm")
+    };
+    let pref = ptm(&[
+        "preferences",
+        "set",
+        "worktrees-directory",
+        worktrees.to_str().expect("worktrees"),
+    ]);
+    assert!(pref.status.success(), "{}", text(&pref.stderr));
+    let created = ptm(&["create", "feature", "--owner", "sep", "--json"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    assert!(worktrees.join("feature").is_dir());
+    let store = sep.join("ptm").join("worktrees.json");
+    let document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&store).expect("common store")).expect("json");
+    assert!(document["worktrees"]
+        .as_array()
+        .expect("records")
+        .iter()
+        .any(|record| record["owner"] == "sep"));
+    assert!(!checkout.join(".git").join("ptm").exists());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn duplicate_metadata_paths_block_mutations() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "kept", "--owner", "creator"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    repo.git(&["branch", "side"]);
+    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let body = "{\n  \"version\": 1,\n  \"worktrees\": [\n    {\"path\": \"/tmp/one\", \"owner\": \"a\"},\n    {\"path\": \"/tmp/one\", \"owner\": \"b\"}\n  ]\n}\n";
+    fs::write(&file, body).expect("duplicate");
+    for args in [
+        vec!["create", "other", "--json"],
+        vec!["attach", "side", "--json"],
+        vec!["delete", "kept", "--json"],
+        vec!["meta", "set", "kept", "--owner", "nope", "--json"],
+    ] {
+        let output = repo.phantom(&args);
+        assert!(
+            !output.status.success(),
+            "{args:?}\n{}\n{}",
+            text(&output.stdout),
+            text(&output.stderr)
+        );
+        let message = format!("{}{}", text(&output.stdout), text(&output.stderr));
+        assert!(message.contains("duplicate path"), "{args:?}\n{message}");
+        assert_eq!(fs::read_to_string(&file).expect("kept"), body, "{args:?}");
+    }
+    assert!(repo.repo.join(".git/ptm/worktrees/kept").is_dir());
+    assert!(!repo.repo.join(".git/ptm/worktrees/other").exists());
+    assert!(!repo.repo.join(".git/ptm/worktrees/side").exists());
+}

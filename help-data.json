@@ -152,7 +152,7 @@
         ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] post-create commands run in the new worktree, in order, and stop at the first failure",
         "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
-        "Owner, purpose, and links are stored in .git/ptm/worktrees.json. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty. where and exec refresh lastUsedAt"
+        "Owner, purpose, and links are stored in ptm/worktrees.json under the Git common directory. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty. where and exec refresh lastUsedAt"
       ]
     },
     "attach": {
@@ -234,7 +234,7 @@
         "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
         "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
-        "Owner, purpose, and links are stored in .git/ptm/worktrees.json. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty"
+        "Owner, purpose, and links are stored in ptm/worktrees.json under the Git common directory. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty"
       ]
     },
     "list": {
@@ -452,7 +452,7 @@
         "Subcommands:",
         "  set <name>   Set owner, purpose, or links on a worktree",
         "",
-        "Records live in .git/ptm/worktrees.json inside the repository. delete removes the record for the worktree."
+        "Records live in ptm/worktrees.json under the Git common directory inside the repository. delete removes the record for the worktree."
       ]
     },
     "meta set": {

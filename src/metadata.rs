@@ -79,26 +79,16 @@ pub fn path_key(path: &Path) -> String {
     paths::normalize(path).to_string_lossy().into_owned()
 }
 
-pub fn metadata_file(git_root: &Path) -> PathBuf {
-    metadata_dir(git_root).join(FILE_NAME)
+pub fn metadata_file(git_root: &Path) -> Result<PathBuf> {
+    Ok(metadata_dir(git_root)?.join(FILE_NAME))
 }
 
 /// Records for every path in the store. A missing file is an empty map.
 pub fn load(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>> {
-    let store = read_store(&metadata_file(git_root))?;
+    let store = validated_store(&metadata_file(git_root)?)?;
     let mut records = BTreeMap::new();
     for record in store.worktrees {
-        let key = path_key(Path::new(&record.path));
-        if key.is_empty() {
-            return Err(Error::msg(
-                "Worktree metadata record is missing a path".to_string(),
-            ));
-        }
-        if records.insert(key, record.metadata).is_some() {
-            return Err(Error::msg(
-                "Worktree metadata contains a duplicate path".to_string(),
-            ));
-        }
+        records.insert(path_key(Path::new(&record.path)), record.metadata);
     }
     Ok(records)
 }
@@ -155,7 +145,7 @@ pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<Work
 
 /// Bump `lastUsedAt` when a record exists. A worktree with no record is left alone.
 pub fn touch(git_root: &Path, path: &Path) -> Result<Option<WorktreeMetadata>> {
-    if !metadata_file(git_root).exists() {
+    if !metadata_file(git_root)?.exists() {
         return Ok(None);
     }
     let key = path_key(path);
@@ -171,18 +161,19 @@ pub fn touch(git_root: &Path, path: &Path) -> Result<Option<WorktreeMetadata>> {
 /// Lock the store, reject a corrupt file, and check that a new file can be
 /// created beside it. Call this before Git creates or removes a worktree.
 pub fn prepare(git_root: &Path) -> Result<()> {
-    let dir = metadata_dir(git_root);
+    let file = metadata_file(git_root)?;
+    let dir = metadata_dir(git_root)?;
     fs::create_dir_all(&dir).map_err(|error| {
         Error::msg(format!(
             "Worktree metadata file {} is not writable: {error}",
-            metadata_file(git_root).display()
+            file.display()
         ))
     })?;
     let lock = open_lock(&dir)?;
     lock.lock().map_err(|error| {
         Error::msg(format!(
             "Worktree metadata file {} is not writable: {error}",
-            metadata_file(git_root).display()
+            file.display()
         ))
     })?;
     let path = dir.join(FILE_NAME);
@@ -192,7 +183,7 @@ pub fn prepare(git_root: &Path) -> Result<()> {
         uuid::Uuid::new_v4()
     ));
     let checked = (|| {
-        read_store(&path)?;
+        validated_store(&path)?;
         OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -218,7 +209,7 @@ pub fn read_problem(git_root: &Path) -> Option<String> {
 
 /// Drop the record for `path`. Missing records are already the end state.
 pub fn remove(git_root: &Path, path: &Path) -> Result<()> {
-    if !metadata_file(git_root).exists() {
+    if !metadata_file(git_root)?.exists() {
         return Ok(());
     }
     let key = path_key(path);
@@ -355,14 +346,10 @@ fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
     }
 }
 
-/// Parent of the default worktrees directory. A custom `worktrees-directory`
-/// does not move this file.
-fn metadata_dir(git_root: &Path) -> PathBuf {
-    let worktrees = paths::worktrees_directory(git_root, None);
-    match worktrees.parent() {
-        Some(parent) => parent.to_path_buf(),
-        None => git_root.join(".git").join("ptm"),
-    }
+/// `ptm/` inside the Git common directory. A custom `worktrees-directory` does
+/// not move this file, and a checkout whose `.git` is a file still shares it.
+fn metadata_dir(git_root: &Path) -> Result<PathBuf> {
+    Ok(crate::git::git_common_dir(git_root)?.join("ptm"))
 }
 
 fn save_injected() -> bool {
@@ -392,28 +379,49 @@ fn open_lock(dir: &Path) -> Result<File> {
 }
 
 fn with_store<T>(git_root: &Path, body: impl FnOnce(&mut Store) -> Result<(T, bool)>) -> Result<T> {
-    let dir = metadata_dir(git_root);
+    let dir = metadata_dir(git_root)?;
+    let file = dir.join(FILE_NAME);
     fs::create_dir_all(&dir).map_err(|error| {
         Error::msg(format!(
             "Worktree metadata file {} is not writable: {error}",
-            metadata_file(git_root).display()
+            file.display()
         ))
     })?;
     let lock = open_lock(&dir)?;
     lock.lock().map_err(|error| {
         Error::msg(format!(
             "Worktree metadata file {} is not writable: {error}",
-            metadata_file(git_root).display()
+            file.display()
         ))
     })?;
-    let path = dir.join(FILE_NAME);
-    let mut store = read_store(&path)?;
+    let mut store = validated_store(&file)?;
     let (value, dirty) = body(&mut store)?;
     if dirty {
-        write_store(&path, &dir, &store)?;
+        write_store(&file, &dir, &store)?;
     }
     let _ = lock.unlock();
     Ok(value)
+}
+
+fn validated_store(path: &Path) -> Result<Store> {
+    let store = read_store(path)?;
+    let mut seen = std::collections::BTreeSet::new();
+    for record in &store.worktrees {
+        let key = path_key(Path::new(&record.path));
+        if key.is_empty() {
+            return Err(Error::msg(format!(
+                "Worktree metadata file {} contains a record without a path",
+                path.display()
+            )));
+        }
+        if !seen.insert(key) {
+            return Err(Error::msg(format!(
+                "Worktree metadata file {} contains a duplicate path",
+                path.display()
+            )));
+        }
+    }
+    Ok(store)
 }
 
 fn read_store(path: &Path) -> Result<Store> {
@@ -521,6 +529,17 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(&path).expect("root");
+        let init = std::process::Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&path)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("git init");
+        assert!(
+            init.status.success(),
+            "{}",
+            String::from_utf8_lossy(&init.stderr)
+        );
         path
     }
 
@@ -528,7 +547,7 @@ mod tests {
     fn missing_file_loads_as_empty() {
         let root = root();
         assert!(load(&root).expect("load").is_empty());
-        assert!(!metadata_file(&root).exists());
+        assert!(!metadata_file(&root).expect("file").exists());
     }
 
     #[test]
@@ -576,16 +595,17 @@ mod tests {
         let root = root();
         let path = root.join("worktrees/feature");
         assert!(touch(&root, &path).expect("missing").is_none());
-        assert!(!metadata_file(&root).exists());
+        assert!(!metadata_file(&root).expect("file").exists());
         remove(&root, &path).expect("missing remove");
 
         let created = write(&root, &path, &MetadataInput::default()).expect("write");
-        let mut document: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(metadata_file(&root)).expect("file"))
-                .expect("json");
+        let mut document: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(metadata_file(&root).expect("file")).expect("file"),
+        )
+        .expect("json");
         document["worktrees"][0]["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
         fs::write(
-            metadata_file(&root),
+            metadata_file(&root).expect("file"),
             format!(
                 "{}\n",
                 serde_json::to_string_pretty(&document).expect("encode")
@@ -606,12 +626,19 @@ mod tests {
     #[test]
     fn corrupt_or_unknown_version_is_not_overwritten() {
         let root = root();
-        fs::create_dir_all(metadata_dir(&root)).expect("dir");
-        let file = metadata_file(&root);
+        fs::create_dir_all(metadata_dir(&root).expect("dir")).expect("dir");
+        let file = metadata_file(&root).expect("file");
         fs::write(&file, "{not json").expect("corrupt");
         let error = write(&root, &root.join("wt"), &MetadataInput::default()).expect_err("write");
         assert!(error.to_string().contains("invalid JSON"));
         assert_eq!(fs::read_to_string(&file).expect("kept"), "{not json");
+
+        let duplicate = "{\n  \"version\": 1,\n  \"worktrees\": [\n    {\"path\": \"/tmp/a\", \"owner\": \"first\"},\n    {\"path\": \"/tmp/a\", \"owner\": \"second\"}\n  ]\n}\n";
+        fs::write(&file, duplicate).expect("duplicate");
+        let error =
+            replace(&root, Path::new("/tmp/b"), &MetadataInput::default()).expect_err("dup");
+        assert!(error.to_string().contains("duplicate path"));
+        assert_eq!(fs::read_to_string(&file).expect("kept"), duplicate);
 
         fs::write(&file, "{\n  \"version\": 2,\n  \"worktrees\": []\n}\n").expect("version");
         let error = load(&root).expect_err("version");
