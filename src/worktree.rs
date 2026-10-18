@@ -9,6 +9,7 @@ use crate::config;
 use crate::context::{self, Context};
 use crate::error::{self, Error, JsonErrorBody, Result};
 use crate::git::{self, GitWorktree};
+use crate::metadata::{self, MetadataInput};
 use crate::names;
 use crate::paths;
 use crate::process;
@@ -23,6 +24,7 @@ pub struct WorktreeInfo {
     pub head: Option<String>,
     pub is_default: bool,
     pub detached: bool,
+    pub metadata: metadata::WorktreeMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +107,7 @@ pub fn list_worktrees(
 ) -> Result<Vec<WorktreeInfo>> {
     let git_root_string = context.git_root.to_string_lossy().to_string();
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
+    let stored = metadata::load(&context.git_root)?;
     let mut infos = Vec::new();
     let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
@@ -115,12 +118,21 @@ pub fn list_worktrees(
         if exclude_default && worktree.path == git_root_string {
             continue;
         }
-        infos.push(info_from_git(&worktree, &cwd, context));
+        let record = stored
+            .get(&metadata::path_key(Path::new(&worktree.path)))
+            .cloned()
+            .unwrap_or_default();
+        infos.push(info_from_git(&worktree, &cwd, context, record));
     }
     Ok(infos)
 }
 
-fn info_from_git(worktree: &GitWorktree, cwd: &Path, context: &Context) -> WorktreeInfo {
+fn info_from_git(
+    worktree: &GitWorktree,
+    cwd: &Path,
+    context: &Context,
+    metadata: metadata::WorktreeMetadata,
+) -> WorktreeInfo {
     let short_head = worktree
         .head
         .as_deref()
@@ -148,6 +160,7 @@ fn info_from_git(worktree: &GitWorktree, cwd: &Path, context: &Context) -> Workt
         head: recorded_head(worktree.head.as_deref()),
         is_default: worktree.path == context.git_root.to_string_lossy(),
         detached,
+        metadata,
     }
 }
 
@@ -250,6 +263,7 @@ pub struct CreateRequest<'a> {
     pub logger: Logger,
     /// Main checkout selected with `--project`. `None` uses the current directory.
     pub repository: Option<&'a Path>,
+    pub metadata: MetadataInput,
 }
 
 pub struct CreateOutcome {
@@ -284,6 +298,7 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
         request.copy_files,
         commands,
         &request.logger,
+        &request.metadata,
     )?;
     request.logger.log(&format!(
         "Created worktree '{name}' at {}",
@@ -298,6 +313,9 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
         request.logger.warn(&failure.warning(&created.path));
     }
     let exec = run_action(&name, &created.path, action, &request.logger)?;
+    if exec.is_some() {
+        metadata::touch(&context.git_root, &created.path)?;
+    }
     let hook_code = created.hook_failure.as_ref().map(|failure| failure.code);
     let action_code = exec.as_ref().map(|item| item.exit_code);
     let worktree = worktree_at_path(&context, &created.path)?;
@@ -370,6 +388,7 @@ pub fn create_worktree(
     copy_files: &[String],
     commands: &[String],
     logger: &Logger,
+    metadata: &MetadataInput,
 ) -> Result<CreatedWorktree> {
     validate_worktree_name(name)?;
     fs::create_dir_all(&context.worktrees_directory)
@@ -381,6 +400,7 @@ pub fn create_worktree(
         &context.directory_name_separator,
     );
     git::add_worktree(&context.git_root, &path, name, base, true)?;
+    metadata::write(&context.git_root, &path, metadata)?;
     let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
         .err()
         .map(|error| error.to_string());
@@ -406,6 +426,7 @@ pub struct AttachRequest<'a> {
     pub logger: Logger,
     /// Main checkout selected with `--project`. `None` uses the current directory.
     pub repository: Option<&'a Path>,
+    pub metadata: MetadataInput,
 }
 
 pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
@@ -418,6 +439,7 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
         request.copy_files,
         commands,
         &request.logger,
+        &request.metadata,
     )?;
     request
         .logger
@@ -426,6 +448,9 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
         request.logger.warn(&failure.warning(&attached.path));
     }
     let exec = run_action(request.name, &attached.path, action, &request.logger)?;
+    if exec.is_some() {
+        metadata::touch(&context.git_root, &attached.path)?;
+    }
     let hook_code = attached.hook_failure.as_ref().map(|failure| failure.code);
     let action_code = exec
         .as_ref()
@@ -448,6 +473,7 @@ pub fn attach_worktree(
     copy_files: &[String],
     commands: &[String],
     logger: &Logger,
+    metadata: &MetadataInput,
 ) -> Result<AttachedWorktree> {
     validate_worktree_name(name)?;
     let path = paths::worktree_path(
@@ -471,6 +497,7 @@ pub fn attach_worktree(
             error
         }
     })?;
+    metadata::write(&context.git_root, &path, metadata)?;
     let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
         .err()
         .map(|error| {
@@ -558,6 +585,9 @@ pub fn delete_worktree(
     if let Err(error) = git::remove_worktree(&context.git_root, &path, force) {
         return Err(DeleteError::kept(error, &worktree));
     }
+    if let Err(error) = metadata::remove(&context.git_root, &path) {
+        return Err(DeleteError::bare(error));
+    }
     let cleanup_warning = remove_empty_parents(&path, &context.worktrees_directory);
     let (message, branch_deleted, branch_error) = if worktree.branch == "(detached HEAD)" {
         (format!("Deleted worktree '{name}'"), false, None)
@@ -638,6 +668,7 @@ pub fn exec_in_worktree(
 ) -> Result<i32> {
     let worktree = find_worktree(context, name, false, None)?;
     let path = PathBuf::from(&worktree.path);
+    metadata::touch(&context.git_root, &path)?;
     let owned = ptm_env(&worktree.name, &path);
     let mut pairs = owned
         .iter()
@@ -997,9 +1028,10 @@ fn copy_error(relative: &Path, error: impl std::fmt::Display) -> Error {
 ///
 /// `base` is set when the command that produced the object knows the starting
 /// commit-ish (create, and GitHub issue/PR checkout). List, where, attach, and
-/// delete leave it null. Later metadata (#774) and cleanup (#775) can add
-/// fields such as `owner`, `purpose`, `createdAt`, `lastUsedAt`, `links`,
-/// `prunable`, and `locked` without a version bump. Parsers must ignore unknown fields.
+/// delete leave it null. `owner`, `purpose`, `createdAt`, `lastUsedAt`, and
+/// `links` come from the repository metadata store. Cleanup fields such as
+/// `prunable` and `locked` can be added later without a version bump. Parsers
+/// must ignore unknown fields.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeJson {
@@ -1012,6 +1044,8 @@ pub struct WorktreeJson {
     #[serde(rename = "default")]
     pub is_default: bool,
     pub detached: bool,
+    #[serde(flatten)]
+    pub metadata: metadata::WorktreeMetadata,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1102,6 +1136,7 @@ impl WorktreeInfo {
             dirty: !self.is_clean,
             is_default: self.is_default,
             detached: self.detached,
+            metadata: self.metadata.clone(),
         }
     }
 }
@@ -1178,6 +1213,7 @@ mod tests {
             head: Some("abc1234".to_string()),
             is_default: false,
             detached: branch == "(detached HEAD)",
+            metadata: metadata::WorktreeMetadata::default(),
         }
     }
 
@@ -1225,6 +1261,13 @@ mod tests {
         assert_eq!(value["base"], "HEAD");
         assert_eq!(value["dirty"], false);
         assert_eq!(value["detached"], false);
+        assert!(value["owner"].is_null());
+        assert!(value["purpose"].is_null());
+        assert!(value["createdAt"].is_null());
+        assert!(value["lastUsedAt"].is_null());
+        assert!(value["links"]["pr"].is_null());
+        assert!(value["links"]["issue"].is_null());
+        assert!(value.get("metadata").is_none());
     }
 
     #[test]

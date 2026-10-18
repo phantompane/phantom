@@ -4,6 +4,7 @@ use crate::args::{self, Opt, Parsed};
 use crate::error::{Error, Result, GENERAL, NOT_FOUND, SUCCESS, VALIDATION};
 use crate::github;
 use crate::help;
+use crate::metadata::{self, MetadataInput};
 use crate::preferences;
 use crate::projects::{self, ProjectListEntry, ProjectRecord, ProjectRegistryStore};
 use crate::repository;
@@ -55,23 +56,21 @@ fn find<'a>(args: &'a [String], commands: &'a [Command]) -> Option<(&'a Command,
 
 fn create(args: &[String]) -> Result<i32> {
     let json = wants_json(args);
-    let parsed = match args::parse(
-        args,
-        &[
-            project_flag(),
-            remainder_flag("exec", Some('x')),
-            Opt {
-                name: "copy-file",
-                short: None,
-                value: true,
-                multiple: true,
-                remainder: false,
-            },
-            value_flag("base", None),
-            flag("json", None),
-        ],
-        true,
-    ) {
+    let mut options = vec![
+        project_flag(),
+        remainder_flag("exec", Some('x')),
+        Opt {
+            name: "copy-file",
+            short: None,
+            value: true,
+            multiple: true,
+            remainder: false,
+        },
+        value_flag("base", None),
+        flag("json", None),
+    ];
+    options.extend(metadata_options());
+    let parsed = match args::parse(args, &options, true) {
         Ok(parsed) => parsed,
         Err(error) => return fail_with(&error, error.exit_code(), json),
     };
@@ -79,6 +78,10 @@ fn create(args: &[String]) -> Result<i32> {
     let action = match action_from(&parsed) {
         Ok(action) => action,
         Err(error) => return fail_with(&error, VALIDATION, json),
+    };
+    let metadata = match metadata_input(&parsed, true) {
+        Ok(metadata) => metadata,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
     };
     let repository = match selected_repository(&parsed) {
         Ok(repository) => repository,
@@ -91,6 +94,7 @@ fn create(args: &[String]) -> Result<i32> {
         action,
         logger: logger_for(json),
         repository: repository.as_deref(),
+        metadata,
     }) {
         Ok(outcome) => finish_change(json, &outcome),
         Err(error) => fail_with(&error, create_code(&error), json),
@@ -115,22 +119,20 @@ fn finish_change(json: bool, outcome: &worktree::CreateOutcome) -> Result<i32> {
 
 fn attach(args: &[String]) -> Result<i32> {
     let json = wants_json(args);
-    let parsed = match args::parse(
-        args,
-        &[
-            project_flag(),
-            remainder_flag("exec", Some('x')),
-            Opt {
-                name: "copy-file",
-                short: None,
-                value: true,
-                multiple: true,
-                remainder: false,
-            },
-            flag("json", None),
-        ],
-        true,
-    ) {
+    let mut options = vec![
+        project_flag(),
+        remainder_flag("exec", Some('x')),
+        Opt {
+            name: "copy-file",
+            short: None,
+            value: true,
+            multiple: true,
+            remainder: false,
+        },
+        flag("json", None),
+    ];
+    options.extend(metadata_options());
+    let parsed = match args::parse(args, &options, true) {
         Ok(parsed) => parsed,
         Err(error) => return fail_with(&error, error.exit_code(), json),
     };
@@ -146,6 +148,10 @@ fn attach(args: &[String]) -> Result<i32> {
         Ok(action) => action,
         Err(error) => return fail_with(&error, VALIDATION, json),
     };
+    let metadata = match metadata_input(&parsed, true) {
+        Ok(metadata) => metadata,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
     let repository = match selected_repository(&parsed) {
         Ok(repository) => repository,
         Err(error) => return fail_project(&error, args, &parsed, json),
@@ -156,6 +162,7 @@ fn attach(args: &[String]) -> Result<i32> {
         action,
         logger: logger_for(json),
         repository: repository.as_deref(),
+        metadata,
     }) {
         Ok(outcome) => finish_mutation(
             json,
@@ -183,6 +190,7 @@ fn list(args: &[String]) -> Result<i32> {
             flag("no-default", None),
             flag("names", None),
             flag("json", None),
+            value_flag("owner", None),
         ],
         false,
     ) {
@@ -190,6 +198,10 @@ fn list(args: &[String]) -> Result<i32> {
         Err(error) => return fail_with(&error, error.exit_code(), json),
     };
     let json = parsed.flag("json");
+    let owner = match list_owner(&parsed) {
+        Ok(owner) => owner,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
     if json && parsed.flag("names") {
         return fail_with(
             &Error::msg("Only one of --json or --names can be specified"),
@@ -206,6 +218,13 @@ fn list(args: &[String]) -> Result<i32> {
         Ok(worktrees) => worktrees,
         Err(error) => return fail_with(&error, GENERAL, json),
     };
+    let worktrees = match owner.as_deref() {
+        Some(owner) => worktrees
+            .into_iter()
+            .filter(|worktree| worktree.metadata.owner.as_deref() == Some(owner))
+            .collect(),
+        None => worktrees,
+    };
     if json {
         return emit_json(&worktree::WorktreeListOutput {
             version: crate::error::JSON_VERSION,
@@ -218,10 +237,12 @@ fn list(args: &[String]) -> Result<i32> {
     if worktrees.is_empty() {
         if !parsed.flag("names") {
             let available = worktree::list_worktrees(&context, false, false).unwrap_or_default();
-            let message = if exclude_default && !available.is_empty() {
-                "No sub worktrees found"
+            let message = if let Some(owner) = &owner {
+                format!("No worktrees found for owner '{owner}'")
+            } else if exclude_default && !available.is_empty() {
+                "No sub worktrees found".to_string()
             } else {
-                "No worktrees found"
+                "No worktrees found".to_string()
             };
             println!("{message}");
         }
@@ -232,7 +253,11 @@ fn list(args: &[String]) -> Result<i32> {
             println!("{}", worktree.name);
         } else {
             let dirty = if worktree.is_clean { "" } else { " [dirty]" };
-            println!("{} ({}){dirty}", worktree.name, worktree.path_to_display);
+            let suffix = metadata::list_suffix(&worktree.metadata);
+            println!(
+                "{} ({}){dirty}{suffix}",
+                worktree.name, worktree.path_to_display
+            );
         }
     }
     Ok(SUCCESS)
@@ -258,7 +283,12 @@ fn where_cmd(args: &[String]) -> Result<i32> {
     };
     let name = &parsed.positionals[0];
     match worktree::find_worktree(&context, name, false, None) {
-        Ok(worktree) => {
+        Ok(mut worktree) => {
+            match metadata::touch(&context.git_root, Path::new(&worktree.path)) {
+                Ok(Some(updated)) => worktree.metadata = updated,
+                Ok(None) => {}
+                Err(error) => return fail_with(&error, GENERAL, json),
+            }
             if json {
                 emit_json(&worktree::WorktreeRefOutput {
                     version: crate::error::JSON_VERSION,
@@ -816,11 +846,14 @@ fn github_root(args: &[String]) -> Result<i32> {
 
 fn github_checkout(args: &[String]) -> Result<i32> {
     let json = wants_json(args);
-    let parsed = match args::parse(
-        args,
-        &[project_flag(), value_flag("base", None), flag("json", None)],
-        true,
-    ) {
+    let options = vec![
+        project_flag(),
+        value_flag("base", None),
+        flag("json", None),
+        value_flag("owner", None),
+        value_flag("purpose", None),
+    ];
+    let parsed = match args::parse(args, &options, true) {
         Ok(parsed) => parsed,
         Err(error) => return fail_with(&error, error.exit_code(), json),
     };
@@ -836,11 +869,16 @@ fn github_checkout(args: &[String]) -> Result<i32> {
         Ok(repository) => repository,
         Err(error) => return fail_project(&error, args, &parsed, json),
     };
+    let metadata = match metadata_input(&parsed, true) {
+        Ok(metadata) => metadata,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
     let checkout = match github::checkout(
         number,
         parsed.value("base"),
         &logger_for(json),
         repository.as_deref(),
+        metadata,
     ) {
         Ok(checkout) => checkout,
         Err(error) => return fail_with(&error, error.exit_code(), json),
@@ -877,6 +915,74 @@ fn catalog_json(projects: &[ProjectListEntry], version: u32) -> serde_json::Valu
         "version": version,
         "projects": projects,
     })
+}
+
+fn meta_root(args: &[String]) -> Result<i32> {
+    if args.is_empty() {
+        if let Some(text) = help::command_help("meta")? {
+            println!("{text}");
+        }
+        return Ok(SUCCESS);
+    }
+    Err(Error::msg(format!("Unknown meta subcommand: {}", args[0])))
+}
+
+fn meta_set(args: &[String]) -> Result<i32> {
+    let json = wants_json(args);
+    let mut options = vec![project_flag(), flag("json", None)];
+    options.extend(metadata_options());
+    let parsed = match args::parse(args, &options, true) {
+        Ok(parsed) => parsed,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let json = parsed.flag("json");
+    if parsed.positionals.len() != 1 {
+        return fail_with(
+            &Error::msg("Usage: ptm meta set <worktree-name> [options]"),
+            VALIDATION,
+            json,
+        );
+    }
+    let input = match metadata_input(&parsed, false) {
+        Ok(input) => input,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    if input.owner.is_none()
+        && input.purpose.is_none()
+        && input.pr.is_none()
+        && input.issue.is_none()
+    {
+        return fail_with(
+            &Error::msg("Specify at least one of --owner, --purpose, --pr, or --issue"),
+            VALIDATION,
+            json,
+        );
+    }
+    let context = match command_context(&parsed) {
+        Ok(context) => context,
+        Err(error) => return fail_project(&error, args, &parsed, json),
+    };
+    let name = &parsed.positionals[0];
+    let worktree = match worktree::find_worktree(&context, name, false, None) {
+        Ok(worktree) => worktree,
+        Err(error @ Error::WorktreeNotFound(_)) => return fail_with(&error, NOT_FOUND, json),
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    if let Err(error) = metadata::write(&context.git_root, Path::new(&worktree.path), &input) {
+        return fail_with(&error, GENERAL, json);
+    }
+    let worktree = match worktree::worktree_at_path(&context, Path::new(&worktree.path)) {
+        Ok(worktree) => worktree,
+        Err(error) => return fail_with(&error, GENERAL, json),
+    };
+    if json {
+        return emit_json(&worktree::WorktreeRefOutput {
+            version: crate::error::JSON_VERSION,
+            worktree: worktree.to_json(None),
+        });
+    }
+    println!("Updated metadata for '{}'", worktree.name);
+    Ok(SUCCESS)
 }
 
 fn action_from(parsed: &Parsed) -> Result<ActionRequest> {
@@ -948,6 +1054,48 @@ fn is_help_flag(arg: &str) -> bool {
 
 fn project_flag() -> Opt {
     value_flag("project", Some('p'))
+}
+
+fn metadata_options() -> [Opt; 4] {
+    [
+        value_flag("owner", None),
+        value_flag("purpose", None),
+        value_flag("pr", None),
+        value_flag("issue", None),
+    ]
+}
+
+fn metadata_input(parsed: &Parsed, use_env: bool) -> Result<MetadataInput> {
+    let env = use_env
+        .then(|| std::env::var("PTM_AGENT_ID").ok())
+        .flatten();
+    Ok(MetadataInput {
+        owner: metadata::resolve_owner(single_value(parsed, "owner")?, env.as_deref())?,
+        purpose: single_value(parsed, "purpose")?
+            .map(metadata::parse_purpose)
+            .transpose()?,
+        pr: single_value(parsed, "pr")?
+            .map(metadata::parse_link)
+            .transpose()?,
+        issue: single_value(parsed, "issue")?
+            .map(metadata::parse_link)
+            .transpose()?,
+    })
+}
+
+fn list_owner(parsed: &Parsed) -> Result<Option<String>> {
+    single_value(parsed, "owner")?
+        .map(metadata::parse_owner)
+        .transpose()
+}
+
+fn single_value<'a>(parsed: &'a Parsed, name: &str) -> Result<Option<&'a str>> {
+    if parsed.occurrences(name) > 1 {
+        return Err(Error::validation(format!(
+            "The --{name} option can only be specified once"
+        )));
+    }
+    Ok(parsed.value(name))
 }
 
 fn selected_repository(parsed: &Parsed) -> Result<Option<std::path::PathBuf>> {
@@ -1103,6 +1251,13 @@ fn attach_code(error: &Error) -> i32 {
     }
 }
 
+static META_COMMANDS: &[Command] = &[Command {
+    name: "set",
+    help_key: "meta set",
+    run: meta_set,
+    children: &[],
+}];
+
 static PREFERENCE_COMMANDS: &[Command] = &[
     Command {
         name: "get",
@@ -1188,6 +1343,12 @@ static COMMANDS: &[Command] = &[
         help_key: "exec",
         run: exec,
         children: &[],
+    },
+    Command {
+        name: "meta",
+        help_key: "meta",
+        run: meta_root,
+        children: META_COMMANDS,
     },
     Command {
         name: "preferences",

@@ -52,6 +52,8 @@ impl Repo {
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env_remove("GHQ_ROOT")
+            .env_remove("PTM_AGENT_ID")
+            .env_remove("PHANTOM_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
             .env_remove("GIT_CONFIG_COUNT")
@@ -2653,6 +2655,13 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     );
     assert_eq!(checkout_json["worktree"]["branch"], "issues/7");
     assert_eq!(checkout_json["worktree"]["base"], "HEAD");
+    assert_eq!(checkout_json["worktree"]["links"]["issue"]["number"], 7);
+    assert_eq!(
+        checkout_json["worktree"]["links"]["issue"]["url"],
+        "https://github.com/acme/demo/issues/7"
+    );
+    assert!(checkout_json["worktree"]["links"]["pr"].is_null());
+    assert!(checkout_json["worktree"]["createdAt"].is_string());
     assert!(!text(&checkout.stdout).contains("Created worktree"));
 
     let missing = repo
@@ -2696,6 +2705,12 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     assert!(again_json["worktree"]["base"].is_null());
     assert_eq!(again_json["postCreate"]["ran"], false);
     assert_worktree_object(&again_json["worktree"], "topic", &checked_out);
+    assert_eq!(again_json["worktree"]["links"]["pr"]["number"], 7);
+    assert_eq!(
+        again_json["worktree"]["links"]["pr"]["url"],
+        "https://github.com/acme/demo/pull/7"
+    );
+    assert!(again_json["worktree"]["links"]["issue"].is_null());
     assert!(!text(&again.stdout).contains("already checked out"));
 }
 
@@ -4411,4 +4426,230 @@ fn relative_origin_is_not_a_github_project_name() {
     assert!(objects.status.success(), "{}", text(&objects.stderr));
     assert!(same_dir(&text(&objects.stdout), &repo.repo));
     assert!(!text(&objects.stderr).contains("must be run in a work tree"));
+}
+
+#[test]
+fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
+    let repo = Repo::new();
+    let help = repo.phantom(&["meta", "--help"]);
+    assert!(help.status.success(), "{}", text(&help.stderr));
+    assert!(text(&help.stdout).contains("meta set"));
+
+    let plain = repo.phantom(&["create", "plain", "--json"]);
+    assert!(plain.status.success(), "{}", text(&plain.stderr));
+    let plain_json = json_value(&plain);
+    assert!(plain_json["worktree"]["owner"].is_null());
+    assert!(plain_json["worktree"]["purpose"].is_null());
+    assert!(plain_json["worktree"]["createdAt"].is_string());
+    assert_eq!(
+        plain_json["worktree"]["createdAt"],
+        plain_json["worktree"]["lastUsedAt"]
+    );
+    assert!(plain_json["worktree"]["links"]["pr"].is_null());
+
+    let ignored = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "legacy", "--json"])
+        .env("PHANTOM_AGENT_ID", "phantom-v6")
+        .output()
+        .expect("legacy env");
+    assert!(ignored.status.success(), "{}", text(&ignored.stderr));
+    assert!(json_value(&ignored)["worktree"]["owner"].is_null());
+
+    let created = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "create",
+                "feature",
+                "--json",
+                "--purpose",
+                "fix the flake",
+                "--pr",
+                "774",
+                "--owner",
+                "from-flag",
+            ],
+        )
+        .env("PTM_AGENT_ID", "from-env")
+        .output()
+        .expect("create");
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let created_json = json_value(&created);
+    assert_eq!(created_json["version"], 1);
+    assert_eq!(created_json["worktree"]["owner"], "from-flag");
+    assert_eq!(created_json["worktree"]["purpose"], "fix the flake");
+    assert_eq!(created_json["worktree"]["links"]["pr"]["number"], 774);
+    assert!(created_json["worktree"]["links"]["pr"]["url"].is_null());
+    assert!(created_json["worktree"]["createdAt"].is_string());
+    let created_at = created_json["worktree"]["createdAt"]
+        .as_str()
+        .expect("created")
+        .to_string();
+
+    let from_env = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["create", "env-owned", "--json"],
+        )
+        .env("PTM_AGENT_ID", "from-env")
+        .output()
+        .expect("env");
+    assert!(from_env.status.success(), "{}", text(&from_env.stderr));
+    assert_eq!(json_value(&from_env)["worktree"]["owner"], "from-env");
+
+    let listed = repo.phantom(&["list", "--owner", "from-flag"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let listed_text = text(&listed.stdout);
+    assert!(listed_text.contains("feature"));
+    assert!(listed_text.contains("[from-flag]"));
+    assert!(listed_text.contains("fix the flake"));
+    assert!(!listed_text.contains("plain"));
+    assert!(!listed_text.contains("env-owned"));
+
+    let listed_json = json_value(&repo.phantom(&["list", "--json", "--owner", "from-env"]));
+    assert_eq!(listed_json["worktrees"].as_array().map(Vec::len), Some(1));
+    assert_eq!(listed_json["worktrees"][0]["name"], "env-owned");
+
+    let none = repo.phantom(&["list", "--names", "--owner", "nobody"]);
+    assert!(none.status.success(), "{}", text(&none.stderr));
+    assert!(text(&none.stdout).is_empty());
+    let none_human = repo.phantom(&["list", "--owner", "nobody"]);
+    assert!(text(&none_human.stdout).contains("No worktrees found for owner 'nobody'"));
+
+    let invalid = repo.phantom(&["create", "nope", "--owner", " "]);
+    assert_eq!(invalid.status.code(), Some(3));
+    let invalid_json = repo.phantom(&["meta", "set", "feature", "--pr", "not-a-link", "--json"]);
+    assert_eq!(invalid_json.status.code(), Some(3));
+    assert_eq!(json_value(&invalid_json)["error"]["code"], "validation");
+    assert_eq!(json_value(&invalid_json)["error"]["exitCode"], 3);
+
+    let missing = repo.phantom(&["meta", "set", "missing", "--owner", "grok", "--json"]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert_eq!(json_value(&missing)["error"]["code"], "not_found");
+
+    let unset = repo.phantom(&["meta", "set", "feature", "--json"]);
+    assert_eq!(unset.status.code(), Some(3));
+
+    let updated = repo.phantom(&[
+        "meta",
+        "set",
+        "feature",
+        "--purpose",
+        "land the fix",
+        "--issue",
+        "https://github.com/phantompane/phantom/issues/12",
+        "--json",
+    ]);
+    assert!(updated.status.success(), "{}", text(&updated.stderr));
+    let updated_json = json_value(&updated);
+    assert_eq!(updated_json["worktree"]["owner"], "from-flag");
+    assert_eq!(updated_json["worktree"]["purpose"], "land the fix");
+    assert_eq!(updated_json["worktree"]["links"]["pr"]["number"], 774);
+    assert_eq!(updated_json["worktree"]["links"]["issue"]["number"], 12);
+    assert_eq!(updated_json["worktree"]["createdAt"], created_at);
+
+    let file = repo.repo.join(".git/phantom/worktrees.json");
+    let mut document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("store json");
+    let records = document["worktrees"].as_array_mut().expect("records");
+    let feature = records
+        .iter_mut()
+        .find(|record| record["path"].as_str().unwrap_or("").ends_with("/feature"))
+        .expect("feature record");
+    feature["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+    fs::write(
+        &file,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&document).expect("encode")
+        ),
+    )
+    .expect("rewrite");
+
+    let located = repo.phantom(&["where", "feature", "--json"]);
+    assert!(located.status.success(), "{}", text(&located.stderr));
+    let located_json = json_value(&located);
+    assert_eq!(located_json["worktree"]["createdAt"], created_at);
+    assert_ne!(
+        located_json["worktree"]["lastUsedAt"],
+        "2000-01-01T00:00:00.000Z"
+    );
+    let human_where = repo.phantom(&["where", "feature"]);
+    assert!(
+        text(&human_where.stdout).starts_with('/'),
+        "{}",
+        text(&human_where.stdout)
+    );
+
+    document =
+        serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("store json");
+    let records = document["worktrees"].as_array_mut().expect("records");
+    let feature = records
+        .iter_mut()
+        .find(|record| record["path"].as_str().unwrap_or("").ends_with("/feature"))
+        .expect("feature record");
+    feature["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+    fs::write(
+        &file,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&document).expect("encode")
+        ),
+    )
+    .expect("rewrite");
+    let ran = repo.phantom(&["exec", "feature", "true"]);
+    assert!(ran.status.success(), "{}", text(&ran.stderr));
+    let after_exec = json_value(&repo.phantom(&["list", "--json", "--owner", "from-flag"]));
+    assert_ne!(
+        after_exec["worktrees"][0]["lastUsedAt"],
+        "2000-01-01T00:00:00.000Z"
+    );
+
+    repo.git(&["branch", "side"]);
+    let attached = repo.phantom(&[
+        "attach",
+        "side",
+        "--json",
+        "--owner",
+        "reviewer",
+        "--pr",
+        "https://github.com/phantompane/phantom/pull/12",
+    ]);
+    assert!(attached.status.success(), "{}", text(&attached.stderr));
+    let attached_json = json_value(&attached);
+    assert_eq!(attached_json["worktree"]["owner"], "reviewer");
+    assert_eq!(attached_json["worktree"]["links"]["pr"]["number"], 12);
+    assert!(attached_json["worktree"]["base"].is_null());
+
+    let deleted = repo.phantom(&["delete", "feature", "--keep-branch", "--json"]);
+    assert!(deleted.status.success(), "{}", text(&deleted.stderr));
+    let deleted_json = json_value(&deleted);
+    assert_eq!(deleted_json["deleted"][0]["worktree"]["owner"], "from-flag");
+    let after_delete = repo.phantom(&["list", "--json", "--owner", "from-flag"]);
+    assert_eq!(
+        json_value(&after_delete)["worktrees"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    let store: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("store json");
+    assert!(store["worktrees"]
+        .as_array()
+        .expect("records")
+        .iter()
+        .all(|record| !record["path"].as_str().unwrap_or("").ends_with("/feature")));
+
+    fs::write(&file, "{not json").expect("corrupt");
+    let broken = repo.phantom(&["list", "--json"]);
+    assert_eq!(broken.status.code(), Some(1));
+    let broken_json = json_value(&broken);
+    assert_eq!(broken_json["version"], 1);
+    assert_eq!(broken_json["error"]["code"], "error");
+    assert_eq!(broken_json["error"]["exitCode"], 1);
+    assert!(broken_json["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("invalid JSON"));
+    assert_eq!(fs::read_to_string(&file).expect("kept"), "{not json");
 }

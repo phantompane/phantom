@@ -131,11 +131,19 @@ A command that does not produce a result writes this object to stdout:
   "base": "HEAD",
   "dirty": false,
   "default": false,
-  "detached": false
+  "detached": false,
+  "owner": "grok",
+  "purpose": "fix the flaky checkout test",
+  "createdAt": "2026-10-18T11:46:00.000Z",
+  "lastUsedAt": "2026-10-18T11:46:00.000Z",
+  "links": {
+    "pr": { "number": 774, "url": null },
+    "issue": null
+  }
 }
 ```
 
-The object is intentionally open. Ownership and purpose metadata (owner, purpose, createdAt, lastUsedAt, links) and cleanup details (prunable, locked) can be added later without a new version.
+`owner`, `purpose`, `createdAt`, `lastUsedAt`, and `links` come from `.git/phantom/worktrees.json` in the repository. `ptm create`, `ptm attach`, and `ptm github checkout` write a record. `owner` is `--owner` or `PTM_AGENT_ID`, and null when neither is set. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `github checkout` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `where` and `exec` refresh `lastUsedAt` only when a record already exists. `delete` removes the record. `ptm meta set` patches the fields you pass and leaves the others. A worktree Git created outside `ptm`, including the default checkout, has null metadata fields until `meta set` or `github checkout` records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
 
 ### Commands
 
