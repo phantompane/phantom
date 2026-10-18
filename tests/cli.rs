@@ -4653,3 +4653,106 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
         .contains("invalid JSON"));
     assert_eq!(fs::read_to_string(&file).expect("kept"), "{not json");
 }
+
+#[test]
+fn github_recheckout_keeps_the_original_owner() {
+    let repo = Repo::new();
+    let created = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "create",
+                "topic",
+                "--owner",
+                "creator",
+                "--purpose",
+                "original task",
+                "--json",
+            ],
+        )
+        .output()
+        .expect("create");
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let created_at = json_value(&created)["worktree"]["createdAt"]
+        .as_str()
+        .expect("created")
+        .to_string();
+    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let mut document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("json");
+    document["worktrees"][0]["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+    fs::write(
+        &file,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&document).expect("encode")
+        ),
+    )
+    .expect("rewrite");
+
+    let path = fake_gh_for_topic_pr(&repo);
+    let again = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "github",
+                "checkout",
+                "7",
+                "--json",
+                "--purpose",
+                "stolen",
+                "--owner",
+                "intruder",
+            ],
+        )
+        .env("PATH", &path)
+        .env("PTM_AGENT_ID", "intruder")
+        .output()
+        .expect("checkout");
+    assert!(again.status.success(), "{}", text(&again.stderr));
+    let again_json = json_value(&again);
+    assert_eq!(again_json["github"]["alreadyExists"], true);
+    assert_eq!(again_json["worktree"]["owner"], "creator");
+    assert_eq!(again_json["worktree"]["purpose"], "original task");
+    assert_eq!(again_json["worktree"]["createdAt"], created_at);
+    assert_ne!(
+        again_json["worktree"]["lastUsedAt"],
+        "2000-01-01T00:00:00.000Z"
+    );
+    assert_eq!(again_json["worktree"]["links"]["pr"]["number"], 7);
+    let listed = repo.phantom(&["list", "--json", "--owner", "creator"]);
+    assert_eq!(
+        json_value(&listed)["worktrees"].as_array().map(Vec::len),
+        Some(1)
+    );
+}
+
+#[test]
+fn delete_keeps_the_removed_worktree_in_json_when_metadata_remove_fails() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "doomed", "--owner", "creator", "--json"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let metadata_dir = repo.repo.join(".git/ptm");
+    let store = fs::read_to_string(metadata_dir.join("worktrees.json")).expect("store");
+    use std::os::unix::fs::PermissionsExt;
+    let mut locked = fs::metadata(&metadata_dir).expect("meta").permissions();
+    locked.set_mode(0o555);
+    fs::set_permissions(&metadata_dir, locked).expect("chmod");
+    let _restore = ModeReset(&metadata_dir);
+    let deleted = repo.phantom(&["delete", "doomed", "--keep-branch", "--json"]);
+    assert_eq!(deleted.status.code(), Some(1), "{}", text(&deleted.stdout));
+    let deleted_json = json_value(&deleted);
+    assert_eq!(deleted_json["deleted"][0]["worktree"]["name"], "doomed");
+    assert_eq!(deleted_json["deleted"][0]["worktree"]["owner"], "creator");
+    assert!(deleted_json["deleted"][0]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("metadata"));
+    assert_eq!(deleted_json["error"]["exitCode"], 1);
+    assert!(!repo.repo.join(".git/ptm/worktrees/doomed").exists());
+    drop(_restore);
+    assert_eq!(
+        fs::read_to_string(metadata_dir.join("worktrees.json")).expect("kept"),
+        store
+    );
+}
