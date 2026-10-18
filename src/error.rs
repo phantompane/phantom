@@ -43,6 +43,12 @@ impl Error {
         Self::Message(message.into())
     }
 
+    /// Invalid command-line arguments. Every parser failure uses this so the
+    /// exit code and JSON `code` stay `validation` / 3 for every subcommand.
+    pub fn validation(message: impl Into<String>) -> Self {
+        Self::Validation(message.into())
+    }
+
     pub fn exit_code(&self) -> i32 {
         match self {
             Self::CommandFailed { code, .. } => *code,

@@ -216,7 +216,7 @@ fn removed_tmux_options_are_unknown() {
         let output = repo.phantom(&args);
         assert_eq!(
             output.status.code(),
-            Some(1),
+            Some(3),
             "{args:?} {}",
             text(&output.stderr)
         );
@@ -913,7 +913,7 @@ fn removed_shell_command_and_flag_are_unknown() {
         let output = repo.phantom(&args);
         assert_eq!(
             output.status.code(),
-            Some(1),
+            Some(3),
             "{args:?} {}",
             text(&output.stderr)
         );
@@ -938,7 +938,7 @@ fn removed_fzf_option_is_unknown() {
         let output = repo.phantom(&args);
         assert_eq!(
             output.status.code(),
-            Some(1),
+            Some(3),
             "{args:?} {}",
             text(&output.stderr)
         );
@@ -2005,6 +2005,55 @@ fn json_unborn_head_is_null() {
 }
 
 #[test]
+fn argument_errors_are_validation_for_every_command() {
+    let repo = Repo::new();
+    let cases: &[&[&str]] = &[
+        &["create", "topic", "--base"],
+        &["create", "topic", "--json", "--base"],
+        &["list", "--unknown"],
+        &["list", "--json", "--unknown"],
+        &["where", "--bogus"],
+        &["where", "--json", "--bogus"],
+        &["delete", "--bogus", "x"],
+        &["delete", "--json", "--bogus", "x"],
+        &["attach", "--zzz", "b"],
+        &["attach", "--json", "--zzz", "b"],
+        &["github", "checkout", "--bogus", "1"],
+        &["gh", "checkout", "1", "--json", "--base"],
+        &["exec", "--bogus", "name", "true"],
+        &["preferences", "get", "--bogus"],
+        &["version", "extra"],
+    ];
+    for args in cases {
+        let output = repo.phantom(args);
+        assert_eq!(
+            output.status.code(),
+            Some(3),
+            "{args:?}\nstdout:\n{}\nstderr:\n{}",
+            text(&output.stdout),
+            text(&output.stderr)
+        );
+        let detail = format!("{}\n{}", text(&output.stdout), text(&output.stderr));
+        assert!(
+            detail.contains("Unknown option")
+                || detail.contains("argument missing")
+                || detail.contains("Unexpected argument"),
+            "{args:?} {detail}"
+        );
+        if args.contains(&"--json") {
+            let value = json_value(&output);
+            assert_eq!(value["error"]["code"], "validation", "{args:?} {value}");
+            assert_eq!(value["error"]["exitCode"], 3, "{args:?} {value}");
+            assert!(
+                text(&output.stderr).is_empty(),
+                "{args:?} stderr: {}",
+                text(&output.stderr)
+            );
+        }
+    }
+}
+
+#[test]
 fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
     let repo = Repo::new();
     for args in [
@@ -2601,7 +2650,7 @@ fn exec_passes_command_options_through() {
     assert!(text(&help.stdout).contains("ptm exec <worktree-name> <command> [args...]"));
 
     let early = repo.phantom(&["exec", "--show-current", "feature/exec-flags", "true"]);
-    assert_eq!(early.status.code(), Some(1));
+    assert_eq!(early.status.code(), Some(3));
     assert!(text(&early.stderr).contains("Unknown option '--show-current'"));
 }
 
@@ -2675,7 +2724,7 @@ fn create_and_attach_exec_pass_command_options_through() {
     assert!(text(&short.stdout).contains("git status --short"));
 
     let missing = repo.phantom(&["create", "feature/missing-exec", "--exec"]);
-    assert_eq!(missing.status.code(), Some(1));
+    assert_eq!(missing.status.code(), Some(3));
     assert!(text(&missing.stderr).contains("Option '--exec <value>' argument missing"));
 
     repo.git(&["branch", "attached-exec-flags"]);
