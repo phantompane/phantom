@@ -144,21 +144,28 @@ pub fn fallback_base(root: &Path) -> Result<String> {
 
 // Git resolves branch.merge through the configured remote's fetch refspecs.
 fn default_upstream(root: &Path, branch: &str) -> Result<Option<String>> {
-    let upstream = git::output(
+    let reference = format!("refs/heads/{branch}");
+    let Ok(resolved) = git::raw_git(
+        root,
         &[
             "for-each-ref",
-            "--format=%(upstream)",
-            &format!("refs/heads/{branch}"),
+            "--format=%(refname) %(upstream)",
+            &reference,
         ],
-        Some(root),
-        true,
-    )?;
-    let upstream = upstream.trim();
-    if upstream.starts_with("refs/remotes/") && commit(root, upstream)?.is_some() {
-        Ok(Some(upstream.to_string()))
-    } else {
-        Ok(None)
+    ) else {
+        return Ok(None);
+    };
+    if resolved.code != 0 {
+        return Ok(None);
     }
+    let upstream = resolved.stdout.lines().find_map(|line| {
+        let (name, upstream) = line.split_once(' ')?;
+        (name == reference).then_some(upstream)
+    });
+    Ok(upstream
+        .filter(|upstream| upstream.starts_with("refs/remotes/"))
+        .filter(|upstream| commit(root, upstream).ok().flatten().is_some())
+        .map(str::to_string))
 }
 
 fn commit(root: &Path, reference: &str) -> Result<Option<String>> {

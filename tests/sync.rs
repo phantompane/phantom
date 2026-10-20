@@ -133,6 +133,73 @@ impl Drop for Repo {
 }
 
 #[test]
+fn default_upstream_ignores_child_branch_without_remote_head() {
+    for has_upstream in [false, true] {
+        let r = Repo::new();
+        r.git(&r.main, &["remote", "set-head", "origin", "--delete"]);
+        let before = r.git(&r.main, &["rev-parse", "main"]);
+        r.git(&r.upstream, &["push", "origin", "main:trunk"]);
+        r.advance();
+        r.git(&r.upstream, &["push", "origin", "main:child"]);
+        r.git(&r.main, &["fetch", "origin"]);
+        let child_tip = r.git(&r.main, &["rev-parse", "origin/main"]);
+        r.git(
+            &r.main,
+            &["update-ref", "refs/remotes/origin/child", &child_tip],
+        );
+        r.git(
+            &r.main,
+            &["update-ref", "refs/remotes/origin/main", &before],
+        );
+        // A packed-ref fixture represents the prefix collision that Git's normal
+        // branch creation rejects. Both refs remain readable by ref enumeration.
+        r.git(&r.main, &["pack-refs", "--all"]);
+        let packed = r.main.join(".git/packed-refs");
+        let mut refs = fs::read_to_string(&packed).unwrap();
+        refs.push_str(&format!("{child_tip} refs/heads/main/foo\n"));
+        let mut lines: Vec<_> = refs.lines().collect();
+        lines.sort_by_key(|line| line.split_once(' ').map(|(_, name)| name).unwrap_or(line));
+        fs::write(packed, lines.join("\n") + "\n").unwrap();
+        r.git(&r.main, &["config", "branch.main/foo.remote", "origin"]);
+        r.git(
+            &r.main,
+            &["config", "branch.main/foo.merge", "refs/heads/child"],
+        );
+        if has_upstream {
+            r.git(
+                &r.main,
+                &["update-ref", "refs/remotes/origin/trunk", &before],
+            );
+            r.git(&r.main, &["config", "branch.main.remote", "origin"]);
+            r.git(
+                &r.main,
+                &["config", "branch.main.merge", "refs/heads/trunk"],
+            );
+        }
+        // Keep the deliberately distinct tracking tips unchanged during sync.
+        r.git(
+            &r.main,
+            &["config", "--add", "remote.origin.fetch", "^refs/heads/main"],
+        );
+        assert_eq!(
+            r.git(&r.main, &["rev-parse", "refs/heads/main/foo"]),
+            child_tip
+        );
+        let doc = r.sync(&r.main, &[], 0);
+        assert_eq!(doc["default"]["status"], "up-to-date");
+        assert_eq!(
+            doc["default"]["base"],
+            if has_upstream {
+                "refs/remotes/origin/trunk"
+            } else {
+                "refs/remotes/origin/main"
+            }
+        );
+        assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
+    }
+}
+
+#[test]
 fn default_without_remote_head_uses_differently_named_upstream() {
     for tracking in [
         "refs/remotes/origin/trunk",
