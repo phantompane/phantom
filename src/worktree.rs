@@ -589,6 +589,12 @@ pub fn attach_worktree(
     })
 }
 
+pub struct DeleteOptions {
+    pub force: bool,
+    pub keep_branch: bool,
+    pub allow_current: bool,
+}
+
 pub struct DeleteOutcome {
     pub message: String,
     pub worktree: WorktreeInfo,
@@ -622,12 +628,13 @@ impl DeleteError {
 pub fn delete_worktree(
     context: &Context,
     name: &str,
-    force: bool,
-    keep_branch: bool,
+    options: &DeleteOptions,
     expected_path: Option<&Path>,
     logger: &Logger,
     hooks: HookControl,
 ) -> std::result::Result<DeleteOutcome, DeleteError> {
+    let force = options.force;
+    let keep_branch = options.keep_branch;
     let worktree = find_worktree(context, name, true, expected_path).map_err(DeleteError::bare)?;
     let path = PathBuf::from(&worktree.path);
     let inside = paths::is_strictly_inside(&path, &context.worktrees_directory);
@@ -650,6 +657,37 @@ pub fn delete_worktree(
             },
             &worktree,
         ));
+    }
+    if !force && !options.allow_current && command_is_inside(&path) {
+        return Err(DeleteError::kept(
+            Error::validation(format!(
+                "Worktree '{name}' is the current directory. Use --current or --force to delete it."
+            )),
+            &worktree,
+        ));
+    }
+    if !force && !keep_branch && !worktree.detached {
+        let base = git::default_branch(&context.git_root)
+            .map_err(|error| DeleteError::kept(error, &worktree))?;
+        let detail = match git::unpushed_tip(
+            &context.git_root,
+            Some(&worktree.branch),
+            worktree.head.as_deref(),
+            &base,
+        ) {
+            Some(false) => None,
+            Some(true) => Some("has unpushed commits"),
+            None => Some("has commits that could not be checked"),
+        };
+        if let Some(detail) = detail {
+            return Err(DeleteError::kept(
+                Error::Unpushed {
+                    name: name.to_string(),
+                    detail,
+                },
+                &worktree,
+            ));
+        }
     }
     let commands = trust::authorize(
         &context.git_root,
@@ -740,6 +778,16 @@ pub fn delete_worktree(
         branch_error,
         metadata_error,
     })
+}
+
+fn command_is_inside(path: &Path) -> bool {
+    let Ok(cwd) = std::env::current_dir() else {
+        return false;
+    };
+    let Ok(top) = git::top_level(&cwd) else {
+        return false;
+    };
+    paths::normalize(&top) == paths::normalize(path)
 }
 
 pub fn current_worktree_name(context: &Context) -> Result<Option<String>> {

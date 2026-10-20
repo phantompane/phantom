@@ -417,6 +417,8 @@
       ],
       "notes": [
         "By default, deletion will fail if the worktree has uncommitted changes",
+        "By default, deletion will fail if the branch has commits that are not on the default branch or any remote, or if that check cannot be completed. --keep-branch still deletes the worktree and leaves the branch",
+        "Deleting the worktree that contains the current directory requires --current or --force",
         "You can pass multiple worktree names to delete them at once",
         "The associated branch will also be deleted if it's not checked out elsewhere",
         "Use --keep-branch to delete only the worktree and preserve the branch",

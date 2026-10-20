@@ -378,8 +378,11 @@ fn delete(args: &[String]) -> Result<i32> {
         match worktree::delete_worktree(
             &context,
             &name,
-            parsed.flag("force"),
-            keep_branch,
+            &worktree::DeleteOptions {
+                force: parsed.flag("force"),
+                keep_branch,
+                allow_current: delete_current,
+            },
             None,
             &logger,
             hook_control(&parsed, json, true),
