@@ -1676,3 +1676,82 @@ fn context_errors_use_shared_exit_codes() {
     }
     assert_eq!(r.mabo(&r.root, &["sync", "--json"]).status.code(), Some(4));
 }
+
+#[test]
+fn metadata_failure_after_fast_forward_restores_worktree() {
+    use std::os::unix::fs::PermissionsExt;
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join("git"))
+        .find(|file| file.is_file())
+        .unwrap();
+    for fail_rollback in [false, true] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        let store = r.main.join(".git/maboroshi/worktrees.json");
+        let original_store = fs::read(&store).unwrap();
+        r.advance();
+        let before = r.snapshot(&tree);
+        let bin = r.root.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let wrapper = bin.join("git");
+        fs::write(
+            &wrapper,
+            r#"#!/bin/sh
+for arg do
+    if [ "$arg" = --keep ] && [ "$FAIL_ROLLBACK" = 1 ]; then
+        echo "injected rollback failure" >&2
+        exit 1
+    fi
+done
+for arg do
+    if [ "$arg" = merge ]; then
+        "$REAL_GIT" "$@" || exit $?
+        printf 'invalid json' > "$STORE"
+        exit 0
+    fi
+done
+exec "$REAL_GIT" "$@"
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        let out = r
+            .command(
+                env!("CARGO_BIN_EXE_mabo"),
+                &tree,
+                &["sync", "--no-default", "--json"],
+            )
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("REAL_GIT", &real_git)
+            .env("STORE", &store)
+            .env("FAIL_ROLLBACK", if fail_rollback { "1" } else { "0" })
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let item = &doc["worktrees"][0];
+        assert_eq!(item["status"], "failed");
+        let detail = item["detail"].as_str().unwrap();
+        assert!(detail.contains("metadata update failed"), "{detail}");
+        if fail_rollback {
+            assert!(detail.contains("rollback failed"), "{detail}");
+        } else {
+            assert!(detail.contains("worktree restored"), "{detail}");
+            assert_eq!(item["before"], item["after"]);
+            assert_eq!(r.snapshot(&tree), before);
+            fs::write(&store, &original_store).unwrap();
+            assert_eq!(
+                r.sync(&tree, &["--no-default"], 0)["worktrees"][0]["status"],
+                "updated"
+            );
+            assert_eq!(
+                r.sync(&tree, &["--no-default"], 0)["worktrees"][0]["status"],
+                "up-to-date"
+            );
+            let out = r.mabo(&r.main, &["gc", "--json"]);
+            assert!(!String::from_utf8_lossy(&out.stdout).contains("topic"));
+        }
+    }
+}

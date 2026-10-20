@@ -917,7 +917,26 @@ fn sync_tree(
     item.after = git::head_commit(path);
     if own.is_empty() {
         if let Some(tip) = item.after.as_deref() {
-            metadata::record_sync_tip(&context.git_root, path, tip)?;
+            if let Err(error) = metadata::record_sync_tip(&context.git_root, path, tip) {
+                let rollback = match item.before.as_deref() {
+                    Some(before) => git::output(
+                        &["-c", "core.hooksPath=/dev/null", "reset", "--keep", before],
+                        Some(path),
+                        true,
+                    )
+                    .map(|_| ()),
+                    None => Err(Error::msg("Original HEAD is unavailable")),
+                };
+                item.after = git::head_commit(path);
+                let detail = match rollback {
+                    Ok(()) => format!("metadata update failed: {error}; worktree restored"),
+                    Err(rollback) => {
+                        format!("metadata update failed: {error}; rollback failed: {rollback}")
+                    }
+                };
+                item.status("failed", Some(detail));
+                return Ok(item);
+            }
         }
     }
     item.status(
