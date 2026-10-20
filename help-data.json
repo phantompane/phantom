@@ -162,6 +162,7 @@
       "notes": [
         "If name is omitted, a random human-readable name is generated automatically",
         "The worktree name will be used as the branch name",
+        "When the name is already a branch on a configured remote, create exits 3 and tells you to run mabo attach <name>. It does not fetch. A worktree that already exists is still reported as already existing.",
         "Gitignored files matching .worktreeinclude at the checkout root are copied into the new worktree",
         ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
         "Files that already exist in the new worktree are left unchanged",
@@ -176,7 +177,7 @@
     },
     "attach": {
       "name": "attach",
-      "description": "Attach to an existing branch by creating a new worktree",
+      "description": "Attach a worktree to a local or remote-tracking branch",
       "usage": "mabo attach [--project <ref>] <branch-name> [options]",
       "options": [
         {
@@ -241,6 +242,14 @@
           "command": "mabo attach main"
         },
         {
+          "description": "Attach the remote-tracking branch when only one remote has it",
+          "command": "mabo attach feature/teammate"
+        },
+        {
+          "description": "Choose the remote when more than one has the branch",
+          "command": "mabo attach origin/feature/teammate"
+        },
+        {
           "description": "Attach to a branch and pull latest changes",
           "command": "mabo attach develop --exec 'git pull'"
         },
@@ -250,8 +259,10 @@
         }
       ],
       "notes": [
-        "The branch must already exist locally",
-        "To work with remote branches, first checkout the branch with git",
+        "A local branch is attached as itself. The worktree uses that branch name.",
+        "When no local branch has that name and exactly one configured remote already has it, attach creates the local branch tracking that remote. mabo does not fetch.",
+        "When more than one configured remote has the name, attach exits 3 and lists those remotes. Pass <remote>/<name>. The remote is a configured remote name. A slash in a branch name is not itself a remote.",
+        "<remote>/<name> attaches local branch <name> when that remote is configured and the remote-tracking ref exists. The worktree name omits the remote. An existing local branch keeps its upstream.",
         "Gitignored files matching .worktreeinclude at the checkout root are copied into the new worktree",
         ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
         "Files that already exist in the new worktree are left unchanged",

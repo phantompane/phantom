@@ -380,17 +380,30 @@ pub fn branch_exists(git_root: &Path, name: &str) -> Result<bool> {
     Ok(!stdout.trim().is_empty())
 }
 
-pub fn add_worktree(
-    git_root: &Path,
-    path: &Path,
-    branch: &str,
-    base: &str,
-    create_branch: bool,
-) -> Result<()> {
+pub enum WorktreeAdd<'a> {
+    Existing {
+        branch: &'a str,
+    },
+    New {
+        branch: &'a str,
+        base: &'a str,
+    },
+    /// `start_point` is `refs/remotes/<remote>/<branch>`.
+    ///
+    /// A short name such as `origin/solo` is ambiguous when a local branch
+    /// has that name. The full ref still sets upstream when `--track` is set.
+    Track {
+        branch: &'a str,
+        start_point: &'a str,
+    },
+}
+
+pub fn add_worktree(git_root: &Path, path: &Path, add: WorktreeAdd<'_>) -> Result<()> {
     let path = path.to_string_lossy();
-    if create_branch {
-        run(
-            &[
+    let args: Vec<&str> = match add {
+        WorktreeAdd::Existing { branch } => vec!["worktree", "add", path.as_ref(), branch],
+        WorktreeAdd::New { branch, base } => {
+            vec![
                 "worktree",
                 "add",
                 "--no-track",
@@ -398,13 +411,22 @@ pub fn add_worktree(
                 "-b",
                 branch,
                 base,
-            ],
-            Some(git_root),
-        )
-    } else {
-        run(&["worktree", "add", path.as_ref(), branch], Some(git_root))
-    }
-    .map_err(|error| Error::msg(format!("worktree add failed: {error}")))
+            ]
+        }
+        WorktreeAdd::Track {
+            branch,
+            start_point,
+        } => vec![
+            "worktree",
+            "add",
+            path.as_ref(),
+            "-b",
+            branch,
+            "--track",
+            start_point,
+        ],
+    };
+    run(&args, Some(git_root)).map_err(|error| Error::msg(format!("worktree add failed: {error}")))
 }
 
 pub fn remove_worktree(git_root: &Path, path: &Path, force: bool) -> Result<()> {
