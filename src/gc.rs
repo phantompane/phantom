@@ -469,18 +469,19 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
     let mut rows = BTreeMap::new();
     for worktree in listed {
         let path = PathBuf::from(&worktree.path);
-        let key = metadata::path_key(&path);
-        if paths::normalize(&path) == paths::normalize(&context.git_root) {
+        if paths::same_location(&path, &context.git_root) {
             continue;
         }
+        let found = metadata::find_in(&stored, &path);
         let inside = paths::is_strictly_inside(&path, &context.worktrees_directory);
-        let recorded = stored
-            .keys()
-            .any(|key| paths::same_location(Path::new(key), &path));
+        let recorded = found.is_some();
         if !inside && !recorded {
             continue;
         }
-        let record = stored.get(&key);
+        let key = found
+            .map(|(key, _)| key.clone())
+            .unwrap_or_else(|| metadata::path_key(&path));
+        let record = found.map(|(_, record)| record);
         if !owner_in_scan(record.and_then(|record| record.owner.as_deref()), policy) {
             continue;
         }

@@ -7355,3 +7355,71 @@ fn gc_removes_a_merged_recorded_worktree_outside_the_resolved_directory() {
     assert!(!landed.exists());
     assert!(repo.repo.join(".git/ptm/worktrees").is_dir());
 }
+
+#[test]
+fn symlink_spelling_keeps_metadata_and_cleans_the_project_directory() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "feature", "--owner", "alice", "--json"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let created_json = json_value(&created);
+    let real = PathBuf::from(created_json["worktree"]["path"].as_str().expect("path"));
+    let created_from = created_json["worktree"]["createdFrom"]
+        .as_str()
+        .expect("createdFrom")
+        .to_string();
+    let created_at = created_json["worktree"]["createdAt"]
+        .as_str()
+        .expect("createdAt")
+        .to_string();
+    fs::write(real.join("landed.txt"), "landed\n").expect("note");
+    for args in [vec!["add", "landed.txt"], vec!["commit", "-m", "landed"]] {
+        let output = repo
+            .command("git", &args)
+            .current_dir(&real)
+            .output()
+            .expect("commit");
+        assert!(output.status.success(), "{}", text(&output.stderr));
+    }
+    repo.git(&["merge", "--ff-only", "feature"]);
+
+    let via = repo.root.join("via-project");
+    std::os::unix::fs::symlink(real.parent().expect("project"), &via).expect("symlink");
+    let spelled = via.join("feature");
+    let gitdir = repo.repo.join(".git/worktrees/feature/gitdir");
+    fs::write(&gitdir, format!("{}\n", spelled.join(".git").display())).expect("gitdir");
+
+    let listed = repo.phantom(&["list", "--json", "--no-default"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let entry = &json_value(&listed)["worktrees"][0];
+    assert_eq!(entry["owner"], "alice");
+    assert_eq!(entry["createdFrom"], created_from);
+    assert_eq!(entry["createdAt"], created_at);
+    let plan = repo.phantom(&["gc", "--json"]);
+    assert!(plan.status.success(), "{}", text(&plan.stderr));
+    let candidate = &json_value(&plan)["candidates"][0];
+    assert_eq!(candidate["owner"], "alice");
+    assert_eq!(candidate["name"], "feature");
+    let deleted = repo.phantom(&["delete", "feature", "--json"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    let removed = &json_value(&deleted)["deleted"][0]["worktree"];
+    assert_eq!(removed["owner"], "alice");
+    assert_eq!(removed["createdFrom"], created_from);
+    assert_eq!(removed["createdAt"], created_at);
+    assert!(!real.exists());
+    assert!(
+        !managed_root(&repo).exists(),
+        "last worktree inside the resolved directory should remove the project directory"
+    );
+    let store = fs::read_to_string(repo.repo.join(".git/ptm/worktrees.json")).unwrap_or_default();
+    assert!(!store.contains("alice"), "{store}");
+}

@@ -514,7 +514,9 @@ fn absolute_xdg_config_home() -> Option<PathBuf> {
 }
 
 pub fn is_strictly_inside(path: &Path, directory: &Path) -> bool {
-    let relative_path = relative(directory, path);
+    let path = canonical_location(path);
+    let directory = canonical_location(directory);
+    let relative_path = relative(&directory, &path);
     !relative_path.is_empty()
         && !relative_path.starts_with("..")
         && !Path::new(&relative_path).is_absolute()
@@ -523,6 +525,27 @@ pub fn is_strictly_inside(path: &Path, directory: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn symlink_inside_the_worktrees_directory_is_inside() {
+        let root = std::env::temp_dir().join(format!(
+            "ptm-inside-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let project = root.join("project");
+        let feature = project.join("feature");
+        fs::create_dir_all(&feature).expect("feature");
+        let via = root.join("via");
+        std::os::unix::fs::symlink(&project, &via).expect("symlink");
+        let spelled = via.join("feature");
+        assert!(is_strictly_inside(&spelled, &project));
+        assert!(!is_strictly_inside(&spelled, &feature));
+        let _ = fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn relative_paths_match_node() {

@@ -121,9 +121,8 @@ pub fn list_worktrees(
         if exclude_default && worktree.path == git_root_string {
             continue;
         }
-        let record = stored
-            .get(&metadata::path_key(Path::new(&worktree.path)))
-            .cloned()
+        let record = metadata::find_in(&stored, Path::new(&worktree.path))
+            .map(|(_, record)| record.clone())
             .unwrap_or_default();
         infos.push(info_from_git(&worktree, &cwd, context, record));
     }
@@ -189,7 +188,10 @@ pub(crate) fn directory_name(path: &Path, worktrees_directory: &Path) -> Option<
     if !paths::is_strictly_inside(path, worktrees_directory) {
         return None;
     }
-    let relative = paths::relative(worktrees_directory, path);
+    let relative = paths::relative(
+        &paths::canonical_location(worktrees_directory),
+        &paths::canonical_location(path),
+    );
     if relative.is_empty() {
         None
     } else {
@@ -666,12 +668,20 @@ pub fn delete_worktree(
             return Err(DeleteError::kept(error, &worktree));
         }
     }
+    let recorded_path = metadata::matching_path(&context.git_root, &path)
+        .map_err(|error| DeleteError::kept(error, &worktree))?;
     if let Err(error) = git::remove_worktree(&context.git_root, &path, force) {
         return Err(DeleteError::kept(error, &worktree));
     }
-    let metadata_error = metadata::remove(&context.git_root, &path)
-        .err()
-        .map(|error| error.to_string());
+    let metadata_error = metadata::remove(
+        &context.git_root,
+        recorded_path
+            .as_deref()
+            .map(Path::new)
+            .unwrap_or(path.as_path()),
+    )
+    .err()
+    .map(|error| error.to_string());
     let cleanup_warning = if inside {
         remove_empty_parents(
             &path,
