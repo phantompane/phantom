@@ -27,6 +27,10 @@ pub struct WorktreeMetadata {
     pub purpose: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
+    /// Full commit the branch was created from. Absent on older records, when
+    /// a new branch has no HEAD, and when an existing branch has no reflog.
+    #[serde(default)]
+    pub created_from: Option<String>,
     #[serde(default)]
     pub last_used_at: Option<String>,
     #[serde(default)]
@@ -49,6 +53,15 @@ pub struct WorktreeLink {
     pub number: Option<u64>,
     #[serde(default)]
     pub url: Option<String>,
+}
+
+/// Whether the branch was created with this record or already existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchOrigin {
+    /// `create` just pointed a new branch at HEAD. That commit is the base.
+    New,
+    /// The branch already existed. The base is its reflog, when one exists.
+    Existing,
 }
 
 /// Fields supplied at a boundary. `None` leaves the stored value alone.
@@ -95,7 +108,12 @@ pub fn load(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>> {
 
 /// Replace any record at `path`. Create, attach, and a first checkout use this
 /// so a worktree removed outside ptm does not keep the previous owner.
-pub fn replace(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<WorktreeMetadata> {
+pub fn replace(
+    git_root: &Path,
+    path: &Path,
+    input: &MetadataInput,
+    origin: BranchOrigin,
+) -> Result<WorktreeMetadata> {
     if save_injected() {
         return Err(Error::msg(
             "Failed to save worktree metadata: injected failure".to_string(),
@@ -104,13 +122,7 @@ pub fn replace(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<Wo
     let key = path_key(path);
     with_store(git_root, |store| {
         store.worktrees.retain(|record| record.path != key);
-        let now = iso_now();
-        let mut metadata = WorktreeMetadata {
-            created_at: Some(now.clone()),
-            last_used_at: Some(now),
-            ..WorktreeMetadata::default()
-        };
-        apply_input(&mut metadata, input);
+        let metadata = fresh_metadata(path, input, origin);
         store.worktrees.push(StoredWorktree {
             path: key,
             metadata: metadata.clone(),
@@ -120,27 +132,41 @@ pub fn replace(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<Wo
 }
 
 /// Insert or patch the record for `path`. `meta set` and re-checkout use this.
-/// A new record gets both timestamps. An existing record keeps omitted fields.
+/// A new record gets both timestamps and `createdFrom`. An existing record
+/// keeps omitted fields, including `createdFrom`.
 pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<WorktreeMetadata> {
     let key = path_key(path);
     with_store(git_root, |store| {
-        let now = iso_now();
         if let Some(record) = store.worktrees.iter_mut().find(|record| record.path == key) {
             apply_input(&mut record.metadata, input);
             return Ok((record.metadata.clone(), true));
         }
-        let mut metadata = WorktreeMetadata {
-            created_at: Some(now.clone()),
-            last_used_at: Some(now),
-            ..WorktreeMetadata::default()
-        };
-        apply_input(&mut metadata, input);
+        let metadata = fresh_metadata(path, input, BranchOrigin::Existing);
         store.worktrees.push(StoredWorktree {
             path: key,
             metadata: metadata.clone(),
         });
         Ok((metadata, true))
     })
+}
+
+fn fresh_metadata(path: &Path, input: &MetadataInput, origin: BranchOrigin) -> WorktreeMetadata {
+    let now = iso_now();
+    let mut metadata = WorktreeMetadata {
+        created_at: Some(now.clone()),
+        last_used_at: Some(now),
+        created_from: recorded_creation(path, origin),
+        ..WorktreeMetadata::default()
+    };
+    apply_input(&mut metadata, input);
+    metadata
+}
+
+fn recorded_creation(path: &Path, origin: BranchOrigin) -> Option<String> {
+    match origin {
+        BranchOrigin::New => crate::git::head_commit(path),
+        BranchOrigin::Existing => crate::git::reflog_creation_commit(path),
+    }
 }
 
 /// Bump `lastUsedAt` when a record exists. A worktree with no record is left alone.
@@ -635,8 +661,13 @@ mod tests {
 
         let duplicate = "{\n  \"version\": 1,\n  \"worktrees\": [\n    {\"path\": \"/tmp/a\", \"owner\": \"first\"},\n    {\"path\": \"/tmp/a\", \"owner\": \"second\"}\n  ]\n}\n";
         fs::write(&file, duplicate).expect("duplicate");
-        let error =
-            replace(&root, Path::new("/tmp/b"), &MetadataInput::default()).expect_err("dup");
+        let error = replace(
+            &root,
+            Path::new("/tmp/b"),
+            &MetadataInput::default(),
+            BranchOrigin::Existing,
+        )
+        .expect_err("dup");
         assert!(error.to_string().contains("duplicate path"));
         assert_eq!(fs::read_to_string(&file).expect("kept"), duplicate);
 

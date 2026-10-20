@@ -9,7 +9,7 @@ use crate::config;
 use crate::context::{self, Context};
 use crate::error::{self, Error, JsonErrorBody, Result};
 use crate::git::{self, GitWorktree};
-use crate::metadata::{self, MetadataInput};
+use crate::metadata::{self, BranchOrigin, MetadataInput};
 use crate::names;
 use crate::paths;
 use crate::process;
@@ -414,7 +414,7 @@ pub fn create_worktree(
         &context.directory_name_separator,
     );
     git::add_worktree(&context.git_root, &path, name, base, true)?;
-    let metadata_error = metadata::replace(&context.git_root, &path, metadata)
+    let metadata_error = metadata::replace(&context.git_root, &path, metadata, BranchOrigin::New)
         .err()
         .map(|error| error.to_string());
     let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
@@ -524,9 +524,10 @@ pub fn attach_worktree(
             error
         }
     })?;
-    let metadata_error = metadata::replace(&context.git_root, &path, metadata)
-        .err()
-        .map(|error| error.to_string());
+    let metadata_error =
+        metadata::replace(&context.git_root, &path, metadata, BranchOrigin::Existing)
+            .err()
+            .map(|error| error.to_string());
     let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
         .err()
         .map(|error| {
@@ -1064,8 +1065,10 @@ fn copy_error(relative: &Path, error: impl std::fmt::Display) -> Error {
 ///
 /// `base` is set when the command that produced the object knows the starting
 /// commit-ish (create, and GitHub issue/PR checkout). List, where, attach, and
-/// delete leave it null. `owner`, `purpose`, `createdAt`, `lastUsedAt`, and
-/// `links` come from the repository metadata store. Cleanup fields such as
+/// delete leave it null. `owner`, `purpose`, `createdAt`, `createdFrom`,
+/// `lastUsedAt`, and `links` come from the repository metadata store.
+/// `createdFrom` is the full creation commit, or null when the record has
+/// none. Cleanup fields such as
 /// `prunable` and `locked` can be added later without a version bump. Parsers
 /// must ignore unknown fields.
 #[derive(Debug, Clone, Serialize)]
