@@ -8772,6 +8772,64 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
 }
 
 #[test]
+fn meta_set_records_outside_worktrees_despite_orphaned_names() {
+    for layout in [false, true] {
+        let repo = Repo::new();
+        let records_path = repo.repo.join(".git/maboroshi/worktrees.json");
+        let missing = repo.root.join("missing");
+        fs::create_dir_all(records_path.parent().expect("parent")).expect("directory");
+        let records = serde_json::json!({
+            "version": 1,
+            "worktrees": [{"path": missing, "name": "shared"}]
+        });
+        fs::write(&records_path, serde_json::to_vec(&records).expect("json")).expect("records");
+        let outside = if layout {
+            repo.repo.join(".git/maboroshi/worktrees/shared")
+        } else {
+            repo.root.join("outside")
+        };
+        fs::create_dir_all(outside.parent().expect("parent")).expect("directory");
+        repo.git(&[
+            "worktree",
+            "add",
+            "-b",
+            "shared",
+            outside.to_str().expect("path"),
+            "HEAD",
+        ]);
+        let marked = repo.mabo(&["meta", "set", "shared", "--owner", "a"]);
+        assert!(marked.status.success(), "{}", text(&marked.stderr));
+        let found = repo.mabo(&["where", "shared"]);
+        assert!(found.status.success(), "{}", text(&found.stderr));
+        assert!(paths_match(text(&found.stdout).trim(), &outside));
+        let listed = repo.mabo(&["list", "--json", "--no-default"]);
+        assert!(listed.status.success(), "{}", text(&listed.stderr));
+        let document: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("json");
+        let worktrees = document["worktrees"].as_array().expect("worktrees");
+        assert_eq!(worktrees.len(), 2);
+        assert!(worktrees
+            .iter()
+            .all(|worktree| worktree["name"] == "shared"));
+        assert_eq!(
+            worktrees
+                .iter()
+                .filter(|worktree| worktree["orphaned"] == true)
+                .count(),
+            1
+        );
+        let cleaned = repo.mabo(&["gc", "--apply"]);
+        assert!(cleaned.status.success(), "{}", text(&cleaned.stderr));
+        let records: serde_json::Value =
+            serde_json::from_slice(&fs::read(&records_path).expect("records")).expect("json");
+        assert!(!records["worktrees"]
+            .as_array()
+            .expect("records")
+            .iter()
+            .any(|record| record["path"] == missing.to_str().expect("path")));
+    }
+}
+
+#[test]
 fn meta_set_refuses_to_record_an_outside_worktree_under_a_taken_name() {
     let repo = Repo::new();
     assert!(repo.mabo(&["create", "dup"]).status.success());

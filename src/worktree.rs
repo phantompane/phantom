@@ -338,9 +338,11 @@ pub(crate) fn outside_name_to_store(context: &Context, path: &Path) -> Result<Op
         .unwrap_or_else(|| "HEAD".to_string());
     let branch = (!worktree.detached).then_some(worktree.branch.as_str());
     let taken = |name: &str| {
-        listed
-            .iter()
-            .any(|other| other.name == name && !paths::same_location(Path::new(&other.path), path))
+        listed.iter().any(|other| {
+            !other.orphaned
+                && other.name == name
+                && !paths::same_location(Path::new(&other.path), path)
+        })
     };
     if let Some(layout) = maboroshi_layout_name(path, &common_dir) {
         if taken(&layout) {
