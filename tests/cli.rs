@@ -5074,6 +5074,8 @@ fn create_replaces_a_record_left_by_git_worktree_remove() {
     );
 }
 
+// Metadata save failure injection is only supported in debug builds.
+#[cfg(debug_assertions)]
 #[test]
 fn metadata_save_failure_after_create_still_runs_hooks() {
     let repo = Repo::new();
@@ -9129,6 +9131,8 @@ fn help_describes_remote_aware_attach_and_create() {
     assert!(create.contains("mabo attach <name>"));
 }
 
+// Deterministic name candidates are only supported in debug builds.
+#[cfg(debug_assertions)]
 #[test]
 fn nameless_create_skips_a_remote_tracking_candidate() {
     let repo = Repo::new();
