@@ -316,6 +316,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "maboroshi"
+version = "7.0.0-alpha.4"
+dependencies = [
+ "chrono",
+ "ignore",
+ "serde",
+ "serde_json",
+ "sha2",
+ "terminal_size",
+ "thiserror",
+ "toml_edit",
+ "uuid",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -335,21 +350,6 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
-
-[[package]]
-name = "maboroshi"
-version = "7.0.0-alpha.4"
-dependencies = [
- "chrono",
- "ignore",
- "serde",
- "serde_json",
- "sha2",
- "terminal_size",
- "thiserror",
- "toml_edit",
- "uuid",
-]
 
 [[package]]
 name = "pin-project-lite"

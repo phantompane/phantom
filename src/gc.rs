@@ -509,6 +509,7 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
             &path,
             &context.worktrees_directory,
             recorded_path.as_deref().map(Path::new),
+            record.and_then(|item| item.name.as_deref()),
             &common_dir,
             branch_name,
             &short_head,
@@ -531,6 +532,7 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
             &path,
             &context.worktrees_directory,
             Some(&path),
+            record.name.as_deref(),
             &common_dir,
             None,
             "HEAD",
@@ -601,9 +603,8 @@ fn observe_listed(
         prunable: worktree.prunable,
         branch_missing,
         is_default,
-        is_current: current.is_some_and(|current| {
-            paths::normalize(current) == paths::normalize(Path::new(&worktree.path))
-        }),
+        is_current: current
+            .is_some_and(|current| paths::same_location(current, Path::new(&worktree.path))),
         locked: worktree.locked,
         dirty,
         unpushed,
@@ -733,8 +734,7 @@ fn directory_state(path: &Path) -> DirState {
 fn current_worktree_path(context: &Context) -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
     let top = git::top_level(&cwd).ok()?;
-    let top = paths::normalize(&top);
-    if top == paths::normalize(&context.git_root) {
+    if paths::same_location(&top, &context.git_root) {
         return None;
     }
     Some(top)

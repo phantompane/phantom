@@ -7116,10 +7116,15 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
     assert!(paths_match(text(&found.stdout).trim(), &legacy));
     let refused = repo.mabo(&["delete", "legacy", "--keep-branch"]);
     assert!(!refused.status.success(), "{}", text(&refused.stdout));
+    assert_eq!(refused.status.code(), Some(1), "{}", text(&refused.stderr));
+    let refused_text = text(&refused.stderr);
     assert!(
-        text(&refused.stderr).contains("outside the managed worktree directory"),
-        "{}",
-        text(&refused.stderr)
+        refused_text.contains("not created by mabo"),
+        "{refused_text}"
+    );
+    assert!(
+        refused_text.contains("git worktree remove"),
+        "{refused_text}"
     );
     assert!(legacy.is_dir());
 }
@@ -7332,10 +7337,15 @@ fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
     repo.git(&["merge", "--ff-only", "stray"]);
     let refused = repo.mabo(&["delete", "stray"]);
     assert!(!refused.status.success(), "{}", text(&refused.stdout));
+    assert_eq!(refused.status.code(), Some(1), "{}", text(&refused.stderr));
+    let refused_text = text(&refused.stderr);
     assert!(
-        text(&refused.stderr).contains("outside the managed worktree directory"),
-        "{}",
-        text(&refused.stderr)
+        refused_text.contains("not created by mabo"),
+        "{refused_text}"
+    );
+    assert!(
+        refused_text.contains(&format!("git worktree remove {}", stray.display())),
+        "{refused_text}"
     );
     let cleaned = repo.mabo(&["gc", "--apply"]);
     assert!(cleaned.status.success(), "{}", text(&cleaned.stderr));
@@ -8435,4 +8445,289 @@ fn delete_checks_every_name_before_removing_any() {
     assert!(!c.exists());
     assert!(b.is_dir());
     assert!(branch_listed(&repo, "b"));
+}
+
+#[test]
+fn gc_keeps_the_current_worktree_when_its_parent_was_replaced_by_a_symlink() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "here"]).status.success());
+    land_branch(&repo, "here");
+    assert!(repo.mabo(&["create", "gone"]).status.success());
+    land_branch(&repo, "gone");
+    let parent = managed_root(&repo);
+    let moved = repo.root.join("moved-parent");
+    fs::rename(&parent, &moved).expect("move parent");
+    std::os::unix::fs::symlink(&moved, &parent).expect("symlink parent");
+    let here = parent.join("here");
+    assert!(here.is_dir());
+    let applied = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &["gc", "--apply"])
+        .current_dir(&here)
+        .output()
+        .expect("gc");
+    assert!(
+        applied.status.success(),
+        "{}\n{}",
+        text(&applied.stdout),
+        text(&applied.stderr)
+    );
+    let stdout = text(&applied.stdout);
+    assert!(
+        stdout.contains("skip here [merged] current worktree"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("removed gone [merged]"), "{stdout}");
+    assert!(
+        moved.join("here").is_dir(),
+        "gc removed the worktree that contains the current directory"
+    );
+    assert!(
+        parent.join("here").is_dir(),
+        "gc removed the worktree reached through the symlink"
+    );
+    assert!(moved.is_dir(), "gc removed the current worktree's parent");
+    assert!(
+        parent
+            .symlink_metadata()
+            .expect("parent")
+            .file_type()
+            .is_symlink(),
+        "gc removed the symlink that replaced the parent directory"
+    );
+    assert!(!moved.join("gone").exists());
+}
+
+#[test]
+fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basename() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "dup"]).status.success());
+    let outside = repo.root.join("x").join("dup");
+    fs::create_dir_all(outside.parent().expect("parent")).expect("x");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "zz",
+        outside.to_str().expect("outside"),
+        "HEAD",
+    ]);
+    let marked = repo.mabo(&["meta", "set", "zz", "--owner", "a"]);
+    assert!(
+        marked.status.success(),
+        "{}\n{}",
+        text(&marked.stdout),
+        text(&marked.stderr)
+    );
+    assert!(
+        text(&marked.stdout).contains("zz"),
+        "{}",
+        text(&marked.stdout)
+    );
+    let found = repo.mabo(&["where", "dup"]);
+    assert!(
+        found.status.success(),
+        "{}\n{}",
+        text(&found.stdout),
+        text(&found.stderr)
+    );
+    assert!(paths_match(
+        text(&found.stdout).trim(),
+        &managed(&repo, "dup")
+    ));
+    let outside_where = repo.mabo(&["where", "zz"]);
+    assert!(
+        outside_where.status.success(),
+        "{}\n{}",
+        text(&outside_where.stdout),
+        text(&outside_where.stderr)
+    );
+    assert!(paths_match(text(&outside_where.stdout).trim(), &outside));
+    let stored = fs::read_to_string(repo.repo.join(".git/maboroshi/worktrees.json")).expect("meta");
+    assert!(stored.contains("\"name\": \"zz\""), "{stored}");
+    let names = text(&repo.mabo(&["list", "--names", "--no-default"]).stdout);
+    assert!(names.lines().any(|line| line == "dup"), "{names}");
+    assert!(names.lines().any(|line| line == "zz"), "{names}");
+    assert_eq!(
+        names.lines().filter(|line| *line == "dup").count(),
+        1,
+        "{names}"
+    );
+
+    let loose = repo.root.join("x").join("loose");
+    repo.git(&[
+        "worktree",
+        "add",
+        "--detach",
+        loose.to_str().expect("loose"),
+        "HEAD",
+    ]);
+    assert!(repo.mabo(&["create", "loose"]).status.success());
+    let head = repo
+        .command("git", &["rev-parse", "--short=7", "HEAD"])
+        .current_dir(&loose)
+        .output()
+        .expect("short head");
+    assert!(head.status.success(), "{}", text(&head.stderr));
+    let sha = text(&head.stdout);
+    let detached = repo.mabo(&["meta", "set", &sha, "--owner", "b"]);
+    assert!(
+        detached.status.success(),
+        "{}\n{}",
+        text(&detached.stdout),
+        text(&detached.stderr)
+    );
+    let found_loose = repo.mabo(&["where", "loose"]);
+    assert!(
+        found_loose.status.success(),
+        "{}",
+        text(&found_loose.stderr)
+    );
+    assert!(paths_match(
+        text(&found_loose.stdout).trim(),
+        &managed(&repo, "loose")
+    ));
+    let found_sha = repo.mabo(&["where", &sha]);
+    assert!(found_sha.status.success(), "{}", text(&found_sha.stderr));
+    assert!(paths_match(text(&found_sha.stdout).trim(), &loose));
+    let stored = fs::read_to_string(repo.repo.join(".git/maboroshi/worktrees.json")).expect("meta");
+    assert!(stored.contains(&format!("\"name\": \"{sha}\"")), "{stored}");
+    fs::write(loose.join("later.txt"), "later\n").expect("later");
+    for args in [vec!["add", "later.txt"], vec!["commit", "-m", "later"]] {
+        let output = repo
+            .command("git", &args)
+            .current_dir(&loose)
+            .output()
+            .expect("commit");
+        assert!(output.status.success(), "{}", text(&output.stderr));
+    }
+    let later = repo
+        .command("git", &["rev-parse", "--short=7", "HEAD"])
+        .current_dir(&loose)
+        .output()
+        .expect("later head");
+    assert!(later.status.success(), "{}", text(&later.stderr));
+    let later_sha = text(&later.stdout);
+    assert_ne!(later_sha, sha);
+    let names_after = text(&repo.mabo(&["list", "--names", "--no-default"]).stdout);
+    assert!(names_after.lines().any(|line| line == sha), "{names_after}");
+    assert!(
+        !names_after.lines().any(|line| line == later_sha),
+        "{names_after}"
+    );
+    let still = repo.mabo(&["where", &sha]);
+    assert!(still.status.success(), "{}", text(&still.stderr));
+    assert!(paths_match(text(&still.stdout).trim(), &loose));
+}
+
+#[test]
+fn meta_set_refuses_to_record_an_outside_worktree_under_a_taken_name() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "dup"]).status.success());
+    let outside = repo.repo.join(".git/maboroshi/worktrees/dup");
+    fs::create_dir_all(outside.parent().expect("parent")).expect("parent");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "zz",
+        outside.to_str().expect("outside"),
+        "HEAD",
+    ]);
+    let meta_path = repo.repo.join(".git/maboroshi/worktrees.json");
+    let before = fs::read(&meta_path).expect("before");
+    let marked = repo.mabo(&["meta", "set", "zz", "--owner", "a"]);
+    assert_eq!(
+        marked.status.code(),
+        Some(1),
+        "{}\n{}",
+        text(&marked.stdout),
+        text(&marked.stderr)
+    );
+    let message = format!("{}{}", text(&marked.stdout), text(&marked.stderr));
+    assert!(
+        message.contains("dup") && message.contains("already used"),
+        "{message}"
+    );
+    let stored = fs::read(&meta_path).expect("after");
+    assert_eq!(stored, before, "a refused meta set rewrote worktrees.json");
+    let found = repo.mabo(&["where", "dup"]);
+    assert!(
+        found.status.success(),
+        "{}\n{}",
+        text(&found.stdout),
+        text(&found.stderr)
+    );
+    assert!(paths_match(
+        text(&found.stdout).trim(),
+        &managed(&repo, "dup")
+    ));
+}
+
+#[test]
+fn a_record_without_a_stored_name_keeps_the_ptm_folder_name() {
+    let repo = Repo::new();
+    let next = repo.repo.join(".git/ptm/worktrees/next");
+    fs::create_dir_all(next.parent().expect("parent")).expect("parent");
+    repo.git(&[
+        "worktree",
+        "add",
+        "--detach",
+        next.to_str().expect("next"),
+        "HEAD",
+    ]);
+    let head = repo
+        .command("git", &["rev-parse", "--short=7", "HEAD"])
+        .current_dir(&next)
+        .output()
+        .expect("head");
+    assert!(head.status.success(), "{}", text(&head.stderr));
+    let sha = text(&head.stdout);
+    let meta = repo.repo.join(".git/maboroshi/worktrees.json");
+    fs::create_dir_all(meta.parent().expect("meta dir")).expect("meta dir");
+    let path = next.to_string_lossy();
+    fs::write(
+        &meta,
+        format!(
+            "{{\n  \"version\": 1,\n  \"worktrees\": [\n    {{\n      \"path\": \"{path}\",\n      \"createdAt\": \"2000-01-01T00:00:00.000Z\",\n      \"lastUsedAt\": \"2000-01-01T00:00:00.000Z\"\n    }}\n  ]\n}}\n"
+        ),
+    )
+    .expect("record");
+    let names = text(&repo.mabo(&["list", "--names", "--no-default"]).stdout);
+    assert!(names.lines().any(|line| line == "next"), "{names}");
+    assert!(!names.lines().any(|line| line == sha), "{names}");
+    let plan = repo.mabo(&["gc", "--older-than", "14d"]);
+    assert!(plan.status.success(), "{}", text(&plan.stderr));
+    let planned = text(&plan.stdout);
+    assert!(planned.contains("would remove next"), "{planned}");
+    assert!(!planned.contains(&sha), "{planned}");
+    let found = repo.mabo(&["where", "next"]);
+    assert!(found.status.success(), "{}", text(&found.stderr));
+    assert!(paths_match(text(&found.stdout).trim(), &next));
+    let ran = repo.mabo(&["exec", "next", "true"]);
+    assert!(ran.status.success(), "{}", text(&ran.stderr));
+    let marked = repo.mabo(&["meta", "set", "next", "--owner", "ada"]);
+    assert!(marked.status.success(), "{}", text(&marked.stderr));
+    assert!(
+        text(&marked.stdout).contains("next"),
+        "{}",
+        text(&marked.stdout)
+    );
+    let stored = fs::read_to_string(&meta).expect("after set");
+    assert!(!stored.contains("\"name\""), "{stored}");
+    let still = repo.mabo(&["where", "next"]);
+    assert!(still.status.success(), "{}", text(&still.stderr));
+    assert!(paths_match(text(&still.stdout).trim(), &next));
+    let deleted = repo.mabo(&["delete", "next"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(
+        text(&deleted.stdout).contains("next"),
+        "{}",
+        text(&deleted.stdout)
+    );
+    assert!(!next.exists());
 }

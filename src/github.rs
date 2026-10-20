@@ -301,7 +301,15 @@ fn record_existing_checkout(
         )?;
         metadata::touch(&context.git_root, path)?;
     } else {
-        metadata::write(&context.git_root, path, metadata)?;
+        let name = worktree::outside_name_to_store(context, path)?;
+        metadata::write(
+            &context.git_root,
+            path,
+            &MetadataInput {
+                name,
+                ..metadata.clone()
+            },
+        )?;
     }
     worktree::worktree_at_path(context, path)
 }
