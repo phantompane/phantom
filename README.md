@@ -76,9 +76,9 @@ pre-delete = ["./scripts/teardown.sh"]
 
 Hooks run only when that repository is trusted. `.worktreeinclude` copies are not hooks and do not need trust. A repository with no hook commands never asks.
 
-On a terminal, ptm prints the project path and the hook commands, then asks `Trust this project and run its hooks? [y/N]`. `y` or `yes` saves trust and runs the hooks. Anything else, a non-terminal, or `--json` stops before the command changes the repository. The process exits 1. With `--json`, stdout is only the error object and `code` is `untrusted`. The message tells you to run `ptm trust` or pass `--no-hooks`.
+On a terminal, ptm prints the project path and the hook commands, then asks `Trust this project and run its hooks? [y/N]`. `y` or `yes` saves trust and runs the hooks. ptm does not ask when `CI` is set, when `PTM_AGENT_ID` is set, when stdin or stderr is not a terminal, or when `--json` is set. An empty value counts as unset. It then exits 1 before changing the repository, the same as a non-terminal. With `--json`, stdout is only the error object and `code` is `untrusted`. The message tells you to run `ptm trust --yes` or pass `--no-hooks`.
 
-`ptm trust [path]` shows the hooks and asks `Trust this project? [y/N]`. `--yes` skips the question. `ptm untrust [path]` removes that repository. `ptm trust --list` prints each trusted git common directory and when it was trusted. Trust is the canonical git common directory, so the main checkout and its linked worktrees share one record. Editing the hook commands later does not ask again.
+`ptm trust [path]` shows the hooks and asks `Trust this project? [y/N]`. `--yes` skips the question. The same `CI`, `PTM_AGENT_ID`, and terminal rules apply, and `--yes` is how a non-interactive run records trust. `ptm untrust [path]` removes that repository. `ptm trust --list` prints each trusted git common directory and when it was trusted. Trust is keyed by the path of the canonical git common directory, so the main checkout and its linked worktrees share one record. Deleting the checkout and cloning it again at the same path keeps that record. `ptm untrust` clears it. Editing the hook commands later does not ask again.
 
 The record is `$XDG_STATE_HOME/ptm/trust.toml` when `XDG_STATE_HOME` is an absolute path, otherwise `~/.local/state/ptm/trust.toml`. Each entry stores `path` and `trustedAt`.
 

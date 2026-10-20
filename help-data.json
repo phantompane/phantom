@@ -167,7 +167,7 @@
         "Files that already exist in the new worktree are left unchanged",
         "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
         ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] post-create commands run in the new worktree, in order, and stop at the first failure",
-        "post-create hooks run only after the repository is trusted. On a terminal, ptm shows the project path and the hook commands and asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, or --json fails before creating the worktree. Run ptm trust or pass --no-hooks. PTM_TRUST_ALL=1 trusts every repository for that process and writes nothing",
+        "post-create hooks run only after the repository is trusted. On a terminal, ptm shows the project path and the hook commands and asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, CI or PTM_AGENT_ID being set, or --json fails before creating the worktree. An empty value counts as unset. Run ptm trust --yes or pass --no-hooks. PTM_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
         "Owner, purpose, and links are stored in ptm/worktrees.json under the Git common directory. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty. where and exec refresh lastUsedAt"
@@ -421,7 +421,7 @@
         "Use --keep-branch to delete only the worktree and preserve the branch",
         ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] pre-delete commands run in the worktree before it is removed, in order, and stop at the first failure",
         "Pre-delete hooks receive PTM=1, PTM_NAME (the worktree name), PTM_PATH (the absolute worktree path), and PTM_ROOT_PATH (the source checkout path)",
-        "pre-delete hooks run only after the repository is trusted. On a terminal, ptm asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, or --json fails before deleting. Run ptm trust or pass --no-hooks. PTM_TRUST_ALL=1 trusts every repository for that process and writes nothing",
+        "pre-delete hooks run only after the repository is trusted. On a terminal, ptm asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, CI or PTM_AGENT_ID being set, or --json fails before deleting. An empty value counts as unset. Run ptm trust --yes or pass --no-hooks. PTM_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "--json reports each deleted worktree, whether its branch was deleted, and per-item errors. The schema is documented in the README"
       ]
     },
@@ -558,9 +558,9 @@
         }
       ],
       "notes": [
-        "The trust record is the canonical git common directory (git rev-parse --git-common-dir). The main checkout and its linked worktrees share one record. Changing hook commands does not ask again",
+        "The trust record is keyed by the path of the canonical git common directory (git rev-parse --git-common-dir). The main checkout and its linked worktrees share one record. Deleting the checkout and cloning it again at the same path keeps the record. ptm untrust clears it. Changing hook commands does not ask again",
         "The file is $XDG_STATE_HOME/ptm/trust.toml when XDG_STATE_HOME is an absolute path, otherwise ~/.local/state/ptm/trust.toml. Each entry has path and trustedAt",
-        "ptm trust shows the post-create and pre-delete commands from the checkout you name, then asks 'Trust this project? [y/N]'. A repository with no hooks can still be trusted",
+        "ptm trust shows the post-create and pre-delete commands from the checkout you name, then asks 'Trust this project? [y/N]'. It does not ask when CI or PTM_AGENT_ID is set, or when stdin or stderr is not a terminal. Use --yes then. A repository with no hooks can still be trusted",
         "PTM_TRUST_ALL=1 treats every repository as trusted for that process and does not write trust.toml. Set it to the single character 1. This is for CI and containers"
       ]
     },
