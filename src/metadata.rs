@@ -35,6 +35,12 @@ pub struct WorktreeMetadata {
     pub last_used_at: Option<String>,
     #[serde(default)]
     pub links: WorktreeLinks,
+    /// Name saved for a worktree outside `maboroshi/worktrees`.
+    ///
+    /// Command JSON already has `name`, so this stays out of that flatten.
+    /// Older records omit it and keep the folder name.
+    #[serde(default, skip)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +77,8 @@ pub struct MetadataInput {
     pub purpose: Option<String>,
     pub pr: Option<WorktreeLink>,
     pub issue: Option<WorktreeLink>,
+    /// Set only when recording a worktree outside `maboroshi/worktrees`.
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -84,6 +92,8 @@ struct Store {
 #[serde(rename_all = "camelCase")]
 struct StoredWorktree {
     path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     #[serde(flatten)]
     metadata: WorktreeMetadata,
 }
@@ -122,7 +132,9 @@ pub fn load(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>> {
     let store = validated_store(&metadata_file(git_root)?)?;
     let mut records = BTreeMap::new();
     for record in store.worktrees {
-        records.insert(path_key(Path::new(&record.path)), record.metadata);
+        let mut metadata = record.metadata;
+        metadata.name = record.name;
+        records.insert(path_key(Path::new(&record.path)), metadata);
     }
     Ok(records)
 }
@@ -146,10 +158,7 @@ pub fn replace(
             .worktrees
             .retain(|record| !paths::same_location(Path::new(&record.path), path));
         let metadata = fresh_metadata(path, input, origin);
-        store.worktrees.push(StoredWorktree {
-            path: key,
-            metadata: metadata.clone(),
-        });
+        store.worktrees.push(stored_worktree(key, metadata.clone()));
         Ok((metadata, true))
     })
 }
@@ -169,10 +178,7 @@ pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<Work
             return Ok((record.metadata.clone(), true));
         }
         let metadata = fresh_metadata(path, input, BranchOrigin::Existing);
-        store.worktrees.push(StoredWorktree {
-            path: key,
-            metadata: metadata.clone(),
-        });
+        store.worktrees.push(stored_worktree(key, metadata.clone()));
         Ok((metadata, true))
     })
 }
@@ -210,6 +216,7 @@ pub fn touch(git_root: &Path, path: &Path) -> Result<Option<WorktreeMetadata>> {
             return Ok((None, false));
         };
         record.metadata.last_used_at = Some(iso_now());
+        record.metadata.name = record.name.clone();
         Ok((Some(record.metadata.clone()), true))
     })
 }
@@ -388,9 +395,20 @@ fn link_number(url: &str) -> Option<u64> {
     None
 }
 
+fn stored_worktree(path: String, metadata: WorktreeMetadata) -> StoredWorktree {
+    StoredWorktree {
+        path,
+        name: metadata.name.clone(),
+        metadata,
+    }
+}
+
 fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
     if input.owner.is_some() {
         metadata.owner = input.owner.clone();
+    }
+    if input.name.is_some() {
+        metadata.name = input.name.clone();
     }
     if input.purpose.is_some() {
         metadata.purpose = input.purpose.clone();

@@ -170,6 +170,7 @@ fn info_from_git(
         &original,
         &context.worktrees_directory,
         recorded_path,
+        metadata.name.as_deref(),
         common_dir,
         worktree.branch.as_deref(),
         &short_head,
@@ -197,6 +198,7 @@ pub(crate) fn resolve_worktree_name(
     path: &Path,
     worktrees_directory: &Path,
     recorded_path: Option<&Path>,
+    stored_name: Option<&str>,
     common_dir: &Path,
     branch: Option<&str>,
     short_head: &str,
@@ -204,18 +206,13 @@ pub(crate) fn resolve_worktree_name(
     if let Some(name) = directory_name(path, worktrees_directory) {
         return name;
     }
-    if let Some(recorded) = recorded_path {
-        if let Some(name) = maboroshi_layout_name(recorded, common_dir) {
-            return name;
-        }
-    }
-    if let Some(name) = branch_or_short_hash(branch, short_head) {
-        return name;
+    if let Some(name) = stored_name.map(str::trim).filter(|name| !name.is_empty()) {
+        return name.to_string();
     }
     if let Some(recorded) = recorded_path {
         return name_from_recorded_path(recorded, common_dir);
     }
-    short_head.to_string()
+    branch_or_short_hash(branch, short_head).unwrap_or_else(|| short_head.to_string())
 }
 
 fn branch_or_short_hash(branch: Option<&str>, short_head: &str) -> Option<String> {
@@ -285,19 +282,24 @@ fn basename_of(path: &Path) -> String {
         .unwrap_or_else(|| normalized.display().to_string())
 }
 
-pub(crate) fn ensure_outside_record(context: &Context, path: &Path) -> Result<()> {
+/// Name to save on a first record outside `maboroshi/worktrees`.
+///
+/// `Ok(None)` leaves the name unset. A layout path keeps its folder name.
+/// `Err` refuses the write.
+pub(crate) fn outside_name_to_store(context: &Context, path: &Path) -> Result<Option<String>> {
     if paths::is_strictly_inside(path, &context.worktrees_directory) {
-        return Ok(());
+        return Ok(None);
     }
     if metadata::records_path(&context.git_root, path)? {
-        return Ok(());
+        return Ok(None);
     }
+    let common_dir = git::canonical_common_dir(&context.git_root)?;
     let listed = list_worktrees(context, false, true)?;
     let Some(worktree) = listed
         .iter()
         .find(|item| paths::same_location(Path::new(&item.path), path))
     else {
-        return Ok(());
+        return Ok(None);
     };
     let short_head = worktree
         .head
@@ -305,30 +307,22 @@ pub(crate) fn ensure_outside_record(context: &Context, path: &Path) -> Result<()
         .map(|head| head.chars().take(7).collect::<String>())
         .unwrap_or_else(|| "HEAD".to_string());
     let branch = (!worktree.detached).then_some(worktree.branch.as_str());
-    let common_dir = git::canonical_common_dir(&context.git_root)?;
-    let displayed = resolve_worktree_name(
-        path,
-        &context.worktrees_directory,
-        Some(path),
-        &common_dir,
-        branch,
-        &short_head,
-    );
-    let basename = basename_of(path);
     let taken = |name: &str| {
         listed
             .iter()
             .any(|other| other.name == name && !paths::same_location(Path::new(&other.path), path))
     };
-    if !taken(&displayed) {
-        return Ok(());
+    if let Some(layout) = maboroshi_layout_name(path, &common_dir) {
+        if taken(&layout) {
+            return Err(Error::msg(format!(
+                "Worktree name '{layout}' is already used. Refusing to record this outside worktree."
+            )));
+        }
+        return Ok(None);
     }
-    match outside_record_name(branch, &short_head, &basename, taken) {
-        Err(error) => Err(error),
-        Ok(_) => Err(Error::msg(format!(
-            "Worktree name '{displayed}' is already used. Refusing to record this outside worktree."
-        ))),
-    }
+    let basename = basename_of(path);
+    let chosen = outside_record_name(branch, &short_head, &basename, taken)?;
+    Ok(branch_or_short_hash(branch, &short_head).map(|_| chosen))
 }
 
 fn join_components(components: &[std::ffi::OsString]) -> String {
@@ -1743,6 +1737,7 @@ mod tests {
                 Path::new("/data/wt/next"),
                 directory,
                 Some(Path::new("/repo/.git/maboroshi/worktrees/other")),
+                None,
                 common,
                 None,
                 "abcdef0",
@@ -1754,6 +1749,7 @@ mod tests {
                 Path::new("/tmp/stray"),
                 directory,
                 None,
+                None,
                 common,
                 Some("legacy"),
                 "abcdef0",
@@ -1764,6 +1760,7 @@ mod tests {
             resolve_worktree_name(
                 Path::new("/tmp/stray"),
                 directory,
+                None,
                 None,
                 common,
                 None,
@@ -1776,22 +1773,36 @@ mod tests {
                 Path::new("/tmp/stray"),
                 directory,
                 Some(Path::new("/tmp/stray")),
+                None,
                 common,
                 Some("legacy"),
                 "abcdef0",
             ),
-            "legacy"
+            "stray"
         );
         assert_eq!(
             resolve_worktree_name(
                 Path::new("/tmp/stray"),
                 directory,
                 Some(Path::new("/tmp/stray")),
+                Some("kept"),
                 common,
                 None,
-                "abcdef0",
+                "fffffff",
             ),
-            "abcdef0"
+            "kept"
+        );
+        assert_eq!(
+            resolve_worktree_name(
+                Path::new("/repo/.git/ptm/worktrees/next"),
+                directory,
+                Some(Path::new("/repo/.git/ptm/worktrees/next")),
+                None,
+                common,
+                None,
+                "4158e88",
+            ),
+            "next"
         );
         let taken = |name: &str| name == "dup" || name == "zz";
         let both = outside_record_name(Some("zz"), "abcdef0", "dup", taken).expect_err("both");

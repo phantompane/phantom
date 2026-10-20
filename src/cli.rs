@@ -1015,9 +1015,10 @@ fn meta_set(args: &[String]) -> Result<i32> {
         Err(error @ Error::WorktreeNotFound(_)) => return fail_with(&error, NOT_FOUND, json),
         Err(error) => return fail_with(&error, error.exit_code(), json),
     };
-    if let Err(error) = worktree::ensure_outside_record(&context, Path::new(&worktree.path)) {
-        return fail_with(&error, error.exit_code(), json);
-    }
+    let input = match worktree::outside_name_to_store(&context, Path::new(&worktree.path)) {
+        Ok(name) => metadata::MetadataInput { name, ..input },
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
     if let Err(error) = metadata::write(&context.git_root, Path::new(&worktree.path), &input) {
         return fail_with(&error, GENERAL, json);
     }
@@ -1130,6 +1131,7 @@ fn metadata_input(parsed: &Parsed, use_env: bool) -> Result<MetadataInput> {
         issue: single_value(parsed, "issue")?
             .map(metadata::parse_link)
             .transpose()?,
+        name: None,
     })
 }
 

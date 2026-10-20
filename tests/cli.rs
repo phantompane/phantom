@@ -8542,6 +8542,8 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
         text(&outside_where.stderr)
     );
     assert!(paths_match(text(&outside_where.stdout).trim(), &outside));
+    let stored = fs::read_to_string(repo.repo.join(".git/maboroshi/worktrees.json")).expect("meta");
+    assert!(stored.contains("\"name\": \"zz\""), "{stored}");
     let names = text(&repo.mabo(&["list", "--names", "--no-default"]).stdout);
     assert!(names.lines().any(|line| line == "dup"), "{names}");
     assert!(names.lines().any(|line| line == "zz"), "{names}");
@@ -8587,6 +8589,34 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
     let found_sha = repo.mabo(&["where", &sha]);
     assert!(found_sha.status.success(), "{}", text(&found_sha.stderr));
     assert!(paths_match(text(&found_sha.stdout).trim(), &loose));
+    let stored = fs::read_to_string(repo.repo.join(".git/maboroshi/worktrees.json")).expect("meta");
+    assert!(stored.contains(&format!("\"name\": \"{sha}\"")), "{stored}");
+    fs::write(loose.join("later.txt"), "later\n").expect("later");
+    for args in [vec!["add", "later.txt"], vec!["commit", "-m", "later"]] {
+        let output = repo
+            .command("git", &args)
+            .current_dir(&loose)
+            .output()
+            .expect("commit");
+        assert!(output.status.success(), "{}", text(&output.stderr));
+    }
+    let later = repo
+        .command("git", &["rev-parse", "--short=7", "HEAD"])
+        .current_dir(&loose)
+        .output()
+        .expect("later head");
+    assert!(later.status.success(), "{}", text(&later.stderr));
+    let later_sha = text(&later.stdout);
+    assert_ne!(later_sha, sha);
+    let names_after = text(&repo.mabo(&["list", "--names", "--no-default"]).stdout);
+    assert!(names_after.lines().any(|line| line == sha), "{names_after}");
+    assert!(
+        !names_after.lines().any(|line| line == later_sha),
+        "{names_after}"
+    );
+    let still = repo.mabo(&["where", &sha]);
+    assert!(still.status.success(), "{}", text(&still.stderr));
+    assert!(paths_match(text(&still.stdout).trim(), &loose));
 }
 
 #[test]
@@ -8603,6 +8633,8 @@ fn meta_set_refuses_to_record_an_outside_worktree_under_a_taken_name() {
         outside.to_str().expect("outside"),
         "HEAD",
     ]);
+    let meta_path = repo.repo.join(".git/maboroshi/worktrees.json");
+    let before = fs::read(&meta_path).expect("before");
     let marked = repo.mabo(&["meta", "set", "zz", "--owner", "a"]);
     assert_eq!(
         marked.status.code(),
@@ -8616,6 +8648,8 @@ fn meta_set_refuses_to_record_an_outside_worktree_under_a_taken_name() {
         message.contains("dup") && message.contains("already used"),
         "{message}"
     );
+    let stored = fs::read(&meta_path).expect("after");
+    assert_eq!(stored, before, "a refused meta set rewrote worktrees.json");
     let found = repo.mabo(&["where", "dup"]);
     assert!(
         found.status.success(),
@@ -8627,9 +8661,73 @@ fn meta_set_refuses_to_record_an_outside_worktree_under_a_taken_name() {
         text(&found.stdout).trim(),
         &managed(&repo, "dup")
     ));
-    let stored = fs::read_to_string(repo.repo.join(".git/maboroshi/worktrees.json")).expect("meta");
+}
+
+#[test]
+fn a_record_without_a_stored_name_keeps_the_ptm_folder_name() {
+    let repo = Repo::new();
+    let next = repo.repo.join(".git/ptm/worktrees/next");
+    fs::create_dir_all(next.parent().expect("parent")).expect("parent");
+    repo.git(&[
+        "worktree",
+        "add",
+        "--detach",
+        next.to_str().expect("next"),
+        "HEAD",
+    ]);
+    let head = repo
+        .command("git", &["rev-parse", "--short=7", "HEAD"])
+        .current_dir(&next)
+        .output()
+        .expect("head");
+    assert!(head.status.success(), "{}", text(&head.stderr));
+    let sha = text(&head.stdout);
+    let meta = repo.repo.join(".git/maboroshi/worktrees.json");
+    fs::create_dir_all(meta.parent().expect("meta dir")).expect("meta dir");
+    let path = next.to_string_lossy();
+    fs::write(
+        &meta,
+        format!(
+            "{{\n  \"version\": 1,\n  \"worktrees\": [\n    {{\n      \"path\": \"{path}\",\n      \"createdAt\": \"2000-01-01T00:00:00.000Z\",\n      \"lastUsedAt\": \"2000-01-01T00:00:00.000Z\"\n    }}\n  ]\n}}\n"
+        ),
+    )
+    .expect("record");
+    let names = text(&repo.mabo(&["list", "--names", "--no-default"]).stdout);
+    assert!(names.lines().any(|line| line == "next"), "{names}");
+    assert!(!names.lines().any(|line| line == sha), "{names}");
+    let plan = repo.mabo(&["gc", "--older-than", "14d"]);
+    assert!(plan.status.success(), "{}", text(&plan.stderr));
+    let planned = text(&plan.stdout);
+    assert!(planned.contains("would remove next"), "{planned}");
+    assert!(!planned.contains(&sha), "{planned}");
+    let found = repo.mabo(&["where", "next"]);
+    assert!(found.status.success(), "{}", text(&found.stderr));
+    assert!(paths_match(text(&found.stdout).trim(), &next));
+    let ran = repo.mabo(&["exec", "next", "true"]);
+    assert!(ran.status.success(), "{}", text(&ran.stderr));
+    let marked = repo.mabo(&["meta", "set", "next", "--owner", "ada"]);
+    assert!(marked.status.success(), "{}", text(&marked.stderr));
     assert!(
-        !stored.contains(&outside.to_string_lossy().to_string()),
-        "{stored}"
+        text(&marked.stdout).contains("next"),
+        "{}",
+        text(&marked.stdout)
     );
+    let stored = fs::read_to_string(&meta).expect("after set");
+    assert!(!stored.contains("\"name\""), "{stored}");
+    let still = repo.mabo(&["where", "next"]);
+    assert!(still.status.success(), "{}", text(&still.stderr));
+    assert!(paths_match(text(&still.stdout).trim(), &next));
+    let deleted = repo.mabo(&["delete", "next"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(
+        text(&deleted.stdout).contains("next"),
+        "{}",
+        text(&deleted.stdout)
+    );
+    assert!(!next.exists());
 }
