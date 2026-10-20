@@ -467,6 +467,10 @@ fn delete(args: &[String]) -> Result<i32> {
         allow_current: delete_current,
         published_tip: None,
     };
+    operation.check_post_release_children(
+        !parsed.flag("no-hooks")
+            && !crate::config::pre_delete_commands(context.config.as_ref()).is_empty(),
+    )?;
     let plans = match worktree::preflight_deletes(&context, &names, &options) {
         Ok(plans) => plans,
         Err(refusals) => return report_delete_refusals(refusals, json),

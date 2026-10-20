@@ -169,6 +169,15 @@ pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Repo
         crate::config::pre_delete_commands(context.config.as_ref()),
         request.no_hooks,
     )?;
+    _operation.check_post_release_children(
+        request.apply
+            && !skip_untrusted
+            && !request.no_hooks
+            && !crate::config::pre_delete_commands(context.config.as_ref()).is_empty()
+            && verdicts
+                .iter()
+                .any(|verdict| matches!(verdict, Verdict::Remove(Removal::Delete { .. }))),
+    )?;
     drop(_operation);
     let mut candidates = Vec::with_capacity(verdicts.len());
     let mut first_failure = None;

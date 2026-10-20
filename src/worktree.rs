@@ -509,6 +509,11 @@ pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
     let action = resolve_action(&request.action)?;
     let context = context::open(request.repository)?;
     let operation = crate::operation::lock(&context.git_root)?;
+    operation.check_post_release_children(
+        action.is_some()
+            || (!request.hooks.no_hooks
+                && !config::post_create_commands(context.config.as_ref()).is_empty()),
+    )?;
     let name = match request.name {
         Some(name) => name.to_string(),
         None => {
@@ -671,6 +676,7 @@ pub(crate) fn create_worktree_locked(
     logger: &Logger,
     metadata: &MetadataInput,
 ) -> Result<CreatedWorktree> {
+    operation.check_post_release_children(!commands.is_empty())?;
     validate_worktree_name(name)?;
     metadata::prepare(&context.git_root)?;
     let path = paths::worktree_path(
@@ -730,6 +736,11 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action = resolve_action(&request.action)?;
     let context = context::open(request.repository)?;
     let operation = crate::operation::lock(&context.git_root)?;
+    operation.check_post_release_children(
+        action.is_some()
+            || (!request.hooks.no_hooks
+                && !config::post_create_commands(context.config.as_ref()).is_empty()),
+    )?;
     let commands = trust::authorize(
         &context.git_root,
         config::post_create_commands(context.config.as_ref()),
@@ -806,6 +817,7 @@ pub(crate) fn attach_worktree_locked(
     logger: &Logger,
     metadata: &MetadataInput,
 ) -> Result<AttachedWorktree> {
+    operation.check_post_release_children(!commands.is_empty())?;
     let lookup = crate::tracking::lookup_attach(&context.git_root, name)?;
     validate_worktree_name(&lookup.directory)?;
     metadata::prepare(&context.git_root)?;
@@ -1129,6 +1141,13 @@ pub(crate) fn commit_delete_checked(
         )
         .map_err(|error| DeleteError::kept(error, &worktree))?
     };
+    {
+        let operation = crate::operation::lock(&context.git_root)
+            .map_err(|error| DeleteError::kept(error, &worktree))?;
+        operation
+            .check_post_release_children(!commands.is_empty())
+            .map_err(|error| DeleteError::kept(error, &worktree))?;
+    }
     metadata::prepare(&context.git_root).map_err(|error| DeleteError::kept(error, &worktree))?;
     if !commands.is_empty() {
         logger.log("\nRunning pre-delete commands...");

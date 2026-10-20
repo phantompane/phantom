@@ -25,6 +25,15 @@ pub struct OperationLock {
 }
 
 impl OperationLock {
+    pub(crate) fn check_post_release_children(&self, has_children: bool) -> Result<()> {
+        if self._file.is_none() && has_children {
+            return Err(Error::msg(
+                "Cannot run project hooks or --exec while borrowing an ancestor's mabo operation lock; use --no-hooks and omit --exec",
+            ));
+        }
+        Ok(())
+    }
+
     fn register(file: Option<File>, token: String) -> Self {
         let id = uuid::Uuid::new_v4();
         ACTIVE.with_borrow_mut(|active| active.push((id, token)));

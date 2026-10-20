@@ -261,6 +261,7 @@ fn checkout_pull_request(
         crate::trust::HookKind::PostCreate,
         hooks,
     )?;
+    operation.check_post_release_children(!commands.is_empty())?;
     metadata::prepare(git_root)?;
     let branch_existed = git::branch_exists(git_root, &worktree_name)?;
     let result = (|| {

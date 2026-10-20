@@ -2211,3 +2211,136 @@ fn fetch_failures_exit_one_even_with_a_published_rebase_refusal() {
         assert!(!stale.join("remote-file").exists());
     }
 }
+
+#[test]
+fn borrowed_lock_actions_and_project_hooks_are_refused_before_changes() {
+    use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+    for action in [
+        "create-exec",
+        "attach-exec",
+        "create-hook",
+        "attach-hook",
+        "delete-hook",
+        "gc-hook",
+    ] {
+        let r = Repo::new();
+        let victim = r.create("victim");
+        r.write_commit(&victim, "landed", "landed\n");
+        r.git(&r.main, &["merge", "--ff-only", "victim"]);
+        r.git(&r.main, &["push", "origin", "main"]);
+        r.git(&r.main, &["branch", "existing"]);
+        let bin = env!("CARGO_BIN_EXE_mabo");
+        let marker = r.root.join("hook-entered");
+        let output = r.root.join("nested-output");
+        let status = r.root.join("nested-status");
+        let hook = r.main.join(".git/hooks/post-checkout");
+        fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        let nested = match action {
+            "create-exec" => {
+                format!("'{bin}' create nested --no-hooks --exec \"'{bin}' gc --json\"")
+            }
+            "attach-exec" => {
+                format!("'{bin}' attach existing --no-hooks --exec \"'{bin}' gc --json\"")
+            }
+            _ => {
+                fs::write(r.main.join(".mabo.toml"), format!("[hooks]\npost-create = [\"'{bin}' gc --json\"]\npre-delete = [\"'{bin}' gc --json\"]\n")).unwrap();
+                match action {
+                    "create-hook" => format!("'{bin}' create nested"),
+                    "attach-hook" => format!("'{bin}' attach existing"),
+                    "delete-hook" => format!("'{bin}' delete victim"),
+                    "gc-hook" => format!("'{bin}' gc --apply --json"),
+                    _ => unreachable!(),
+                }
+            }
+        };
+        fs::write(&hook, format!("#!/bin/sh\n[ -e '{marker}' ] && exit 0\ntouch '{marker}'\ncd '{main}'\n{nested} > '{output}' 2>&1\necho $? > '{status}'\nexit 0\n", marker=marker.display(), main=r.main.display(), output=output.display(), status=status.display())).unwrap();
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut child = r
+            .command(bin, &r.main, &["create", "outer", "--no-hooks"])
+            .env("MABO_TRUST_ALL", "1")
+            .process_group(0)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let timed_out = loop {
+            if child.try_wait().unwrap().is_some() {
+                break false;
+            }
+            if std::time::Instant::now() >= deadline {
+                Command::new("kill")
+                    .args(["-KILL", "--", &format!("-{}", child.id())])
+                    .status()
+                    .unwrap();
+                break true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let out = child.wait_with_output().unwrap();
+        let nested_output = fs::read_to_string(output).unwrap();
+        assert!(!timed_out, "{action} deadlocked: {nested_output}");
+        assert!(
+            out.status.success(),
+            "{action}: {} {nested_output}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(status).unwrap().trim(),
+            "1",
+            "{action}: {nested_output}"
+        );
+        assert!(
+            nested_output.contains("Cannot run project hooks or --exec while borrowing"),
+            "{action}: {nested_output}"
+        );
+        assert!(victim.exists());
+        assert_eq!(r.git(&r.main, &["branch", "--list", "nested"]), "");
+        let listed: Value =
+            serde_json::from_slice(&r.mabo(&r.main, &["list", "--json"]).stdout).unwrap();
+        assert!(!listed["worktrees"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tree| tree["name"] == "nested" || tree["name"] == "existing"));
+    }
+}
+
+#[test]
+fn operation_lock_token_is_not_exported_to_gh() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = Repo::new();
+    let out = r.mabo(
+        &r.main,
+        &[
+            "create",
+            "topic",
+            "--pr",
+            "https://github.com/acme/demo/pull/7",
+        ],
+    );
+    assert!(out.status.success());
+    let bin = r.root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let observed = r.root.join("gh-token");
+    let gh = bin.join("gh");
+    fs::write(&gh, format!("#!/bin/sh\nprintf '%s' \"${{MABO_OPERATION_LOCK-unset}}\" > '{}'\nprintf '%s\\n' '{{\"state\":\"MERGED\"}}'\n", observed.display())).unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = r
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &r.main,
+            &["gc", "--pr", "--json"],
+        )
+        .env(
+            "PATH",
+            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+        )
+        .env("MABO_OPERATION_LOCK", "stale-inherited-token")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(doc["candidates"][0]["action"], "wouldRemove", "{doc}");
+    assert_eq!(fs::read_to_string(observed).unwrap(), "unset");
+}
