@@ -1302,3 +1302,80 @@ fn rebase_does_not_preserve_merges_from_user_config() {
         "3"
     );
 }
+
+#[test]
+fn slash_remote_default_and_explicit_bases_fetch_and_integrate_main() {
+    for overlapping in [false, true] {
+        let r = Repo::new();
+        r.git(&r.main, &["remote", "rename", "origin", "team/origin"]);
+        if overlapping {
+            // Fetching the shorter prefix would fail, and must never be attempted.
+            r.git(&r.main, &["remote", "add", "team", "/does/not/exist"]);
+        }
+        for base in [
+            None,
+            Some("team/origin/main"),
+            Some("refs/remotes/team/origin/main"),
+        ] {
+            let name = format!("topic-{}", base.map_or(0, str::len));
+            let mut args = vec!["create", &name, "--json"];
+            if let Some(base) = base {
+                args.extend(["--base", base]);
+            }
+            let out = r.mabo(&r.main, &args);
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+            let tree = PathBuf::from(doc["worktree"]["path"].as_str().unwrap());
+            let out = r.mabo(
+                &r.main,
+                &["meta", "set", &name, "--base", "team/origin/main"],
+            );
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            r.write_commit(&r.upstream, &name, "incoming\n");
+            r.git(&r.upstream, &["push", "origin", "main"]);
+            let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+            let doc = r.sync(&r.main, &[], 0);
+            assert_eq!(doc["default"]["name"], "main");
+            assert_eq!(doc["default"]["status"], "updated");
+            assert_eq!(r.git(&r.main, &["rev-parse", "main"]), expected);
+            assert_eq!(r.git(&r.main, &["branch", "--list", "origin/main"]), "");
+            r.write_commit(&r.upstream, &format!("{name}-next"), "next\n");
+            r.git(&r.upstream, &["push", "origin", "main"]);
+            let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+            let doc = r.sync(&tree, &["--no-default"], 0);
+            assert_eq!(doc["worktrees"][0]["base"], "refs/remotes/team/origin/main");
+            assert_eq!(doc["worktrees"][0]["status"], "updated");
+            assert_eq!(r.git(&tree, &["rev-parse", "HEAD"]), expected);
+        }
+    }
+}
+
+#[test]
+fn unmatched_default_remote_fails_without_creating_a_branch() {
+    let r = Repo::new();
+    r.git(&r.main, &["update-ref", "refs/remotes/stale/main", "HEAD"]);
+    r.git(
+        &r.main,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/stale/main",
+        ],
+    );
+    let before = r.git(&r.main, &["for-each-ref", "refs/heads"]);
+    let doc = r.sync(&r.main, &[], 1);
+    assert_eq!(doc["default"]["status"], "failed");
+    assert!(doc["default"]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("No configured remote matches"));
+    assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), before);
+}

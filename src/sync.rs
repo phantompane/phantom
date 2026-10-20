@@ -261,11 +261,7 @@ fn ignored_would_be_overwritten(path: &Path, base: &str, rebase: bool) -> Result
 
 fn remote_for(base: &str, remotes: &[String]) -> Option<String> {
     let name = base.strip_prefix("refs/remotes/")?;
-    remotes
-        .iter()
-        .filter(|remote| name.starts_with(&format!("{remote}/")))
-        .max_by_key(|remote| remote.len())
-        .cloned()
+    crate::tracking::split_remote(name, remotes).map(|(remote, _)| remote.to_string())
 }
 
 pub fn run(context: &Context, request: &Request) -> Result<Report> {
@@ -368,7 +364,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         exit: 0,
     };
     if !request.no_default && fetch_errors.is_empty() {
-        let item = sync_default(context, &fallback);
+        let item = sync_default(context, &fallback, &remotes);
         let item = match item {
             Ok(item) => item,
             Err(error) => failed_item("default", error),
@@ -457,12 +453,19 @@ fn tree_item(tree: &worktree::WorktreeInfo, base: &str) -> Item {
     }
 }
 
-fn sync_default(context: &Context, base: &str) -> Result<Item> {
-    let local_name = base
-        .strip_prefix("refs/remotes/")
-        .and_then(|value| value.split_once('/').map(|(_, branch)| branch))
-        .or_else(|| base.strip_prefix("refs/heads/"))
-        .ok_or_else(|| Error::msg("Default branch must name a branch"))?;
+fn sync_default(context: &Context, base: &str, remotes: &[String]) -> Result<Item> {
+    let local_name = if let Some(rest) = base.strip_prefix("refs/remotes/") {
+        crate::tracking::split_remote(rest, remotes)
+            .map(|(_, branch)| branch)
+            .ok_or_else(|| {
+                Error::msg(format!(
+                    "No configured remote matches default base '{base}'"
+                ))
+            })?
+    } else {
+        base.strip_prefix("refs/heads/")
+            .ok_or_else(|| Error::msg("Default branch must name a branch"))?
+    };
     let local = format!("refs/heads/{local_name}");
     let root = &context.git_root;
     let before = commit(root, &local)?;
