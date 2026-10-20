@@ -21,7 +21,7 @@ Maboroshi creates, takes over, and prepares workspaces, keeps them current with 
 - **Update.** `sync` fetches, fast-forwards the default branch when possible, and brings selected workspaces up to date with their base. It skips dirty worktrees and refuses to advance a diverged default branch.
 - **Retire.** `gc` selects workspaces on evidence: merged branches, closed pull requests, orphaned records, and age (`--older-than`).
 
-Every command can run non-interactively. Commands with `--json` provide versioned output and structured errors, with stable, documented exit codes (see [Machine-readable JSON](#machine-readable-json)). `exec` passes through the child command's output and exit code instead. Humans use the same commands with plain-text output.
+Every command can run non-interactively. `--json` success output is versioned (`version`, or `schema` for `sync`), except `project add` and `project remove`, which return `{status, project}`. Errors are structured, with stable, documented exit codes (see [Machine-readable JSON](#machine-readable-json)). `exec` passes through the child command's output and exit code instead. Humans use the same commands with plain-text output.
 
 ## Safe by default, explicit when you want otherwise
 
