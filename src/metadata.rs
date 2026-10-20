@@ -92,6 +92,15 @@ pub fn path_key(path: &Path) -> String {
     paths::normalize(path).to_string_lossy().into_owned()
 }
 
+/// True when `worktrees.json` records this path. Comparison is canonical when
+/// the path exists and normalized otherwise.
+pub fn records_path(git_root: &Path, path: &Path) -> Result<bool> {
+    let stored = load(git_root)?;
+    Ok(stored
+        .keys()
+        .any(|key| paths::same_location(Path::new(key), path)))
+}
+
 pub fn metadata_file(git_root: &Path) -> Result<PathBuf> {
     Ok(metadata_dir(git_root)?.join(FILE_NAME))
 }

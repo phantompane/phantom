@@ -170,7 +170,7 @@
         "post-create hooks run only after the repository is trusted. On a terminal, ptm shows the project path and the hook commands and asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, CI or PTM_AGENT_ID being set, or --json fails before creating the worktree. An empty value counts as unset. Run ptm trust --yes or pass --no-hooks. PTM_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
-        "New worktrees are created under $XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash> (default ~/.local/share/ptm/worktrees/...). <checkout> is the main checkout directory name. <hash> is the first 8 hex digits of the SHA-256 of the canonical Git common directory. A relative XDG_DATA_HOME is ignored. worktrees-directory overrides this and is joined to the repository root",
+        "New worktrees are created under $XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash> (default ~/.local/share/ptm/worktrees/...). <checkout> is the canonical main checkout directory name, so a symlink uses the same directory. <hash> is the first 8 hex digits of the SHA-256 of the canonical Git common directory. A relative XDG_DATA_HOME is ignored. worktrees-directory overrides this and is joined to the repository root",
         "Owner, purpose, and links are stored in ptm/worktrees.json under the Git common directory. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty. where and exec refresh lastUsedAt"
       ]
     },
@@ -423,6 +423,7 @@
         ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] pre-delete commands run in the worktree before it is removed, in order, and stop at the first failure",
         "Pre-delete hooks receive PTM=1, PTM_NAME (the worktree name), PTM_PATH (the absolute worktree path), and PTM_ROOT_PATH (the source checkout path)",
         "pre-delete hooks run only after the repository is trusted. On a terminal, ptm asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, CI or PTM_AGENT_ID being set, or --json fails before deleting. An empty value counts as unset. Run ptm trust --yes or pass --no-hooks. PTM_TRUST_ALL=1 trusts every repository for that process and writes nothing",
+        "delete removes a linked worktree inside the resolved worktrees directory, or one recorded in ptm/worktrees.json. An unrecorded worktree outside that directory is refused. Parent directories are removed only when the worktree is inside the resolved directory",
         "--json reports each deleted worktree, whether its branch was deleted, and per-item errors. The schema is documented in the README"
       ]
     },
@@ -512,6 +513,7 @@
       ],
       "notes": [
         "gc is a dry run until --apply or --force. A second apply removes nothing",
+        "gc selects linked worktrees inside the resolved worktrees directory and worktrees recorded in ptm/worktrees.json. An unrecorded worktree outside that directory is ignored",
         "The current worktree, the primary checkout, and any worktree checked out on the default branch are never removed. The default branch is origin/HEAD when that ref exists, otherwise main, otherwise master",
         "A branch that still points at the commit it was created from is not merged. It can still match --older-than or --orphaned",
         "A stored pull request URL is passed to gh pr view. A number with no URL is checked only when gh can name the current repository. When gh is missing or cannot answer, gc reports that the pull request status is unavailable",

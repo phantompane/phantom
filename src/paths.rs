@@ -124,69 +124,131 @@ pub fn data_home_from_env() -> Result<PathBuf> {
 }
 
 pub fn ensure_worktrees_directory(directory: &Path, common_dir: Option<&Path>) -> Result<()> {
-    match common_dir {
-        Some(common_dir) => claim_project_directory(directory, common_dir),
-        None => fs::create_dir_all(directory).map_err(|error| {
-            Error::msg(format!(
-                "Failed to create worktree directory {}: {error}",
-                directory.display()
-            ))
-        }),
-    }
+    with_worktrees_directory(directory, common_dir, || Ok(()))
 }
 
-/// Remove the project directory when it has no worktrees left.
-///
-/// The marker file is removed with it. The parent `ptm/worktrees` directory
-/// is never removed. Returns false when a worktree is still inside.
-pub fn remove_project_directory_if_empty(directory: &Path) -> Result<bool> {
-    let Some(parent) = directory.parent() else {
-        return Ok(false);
-    };
-    if !parent.exists() || !fs::symlink_metadata(directory).is_ok_and(|meta| meta.is_dir()) {
-        return Ok(false);
-    }
-    with_worktrees_lock(parent, || {
-        if !fs::symlink_metadata(directory).is_ok_and(|meta| meta.is_dir()) {
-            return Ok(false);
+/// Claim the project directory and run `body` before any last-worktree delete
+/// can remove it. The lock is the same one `remove_project_directory_if_empty`
+/// takes, and it stays held until `body` returns. `git worktree add` belongs
+/// inside `body`. A preference directory is created without that lock.
+pub fn with_worktrees_directory<T>(
+    directory: &Path,
+    common_dir: Option<&Path>,
+    body: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    match common_dir {
+        Some(common_dir) => {
+            let Some(parent) = directory.parent() else {
+                return Err(Error::msg(format!(
+                    "Worktree directory {} has no parent",
+                    directory.display()
+                )));
+            };
+            with_worktrees_lock(parent, || {
+                reconcile_project_directory(directory, common_dir)?;
+                body()
+            })
         }
-        let names = directory_entries(directory)?;
-        let marker = std::ffi::OsString::from(PROJECT_MARKER);
-        let only_marker = names.len() == 1 && names[0] == marker;
-        if !names.is_empty() && !only_marker {
-            return Ok(false);
-        }
-        let marker_path = directory.join(PROJECT_MARKER);
-        let saved = if only_marker {
-            match fs::read(&marker_path) {
-                Ok(bytes) => Some(bytes),
-                Err(error) if error.kind() == ErrorKind::NotFound => None,
-                Err(error) => {
-                    return Err(Error::msg(format!(
-                        "Failed to remove empty directory {}: {error}",
-                        directory.display()
-                    )));
-                }
-            }
-        } else {
-            None
-        };
-        if only_marker {
-            fs::remove_file(&marker_path).map_err(|error| {
+        None => {
+            fs::create_dir_all(directory).map_err(|error| {
                 Error::msg(format!(
-                    "Failed to remove empty directory {}: {error}",
+                    "Failed to create worktree directory {}: {error}",
                     directory.display()
                 ))
             })?;
+            body()
         }
+    }
+}
+
+/// Result of trying to remove an empty project directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectDirRemoval {
+    pub removed: bool,
+    pub warning: Option<String>,
+}
+
+/// Remove the project directory when it holds nothing but this repository's marker.
+///
+/// A missing or different `.ptm-common-dir` leaves the directory in place.
+/// The parent `ptm/worktrees` directory is never removed.
+pub fn remove_project_directory_if_empty(
+    directory: &Path,
+    common_dir: &Path,
+) -> Result<ProjectDirRemoval> {
+    let Some(parent) = directory.parent() else {
+        return Ok(ProjectDirRemoval {
+            removed: false,
+            warning: None,
+        });
+    };
+    if !parent.exists() || !fs::symlink_metadata(directory).is_ok_and(|meta| meta.is_dir()) {
+        return Ok(ProjectDirRemoval {
+            removed: false,
+            warning: None,
+        });
+    }
+    with_worktrees_lock(parent, || {
+        if !fs::symlink_metadata(directory).is_ok_and(|meta| meta.is_dir()) {
+            return Ok(ProjectDirRemoval {
+                removed: false,
+                warning: None,
+            });
+        }
+        let names = directory_entries(directory)?;
+        let marker_name = std::ffi::OsString::from(PROJECT_MARKER);
+        let only_marker = names.len() == 1 && names[0] == marker_name;
+        if !names.is_empty() && !only_marker {
+            return Ok(ProjectDirRemoval {
+                removed: false,
+                warning: None,
+            });
+        }
+        let marker_path = directory.join(PROJECT_MARKER);
+        let marker = read_marker(directory)?;
+        if !marker
+            .as_deref()
+            .is_some_and(|existing| marker_matches(existing, common_dir))
+        {
+            let warning = match marker {
+                Some(_) => format!(
+                    "Left worktree directory {} in place because its repository marker belongs to a different repository.",
+                    directory.display()
+                ),
+                None => format!(
+                    "Left worktree directory {} in place because it has no repository marker.",
+                    directory.display()
+                ),
+            };
+            return Ok(ProjectDirRemoval {
+                removed: false,
+                warning: Some(warning),
+            });
+        }
+        let saved = fs::read(&marker_path).ok();
+        fs::remove_file(&marker_path).map_err(|error| {
+            Error::msg(format!(
+                "Failed to remove empty directory {}: {error}",
+                directory.display()
+            ))
+        })?;
         match fs::remove_dir(directory) {
-            Ok(()) => Ok(true),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+            Ok(()) => Ok(ProjectDirRemoval {
+                removed: true,
+                warning: None,
+            }),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(ProjectDirRemoval {
+                removed: false,
+                warning: None,
+            }),
             Err(error) if error.kind() == ErrorKind::DirectoryNotEmpty => {
                 if let Some(bytes) = saved {
                     let _ = fs::write(&marker_path, bytes);
                 }
-                Ok(false)
+                Ok(ProjectDirRemoval {
+                    removed: false,
+                    warning: None,
+                })
             }
             Err(error) => Err(Error::msg(format!(
                 "Failed to remove empty directory {}: {error}",
@@ -196,8 +258,25 @@ pub fn remove_project_directory_if_empty(directory: &Path) -> Result<bool> {
     })
 }
 
+fn marker_matches(existing: &str, common_dir: &Path) -> bool {
+    existing == common_dir_identity(common_dir) || same_location(Path::new(existing), common_dir)
+}
+
+/// Canonical path when it exists, otherwise the normalized path.
+pub fn canonical_location(path: &Path) -> PathBuf {
+    match fs::canonicalize(path) {
+        Ok(path) => normalize(&path),
+        Err(_) => normalize(path),
+    }
+}
+
+pub fn same_location(left: &Path, right: &Path) -> bool {
+    canonical_location(left) == canonical_location(right)
+}
+
 fn checkout_component(git_root: &Path) -> String {
-    git_root
+    let canonical = fs::canonicalize(git_root).unwrap_or_else(|_| git_root.to_path_buf());
+    canonical
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .filter(|name| !name.is_empty())
@@ -236,18 +315,6 @@ fn common_dir_digest(path: &Path) -> String {
 
 fn common_dir_identity(path: &Path) -> String {
     path.to_string_lossy().into_owned()
-}
-
-fn claim_project_directory(directory: &Path, common_dir: &Path) -> Result<()> {
-    let Some(parent) = directory.parent() else {
-        return Err(Error::msg(format!(
-            "Worktree directory {} has no parent",
-            directory.display()
-        )));
-    };
-    with_worktrees_lock(parent, || {
-        reconcile_project_directory(directory, common_dir)
-    })
 }
 
 fn reconcile_project_directory(directory: &Path, common_dir: &Path) -> Result<()> {
@@ -508,6 +575,38 @@ mod tests {
     }
 
     #[test]
+    fn symlink_checkout_uses_the_canonical_directory_name() {
+        let root = std::env::temp_dir().join(format!(
+            "ptm-spell-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let checkout = root.join("real-name");
+        fs::create_dir_all(&checkout).expect("checkout");
+        let link = root.join("link-name");
+        std::os::unix::fs::symlink(&checkout, &link).expect("symlink");
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).expect("nested");
+        let indirect = nested.join("again");
+        std::os::unix::fs::symlink(&link, &indirect).expect("indirect");
+        let common = Path::new("/var/sep.git");
+        let data = Path::new("/home/u/.local/share");
+        let from_real = default_worktrees_directory(&checkout, common, data);
+        let from_link = default_worktrees_directory(&link, common, data);
+        let from_indirect = default_worktrees_directory(&indirect, common, data);
+        assert_eq!(from_real.path, from_link.path);
+        assert_eq!(from_real.path, from_indirect.path);
+        assert_eq!(
+            from_real.path,
+            PathBuf::from("/home/u/.local/share/ptm/worktrees/real-name-0d78ac9a")
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn configured_worktrees_directory_stays_relative_to_the_repo() {
         let root = Path::new("/repo");
         assert_eq!(
@@ -589,12 +688,131 @@ mod tests {
         let common = Path::new("/repos/one/.git");
         ensure_worktrees_directory(&directory, Some(common)).expect("claim");
         fs::create_dir_all(directory.join("feature")).expect("worktree");
-        assert!(!remove_project_directory_if_empty(&directory).expect("kept"));
+        assert!(
+            !remove_project_directory_if_empty(&directory, common)
+                .expect("kept")
+                .removed
+        );
         assert!(directory.is_dir());
         fs::remove_dir(directory.join("feature")).expect("remove worktree");
-        assert!(remove_project_directory_if_empty(&directory).expect("removed"));
+        assert!(
+            remove_project_directory_if_empty(&directory, common)
+                .expect("removed")
+                .removed
+        );
         assert!(!directory.exists());
         assert!(ceiling.is_dir());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn project_directory_removal_requires_this_repository_marker() {
+        let root = std::env::temp_dir().join(format!(
+            "ptm-marker-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let ours = root.join("ours");
+        let foreign = root.join("foreign");
+        let unmarked = root.join("unmarked");
+        let common = Path::new("/repos/one/.git");
+        for directory in [&ours, &foreign, &unmarked] {
+            fs::create_dir_all(directory.join("feature")).expect("worktree");
+            fs::remove_dir(directory.join("feature")).expect("empty");
+        }
+        fs::write(ours.join(PROJECT_MARKER), "/repos/one/.git\n").expect("ours");
+        fs::write(foreign.join(PROJECT_MARKER), "/other/.git\n").expect("foreign");
+        let removed = remove_project_directory_if_empty(&ours, common).expect("ours");
+        assert!(removed.removed);
+        assert!(removed.warning.is_none());
+        assert!(!ours.exists());
+        let kept = remove_project_directory_if_empty(&foreign, common).expect("foreign");
+        assert!(!kept.removed);
+        assert!(kept
+            .warning
+            .as_deref()
+            .is_some_and(|warning| warning.contains("different repository")));
+        assert_eq!(
+            fs::read_to_string(foreign.join(PROJECT_MARKER)).expect("marker"),
+            "/other/.git\n"
+        );
+        let missing = remove_project_directory_if_empty(&unmarked, common).expect("missing");
+        assert!(!missing.removed);
+        assert!(missing
+            .warning
+            .as_deref()
+            .is_some_and(|warning| warning.contains("no repository marker")));
+        assert!(unmarked.is_dir());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn empty_unmarked_project_directory_is_claimed() {
+        let root = std::env::temp_dir().join(format!(
+            "ptm-reclaim-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let directory = root.join("ptm/worktrees/repo-abcdef12");
+        fs::create_dir_all(&directory).expect("empty");
+        let common = Path::new("/repos/one/.git");
+        ensure_worktrees_directory(&directory, Some(common)).expect("reclaim");
+        assert_eq!(
+            fs::read_to_string(directory.join(PROJECT_MARKER))
+                .expect("marker")
+                .trim_end(),
+            "/repos/one/.git"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn create_holds_the_project_directory_until_the_worktree_exists() {
+        let root = std::env::temp_dir().join(format!(
+            "ptm-hold-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let directory = root.join("ptm/worktrees/repo-abcdef12");
+        let common = Path::new("/repos/one/.git");
+        let handle = with_worktrees_directory(&directory, Some(common), || {
+            let dir = directory.clone();
+            let (started, start_receiver) = std::sync::mpsc::channel();
+            let common_dir = common.to_path_buf();
+            let handle = std::thread::spawn(move || {
+                started.send(()).expect("started");
+                remove_project_directory_if_empty(&dir, &common_dir)
+            });
+            start_receiver.recv().expect("remover started");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            assert!(
+                directory.is_dir(),
+                "last delete removed the project directory during create"
+            );
+            assert!(
+                directory.join(PROJECT_MARKER).is_file(),
+                "last delete removed the repository marker during create"
+            );
+            fs::create_dir(directory.join("feature")).expect("worktree");
+            Ok(handle)
+        })
+        .expect("held");
+        let removed = handle.join().expect("remover").expect("remove");
+        assert!(
+            !removed.removed,
+            "delete removed a directory that create had filled"
+        );
+        assert!(directory.join("feature").is_dir());
+        assert!(directory.join(PROJECT_MARKER).is_file());
         let _ = fs::remove_dir_all(&root);
     }
 

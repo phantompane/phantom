@@ -7146,3 +7146,212 @@ fn two_clones_do_not_share_a_worktree_directory() {
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.starts_with("repo-")));
 }
+
+#[test]
+fn symlink_checkout_shares_the_project_directory() {
+    let repo = Repo::new();
+    let link = repo.root.join("link-name");
+    std::os::unix::fs::symlink(&repo.repo, &link).expect("symlink");
+    let created = repo.phantom(&["create", "from-real"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let via_link = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "create",
+                "--project",
+                link.to_str().expect("link"),
+                "from-link",
+            ],
+        )
+        .output()
+        .expect("create");
+    assert!(
+        via_link.status.success(),
+        "{}\n{}",
+        text(&via_link.stdout),
+        text(&via_link.stderr)
+    );
+    let project = managed_root(&repo);
+    assert!(project.join("from-real").is_dir());
+    assert!(project.join("from-link").is_dir());
+    let projects = fs::read_dir(project.parent().expect("ceiling"))
+        .expect("ceiling")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
+        .count();
+    assert_eq!(
+        projects, 1,
+        "symlink spelling created a second project directory"
+    );
+    let deleted = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "delete",
+                "--project",
+                link.to_str().expect("link"),
+                "from-real",
+            ],
+        )
+        .output()
+        .expect("delete");
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(!project.join("from-real").exists());
+    assert!(project.join("from-link").is_dir());
+}
+
+#[test]
+fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
+    let repo = Repo::new();
+    assert!(repo
+        .phantom(&[
+            "preferences",
+            "set",
+            "worktrees-directory",
+            ".git/ptm/worktrees",
+        ])
+        .status
+        .success());
+    let created = repo.phantom(&["create", "feature/topic"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let topic = repo.repo.join(".git/ptm/worktrees/feature/topic");
+    let parent = repo.repo.join(".git/ptm/worktrees/feature");
+    assert!(topic.is_dir());
+    assert!(repo
+        .phantom(&["preferences", "remove", "worktrees-directory"])
+        .status
+        .success());
+    let deleted = repo.phantom(&["delete", "feature/topic"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(!topic.exists());
+    assert!(parent.is_dir(), "parents of a recorded worktree stay");
+    assert!(repo.repo.join(".git/ptm/worktrees").is_dir());
+
+    let other = repo.root.join("other-xdg");
+    let elsewhere_created = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "elsewhere"])
+        .env("XDG_DATA_HOME", &other)
+        .output()
+        .expect("elsewhere");
+    assert!(
+        elsewhere_created.status.success(),
+        "{}\n{}",
+        text(&elsewhere_created.stdout),
+        text(&elsewhere_created.stderr)
+    );
+    let elsewhere = managed_directory(&repo.repo, &other).join("elsewhere");
+    assert!(elsewhere.is_dir());
+    fs::write(elsewhere.join("dirty.txt"), "dirty\n").expect("dirty");
+    let blocked = repo.phantom(&["delete", "elsewhere"]);
+    assert!(!blocked.status.success(), "{}", text(&blocked.stdout));
+    assert!(
+        text(&blocked.stderr).contains("uncommitted"),
+        "{}",
+        text(&blocked.stderr)
+    );
+    assert!(elsewhere.is_dir());
+    fs::remove_file(elsewhere.join("dirty.txt")).expect("clean");
+    let removed = repo.phantom(&["delete", "elsewhere"]);
+    assert!(
+        removed.status.success(),
+        "{}\n{}",
+        text(&removed.stdout),
+        text(&removed.stderr)
+    );
+    assert!(!elsewhere.exists());
+    assert!(
+        elsewhere.parent().expect("project dir").is_dir(),
+        "the other data directory's project dir stays"
+    );
+
+    let stray = repo.root.join("stray");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "stray",
+        stray.to_str().expect("stray"),
+        "HEAD",
+    ]);
+    fs::write(stray.join("stray.txt"), "stray\n").expect("stray note");
+    for args in [vec!["add", "stray.txt"], vec!["commit", "-m", "stray"]] {
+        let output = repo
+            .command("git", &args)
+            .current_dir(&stray)
+            .output()
+            .expect("commit stray");
+        assert!(output.status.success(), "{}", text(&output.stderr));
+    }
+    repo.git(&["merge", "--ff-only", "stray"]);
+    let refused = repo.phantom(&["delete", "stray"]);
+    assert!(!refused.status.success(), "{}", text(&refused.stdout));
+    assert!(
+        text(&refused.stderr).contains("outside the managed worktree directory"),
+        "{}",
+        text(&refused.stderr)
+    );
+    let cleaned = repo.phantom(&["gc", "--apply"]);
+    assert!(cleaned.status.success(), "{}", text(&cleaned.stderr));
+    assert!(
+        !text(&cleaned.stdout).contains("stray"),
+        "{}",
+        text(&cleaned.stdout)
+    );
+    assert!(stray.is_dir());
+}
+
+#[test]
+fn gc_removes_a_merged_recorded_worktree_outside_the_resolved_directory() {
+    let repo = Repo::new();
+    assert!(repo
+        .phantom(&[
+            "preferences",
+            "set",
+            "worktrees-directory",
+            ".git/ptm/worktrees",
+        ])
+        .status
+        .success());
+    let created = repo.phantom(&["create", "landed"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let landed = repo.repo.join(".git/ptm/worktrees/landed");
+    fs::write(landed.join("landed.txt"), "landed\n").expect("note");
+    for args in [vec!["add", "landed.txt"], vec!["commit", "-m", "landed"]] {
+        let output = repo
+            .command("git", &args)
+            .current_dir(&landed)
+            .output()
+            .expect("commit");
+        assert!(output.status.success(), "{}", text(&output.stderr));
+    }
+    repo.git(&["merge", "--ff-only", "landed"]);
+    assert!(repo
+        .phantom(&["preferences", "remove", "worktrees-directory"])
+        .status
+        .success());
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(
+        applied.status.success(),
+        "{}\n{}",
+        text(&applied.stdout),
+        text(&applied.stderr)
+    );
+    let stdout = text(&applied.stdout);
+    assert!(
+        stdout.contains("landed") && stdout.contains("Removed"),
+        "{stdout}"
+    );
+    assert!(!landed.exists());
+    assert!(repo.repo.join(".git/ptm/worktrees").is_dir());
+}

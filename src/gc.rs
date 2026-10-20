@@ -473,7 +473,11 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
         if paths::normalize(&path) == paths::normalize(&context.git_root) {
             continue;
         }
-        if !paths::is_strictly_inside(&path, &context.worktrees_directory) {
+        let inside = paths::is_strictly_inside(&path, &context.worktrees_directory);
+        let recorded = stored
+            .keys()
+            .any(|key| paths::same_location(Path::new(key), &path));
+        if !inside && !recorded {
             continue;
         }
         let record = stored.get(&key);

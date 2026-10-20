@@ -427,17 +427,20 @@ pub fn create_worktree(
 ) -> Result<CreatedWorktree> {
     validate_worktree_name(name)?;
     metadata::prepare(&context.git_root)?;
-    paths::ensure_worktrees_directory(
-        &context.worktrees_directory,
-        context.project_common_dir.as_deref(),
-    )?;
-    ensure_absent(context, name)?;
     let path = paths::worktree_path(
         &context.worktrees_directory,
         name,
         &context.directory_name_separator,
     );
-    git::add_worktree(&context.git_root, &path, name, base, true)?;
+    paths::with_worktrees_directory(
+        &context.worktrees_directory,
+        context.project_common_dir.as_deref(),
+        || {
+            ensure_absent(context, name)?;
+            git::add_worktree(&context.git_root, &path, name, base, true)?;
+            Ok(())
+        },
+    )?;
     let metadata_error = metadata::replace(&context.git_root, &path, metadata, BranchOrigin::New)
         .err()
         .map(|error| error.to_string());
@@ -545,18 +548,21 @@ pub fn attach_worktree(
     if !git::branch_exists(&context.git_root, name)? {
         return Err(Error::BranchNotFound(name.to_string()));
     }
-    paths::ensure_worktrees_directory(
+    paths::with_worktrees_directory(
         &context.worktrees_directory,
         context.project_common_dir.as_deref(),
+        || {
+            git::add_worktree(&context.git_root, &path, name, "HEAD", false).map_err(|error| {
+                let message = error.to_string();
+                if let Some(stripped) = message.strip_prefix("worktree add failed: ") {
+                    Error::msg(stripped.to_string())
+                } else {
+                    error
+                }
+            })?;
+            Ok(())
+        },
     )?;
-    git::add_worktree(&context.git_root, &path, name, "HEAD", false).map_err(|error| {
-        let message = error.to_string();
-        if let Some(stripped) = message.strip_prefix("worktree add failed: ") {
-            Error::msg(stripped.to_string())
-        } else {
-            error
-        }
-    })?;
     let metadata_error =
         metadata::replace(&context.git_root, &path, metadata, BranchOrigin::Existing)
             .err()
@@ -624,7 +630,10 @@ pub fn delete_worktree(
 ) -> std::result::Result<DeleteOutcome, DeleteError> {
     let worktree = find_worktree(context, name, true, expected_path).map_err(DeleteError::bare)?;
     let path = PathBuf::from(&worktree.path);
-    if !paths::is_strictly_inside(&path, &context.worktrees_directory) {
+    let inside = paths::is_strictly_inside(&path, &context.worktrees_directory);
+    let recorded = metadata::records_path(&context.git_root, &path)
+        .map_err(|error| DeleteError::kept(error, &worktree))?;
+    if !inside && !recorded {
         return Err(DeleteError::kept(
             Error::msg(format!(
                 "Worktree '{name}' is outside the managed worktree directory and cannot be deleted."
@@ -663,11 +672,15 @@ pub fn delete_worktree(
     let metadata_error = metadata::remove(&context.git_root, &path)
         .err()
         .map(|error| error.to_string());
-    let cleanup_warning = remove_empty_parents(
-        &path,
-        &context.worktrees_directory,
-        context.project_common_dir.is_some(),
-    );
+    let cleanup_warning = if inside {
+        remove_empty_parents(
+            &path,
+            &context.worktrees_directory,
+            context.project_common_dir.as_deref(),
+        )
+    } else {
+        None
+    };
     let (message, branch_deleted, branch_error) = if worktree.branch == "(detached HEAD)" {
         (format!("Deleted worktree '{name}'"), false, None)
     } else if keep_branch {
@@ -923,7 +936,11 @@ fn run_hook_commands(
     Ok(None)
 }
 
-fn remove_empty_parents(path: &Path, root: &Path, remove_root: bool) -> Option<String> {
+fn remove_empty_parents(
+    path: &Path,
+    root: &Path,
+    project_common_dir: Option<&Path>,
+) -> Option<String> {
     let mut current = path.parent().map(Path::to_path_buf);
     while let Some(dir) = current {
         if !paths::is_strictly_inside(&dir, root) {
@@ -941,11 +958,9 @@ fn remove_empty_parents(path: &Path, root: &Path, remove_root: bool) -> Option<S
             }
         }
     }
-    if !remove_root {
-        return None;
-    }
-    match paths::remove_project_directory_if_empty(root) {
-        Ok(_) => None,
+    let common_dir = project_common_dir?;
+    match paths::remove_project_directory_if_empty(root, common_dir) {
+        Ok(removal) => removal.warning,
         Err(error) => Some(error.to_string()),
     }
 }
