@@ -1768,6 +1768,8 @@ fn slash_remote_default_and_explicit_bases_fetch_and_integrate_main() {
 #[test]
 fn unmatched_default_remote_fails_without_creating_a_branch() {
     let r = Repo::new();
+    let tree = r.create("topic");
+    r.write_commit(&tree, "own", "own\n");
     r.git(&r.main, &["update-ref", "refs/remotes/stale/main", "HEAD"]);
     r.git(
         &r.main,
@@ -1785,6 +1787,11 @@ fn unmatched_default_remote_fails_without_creating_a_branch() {
         .unwrap()
         .contains("No configured remote matches"));
     assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), before);
+    r.advance();
+    let doc = r.sync(&r.main, &["topic"], 1);
+    assert_eq!(doc["default"]["status"], "failed");
+    assert_eq!(doc["worktrees"][0]["status"], "updated", "{doc}");
+    assert!(tree.join("remote-file").exists());
 }
 
 fn pause_root_rebase(r: &Repo, path: &Path, update_refs: bool) {
@@ -2547,4 +2554,64 @@ fn fetch_refspec_namespace_determines_remote_and_default_local_name() {
         assert!(tree.join("remote-file").exists());
         assert_eq!(r.git(&r.main, &["branch", "--list", "cache/main"]), "");
     }
+}
+
+#[test]
+fn unresolved_default_does_not_block_recorded_bases() {
+    let r = Repo::new();
+    r.git(&r.upstream, &["branch", "-m", "develop"]);
+    r.git(&r.upstream, &["push", "origin", "develop"]);
+    let clone = r.root.join("single-branch");
+    r.git(
+        &r.main,
+        &[
+            "clone",
+            "--single-branch",
+            "--branch",
+            "develop",
+            r.root.join("remote.git").to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    );
+    r.git(&clone, &["config", "user.name", "Sync Test"]);
+    r.git(&clone, &["config", "user.email", "sync@example.com"]);
+    r.git(&clone, &["remote", "set-head", "origin", "--delete"]);
+    let out = r.mabo(
+        &clone,
+        &["create", "topic", "--base", "origin/develop", "--json"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let created: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let tree = PathBuf::from(created["worktree"]["path"].as_str().unwrap());
+    r.write_commit(&tree, "own", "own\n");
+    // attach deliberately leaves the recorded base null, exercising fallback errors.
+    r.git(&clone, &["branch", "legacy"]);
+    assert!(r.mabo(&clone, &["attach", "legacy"]).status.success());
+    r.write_commit(&r.upstream, "incoming-develop", "incoming\n");
+    r.git(&r.upstream, &["push", "origin", "develop"]);
+    let doc = r.sync(&clone, &["legacy", "topic"], 1);
+    assert_eq!(doc["default"]["status"], "failed", "{doc}");
+    assert_eq!(doc["worktrees"][0]["status"], "failed", "{doc}");
+    for item in [&doc["default"], &doc["worktrees"][0]] {
+        assert!(
+            item["detail"]
+                .as_str()
+                .unwrap()
+                .contains("Cannot determine the default branch"),
+            "{doc}"
+        );
+    }
+    assert_eq!(doc["worktrees"][1]["status"], "updated", "{doc}");
+    assert!(tree.join("incoming-develop").exists());
+    let doc = r.sync(&clone, &["topic", "--no-default"], 0);
+    assert!(doc["default"].is_null());
+    assert_eq!(doc["worktrees"][0]["status"], "up-to-date");
+    let doc = r.sync(&clone, &["legacy", "topic", "--no-default"], 1);
+    assert!(doc["default"].is_null());
+    assert_eq!(doc["worktrees"][0]["status"], "failed");
+    assert_eq!(doc["worktrees"][1]["status"], "up-to-date");
 }

@@ -437,17 +437,22 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         ));
     }
     // Resolve the default identity independently of a worktree's recorded base.
-    let fallback = match fallback_base(&context.git_root) {
-        Ok(base) => base,
-        Err(error)
-            if !request.no_default || targets.iter().any(|tree| tree.metadata.base.is_none()) =>
-        {
-            return Err(error);
-        }
-        Err(_) => String::new(),
+    let (fallback, mut fallback_error) = match fallback_base(&context.git_root) {
+        Ok(base) => (base, None),
+        Err(error) => (String::new(), Some(error.to_string())),
     };
     let remotes = fetch_refspecs(&context.git_root)?;
-    let default_name = default_local_name(&context.git_root, &fallback, &remotes).ok();
+    let default_name = if fallback_error.is_none() {
+        match default_local_name(&context.git_root, &fallback, &remotes) {
+            Ok(name) => Some(name),
+            Err(error) => {
+                fallback_error = Some(error.to_string());
+                None
+            }
+        }
+    } else {
+        None
+    };
     targets.retain(|tree| {
         tree.detached
             || Some(tree.branch.as_str()) != default_name.as_deref()
@@ -504,7 +509,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
     let fetch_error =
         |base: &str| remote_for(base, &remotes).and_then(|remote| fetch_errors.get(&remote));
     if !request.no_default {
-        let item = match fetch_error(&fallback) {
+        let item = match fallback_error.as_ref().or_else(|| fetch_error(&fallback)) {
             Some(error) => Err(Error::msg(error.clone())),
             None => sync_default(context, &fallback, &remotes),
         };
@@ -521,14 +526,31 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
     }
     for (tree, base) in targets.iter().zip(&bases) {
         // Only targets using the failed remote must refuse their stale base.
-        let result = match fetch_error(base) {
+        let base_error = tree
+            .metadata
+            .base
+            .is_none()
+            .then_some(fallback_error.as_ref())
+            .flatten();
+        let result = match base_error.or_else(|| fetch_error(base)) {
             Some(error) => Err(Error::msg(error.clone())),
-            None => sync_tree(context, tree, base, request, &fallback, &remotes),
+            None => sync_tree(
+                context,
+                tree,
+                base,
+                request,
+                &fallback,
+                &remotes,
+                default_name.as_deref(),
+            ),
         };
         let item = match result {
             Ok(item) => item,
             Err(error) => {
                 let mut item = tree_item(tree, base);
+                if base.is_empty() {
+                    item.base = None;
+                }
                 item.status("failed", Some(error.to_string()));
                 item
             }
@@ -809,12 +831,10 @@ fn sync_tree(
     request: &Request,
     default_base: &str,
     remotes: &[FetchRefspec],
+    default_name: Option<&str>,
 ) -> Result<Item> {
     // Keep this guard at the integration boundary, regardless of selector/strategy.
-    if !tree.detached
-        && !default_base.is_empty()
-        && tree.branch == default_local_name(&context.git_root, default_base, remotes)?
-    {
+    if !tree.detached && default_name == Some(tree.branch.as_str()) {
         let mut item = sync_default(context, default_base, remotes)?;
         item.name = tree.name.clone();
         return Ok(item);
