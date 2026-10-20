@@ -133,6 +133,58 @@ impl Drop for Repo {
 }
 
 #[test]
+fn default_without_remote_head_uses_differently_named_upstream() {
+    for tracking in [
+        "refs/remotes/origin/trunk",
+        "refs/remotes/origin/mapped/trunk",
+    ] {
+        for checked_out in [true, false] {
+            let r = Repo::new();
+            r.git(&r.main, &["remote", "set-head", "origin", "--delete"]);
+            r.git(&r.upstream, &["push", "origin", "main:trunk"]);
+            if tracking.contains("/mapped/") {
+                r.git(
+                    &r.main,
+                    &[
+                        "config",
+                        "remote.origin.fetch",
+                        "+refs/heads/*:refs/remotes/origin/mapped/*",
+                    ],
+                );
+            }
+            r.git(&r.main, &["fetch", "origin"]);
+            r.git(&r.main, &["config", "branch.main.remote", "origin"]);
+            r.git(
+                &r.main,
+                &["config", "branch.main.merge", "refs/heads/trunk"],
+            );
+            if !checked_out {
+                r.git(&r.main, &["update-ref", "-d", "refs/remotes/origin/main"]);
+            }
+            // Neither a missing nor a stale origin/main may override the upstream.
+            let tree = r.create("topic");
+            let doc = r.sync(&tree, &["--no-default"], 0);
+            assert_eq!(doc["worktrees"][0]["base"], tracking);
+            if !checked_out {
+                r.git(&r.main, &["checkout", "-b", "other"]);
+            }
+            r.write_commit(&r.upstream, "remote-trunk", "advanced\n");
+            r.git(&r.upstream, &["push", "origin", "main:trunk"]);
+            let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+            assert_ne!(r.git(&r.main, &["rev-parse", tracking]), expected);
+            let doc = r.sync(&r.main, &[], 0);
+            assert_eq!(doc["default"]["status"], "updated");
+            assert_eq!(doc["default"]["branch"], "refs/heads/main");
+            assert_eq!(doc["default"]["base"], tracking);
+            assert_eq!(r.git(&r.main, &["rev-parse", "main"]), expected);
+            assert_eq!(r.git(&r.main, &["rev-parse", tracking]), expected);
+            assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads/trunk"]), "");
+            assert_eq!(r.sync(&r.main, &[], 0)["default"]["status"], "up-to-date");
+        }
+    }
+}
+
+#[test]
 fn default_only_and_linked_implicit_including_subdirectory_and_detached() {
     let r = Repo::new();
     let tree = r.create("topic");

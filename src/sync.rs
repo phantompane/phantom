@@ -122,6 +122,9 @@ pub fn fallback_base(root: &Path) -> Result<String> {
             return Err(Error::msg("Cannot determine the default branch"));
         }
     };
+    if let Some(upstream) = default_upstream(root, &default)? {
+        return Ok(upstream);
+    }
     let configured = git::raw_git(
         root,
         &["config", "--get", &format!("branch.{default}.remote")],
@@ -136,6 +139,25 @@ pub fn fallback_base(root: &Path) -> Result<String> {
         Ok(remote)
     } else {
         normalize_base(root, &format!("refs/heads/{default}"))
+    }
+}
+
+// Git resolves branch.merge through the configured remote's fetch refspecs.
+fn default_upstream(root: &Path, branch: &str) -> Result<Option<String>> {
+    let upstream = git::output(
+        &[
+            "for-each-ref",
+            "--format=%(upstream)",
+            &format!("refs/heads/{branch}"),
+        ],
+        Some(root),
+        true,
+    )?;
+    let upstream = upstream.trim();
+    if upstream.starts_with("refs/remotes/") && commit(root, upstream)?.is_some() {
+        Ok(Some(upstream.to_string()))
+    } else {
+        Ok(None)
     }
 }
 
@@ -333,16 +355,16 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         .lines()
         .map(str::to_string)
         .collect();
-    let default_name = default_local_name(&fallback, &remotes).ok();
+    let default_name = default_local_name(&context.git_root, &fallback, &remotes).ok();
     targets.retain(|tree| {
         tree.detached
-            || Some(tree.branch.as_str()) != default_name
+            || Some(tree.branch.as_str()) != default_name.as_deref()
             || (request.no_default && !request.names.is_empty())
     });
     let bases: Vec<String> = targets
         .iter()
         .map(|tree| {
-            if !tree.detached && Some(tree.branch.as_str()) == default_name {
+            if !tree.detached && Some(tree.branch.as_str()) == default_name.as_deref() {
                 fallback.clone()
             } else {
                 tree.metadata
@@ -554,7 +576,14 @@ fn branch_reservation(context: &Context, local: &str) -> Result<Option<(String, 
     Ok(None)
 }
 
-fn default_local_name<'a>(base: &'a str, remotes: &'a [String]) -> Result<&'a str> {
+fn default_local_name(root: &Path, base: &str, remotes: &[String]) -> Result<String> {
+    if let Some(default) = git::default_branch(root)? {
+        if !default.starts_with("origin/")
+            && default_upstream(root, &default)?.as_deref() == Some(base)
+        {
+            return Ok(default);
+        }
+    }
     let local_name = if let Some(rest) = base.strip_prefix("refs/remotes/") {
         crate::tracking::split_remote(rest, remotes)
             .map(|(_, branch)| branch)
@@ -567,11 +596,11 @@ fn default_local_name<'a>(base: &'a str, remotes: &'a [String]) -> Result<&'a st
         base.strip_prefix("refs/heads/")
             .ok_or_else(|| Error::msg("Default branch must name a branch"))?
     };
-    Ok(local_name)
+    Ok(local_name.to_string())
 }
 
 fn sync_default(context: &Context, base: &str, remotes: &[String]) -> Result<Item> {
-    let local_name = default_local_name(base, remotes)?;
+    let local_name = default_local_name(&context.git_root, base, remotes)?;
     let local = format!("refs/heads/{local_name}");
     let root = &context.git_root;
     let before = commit(root, &local)?;
@@ -685,7 +714,7 @@ fn sync_tree(
     // Keep this guard at the integration boundary, regardless of selector/strategy.
     if !tree.detached
         && !default_base.is_empty()
-        && tree.branch == default_local_name(default_base, remotes)?
+        && tree.branch == default_local_name(&context.git_root, default_base, remotes)?
     {
         let mut item = sync_default(context, default_base, remotes)?;
         item.name = tree.name.clone();
