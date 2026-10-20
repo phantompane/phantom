@@ -487,6 +487,11 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
     let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
     let base = git::default_branch(&context.git_root)?;
+    let name = base
+        .as_deref()
+        .map(|base| crate::sync::default_local_branch(&context.git_root, base))
+        .transpose()?;
+    let default = DefaultBranch { base, name };
     let current = current_worktree_path(context);
     let mut pull_requests = BTreeMap::new();
     let mut rows = BTreeMap::new();
@@ -515,7 +520,7 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
         let mut facts = observe_listed(
             context,
             policy,
-            &base,
+            &default,
             current.as_deref(),
             worktree,
             record,
@@ -570,15 +575,21 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
     Ok(rows.into_values().collect())
 }
 
+struct DefaultBranch {
+    base: Option<String>,
+    name: Option<String>,
+}
+
 fn observe_listed(
     context: &Context,
     policy: &Policy,
-    base: &Option<String>,
+    default: &DefaultBranch,
     current: Option<&Path>,
     worktree: &git::GitWorktree,
     record: Option<&WorktreeMetadata>,
     pull_requests: &mut BTreeMap<String, PullRequestStatus>,
 ) -> WorktreeFacts {
+    let base = &default.base;
     let path = PathBuf::from(&worktree.path);
     let directory = directory_state(&path);
     let detached = worktree.branch.as_deref() == Some("(detached HEAD)");
@@ -612,10 +623,9 @@ fn observe_listed(
         }
         _ => false,
     };
-    let is_default = match (&branch, base) {
-        (Some(branch), Some(base)) => branch == local_default_name(base),
-        _ => false,
-    };
+    let is_default = branch
+        .as_deref()
+        .is_some_and(|branch| default.name.as_deref() == Some(branch));
     let unpushed = reachability.unpushed;
     let pr_link = record.and_then(|item| item.links.pr.as_ref());
     let pr = pull_state(policy, &context.git_root, pr_link, pull_requests);
@@ -829,10 +839,6 @@ fn parse_time(value: &str) -> Option<SystemTime> {
     let parsed = chrono::DateTime::parse_from_rfc3339(value).ok()?;
     let seconds = u64::try_from(parsed.timestamp()).ok()?;
     Some(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
-}
-
-fn local_default_name(base: &str) -> &str {
-    base.strip_prefix("origin/").unwrap_or(base)
 }
 
 pub(crate) fn still_at_creation_point(

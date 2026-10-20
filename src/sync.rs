@@ -96,6 +96,7 @@ pub fn fallback_base(root: &Path) -> Result<String> {
     {
         return normalize_base(root, default);
     }
+    let specs = fetch_refspecs(root)?;
     let remotes = git::output(&["remote"], Some(root), true)?;
     for remote in remotes.lines() {
         let head = git::raw_git(
@@ -114,8 +115,7 @@ pub fn fallback_base(root: &Path) -> Result<String> {
         Some(default) => default,
         None => {
             for name in ["main", "master"] {
-                let remote = format!("refs/remotes/origin/{name}");
-                if commit(root, &remote)?.is_some() {
+                if let Some(remote) = tracking_ref(root, &specs, "origin", name)? {
                     return Ok(remote);
                 }
             }
@@ -134,8 +134,7 @@ pub fn fallback_base(root: &Path) -> Result<String> {
     } else {
         "origin"
     };
-    let remote = format!("refs/remotes/{remote_name}/{default}");
-    if commit(root, &remote)?.is_some() {
+    if let Some(remote) = tracking_ref(root, &specs, remote_name, &default)? {
         Ok(remote)
     } else {
         normalize_base(root, &format!("refs/heads/{default}"))
@@ -310,9 +309,83 @@ fn ignored_would_be_overwritten(path: &Path, base: &str, rebase: bool) -> Result
     Ok(false)
 }
 
-fn remote_for(base: &str, remotes: &[String]) -> Option<String> {
-    let name = base.strip_prefix("refs/remotes/")?;
-    crate::tracking::split_remote(name, remotes).map(|(remote, _)| remote.to_string())
+struct FetchRefspec {
+    remote: String,
+    source: String,
+    destination: String,
+}
+
+// Fetch refspecs can store a remote's branches in any tracking namespace.
+fn fetch_refspecs(root: &Path) -> Result<Vec<FetchRefspec>> {
+    let mut specs = Vec::new();
+    for remote in git::output(&["remote"], Some(root), true)?.lines() {
+        let configured = git::raw_git(
+            root,
+            &["config", "--get-all", &format!("remote.{remote}.fetch")],
+        )?;
+        if configured.code != 0 && configured.code != 1 {
+            return Err(Error::msg(configured.stderr));
+        }
+        for spec in configured.stdout.lines() {
+            let spec = spec.strip_prefix('+').unwrap_or(spec);
+            if let Some((source, destination)) = spec.split_once(':') {
+                if !source.starts_with('^') && !destination.is_empty() {
+                    specs.push(FetchRefspec {
+                        remote: remote.to_string(),
+                        source: source.to_string(),
+                        destination: destination.to_string(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(specs)
+}
+
+fn map_ref(reference: &str, from: &str, to: &str) -> Option<String> {
+    if let Some((prefix, suffix)) = from.split_once('*') {
+        let captured = reference.strip_prefix(prefix)?.strip_suffix(suffix)?;
+        let (prefix, suffix) = to.split_once('*')?;
+        Some(format!("{prefix}{captured}{suffix}"))
+    } else {
+        (reference == from).then(|| to.to_string())
+    }
+}
+
+fn tracking_ref(
+    root: &Path,
+    specs: &[FetchRefspec],
+    remote: &str,
+    branch: &str,
+) -> Result<Option<String>> {
+    for spec in specs.iter().filter(|spec| spec.remote == remote) {
+        if let Some(reference) = map_ref(
+            &format!("refs/heads/{branch}"),
+            &spec.source,
+            &spec.destination,
+        ) {
+            if commit(root, &reference)?.is_some() {
+                return Ok(Some(reference));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn source_for(base: &str, specs: &[FetchRefspec]) -> Option<(String, String)> {
+    // Prefer a specific mapping over a broader overlapping namespace, including
+    // remotes named team and team/origin. Exact refspecs precede patterns.
+    specs
+        .iter()
+        .filter_map(|spec| {
+            map_ref(base, &spec.destination, &spec.source).map(|source| (spec, source))
+        })
+        .max_by_key(|(spec, _)| (!spec.destination.contains('*'), spec.destination.len()))
+        .map(|(spec, source)| (spec.remote.clone(), source))
+}
+
+fn remote_for(base: &str, specs: &[FetchRefspec]) -> Option<String> {
+    source_for(base, specs).map(|(remote, _)| remote)
 }
 
 pub fn run(context: &Context, request: &Request) -> Result<Report> {
@@ -373,10 +446,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         }
         Err(_) => String::new(),
     };
-    let remotes: Vec<String> = git::output(&["remote"], Some(&context.git_root), true)?
-        .lines()
-        .map(str::to_string)
-        .collect();
+    let remotes = fetch_refspecs(&context.git_root)?;
     let default_name = default_local_name(&context.git_root, &fallback, &remotes).ok();
     targets.retain(|tree| {
         tree.detached
@@ -598,7 +668,12 @@ fn branch_reservation(context: &Context, local: &str) -> Result<Option<(String, 
     Ok(None)
 }
 
-fn default_local_name(root: &Path, base: &str, remotes: &[String]) -> Result<String> {
+pub(crate) fn default_local_branch(root: &Path, base: &str) -> Result<String> {
+    let base = normalize_base(root, base)?;
+    default_local_name(root, &base, &fetch_refspecs(root)?)
+}
+
+fn default_local_name(root: &Path, base: &str, remotes: &[FetchRefspec]) -> Result<String> {
     if let Some(default) = git::default_branch(root)? {
         if !default.starts_with("origin/")
             && default_upstream(root, &default)?.as_deref() == Some(base)
@@ -606,14 +681,15 @@ fn default_local_name(root: &Path, base: &str, remotes: &[String]) -> Result<Str
             return Ok(default);
         }
     }
-    let local_name = if let Some(rest) = base.strip_prefix("refs/remotes/") {
-        crate::tracking::split_remote(rest, remotes)
-            .map(|(_, branch)| branch)
-            .ok_or_else(|| {
-                Error::msg(format!(
-                    "No configured remote matches default base '{base}'"
-                ))
-            })?
+    let source = source_for(base, remotes).map(|(_, source)| source);
+    let local_name = if let Some(source) = source.as_deref() {
+        source
+            .strip_prefix("refs/heads/")
+            .ok_or_else(|| Error::msg("Default branch must name a branch"))?
+    } else if base.starts_with("refs/remotes/") {
+        return Err(Error::msg(format!(
+            "No configured remote matches default base '{base}'"
+        )));
     } else {
         base.strip_prefix("refs/heads/")
             .ok_or_else(|| Error::msg("Default branch must name a branch"))?
@@ -621,7 +697,7 @@ fn default_local_name(root: &Path, base: &str, remotes: &[String]) -> Result<Str
     Ok(local_name.to_string())
 }
 
-fn sync_default(context: &Context, base: &str, remotes: &[String]) -> Result<Item> {
+fn sync_default(context: &Context, base: &str, remotes: &[FetchRefspec]) -> Result<Item> {
     let local_name = default_local_name(&context.git_root, base, remotes)?;
     let local = format!("refs/heads/{local_name}");
     let root = &context.git_root;
@@ -732,7 +808,7 @@ fn sync_tree(
     base: &str,
     request: &Request,
     default_base: &str,
-    remotes: &[String],
+    remotes: &[FetchRefspec],
 ) -> Result<Item> {
     // Keep this guard at the integration boundary, regardless of selector/strategy.
     if !tree.detached

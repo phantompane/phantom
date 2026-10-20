@@ -2129,6 +2129,23 @@ fn default_branch_merge_options_cannot_autostash_local_edits() {
 #[test]
 fn failed_default_remote_does_not_block_a_healthy_base_remote() {
     let r = Repo::new();
+    r.git(
+        &r.main,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/cache/*",
+        ],
+    );
+    r.git(&r.main, &["fetch", "origin"]);
+    r.git(
+        &r.main,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/cache/main",
+        ],
+    );
     let healthy = r.create("healthy");
     let stale = r.create("stale");
     r.write_commit(&healthy, "own", "own\n");
@@ -2435,4 +2452,99 @@ fn operation_lock_token_is_not_exported_to_gh() {
     let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(doc["candidates"][0]["action"], "wouldRemove", "{doc}");
     assert_eq!(fs::read_to_string(observed).unwrap(), "unset");
+}
+
+#[test]
+fn gc_protects_linked_default_with_a_remapped_tracking_namespace() {
+    let r = Repo::new();
+    r.git(
+        &r.main,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/cache/*",
+        ],
+    );
+    r.git(&r.main, &["fetch", "origin"]);
+    r.git(
+        &r.main,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/cache/main",
+        ],
+    );
+    r.git(&r.main, &["checkout", "-b", "other"]);
+    assert!(r.mabo(&r.main, &["attach", "main"]).status.success());
+    // main has moved since creation, so only the default-branch guard protects it.
+    r.advance();
+    let doc = r.sync(&r.main, &[], 0);
+    let tree = PathBuf::from(doc["default"]["path"].as_str().unwrap());
+    let before = r.snapshot(&tree);
+    let out = r.mabo(&r.main, &["gc", "--merged", "--apply", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(tree.exists(), "default worktree removed: {doc}");
+    assert_eq!(r.snapshot(&tree), before);
+    assert!(
+        !doc["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["action"] == "removed"),
+        "{doc}"
+    );
+}
+
+#[test]
+fn fetch_refspec_namespace_determines_remote_and_default_local_name() {
+    for (refspec, upstream, remote_head) in [
+        ("+refs/heads/*:refs/remotes/cache/*", false, true),
+        ("+refs/heads/*:refs/remotes/cache/*", true, false),
+        ("+refs/heads/main:refs/remotes/cache/main", false, false),
+        ("+refs/heads/m*in:refs/remotes/cache/m*in", true, true),
+    ] {
+        let r = Repo::new();
+        r.git(&r.main, &["config", "remote.origin.fetch", refspec]);
+        r.git(&r.main, &["fetch", "origin"]);
+        r.git(
+            &r.main,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/cache/main",
+            ],
+        );
+        if !remote_head {
+            r.git(&r.main, &["remote", "set-head", "origin", "--delete"]);
+        }
+        if upstream {
+            r.git(&r.main, &["config", "branch.main.remote", "origin"]);
+            r.git(&r.main, &["config", "branch.main.merge", "refs/heads/main"]);
+        }
+        let tree = r.create("topic");
+        let out = r.mabo(
+            &r.main,
+            &["meta", "set", "topic", "--base", "refs/remotes/cache/main"],
+        );
+        assert!(out.status.success());
+        r.write_commit(&tree, "local", "local\n");
+        r.advance();
+        let tip = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+        let doc = r.sync(&r.main, &["topic"], 0);
+        assert_eq!(doc["default"]["status"], "updated", "{doc}");
+        assert_eq!(doc["default"]["branch"], "refs/heads/main");
+        assert_eq!(doc["worktrees"][0]["status"], "updated", "{doc}");
+        assert_eq!(r.git(&r.main, &["rev-parse", "main"]), tip);
+        assert_eq!(
+            r.git(&r.main, &["rev-parse", "refs/remotes/cache/main"]),
+            tip
+        );
+        assert!(tree.join("remote-file").exists());
+        assert_eq!(r.git(&r.main, &["branch", "--list", "cache/main"]), "");
+    }
 }
