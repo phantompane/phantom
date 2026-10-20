@@ -625,14 +625,20 @@ impl DeleteError {
     }
 }
 
-pub fn delete_worktree(
+pub struct DeletePlan {
+    name: String,
+    worktree: WorktreeInfo,
+    path: PathBuf,
+    inside: bool,
+    changed: usize,
+}
+
+pub fn preflight_delete(
     context: &Context,
     name: &str,
     options: &DeleteOptions,
     expected_path: Option<&Path>,
-    logger: &Logger,
-    hooks: HookControl,
-) -> std::result::Result<DeleteOutcome, DeleteError> {
+) -> std::result::Result<DeletePlan, DeleteError> {
     let force = options.force;
     let keep_branch = options.keep_branch;
     let worktree = find_worktree(context, name, true, expected_path).map_err(DeleteError::bare)?;
@@ -666,29 +672,60 @@ pub fn delete_worktree(
             &worktree,
         ));
     }
-    if !force && !keep_branch && !worktree.detached {
+    if !force && (worktree.detached || !keep_branch) {
         let base = git::default_branch(&context.git_root)
             .map_err(|error| DeleteError::kept(error, &worktree))?;
-        let detail = match git::unpushed_tip(
-            &context.git_root,
-            Some(&worktree.branch),
-            worktree.head.as_deref(),
-            &base,
-        ) {
-            Some(false) => None,
-            Some(true) => Some("has unpushed commits"),
-            None => Some("has commits that could not be checked"),
-        };
-        if let Some(detail) = detail {
+        let branch = (!worktree.detached).then_some(worktree.branch.as_str());
+        let refusal =
+            match git::unpushed_tip(&context.git_root, branch, worktree.head.as_deref(), &base) {
+                Some(false) => None,
+                Some(true) => Some(false),
+                None => Some(true),
+            };
+        if let Some(unknown) = refusal {
             return Err(DeleteError::kept(
-                Error::Unpushed {
-                    name: name.to_string(),
-                    detail,
-                },
+                Error::unpushed_delete(name, worktree.detached, unknown),
                 &worktree,
             ));
         }
     }
+    Ok(DeletePlan {
+        name: name.to_string(),
+        worktree,
+        path,
+        inside,
+        changed,
+    })
+}
+
+pub fn delete_worktree(
+    context: &Context,
+    name: &str,
+    options: &DeleteOptions,
+    expected_path: Option<&Path>,
+    logger: &Logger,
+    hooks: HookControl,
+) -> std::result::Result<DeleteOutcome, DeleteError> {
+    let plan = preflight_delete(context, name, options, expected_path)?;
+    commit_delete(context, plan, options, logger, hooks)
+}
+
+pub fn commit_delete(
+    context: &Context,
+    plan: DeletePlan,
+    options: &DeleteOptions,
+    logger: &Logger,
+    hooks: HookControl,
+) -> std::result::Result<DeleteOutcome, DeleteError> {
+    let DeletePlan {
+        name,
+        worktree,
+        path,
+        inside,
+        changed,
+    } = plan;
+    let force = options.force;
+    let keep_branch = options.keep_branch;
     let commands = trust::authorize(
         &context.git_root,
         config::post_create_commands(context.config.as_ref()),
@@ -700,7 +737,7 @@ pub fn delete_worktree(
     metadata::prepare(&context.git_root).map_err(|error| DeleteError::kept(error, &worktree))?;
     if !commands.is_empty() {
         logger.log("\nRunning pre-delete commands...");
-        if let Err(error) = run_hook_commands(context, name, &commands, false, logger) {
+        if let Err(error) = run_hook_commands(context, &name, &commands, false, logger) {
             return Err(DeleteError::kept(error, &worktree));
         }
     }

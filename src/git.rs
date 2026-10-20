@@ -449,13 +449,28 @@ pub(crate) fn unpushed_tip(
     base: &Option<String>,
 ) -> Option<bool> {
     let base = base.as_deref()?;
-    let tip = branch.or_else(|| head.filter(|sha| sha.bytes().any(|byte| byte != b'0')))?;
+    // A bare name prefers `refs/tags` over `refs/heads`, so a tag with the
+    // branch's name hides the branch tip and those commits look pushed.
+    let tip = match branch {
+        Some(name) => format!("refs/heads/{name}"),
+        None => head
+            .filter(|sha| sha.bytes().any(|byte| byte != b'0'))?
+            .to_string(),
+    };
     // `--not` stays in effect for `--remotes`, so those commits are excluded.
     // A second `--not` would include them again. The trailing `--` keeps a
     // branch name that matches a worktree directory from being read as a path.
     let Ok(captured) = raw_git(
         git_root,
-        &["rev-list", "--count", tip, "--not", base, "--remotes", "--"],
+        &[
+            "rev-list",
+            "--count",
+            &tip,
+            "--not",
+            base,
+            "--remotes",
+            "--",
+        ],
     ) else {
         return None;
     };

@@ -1975,24 +1975,16 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     let partial = repo.phantom(&["delete", "feature/json", "missing-json", "--json"]);
     assert_eq!(partial.status.code(), Some(2), "{}", text(&partial.stderr));
     let partial_json = json_value(&partial);
-    assert_eq!(
-        partial_json["deleted"][0]["worktree"]["name"],
-        "feature/json"
-    );
-    assert_eq!(partial_json["deleted"][0]["branchDeleted"], true);
-    assert!(partial_json["deleted"][1]["worktree"].is_null());
-    assert!(partial_json["deleted"][1]["error"]
+    assert_eq!(partial_json["deleted"].as_array().map(Vec::len), Some(1));
+    assert!(partial_json["deleted"][0]["worktree"].is_null());
+    assert!(partial_json["deleted"][0]["error"]
         .as_str()
         .unwrap_or("")
         .contains("missing-json"));
     assert_eq!(partial_json["error"]["code"], "not_found");
     assert_eq!(partial_json["error"]["exitCode"], 2);
-    assert!(!text(&partial.stdout).contains("Deleted worktree"));
-    let gone = repo
-        .command("git", &["branch", "--list", "feature/json"])
-        .output()
-        .expect("branch");
-    assert!(text(&gone.stdout).is_empty(), "{}", text(&gone.stdout));
+    assert!(worktree.is_dir(), "a later refusal deletes nothing");
+    assert!(branch_listed(&repo, "feature/json"));
 
     let outside = repo.root.join("outside");
     fs::create_dir_all(&outside).expect("outside");
@@ -7606,10 +7598,11 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     empty_commit(&repo, &worktree, "x");
     let refused = repo.phantom(&["delete", "u"]);
     assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    let refused_text = text(&refused.stderr);
+    assert!(refused_text.contains("unpushed"), "{refused_text}");
     assert!(
-        text(&refused.stderr).contains("unpushed"),
-        "{}",
-        text(&refused.stderr)
+        refused_text.contains("Use --keep-branch to keep the branch, or --force to delete it."),
+        "{refused_text}"
     );
     assert!(worktree.is_dir());
     assert!(branch_listed(&repo, "u"));
@@ -7830,4 +7823,186 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
     );
     assert!(!both.exists());
     assert!(!branch_listed(&repo, "both"));
+}
+
+fn rev_parse(repo: &Repo, dir: &Path, spec: &str) -> String {
+    let output = repo
+        .command("git", &["rev-parse", spec])
+        .current_dir(dir)
+        .output()
+        .expect("rev-parse");
+    assert!(
+        output.status.success(),
+        "git rev-parse {spec}: {}",
+        text(&output.stderr)
+    );
+    text(&output.stdout)
+}
+
+#[test]
+fn delete_and_gc_keep_a_branch_shadowed_by_a_tag() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "v1"]).status.success());
+    let worktree = managed(&repo, "v1");
+    empty_commit(&repo, &worktree, "only on the branch");
+    let commit = rev_parse(&repo, &repo.repo, "refs/heads/v1");
+    repo.git(&["tag", "v1", "main"]);
+
+    let refused = repo.phantom(&["delete", "v1"]);
+    assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    assert!(
+        text(&refused.stderr).contains("unpushed"),
+        "{}",
+        text(&refused.stderr)
+    );
+    assert!(worktree.is_dir());
+    assert!(branch_listed(&repo, "v1"));
+    assert_eq!(rev_parse(&repo, &repo.repo, "refs/heads/v1"), commit);
+
+    age_metadata(&repo, "v1");
+    let cleaned = repo.phantom(&["gc", "--older-than", "14d", "--apply"]);
+    assert!(
+        cleaned.status.success(),
+        "{}\n{}",
+        text(&cleaned.stdout),
+        text(&cleaned.stderr)
+    );
+    let cleaned_text = text(&cleaned.stdout);
+    assert!(
+        cleaned_text.contains("skip v1 [olderThan] unpushed"),
+        "{cleaned_text}"
+    );
+    assert!(worktree.is_dir());
+    assert!(branch_listed(&repo, "v1"));
+    assert_eq!(rev_parse(&repo, &repo.repo, "refs/heads/v1"), commit);
+}
+
+#[test]
+fn delete_refuses_a_detached_worktree_until_force() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "dt"]).status.success());
+    let worktree = managed(&repo, "dt");
+    let detached = repo
+        .command("git", &["checkout", "--detach"])
+        .current_dir(&worktree)
+        .output()
+        .expect("detach");
+    assert!(detached.status.success(), "{}", text(&detached.stderr));
+    empty_commit(&repo, &worktree, "only here");
+    let commit = rev_parse(&repo, &worktree, "HEAD");
+
+    let refused = repo.phantom(&["delete", "dt"]);
+    assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    let refused_text = text(&refused.stderr);
+    assert!(refused_text.contains("unpushed"), "{refused_text}");
+    assert!(
+        refused_text.contains("Use --force to delete anyway."),
+        "{refused_text}"
+    );
+    assert!(!refused_text.contains("--keep-branch"), "{refused_text}");
+    let kept = repo.phantom(&["delete", "dt", "--keep-branch"]);
+    assert_eq!(kept.status.code(), Some(3), "{}", text(&kept.stdout));
+    assert!(worktree.is_dir());
+    assert_eq!(rev_parse(&repo, &worktree, "HEAD"), commit);
+
+    let forced = repo.phantom(&["delete", "dt", "--force"]);
+    assert!(
+        forced.status.success(),
+        "{}\n{}",
+        text(&forced.stdout),
+        text(&forced.stderr)
+    );
+    assert!(!worktree.exists());
+
+    let bare = repo.root.join("origin.git");
+    repo.git(&["init", "--bare", bare.to_str().expect("bare")]);
+    repo.git(&["remote", "add", "origin", bare.to_str().expect("origin")]);
+    repo.git(&["push", "-u", "origin", "main"]);
+    assert!(repo.phantom(&["create", "shipped"]).status.success());
+    let shipped = managed(&repo, "shipped");
+    empty_commit(&repo, &shipped, "on the remote");
+    repo.git(&["push", "-u", "origin", "shipped"]);
+    let again = repo
+        .command("git", &["checkout", "--detach"])
+        .current_dir(&shipped)
+        .output()
+        .expect("detach shipped");
+    assert!(again.status.success(), "{}", text(&again.stderr));
+    let pushed = rev_parse(&repo, &shipped, "HEAD");
+    let removed = repo.phantom(&["delete", "shipped"]);
+    assert!(
+        removed.status.success(),
+        "{}\n{}",
+        text(&removed.stdout),
+        text(&removed.stderr)
+    );
+    assert!(!shipped.exists());
+    assert_eq!(
+        rev_parse(&repo, &repo.repo, &pushed),
+        pushed,
+        "the pushed commit stays reachable"
+    );
+}
+
+#[test]
+fn delete_checks_every_name_before_removing_any() {
+    let repo = Repo::new();
+    let marker = repo.root.join("hook-ran");
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        format!("[hooks]\npre-delete = [\"touch {}\"]\n", marker.display()),
+    )
+    .expect("hooks");
+    assert!(repo.phantom(&["create", "a"]).status.success());
+    assert!(repo.phantom(&["create", "b"]).status.success());
+    assert!(repo.phantom(&["create", "c"]).status.success());
+    let a = managed(&repo, "a");
+    let b = managed(&repo, "b");
+    let c = managed(&repo, "c");
+    empty_commit(&repo, &b, "local");
+
+    let refused = repo.phantom(&["delete", "a", "b", "missing"]);
+    assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    let stderr = text(&refused.stderr);
+    assert!(stderr.contains("unpushed"), "{stderr}");
+    assert!(stderr.contains("missing"), "{stderr}");
+    assert!(a.is_dir());
+    assert!(b.is_dir());
+    assert!(c.is_dir());
+    assert!(!marker.exists(), "hooks run only after every name passes");
+    assert!(branch_listed(&repo, "a"));
+    assert!(branch_listed(&repo, "b"));
+
+    let json = repo.phantom(&["delete", "a", "b", "missing", "--json"]);
+    assert_eq!(json.status.code(), Some(3));
+    assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
+    let document = json_value(&json);
+    let entries = document["deleted"].as_array().expect("deleted");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0]["worktree"]["name"], "b");
+    assert!(entries[0]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("unpushed"));
+    assert!(entries[1]["worktree"].is_null());
+    assert!(entries[1]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("missing"));
+    assert_eq!(document["error"]["code"], "unpushed");
+    assert_eq!(document["error"]["exitCode"], 3);
+    assert!(a.is_dir());
+    assert!(b.is_dir());
+
+    let removed = repo.phantom(&["delete", "a", "c"]);
+    assert!(
+        removed.status.success(),
+        "{}\n{}",
+        text(&removed.stdout),
+        text(&removed.stderr)
+    );
+    assert!(!a.exists());
+    assert!(!c.exists());
+    assert!(b.is_dir());
+    assert!(branch_listed(&repo, "b"));
 }
