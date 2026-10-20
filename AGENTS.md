@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-- Maboroshi is a Rust CLI. The crate lives at the repository root (`Cargo.toml`, `src/`, `tests/`).
+- Maboroshi is a Rust CLI that manages local Git workspaces so many coding agents and humans can work independently in the same repository. The crate lives at the repository root (`Cargo.toml`, `src/`, `tests/`).
 - Development happens on `next`. `main` stays the previous TypeScript version.
 - Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `github`, `help`.
 - Command help text is generated from `help-data.json`.
