@@ -72,7 +72,19 @@ post-create = ["pnpm install"]
 pre-delete = ["./scripts/teardown.sh"]
 ```
 
-`ptm create` and `ptm attach` run `post-create` in the new worktree. `ptm delete` runs `pre-delete` in the worktree before removing it. Commands run in order and stop at the first failure. Unknown keys are rejected.
+`ptm create`, `ptm attach`, and `ptm github checkout` run `post-create` in the new worktree. `ptm delete` and `ptm gc --apply` run `pre-delete` in the worktree before removing it. Commands run in order and stop at the first failure. Unknown keys are rejected.
+
+Hooks run only when that repository is trusted. `.worktreeinclude` copies are not hooks and do not need trust. A repository with no hook commands never asks.
+
+On a terminal, ptm prints the project path and the hook commands, then asks `Trust this project and run its hooks? [y/N]`. `y` or `yes` saves trust and runs the hooks. Anything else, a non-terminal, or `--json` stops before the command changes the repository. The process exits 1. With `--json`, stdout is only the error object and `code` is `untrusted`. The message tells you to run `ptm trust` or pass `--no-hooks`.
+
+`ptm trust [path]` shows the hooks and asks `Trust this project? [y/N]`. `--yes` skips the question. `ptm untrust [path]` removes that repository. `ptm trust --list` prints each trusted git common directory and when it was trusted. Trust is the canonical git common directory, so the main checkout and its linked worktrees share one record. Editing the hook commands later does not ask again.
+
+The record is `$XDG_STATE_HOME/ptm/trust.toml` when `XDG_STATE_HOME` is an absolute path, otherwise `~/.local/state/ptm/trust.toml`. Each entry stores `path` and `trustedAt`.
+
+`PTM_TRUST_ALL=1` trusts every repository for that process and does not write the file. The value has to be the single character `1`. Use it in CI and containers. `--no-hooks` on `create`, `attach`, `delete`, `gc`, and `github checkout` does the worktree change and skips hooks. It does not write trust.
+
+`ptm gc` never asks, including on a terminal. An untrusted repository that has `pre-delete` hooks is skipped. The candidate detail is `untrusted hooks`. Other candidates still run. `--no-hooks` removes those worktrees without running hooks.
 
 Each hook receives:
 
@@ -112,7 +124,7 @@ A command that does not produce a result writes this object to stdout:
 }
 ```
 
-`code` is the stable machine code. `exitCode` is the process status: `1` general, `2` not found (`where`, `delete`, and `exec`, and a `--project` name or path that matches nothing), `3` validation (an invalid worktree name, an unknown or incomplete option on any command, or a `--project` name that matches more than one project), `4` not a repository. `code` values include `not_found`, `already_exists`, `branch_not_found`, `not_repository`, `uncommitted`, `validation`, `command_failed`, `spawn`, `signaled`, `projects`, and `error`.
+`code` is the stable machine code. `exitCode` is the process status: `1` general, `2` not found (`where`, `delete`, and `exec`, and a `--project` name or path that matches nothing), `3` validation (an invalid worktree name, an unknown or incomplete option on any command, or a `--project` name that matches more than one project), `4` not a repository. `code` values include `not_found`, `already_exists`, `branch_not_found`, `not_repository`, `uncommitted`, `validation`, `command_failed`, `spawn`, `signaled`, `projects`, `untrusted`, and `error`. `untrusted` exits 1. It means project hooks would have run and the repository is not trusted. Nothing was created or deleted.
 
 `delete --json` is the exception that can include both deleted entries and a top-level `error`. Entries that were removed stay in `deleted`. The failed name has `worktree: null` and a string `error`. The process still exits nonzero.
 
@@ -135,6 +147,7 @@ A command that does not produce a result writes this object to stdout:
   "owner": "grok",
   "purpose": "fix the flaky checkout test",
   "createdAt": "2026-10-18T11:46:00.000Z",
+  "createdFrom": "0123456789abcdef0123456789abcdef01234567",
   "lastUsedAt": "2026-10-18T11:46:00.000Z",
   "links": {
     "pr": { "number": 774, "url": null },
@@ -143,7 +156,7 @@ A command that does not produce a result writes this object to stdout:
 }
 ```
 
-`owner`, `purpose`, `createdAt`, `lastUsedAt`, and `links` come from `ptm/worktrees.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `ptm create`, `ptm attach`, and `ptm github checkout` write a record. `owner` is `--owner` or `PTM_AGENT_ID`, and null when neither is set. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `github checkout` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `where` and `exec` refresh `lastUsedAt` when a record already exists. A failure to update it is a warning on stderr and does not change the exit code. `delete` removes the record after Git removes the worktree. `create` and `attach` replace any record already stored at that path. `meta set` and a second `github checkout` of a worktree that already exists patch the record. `create --json` and `attach --json` include `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the worktree exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 1. The stdout document is the result object, not the error envelope. A corrupt `worktrees.json` makes `list`, `where`, and `exec` continue with null metadata fields and a stderr warning. `create`, `attach`, `delete`, `meta set`, and `github checkout` refuse and leave the file unchanged. `ptm meta set` patches the fields you pass and leaves the others. A worktree Git created outside `ptm`, including the default checkout, has null metadata fields until `meta set` or `github checkout` records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
+`owner`, `purpose`, `createdAt`, `createdFrom`, `lastUsedAt`, and `links` come from `ptm/worktrees.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `ptm create`, `ptm attach`, and `ptm github checkout` write a record. `owner` is `--owner` or `PTM_AGENT_ID`, and null when neither is set. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `github checkout` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `where` and `exec` refresh `lastUsedAt` when a record already exists. A failure to update it is a warning on stderr and does not change the exit code. `delete` removes the record after Git removes the worktree. `create` and `attach` replace any record already stored at that path. `meta set` and a second `github checkout` of a worktree that already exists patch the record. `create --json` and `attach --json` include `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the worktree exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 1. The stdout document is the result object, not the error envelope. A corrupt `worktrees.json` makes `list`, `where`, and `exec` continue with null metadata fields and a stderr warning. `create`, `attach`, `delete`, `meta set`, and `github checkout` refuse and leave the file unchanged. `createdFrom` is the full commit the branch was created from. `create` stores the new branch's HEAD. A record for a branch that already existed stores the oldest `refs/heads` reflog entry, or null when that reflog is missing. `meta set` and a later checkout leave it unchanged. A record written before this field existed has `createdFrom` null. `ptm meta set` patches the fields you pass and leaves the others. A worktree Git created outside `ptm`, including the default checkout, has null metadata fields until `meta set` or `github checkout` records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
 
 ### Commands
 
@@ -194,7 +207,7 @@ A command that does not produce a result writes this object to stdout:
 
 `branchDeleted` is false for a detached HEAD, for `--keep-branch`, and when deleting the branch failed. A failed branch delete sets `branchError` and still exits 0. A fatal per-item failure sets `error` on that entry and the top-level `error` object, and exits nonzero.
 
-`gc --json` is a dry run unless `--apply` or `--force` is set. A branch that still points at the commit it was created from is not merged. A worktree checked out on the default branch is kept. `gh pr view` receives the stored pull request URL when one was recorded. A number with no confirmed repository is unavailable, and gc says so instead of ignoring the link. `applied` is true when a removal was requested. Each candidate names the worktree, why it matched (`merged`, `pullRequest`, `orphaned`, `olderThan`), and `action`: `wouldRemove`, `removed`, `skipped`, or `failed`. `detail` explains a skip or a failure. `branchDeleted` is null on a dry run and on a skip. A removal failure sets the top-level `error` object and exits 1, and the other candidates are still listed. An empty plan exits 0.
+`gc --json` is a dry run unless `--apply` or `--force` is set. A branch that still points at its recorded `createdFrom` commit is not merged. When `createdFrom` is null, gc uses the oldest branch reflog entry for that check, and a missing reflog still counts as merged. A worktree still at that commit can match `--older-than` or an orphaned checkout. A worktree checked out on the default branch is kept. `gh pr view` receives the stored pull request URL when one was recorded. A number with no confirmed repository is unavailable, and gc says so instead of ignoring the link. `applied` is true when a removal was requested. Each candidate names the worktree, why it matched (`merged`, `pullRequest`, `orphaned`, `olderThan`), and `action`: `wouldRemove`, `removed`, `skipped`, or `failed`. `detail` explains a skip or a failure. `branchDeleted` is null on a dry run and on a skip. A removal failure sets the top-level `error` object and exits 1, and the other candidates are still listed. An empty plan exits 0.
 
 ```json
 {

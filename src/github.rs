@@ -80,6 +80,7 @@ pub fn checkout(
     logger: &Logger,
     repository: Option<&Path>,
     metadata: MetadataInput,
+    hooks: crate::trust::HookControl,
 ) -> Result<Checkout> {
     let cwd = match repository {
         Some(path) => path.to_path_buf(),
@@ -99,9 +100,17 @@ pub fn checkout(
                 pull.head_ref
             )));
         }
-        checkout_pull_request(&pull, &repo, logger, repository, metadata)
+        checkout_pull_request(&pull, &repo, logger, repository, metadata, hooks)
     } else {
-        checkout_issue(issue.number, base, &repo, logger, repository, metadata)
+        checkout_issue(
+            issue.number,
+            base,
+            &repo,
+            logger,
+            repository,
+            metadata,
+            hooks,
+        )
     }
 }
 
@@ -123,6 +132,7 @@ fn checkout_pull_request(
     logger: &Logger,
     repository: Option<&Path>,
     mut metadata: MetadataInput,
+    hooks: crate::trust::HookControl,
 ) -> Result<Checkout> {
     let context = context::open(repository)?;
     let git_root = &context.git_root;
@@ -165,12 +175,19 @@ fn checkout_pull_request(
         format!("origin/{}", pull.head_ref)
     };
     let refspec = format!("{}:{worktree_name}", upstream.trim_start_matches("origin/"));
+    let post = post_commands(&context);
+    let commands = crate::trust::authorize(
+        git_root,
+        &post,
+        crate::config::pre_delete_commands(context.config.as_ref()),
+        crate::trust::HookKind::PostCreate,
+        hooks,
+    )?;
     metadata::prepare(git_root)?;
     git::fetch(git_root, "origin", &refspec)?;
     if let Err(error) = git::set_upstream(git_root, &worktree_name, &upstream) {
         eprintln!("Warning: Could not set upstream branch: {error}");
     }
-    let commands = post_commands(&context);
     let attached =
         worktree::attach_worktree(&context, &worktree_name, &[], &commands, logger, &metadata)?;
     let message = if pull.fork {
@@ -210,6 +227,7 @@ fn checkout_issue(
     logger: &Logger,
     repository: Option<&Path>,
     mut metadata: MetadataInput,
+    hooks: crate::trust::HookControl,
 ) -> Result<Checkout> {
     let context = context::open(repository)?;
     let name = format!("issues/{number}");
@@ -231,7 +249,14 @@ fn checkout_issue(
             subject: GithubSubject::Issue { number },
         });
     }
-    let commands = post_commands(&context);
+    let post = post_commands(&context);
+    let commands = crate::trust::authorize(
+        &context.git_root,
+        &post,
+        crate::config::pre_delete_commands(context.config.as_ref()),
+        crate::trust::HookKind::PostCreate,
+        hooks,
+    )?;
     let base = base.unwrap_or("HEAD");
     let created =
         worktree::create_worktree(&context, &name, base, &[], &commands, logger, &metadata)?;
@@ -251,9 +276,10 @@ fn checkout_issue(
     })
 }
 
-/// An existing record keeps its owner, purpose, and createdAt. Links are
-/// updated and lastUsedAt moves. A worktree with no record yet is a first
-/// checkout and stores the owner.
+/// An existing record keeps its owner, purpose, createdAt, and createdFrom.
+/// Links are updated and lastUsedAt moves. A worktree with no record yet is a
+/// first checkout and stores the owner. `createdFrom` is that branch's reflog
+/// creation commit when the reflog exists.
 fn record_existing_checkout(
     context: &context::Context,
     path: &Path,

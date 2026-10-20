@@ -58,6 +58,13 @@ impl Repo {
             .env_remove("GIT_CONFIG_SYSTEM")
             .env_remove("GIT_CONFIG_COUNT")
             .env_remove("GIT_CONFIG_PARAMETERS");
+        if std::path::Path::new(program)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some("ptm")
+        {
+            command.env("PTM_TRUST_ALL", "1");
+        }
         // Parallel `git init` hardlinks the shared template and can fail with
         // "File exists" on the hook samples. Give each repo an empty template.
         if program.ends_with("git") && args.first() == Some(&"init") {
@@ -4575,6 +4582,14 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
         .as_str()
         .expect("created")
         .to_string();
+    let created_from = created_json["worktree"]["createdFrom"]
+        .as_str()
+        .expect("createdFrom")
+        .to_string();
+    assert_eq!(
+        created_from,
+        created_json["worktree"]["head"].as_str().expect("head")
+    );
 
     let from_env = repo
         .command(
@@ -4637,6 +4652,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     assert_eq!(updated_json["worktree"]["links"]["pr"]["number"], 774);
     assert_eq!(updated_json["worktree"]["links"]["issue"]["number"], 12);
     assert_eq!(updated_json["worktree"]["createdAt"], created_at);
+    assert_eq!(updated_json["worktree"]["createdFrom"], created_from);
 
     let file = repo.repo.join(".git/ptm/worktrees.json");
     let mut document: serde_json::Value =
@@ -5374,6 +5390,13 @@ impl SeparateCheckout {
             .env_remove("GIT_CONFIG_SYSTEM")
             .env_remove("GIT_CONFIG_COUNT")
             .env_remove("GIT_CONFIG_PARAMETERS");
+        if std::path::Path::new(program)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some("ptm")
+        {
+            command.env("PTM_TRUST_ALL", "1");
+        }
         if program.ends_with("git") && args.first() == Some(&"init") {
             let template = self.root.join("git-template");
             fs::create_dir_all(&template).expect("git template");
@@ -6329,6 +6352,33 @@ fn commit_in_worktree(repo: &Repo, name: &str) {
     }
 }
 
+fn clear_created_from(repo: &Repo, name: &str) {
+    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let mut document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("json");
+    let records = document["worktrees"].as_array_mut().expect("records");
+    let record = records
+        .iter_mut()
+        .find(|record| {
+            record["path"].as_str().is_some_and(|path| {
+                Path::new(path).file_name().and_then(|part| part.to_str()) == Some(name)
+            })
+        })
+        .expect(name);
+    record
+        .as_object_mut()
+        .expect("record")
+        .remove("createdFrom");
+    fs::write(
+        &file,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&document).expect("encode")
+        ),
+    )
+    .expect("rewrite");
+}
+
 fn age_metadata(repo: &Repo, name: &str) {
     let file = repo.repo.join(".git/ptm/worktrees.json");
     let mut document: serde_json::Value =
@@ -6701,6 +6751,120 @@ fn gc_does_not_remove_a_worktree_checked_out_on_the_default_branch() {
     assert!(worktree_dir(&repo, "main").is_dir());
     assert!(branch_listed(&repo, "main"));
     assert!(branch_listed(&repo, "dev"));
+}
+
+#[test]
+fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
+    let repo = Repo::new();
+    repo.git(&["config", "core.logAllRefUpdates", "false"]);
+    let created = repo.phantom(&["create", "fresh", "--json"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let head = json_value(&created)["worktree"]["head"]
+        .as_str()
+        .expect("head")
+        .to_string();
+    assert!(
+        !repo.repo.join(".git/logs/refs/heads/fresh").exists(),
+        "the fresh branch reflog must be absent"
+    );
+    repo.git(&["commit", "--allow-empty", "-m", "advance"]);
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let output = text(&applied.stdout);
+    assert!(output.contains("Nothing to clean up."), "{output}");
+    assert!(worktree_dir(&repo, "fresh").is_dir());
+    assert!(branch_listed(&repo, "fresh"));
+    assert_eq!(
+        json_value(&created)["worktree"]["createdFrom"],
+        head,
+        "create records the base commit"
+    );
+
+    age_metadata(&repo, "fresh");
+    let aged = repo.phantom(&["gc", "--older-than", "14d", "--apply"]);
+    assert!(aged.status.success(), "{}", text(&aged.stderr));
+    let aged_text = text(&aged.stdout);
+    assert!(
+        aged_text.contains("removed fresh [olderThan]"),
+        "{aged_text}"
+    );
+    assert!(!worktree_dir(&repo, "fresh").is_dir());
+    assert!(!branch_listed(&repo, "fresh"));
+}
+
+#[test]
+fn gc_removes_a_merged_worktree_when_the_branch_reflog_is_missing() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "feature"]).status.success());
+    land_branch(&repo, "feature");
+    let reflog = repo.repo.join(".git/logs/refs/heads/feature");
+    assert!(reflog.is_file(), "feature reflog");
+    fs::remove_file(&reflog).expect("remove reflog");
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let output = text(&applied.stdout);
+    assert!(output.contains("removed feature [merged]"), "{output}");
+    assert!(!worktree_dir(&repo, "feature").is_dir());
+    assert!(!branch_listed(&repo, "feature"));
+}
+
+#[test]
+fn gc_removes_an_attached_branch_that_already_moved_past_its_creation_commit() {
+    let repo = Repo::new();
+    repo.git(&["checkout", "-b", "landed"]);
+    fs::write(repo.repo.join("landed.txt"), "landed\n").expect("landed");
+    repo.git(&["add", "landed.txt"]);
+    repo.git(&["commit", "-m", "landed"]);
+    repo.git(&["checkout", "main"]);
+    repo.git(&["merge", "--ff-only", "landed"]);
+    let attached = repo.phantom(&["attach", "landed"]);
+    assert!(attached.status.success(), "{}", text(&attached.stderr));
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let output = text(&applied.stdout);
+    assert!(output.contains("removed landed [merged]"), "{output}");
+    assert!(!worktree_dir(&repo, "landed").is_dir());
+    assert!(!branch_listed(&repo, "landed"));
+}
+
+#[test]
+fn gc_removes_an_attached_merged_branch_when_its_reflog_is_missing() {
+    let repo = Repo::new();
+    repo.git(&["checkout", "-b", "landed"]);
+    fs::write(repo.repo.join("landed.txt"), "landed\n").expect("landed");
+    repo.git(&["add", "landed.txt"]);
+    repo.git(&["commit", "-m", "landed"]);
+    repo.git(&["checkout", "main"]);
+    repo.git(&["merge", "--ff-only", "landed"]);
+    let reflog = repo.repo.join(".git/logs/refs/heads/landed");
+    assert!(reflog.is_file(), "landed reflog");
+    fs::remove_file(&reflog).expect("remove reflog");
+    let attached = repo.phantom(&["attach", "landed"]);
+    assert!(attached.status.success(), "{}", text(&attached.stderr));
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let output = text(&applied.stdout);
+    assert!(output.contains("removed landed [merged]"), "{output}");
+    assert!(!worktree_dir(&repo, "landed").is_dir());
+    assert!(!branch_listed(&repo, "landed"));
+}
+
+#[test]
+fn gc_keeps_an_older_record_by_its_reflog_when_created_from_is_absent() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "fresh"]).status.success());
+    clear_created_from(&repo, "fresh");
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let output = text(&applied.stdout);
+    assert!(output.contains("Nothing to clean up."), "{output}");
+    assert!(worktree_dir(&repo, "fresh").is_dir());
+    assert!(branch_listed(&repo, "fresh"));
 }
 
 #[test]
