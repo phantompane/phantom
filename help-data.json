@@ -46,7 +46,7 @@
     },
     {
       "name": "version",
-      "description": "Display the ptm version"
+      "description": "Display the mabo version"
     },
     {
       "name": "clone",
@@ -69,7 +69,7 @@
     "create": {
       "name": "create",
       "description": "Create a new Git worktree",
-      "usage": "ptm create [--project <ref>] [name] [options]",
+      "usage": "mabo create [--project <ref>] [name] [options]",
       "options": [
         {
           "name": "project",
@@ -101,7 +101,7 @@
         {
           "name": "owner",
           "type": "string",
-          "description": "Who created the worktree. When omitted, PTM_AGENT_ID is used if that environment variable is set",
+          "description": "Who created the worktree. When omitted, MABO_AGENT_ID is used if that environment variable is set",
           "example": "--owner grok"
         },
         {
@@ -136,27 +136,27 @@
       "examples": [
         {
           "description": "Create a new worktree with an auto-generated name",
-          "command": "ptm create"
+          "command": "mabo create"
         },
         {
           "description": "Create a new worktree named 'feature-auth'",
-          "command": "ptm create feature-auth"
+          "command": "mabo create feature-auth"
         },
         {
           "description": "Create a worktree and run npm install",
-          "command": "ptm create new-feature --exec 'npm install'"
+          "command": "mabo create new-feature --exec 'npm install'"
         },
         {
           "description": "Create a worktree and copy environment files",
-          "command": "ptm create staging --copy-file .env --copy-file database.yml"
+          "command": "mabo create staging --copy-file .env --copy-file database.yml"
         },
         {
           "description": "Create a worktree from main branch",
-          "command": "ptm create feature-new --base main"
+          "command": "mabo create feature-new --base main"
         },
         {
           "description": "Create a worktree from remote branch",
-          "command": "ptm create hotfix --base origin/production"
+          "command": "mabo create hotfix --base origin/production"
         }
       ],
       "notes": [
@@ -166,18 +166,18 @@
         ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
         "Files that already exist in the new worktree are left unchanged",
         "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
-        ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] post-create commands run in the new worktree, in order, and stop at the first failure",
-        "post-create hooks run only after the repository is trusted. On a terminal, ptm shows the project path and the hook commands and asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, CI or PTM_AGENT_ID being set, or --json fails before creating the worktree. An empty value counts as unset. Run ptm trust --yes or pass --no-hooks. PTM_TRUST_ALL=1 trusts every repository for that process and writes nothing",
-        "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
+        ".mabo.toml is read from the source checkout, the checkout where the command runs. [hooks] post-create commands run in the new worktree, in order, and stop at the first failure",
+        "post-create hooks run only after the repository is trusted. On a terminal, mabo shows the project path and the hook commands and asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, CI or MABO_AGENT_ID being set, or --json fails before creating the worktree. An empty value counts as unset. Run mabo trust --yes or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
+        "--exec receives MABO=1, MABO_NAME (the worktree name), and MABO_PATH (the absolute worktree path). Post-create hooks also receive MABO_ROOT_PATH (the source checkout path)",
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
-        "New worktrees are created under $XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash> (default ~/.local/share/ptm/worktrees/...). <checkout> is the canonical main checkout directory name, so a symlink uses the same directory. <hash> is the first 8 hex digits of the SHA-256 of the canonical Git common directory. A relative XDG_DATA_HOME is ignored. worktrees-directory overrides this and is joined to the repository root",
-        "Owner, purpose, and links are stored in ptm/worktrees.json under the Git common directory. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty. where and exec refresh lastUsedAt"
+        "New worktrees are created under $XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash> (default ~/.local/share/maboroshi/worktrees/...). <checkout> is the canonical main checkout directory name, so a symlink uses the same directory. <hash> is the first 8 hex digits of the SHA-256 of the canonical Git common directory. A relative XDG_DATA_HOME is ignored. worktrees-directory overrides this and is joined to the repository root",
+        "Owner, purpose, and links are stored in maboroshi/worktrees.json under the Git common directory. --owner overrides MABO_AGENT_ID. Omit both to leave the owner empty. where and exec refresh lastUsedAt"
       ]
     },
     "attach": {
       "name": "attach",
       "description": "Attach to an existing branch by creating a new worktree",
-      "usage": "ptm attach [--project <ref>] <branch-name> [options]",
+      "usage": "mabo attach [--project <ref>] <branch-name> [options]",
       "options": [
         {
           "name": "project",
@@ -203,7 +203,7 @@
         {
           "name": "owner",
           "type": "string",
-          "description": "Who created the worktree. When omitted, PTM_AGENT_ID is used if that environment variable is set",
+          "description": "Who created the worktree. When omitted, MABO_AGENT_ID is used if that environment variable is set",
           "example": "--owner grok"
         },
         {
@@ -238,15 +238,15 @@
       "examples": [
         {
           "description": "Attach to an existing branch",
-          "command": "ptm attach main"
+          "command": "mabo attach main"
         },
         {
           "description": "Attach to a branch and pull latest changes",
-          "command": "ptm attach develop --exec 'git pull'"
+          "command": "mabo attach develop --exec 'git pull'"
         },
         {
           "description": "Attach and copy shared environment files",
-          "command": "ptm attach feature-branch --copy-file .env --copy-file .npmrc"
+          "command": "mabo attach feature-branch --copy-file .env --copy-file .npmrc"
         }
       ],
       "notes": [
@@ -256,16 +256,16 @@
         ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
         "Files that already exist in the new worktree are left unchanged",
         "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
-        "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
+        "--exec receives MABO=1, MABO_NAME (the worktree name), and MABO_PATH (the absolute worktree path). Post-create hooks also receive MABO_ROOT_PATH (the source checkout path)",
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
-        "post-create hooks run only after the repository is trusted. The prompt, refusal, ptm trust, --no-hooks, and PTM_TRUST_ALL=1 behave the same as ptm create",
-        "Owner, purpose, and links are stored in ptm/worktrees.json under the Git common directory. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty"
+        "post-create hooks run only after the repository is trusted. The prompt, refusal, mabo trust, --no-hooks, and MABO_TRUST_ALL=1 behave the same as mabo create",
+        "Owner, purpose, and links are stored in maboroshi/worktrees.json under the Git common directory. --owner overrides MABO_AGENT_ID. Omit both to leave the owner empty"
       ]
     },
     "list": {
       "name": "list",
       "description": "List all Git worktrees",
-      "usage": "ptm list [--project <ref>] [options]",
+      "usage": "mabo list [--project <ref>] [options]",
       "options": [
         {
           "name": "project",
@@ -299,15 +299,15 @@
       "examples": [
         {
           "description": "List all worktrees",
-          "command": "ptm list"
+          "command": "mabo list"
         },
         {
           "description": "List only worktree names",
-          "command": "ptm list --names"
+          "command": "mabo list --names"
         },
         {
           "description": "List only non-default worktrees",
-          "command": "ptm list --no-default"
+          "command": "mabo list --no-default"
         }
       ],
       "notes": [
@@ -322,7 +322,7 @@
     "where": {
       "name": "where",
       "description": "Output the filesystem path of a specific worktree",
-      "usage": "ptm where [--project <ref>] <worktree-name> [options]",
+      "usage": "mabo where [--project <ref>] <worktree-name> [options]",
       "options": [
         {
           "name": "project",
@@ -340,11 +340,11 @@
       "examples": [
         {
           "description": "Get the path of a worktree",
-          "command": "ptm where feature-auth"
+          "command": "mabo where feature-auth"
         },
         {
           "description": "Change directory to a worktree",
-          "command": "cd $(ptm where staging)"
+          "command": "cd $(mabo where staging)"
         }
       ],
       "notes": [
@@ -357,7 +357,7 @@
     "delete": {
       "name": "delete",
       "description": "Delete one or more Git worktrees",
-      "usage": "ptm delete [--project <ref>] <name...> [options]",
+      "usage": "mabo delete [--project <ref>] <name...> [options]",
       "options": [
         {
           "name": "project",
@@ -396,23 +396,23 @@
       "examples": [
         {
           "description": "Delete a worktree",
-          "command": "ptm delete feature-auth"
+          "command": "mabo delete feature-auth"
         },
         {
           "description": "Delete multiple worktrees in one command",
-          "command": "ptm delete feature-auth docs-cleanup spike-login"
+          "command": "mabo delete feature-auth docs-cleanup spike-login"
         },
         {
           "description": "Force delete a worktree with uncommitted changes",
-          "command": "ptm delete experimental --force"
+          "command": "mabo delete experimental --force"
         },
         {
           "description": "Delete the current worktree",
-          "command": "ptm delete --current"
+          "command": "mabo delete --current"
         },
         {
           "description": "Delete a worktree while keeping its branch",
-          "command": "ptm delete feature-auth --keep-branch"
+          "command": "mabo delete feature-auth --keep-branch"
         }
       ],
       "notes": [
@@ -422,17 +422,17 @@
         "You can pass multiple worktree names to delete them at once. If any name is refused, no worktree is deleted",
         "The associated branch will also be deleted if it's not checked out elsewhere",
         "Use --keep-branch to delete only the worktree and preserve the branch",
-        ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] pre-delete commands run in the worktree before it is removed, in order, and stop at the first failure",
-        "Pre-delete hooks receive PTM=1, PTM_NAME (the worktree name), PTM_PATH (the absolute worktree path), and PTM_ROOT_PATH (the source checkout path)",
-        "pre-delete hooks run only after the repository is trusted. On a terminal, ptm asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, CI or PTM_AGENT_ID being set, or --json fails before deleting. An empty value counts as unset. Run ptm trust --yes or pass --no-hooks. PTM_TRUST_ALL=1 trusts every repository for that process and writes nothing",
-        "delete removes a linked worktree inside the resolved worktrees directory, or one recorded in ptm/worktrees.json. An unrecorded worktree outside that directory is refused. Parent directories are removed only when the worktree is inside the resolved directory",
+        ".mabo.toml is read from the source checkout, the checkout where the command runs. [hooks] pre-delete commands run in the worktree before it is removed, in order, and stop at the first failure",
+        "Pre-delete hooks receive MABO=1, MABO_NAME (the worktree name), MABO_PATH (the absolute worktree path), and MABO_ROOT_PATH (the source checkout path)",
+        "pre-delete hooks run only after the repository is trusted. On a terminal, mabo asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, CI or MABO_AGENT_ID being set, or --json fails before deleting. An empty value counts as unset. Run mabo trust --yes or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
+        "delete removes a linked worktree inside the resolved worktrees directory, or one recorded in maboroshi/worktrees.json. An unrecorded worktree outside that directory is refused. Parent directories are removed only when the worktree is inside the resolved directory",
         "--json reports each deleted worktree, whether its branch was deleted, and per-item errors. The schema is documented in the README"
       ]
     },
     "gc": {
       "name": "gc",
       "description": "Remove stale Git worktrees",
-      "usage": "ptm gc [--project <ref>] [options]",
+      "usage": "mabo gc [--project <ref>] [options]",
       "options": [
         {
           "name": "project",
@@ -498,38 +498,38 @@
       "examples": [
         {
           "description": "Show what would be removed",
-          "command": "ptm gc"
+          "command": "mabo gc"
         },
         {
           "description": "Remove merged, closed, and orphaned worktrees",
-          "command": "ptm gc --apply"
+          "command": "mabo gc --apply"
         },
         {
           "description": "Remove worktrees that have not been used for 14 days",
-          "command": "ptm gc --older-than 14d --apply"
+          "command": "mabo gc --older-than 14d --apply"
         },
         {
           "description": "Remove one agent's stale worktrees, including dirty ones",
-          "command": "ptm gc --owner grok --force"
+          "command": "mabo gc --owner grok --force"
         }
       ],
       "notes": [
         "gc is a dry run until --apply or --force. A second apply removes nothing",
-        "gc selects linked worktrees inside the resolved worktrees directory and worktrees recorded in ptm/worktrees.json. An unrecorded worktree outside that directory is ignored",
+        "gc selects linked worktrees inside the resolved worktrees directory and worktrees recorded in maboroshi/worktrees.json. An unrecorded worktree outside that directory is ignored",
         "The current worktree, the primary checkout, and any worktree checked out on the default branch are never removed. The default branch is origin/HEAD when that ref exists, otherwise main, otherwise master",
         "A branch that still points at the commit it was created from is not merged. It can still match --older-than or --orphaned",
         "A stored pull request URL is passed to gh pr view. A number with no URL is checked only when gh can name the current repository. When gh is missing or cannot answer, gc reports that the pull request status is unavailable",
         "Another agent's worktree is removed only when it is merged, its pull request is closed or merged, it is orphaned, or --owner names that agent",
         "Dirty worktrees and worktrees with commits that are not on the default branch or a remote are skipped unless --force",
-        "Live removals run [hooks] pre-delete from .ptm.toml and then the same deletion as ptm delete. A hook failure skips that worktree and continues",
-        "gc never asks for trust. An untrusted repository with pre-delete hooks is skipped, and the detail is 'untrusted hooks'. --no-hooks removes those worktrees without running hooks. PTM_TRUST_ALL=1 trusts every repository for that process",
+        "Live removals run [hooks] pre-delete from .mabo.toml and then the same deletion as mabo delete. A hook failure skips that worktree and continues",
+        "gc never asks for trust. An untrusted repository with pre-delete hooks is skipped, and the detail is 'untrusted hooks'. --no-hooks removes those worktrees without running hooks. MABO_TRUST_ALL=1 trusts every repository for that process",
         "--json lists each candidate, why it matched, and the action taken. The schema is documented in the README"
       ]
     },
     "trust": {
       "name": "trust",
       "description": "Trust a repository so its project hooks can run",
-      "usage": "ptm trust [path] [options]",
+      "usage": "mabo trust [path] [options]",
       "options": [
         {
           "name": "yes",
@@ -551,28 +551,28 @@
       "examples": [
         {
           "description": "Trust the repository in the current directory",
-          "command": "ptm trust"
+          "command": "mabo trust"
         },
         {
           "description": "Trust a repository without a prompt",
-          "command": "ptm trust --yes /path/to/repo"
+          "command": "mabo trust --yes /path/to/repo"
         },
         {
           "description": "List trusted repositories",
-          "command": "ptm trust --list"
+          "command": "mabo trust --list"
         }
       ],
       "notes": [
-        "The trust record is keyed by the path of the canonical git common directory (git rev-parse --git-common-dir). The main checkout and its linked worktrees share one record. Deleting the checkout and cloning it again at the same path keeps the record. ptm untrust clears it. Changing hook commands does not ask again",
-        "The file is $XDG_STATE_HOME/ptm/trust.toml when XDG_STATE_HOME is an absolute path, otherwise ~/.local/state/ptm/trust.toml. Each entry has path and trustedAt",
-        "ptm trust shows the post-create and pre-delete commands from the checkout you name, then asks 'Trust this project? [y/N]'. It does not ask when CI or PTM_AGENT_ID is set, or when stdin or stderr is not a terminal. Use --yes then. A repository with no hooks can still be trusted",
-        "PTM_TRUST_ALL=1 treats every repository as trusted for that process and does not write trust.toml. Set it to the single character 1. This is for CI and containers"
+        "The trust record is keyed by the path of the canonical git common directory (git rev-parse --git-common-dir). The main checkout and its linked worktrees share one record. Deleting the checkout and cloning it again at the same path keeps the record. mabo untrust clears it. Changing hook commands does not ask again",
+        "The file is $XDG_STATE_HOME/maboroshi/trust.toml when XDG_STATE_HOME is an absolute path, otherwise ~/.local/state/maboroshi/trust.toml. Each entry has path and trustedAt",
+        "mabo trust shows the post-create and pre-delete commands from the checkout you name, then asks 'Trust this project? [y/N]'. It does not ask when CI or MABO_AGENT_ID is set, or when stdin or stderr is not a terminal. Use --yes then. A repository with no hooks can still be trusted",
+        "MABO_TRUST_ALL=1 treats every repository as trusted for that process and does not write trust.toml. Set it to the single character 1. This is for CI and containers"
       ]
     },
     "untrust": {
       "name": "untrust",
       "description": "Forget trust for a repository",
-      "usage": "ptm untrust [path] [options]",
+      "usage": "mabo untrust [path] [options]",
       "options": [
         {
           "name": "json",
@@ -583,22 +583,22 @@
       "examples": [
         {
           "description": "Forget trust for the current repository",
-          "command": "ptm untrust"
+          "command": "mabo untrust"
         },
         {
           "description": "Forget trust for a repository by path",
-          "command": "ptm untrust /path/to/repo"
+          "command": "mabo untrust /path/to/repo"
         }
       ],
       "notes": [
         "Removes the git common directory from trust.toml. A repository that is not trusted is left unchanged and the command exits 0",
-        "PTM_TRUST_ALL=1 is not stored, so untrust does not turn that environment variable off"
+        "MABO_TRUST_ALL=1 is not stored, so untrust does not turn that environment variable off"
       ]
     },
     "exec": {
       "name": "exec",
       "description": "Execute a command in a worktree directory",
-      "usage": "ptm exec [--project <ref>] <worktree-name> <command> [args...]",
+      "usage": "mabo exec [--project <ref>] <worktree-name> <command> [args...]",
       "options": [
         {
           "name": "project",
@@ -611,40 +611,40 @@
       "examples": [
         {
           "description": "Run npm test in a worktree",
-          "command": "ptm exec feature-auth npm test"
+          "command": "mabo exec feature-auth npm test"
         },
         {
           "description": "Check git status in a worktree",
-          "command": "ptm exec bugfix-123 git status"
+          "command": "mabo exec bugfix-123 git status"
         },
         {
           "description": "Pass the command's own options through",
-          "command": "ptm exec feature git branch --show-current"
+          "command": "mabo exec feature git branch --show-current"
         },
         {
           "description": "Run in another project and pass --project through to the command",
-          "command": "ptm exec --project owner/repo feature pwd --project y"
+          "command": "mabo exec --project owner/repo feature pwd --project y"
         },
         {
           "description": "Run a complex command with arguments",
-          "command": "ptm exec staging npm run build -- --production"
+          "command": "mabo exec staging npm run build -- --production"
         }
       ],
       "notes": [
         "The command is executed with the worktree directory as the working directory",
         "Put --project before the worktree name. All arguments after the worktree name are passed to the command, including options. A -- before the command is accepted but not required",
         "The exit code of the executed command is preserved",
-        "The command receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path)",
+        "The command receives MABO=1, MABO_NAME (the worktree name), and MABO_PATH (the absolute worktree path)",
         "exec updates lastUsedAt when the worktree already has a metadata record"
       ]
     },
     "meta": {
       "name": "meta",
-      "usage": "ptm meta <subcommand>",
+      "usage": "mabo meta <subcommand>",
       "description": "Show or update worktree ownership and purpose",
       "examples": [
         {
-          "command": "ptm meta set feature-auth --owner grok --purpose 'fix the flake'",
+          "command": "mabo meta set feature-auth --owner grok --purpose 'fix the flake'",
           "description": "Record the owner and purpose of an existing worktree"
         }
       ],
@@ -652,12 +652,12 @@
         "Subcommands:",
         "  set <name>   Set owner, purpose, or links on a worktree",
         "",
-        "Records live in ptm/worktrees.json under the Git common directory inside the repository. delete removes the record for the worktree."
+        "Records live in maboroshi/worktrees.json under the Git common directory inside the repository. delete removes the record for the worktree."
       ]
     },
     "meta set": {
       "name": "meta set",
-      "usage": "ptm meta set [--project <ref>] <worktree-name> [options]",
+      "usage": "mabo meta set [--project <ref>] <worktree-name> [options]",
       "description": "Set owner, purpose, or links on an existing worktree",
       "options": [
         {
@@ -670,7 +670,7 @@
         {
           "name": "owner",
           "type": "string",
-          "description": "Replace the recorded owner. PTM_AGENT_ID is not applied by meta set",
+          "description": "Replace the recorded owner. MABO_AGENT_ID is not applied by meta set",
           "example": "--owner grok"
         },
         {
@@ -699,11 +699,11 @@
       ],
       "examples": [
         {
-          "command": "ptm meta set feature-auth --purpose 'land the fix'",
+          "command": "mabo meta set feature-auth --purpose 'land the fix'",
           "description": "Change the purpose and leave the owner and links as they are"
         },
         {
-          "command": "ptm meta set feature-auth --pr https://github.com/phantompane/phantom/pull/774 --json",
+          "command": "mabo meta set feature-auth --pr https://github.com/phantompane/phantom/pull/774 --json",
           "description": "Link a pull request and print the worktree object"
         }
       ],
@@ -715,28 +715,28 @@
     },
     "preferences": {
       "name": "preferences",
-      "usage": "ptm preferences <subcommand>",
-      "description": "Manage user preferences stored in $XDG_CONFIG_HOME/ptm/config.toml",
+      "usage": "mabo preferences <subcommand>",
+      "description": "Manage user preferences stored in $XDG_CONFIG_HOME/maboroshi/config.toml",
       "examples": [
         {
-          "command": "ptm preferences set worktrees-directory ../phantom-worktrees",
+          "command": "mabo preferences set worktrees-directory ../phantom-worktrees",
           "description": "Store a custom worktrees directory (relative to the Git repository root) for all commands"
         },
         {
-          "command": "ptm preferences set directory-name-separator \"-\"",
+          "command": "mabo preferences set directory-name-separator \"-\"",
           "description": "Store a separator for flattening worktree directory names while keeping branch names unchanged"
         },
         {
-          "command": "ptm preferences set keep-branch true",
-          "description": "Keep branches by default when deleting worktrees with ptm delete"
+          "command": "mabo preferences set keep-branch true",
+          "description": "Keep branches by default when deleting worktrees with mabo delete"
         },
         {
-          "command": "ptm preferences set ghq-discovery false",
+          "command": "mabo preferences set ghq-discovery false",
           "description": "Disable automatic project discovery through ghq"
         },
         {
-          "command": "ptm preferences set root ~/ghq",
-          "description": "Store repositories cloned by ptm clone under ~/ghq"
+          "command": "mabo preferences set root ~/ghq",
+          "description": "Store repositories cloned by mabo clone under ~/ghq"
         }
       ],
       "notes": [
@@ -745,35 +745,35 @@
         "  set <key>    Set a preference value",
         "  remove <key> Remove a preference value",
         "",
-        "Preferences are stored in $XDG_CONFIG_HOME/ptm/config.toml (default ~/.config/ptm/config.toml).",
+        "Preferences are stored in $XDG_CONFIG_HOME/maboroshi/config.toml (default ~/.config/maboroshi/config.toml).",
         "The file and directory are created on the first set. Comments and formatting are preserved.",
         "Supported keys:",
-        "  worktrees-directory - path relative to the Git repo root for storing worktrees (default is $XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash>, or ~/.local/share/ptm/worktrees/...)",
+        "  worktrees-directory - path relative to the Git repo root for storing worktrees (default is $XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash>, or ~/.local/share/maboroshi/worktrees/...)",
         "  directory-name-separator - replaces '/' in worktree directory names only (defaults to / for nested directories)",
         "  keep-branch - keeps the branch when deleting a worktree (defaults to false)",
         "  ghq-discovery - discovers ghq-managed repositories as projects (defaults to true)",
-        "  root - absolute path, or ~/path, where ptm clone places repositories (defaults to the first git config ghq.root, then $GHQ_ROOT, then ~/ghq)"
+        "  root - absolute path, or ~/path, where mabo clone places repositories (defaults to the first git config ghq.root, then $GHQ_ROOT, then ~/ghq)"
       ]
     },
     "preferences get": {
       "name": "preferences get",
-      "usage": "ptm preferences get <key>",
-      "description": "Show a preference value from $XDG_CONFIG_HOME/ptm/config.toml",
+      "usage": "mabo preferences get <key>",
+      "description": "Show a preference value from $XDG_CONFIG_HOME/maboroshi/config.toml",
       "examples": [
         {
-          "command": "ptm preferences get worktrees-directory",
+          "command": "mabo preferences get worktrees-directory",
           "description": "Show the preferred worktrees directory (relative to repo root)"
         },
         {
-          "command": "ptm preferences get directory-name-separator",
+          "command": "mabo preferences get directory-name-separator",
           "description": "Show the preferred worktree directory name separator"
         },
         {
-          "command": "ptm preferences get keep-branch",
+          "command": "mabo preferences get keep-branch",
           "description": "Show whether delete keeps branches by default"
         },
         {
-          "command": "ptm preferences get ghq-discovery",
+          "command": "mabo preferences get ghq-discovery",
           "description": "Show whether ghq project discovery is enabled"
         }
       ],
@@ -783,55 +783,55 @@
     },
     "preferences set": {
       "name": "preferences set",
-      "usage": "ptm preferences set <key> <value>",
-      "description": "Set a preference value in $XDG_CONFIG_HOME/ptm/config.toml",
+      "usage": "mabo preferences set <key> <value>",
+      "description": "Set a preference value in $XDG_CONFIG_HOME/maboroshi/config.toml",
       "examples": [
         {
-          "command": "ptm preferences set worktrees-directory ../phantom-worktrees",
+          "command": "mabo preferences set worktrees-directory ../phantom-worktrees",
           "description": "Store worktrees in ../phantom-worktrees relative to the Git repository root"
         },
         {
-          "command": "ptm preferences set directory-name-separator \"-\"",
+          "command": "mabo preferences set directory-name-separator \"-\"",
           "description": "Flatten worktree directory names such as feature/test to feature-test"
         },
         {
-          "command": "ptm preferences set keep-branch true",
+          "command": "mabo preferences set keep-branch true",
           "description": "Keep branches when deleting worktrees by default"
         },
         {
-          "command": "ptm preferences set ghq-discovery false",
+          "command": "mabo preferences set ghq-discovery false",
           "description": "Disable automatic project discovery through ghq"
         }
       ],
       "notes": [
         "Supported keys: worktrees-directory, directory-name-separator, keep-branch, ghq-discovery, root",
-        "For worktrees-directory, provide a path relative to the Git repository root. When unset, new worktrees go to $XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash> (or ~/.local/share/ptm/worktrees/... when XDG_DATA_HOME is unset, empty, or relative)",
+        "For worktrees-directory, provide a path relative to the Git repository root. When unset, new worktrees go to $XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash> (or ~/.local/share/maboroshi/worktrees/... when XDG_DATA_HOME is unset, empty, or relative)",
         "For directory-name-separator, '/' keeps nested directories; any other string replaces '/' only in the directory path",
         "For keep-branch, use true to preserve branches on delete or false to keep the default branch deletion behavior",
-        "For ghq-discovery, use false to list only projects registered directly with ptm",
-        "For root, provide an absolute path or a path starting with ~/. ptm clone uses it as the repository root",
+        "For ghq-discovery, use false to list only projects registered directly with mabo",
+        "For root, provide an absolute path or a path starting with ~/. mabo clone uses it as the repository root",
         "keep-branch and ghq-discovery are stored as TOML booleans. The other keys are strings."
       ]
     },
     "preferences remove": {
       "name": "preferences remove",
-      "usage": "ptm preferences remove <key>",
-      "description": "Remove a preference value from $XDG_CONFIG_HOME/ptm/config.toml",
+      "usage": "mabo preferences remove <key>",
+      "description": "Remove a preference value from $XDG_CONFIG_HOME/maboroshi/config.toml",
       "examples": [
         {
-          "command": "ptm preferences remove worktrees-directory",
+          "command": "mabo preferences remove worktrees-directory",
           "description": "Unset the custom worktrees directory preference"
         },
         {
-          "command": "ptm preferences remove directory-name-separator",
+          "command": "mabo preferences remove directory-name-separator",
           "description": "Restore nested worktree directories that follow branch slashes"
         },
         {
-          "command": "ptm preferences remove keep-branch",
+          "command": "mabo preferences remove keep-branch",
           "description": "Restore the default behavior of deleting branches with worktrees"
         },
         {
-          "command": "ptm preferences remove ghq-discovery",
+          "command": "mabo preferences remove ghq-discovery",
           "description": "Restore the default behavior of discovering ghq projects"
         }
       ],
@@ -842,7 +842,7 @@
     "clone": {
       "name": "clone",
       "description": "Clone a Git repository into the ghq-compatible layout and register it",
-      "usage": "ptm clone <url|host/owner/repo|owner/repo> [options]",
+      "usage": "mabo clone <url|host/owner/repo|owner/repo> [options]",
       "options": [
         {
           "name": "branch",
@@ -868,77 +868,77 @@
       "examples": [
         {
           "description": "Clone owner/repo from github.com",
-          "command": "ptm clone aku11i/phantom"
+          "command": "mabo clone aku11i/phantom"
         },
         {
           "description": "Clone an SSH URL and check out a branch",
-          "command": "ptm clone git@github.com:aku11i/phantom.git --branch next"
+          "command": "mabo clone git@github.com:aku11i/phantom.git --branch next"
         },
         {
           "description": "Shallow clone and print the versioned JSON result",
-          "command": "ptm clone github.com/aku11i/phantom --depth 1 --json"
+          "command": "mabo clone github.com/aku11i/phantom --depth 1 --json"
         },
         {
           "description": "Fetch an existing checkout and register it",
-          "command": "ptm clone aku11i/phantom --update"
+          "command": "mabo clone aku11i/phantom --update"
         }
       ],
       "notes": [
         "owner/repo uses github.com. host/owner/repo uses that host.",
         "https URLs, http URLs, ssh:// URLs, and scp-style git@host:owner/repo paths are accepted. A trailing .git suffix is optional.",
         "The repository is placed at <root>/<host>/<owner>/<repo>. The host is lowercased, and a URL port is part of that directory (example.net:9443).",
-        "The root is the root key in $XDG_CONFIG_HOME/ptm/config.toml, otherwise the first git config ghq.root value, otherwise $GHQ_ROOT, otherwise ~/ghq. A configured root is used without reading git config. A git config read failure warns and falls through to $GHQ_ROOT or ~/ghq.",
-        "When that path is already the same repository root, ptm registers it and prints the path instead of cloning again. --update fetches origin in that case.",
+        "The root is the root key in $XDG_CONFIG_HOME/maboroshi/config.toml, otherwise the first git config ghq.root value, otherwise $GHQ_ROOT, otherwise ~/ghq. A configured root is used without reading git config. A git config read failure warns and falls through to $GHQ_ROOT or ~/ghq.",
+        "When that path is already the same repository root, mabo registers it and prints the path instead of cloning again. --update fetches origin in that case.",
         "remoteUrl omits http and https userinfo, including a token used as the username. ssh and scp-style URLs keep the login name. file:// URLs and absolute scp-style paths are rejected.",
         "--branch and --depth apply only when cloning. updated is true only when an existing repository was fetched.",
         "If the path exists but is not that repository, the command exits with a validation error.",
-        "The project is always registered. New worktrees for that repository are created under $XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash> unless worktrees-directory is set.",
-        "Authentication is left to Git. ptm does not call gh.",
+        "The project is always registered. New worktrees for that repository are created under $XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash> unless worktrees-directory is set.",
+        "Authentication is left to Git. mabo does not call gh.",
         "Git progress is written to stderr. With --json, stdout is only the version 1 result: path, host, owner, repo, remoteUrl, cloned, and updated."
       ]
     },
     "version": {
       "name": "version",
-      "description": "Display the ptm version",
-      "usage": "ptm version",
+      "description": "Display the mabo version",
+      "usage": "mabo version",
       "examples": [
         {
           "description": "Show version",
-          "command": "ptm version"
+          "command": "mabo version"
         }
       ],
       "notes": [
-        "Also accessible via 'ptm --version' or 'ptm -v'"
+        "Also accessible via 'mabo --version' or 'mabo -v'"
       ]
     },
     "project": {
       "name": "project",
       "description": "Manage and discover Git projects",
-      "usage": "ptm project <subcommand> [options]",
+      "usage": "mabo project <subcommand> [options]",
       "examples": [
         {
           "description": "Register the current Git repository",
-          "command": "ptm project add"
+          "command": "mabo project add"
         },
         {
           "description": "List available projects for an AI agent",
-          "command": "ptm project list --json"
+          "command": "mabo project list --json"
         },
         {
           "description": "Remove a project from the registry",
-          "command": "ptm project remove proj_550e8400-e29b-41d4-a716-446655440000"
+          "command": "mabo project remove proj_550e8400-e29b-41d4-a716-446655440000"
         }
       ],
       "notes": [
         "Available subcommands: add, list, remove",
-        "The project registry is stored in $XDG_STATE_HOME/ptm (default ~/.local/state/ptm).",
-        "Removing a project only updates ptm's registry; it never deletes the Git repository."
+        "The project registry is stored in $XDG_STATE_HOME/maboroshi (default ~/.local/state/maboroshi).",
+        "Removing a project only updates mabo's registry; it never deletes the Git repository."
       ]
     },
     "project add": {
       "name": "project add",
-      "description": "Register a Git repository as a ptm project",
-      "usage": "ptm project add [path] [options]",
+      "description": "Register a Git repository as a mabo project",
+      "usage": "mabo project add [path] [options]",
       "options": [
         {
           "name": "json",
@@ -953,8 +953,8 @@
     },
     "project list": {
       "name": "project list",
-      "description": "List registered and discovered ptm projects",
-      "usage": "ptm project list [options]",
+      "description": "List registered and discovered mabo projects",
+      "usage": "mabo project list [options]",
       "options": [
         {
           "name": "json",
@@ -982,8 +982,8 @@
     },
     "project remove": {
       "name": "project remove",
-      "description": "Remove a Git project from ptm's registry",
-      "usage": "ptm project remove <id|name|path> [options]",
+      "description": "Remove a Git project from mabo's registry",
+      "usage": "mabo project remove <id|name|path> [options]",
       "options": [
         {
           "name": "json",
@@ -1000,15 +1000,15 @@
     },
     "github": {
       "name": "github",
-      "usage": "ptm github <subcommand> [options]",
+      "usage": "mabo github <subcommand> [options]",
       "description": "GitHub-specific commands for worktrees",
       "examples": [
         {
-          "command": "ptm github checkout 123",
+          "command": "mabo github checkout 123",
           "description": "Create a worktree for PR or issue #123"
         },
         {
-          "command": "ptm gh checkout 456",
+          "command": "mabo gh checkout 456",
           "description": "Same as above, using the gh alias"
         }
       ],
@@ -1025,7 +1025,7 @@
     },
     "github checkout": {
       "name": "github checkout",
-      "usage": "ptm github checkout [--project <ref>] <number> [options]",
+      "usage": "mabo github checkout [--project <ref>] <number> [options]",
       "description": "Create a worktree for a GitHub PR or issue",
       "options": [
         {
@@ -1043,7 +1043,7 @@
         {
           "name": "owner",
           "type": "string",
-          "description": "Who created the worktree. When omitted, PTM_AGENT_ID is used if that environment variable is set",
+          "description": "Who created the worktree. When omitted, MABO_AGENT_ID is used if that environment variable is set",
           "example": "--owner grok"
         },
         {
@@ -1065,15 +1065,15 @@
       ],
       "examples": [
         {
-          "command": "ptm github checkout 123",
+          "command": "mabo github checkout 123",
           "description": "Create a worktree for PR #123 (checks out PR branch)"
         },
         {
-          "command": "ptm github checkout 456",
+          "command": "mabo github checkout 456",
           "description": "Create a worktree for issue #456 (creates new branch)"
         },
         {
-          "command": "ptm github checkout 789 --base develop",
+          "command": "mabo github checkout 789 --base develop",
           "description": "Create a worktree for issue #789 based on develop branch"
         }
       ],
@@ -1081,7 +1081,7 @@
         "For same-repo PRs: Worktree name matches the PR branch (e.g., 'feature/add-logging')",
         "For fork PRs: Worktree name is '{owner}/{branch}' (e.g., 'aku11i/feature/add-logging')",
         "For Issues: Creates worktree named 'issues/{number}' with a new branch",
-        "The pull request or issue number and URL are stored on the worktree. --owner and --purpose are recorded the same way as ptm create",
+        "The pull request or issue number and URL are stored on the worktree. --owner and --purpose are recorded the same way as mabo create",
         "",
         "Requirements:",
         "  - GitHub CLI (gh) must be installed",
@@ -1091,15 +1091,15 @@
     },
     "gh": {
       "name": "github",
-      "usage": "ptm github <subcommand> [options]",
+      "usage": "mabo github <subcommand> [options]",
       "description": "GitHub-specific commands for worktrees",
       "examples": [
         {
-          "command": "ptm github checkout 123",
+          "command": "mabo github checkout 123",
           "description": "Create a worktree for PR or issue #123"
         },
         {
-          "command": "ptm gh checkout 456",
+          "command": "mabo gh checkout 456",
           "description": "Same as above, using the gh alias"
         }
       ],
@@ -1116,7 +1116,7 @@
     },
     "gh checkout": {
       "name": "github checkout",
-      "usage": "ptm gh checkout [--project <ref>] <number> [options]",
+      "usage": "mabo gh checkout [--project <ref>] <number> [options]",
       "description": "Create a worktree for a GitHub PR or issue",
       "options": [
         {
@@ -1134,7 +1134,7 @@
         {
           "name": "owner",
           "type": "string",
-          "description": "Who created the worktree. When omitted, PTM_AGENT_ID is used if that environment variable is set",
+          "description": "Who created the worktree. When omitted, MABO_AGENT_ID is used if that environment variable is set",
           "example": "--owner grok"
         },
         {
@@ -1156,15 +1156,15 @@
       ],
       "examples": [
         {
-          "command": "ptm github checkout 123",
+          "command": "mabo github checkout 123",
           "description": "Create a worktree for PR #123 (checks out PR branch)"
         },
         {
-          "command": "ptm github checkout 456",
+          "command": "mabo github checkout 456",
           "description": "Create a worktree for issue #456 (creates new branch)"
         },
         {
-          "command": "ptm github checkout 789 --base develop",
+          "command": "mabo github checkout 789 --base develop",
           "description": "Create a worktree for issue #789 based on develop branch"
         }
       ],
@@ -1172,7 +1172,7 @@
         "For same-repo PRs: Worktree name matches the PR branch (e.g., 'feature/add-logging')",
         "For fork PRs: Worktree name is '{owner}/{branch}' (e.g., 'aku11i/feature/add-logging')",
         "For Issues: Creates worktree named 'issues/{number}' with a new branch",
-        "The pull request or issue number and URL are stored on the worktree. --owner and --purpose are recorded the same way as ptm create",
+        "The pull request or issue number and URL are stored on the worktree. --owner and --purpose are recorded the same way as mabo create",
         "",
         "Requirements:",
         "  - GitHub CLI (gh) must be installed",

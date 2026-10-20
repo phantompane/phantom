@@ -71,7 +71,7 @@ pub fn decide(facts: Facts) -> Decision {
 }
 
 pub fn trust_all() -> bool {
-    std::env::var("PTM_TRUST_ALL").ok().as_deref() == Some("1")
+    std::env::var("MABO_TRUST_ALL").ok().as_deref() == Some("1")
 }
 
 pub fn answer_is_yes(line: &str) -> bool {
@@ -84,7 +84,7 @@ pub fn answer_is_yes(line: &str) -> bool {
 pub fn prompts() -> bool {
     may_prompt(
         env_present("CI"),
-        env_present("PTM_AGENT_ID"),
+        env_present("MABO_AGENT_ID"),
         std::io::stdin().is_terminal(),
         std::io::stderr().is_terminal(),
     )
@@ -228,7 +228,7 @@ pub fn format_hooks(post_create: &[String], pre_delete: &[String]) -> String {
 
 pub fn refusal_message(project: &str, post_create: &[String], pre_delete: &[String]) -> String {
     format!(
-        "Untrusted project: {}\n{}\nRefusing to run project hooks. Run `ptm trust` or pass `--no-hooks`.",
+        "Untrusted project: {}\n{}\nRefusing to run project hooks. Run `mabo trust` or pass `--no-hooks`.",
         visible_text(project),
         format_hooks(post_create, pre_delete)
     )
@@ -312,13 +312,16 @@ fn state_dir() -> Result<PathBuf> {
     if let Some(value) = std::env::var_os("XDG_STATE_HOME") {
         let path = PathBuf::from(&value);
         if !value.is_empty() && path.is_absolute() {
-            return Ok(path.join("ptm"));
+            return Ok(path.join("maboroshi"));
         }
     }
     let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) else {
         return Err(Error::msg("HOME is not set"));
     };
-    Ok(PathBuf::from(home).join(".local").join("state").join("ptm"))
+    Ok(PathBuf::from(home)
+        .join(".local")
+        .join("state")
+        .join("maboroshi"))
 }
 
 fn load() -> Result<BTreeMap<String, String>> {

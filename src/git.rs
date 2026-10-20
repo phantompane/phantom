@@ -314,8 +314,8 @@ pub fn top_level(cwd: &Path) -> Result<PathBuf> {
 }
 
 /// Checkout the command is running in: `git rev-parse --show-toplevel` of the
-/// current directory. `.ptm.toml` and `.worktreeinclude` are read from here,
-/// and hooks receive this path as `PTM_ROOT_PATH`.
+/// current directory. `.mabo.toml` and `.worktreeinclude` are read from here,
+/// and hooks receive this path as `MABO_ROOT_PATH`.
 pub fn source_checkout(fallback: &Path) -> PathBuf {
     let Ok(cwd) = std::env::current_dir() else {
         return fallback.to_path_buf();
@@ -584,7 +584,7 @@ worktree /repo
 HEAD abcdef1234567890
 branch refs/heads/main
 
-worktree /repo/.git/ptm/worktrees/feature
+worktree /repo/.git/maboroshi/worktrees/feature
 HEAD 1234567890abcdef
 branch refs/heads/feature/name
 prunable

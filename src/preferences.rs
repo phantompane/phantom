@@ -15,7 +15,7 @@ pub const SUPPORTED_KEYS: &[&str] = &[
 ];
 
 const NEW_FILE_COMMENT: &str =
-    "# ptm user preferences. `ptm preferences` reads and writes this file.\n";
+    "# mabo user preferences. `mabo preferences` reads and writes this file.\n";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Preferences {
@@ -245,7 +245,7 @@ mod tests {
             .expect("clock")
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "ptm-preferences-{label}-{}-{nanos}",
+            "mabo-preferences-{label}-{}-{nanos}",
             std::process::id()
         ))
     }
@@ -253,12 +253,12 @@ mod tests {
     #[test]
     fn round_trip_preserves_comments_under_xdg_config_home() {
         let xdg = xdg_config("round-trip");
-        let path = xdg.join("ptm").join("config.toml");
+        let path = xdg.join("maboroshi").join("config.toml");
         assert!(!path.exists());
 
         set_preference_at(&path, "keep-branch", "true").expect("set");
         let created = fs::read_to_string(&path).expect("created");
-        assert!(created.starts_with("# ptm user preferences"), "{created}");
+        assert!(created.starts_with("# mabo user preferences"), "{created}");
         assert!(created.contains("keep-branch = true\n"), "{created}");
         assert!(!created.contains("keepBranch"), "{created}");
         assert!(!created.contains("\"true\""), "{created}");
@@ -323,7 +323,7 @@ directory-name-separator = \"/\"
     #[test]
     fn invalid_toml_and_unknown_keys_name_the_file() {
         let xdg = xdg_config("invalid");
-        let path = xdg.join("ptm").join("config.toml");
+        let path = xdg.join("maboroshi").join("config.toml");
         fs::create_dir_all(path.parent().expect("parent")).expect("dir");
 
         fs::write(&path, "{\n").expect("toml");
@@ -382,7 +382,7 @@ directory-name-separator = \"/\"
     #[test]
     fn missing_file_is_empty_and_remove_does_not_create_it() {
         let xdg = xdg_config("missing");
-        let path = xdg.join("ptm").join("config.toml");
+        let path = xdg.join("maboroshi").join("config.toml");
         let loaded = load_preferences_from(&path).expect("missing");
         assert_eq!(loaded, Preferences::default());
         let error = remove_preference_at(&path, "keep-branch").expect_err("remove");
@@ -409,7 +409,7 @@ directory-name-separator = \"/\"
     #[test]
     fn root_preference_is_an_absolute_or_tilde_path() {
         let xdg = xdg_config("root");
-        let path = xdg.join("ptm").join("config.toml");
+        let path = xdg.join("maboroshi").join("config.toml");
         let error = set_preference_at(&path, "root", "relative").expect_err("relative");
         assert!(error.to_string().contains("absolute"), "{error}");
         assert!(!path.exists());

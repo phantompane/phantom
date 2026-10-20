@@ -928,7 +928,7 @@ fn resolve_data_dir(home: &str, xdg_state_home: Option<&str>) -> PathBuf {
         Some(state) if Path::new(state).is_absolute() => PathBuf::from(state),
         _ => PathBuf::from(home).join(".local").join("state"),
     };
-    base.join("ptm")
+    base.join("maboroshi")
 }
 
 fn empty_registry() -> RegistryState {
@@ -1190,16 +1190,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_data_dir_uses_xdg_state_home_ptm() {
+    fn default_data_dir_uses_xdg_state_home_mabo() {
         assert_eq!(
             resolve_data_dir("/home/user", Some("/var/state")),
-            PathBuf::from("/var/state/ptm")
+            PathBuf::from("/var/state/maboroshi")
         );
     }
 
     #[test]
-    fn default_data_dir_falls_back_to_home_local_state_ptm() {
-        let fallback = PathBuf::from("/home/user/.local/state/ptm");
+    fn default_data_dir_falls_back_to_home_local_state_mabo() {
+        let fallback = PathBuf::from("/home/user/.local/state/maboroshi");
         assert_eq!(resolve_data_dir("/home/user", None), fallback);
         assert_eq!(resolve_data_dir("/home/user", Some("")), fallback);
         assert_eq!(
@@ -1529,7 +1529,7 @@ mod tests {
         fs::write(repo.join("README.md"), "hi\n").expect("readme");
         git_ok(&repo, &["add", "README.md"]);
         git_ok(&repo, &["commit", "-m", "initial"]);
-        let worktree = repo.join(".git/ptm/worktrees/feature");
+        let worktree = repo.join(".git/maboroshi/worktrees/feature");
         git_ok(
             &repo,
             &[
@@ -1591,13 +1591,13 @@ mod tests {
             .expect("inside .git"),
             main
         );
-        let missing = resolve_directory_reference("/no/such/ptm-project", &dir, &home);
+        let missing = resolve_directory_reference("/no/such/maboroshi-project", &dir, &home);
         let missing = missing.expect_err("missing path");
         assert!(matches!(missing, Error::PathNotFound(_)));
         assert_eq!(missing.exit_code(), crate::error::NOT_FOUND);
         assert_eq!(
             missing.to_string(),
-            "Path '/no/such/ptm-project' does not exist"
+            "Path '/no/such/maboroshi-project' does not exist"
         );
         let option = resolve_project_ref("--json").expect_err("option");
         assert!(matches!(option, Error::Validation(_)));

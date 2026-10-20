@@ -64,14 +64,14 @@ fn data() -> Result<&'static HelpFile> {
 pub fn main_help() -> Result<String> {
     let file = data()?;
     let mut lines = Vec::new();
-    lines.push(bold("ptm - Git Worktree Manager"));
+    lines.push(bold("mabo - Git Worktree Manager"));
     lines.push(String::new());
     lines.push(dim(
         "A CLI tool for managing Git worktrees with enhanced functionality",
     ));
     lines.push(String::new());
     lines.push(bold("USAGE"));
-    lines.push("  ptm <command> [options]".to_string());
+    lines.push("  mabo <command> [options]".to_string());
     lines.push(String::new());
     lines.push(bold("COMMANDS"));
     let max_name = file
@@ -102,7 +102,7 @@ pub fn main_help() -> Result<String> {
     ));
     lines.push(String::new());
     lines.push(dim(
-        "Run 'ptm <command> --help' for more information on a command.",
+        "Run 'mabo <command> --help' for more information on a command.",
     ));
     Ok(lines.join("\n"))
 }
@@ -114,7 +114,7 @@ pub fn command_help(key: &str) -> Result<Option<String>> {
         return Ok(None);
     };
     let mut lines = Vec::new();
-    lines.push(bold(&format!("ptm {}", help.name)));
+    lines.push(bold(&format!("mabo {}", help.name)));
     lines.push(dim(&help.description));
     lines.push(String::new());
     lines.push(bold("USAGE"));
@@ -293,25 +293,29 @@ mod tests {
     }
 
     #[test]
-    fn rendered_help_names_the_ptm_command() {
+    fn rendered_help_names_the_mabo_command() {
         let main = main_help().expect("main help");
-        assert!(main.contains("ptm - Git Worktree Manager"));
-        assert!(main.contains("ptm <command> [options]"));
-        assert!(main.contains("Run 'ptm <command> --help'"));
+        assert!(main.contains("mabo - Git Worktree Manager"));
+        assert!(main.contains("mabo <command> [options]"));
+        assert!(main.contains("Run 'mabo <command> --help'"));
         assert!(!main.contains("Phantom"), "{main}");
+        assert!(!main.contains("ptm"), "{main}");
+        assert!(!main.contains("PTM"), "{main}");
         assert!(!mentions_phantom_command(&main), "{main}");
         let file = data().expect("help data");
         assert!(!file.helps.is_empty());
         for key in file.helps.keys() {
             let help = command_help(key).expect("render").expect(key);
             assert!(
-                help.contains("ptm "),
-                "{key} help does not name ptm:\n{help}"
+                help.contains("mabo "),
+                "{key} help does not name mabo:\n{help}"
             );
             assert!(
                 !help.contains("Phantom"),
                 "{key} still names Phantom:\n{help}"
             );
+            assert!(!help.contains("ptm"), "{key} still names ptm:\n{help}");
+            assert!(!help.contains("PTM"), "{key} still names PTM:\n{help}");
             assert!(
                 !mentions_phantom_command(&help),
                 "{key} still tells the user to run phantom:\n{help}"
@@ -320,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn help_names_worktrees_and_ptm_env() {
+    fn help_names_worktrees_and_mabo_env() {
         let main = main_help().expect("main help");
         assert!(main.contains("Create a new Git worktree"));
         assert!(main.contains("List all Git worktrees"));
@@ -330,16 +334,17 @@ mod tests {
         assert!(!main.contains("(phantoms)"));
         for key in ["create", "attach", "delete", "exec"] {
             let help = command_help(key).expect("render").expect(key);
-            assert!(help.contains("PTM_NAME"), "{key}:\n{help}");
-            assert!(help.contains("PTM_PATH"), "{key}:\n{help}");
+            assert!(help.contains("MABO_NAME"), "{key}:\n{help}");
+            assert!(help.contains("MABO_PATH"), "{key}:\n{help}");
             assert!(!help.contains("PHANTOM"), "{key}:\n{help}");
+            assert!(!help.contains("PTM"), "{key}:\n{help}");
         }
         for key in ["create", "attach", "delete"] {
             let help = command_help(key).expect("render").expect(key);
-            assert!(help.contains("PTM_ROOT_PATH"), "{key}:\n{help}");
+            assert!(help.contains("MABO_ROOT_PATH"), "{key}:\n{help}");
         }
         let exec = command_help("exec").expect("render").expect("exec");
-        assert!(!exec.contains("PTM_ROOT_PATH"), "{exec}");
+        assert!(!exec.contains("MABO_ROOT_PATH"), "{exec}");
     }
 
     fn mentions_phantom_command(help: &str) -> bool {

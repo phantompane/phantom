@@ -36,10 +36,10 @@ impl Repo {
         );
     }
 
-    fn phantom(&self, args: &[&str]) -> std::process::Output {
-        self.command(env!("CARGO_BIN_EXE_ptm"), args)
+    fn mabo(&self, args: &[&str]) -> std::process::Output {
+        self.command(env!("CARGO_BIN_EXE_mabo"), args)
             .output()
-            .expect("phantom")
+            .expect("mabo")
     }
 
     fn command(&self, program: &str, args: &[&str]) -> Command {
@@ -53,7 +53,7 @@ impl Repo {
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_DATA_HOME", self.root.join("xdg"))
             .env_remove("GHQ_ROOT")
-            .env_remove("PTM_AGENT_ID")
+            .env_remove("MABO_AGENT_ID")
             .env_remove("PHANTOM_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
@@ -62,9 +62,9 @@ impl Repo {
         if std::path::Path::new(program)
             .file_name()
             .and_then(|name| name.to_str())
-            == Some("ptm")
+            == Some("mabo")
         {
-            command.env("PTM_TRUST_ALL", "1");
+            command.env("MABO_TRUST_ALL", "1");
         }
         // Parallel `git init` hardlinks the shared template and can fail with
         // "File exists" on the hook samples. Give each repo an empty template.
@@ -84,8 +84,8 @@ impl Drop for Repo {
 }
 
 fn managed_directory(git_root: &Path, xdg: &Path) -> PathBuf {
-    let common = phantom::git::canonical_common_dir(git_root).expect("common dir");
-    phantom::paths::default_worktrees_directory(git_root, &common, xdg).path
+    let common = maboroshi::git::canonical_common_dir(git_root).expect("common dir");
+    maboroshi::paths::default_worktrees_directory(git_root, &common, xdg).path
 }
 
 fn managed(repo: &Repo, relative: &str) -> PathBuf {
@@ -108,13 +108,13 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim_end().to_string()
 }
 
-fn phantom_color(
+fn mabo_color(
     repo: &Repo,
     args: &[&str],
     no_color: Option<&str>,
     force_color: Option<&str>,
 ) -> std::process::Output {
-    let mut command = repo.command(env!("CARGO_BIN_EXE_ptm"), args);
+    let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), args);
     command.env_remove("NO_COLOR").env_remove("FORCE_COLOR");
     if let Some(value) = no_color {
         command.env("NO_COLOR", value);
@@ -122,36 +122,36 @@ fn phantom_color(
     if let Some(value) = force_color {
         command.env("FORCE_COLOR", value);
     }
-    command.output().expect("phantom")
+    command.output().expect("mabo")
 }
 
 #[test]
 fn help_is_plain_when_stdout_is_not_a_tty() {
     let repo = Repo::new();
-    let help = phantom_color(&repo, &["--help"], None, None);
+    let help = mabo_color(&repo, &["--help"], None, None);
     assert!(help.status.success());
     assert!(
         !text(&help.stdout).contains('\u{1b}'),
         "piped help should not include ANSI color: {}",
         text(&help.stdout)
     );
-    let list = phantom_color(&repo, &["list", "--help"], None, None);
+    let list = mabo_color(&repo, &["list", "--help"], None, None);
     assert!(list.status.success());
     assert!(!text(&list.stdout).contains('\u{1b}'));
 
-    let forced = phantom_color(&repo, &["--help"], None, Some("1"));
+    let forced = mabo_color(&repo, &["--help"], None, Some("1"));
     assert!(
         text(&forced.stdout).contains('\u{1b}'),
         "FORCE_COLOR=1 should color piped help"
     );
 
-    let no_color = phantom_color(&repo, &["--help"], Some("1"), Some("1"));
+    let no_color = mabo_color(&repo, &["--help"], Some("1"), Some("1"));
     assert!(
         !text(&no_color.stdout).contains('\u{1b}'),
         "NO_COLOR disables color even when FORCE_COLOR is set"
     );
 
-    let disabled = phantom_color(&repo, &["github", "checkout", "--help"], None, Some("0"));
+    let disabled = mabo_color(&repo, &["github", "checkout", "--help"], None, Some("0"));
     assert!(!text(&disabled.stdout).contains('\u{1b}'));
 }
 
@@ -169,23 +169,23 @@ fn outside_a_git_repository_is_a_phantom_error() {
         &["gc"],
     ] {
         let output = repo
-            .command(env!("CARGO_BIN_EXE_ptm"), args)
+            .command(env!("CARGO_BIN_EXE_mabo"), args)
             .current_dir(&outside)
             .output()
-            .expect("phantom");
+            .expect("mabo");
         let stderr = text(&output.stderr);
         assert!(
             !stderr.to_ascii_lowercase().contains("fatal:"),
             "{args:?} leaked git output: {stderr}"
         );
         assert!(
-            stderr.contains("Not a git repository. Run ptm from inside a Git repository."),
+            stderr.contains("Not a git repository. Run mabo from inside a Git repository."),
             "{args:?} stderr: {stderr}"
         );
         assert_eq!(output.status.code(), Some(4), "{args:?} stderr: {stderr}");
     }
     let help = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["--help"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["--help"])
         .current_dir(&outside)
         .output()
         .expect("help");
@@ -195,28 +195,29 @@ fn outside_a_git_repository_is_a_phantom_error() {
 #[test]
 fn version_help_and_unknown_command() {
     let repo = Repo::new();
-    let version = repo.phantom(&["--version"]);
+    let version = repo.mabo(&["--version"]);
     assert!(version.status.success());
     let version_line = text(&version.stdout);
     assert!(
-        version_line.starts_with("ptm v7.0.0-alpha.4+rust"),
+        version_line.starts_with("mabo v7.0.0-alpha.4+rust"),
         "{version_line}"
     );
-    assert_ne!(version_line, "ptm v7.0.0-alpha.4");
-    let subcommand = repo.phantom(&["version"]);
+    assert!(!version_line.contains("ptm"), "{version_line}");
+    assert_ne!(version_line, "mabo v7.0.0-alpha.4");
+    let subcommand = repo.mabo(&["version"]);
     assert_eq!(text(&subcommand.stdout), version_line);
 
-    let help = repo.phantom(&["--help"]);
+    let help = repo.mabo(&["--help"]);
     assert!(help.status.success());
     let help_text = text(&help.stdout);
-    assert!(help_text.contains("ptm - Git Worktree Manager"));
+    assert!(help_text.contains("mabo - Git Worktree Manager"));
     assert!(!help_text.contains("Phantom"), "{help_text}");
-    assert!(help_text.contains("ptm <command> [options]"));
-    assert!(help_text.contains("Run 'ptm <command> --help'"));
+    assert!(help_text.contains("mabo <command> [options]"));
+    assert!(help_text.contains("Run 'mabo <command> --help'"));
     assert!(!help_text.contains("phantom <command>"));
 
     for args in [["version", "--help"], ["project", "--help"]] {
-        let command_help = repo.phantom(&args);
+        let command_help = repo.mabo(&args);
         assert!(command_help.status.success(), "{args:?}");
         let command_text = text(&command_help.stdout);
         assert!(
@@ -225,18 +226,18 @@ fn version_help_and_unknown_command() {
         );
     }
 
-    let where_help = repo.phantom(&["where", "--help"]);
+    let where_help = repo.mabo(&["where", "--help"]);
     assert!(where_help.status.success());
     let where_text = text(&where_help.stdout);
-    assert!(where_text.contains("ptm where"));
-    assert!(where_text.contains("ptm where [--project <ref>] <worktree-name> [options]"));
+    assert!(where_text.contains("mabo where"));
+    assert!(where_text.contains("mabo where [--project <ref>] <worktree-name> [options]"));
     assert!(!where_text.contains("phantom where"));
 
-    let missing_where = repo.phantom(&["where"]);
+    let missing_where = repo.mabo(&["where"]);
     assert_eq!(missing_where.status.code(), Some(3));
-    assert!(text(&missing_where.stderr).contains("Usage: ptm where <worktree-name>"));
+    assert!(text(&missing_where.stderr).contains("Usage: mabo where <worktree-name>"));
 
-    let unknown = repo.phantom(&["nope"]);
+    let unknown = repo.mabo(&["nope"]);
     assert_eq!(unknown.status.code(), Some(1));
     assert!(text(&unknown.stderr).contains("Unknown command 'nope'"));
 }
@@ -257,7 +258,7 @@ fn linked_worktree_git_file_and_insteadof_canonical_name() {
     assert!(gitfile.is_file(), "{}", gitfile.display());
     let from_worktree = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["list", "-p", worktree.to_str().expect("worktree"), "--json"],
         )
         .output()
@@ -269,7 +270,7 @@ fn linked_worktree_git_file_and_insteadof_canonical_name() {
     );
     let from_gitfile = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["list", "-p", gitfile.to_str().expect("git file"), "--json"],
         )
         .output()
@@ -312,7 +313,7 @@ fn linked_worktree_git_file_and_insteadof_canonical_name() {
     );
     let added = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &[
                 "project",
                 "add",
@@ -323,7 +324,7 @@ fn linked_worktree_git_file_and_insteadof_canonical_name() {
         .output()
         .expect("project add");
     assert!(added.status.success(), "{}", text(&added.stderr));
-    let catalog = repo.phantom(&["project", "list", "--json"]);
+    let catalog = repo.mabo(&["project", "list", "--json"]);
     assert!(catalog.status.success(), "{}", text(&catalog.stderr));
     let catalog = json_value(&catalog);
     let entry = catalog["projects"]
@@ -364,7 +365,7 @@ fn removed_tmux_options_are_unknown() {
         vec!["gh", "checkout", "1", "-t"],
     ];
     for args in cases {
-        let output = repo.phantom(&args);
+        let output = repo.mabo(&args);
         assert_eq!(
             output.status.code(),
             Some(3),
@@ -382,39 +383,41 @@ fn removed_tmux_options_are_unknown() {
 #[test]
 fn create_list_where_delete_and_attach() {
     let repo = Repo::new();
-    let created = repo.phantom(&["create", "feature/add-tests"]);
+    let created = repo.mabo(&["create", "feature/add-tests"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(text(&created.stdout).contains("Created worktree 'feature/add-tests' at "));
     let worktree = managed(&repo, "feature/add-tests");
     assert!(worktree.join("README.md").is_file());
     assert!(!repo.repo.join(".git/phantom").exists());
+    assert!(!repo.repo.join(".git/ptm").exists());
+    assert!(repo.repo.join(".git/maboroshi/worktrees.json").is_file());
 
-    let duplicate = repo.phantom(&["create", "feature/add-tests"]);
+    let duplicate = repo.mabo(&["create", "feature/add-tests"]);
     assert_eq!(duplicate.status.code(), Some(3));
     assert!(text(&duplicate.stderr).contains("already exists"));
 
-    let names = repo.phantom(&["list", "--names", "--no-default"]);
+    let names = repo.mabo(&["list", "--names", "--no-default"]);
     assert!(names.status.success(), "{}", text(&names.stderr));
     assert_eq!(text(&names.stdout), "feature/add-tests");
 
-    let empty = repo.phantom(&["list", "--no-default"]);
+    let empty = repo.mabo(&["list", "--no-default"]);
     let _ = empty;
-    let where_path = repo.phantom(&["where", "feature/add-tests"]);
+    let where_path = repo.mabo(&["where", "feature/add-tests"]);
     assert_eq!(where_path.status.code(), Some(0));
     assert_eq!(text(&where_path.stdout), worktree.to_string_lossy());
 
-    let missing = repo.phantom(&["where", "missing-worktree"]);
+    let missing = repo.mabo(&["where", "missing-worktree"]);
     assert_eq!(missing.status.code(), Some(2));
     assert!(text(&missing.stderr).contains("not found"));
 
     repo.git(&["branch", "existing-feature"]);
-    let attached = repo.phantom(&["attach", "existing-feature"]);
+    let attached = repo.mabo(&["attach", "existing-feature"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     assert!(text(&attached.stdout).contains("Attached worktree: existing-feature"));
-    let missing_branch = repo.phantom(&["attach", "missing-branch"]);
+    let missing_branch = repo.mabo(&["attach", "missing-branch"]);
     assert_eq!(missing_branch.status.code(), Some(2));
 
-    let kept = repo.phantom(&["delete", "existing-feature", "--keep-branch"]);
+    let kept = repo.mabo(&["delete", "existing-feature", "--keep-branch"]);
     assert!(kept.status.success(), "{}", text(&kept.stderr));
     assert!(text(&kept.stdout).contains("kept its branch 'existing-feature'"));
     let branch = repo
@@ -423,19 +426,19 @@ fn create_list_where_delete_and_attach() {
         .expect("branch");
     assert!(text(&branch.stdout).contains("existing-feature"));
 
-    let deleted = repo.phantom(&["delete", "feature/add-tests"]);
+    let deleted = repo.mabo(&["delete", "feature/add-tests"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     assert!(text(&deleted.stdout).contains("and its branch 'feature/add-tests'"));
     assert!(!worktree.exists());
-    let missing_delete = repo.phantom(&["delete", "missing-worktree"]);
+    let missing_delete = repo.mabo(&["delete", "missing-worktree"]);
     assert_eq!(missing_delete.status.code(), Some(2));
 }
 
 #[test]
 fn invalid_config_names_the_file_and_the_problem() {
     let repo = Repo::new();
-    fs::write(repo.repo.join(".ptm.toml"), "[\n").expect("config");
-    let created = repo.phantom(&["create", "feature/bad-toml"]);
+    fs::write(repo.repo.join(".mabo.toml"), "[\n").expect("config");
+    let created = repo.mabo(&["create", "feature/bad-toml"]);
     let stderr = text(&created.stderr);
     assert!(
         !created.status.success(),
@@ -443,7 +446,7 @@ fn invalid_config_names_the_file_and_the_problem() {
         text(&created.stdout)
     );
     assert!(
-        stderr.contains(".ptm.toml"),
+        stderr.contains(".mabo.toml"),
         "stderr should name the file: {stderr}"
     );
     assert!(
@@ -453,28 +456,28 @@ fn invalid_config_names_the_file_and_the_problem() {
     assert!(!managed(&repo, "feature/bad-toml").exists());
 
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npost-create = \"pnpm install\"\n",
     )
     .expect("schema");
-    let created = repo.phantom(&["where", "feature/bad-toml"]);
+    let created = repo.mabo(&["where", "feature/bad-toml"]);
     let stderr = text(&created.stderr);
     assert!(!created.status.success(), "{}", text(&created.stdout));
-    assert!(stderr.contains(".ptm.toml"), "{stderr}");
+    assert!(stderr.contains(".mabo.toml"), "{stderr}");
     assert!(
         stderr.contains("post-create") || stderr.contains("invalid type"),
         "{stderr}"
     );
 
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "worktreesDirectory = \".phantom\"\n",
     )
     .expect("unknown");
-    let created = repo.phantom(&["where", "feature/bad-toml"]);
+    let created = repo.mabo(&["where", "feature/bad-toml"]);
     let stderr = text(&created.stderr);
     assert!(!created.status.success(), "{}", text(&created.stdout));
-    assert!(stderr.contains(".ptm.toml"), "{stderr}");
+    assert!(stderr.contains(".mabo.toml"), "{stderr}");
     assert!(stderr.contains("worktreesDirectory"), "{stderr}");
 }
 
@@ -482,7 +485,7 @@ fn invalid_config_names_the_file_and_the_problem() {
 fn github_checkout_logs_the_post_create_hook() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npost-create = [\"true\"]\n",
     )
     .expect("config");
@@ -505,7 +508,7 @@ fn github_checkout_logs_the_post_create_hook() {
     );
 
     let cli = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["github", "checkout", "7"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["github", "checkout", "7"])
         .env("PATH", &path)
         .output()
         .expect("cli");
@@ -526,11 +529,11 @@ fn github_checkout_logs_the_post_create_hook() {
 fn post_create_failure_reports_the_created_worktree() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npost-create = [\"phantom-missing-post-create-bin\"]\n",
     )
     .expect("config");
-    let created = repo.phantom(&["create", "feature/hooks"]);
+    let created = repo.mabo(&["create", "feature/hooks"]);
     let worktree = managed(&repo, "feature/hooks");
     assert!(
         worktree.join("README.md").is_file(),
@@ -562,7 +565,7 @@ fn post_create_failure_reports_the_created_worktree() {
     assert_eq!(created.status.code(), Some(127), "{stderr}");
 
     repo.git(&["branch", "existing-hook"]);
-    let attached = repo.phantom(&["attach", "existing-hook"]);
+    let attached = repo.mabo(&["attach", "existing-hook"]);
     let attached_path = managed(&repo, "existing-hook");
     assert!(attached_path.join("README.md").is_file());
     assert!(
@@ -585,11 +588,11 @@ fn copies_worktreeinclude_files_and_runs_post_create() {
     fs::write(repo.repo.join(".env.local"), "API_KEY=test-value\n").expect("env");
     fs::write(repo.repo.join(".worktreeinclude"), ".env.local\n").expect("include");
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npost-create = [\"touch post-create.txt\"]\n",
     )
     .expect("config");
-    let created = repo.phantom(&["create", "feature/config"]);
+    let created = repo.mabo(&["create", "feature/config"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -610,10 +613,13 @@ fn copies_worktreeinclude_files_and_runs_post_create() {
 fn hooks_run_in_order_stop_on_failure_and_export_root_path() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         r#"[hooks]
 post-create = [
-  "printf '%s' \"$PTM_ROOT_PATH\" > root-path.txt",
+  "printf '%s' \"$MABO_ROOT_PATH\" > root-path.txt",
+  "printf '%s' \"$MABO\" > mabo-flag.txt",
+  "printf '%s' \"$MABO_NAME\" > mabo-name.txt",
+  "printf '%s' \"$MABO_PATH\" > mabo-path.txt",
   "printf '%s' \"$PTM\" > ptm-flag.txt",
   "printf '%s' \"$PTM_NAME\" > ptm-name.txt",
   "printf '%s' \"$PTM_PATH\" > ptm-path.txt",
@@ -634,7 +640,7 @@ pre-delete = [
     )
     .expect("toml");
 
-    let created = repo.phantom(&["create", "feature/hooks-order"]);
+    let created = repo.mabo(&["create", "feature/hooks-order"]);
     let worktree = managed(&repo, "feature/hooks-order");
     assert_eq!(created.status.code(), Some(1), "{}", text(&created.stderr));
     assert_eq!(
@@ -642,16 +648,28 @@ pre-delete = [
         repo.repo.display().to_string()
     );
     assert_eq!(
-        fs::read_to_string(worktree.join("ptm-flag.txt")).expect("flag"),
+        fs::read_to_string(worktree.join("mabo-flag.txt")).expect("flag"),
         "1"
     );
     assert_eq!(
-        fs::read_to_string(worktree.join("ptm-name.txt")).expect("name"),
+        fs::read_to_string(worktree.join("mabo-name.txt")).expect("name"),
         "feature/hooks-order"
     );
     assert_eq!(
-        fs::read_to_string(worktree.join("ptm-path.txt")).expect("path"),
+        fs::read_to_string(worktree.join("mabo-path.txt")).expect("path"),
         worktree.display().to_string()
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("ptm-flag.txt")).expect("old ptm flag"),
+        ""
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("ptm-name.txt")).expect("old ptm name"),
+        ""
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("ptm-path.txt")).expect("old ptm path"),
+        ""
     );
     assert_eq!(
         fs::read_to_string(worktree.join("phantom-flag.txt")).expect("old flag"),
@@ -672,7 +690,7 @@ pre-delete = [
     assert!(worktree.join("first.txt").is_file());
     assert!(!worktree.join("skipped.txt").exists());
 
-    let deleted = repo.phantom(&["delete", "--force", "feature/hooks-order"]);
+    let deleted = repo.mabo(&["delete", "--force", "feature/hooks-order"]);
     let stderr = text(&deleted.stderr);
     assert!(!deleted.status.success(), "{}", text(&deleted.stdout));
     assert!(stderr.contains("exit code 9"), "{stderr}");
@@ -687,7 +705,7 @@ pre-delete = [
 #[test]
 fn hooks_follow_the_source_checkout_when_run_from_a_worktree() {
     let repo = Repo::new();
-    let source_created = repo.phantom(&["create", "feature/source"]);
+    let source_created = repo.mabo(&["create", "feature/source"]);
     assert!(
         source_created.status.success(),
         "{}\n{}",
@@ -696,15 +714,15 @@ fn hooks_follow_the_source_checkout_when_run_from_a_worktree() {
     );
     let source = managed(&repo, "feature/source");
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npost-create = [\"touch from-main.txt\"]\npre-delete = [\"touch pre-from-main.txt\"]\n",
     )
     .expect("main hooks");
     fs::write(
-        source.join(".ptm.toml"),
+        source.join(".mabo.toml"),
         r#"[hooks]
-post-create = ["printf '%s' \"$PTM_ROOT_PATH\" > root-path.txt"]
-pre-delete = ["printf '%s' \"$PTM_ROOT_PATH\" > \"$PTM_ROOT_PATH/pre-root.txt\""]
+post-create = ["printf '%s' \"$MABO_ROOT_PATH\" > root-path.txt"]
+pre-delete = ["printf '%s' \"$MABO_ROOT_PATH\" > \"$MABO_ROOT_PATH/pre-root.txt\""]
 "#,
     )
     .expect("source hooks");
@@ -718,7 +736,7 @@ pre-delete = ["printf '%s' \"$PTM_ROOT_PATH\" > \"$PTM_ROOT_PATH/pre-root.txt\""
     assert_ne!(source_path, repo.repo.display().to_string());
 
     let created = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "feature/child"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "feature/child"])
         .current_dir(&source)
         .output()
         .expect("create");
@@ -737,7 +755,7 @@ pre-delete = ["printf '%s' \"$PTM_ROOT_PATH\" > \"$PTM_ROOT_PATH/pre-root.txt\""
 
     let deleted = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["delete", "--force", "feature/child"],
         )
         .current_dir(&source)
@@ -760,7 +778,7 @@ pre-delete = ["printf '%s' \"$PTM_ROOT_PATH\" > \"$PTM_ROOT_PATH/pre-root.txt\""
 fn phantom_config_json_is_not_read() {
     let repo = Repo::new();
     fs::write(repo.repo.join("phantom.config.json"), "{").expect("json");
-    let created = repo.phantom(&["create", "feature/no-json"]);
+    let created = repo.mabo(&["create", "feature/no-json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -773,7 +791,7 @@ fn phantom_config_json_is_not_read() {
 #[test]
 fn preferences_and_project_registry() {
     let repo = Repo::new();
-    let set = repo.phantom(&["preferences", "set", "keep-branch", "true"]);
+    let set = repo.mabo(&["preferences", "set", "keep-branch", "true"]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     let set_stdout = text(&set.stdout);
     assert!(set_stdout.contains("keep-branch"), "{set_stdout}");
@@ -781,16 +799,16 @@ fn preferences_and_project_registry() {
     assert!(
         set_stdout.contains(
             repo.home
-                .join(".config/ptm/config.toml")
+                .join(".config/maboroshi/config.toml")
                 .to_str()
                 .expect("path")
         ),
         "{set_stdout}"
     );
-    let get = repo.phantom(&["preferences", "get", "keep-branch"]);
+    let get = repo.mabo(&["preferences", "get", "keep-branch"]);
     assert_eq!(text(&get.stdout), "true");
 
-    let added = repo.phantom(&["project", "add", "--json"]);
+    let added = repo.mabo(&["project", "add", "--json"]);
     assert!(added.status.success(), "{}", text(&added.stderr));
     let value: serde_json::Value = serde_json::from_str(&text(&added.stdout)).expect("json");
     assert_eq!(value["status"], "added");
@@ -800,8 +818,8 @@ fn preferences_and_project_registry() {
         repo.repo.to_string_lossy().as_ref()
     );
 
-    repo.phantom(&["preferences", "set", "ghq-discovery", "false"]);
-    let listed = repo.phantom(&["project", "list", "--json"]);
+    repo.mabo(&["preferences", "set", "ghq-discovery", "false"]);
+    let listed = repo.mabo(&["project", "list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let catalog: serde_json::Value = serde_json::from_str(&text(&listed.stdout)).expect("catalog");
     assert_eq!(catalog["version"], 2);
@@ -810,80 +828,97 @@ fn preferences_and_project_registry() {
     assert_eq!(catalog["projects"][0]["name"], "repo");
     assert_eq!(catalog["projects"][0]["canonicalName"], "repo");
 
-    let removed = repo.phantom(&[
+    let removed = repo.mabo(&[
         "project",
         "remove",
         value["project"]["id"].as_str().expect("id"),
         "--json",
     ]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
-    let empty = repo.phantom(&["project", "list", "--json"]);
+    let empty = repo.mabo(&["project", "list", "--json"]);
     let empty_catalog: serde_json::Value =
         serde_json::from_str(&text(&empty.stdout)).expect("empty");
     assert_eq!(empty_catalog["projects"].as_array().map(Vec::len), Some(0));
 }
 
 #[test]
-fn project_registry_is_stored_under_xdg_state_home_ptm() {
+fn project_registry_is_stored_under_xdg_state_home_maboroshi() {
     let repo = Repo::new();
     let legacy = repo.root.join("state/phantom");
+    let previous = repo.root.join("state/ptm");
     write_legacy_registry(&legacy);
+    write_legacy_registry(&previous);
     let legacy_body = fs::read_to_string(legacy.join("projects.json")).expect("legacy");
+    let previous_body = fs::read_to_string(previous.join("projects.json")).expect("previous");
 
-    let added = repo.phantom(&["project", "add", "--json"]);
+    let added = repo.mabo(&["project", "add", "--json"]);
     assert!(added.status.success(), "{}", text(&added.stderr));
-    let registry = fs::read_to_string(repo.root.join("state/ptm/projects.json")).expect("registry");
+    let registry =
+        fs::read_to_string(repo.root.join("state/maboroshi/projects.json")).expect("registry");
     assert!(registry.contains("\"name\": \"repo\""));
     assert!(!registry.contains("proj_550e8400-e29b-41d4-a716-446655440000"));
     assert_eq!(
         fs::read_to_string(legacy.join("projects.json")).expect("legacy unchanged"),
         legacy_body
     );
+    assert_eq!(
+        fs::read_to_string(previous.join("projects.json")).expect("previous unchanged"),
+        previous_body
+    );
 
-    let disabled = repo.phantom(&["preferences", "set", "ghq-discovery", "false"]);
+    let disabled = repo.mabo(&["preferences", "set", "ghq-discovery", "false"]);
     assert!(disabled.status.success(), "{}", text(&disabled.stderr));
-    let listed = repo.phantom(&["project", "list", "--json"]);
+    let listed = repo.mabo(&["project", "list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let catalog: serde_json::Value = serde_json::from_str(&text(&listed.stdout)).expect("catalog");
     assert_eq!(catalog["projects"].as_array().map(Vec::len), Some(1));
     assert_eq!(catalog["projects"][0]["name"], "repo");
     assert_eq!(catalog["projects"][0]["source"], "registry");
 
-    let help = repo.phantom(&["project", "--help"]);
+    let help = repo.mabo(&["project", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
     let help_text = text(&help.stdout);
-    assert!(help_text.contains("$XDG_STATE_HOME/ptm"));
-    assert!(help_text.contains("~/.local/state/ptm"));
+    assert!(help_text.contains("$XDG_STATE_HOME/maboroshi"));
+    assert!(help_text.contains("~/.local/state/maboroshi"));
     assert!(!help_text.contains("XDG_STATE_HOME/phantom"));
     assert!(!help_text.contains(".local/state/phantom"));
+    assert!(!help_text.contains("XDG_STATE_HOME/ptm"));
+    assert!(!help_text.contains(".local/state/ptm"));
 }
 
 #[test]
-fn project_registry_defaults_to_home_local_state_ptm() {
+fn project_registry_defaults_to_home_local_state_maboroshi() {
     let repo = Repo::new();
     let legacy = repo.home.join(".local/state/phantom");
+    let previous = repo.home.join(".local/state/ptm");
     write_legacy_registry(&legacy);
+    write_legacy_registry(&previous);
     let legacy_body = fs::read_to_string(legacy.join("projects.json")).expect("legacy");
-    let disabled = repo.phantom(&["preferences", "set", "ghq-discovery", "false"]);
+    let previous_body = fs::read_to_string(previous.join("projects.json")).expect("previous");
+    let disabled = repo.mabo(&["preferences", "set", "ghq-discovery", "false"]);
     assert!(disabled.status.success(), "{}", text(&disabled.stderr));
 
     let added = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["project", "add", "--json"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["project", "add", "--json"])
         .env_remove("XDG_STATE_HOME")
         .output()
         .expect("add");
     assert!(added.status.success(), "{}", text(&added.stderr));
-    let registry =
-        fs::read_to_string(repo.home.join(".local/state/ptm/projects.json")).expect("registry");
+    let registry = fs::read_to_string(repo.home.join(".local/state/maboroshi/projects.json"))
+        .expect("registry");
     assert!(registry.contains("\"name\": \"repo\""));
     assert!(!registry.contains("proj_550e8400-e29b-41d4-a716-446655440000"));
     assert_eq!(
         fs::read_to_string(legacy.join("projects.json")).expect("legacy unchanged"),
         legacy_body
     );
+    assert_eq!(
+        fs::read_to_string(previous.join("projects.json")).expect("previous unchanged"),
+        previous_body
+    );
 
     let listed = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["project", "list", "--names"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["project", "list", "--names"])
         .env("XDG_STATE_HOME", "relative/state")
         .output()
         .expect("list");
@@ -915,10 +950,10 @@ fn write_legacy_registry(dir: &std::path::Path) {
 #[test]
 fn preferences_file_uses_xdg_config_home() {
     let repo = Repo::new();
-    let path = repo.home.join(".config/ptm/config.toml");
+    let path = repo.home.join(".config/maboroshi/config.toml");
     let gitconfig = fs::read_to_string(repo.home.join(".gitconfig")).expect("gitconfig");
 
-    let missing = repo.phantom(&["preferences", "get", "keep-branch"]);
+    let missing = repo.mabo(&["preferences", "get", "keep-branch"]);
     assert!(missing.status.success(), "{}", text(&missing.stderr));
     let missing_stdout = text(&missing.stdout);
     assert!(missing_stdout.contains("is not set"), "{missing_stdout}");
@@ -928,7 +963,7 @@ fn preferences_file_uses_xdg_config_home() {
     );
     assert!(!path.exists());
 
-    let invalid_bool = repo.phantom(&["preferences", "set", "keep-branch", "yes"]);
+    let invalid_bool = repo.mabo(&["preferences", "set", "keep-branch", "yes"]);
     assert_eq!(invalid_bool.status.code(), Some(3));
     assert!(
         text(&invalid_bool.stderr).contains("true"),
@@ -937,7 +972,7 @@ fn preferences_file_uses_xdg_config_home() {
     );
     assert!(!path.exists());
 
-    let set = repo.phantom(&["preferences", "set", "directory-name-separator", "-"]);
+    let set = repo.mabo(&["preferences", "set", "directory-name-separator", "-"]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     let written = fs::read_to_string(&path).expect("config");
     assert!(
@@ -954,7 +989,7 @@ fn preferences_file_uses_xdg_config_home() {
         "# header\nkeep-branch = false # inline\n\n# separator\ndirectory-name-separator = \"-\"\n",
     )
     .expect("seed");
-    let updated = repo.phantom(&["preferences", "set", "keep-branch", "true"]);
+    let updated = repo.mabo(&["preferences", "set", "keep-branch", "true"]);
     assert!(updated.status.success(), "{}", text(&updated.stderr));
     let written = fs::read_to_string(&path).expect("updated");
     assert!(written.contains("# header"), "{written}");
@@ -966,20 +1001,20 @@ fn preferences_file_uses_xdg_config_home() {
         "{written}"
     );
 
-    let removed = repo.phantom(&["preferences", "remove", "keep-branch"]);
+    let removed = repo.mabo(&["preferences", "remove", "keep-branch"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
     let written = fs::read_to_string(&path).expect("removed");
     assert!(!written.contains("keep-branch"), "{written}");
     assert!(written.contains("# separator"), "{written}");
 
     fs::write(&path, "{\n").expect("invalid");
-    let invalid = repo.phantom(&["preferences", "get", "keep-branch"]);
+    let invalid = repo.mabo(&["preferences", "get", "keep-branch"]);
     assert_eq!(invalid.status.code(), Some(1));
     let stderr = text(&invalid.stderr);
     assert!(stderr.contains(path.to_str().expect("path")), "{stderr}");
 
     fs::write(&path, "editor = \"code\"\n").expect("unknown");
-    let unknown = repo.phantom(&["preferences", "get", "ghq-discovery"]);
+    let unknown = repo.mabo(&["preferences", "get", "ghq-discovery"]);
     assert_eq!(unknown.status.code(), Some(1));
     let stderr = text(&unknown.stderr);
     assert!(stderr.contains("editor"), "{stderr}");
@@ -987,7 +1022,8 @@ fn preferences_file_uses_xdg_config_home() {
 
     fs::remove_file(&path).expect("cleanup");
     repo.git(&["config", "--global", "phantom.keepBranch", "true"]);
-    let ignored = repo.phantom(&["preferences", "get", "keep-branch"]);
+    repo.git(&["config", "--global", "ptm.keepBranch", "true"]);
+    let ignored = repo.mabo(&["preferences", "get", "keep-branch"]);
     assert!(ignored.status.success(), "{}", text(&ignored.stderr));
     assert!(
         text(&ignored.stdout).contains("is not set"),
@@ -1009,8 +1045,8 @@ fn keep_branch_preference_applies_to_delete() {
         removable.to_str().expect("path"),
         "HEAD",
     ]);
-    repo.phantom(&["preferences", "set", "keep-branch", "true"]);
-    let deleted = repo.phantom(&["delete", "removable"]);
+    repo.mabo(&["preferences", "set", "keep-branch", "true"]);
+    let deleted = repo.mabo(&["delete", "removable"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     assert!(text(&deleted.stdout).contains("kept its branch 'removable'"));
     let branch = repo
@@ -1023,11 +1059,11 @@ fn keep_branch_preference_applies_to_delete() {
 #[test]
 fn removed_ai_command_and_preference_are_unknown() {
     let repo = Repo::new();
-    let command = repo.phantom(&["ai", "feature"]);
+    let command = repo.mabo(&["ai", "feature"]);
     assert_eq!(command.status.code(), Some(1));
     assert!(text(&command.stderr).contains("Unknown command 'ai feature'"));
 
-    let preference = repo.phantom(&["preferences", "set", "ai", "claude"]);
+    let preference = repo.mabo(&["preferences", "set", "ai", "claude"]);
     assert_eq!(preference.status.code(), Some(3));
     let stderr = text(&preference.stderr);
     assert!(stderr.contains("Unknown preference 'ai'"), "{stderr}");
@@ -1037,11 +1073,11 @@ fn removed_ai_command_and_preference_are_unknown() {
 #[test]
 fn removed_edit_command_and_editor_preference_are_unknown() {
     let repo = Repo::new();
-    let command = repo.phantom(&["edit", "feature"]);
+    let command = repo.mabo(&["edit", "feature"]);
     assert_eq!(command.status.code(), Some(1));
     assert!(text(&command.stderr).contains("Unknown command 'edit feature'"));
 
-    let preference = repo.phantom(&["preferences", "get", "editor"]);
+    let preference = repo.mabo(&["preferences", "get", "editor"]);
     assert_eq!(preference.status.code(), Some(3));
     let stderr = text(&preference.stderr);
     assert!(stderr.contains("Unknown preference 'editor'"), "{stderr}");
@@ -1051,7 +1087,7 @@ fn removed_edit_command_and_editor_preference_are_unknown() {
 #[test]
 fn removed_shell_command_and_flag_are_unknown() {
     let repo = Repo::new();
-    let command = repo.phantom(&["shell", "feature"]);
+    let command = repo.mabo(&["shell", "feature"]);
     assert_eq!(command.status.code(), Some(1));
     assert!(text(&command.stderr).contains("Unknown command 'shell feature'"));
 
@@ -1059,7 +1095,7 @@ fn removed_shell_command_and_flag_are_unknown() {
         vec!["create", "name", "--shell"],
         vec!["attach", "main", "-s"],
     ] {
-        let output = repo.phantom(&args);
+        let output = repo.mabo(&args);
         assert_eq!(
             output.status.code(),
             Some(3),
@@ -1084,7 +1120,7 @@ fn removed_fzf_option_is_unknown() {
         vec!["exec", "--fzf", "true"],
     ];
     for args in cases {
-        let output = repo.phantom(&args);
+        let output = repo.mabo(&args);
         assert_eq!(
             output.status.code(),
             Some(3),
@@ -1102,7 +1138,7 @@ fn removed_fzf_option_is_unknown() {
 #[test]
 fn reports_when_only_the_default_worktree_exists() {
     let repo = Repo::new();
-    let result = repo.phantom(&["list", "--no-default"]);
+    let result = repo.mabo(&["list", "--no-default"]);
     assert_eq!(result.status.code(), Some(0), "{}", text(&result.stderr));
     assert!(text(&result.stdout).contains("No sub worktrees found"));
 }
@@ -1110,7 +1146,7 @@ fn reports_when_only_the_default_worktree_exists() {
 #[test]
 fn project_add_from_a_linked_worktree_is_idempotent() {
     let repo = Repo::new();
-    let added = repo.phantom(&["project", "add", "--json"]);
+    let added = repo.mabo(&["project", "add", "--json"]);
     assert!(added.status.success(), "{}", text(&added.stderr));
     let value: serde_json::Value = serde_json::from_str(&text(&added.stdout)).expect("json");
     let linked = repo.root.join("linked-worktree");
@@ -1123,7 +1159,7 @@ fn project_add_from_a_linked_worktree_is_idempotent() {
     ]);
     let again = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["project", "add", linked.to_str().expect("path"), "--json"],
         )
         .current_dir(&linked)
@@ -1143,7 +1179,7 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
     let ghq = bin.join("ghq");
     fs::write(
         &ghq,
-        "#!/bin/sh\nif [ \"$1\" != \"list\" ] || [ \"$2\" != \"--full-path\" ]; then\n  exit 2\nfi\nprintf \"%s\\n\" \"$PTM_TEST_GHQ_PROJECT\"\n",
+        "#!/bin/sh\nif [ \"$1\" != \"list\" ] || [ \"$2\" != \"--full-path\" ]; then\n  exit 2\nfi\nprintf \"%s\\n\" \"$MABO_TEST_GHQ_PROJECT\"\n",
     )
     .expect("ghq");
     use std::os::unix::fs::PermissionsExt;
@@ -1156,9 +1192,9 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
         std::env::var("PATH").unwrap_or_default()
     );
     let discovered = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["project", "list", "--json"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["project", "list", "--json"])
         .env("PATH", &path)
-        .env("PTM_TEST_GHQ_PROJECT", &repo.repo)
+        .env("MABO_TEST_GHQ_PROJECT", &repo.repo)
         .output()
         .expect("list");
     assert!(discovered.status.success(), "{}", text(&discovered.stderr));
@@ -1177,13 +1213,13 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
     .expect("fail");
     fs::set_permissions(&ghq, perms).expect("chmod");
     let added = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["project", "add", "--json"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["project", "add", "--json"])
         .env("PATH", &path)
         .output()
         .expect("add");
     assert!(added.status.success(), "{}", text(&added.stderr));
     let warned = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["project", "list", "--json"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["project", "list", "--json"])
         .env("PATH", &path)
         .output()
         .expect("warn");
@@ -1227,12 +1263,12 @@ fn worktreeinclude_copies_only_matching_gitignored_files() {
 
     let created = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["create", "copied", "--copy-file", "notes.log"],
         )
         .current_dir(repo.repo.join("nested"))
         .output()
-        .expect("phantom");
+        .expect("mabo");
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -1253,7 +1289,7 @@ fn worktreeinclude_copies_only_matching_gitignored_files() {
     assert!(!worktree.join("from-config.local").exists());
 
     repo.git(&["branch", "attached"]);
-    let attached = repo.phantom(&["attach", "attached"]);
+    let attached = repo.mabo(&["attach", "attached"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     let attached_path = managed(&repo, "attached");
     assert_eq!(read_copy(&attached_path.join("secret.env")), "secret\n");
@@ -1274,16 +1310,16 @@ fn copies_gitignored_files_from_the_checkout_the_command_runs_in() {
         "add",
         "-b",
         "source",
-        ".git/ptm/worktrees/source",
+        ".git/maboroshi/worktrees/source",
     ]);
-    let source = repo.repo.join(".git/ptm/worktrees/source");
+    let source = repo.repo.join(".git/maboroshi/worktrees/source");
     fs::write(source.join("secret.env"), "from-source\n").expect("source env");
 
     let created = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "copied"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "copied"])
         .current_dir(&source)
         .output()
-        .expect("phantom");
+        .expect("mabo");
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -1333,7 +1369,7 @@ fn copy_file_globs_ignore_brackets_in_the_repository_path() {
     git(&["commit", "-m", "initial"]);
     fs::write(repo_dir.join(".gitignore"), "*.env\n").expect("gitignore");
     fs::write(repo_dir.join("kept.env"), "kept\n").expect("kept");
-    let output = Command::new(env!("CARGO_BIN_EXE_ptm"))
+    let output = Command::new(env!("CARGO_BIN_EXE_mabo"))
         .args(["create", "copied", "--copy-file", "*.env"])
         .current_dir(&repo_dir)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -1342,7 +1378,7 @@ fn copy_file_globs_ignore_brackets_in_the_repository_path() {
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_DATA_HOME", root.join("xdg"))
         .output()
-        .expect("phantom");
+        .expect("mabo");
     assert!(output.status.success(), "{}", text(&output.stderr));
     assert_eq!(
         fs::read_to_string(
@@ -1357,7 +1393,7 @@ fn copy_file_globs_ignore_brackets_in_the_repository_path() {
 #[test]
 fn concurrent_project_add_processes_keep_every_record() {
     let repo = Repo::new();
-    repo.phantom(&["preferences", "set", "ghq-discovery", "false"]);
+    repo.mabo(&["preferences", "set", "ghq-discovery", "false"]);
     let mut children = Vec::new();
     for index in 0..6 {
         let path = repo.root.join(format!("project-{index}"));
@@ -1370,7 +1406,7 @@ fn concurrent_project_add_processes_keep_every_record() {
         assert!(init.status.success(), "{}", text(&init.stderr));
         let child = repo
             .command(
-                env!("CARGO_BIN_EXE_ptm"),
+                env!("CARGO_BIN_EXE_mabo"),
                 &["project", "add", path.to_str().expect("path"), "--json"],
             )
             .stdout(std::process::Stdio::piped())
@@ -1383,7 +1419,7 @@ fn concurrent_project_add_processes_keep_every_record() {
         let output = child.wait_with_output().expect("wait");
         assert!(output.status.success(), "{}", text(&output.stderr));
     }
-    let listed = repo.phantom(&["project", "list", "--names"]);
+    let listed = repo.mabo(&["project", "list", "--names"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let names = text(&listed.stdout);
     for index in 0..6 {
@@ -1392,10 +1428,10 @@ fn concurrent_project_add_processes_keep_every_record() {
 }
 
 #[test]
-fn create_and_attach_exec_export_ptm_env() {
+fn create_and_attach_exec_export_mabo_env() {
     let repo = Repo::new();
-    let script = "printf '%s\\n' \"$PTM\" \"$PTM_NAME\" \"$PTM_PATH\" \"$PHANTOM\" \"$PHANTOM_NAME\" \"$PHANTOM_PATH\" > ptm-env.txt";
-    let created = repo.phantom(&["create", "feature/env", "--exec", script]);
+    let script = "printf '%s\\n' \"$MABO\" \"$MABO_NAME\" \"$MABO_PATH\" \"$PTM\" \"$PTM_NAME\" \"$PTM_PATH\" \"$PHANTOM\" \"$PHANTOM_NAME\" \"$PHANTOM_PATH\" > mabo-env.txt";
+    let created = repo.mabo(&["create", "feature/env", "--exec", script]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -1403,25 +1439,25 @@ fn create_and_attach_exec_export_ptm_env() {
         text(&created.stderr)
     );
     let worktree = managed(&repo, "feature/env");
-    assert_ptm_env(&worktree, "feature/env");
+    assert_mabo_env(&worktree, "feature/env");
 
     repo.git(&["branch", "attached-env"]);
-    let attached = repo.phantom(&["attach", "attached-env", "--exec", script]);
+    let attached = repo.mabo(&["attach", "attached-env", "--exec", script]);
     assert!(
         attached.status.success(),
         "{}\n{}",
         text(&attached.stdout),
         text(&attached.stderr)
     );
-    assert_ptm_env(&managed(&repo, "attached-env"), "attached-env");
+    assert_mabo_env(&managed(&repo, "attached-env"), "attached-env");
 
-    let execed = repo.phantom(&["exec", "feature/env", "--", "sh", "-c", script]);
+    let execed = repo.mabo(&["exec", "feature/env", "--", "sh", "-c", script]);
     assert!(execed.status.success(), "{}", text(&execed.stderr));
-    assert_ptm_env(&worktree, "feature/env");
+    assert_mabo_env(&worktree, "feature/env");
 }
 
-fn assert_ptm_env(worktree: &std::path::Path, name: &str) {
-    let recorded = fs::read_to_string(worktree.join("ptm-env.txt")).expect("ptm env");
+fn assert_mabo_env(worktree: &std::path::Path, name: &str) {
+    let recorded = fs::read_to_string(worktree.join("mabo-env.txt")).expect("mabo env");
     let mut lines = recorded.lines();
     assert_eq!(lines.next(), Some("1"), "{recorded}");
     assert_eq!(lines.next(), Some(name), "{recorded}");
@@ -1430,15 +1466,15 @@ fn assert_ptm_env(worktree: &std::path::Path, name: &str) {
         Some(worktree.to_string_lossy().as_ref()),
         "{recorded}"
     );
-    assert_eq!(lines.next(), Some(""), "{recorded}");
-    assert_eq!(lines.next(), Some(""), "{recorded}");
-    assert_eq!(lines.next(), Some(""), "{recorded}");
+    for _ in 0..6 {
+        assert_eq!(lines.next(), Some(""), "{recorded}");
+    }
 }
 
 #[test]
 fn parent_cleanup_failure_still_deletes_the_branch() {
     let repo = Repo::new();
-    let created = repo.phantom(&["create", "cursor/foo"]);
+    let created = repo.mabo(&["create", "cursor/foo"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let root = managed_root(&repo);
     use std::os::unix::fs::PermissionsExt;
@@ -1447,7 +1483,7 @@ fn parent_cleanup_failure_still_deletes_the_branch() {
     perms.set_mode(0o555);
     fs::set_permissions(&root, perms).expect("chmod");
 
-    let deleted = repo.phantom(&["delete", "cursor/foo"]);
+    let deleted = repo.mabo(&["delete", "cursor/foo"]);
     assert!(
         deleted.status.success(),
         "cleanup must not fail the delete\n{}\n{}",
@@ -1488,7 +1524,7 @@ impl Drop for ModeReset<'_> {
 fn removed_mcp_command_is_unknown() {
     let repo = Repo::new();
     for args in [vec!["mcp"], vec!["mcp", "serve"], vec!["mcp", "--help"]] {
-        let output = repo.phantom(&args);
+        let output = repo.mabo(&args);
         assert_eq!(
             output.status.code(),
             Some(1),
@@ -1503,7 +1539,7 @@ fn removed_mcp_command_is_unknown() {
         );
     }
 
-    let help = repo.phantom(&["--help"]);
+    let help = repo.mabo(&["--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
     assert!(
         !text(&help.stdout).to_ascii_lowercase().contains("mcp"),
@@ -1511,7 +1547,7 @@ fn removed_mcp_command_is_unknown() {
         text(&help.stdout)
     );
 
-    let preferences = repo.phantom(&["preferences", "--help"]);
+    let preferences = repo.mabo(&["preferences", "--help"]);
     assert!(
         preferences.status.success(),
         "{}",
@@ -1529,13 +1565,13 @@ fn removed_mcp_command_is_unknown() {
 #[test]
 fn delete_removes_empty_parent_directories() {
     let repo = Repo::new();
-    let created = repo.phantom(&["create", "cursor/foo"]);
+    let created = repo.mabo(&["create", "cursor/foo"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let project = managed_root(&repo);
-    let ceiling = project.parent().expect("ptm/worktrees");
+    let ceiling = project.parent().expect("maboroshi/worktrees");
     let parent = project.join("cursor");
     assert!(parent.join("foo").is_dir());
-    let deleted = repo.phantom(&["delete", "cursor/foo"]);
+    let deleted = repo.mabo(&["delete", "cursor/foo"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     assert!(!parent.join("foo").exists());
     assert!(!parent.exists(), "empty parent directory should be removed");
@@ -1543,21 +1579,21 @@ fn delete_removes_empty_parent_directories() {
         !project.exists(),
         "empty project directory should be removed"
     );
-    assert!(ceiling.is_dir(), "ptm/worktrees should stay");
+    assert!(ceiling.is_dir(), "maboroshi/worktrees should stay");
 
-    assert!(repo.phantom(&["create", "cursor/foo"]).status.success());
-    assert!(repo.phantom(&["create", "cursor/bar"]).status.success());
-    assert!(repo.phantom(&["delete", "cursor/foo"]).status.success());
+    assert!(repo.mabo(&["create", "cursor/foo"]).status.success());
+    assert!(repo.mabo(&["create", "cursor/bar"]).status.success());
+    assert!(repo.mabo(&["delete", "cursor/foo"]).status.success());
     assert!(parent.join("bar").is_dir());
     assert!(parent.is_dir(), "parent still holds another worktree");
     assert!(project.is_dir(), "project directory still holds a worktree");
-    assert!(repo.phantom(&["delete", "cursor/bar"]).status.success());
+    assert!(repo.mabo(&["delete", "cursor/bar"]).status.success());
     assert!(!parent.exists());
     assert!(!project.exists());
     assert!(ceiling.is_dir());
 
-    assert!(repo.phantom(&["create", "a/b/c"]).status.success());
-    assert!(repo.phantom(&["delete", "a/b/c"]).status.success());
+    assert!(repo.mabo(&["create", "a/b/c"]).status.success());
+    assert!(repo.mabo(&["delete", "a/b/c"]).status.success());
     assert!(!managed(&repo, "a").exists());
     assert!(ceiling.is_dir());
 }
@@ -1578,10 +1614,10 @@ fn detached_worktree_keeps_its_directory_name() {
         .output()
         .expect("rev-parse");
     let sha = text(&head.stdout);
-    let names = repo.phantom(&["list", "--names", "--no-default"]);
+    let names = repo.mabo(&["list", "--names", "--no-default"]);
     assert!(names.status.success(), "{}", text(&names.stderr));
     assert_eq!(text(&names.stdout), "next");
-    let listed = repo.phantom(&["list", "--no-default"]);
+    let listed = repo.mabo(&["list", "--no-default"]);
     assert!(
         text(&listed.stdout).starts_with("next ("),
         "{}",
@@ -1593,7 +1629,7 @@ fn detached_worktree_keeps_its_directory_name() {
         text(&listed.stdout)
     );
 
-    let found = repo.phantom(&["where", "next"]);
+    let found = repo.mabo(&["where", "next"]);
     assert_eq!(found.status.code(), Some(0), "{}", text(&found.stderr));
     assert_eq!(text(&found.stdout), worktree.to_string_lossy());
 
@@ -1606,7 +1642,7 @@ fn detached_worktree_keeps_its_directory_name() {
         .output()
         .expect("commit");
     assert!(moved.status.success(), "{}", text(&moved.stderr));
-    let names_after = repo.phantom(&["list", "--names", "--no-default"]);
+    let names_after = repo.mabo(&["list", "--names", "--no-default"]);
     assert_eq!(text(&names_after.stdout), "next");
 
     repo.git(&[
@@ -1617,12 +1653,12 @@ fn detached_worktree_keeps_its_directory_name() {
         managed(&repo, "alias").to_str().expect("path"),
         "HEAD",
     ]);
-    let by_directory = repo.phantom(&["where", "alias"]);
-    let by_branch = repo.phantom(&["where", "topic"]);
+    let by_directory = repo.mabo(&["where", "alias"]);
+    let by_branch = repo.mabo(&["where", "topic"]);
     let alias = managed(&repo, "alias");
     assert_eq!(text(&by_directory.stdout), alias.to_string_lossy());
     assert_eq!(text(&by_branch.stdout), alias.to_string_lossy());
-    let both = repo.phantom(&["list", "--names", "--no-default"]);
+    let both = repo.mabo(&["list", "--names", "--no-default"]);
     let listed_names = text(&both.stdout);
     assert!(listed_names.contains("next"), "{listed_names}");
     assert!(listed_names.contains("alias"), "{listed_names}");
@@ -1651,7 +1687,7 @@ fn directory_name_is_preferred_over_another_worktrees_branch() {
         "HEAD",
     ]);
 
-    let found = repo.phantom(&["where", "topic"]);
+    let found = repo.mabo(&["where", "topic"]);
     assert_eq!(found.status.code(), Some(0), "{}", text(&found.stderr));
     assert_eq!(
         text(&found.stdout),
@@ -1659,7 +1695,7 @@ fn directory_name_is_preferred_over_another_worktrees_branch() {
         "directory name should win over branch topic checked out at a"
     );
 
-    let deleted = repo.phantom(&["delete", "topic", "--keep-branch"]);
+    let deleted = repo.mabo(&["delete", "topic", "--keep-branch"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -1764,7 +1800,7 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
         "HEAD",
     ]);
     let output = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["github", "checkout", "7"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["github", "checkout", "7"])
         .env("PATH", &path)
         .output()
         .expect("checkout");
@@ -1792,7 +1828,7 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
         "HEAD",
     ]);
     let again = matching
-        .command(env!("CARGO_BIN_EXE_ptm"), &["github", "checkout", "7"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["github", "checkout", "7"])
         .env("PATH", &matching_path)
         .output()
         .expect("again");
@@ -1851,14 +1887,14 @@ fn assert_worktree_object(value: &serde_json::Value, name: &str, path: &std::pat
 fn worktree_json_covers_list_where_create_attach_and_delete() {
     let repo = Repo::new();
     let head = full_head(&repo);
-    let empty = repo.phantom(&["list", "--json", "--no-default"]);
+    let empty = repo.mabo(&["list", "--json", "--no-default"]);
     assert!(empty.status.success(), "{}", text(&empty.stderr));
     let empty_json = json_value(&empty);
     assert_eq!(empty_json["version"], 1);
     assert_eq!(empty_json["worktrees"].as_array().map(Vec::len), Some(0));
     assert!(text(&empty.stderr).is_empty(), "{}", text(&empty.stderr));
 
-    let created = repo.phantom(&["create", "feature/json", "--json", "--base", "HEAD"]);
+    let created = repo.mabo(&["create", "feature/json", "--json", "--base", "HEAD"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let created_json = json_value(&created);
     assert_eq!(created_json["version"], 1);
@@ -1881,7 +1917,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     assert!(created_json["exec"].is_null());
     assert!(!text(&created.stdout).contains("Created worktree"));
 
-    let duplicate = repo.phantom(&["create", "feature/json", "--json"]);
+    let duplicate = repo.mabo(&["create", "feature/json", "--json"]);
     assert_eq!(duplicate.status.code(), Some(3));
     let duplicate_json = json_value(&duplicate);
     assert_eq!(duplicate_json["error"]["code"], "already_exists");
@@ -1892,11 +1928,11 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
         text(&duplicate.stderr)
     );
 
-    let both = repo.phantom(&["list", "--json", "--names"]);
+    let both = repo.mabo(&["list", "--json", "--names"]);
     assert_eq!(both.status.code(), Some(3));
     assert_eq!(json_value(&both)["error"]["code"], "validation");
 
-    let listed = repo.phantom(&["list", "--json"]);
+    let listed = repo.mabo(&["list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
     let worktrees = listed_json["worktrees"].as_array().expect("worktrees");
@@ -1913,19 +1949,19 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
 
     let worktree = managed(&repo, "feature/json");
     fs::write(worktree.join("README.md"), "dirty\n").expect("dirty");
-    let dirty = repo.phantom(&["list", "--json", "--no-default"]);
+    let dirty = repo.mabo(&["list", "--json", "--no-default"]);
     let dirty_json = json_value(&dirty);
     assert_eq!(dirty_json["worktrees"][0]["dirty"], true);
     assert_eq!(dirty_json["worktrees"].as_array().map(Vec::len), Some(1));
 
-    let located = repo.phantom(&["where", "feature/json", "--json"]);
+    let located = repo.mabo(&["where", "feature/json", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
     let located_json = json_value(&located);
     assert_eq!(located_json["version"], 1);
     assert_worktree_object(&located_json["worktree"], "feature/json", &worktree);
     assert!(!text(&located.stdout).contains("feature/json ("));
 
-    let missing = repo.phantom(&["where", "missing-worktree", "--json"]);
+    let missing = repo.mabo(&["where", "missing-worktree", "--json"]);
     assert_eq!(missing.status.code(), Some(2));
     let missing_json = json_value(&missing);
     assert_eq!(missing_json["version"], 1);
@@ -1942,7 +1978,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     );
 
     repo.git(&["branch", "existing-json"]);
-    let attached = repo.phantom(&["attach", "existing-json", "--json"]);
+    let attached = repo.mabo(&["attach", "existing-json", "--json"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     let attached_json = json_value(&attached);
     assert_worktree_object(
@@ -1955,7 +1991,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     assert_eq!(attached_json["copyFiles"]["ok"], true);
     assert!(attached_json["exec"].is_null());
 
-    let kept = repo.phantom(&["delete", "existing-json", "--keep-branch", "--json"]);
+    let kept = repo.mabo(&["delete", "existing-json", "--keep-branch", "--json"]);
     assert!(kept.status.success(), "{}", text(&kept.stderr));
     let kept_json = json_value(&kept);
     assert!(kept_json["error"].is_null());
@@ -1971,8 +2007,8 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
 
     fs::write(worktree.join("README.md"), "# phantom\n").expect("restore");
     repo.git(&["branch", "second-json"]);
-    assert!(repo.phantom(&["attach", "second-json"]).status.success());
-    let partial = repo.phantom(&["delete", "feature/json", "missing-json", "--json"]);
+    assert!(repo.mabo(&["attach", "second-json"]).status.success());
+    let partial = repo.mabo(&["delete", "feature/json", "missing-json", "--json"]);
     assert_eq!(partial.status.code(), Some(2), "{}", text(&partial.stderr));
     let partial_json = json_value(&partial);
     assert_eq!(partial_json["deleted"].as_array().map(Vec::len), Some(1));
@@ -1989,7 +2025,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     let outside = repo.root.join("outside");
     fs::create_dir_all(&outside).expect("outside");
     let not_repo = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["list", "--json"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["list", "--json"])
         .current_dir(&outside)
         .output()
         .expect("list");
@@ -2003,7 +2039,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
         text(&not_repo.stderr)
     );
 
-    let project_modes = repo.phantom(&["project", "list", "--json", "--names"]);
+    let project_modes = repo.mabo(&["project", "list", "--json", "--names"]);
     assert_eq!(project_modes.status.code(), Some(3));
     assert_eq!(json_value(&project_modes)["error"]["code"], "validation");
     assert_eq!(json_value(&project_modes)["version"], 1);
@@ -2013,11 +2049,11 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
 fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npost-create = [\"echo HOOK_STDOUT_MARKER\"]\npre-delete = [\"echo PRE_DELETE_MARKER\"]\n",
     )
     .expect("hooks");
-    let created = repo.phantom(&[
+    let created = repo.mabo(&[
         "create",
         "feature/hooks-json",
         "--json",
@@ -2045,18 +2081,18 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     assert_eq!(created_json["exec"]["exitCode"], 0);
     assert_eq!(created_json["exec"]["command"], "echo EXEC_MARKER");
 
-    let deleted = repo.phantom(&["delete", "--force", "feature/hooks-json", "--json"]);
+    let deleted = repo.mabo(&["delete", "--force", "feature/hooks-json", "--json"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     assert!(!text(&deleted.stdout).contains("PRE_DELETE_MARKER"));
     assert!(text(&deleted.stderr).contains("PRE_DELETE_MARKER"));
     assert_eq!(json_value(&deleted)["deleted"][0]["branchDeleted"], true);
 
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npost-create = [\"echo HOOK_FAIL_MARKER\", \"exit 7\"]\n",
     )
     .expect("failing hook");
-    let failed = repo.phantom(&["create", "feature/hook-fail", "--json"]);
+    let failed = repo.mabo(&["create", "feature/hook-fail", "--json"]);
     assert_eq!(failed.status.code(), Some(7), "{}", text(&failed.stderr));
     let failed_json = json_value(&failed);
     assert_eq!(failed_json["postCreate"]["ok"], false);
@@ -2067,8 +2103,8 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     assert!(text(&failed.stderr).contains("HOOK_FAIL_MARKER"));
     assert!(managed(&repo, "feature/hook-fail/README.md").is_file());
 
-    fs::write(repo.repo.join(".ptm.toml"), "").expect("clear hooks");
-    let exec_failed = repo.phantom(&[
+    fs::write(repo.repo.join(".mabo.toml"), "").expect("clear hooks");
+    let exec_failed = repo.mabo(&[
         "create",
         "feature/exec-fail",
         "--json",
@@ -2098,7 +2134,7 @@ fn json_reports_detached_head_and_copy_errors() {
         detached.to_str().expect("path"),
         "HEAD",
     ]);
-    let listed = repo.phantom(&["list", "--json", "--no-default"]);
+    let listed = repo.mabo(&["list", "--json", "--no-default"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let entry = &json_value(&listed)["worktrees"][0];
     assert_eq!(entry["name"], "next");
@@ -2108,7 +2144,7 @@ fn json_reports_detached_head_and_copy_errors() {
     assert_eq!(entry["default"], false);
 
     std::os::unix::fs::symlink("elsewhere", repo.repo.join(".worktreeinclude")).expect("symlink");
-    let created = repo.phantom(&["create", "feature/copy", "--json"]);
+    let created = repo.mabo(&["create", "feature/copy", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let created_json = json_value(&created);
     assert_eq!(created_json["copyFiles"]["ok"], false);
@@ -2131,7 +2167,7 @@ fn project_parse_errors_keep_the_validation_exit_code() {
         &["project", "remove", "--unknown", "--json"],
     ];
     for args in cases {
-        let output = repo.phantom(args);
+        let output = repo.mabo(args);
         assert_eq!(
             output.status.code(),
             Some(3),
@@ -2163,7 +2199,7 @@ fn project_parse_errors_keep_the_validation_exit_code() {
 fn json_unborn_head_is_null() {
     let repo = Repo::new();
     repo.git(&["update-ref", "-d", "HEAD"]);
-    let listed = repo.phantom(&["list", "--json"]);
+    let listed = repo.mabo(&["list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
     let worktrees = listed_json["worktrees"].as_array().expect("worktrees");
@@ -2177,7 +2213,7 @@ fn json_unborn_head_is_null() {
         worktrees[0]["head"]
     );
 
-    let located = repo.phantom(&["where", "main", "--json"]);
+    let located = repo.mabo(&["where", "main", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
     let located_json = json_value(&located);
     assert!(located_json["worktree"]["head"].is_null(), "{located_json}");
@@ -2207,7 +2243,7 @@ fn argument_errors_are_validation_for_every_command() {
         &["clone", "owner/repo", "--json", "--depth"],
     ];
     for args in cases {
-        let output = repo.phantom(args);
+        let output = repo.mabo(args);
         assert_eq!(
             output.status.code(),
             Some(3),
@@ -2244,7 +2280,7 @@ fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
         &["attach", "a/../x"],
         &["attach", "a/../x", "--json"],
     ] {
-        let output = repo.phantom(args);
+        let output = repo.mabo(args);
         assert_eq!(
             output.status.code(),
             Some(3),
@@ -2268,24 +2304,21 @@ fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
     }
     assert!(!managed(&repo, "a/../x").exists());
 
-    let missing_delete = repo.phantom(&["delete", "nope"]);
+    let missing_delete = repo.mabo(&["delete", "nope"]);
     assert_eq!(missing_delete.status.code(), Some(2));
-    let missing_json = repo.phantom(&["delete", "nope", "--json"]);
+    let missing_json = repo.mabo(&["delete", "nope", "--json"]);
     assert_eq!(missing_json.status.code(), Some(2));
     let missing_value = json_value(&missing_json);
     assert_eq!(missing_value["error"]["code"], "not_found");
     assert_eq!(missing_value["error"]["exitCode"], 2);
-    assert_eq!(repo.phantom(&["where", "nope"]).status.code(), Some(2));
-    assert_eq!(
-        repo.phantom(&["exec", "nope", "true"]).status.code(),
-        Some(2)
-    );
+    assert_eq!(repo.mabo(&["where", "nope"]).status.code(), Some(2));
+    assert_eq!(repo.mabo(&["exec", "nope", "true"]).status.code(), Some(2));
 }
 
 #[test]
 fn json_exec_signal_and_spawn_failure_return_the_worktree() {
     let repo = Repo::new();
-    let signaled = repo.phantom(&["create", "sig", "--json", "--exec", "kill -TERM $$"]);
+    let signaled = repo.mabo(&["create", "sig", "--json", "--exec", "kill -TERM $$"]);
     assert_eq!(
         signaled.status.code(),
         Some(143),
@@ -2304,7 +2337,7 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
     assert!(managed(&repo, "sig/README.md").is_file());
 
     repo.git(&["branch", "attach-sig"]);
-    let attached = repo.phantom(&["attach", "attach-sig", "--json", "--exec", "kill -TERM $$"]);
+    let attached = repo.mabo(&["attach", "attach-sig", "--json", "--exec", "kill -TERM $$"]);
     assert_eq!(
         attached.status.code(),
         Some(143),
@@ -2317,17 +2350,17 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
     assert_eq!(attached_json["exec"]["signal"], "SIGTERM");
     assert!(attached_json.get("error").is_none(), "{attached_json}");
 
-    let human = repo.phantom(&["create", "sig-human", "--exec", "kill -TERM $$"]);
+    let human = repo.mabo(&["create", "sig-human", "--exec", "kill -TERM $$"]);
     assert_eq!(human.status.code(), Some(143));
     assert!(text(&human.stdout).contains("Created worktree 'sig-human'"));
     assert!(text(&human.stderr).contains("SIGTERM"));
 
     let spawned = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["create", "spawn", "--json", "--exec", "true"],
         )
-        .env("SHELL", "/no/such/ptm-shell")
+        .env("SHELL", "/no/such/maboroshi-shell")
         .output()
         .expect("spawn");
     assert_eq!(
@@ -2345,7 +2378,7 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
     assert!(spawned_json["exec"]["signal"].is_null());
     let spawn_error = spawned_json["exec"]["error"].as_str().unwrap_or("");
     assert!(
-        spawn_error.contains("ENOENT") && spawn_error.contains("/no/such/ptm-shell"),
+        spawn_error.contains("ENOENT") && spawn_error.contains("/no/such/maboroshi-shell"),
         "{spawn_error}"
     );
     assert!(managed(&repo, "spawn/README.md").is_file());
@@ -2353,10 +2386,10 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
     repo.git(&["branch", "attach-spawn"]);
     let attach_spawn = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["attach", "attach-spawn", "--json", "--exec", "true"],
         )
-        .env("SHELL", "/no/such/ptm-shell")
+        .env("SHELL", "/no/such/maboroshi-shell")
         .output()
         .expect("attach spawn");
     assert_eq!(attach_spawn.status.code(), Some(1));
@@ -2369,7 +2402,7 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
         .contains("ENOENT"));
     assert!(attach_json.get("error").is_none(), "{attach_json}");
 
-    let interrupted = repo.phantom(&["create", "sigint", "--json", "--exec", "kill -INT $$"]);
+    let interrupted = repo.mabo(&["create", "sigint", "--json", "--exec", "kill -INT $$"]);
     assert_eq!(
         interrupted.status.code(),
         Some(130),
@@ -2390,11 +2423,11 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
 fn json_post_create_signal_and_spawn_return_the_worktree() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npost-create = [\"kill -TERM $$\"]\n",
     )
     .expect("hooks");
-    let created = repo.phantom(&["create", "h", "--json"]);
+    let created = repo.mabo(&["create", "h", "--json"]);
     assert_eq!(
         created.status.code(),
         Some(143),
@@ -2413,7 +2446,7 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     assert!(managed(&repo, "h/README.md").is_file());
 
     repo.git(&["branch", "attach-hook"]);
-    let attached = repo.phantom(&["attach", "attach-hook", "--json"]);
+    let attached = repo.mabo(&["attach", "attach-hook", "--json"]);
     assert_eq!(
         attached.status.code(),
         Some(143),
@@ -2428,13 +2461,13 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     assert_eq!(attached_json["postCreate"]["exitCode"], 143);
 
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npost-create = [\"true\"]\n",
     )
     .expect("spawn hook");
     let spawned = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["create", "hook-spawn", "--json"],
         )
         .env("SHELL", "/nonexistent")
@@ -2463,7 +2496,7 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     repo.git(&["branch", "attach-hook-spawn"]);
     let attach_spawn = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["attach", "attach-hook-spawn", "--json"],
         )
         .env("SHELL", "/nonexistent")
@@ -2480,11 +2513,11 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     assert!(managed(&repo, "attach-hook-spawn/README.md").is_file());
 
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npre-delete = [\"kill -TERM $$\"]\n",
     )
     .expect("pre-delete signal");
-    let deleted = repo.phantom(&["delete", "--force", "h", "--json"]);
+    let deleted = repo.mabo(&["delete", "--force", "h", "--json"]);
     assert_eq!(
         deleted.status.code(),
         Some(143),
@@ -2505,13 +2538,13 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     assert!(managed(&repo, "h").is_dir());
 
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npre-delete = [\"true\"]\n",
     )
     .expect("pre-delete spawn");
     let pre_spawn = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["delete", "--force", "attach-hook", "--json"],
         )
         .env("SHELL", "/nonexistent")
@@ -2534,10 +2567,10 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
 #[test]
 fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
     let repo = Repo::new();
-    let set = repo.phantom(&["preferences", "set", "directory-name-separator", "-"]);
+    let set = repo.mabo(&["preferences", "set", "directory-name-separator", "-"]);
     assert!(set.status.success(), "{}", text(&set.stderr));
 
-    let created = repo.phantom(&[
+    let created = repo.mabo(&[
         "create",
         "feature/topic",
         "--exec",
@@ -2560,7 +2593,7 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
         .expect("abbrev");
     assert_eq!(text(&abbrev.stdout), "HEAD");
 
-    let json_created = repo.phantom(&[
+    let json_created = repo.mabo(&[
         "create",
         "feature/json-topic",
         "--json",
@@ -2590,7 +2623,7 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
     ));
 
     repo.git(&["branch", "feature/attached"]);
-    let attached = repo.phantom(&[
+    let attached = repo.mabo(&[
         "attach",
         "feature/attached",
         "--json",
@@ -2613,7 +2646,7 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
     ));
 
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npost-create = [\"git checkout -q --detach\"]\n",
     )
     .expect("detach hook");
@@ -2636,7 +2669,7 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
     );
     let checkout = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["github", "checkout", "7", "--json"],
         )
         .env("PATH", &path)
@@ -2681,7 +2714,7 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     );
     let checkout = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["github", "checkout", "7", "--json"],
         )
         .env("PATH", &path)
@@ -2716,7 +2749,10 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     assert!(!text(&checkout.stdout).contains("Created worktree"));
 
     let missing = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["github", "checkout", "--json"])
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["github", "checkout", "--json"],
+        )
         .env("PATH", &path)
         .output()
         .expect("missing");
@@ -2736,7 +2772,7 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     ]);
     let again = matching
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["gh", "checkout", "7", "--json"],
         )
         .env("PATH", &matching_path)
@@ -2768,10 +2804,10 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
 #[test]
 fn exec_passes_command_options_through() {
     let repo = Repo::new();
-    let created = repo.phantom(&["create", "feature/exec-flags"]);
+    let created = repo.mabo(&["create", "feature/exec-flags"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
 
-    let direct = repo.phantom(&[
+    let direct = repo.mabo(&[
         "exec",
         "feature/exec-flags",
         "git",
@@ -2786,7 +2822,7 @@ fn exec_passes_command_options_through() {
     );
     assert_eq!(text(&direct.stdout), "feature/exec-flags");
 
-    let separated = repo.phantom(&[
+    let separated = repo.mabo(&[
         "exec",
         "feature/exec-flags",
         "--",
@@ -2797,7 +2833,7 @@ fn exec_passes_command_options_through() {
     assert!(separated.status.success(), "{}", text(&separated.stderr));
     assert_eq!(text(&separated.stdout), "feature/exec-flags");
 
-    let nested = repo.phantom(&[
+    let nested = repo.mabo(&[
         "exec",
         "feature/exec-flags",
         "sh",
@@ -2820,14 +2856,14 @@ fn exec_passes_command_options_through() {
         text(&nested.stdout),
         "--show-current\n-n\n--\n--keep\n--help"
     );
-    assert!(!text(&nested.stdout).contains("ptm exec <worktree-name>"));
+    assert!(!text(&nested.stdout).contains("mabo exec <worktree-name>"));
 
-    let help = repo.phantom(&["exec", "--help"]);
+    let help = repo.mabo(&["exec", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
     assert!(text(&help.stdout)
-        .contains("ptm exec [--project <ref>] <worktree-name> <command> [args...]"));
+        .contains("mabo exec [--project <ref>] <worktree-name> <command> [args...]"));
 
-    let early = repo.phantom(&["exec", "--show-current", "feature/exec-flags", "true"]);
+    let early = repo.mabo(&["exec", "--show-current", "feature/exec-flags", "true"]);
     assert_eq!(early.status.code(), Some(3));
     assert!(text(&early.stderr).contains("Unknown option '--show-current'"));
 }
@@ -2835,7 +2871,7 @@ fn exec_passes_command_options_through() {
 #[test]
 fn create_and_attach_exec_pass_command_options_through() {
     let repo = Repo::new();
-    let created = repo.phantom(&[
+    let created = repo.mabo(&[
         "create",
         "feature/exec-args",
         "--base",
@@ -2863,13 +2899,13 @@ fn create_and_attach_exec_pass_command_options_through() {
         "{created_text}"
     );
 
-    let env_exec = repo.phantom(&[
+    let env_exec = repo.mabo(&[
         "create",
         "feature/exec-env-args",
         "--exec",
         "sh",
         "-c",
-        "printf '%s\\n' \"$PTM_NAME\"",
+        "printf '%s\\n' \"$MABO_NAME\"",
     ]);
     assert!(
         env_exec.status.success(),
@@ -2885,7 +2921,7 @@ fn create_and_attach_exec_pass_command_options_through() {
         text(&env_exec.stdout)
     );
 
-    let short = repo.phantom(&[
+    let short = repo.mabo(&[
         "create",
         "feature/exec-short",
         "-x",
@@ -2901,12 +2937,12 @@ fn create_and_attach_exec_pass_command_options_through() {
     );
     assert!(text(&short.stdout).contains("git status --short"));
 
-    let missing = repo.phantom(&["create", "feature/missing-exec", "--exec"]);
+    let missing = repo.mabo(&["create", "feature/missing-exec", "--exec"]);
     assert_eq!(missing.status.code(), Some(3));
     assert!(text(&missing.stderr).contains("Option '--exec <value>' argument missing"));
 
     repo.git(&["branch", "attached-exec-flags"]);
-    let attached = repo.phantom(&[
+    let attached = repo.mabo(&[
         "attach",
         "attached-exec-flags",
         "--exec",
@@ -2928,7 +2964,7 @@ fn create_and_attach_exec_pass_command_options_through() {
         text(&attached.stdout)
     );
 
-    let help_arg = repo.phantom(&[
+    let help_arg = repo.mabo(&[
         "create",
         "feature/exec-help",
         "--exec",
@@ -2947,9 +2983,9 @@ fn create_and_attach_exec_pass_command_options_through() {
         "{}",
         text(&help_arg.stdout)
     );
-    assert!(!text(&help_arg.stdout).contains("ptm create [name]"));
+    assert!(!text(&help_arg.stdout).contains("mabo create [name]"));
 
-    let option_after = repo.phantom(&[
+    let option_after = repo.mabo(&[
         "create",
         "feature/exec-base",
         "--exec",
@@ -2978,7 +3014,7 @@ fn repeated_exec_options_are_rejected() {
     let repo = Repo::new();
     let message = "The --exec option can only be specified once";
 
-    let created = repo.phantom(&["create", "a", "--exec=echo", "--exec=true"]);
+    let created = repo.mabo(&["create", "a", "--exec=echo", "--exec=true"]);
     assert_eq!(created.status.code(), Some(3), "{}", text(&created.stderr));
     assert!(
         text(&created.stderr).contains(message),
@@ -2988,7 +3024,7 @@ fn repeated_exec_options_are_rejected() {
     assert_eq!(text(&created.stdout), "");
     assert!(!managed(&repo, "a").exists());
 
-    let quoted = repo.phantom(&["create", "b", "--exec=echo one", "--exec=echo two"]);
+    let quoted = repo.mabo(&["create", "b", "--exec=echo one", "--exec=echo two"]);
     assert_eq!(quoted.status.code(), Some(3), "{}", text(&quoted.stderr));
     assert!(
         text(&quoted.stderr).contains(message),
@@ -2997,12 +3033,12 @@ fn repeated_exec_options_are_rejected() {
     );
     assert!(!managed(&repo, "b").exists());
 
-    let mixed = repo.phantom(&["create", "c", "-xecho", "--exec=true"]);
+    let mixed = repo.mabo(&["create", "c", "-xecho", "--exec=true"]);
     assert_eq!(mixed.status.code(), Some(3), "{}", text(&mixed.stderr));
     assert!(text(&mixed.stderr).contains(message));
 
     repo.git(&["branch", "attached-repeat"]);
-    let attached = repo.phantom(&["attach", "attached-repeat", "--exec=echo", "--exec=true"]);
+    let attached = repo.mabo(&["attach", "attached-repeat", "--exec=echo", "--exec=true"]);
     assert_eq!(
         attached.status.code(),
         Some(3),
@@ -3017,7 +3053,7 @@ fn repeated_exec_options_are_rejected() {
     assert_eq!(text(&attached.stdout), "");
     assert!(!managed(&repo, "attached-repeat").exists());
 
-    let attached_short = repo.phantom(&["attach", "attached-repeat", "-xecho", "-xtrue"]);
+    let attached_short = repo.mabo(&["attach", "attached-repeat", "-xecho", "-xtrue"]);
     assert_eq!(
         attached_short.status.code(),
         Some(3),
@@ -3026,7 +3062,7 @@ fn repeated_exec_options_are_rejected() {
     );
     assert!(text(&attached_short.stderr).contains(message));
 
-    let trailing = repo.phantom(&["create", "kept", "--exec", "echo", "--exec"]);
+    let trailing = repo.mabo(&["create", "kept", "--exec", "echo", "--exec"]);
     assert!(
         trailing.status.success(),
         "{}\n{}",
@@ -3040,7 +3076,7 @@ fn repeated_exec_options_are_rejected() {
     );
 
     let trailing_attach =
-        repo.phantom(&["attach", "attached-repeat", "--exec", "echo", "--exec=true"]);
+        repo.mabo(&["attach", "attached-repeat", "--exec", "echo", "--exec=true"]);
     assert!(
         trailing_attach.status.success(),
         "{}\n{}",
@@ -3059,9 +3095,9 @@ fn repeated_exec_options_are_rejected() {
 #[test]
 fn exec_preserves_the_child_exit_code() {
     let repo = Repo::new();
-    let created = repo.phantom(&["create", "feature/exec"]);
+    let created = repo.mabo(&["create", "feature/exec"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let output = repo.phantom(&["exec", "feature/exec", "--", "sh", "-c", "exit 4"]);
+    let output = repo.mabo(&["exec", "feature/exec", "--", "sh", "-c", "exit 4"]);
     assert_eq!(output.status.code(), Some(4));
     assert!(text(&output.stderr).contains("failed with exit code 4"));
 }
@@ -3078,19 +3114,19 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
         bare.to_str().expect("bare"),
     ]);
     let root = repo.root.join("clones");
-    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    let set = repo.mabo(&["preferences", "set", "root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
 
-    let help = repo.phantom(&["clone", "--help"]);
+    let help = repo.mabo(&["clone", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
     let help_text = text(&help.stdout);
-    assert!(help_text.contains("ptm clone"));
+    assert!(help_text.contains("mabo clone"));
     assert!(help_text.contains("--update"));
     assert!(help_text.contains("--branch <value>"));
     assert!(help_text.contains("~/ghq"));
 
-    let missing = repo.phantom(&["clone", "--json"]);
+    let missing = repo.mabo(&["clone", "--json"]);
     assert_eq!(missing.status.code(), Some(3));
     let missing_json: serde_json::Value =
         serde_json::from_str(&text(&missing.stdout)).expect("usage json");
@@ -3098,7 +3134,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     assert_eq!(missing_json["error"]["code"], "validation");
     assert_eq!(missing_json["error"]["exitCode"], 3);
 
-    let bad_depth = repo.phantom(&["clone", "example/widget", "--depth", "0", "--json"]);
+    let bad_depth = repo.mabo(&["clone", "example/widget", "--depth", "0", "--json"]);
     assert_eq!(
         bad_depth.status.code(),
         Some(3),
@@ -3109,7 +3145,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
         serde_json::from_str(&text(&bad_depth.stdout)).expect("depth json");
     assert_eq!(bad_depth_json["error"]["code"], "validation");
 
-    let bad_url = repo.phantom(&["clone", "not a repo", "--json"]);
+    let bad_url = repo.mabo(&["clone", "not a repo", "--json"]);
     assert_eq!(bad_url.status.code(), Some(3));
     let bad_url_json: serde_json::Value =
         serde_json::from_str(&text(&bad_url.stdout)).expect("url json");
@@ -3119,7 +3155,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
         .unwrap_or_default()
         .contains("not a repo"));
 
-    let cloned = repo.phantom(&[
+    let cloned = repo.mabo(&[
         "clone",
         "example/widget",
         "--branch",
@@ -3165,7 +3201,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     assert_eq!(text(&shallow.stdout), "true");
 
     fs::write(destination.join("local.txt"), "keep\n").expect("marker");
-    let again = repo.phantom(&["clone", "git@github.com:example/widget.git"]);
+    let again = repo.mabo(&["clone", "git@github.com:example/widget.git"]);
     assert!(again.status.success(), "{}", text(&again.stderr));
     let again_text = text(&again.stdout);
     assert!(
@@ -3177,7 +3213,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
         fs::read_to_string(destination.join("local.txt")).expect("marker"),
         "keep\n"
     );
-    let listed = repo.phantom(&["project", "list", "--json"]);
+    let listed = repo.mabo(&["project", "list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let catalog: serde_json::Value = serde_json::from_str(&text(&listed.stdout)).expect("catalog");
     let registered = catalog["projects"]
@@ -3190,7 +3226,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     assert_eq!(registered["name"], "widget");
     assert_eq!(registered["canonicalName"], "github.com/example/widget");
 
-    let updated = repo.phantom(&[
+    let updated = repo.mabo(&[
         "clone",
         "https://github.com/example/widget.git",
         "--update",
@@ -3213,7 +3249,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     );
 
     let created = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "topic"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "topic"])
         .current_dir(&destination)
         .output()
         .expect("worktree");
@@ -3249,7 +3285,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
         .output()
         .expect("remote");
     assert!(remote.status.success(), "{}", text(&remote.stderr));
-    let mismatch = repo.phantom(&["clone", "example/other", "--json"]);
+    let mismatch = repo.mabo(&["clone", "example/other", "--json"]);
     assert_eq!(
         mismatch.status.code(),
         Some(3),
@@ -3270,7 +3306,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
 
     let empty = root.join("github.com/example/empty");
     fs::create_dir_all(&empty).expect("empty");
-    let not_repo = repo.phantom(&["clone", "example/empty"]);
+    let not_repo = repo.mabo(&["clone", "example/empty"]);
     assert_eq!(
         not_repo.status.code(),
         Some(3),
@@ -3279,9 +3315,9 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     );
     assert!(text(&not_repo.stderr).contains("not a Git repository"));
 
-    let removed = repo.phantom(&["project", "remove", "widget"]);
+    let removed = repo.mabo(&["project", "remove", "widget"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
-    let discovered = repo.phantom(&["project", "list", "--json"]);
+    let discovered = repo.mabo(&["project", "list", "--json"]);
     assert!(discovered.status.success(), "{}", text(&discovered.stderr));
     let discovered_json: serde_json::Value =
         serde_json::from_str(&text(&discovered.stdout)).expect("discovered");
@@ -3311,10 +3347,10 @@ fn clone_root_resolution_order() {
     let second_root = repo.root.join("second-root");
     let env_root = repo.root.join("from-env");
     let default_root = repo.home.join("ghq");
-    let invalid = repo.phantom(&["preferences", "set", "root", "relative/path"]);
+    let invalid = repo.mabo(&["preferences", "set", "root", "relative/path"]);
     assert_eq!(invalid.status.code(), Some(3), "{}", text(&invalid.stderr));
     assert!(text(&invalid.stderr).contains("absolute"));
-    let set = repo.phantom(&[
+    let set = repo.mabo(&[
         "preferences",
         "set",
         "root",
@@ -3336,7 +3372,7 @@ fn clone_root_resolution_order() {
     assert!(!env_root.join("github.com/example/widget").exists());
     assert!(!second_root.join("github.com/example/widget").exists());
 
-    let removed = repo.phantom(&["preferences", "remove", "root"]);
+    let removed = repo.mabo(&["preferences", "remove", "root"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
     let from_git = clone_widget(&repo, Some(&env_root));
     assert_clone_landed(&from_git, &git_root);
@@ -3364,10 +3400,10 @@ fn clone_names_the_remote_origin_when_default_remote_name_is_upstream() {
     append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
     repo.git(&["config", "--global", "clone.defaultRemoteName", "upstream"]);
     let root = repo.root.join("clones");
-    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    let set = repo.mabo(&["preferences", "set", "root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
 
-    let cloned = repo.phantom(&["clone", "example/widget", "--json"]);
+    let cloned = repo.mabo(&["clone", "example/widget", "--json"]);
     assert!(
         cloned.status.success(),
         "{}\n{}",
@@ -3383,7 +3419,7 @@ fn clone_names_the_remote_origin_when_default_remote_name_is_upstream() {
     assert!(remotes.status.success(), "{}", text(&remotes.stderr));
     assert_eq!(text(&remotes.stdout), "origin");
 
-    let again = repo.phantom(&["clone", "example/widget", "--update", "--json"]);
+    let again = repo.mabo(&["clone", "example/widget", "--update", "--json"]);
     assert!(
         again.status.success(),
         "{}\n{}",
@@ -3409,10 +3445,10 @@ fn clone_lowercases_remote_url_host() {
     append_instead_of(&repo, &bare, "https://GitHub.com/example/widget.git");
     append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
     let root = repo.root.join("clones");
-    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    let set = repo.mabo(&["preferences", "set", "root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
 
-    let cloned = repo.phantom(&["clone", "https://GitHub.com/example/widget.git", "--json"]);
+    let cloned = repo.mabo(&["clone", "https://GitHub.com/example/widget.git", "--json"]);
     assert!(
         cloned.status.success(),
         "{}\n{}",
@@ -3434,11 +3470,11 @@ fn clone_lowercases_remote_url_host() {
 fn clone_overlong_owner_is_validation() {
     let repo = Repo::new();
     let root = repo.root.join("clones");
-    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    let set = repo.mabo(&["preferences", "set", "root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     let owner = "o".repeat(256);
     let source = format!("example.com/{owner}/widget");
-    let output = repo.phantom(&["clone", &source, "--json"]);
+    let output = repo.mabo(&["clone", &source, "--json"]);
     assert_eq!(
         output.status.code(),
         Some(3),
@@ -3460,7 +3496,7 @@ fn clone_overlong_owner_is_validation() {
 fn clone_overlong_name_with_existing_parent_is_validation() {
     let repo = Repo::new();
     let root = repo.root.join("clones");
-    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    let set = repo.mabo(&["preferences", "set", "root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
 
     let host = root.join("github.com");
@@ -3479,7 +3515,7 @@ fn clone_overlong_name_with_existing_parent_is_validation() {
 }
 
 fn assert_clone_validation(repo: &Repo, source: &str) {
-    let output = repo.phantom(&["clone", source, "--json"]);
+    let output = repo.mabo(&["clone", source, "--json"]);
     assert_eq!(
         output.status.code(),
         Some(3),
@@ -3511,9 +3547,9 @@ fn clone_surfaces_unreadable_git_config_for_an_existing_checkout() {
     ]);
     append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
     let root = repo.root.join("clones");
-    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    let set = repo.mabo(&["preferences", "set", "root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
-    let cloned = repo.phantom(&["clone", "example/widget", "--json"]);
+    let cloned = repo.mabo(&["clone", "example/widget", "--json"]);
     assert!(
         cloned.status.success(),
         "{}\n{}",
@@ -3525,7 +3561,7 @@ fn clone_surfaces_unreadable_git_config_for_an_existing_checkout() {
     fs::write(&broken, "[[[[ not valid\n").expect("config");
     let again = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["clone", "example/widget", "--json"],
         )
         .env("GIT_CONFIG_GLOBAL", &broken)
@@ -3566,23 +3602,23 @@ fn clone_removes_stale_staging_directories() {
     ]);
     append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
     let root = repo.root.join("clones");
-    let set = repo.phantom(&["preferences", "set", "root", root.to_str().expect("root")]);
+    let set = repo.mabo(&["preferences", "set", "root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     let owner = root.join("github.com").join("example");
     fs::create_dir_all(&owner).expect("owner");
     let dead_pid = unused_pid();
-    let dead = owner.join(format!(".ptm-clone-{dead_pid}-{}", uuid_token()));
+    let dead = owner.join(format!(".maboroshi-clone-{dead_pid}-{}", uuid_token()));
     fs::create_dir_all(dead.join(".git")).expect("dead");
     fs::write(dead.join("payload.txt"), "stale").expect("payload");
     let live = owner.join(format!(
-        ".ptm-clone-{}-{}",
+        ".maboroshi-clone-{}-{}",
         std::process::id(),
         uuid_token()
     ));
     fs::create_dir_all(&live).expect("live");
     fs::write(live.join("payload.txt"), "live").expect("live");
 
-    let cloned = repo.phantom(&["clone", "example/widget", "--json"]);
+    let cloned = repo.mabo(&["clone", "example/widget", "--json"]);
     assert!(
         cloned.status.success(),
         "{}\n{}",
@@ -3600,7 +3636,7 @@ fn clone_removes_stale_staging_directories() {
 #[test]
 fn clone_rejects_file_urls() {
     let repo = Repo::new();
-    let output = repo.phantom(&["clone", "file:///tmp/repo.git", "--json"]);
+    let output = repo.mabo(&["clone", "file:///tmp/repo.git", "--json"]);
     assert_eq!(output.status.code(), Some(3), "{}", text(&output.stdout));
     let value: serde_json::Value = serde_json::from_str(&text(&output.stdout)).expect("json");
     assert_eq!(value["error"]["code"], "validation");
@@ -3654,7 +3690,7 @@ fn append_instead_of(repo: &Repo, bare: &std::path::Path, url: &str) {
 
 fn clone_widget(repo: &Repo, ghq_root: Option<&std::path::Path>) -> std::process::Output {
     let mut command = repo.command(
-        env!("CARGO_BIN_EXE_ptm"),
+        env!("CARGO_BIN_EXE_mabo"),
         &["clone", "example/widget", "--json"],
     );
     if let Some(root) = ghq_root {
@@ -3739,7 +3775,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
     let repo = Repo::new();
     let path_env = silent_ghq_path(&repo);
     let clones = repo.root.join("clones");
-    let set = repo.phantom(&["preferences", "set", "root", clones.to_str().expect("root")]);
+    let set = repo.mabo(&["preferences", "set", "root", clones.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     let only = init_named_repo(
         &repo,
@@ -3762,11 +3798,11 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         "https://gitlab.com/other/renamed.git",
     );
     let run = |args: &[&str], cwd: &std::path::Path| {
-        repo.command(env!("CARGO_BIN_EXE_ptm"), args)
+        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
             .env("PATH", &path_env)
             .current_dir(cwd)
             .output()
-            .expect("ptm")
+            .expect("mabo")
     };
 
     let catalog = run(&["project", "list", "--json"], &repo.home);
@@ -3873,7 +3909,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
     assert_eq!(prefix.status.code(), Some(2), "{}", text(&prefix.stdout));
     assert_eq!(json_value(&prefix)["error"]["code"], "not_found");
 
-    let created = repo.phantom(&["create", "feature"]);
+    let created = repo.mabo(&["create", "feature"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let worktree = managed(&repo, "feature");
     let nested = worktree.join("nested");
@@ -3895,7 +3931,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
     assert!(same_dir(&text(&dotted.stdout), &repo.repo));
     let tilde = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["where", "--project", "~/repo", "main"],
         )
         .env("PATH", &path_env)
@@ -3955,7 +3991,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         text(&created_from_link.stderr)
     );
     assert!(managed(&repo, "from-link").is_dir());
-    assert!(!worktree.join(".git/ptm/worktrees/from-link").exists());
+    assert!(!worktree.join(".git/maboroshi/worktrees/from-link").exists());
 
     let file = run(
         &[
@@ -4073,7 +4109,7 @@ fn exec_project_option_passes_later_options_to_the_command() {
     let repo = Repo::new();
     let path_env = silent_ghq_path(&repo);
     let clones = repo.root.join("clones");
-    let set = repo.phantom(&["preferences", "set", "root", clones.to_str().expect("root")]);
+    let set = repo.mabo(&["preferences", "set", "root", clones.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     let project = init_named_repo(
         &repo,
@@ -4081,11 +4117,11 @@ fn exec_project_option_passes_later_options_to_the_command() {
         "https://github.com/acme/ptm805exec.git",
     );
     let run = |args: &[&str]| {
-        repo.command(env!("CARGO_BIN_EXE_ptm"), args)
+        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
             .env("PATH", &path_env)
             .current_dir(&repo.home)
             .output()
-            .expect("ptm")
+            .expect("mabo")
     };
     let created = run(&["create", "--project", "acme/ptm805exec", "foo"]);
     assert!(
@@ -4164,7 +4200,7 @@ fn project_option_ignores_the_callers_config_and_matches_directory_names() {
     fs::write(tool.join("README.md"), "tool\n").expect("readme");
     git_at(&repo, &tool, &["add", "README.md"]);
     git_at(&repo, &tool, &["commit", "-m", "initial"]);
-    let feature = tool.join(".git/ptm/worktrees/h1");
+    let feature = tool.join(".git/maboroshi/worktrees/h1");
     git_at(
         &repo,
         &tool,
@@ -4200,16 +4236,16 @@ fn project_option_ignores_the_callers_config_and_matches_directory_names() {
         ],
     );
     for path in [&tool, &localname] {
-        let added = repo.phantom(&["project", "add", path.to_str().expect("path"), "--json"]);
+        let added = repo.mabo(&["project", "add", path.to_str().expect("path"), "--json"]);
         assert!(added.status.success(), "{}", text(&added.stderr));
     }
-    fs::write(repo.repo.join(".ptm.toml"), "not = [\n").expect("invalid config");
+    fs::write(repo.repo.join(".mabo.toml"), "not = [\n").expect("invalid config");
 
     let run = |args: &[&str]| {
-        repo.command(env!("CARGO_BIN_EXE_ptm"), args)
+        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
             .env("PATH", &path_env)
             .output()
-            .expect("ptm")
+            .expect("mabo")
     };
     let listed = run(&["list", "-p", "tool"]);
     assert!(
@@ -4218,7 +4254,7 @@ fn project_option_ignores_the_callers_config_and_matches_directory_names() {
         text(&listed.stdout),
         text(&listed.stderr)
     );
-    assert!(!text(&listed.stderr).contains("Invalid .ptm.toml"));
+    assert!(!text(&listed.stderr).contains("Invalid .mabo.toml"));
     assert!(
         text(&listed.stdout).contains("h1"),
         "{}",
@@ -4237,7 +4273,7 @@ fn project_option_ignores_the_callers_config_and_matches_directory_names() {
     assert!(managed_directory(&tool, &repo.root.join("xdg"))
         .join("z1")
         .is_dir());
-    assert!(!text(&created.stderr).contains("Invalid .ptm.toml"));
+    assert!(!text(&created.stderr).contains("Invalid .mabo.toml"));
     assert!(!managed(&repo, "z1").exists());
 
     let by_directory = run(&["where", "-p", "localname", "main"]);
@@ -4280,14 +4316,14 @@ fn project_option_ignores_the_callers_config_and_matches_directory_names() {
 
     let help = run(&["exec", "--project", "tool", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
-    assert!(text(&help.stdout).contains("ptm exec"));
+    assert!(text(&help.stdout).contains("mabo exec"));
     assert!(!text(&help.stderr).contains("Unknown option"));
 }
 
 #[test]
 fn github_checkout_project_passes_the_selected_host() {
     let repo = Repo::new();
-    fs::write(repo.repo.join(".ptm.toml"), "not = [\n").expect("invalid config");
+    fs::write(repo.repo.join(".mabo.toml"), "not = [\n").expect("invalid config");
     let tool = repo.root.join("ghe-tool");
     fs::create_dir_all(&tool).expect("tool");
     git_at(&repo, &tool, &["init", "-b", "main"]);
@@ -4316,7 +4352,7 @@ fn github_checkout_project_passes_the_selected_host() {
     let gh = bin.join("gh");
     fs::write(
         &gh,
-        "#!/bin/sh\nprintf '%s\\n' \"pwd=$(pwd)\" >> \"$PTM_GH_LOG\"\nprintf '%s\\n' \"$*\" >> \"$PTM_GH_LOG\"\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' \"$PTM_GH_REPO_JSON\"\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":3}'\nexit 0\n",
+        "#!/bin/sh\nprintf '%s\\n' \"pwd=$(pwd)\" >> \"$MABO_GH_LOG\"\nprintf '%s\\n' \"$*\" >> \"$MABO_GH_LOG\"\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' \"$MABO_GH_REPO_JSON\"\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":3}'\nexit 0\n",
     )
     .expect("gh");
     use std::os::unix::fs::PermissionsExt;
@@ -4330,7 +4366,7 @@ fn github_checkout_project_passes_the_selected_host() {
     );
     let checkout = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &[
                 "github",
                 "checkout",
@@ -4341,9 +4377,9 @@ fn github_checkout_project_passes_the_selected_host() {
             ],
         )
         .env("PATH", &path_env)
-        .env("PTM_GH_LOG", &log)
+        .env("MABO_GH_LOG", &log)
         .env(
-            "PTM_GH_REPO_JSON",
+            "MABO_GH_REPO_JSON",
             r#"{"url":"https://ghe.corp.example/acme/tool","owner":{"login":"acme"},"name":"tool"}"#,
         )
         .output()
@@ -4354,7 +4390,7 @@ fn github_checkout_project_passes_the_selected_host() {
         text(&checkout.stdout),
         text(&checkout.stderr)
     );
-    assert!(!text(&checkout.stderr).contains("Invalid .ptm.toml"));
+    assert!(!text(&checkout.stderr).contains("Invalid .mabo.toml"));
     assert!(managed_directory(&tool, &repo.root.join("xdg"))
         .join("issues/3")
         .is_dir());
@@ -4371,12 +4407,12 @@ fn github_checkout_project_passes_the_selected_host() {
 
     fs::write(&log, "").expect("truncate");
     let local = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["github", "checkout", "4"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["github", "checkout", "4"])
         .current_dir(&tool)
         .env("PATH", &path_env)
-        .env("PTM_GH_LOG", &log)
+        .env("MABO_GH_LOG", &log)
         .env(
-            "PTM_GH_REPO_JSON",
+            "MABO_GH_REPO_JSON",
             r#"{"url":"https://ghe.corp.example/acme/tool","owner":{"login":"acme"},"name":"tool"}"#,
         )
         .output()
@@ -4410,7 +4446,7 @@ fn github_checkout_project_passes_the_selected_host() {
     fs::write(&log, "").expect("truncate");
     let aliased = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &[
                 "github",
                 "checkout",
@@ -4420,9 +4456,9 @@ fn github_checkout_project_passes_the_selected_host() {
             ],
         )
         .env("PATH", &path_env)
-        .env("PTM_GH_LOG", &log)
+        .env("MABO_GH_LOG", &log)
         .env(
-            "PTM_GH_REPO_JSON",
+            "MABO_GH_REPO_JSON",
             r#"{"url":"https://github.com/acme/tool","owner":{"login":"acme"},"name":"tool"}"#,
         )
         .output()
@@ -4462,10 +4498,10 @@ fn relative_origin_is_not_a_github_project_name() {
         &project,
         &["remote", "add", "origin", "backups/widget.git"],
     );
-    let added = repo.phantom(&["project", "add", project.to_str().expect("path"), "--json"]);
+    let added = repo.mabo(&["project", "add", project.to_str().expect("path"), "--json"]);
     assert!(added.status.success(), "{}", text(&added.stderr));
     let listed = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["project", "list", "--json"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["project", "list", "--json"])
         .env("PATH", &path_env)
         .output()
         .expect("list");
@@ -4484,7 +4520,7 @@ fn relative_origin_is_not_a_github_project_name() {
         .contains("github.com"));
     let matched = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["where", "-p", "github.com/backups/widget", "main", "--json"],
         )
         .env("PATH", &path_env)
@@ -4494,7 +4530,7 @@ fn relative_origin_is_not_a_github_project_name() {
     assert_eq!(json_value(&matched)["error"]["code"], "not_found");
     let by_name = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["where", "-p", "ptm805local", "main"],
         )
         .env("PATH", &path_env)
@@ -4503,7 +4539,7 @@ fn relative_origin_is_not_a_github_project_name() {
     assert!(by_name.status.success(), "{}", text(&by_name.stderr));
     assert!(same_dir(&text(&by_name.stdout), &project));
 
-    let git_dir = repo.phantom(&[
+    let git_dir = repo.mabo(&[
         "where",
         "-p",
         repo.repo.join(".git").to_str().expect("git"),
@@ -4516,7 +4552,7 @@ fn relative_origin_is_not_a_github_project_name() {
         text(&git_dir.stderr)
     );
     assert!(same_dir(&text(&git_dir.stdout), &repo.repo));
-    let objects = repo.phantom(&[
+    let objects = repo.mabo(&[
         "where",
         "-p",
         repo.repo.join(".git/objects").to_str().expect("objects"),
@@ -4530,11 +4566,11 @@ fn relative_origin_is_not_a_github_project_name() {
 #[test]
 fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     let repo = Repo::new();
-    let help = repo.phantom(&["meta", "--help"]);
+    let help = repo.mabo(&["meta", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
     assert!(text(&help.stdout).contains("meta set"));
 
-    let plain = repo.phantom(&["create", "plain", "--json"]);
+    let plain = repo.mabo(&["create", "plain", "--json"]);
     assert!(plain.status.success(), "{}", text(&plain.stderr));
     let plain_json = json_value(&plain);
     assert!(plain_json["worktree"]["owner"].is_null());
@@ -4547,8 +4583,9 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     assert!(plain_json["worktree"]["links"]["pr"].is_null());
 
     let ignored = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "legacy", "--json"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "legacy", "--json"])
         .env("PHANTOM_AGENT_ID", "phantom-v6")
+        .env("PTM_AGENT_ID", "ptm")
         .output()
         .expect("legacy env");
     assert!(ignored.status.success(), "{}", text(&ignored.stderr));
@@ -4556,7 +4593,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
 
     let created = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &[
                 "create",
                 "feature",
@@ -4569,7 +4606,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
                 "from-flag",
             ],
         )
-        .env("PTM_AGENT_ID", "from-env")
+        .env("MABO_AGENT_ID", "from-env")
         .output()
         .expect("create");
     assert!(created.status.success(), "{}", text(&created.stderr));
@@ -4595,16 +4632,16 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
 
     let from_env = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["create", "env-owned", "--json"],
         )
-        .env("PTM_AGENT_ID", "from-env")
+        .env("MABO_AGENT_ID", "from-env")
         .output()
         .expect("env");
     assert!(from_env.status.success(), "{}", text(&from_env.stderr));
     assert_eq!(json_value(&from_env)["worktree"]["owner"], "from-env");
 
-    let listed = repo.phantom(&["list", "--owner", "from-flag"]);
+    let listed = repo.mabo(&["list", "--owner", "from-flag"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_text = text(&listed.stdout);
     assert!(listed_text.contains("feature"));
@@ -4613,31 +4650,31 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     assert!(!listed_text.contains("plain"));
     assert!(!listed_text.contains("env-owned"));
 
-    let listed_json = json_value(&repo.phantom(&["list", "--json", "--owner", "from-env"]));
+    let listed_json = json_value(&repo.mabo(&["list", "--json", "--owner", "from-env"]));
     assert_eq!(listed_json["worktrees"].as_array().map(Vec::len), Some(1));
     assert_eq!(listed_json["worktrees"][0]["name"], "env-owned");
 
-    let none = repo.phantom(&["list", "--names", "--owner", "nobody"]);
+    let none = repo.mabo(&["list", "--names", "--owner", "nobody"]);
     assert!(none.status.success(), "{}", text(&none.stderr));
     assert!(text(&none.stdout).is_empty());
-    let none_human = repo.phantom(&["list", "--owner", "nobody"]);
+    let none_human = repo.mabo(&["list", "--owner", "nobody"]);
     assert!(text(&none_human.stdout).contains("No worktrees found for owner 'nobody'"));
 
-    let invalid = repo.phantom(&["create", "nope", "--owner", " "]);
+    let invalid = repo.mabo(&["create", "nope", "--owner", " "]);
     assert_eq!(invalid.status.code(), Some(3));
-    let invalid_json = repo.phantom(&["meta", "set", "feature", "--pr", "not-a-link", "--json"]);
+    let invalid_json = repo.mabo(&["meta", "set", "feature", "--pr", "not-a-link", "--json"]);
     assert_eq!(invalid_json.status.code(), Some(3));
     assert_eq!(json_value(&invalid_json)["error"]["code"], "validation");
     assert_eq!(json_value(&invalid_json)["error"]["exitCode"], 3);
 
-    let missing = repo.phantom(&["meta", "set", "missing", "--owner", "grok", "--json"]);
+    let missing = repo.mabo(&["meta", "set", "missing", "--owner", "grok", "--json"]);
     assert_eq!(missing.status.code(), Some(2));
     assert_eq!(json_value(&missing)["error"]["code"], "not_found");
 
-    let unset = repo.phantom(&["meta", "set", "feature", "--json"]);
+    let unset = repo.mabo(&["meta", "set", "feature", "--json"]);
     assert_eq!(unset.status.code(), Some(3));
 
-    let updated = repo.phantom(&[
+    let updated = repo.mabo(&[
         "meta",
         "set",
         "feature",
@@ -4656,7 +4693,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     assert_eq!(updated_json["worktree"]["createdAt"], created_at);
     assert_eq!(updated_json["worktree"]["createdFrom"], created_from);
 
-    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let file = repo.repo.join(".git/maboroshi/worktrees.json");
     let mut document: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("store json");
     let records = document["worktrees"].as_array_mut().expect("records");
@@ -4674,7 +4711,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     )
     .expect("rewrite");
 
-    let located = repo.phantom(&["where", "feature", "--json"]);
+    let located = repo.mabo(&["where", "feature", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
     let located_json = json_value(&located);
     assert_eq!(located_json["worktree"]["createdAt"], created_at);
@@ -4682,7 +4719,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
         located_json["worktree"]["lastUsedAt"],
         "2000-01-01T00:00:00.000Z"
     );
-    let human_where = repo.phantom(&["where", "feature"]);
+    let human_where = repo.mabo(&["where", "feature"]);
     assert!(
         text(&human_where.stdout).starts_with('/'),
         "{}",
@@ -4705,16 +4742,16 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
         ),
     )
     .expect("rewrite");
-    let ran = repo.phantom(&["exec", "feature", "true"]);
+    let ran = repo.mabo(&["exec", "feature", "true"]);
     assert!(ran.status.success(), "{}", text(&ran.stderr));
-    let after_exec = json_value(&repo.phantom(&["list", "--json", "--owner", "from-flag"]));
+    let after_exec = json_value(&repo.mabo(&["list", "--json", "--owner", "from-flag"]));
     assert_ne!(
         after_exec["worktrees"][0]["lastUsedAt"],
         "2000-01-01T00:00:00.000Z"
     );
 
     repo.git(&["branch", "side"]);
-    let attached = repo.phantom(&[
+    let attached = repo.mabo(&[
         "attach",
         "side",
         "--json",
@@ -4729,11 +4766,11 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     assert_eq!(attached_json["worktree"]["links"]["pr"]["number"], 12);
     assert!(attached_json["worktree"]["base"].is_null());
 
-    let deleted = repo.phantom(&["delete", "feature", "--keep-branch", "--json"]);
+    let deleted = repo.mabo(&["delete", "feature", "--keep-branch", "--json"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     let deleted_json = json_value(&deleted);
     assert_eq!(deleted_json["deleted"][0]["worktree"]["owner"], "from-flag");
-    let after_delete = repo.phantom(&["list", "--json", "--owner", "from-flag"]);
+    let after_delete = repo.mabo(&["list", "--json", "--owner", "from-flag"]);
     assert_eq!(
         json_value(&after_delete)["worktrees"]
             .as_array()
@@ -4749,7 +4786,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
         .all(|record| !record["path"].as_str().unwrap_or("").ends_with("/feature")));
 
     fs::write(&file, "{not json").expect("corrupt");
-    let broken = repo.phantom(&["list", "--json"]);
+    let broken = repo.mabo(&["list", "--json"]);
     assert!(broken.status.success(), "{}", text(&broken.stderr));
     let broken_json = json_value(&broken);
     assert_eq!(broken_json["version"], 1);
@@ -4758,7 +4795,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     assert!(text(&broken.stderr).contains("worktrees.json"));
     assert!(!text(&broken.stdout).contains("invalid JSON"));
     assert_eq!(fs::read_to_string(&file).expect("kept"), "{not json");
-    let refused = repo.phantom(&["create", "after-corrupt", "--json"]);
+    let refused = repo.mabo(&["create", "after-corrupt", "--json"]);
     assert_eq!(refused.status.code(), Some(1));
     assert_eq!(json_value(&refused)["error"]["code"], "error");
     assert!(json_value(&refused)["error"]["message"]
@@ -4774,7 +4811,7 @@ fn github_recheckout_keeps_the_original_owner() {
     let repo = Repo::new();
     let created = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &[
                 "create",
                 "topic",
@@ -4792,7 +4829,7 @@ fn github_recheckout_keeps_the_original_owner() {
         .as_str()
         .expect("created")
         .to_string();
-    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let file = repo.repo.join(".git/maboroshi/worktrees.json");
     let mut document: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("json");
     document["worktrees"][0]["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
@@ -4808,7 +4845,7 @@ fn github_recheckout_keeps_the_original_owner() {
     let path = fake_gh_for_topic_pr(&repo);
     let again = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &[
                 "github",
                 "checkout",
@@ -4821,7 +4858,7 @@ fn github_recheckout_keeps_the_original_owner() {
             ],
         )
         .env("PATH", &path)
-        .env("PTM_AGENT_ID", "intruder")
+        .env("MABO_AGENT_ID", "intruder")
         .output()
         .expect("checkout");
     assert!(again.status.success(), "{}", text(&again.stderr));
@@ -4835,7 +4872,7 @@ fn github_recheckout_keeps_the_original_owner() {
         "2000-01-01T00:00:00.000Z"
     );
     assert_eq!(again_json["worktree"]["links"]["pr"]["number"], 7);
-    let listed = repo.phantom(&["list", "--json", "--owner", "creator"]);
+    let listed = repo.mabo(&["list", "--json", "--owner", "creator"]);
     assert_eq!(
         json_value(&listed)["worktrees"].as_array().map(Vec::len),
         Some(1)
@@ -4847,11 +4884,11 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     let corrupt = Repo::new();
     publish_pr_topic(&corrupt);
     let corrupt_path = fake_gh_for_topic_pr(&corrupt);
-    let file = corrupt.repo.join(".git/ptm/worktrees.json");
+    let file = corrupt.repo.join(".git/maboroshi/worktrees.json");
     fs::create_dir_all(file.parent().expect("dir")).expect("dir");
     fs::write(&file, "{not json").expect("corrupt");
     let refused = corrupt
-        .command(env!("CARGO_BIN_EXE_ptm"), &["github", "checkout", "7"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["github", "checkout", "7"])
         .env("PATH", &corrupt_path)
         .output()
         .expect("checkout");
@@ -4875,7 +4912,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     let locked = Repo::new();
     publish_pr_topic(&locked);
     let locked_path = fake_gh_for_topic_pr(&locked);
-    let metadata_dir = locked.repo.join(".git/ptm");
+    let metadata_dir = locked.repo.join(".git/maboroshi");
     fs::create_dir_all(&metadata_dir).expect("dir");
     let store = "{\n  \"version\": 1,\n  \"worktrees\": []\n}\n";
     fs::write(metadata_dir.join("worktrees.json"), store).expect("store");
@@ -4886,7 +4923,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     let _restore = ModeReset(&metadata_dir);
     let unwritable = locked
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["github", "checkout", "7", "--json"],
         )
         .env("PATH", &locked_path)
@@ -4927,7 +4964,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     let ready_path = fake_gh_for_topic_pr(&ready);
     let checked_out = ready
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["github", "checkout", "7", "--json"],
         )
         .env("PATH", &ready_path)
@@ -4965,16 +5002,16 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
 #[test]
 fn delete_refuses_when_metadata_is_not_writable() {
     let repo = Repo::new();
-    let created = repo.phantom(&["create", "doomed", "--owner", "creator", "--json"]);
+    let created = repo.mabo(&["create", "doomed", "--owner", "creator", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let metadata_dir = repo.repo.join(".git/ptm");
+    let metadata_dir = repo.repo.join(".git/maboroshi");
     let store = fs::read_to_string(metadata_dir.join("worktrees.json")).expect("store");
     use std::os::unix::fs::PermissionsExt;
     let mut locked = fs::metadata(&metadata_dir).expect("meta").permissions();
     locked.set_mode(0o555);
     fs::set_permissions(&metadata_dir, locked).expect("chmod");
     let _restore = ModeReset(&metadata_dir);
-    let deleted = repo.phantom(&["delete", "doomed", "--keep-branch", "--json"]);
+    let deleted = repo.mabo(&["delete", "doomed", "--keep-branch", "--json"]);
     assert_eq!(deleted.status.code(), Some(1), "{}", text(&deleted.stdout));
     let deleted_json = json_value(&deleted);
     assert!(deleted_json["error"]["message"]
@@ -4993,7 +5030,7 @@ fn delete_refuses_when_metadata_is_not_writable() {
 #[test]
 fn create_replaces_a_record_left_by_git_worktree_remove() {
     let repo = Repo::new();
-    let created = repo.phantom(&[
+    let created = repo.mabo(&[
         "create",
         "feature",
         "--owner",
@@ -5010,7 +5047,7 @@ fn create_replaces_a_record_left_by_git_worktree_remove() {
     let path = managed(&repo, "feature");
     repo.git(&["worktree", "remove", path.to_str().expect("path")]);
     repo.git(&["branch", "-D", "feature"]);
-    let again = repo.phantom(&[
+    let again = repo.mabo(&[
         "create",
         "feature",
         "--owner",
@@ -5025,10 +5062,10 @@ fn create_replaces_a_record_left_by_git_worktree_remove() {
     assert_eq!(again_json["worktree"]["purpose"], "new task");
     assert_ne!(again_json["worktree"]["createdAt"], created_at);
     assert_eq!(again_json["metadata"]["ok"], true);
-    let listed = repo.phantom(&["list", "--names", "--owner", "first"]);
+    let listed = repo.mabo(&["list", "--names", "--owner", "first"]);
     assert!(text(&listed.stdout).is_empty(), "{}", text(&listed.stdout));
     assert_eq!(
-        json_value(&repo.phantom(&["list", "--json", "--owner", "second"]))["worktrees"]
+        json_value(&repo.mabo(&["list", "--json", "--owner", "second"]))["worktrees"]
             .as_array()
             .map(Vec::len),
         Some(1)
@@ -5039,16 +5076,16 @@ fn create_replaces_a_record_left_by_git_worktree_remove() {
 fn metadata_save_failure_after_create_still_runs_hooks() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         "[hooks]\npost-create = [\"touch hook-ran\"]\n",
     )
     .expect("hooks");
     let created = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["create", "feature", "--owner", "creator", "--json"],
         )
-        .env("PTM_TEST_FAIL_METADATA_SAVE", "1")
+        .env("MABO_TEST_FAIL_METADATA_SAVE", "1")
         .output()
         .expect("create");
     assert_eq!(created.status.code(), Some(1), "{}", text(&created.stdout));
@@ -5072,12 +5109,12 @@ fn metadata_save_failure_after_create_still_runs_hooks() {
 #[test]
 fn readers_warn_on_corrupt_metadata_and_still_run() {
     let repo = Repo::new();
-    let created = repo.phantom(&["create", "feature", "--owner", "creator"]);
+    let created = repo.mabo(&["create", "feature", "--owner", "creator"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let file = repo.repo.join(".git/maboroshi/worktrees.json");
     fs::write(&file, "{not json").expect("corrupt");
 
-    let listed = repo.phantom(&["list", "--json", "--no-default"]);
+    let listed = repo.mabo(&["list", "--json", "--no-default"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
     assert_eq!(listed_json["worktrees"][0]["name"], "feature");
@@ -5085,15 +5122,15 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
     assert!(text(&listed.stderr).contains("worktrees.json"));
     assert!(!text(&listed.stdout).contains("Warning"));
 
-    let located = repo.phantom(&["where", "feature", "--json"]);
+    let located = repo.mabo(&["where", "feature", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
     assert!(json_value(&located)["worktree"]["owner"].is_null());
     assert!(text(&located.stderr).contains("invalid JSON"));
-    let human = repo.phantom(&["where", "feature"]);
+    let human = repo.mabo(&["where", "feature"]);
     assert!(human.status.success());
     assert!(text(&human.stdout).starts_with('/'));
 
-    let ran = repo.phantom(&["exec", "feature", "true"]);
+    let ran = repo.mabo(&["exec", "feature", "true"]);
     assert!(ran.status.success(), "{}", text(&ran.stderr));
     assert!(text(&ran.stderr).contains("invalid JSON"));
 
@@ -5103,7 +5140,7 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
 #[test]
 fn owner_flag_rejects_a_value_that_looks_like_an_option() {
     let repo = Repo::new();
-    let listed = repo.phantom(&["list", "--owner", "--json"]);
+    let listed = repo.mabo(&["list", "--owner", "--json"]);
     assert_eq!(listed.status.code(), Some(3), "{}", text(&listed.stdout));
     let listed_json = json_value(&listed);
     assert_eq!(listed_json["error"]["code"], "validation");
@@ -5118,16 +5155,16 @@ fn owner_flag_rejects_a_value_that_looks_like_an_option() {
         .contains("--json"));
     assert!(text(&listed.stderr).is_empty(), "{}", text(&listed.stderr));
 
-    let created = repo.phantom(&["create", "feature", "--purpose", "--json"]);
+    let created = repo.mabo(&["create", "feature", "--purpose", "--json"]);
     assert_eq!(created.status.code(), Some(3));
     assert_eq!(json_value(&created)["error"]["code"], "validation");
     assert!(!managed(&repo, "feature").exists());
 }
 
 #[test]
-fn exec_command_json_flag_does_not_switch_ptm_to_json() {
+fn exec_command_json_flag_does_not_switch_mabo_to_json() {
     let repo = Repo::new();
-    let created = repo.phantom(&["create", "topic", "--exec", "npm", "test", "--json"]);
+    let created = repo.mabo(&["create", "topic", "--exec", "npm", "test", "--json"]);
     let stdout = text(&created.stdout);
     assert!(
         stdout.contains("Created worktree 'topic'"),
@@ -5146,8 +5183,11 @@ fn exec_command_json_flag_does_not_switch_ptm_to_json() {
 
 #[test]
 fn separate_git_dir_creates_the_default_worktree_under_xdg() {
-    let root =
-        std::env::temp_dir().join(format!("ptm-sep-default-{}-{}", std::process::id(), uuid()));
+    let root = std::env::temp_dir().join(format!(
+        "mabo-sep-default-{}-{}",
+        std::process::id(),
+        uuid()
+    ));
     let home = root.join("home");
     let checkout = root.join("checkout");
     let sep = root.join("sep.git");
@@ -5197,7 +5237,7 @@ fn separate_git_dir_creates_the_default_worktree_under_xdg() {
     git(&["commit", "-m", "initial"]);
     assert!(checkout.join(".git").is_file(), ".git is a gitdir file");
 
-    let created = std::process::Command::new(env!("CARGO_BIN_EXE_ptm"))
+    let created = std::process::Command::new(env!("CARGO_BIN_EXE_mabo"))
         .args(["create", "feature", "--json"])
         .current_dir(&checkout)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -5205,9 +5245,9 @@ fn separate_git_dir_creates_the_default_worktree_under_xdg() {
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_DATA_HOME", root.join("xdg"))
-        .env_remove("PTM_AGENT_ID")
+        .env_remove("MABO_AGENT_ID")
         .output()
-        .expect("ptm");
+        .expect("mabo");
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -5219,16 +5259,20 @@ fn separate_git_dir_creates_the_default_worktree_under_xdg() {
     let worktree = managed_directory(&checkout, &root.join("xdg")).join("feature");
     assert_worktree_object(&created_json["worktree"], "feature", &worktree);
     assert!(worktree.is_dir());
-    assert!(!sep.join("ptm").join("worktrees").join("feature").exists());
-    assert!(sep.join("ptm").join("worktrees.json").is_file());
+    assert!(!sep
+        .join("maboroshi")
+        .join("worktrees")
+        .join("feature")
+        .exists());
+    assert!(sep.join("maboroshi").join("worktrees.json").is_file());
     assert!(checkout.join(".git").is_file(), ".git stayed a gitdir file");
-    assert!(!checkout.join(".git").join("ptm").exists());
+    assert!(!checkout.join(".git").join("maboroshi").exists());
     let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
 fn separate_git_dir_writes_metadata_in_the_common_dir() {
-    let root = std::env::temp_dir().join(format!("ptm-sep-{}-{}", std::process::id(), uuid()));
+    let root = std::env::temp_dir().join(format!("mabo-sep-{}-{}", std::process::id(), uuid()));
     let home = root.join("home");
     let checkout = root.join("checkout");
     let sep = root.join("sep.git");
@@ -5276,8 +5320,8 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
     git(&["commit", "-m", "initial"]);
     assert!(checkout.join(".git").is_file(), ".git is a gitdir file");
 
-    let ptm = |args: &[&str]| {
-        std::process::Command::new(env!("CARGO_BIN_EXE_ptm"))
+    let mabo = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_mabo"))
             .args(args)
             .current_dir(&checkout)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -5285,18 +5329,18 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
-            .env_remove("PTM_AGENT_ID")
+            .env_remove("MABO_AGENT_ID")
             .output()
-            .expect("ptm")
+            .expect("mabo")
     };
-    let pref = ptm(&[
+    let pref = mabo(&[
         "preferences",
         "set",
         "worktrees-directory",
         worktrees.to_str().expect("worktrees"),
     ]);
     assert!(pref.status.success(), "{}", text(&pref.stderr));
-    let created = ptm(&["create", "feature", "--owner", "sep", "--json"]);
+    let created = mabo(&["create", "feature", "--owner", "sep", "--json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -5304,7 +5348,7 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
         text(&created.stderr)
     );
     assert!(worktrees.join("feature").is_dir());
-    let store = sep.join("ptm").join("worktrees.json");
+    let store = sep.join("maboroshi").join("worktrees.json");
     let document: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&store).expect("common store")).expect("json");
     assert!(document["worktrees"]
@@ -5312,7 +5356,7 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
         .expect("records")
         .iter()
         .any(|record| record["owner"] == "sep"));
-    assert!(!checkout.join(".git").join("ptm").exists());
+    assert!(!checkout.join(".git").join("maboroshi").exists());
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -5325,7 +5369,7 @@ struct SeparateCheckout {
 
 impl SeparateCheckout {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!("ptm-sep-root-{}", uuid()));
+        let root = std::env::temp_dir().join(format!("mabo-sep-root-{}", uuid()));
         let home = root.join("home");
         let checkout = root.join("deep").join("checkout");
         let git_dir = root.join("var").join("sep.git");
@@ -5371,10 +5415,10 @@ impl SeparateCheckout {
         );
     }
 
-    fn ptm(&self, cwd: &Path, args: &[&str]) -> std::process::Output {
-        self.command(env!("CARGO_BIN_EXE_ptm"), args, cwd)
+    fn mabo(&self, cwd: &Path, args: &[&str]) -> std::process::Output {
+        self.command(env!("CARGO_BIN_EXE_mabo"), args, cwd)
             .output()
-            .expect("ptm")
+            .expect("mabo")
     }
 
     fn command(&self, program: &str, args: &[&str], cwd: &Path) -> Command {
@@ -5388,7 +5432,7 @@ impl SeparateCheckout {
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_DATA_HOME", self.root.join("xdg"))
             .env_remove("GHQ_ROOT")
-            .env_remove("PTM_AGENT_ID")
+            .env_remove("MABO_AGENT_ID")
             .env_remove("PHANTOM_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
@@ -5397,9 +5441,9 @@ impl SeparateCheckout {
         if std::path::Path::new(program)
             .file_name()
             .and_then(|name| name.to_str())
-            == Some("ptm")
+            == Some("mabo")
         {
-            command.env("PTM_TRUST_ALL", "1");
+            command.env("MABO_TRUST_ALL", "1");
         }
         if program.ends_with("git") && args.first() == Some(&"init") {
             let template = self.root.join("git-template");
@@ -5419,7 +5463,7 @@ impl Drop for SeparateCheckout {
 #[test]
 fn separate_git_dir_delete_current_removes_the_linked_worktree() {
     let repo = SeparateCheckout::new();
-    let created = repo.ptm(&repo.checkout, &["create", "linked"]);
+    let created = repo.mabo(&repo.checkout, &["create", "linked"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -5433,11 +5477,11 @@ fn separate_git_dir_delete_current_removes_the_linked_worktree() {
     );
     assert!(!repo
         .git_dir
-        .join("ptm")
+        .join("maboroshi")
         .join("worktrees")
         .join("linked")
         .exists());
-    let deleted = repo.ptm(&linked, &["delete", "--current"]);
+    let deleted = repo.mabo(&linked, &["delete", "--current"]);
     let stdout = text(&deleted.stdout);
     let stderr = text(&deleted.stderr);
     assert!(
@@ -5481,12 +5525,12 @@ fn separate_git_dir_delete_current_removes_the_linked_worktree() {
 #[test]
 fn separate_git_dir_relative_worktrees_directory_joins_the_main_checkout() {
     let repo = SeparateCheckout::new();
-    let pref = repo.ptm(
+    let pref = repo.mabo(
         &repo.checkout,
         &["preferences", "set", "worktrees-directory", "../wt"],
     );
     assert!(pref.status.success(), "{}", text(&pref.stderr));
-    let first = repo.ptm(&repo.checkout, &["create", "r1"]);
+    let first = repo.mabo(&repo.checkout, &["create", "r1"]);
     assert!(
         first.status.success(),
         "{}\n{}",
@@ -5498,7 +5542,7 @@ fn separate_git_dir_relative_worktrees_directory_joins_the_main_checkout() {
         first_path.is_dir(),
         "from the main checkout, ../wt is deep/wt"
     );
-    let second = repo.ptm(&first_path, &["create", "r2"]);
+    let second = repo.mabo(&first_path, &["create", "r2"]);
     let stdout = text(&second.stdout);
     let stderr = text(&second.stderr);
     assert!(second.status.success(), "{stdout}\n{stderr}");
@@ -5526,7 +5570,7 @@ fn separate_git_dir_relative_worktrees_directory_joins_the_main_checkout() {
 
 #[test]
 fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() {
-    let root = std::env::temp_dir().join(format!("ptm-sub-root-{}", uuid()));
+    let root = std::env::temp_dir().join(format!("mabo-sub-root-{}", uuid()));
     let home = root.join("home");
     let remote = root.join("remote");
     let superproject = root.join("super");
@@ -5588,8 +5632,8 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
         String::from_utf8_lossy(&added.stderr)
     );
     git(&superproject, &["commit", "-m", "add submodule"]);
-    let ptm = |cwd: &Path, args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_ptm"))
+    let mabo = |cwd: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_mabo"))
             .args(args)
             .current_dir(cwd)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -5597,11 +5641,11 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
-            .env_remove("PTM_AGENT_ID")
+            .env_remove("MABO_AGENT_ID")
             .output()
-            .expect("ptm")
+            .expect("mabo")
     };
-    let created = ptm(&checkout, &["create", "linked"]);
+    let created = mabo(&checkout, &["create", "linked"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -5610,10 +5654,10 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
     );
     let linked = managed_directory(&checkout, &root.join("xdg")).join("linked");
     assert!(!superproject
-        .join(".git/modules/sub/ptm/worktrees/linked")
+        .join(".git/modules/sub/maboroshi/worktrees/linked")
         .exists());
     assert!(linked.is_dir());
-    let deleted = ptm(&linked, &["delete", "--current"]);
+    let deleted = mabo(&linked, &["delete", "--current"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -5622,16 +5666,16 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
     );
     assert!(!linked.exists());
     assert!(checkout.join(".git").is_file(), "submodule checkout stays");
-    let pref = ptm(
+    let pref = mabo(
         &checkout,
         &["preferences", "set", "worktrees-directory", "../wt"],
     );
     assert!(pref.status.success(), "{}", text(&pref.stderr));
-    let first = ptm(&checkout, &["create", "r1"]);
+    let first = mabo(&checkout, &["create", "r1"]);
     assert!(first.status.success(), "{}", text(&first.stderr));
     let first_path = superproject.join("wt").join("r1");
     assert!(first_path.is_dir());
-    let second = ptm(&first_path, &["create", "r2"]);
+    let second = mabo(&first_path, &["create", "r2"]);
     assert!(
         second.status.success(),
         "{}\n{}",
@@ -5645,7 +5689,7 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
 
 #[test]
 fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
-    let root = std::env::temp_dir().join(format!("ptm-ambiguous-{}", uuid()));
+    let root = std::env::temp_dir().join(format!("mabo-ambiguous-{}", uuid()));
     let home = root.join("home");
     let real = root.join("zz-real");
     let copy = root.join("aa-copy");
@@ -5690,7 +5734,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
     git(&real, &["config", "user.email", "phantom-rust@example.com"]);
     git(&real, &["commit", "--allow-empty", "-m", "initial"]);
     copy_dir(&real, &copy);
-    let linked = git_dir.join("ptm").join("worktrees").join("q");
+    let linked = git_dir.join("maboroshi").join("worktrees").join("q");
     git(
         &real,
         &[
@@ -5701,8 +5745,8 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
             linked.to_str().expect("linked"),
         ],
     );
-    let ptm = |cwd: &Path, args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_ptm"))
+    let mabo = |cwd: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_mabo"))
             .args(args)
             .current_dir(cwd)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -5710,13 +5754,13 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
-            .env_remove("PTM_AGENT_ID")
+            .env_remove("MABO_AGENT_ID")
             .output()
-            .expect("ptm")
+            .expect("mabo")
     };
 
     for checkout in [&copy, &real] {
-        let here = ptm(checkout, &["list", "--json"]);
+        let here = mabo(checkout, &["list", "--json"]);
         assert!(
             here.status.success(),
             "running inside {} should use that checkout\n{}\n{}",
@@ -5731,7 +5775,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
             main["path"]
         );
         assert_eq!(main["default"], true);
-        let ran = ptm(checkout, &["exec", "main", "pwd"]);
+        let ran = mabo(checkout, &["exec", "main", "pwd"]);
         assert!(ran.status.success(), "{}", text(&ran.stderr));
         assert!(
             paths_match(text(&ran.stdout).trim(), checkout),
@@ -5740,7 +5784,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
         );
     }
 
-    let listed = ptm(&linked, &["list"]);
+    let listed = mabo(&linked, &["list"]);
     assert_eq!(
         listed.status.code(),
         Some(1),
@@ -5755,7 +5799,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
     assert!(!stderr.to_ascii_lowercase().contains("fatal:"), "{stderr}");
     assert!(text(&listed.stdout).is_empty(), "{}", text(&listed.stdout));
 
-    let json_error = ptm(&linked, &["list", "--json"]);
+    let json_error = mabo(&linked, &["list", "--json"]);
     assert_eq!(json_error.status.code(), Some(1));
     assert!(
         text(&json_error.stderr).is_empty(),
@@ -5779,7 +5823,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
         &real,
         &["config", "core.worktree", real.to_str().expect("real")],
     );
-    let resolved = ptm(&linked, &["list", "--json"]);
+    let resolved = mabo(&linked, &["list", "--json"]);
     assert!(
         resolved.status.success(),
         "{}\n{}",
@@ -5793,7 +5837,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
         main["path"]
     );
     assert_eq!(main["default"], true);
-    let ran = ptm(&linked, &["exec", "main", "pwd"]);
+    let ran = mabo(&linked, &["exec", "main", "pwd"]);
     assert!(
         ran.status.success(),
         "{}\n{}",
@@ -5810,7 +5854,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
 
 #[test]
 fn missing_separate_checkout_names_the_git_dir() {
-    let root = std::env::temp_dir().join(format!("ptm-missing-checkout-{}", uuid()));
+    let root = std::env::temp_dir().join(format!("mabo-missing-checkout-{}", uuid()));
     let home = root.join("home");
     let checkout = root.join("deep").join("checkout");
     let git_dir = root.join("var").join("sep.git");
@@ -5838,7 +5882,7 @@ fn missing_separate_checkout_names_the_git_dir() {
         String::from_utf8_lossy(&init.stderr)
     );
     fs::remove_dir_all(&checkout).expect("remove checkout");
-    let listed = Command::new(env!("CARGO_BIN_EXE_ptm"))
+    let listed = Command::new(env!("CARGO_BIN_EXE_mabo"))
         .args(["list", "--json"])
         .current_dir(&git_dir)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -5846,9 +5890,9 @@ fn missing_separate_checkout_names_the_git_dir() {
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_DATA_HOME", root.join("xdg"))
-        .env_remove("PTM_AGENT_ID")
+        .env_remove("MABO_AGENT_ID")
         .output()
-        .expect("ptm");
+        .expect("mabo");
     assert_eq!(
         listed.status.code(),
         Some(1),
@@ -5875,12 +5919,12 @@ fn missing_separate_checkout_names_the_git_dir() {
 
 #[test]
 fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
-    let root = std::env::temp_dir().join(format!("ptm-far-checkout-{}", uuid()));
+    let root = std::env::temp_dir().join(format!("mabo-far-checkout-{}", uuid()));
     let home = root.join("home");
     fs::create_dir_all(home.join(".config/git")).expect("home");
     fs::write(home.join(".gitconfig"), "").expect("gitconfig");
-    let ptm = |cwd: &Path, args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_ptm"))
+    let mabo = |cwd: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_mabo"))
             .args(args)
             .current_dir(cwd)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -5888,11 +5932,11 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
-            .env_remove("PTM_AGENT_ID")
+            .env_remove("MABO_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
             .output()
-            .expect("ptm")
+            .expect("mabo")
     };
     let init_checkout = |checkout: &Path, git_dir: &Path| {
         fs::create_dir_all(checkout).expect("checkout");
@@ -5944,7 +5988,7 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
     }
     let wide_checkout = root.join("src").join("proj");
     init_checkout(&wide_checkout, &root.join(".gitdirs").join("proj.git"));
-    let listed = ptm(&wide_checkout, &["list", "--json"]);
+    let listed = mabo(&wide_checkout, &["list", "--json"]);
     assert!(
         listed.status.success(),
         "list from a checkout beside wide siblings\n{}\n{}",
@@ -5967,7 +6011,7 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
         .join("5")
         .join("6");
     init_checkout(&deep_checkout, &root.join("deep.git"));
-    let deep = ptm(&deep_checkout, &["list", "--json"]);
+    let deep = mabo(&deep_checkout, &["list", "--json"]);
     assert!(
         deep.status.success(),
         "list from a checkout six levels down\n{}\n{}",
@@ -5987,7 +6031,7 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
 #[test]
 fn core_worktree_without_a_gitfile_names_that_path() {
     let repo = SeparateCheckout::new();
-    let created = repo.ptm(&repo.checkout, &["create", "linked"]);
+    let created = repo.mabo(&repo.checkout, &["create", "linked"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -5998,7 +6042,7 @@ fn core_worktree_without_a_gitfile_names_that_path() {
     fs::create_dir_all(&empty).expect("empty");
     repo.git(&["config", "core.worktree", empty.to_str().expect("empty")]);
     let linked = managed_directory(&repo.checkout, &repo.root.join("xdg")).join("linked");
-    let listed = repo.ptm(&linked, &["list"]);
+    let listed = repo.mabo(&linked, &["list"]);
     assert_eq!(
         listed.status.code(),
         Some(1),
@@ -6011,7 +6055,7 @@ fn core_worktree_without_a_gitfile_names_that_path() {
     assert!(stderr.contains("gitfile"), "{stderr}");
     assert!(!stderr.contains("Set the main checkout"), "{stderr}");
     assert!(!stderr.to_ascii_lowercase().contains("fatal:"), "{stderr}");
-    let json = repo.ptm(&linked, &["list", "--json"]);
+    let json = repo.mabo(&linked, &["list", "--json"]);
     assert_eq!(json.status.code(), Some(1));
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let message = json_value(&json)["error"]["message"]
@@ -6029,7 +6073,7 @@ fn core_worktree_without_a_gitfile_names_that_path() {
 #[test]
 fn separate_git_dir_lists_and_execs_the_main_checkout() {
     let repo = SeparateCheckout::new();
-    let created = repo.ptm(&repo.checkout, &["create", "linked"]);
+    let created = repo.mabo(&repo.checkout, &["create", "linked"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -6042,7 +6086,7 @@ fn separate_git_dir_lists_and_execs_the_main_checkout() {
 
 #[test]
 fn submodule_lists_and_execs_the_main_checkout() {
-    let root = std::env::temp_dir().join(format!("ptm-sub-list-{}", uuid()));
+    let root = std::env::temp_dir().join(format!("mabo-sub-list-{}", uuid()));
     let home = root.join("home");
     let remote = root.join("remote");
     let superproject = root.join("super");
@@ -6104,8 +6148,8 @@ fn submodule_lists_and_execs_the_main_checkout() {
         String::from_utf8_lossy(&added.stderr)
     );
     git(&superproject, &["commit", "-m", "add submodule"]);
-    let ptm = |cwd: &Path, args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_ptm"))
+    let mabo = |cwd: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_mabo"))
             .args(args)
             .current_dir(cwd)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -6113,11 +6157,11 @@ fn submodule_lists_and_execs_the_main_checkout() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
-            .env_remove("PTM_AGENT_ID")
+            .env_remove("MABO_AGENT_ID")
             .output()
-            .expect("ptm")
+            .expect("mabo")
     };
-    let created = ptm(&checkout, &["create", "linked"]);
+    let created = mabo(&checkout, &["create", "linked"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -6126,13 +6170,13 @@ fn submodule_lists_and_execs_the_main_checkout() {
     );
     let git_dir = superproject.join(".git").join("modules").join("sub");
     let linked = managed_directory(&checkout, &root.join("xdg")).join("linked");
-    assert!(git_dir.join("ptm").join("worktrees.json").is_file());
+    assert!(git_dir.join("maboroshi").join("worktrees.json").is_file());
     assert!(!git_dir
-        .join("ptm")
+        .join("maboroshi")
         .join("worktrees")
         .join("linked")
         .exists());
-    let listed = ptm(&linked, &["list"]);
+    let listed = mabo(&linked, &["list"]);
     assert!(
         listed.status.success(),
         "{}\n{}",
@@ -6146,7 +6190,7 @@ fn submodule_lists_and_execs_the_main_checkout() {
             .any(|line| line.starts_with("main (") && line.contains("sub)")),
         "main entry should be the submodule checkout\n{stdout}"
     );
-    let json = ptm(&linked, &["list", "--json"]);
+    let json = mabo(&linked, &["list", "--json"]);
     assert!(json.status.success(), "{}", text(&json.stderr));
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let main = default_worktree(&json_value(&json));
@@ -6156,7 +6200,7 @@ fn submodule_lists_and_execs_the_main_checkout() {
         main["path"]
     );
     assert_eq!(main["default"], true);
-    let hidden = ptm(&linked, &["list", "--no-default", "--json"]);
+    let hidden = mabo(&linked, &["list", "--no-default", "--json"]);
     assert!(hidden.status.success(), "{}", text(&hidden.stderr));
     let hidden_rows = json_value(&hidden)["worktrees"]
         .as_array()
@@ -6171,7 +6215,7 @@ fn submodule_lists_and_execs_the_main_checkout() {
         hidden_rows.iter().any(|row| row["name"] == "linked"),
         "{hidden_rows:?}"
     );
-    let ran = ptm(&linked, &["exec", "main", "pwd"]);
+    let ran = mabo(&linked, &["exec", "main", "pwd"]);
     assert!(
         ran.status.success(),
         "{}\n{}",
@@ -6187,14 +6231,14 @@ fn submodule_lists_and_execs_the_main_checkout() {
 }
 
 #[test]
-fn running_inside_dot_git_returns_a_ptm_error() {
+fn running_inside_dot_git_returns_a_mabo_error() {
     let repo = Repo::new();
     for cwd in [repo.repo.join(".git"), repo.repo.join(".git").join("refs")] {
         let listed = repo
-            .command(env!("CARGO_BIN_EXE_ptm"), &["list"])
+            .command(env!("CARGO_BIN_EXE_mabo"), &["list"])
             .current_dir(&cwd)
             .output()
-            .expect("ptm");
+            .expect("mabo");
         assert_eq!(
             listed.status.code(),
             Some(1),
@@ -6209,10 +6253,10 @@ fn running_inside_dot_git_returns_a_ptm_error() {
         assert!(text(&listed.stdout).is_empty(), "{}", text(&listed.stdout));
 
         let json = repo
-            .command(env!("CARGO_BIN_EXE_ptm"), &["list", "--json"])
+            .command(env!("CARGO_BIN_EXE_mabo"), &["list", "--json"])
             .current_dir(&cwd)
             .output()
-            .expect("ptm");
+            .expect("mabo");
         assert_eq!(json.status.code(), Some(1), "{}", cwd.display());
         assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
         let error = json_value(&json);
@@ -6230,7 +6274,7 @@ fn running_inside_dot_git_returns_a_ptm_error() {
 }
 
 fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path, git_dir: &Path) {
-    let listed = repo.ptm(linked, &["list"]);
+    let listed = repo.mabo(linked, &["list"]);
     assert!(
         listed.status.success(),
         "{}\n{}",
@@ -6246,7 +6290,7 @@ fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path,
         !stdout.contains("sep.git"),
         "human list should not show the git dir\n{stdout}"
     );
-    let json = repo.ptm(linked, &["list", "--json"]);
+    let json = repo.mabo(linked, &["list", "--json"]);
     assert!(json.status.success(), "{}", text(&json.stderr));
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let document = json_value(&json);
@@ -6264,7 +6308,7 @@ fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path,
         main["path"]
     );
     assert_eq!(main["default"], true);
-    let hidden = repo.ptm(linked, &["list", "--no-default"]);
+    let hidden = repo.mabo(linked, &["list", "--no-default"]);
     assert!(hidden.status.success(), "{}", text(&hidden.stderr));
     let hidden_text = text(&hidden.stdout);
     assert!(
@@ -6272,7 +6316,7 @@ fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path,
         "--no-default still shows main\n{hidden_text}"
     );
     assert!(hidden_text.contains("linked"), "{hidden_text}");
-    let ran = repo.ptm(linked, &["exec", "main", "pwd"]);
+    let ran = repo.mabo(linked, &["exec", "main", "pwd"]);
     assert!(
         ran.status.success(),
         "{}\n{}",
@@ -6305,10 +6349,10 @@ fn copy_dir(from: &Path, to: &Path) {
 #[test]
 fn duplicate_metadata_paths_block_mutations() {
     let repo = Repo::new();
-    let created = repo.phantom(&["create", "kept", "--owner", "creator"]);
+    let created = repo.mabo(&["create", "kept", "--owner", "creator"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     repo.git(&["branch", "side"]);
-    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let file = repo.repo.join(".git/maboroshi/worktrees.json");
     let body = "{\n  \"version\": 1,\n  \"worktrees\": [\n    {\"path\": \"/tmp/one\", \"owner\": \"a\"},\n    {\"path\": \"/tmp/one\", \"owner\": \"b\"}\n  ]\n}\n";
     fs::write(&file, body).expect("duplicate");
     for args in [
@@ -6318,7 +6362,7 @@ fn duplicate_metadata_paths_block_mutations() {
         vec!["meta", "set", "kept", "--owner", "nope", "--json"],
         vec!["gc", "--json"],
     ] {
-        let output = repo.phantom(&args);
+        let output = repo.mabo(&args);
         assert!(
             !output.status.success(),
             "{args:?}\n{}\n{}",
@@ -6356,9 +6400,9 @@ fn worktree_registered(repo: &Repo, name: &str) -> bool {
 }
 
 fn reserve_project_dir(git_root: &Path, xdg: &Path) {
-    let common = phantom::git::canonical_common_dir(git_root).expect("common dir");
-    let directory = phantom::paths::default_worktrees_directory(git_root, &common, xdg).path;
-    phantom::paths::ensure_worktrees_directory(&directory, Some(&common)).expect("project dir");
+    let common = maboroshi::git::canonical_common_dir(git_root).expect("common dir");
+    let directory = maboroshi::paths::default_worktrees_directory(git_root, &common, xdg).path;
+    maboroshi::paths::ensure_worktrees_directory(&directory, Some(&common)).expect("project dir");
 }
 
 fn land_branch(repo: &Repo, name: &str) {
@@ -6386,7 +6430,7 @@ fn commit_in_worktree(repo: &Repo, name: &str) {
 }
 
 fn clear_created_from(repo: &Repo, name: &str) {
-    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let file = repo.repo.join(".git/maboroshi/worktrees.json");
     let mut document: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("json");
     let records = document["worktrees"].as_array_mut().expect("records");
@@ -6413,7 +6457,7 @@ fn clear_created_from(repo: &Repo, name: &str) {
 }
 
 fn age_metadata(repo: &Repo, name: &str) {
-    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let file = repo.repo.join(".git/maboroshi/worktrees.json");
     let mut document: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("json");
     let records = document["worktrees"].as_array_mut().expect("records");
@@ -6436,9 +6480,9 @@ fn age_metadata(repo: &Repo, name: &str) {
 #[test]
 fn gc_dry_run_keeps_a_merged_worktree_until_apply() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "feature"]).status.success());
+    assert!(repo.mabo(&["create", "feature"]).status.success());
     land_branch(&repo, "feature");
-    let plan = repo.phantom(&["gc"]);
+    let plan = repo.mabo(&["gc"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let planned = text(&plan.stdout);
     assert!(
@@ -6449,7 +6493,7 @@ fn gc_dry_run_keeps_a_merged_worktree_until_apply() {
     assert!(worktree_dir(&repo, "feature").is_dir());
     assert!(branch_listed(&repo, "feature"));
 
-    let applied = repo.phantom(&["gc", "--apply"]);
+    let applied = repo.mabo(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let removed = text(&applied.stdout);
     assert!(removed.contains("removed feature [merged]"), "{removed}");
@@ -6457,7 +6501,7 @@ fn gc_dry_run_keeps_a_merged_worktree_until_apply() {
     assert!(!branch_listed(&repo, "feature"));
     assert!(!worktree_registered(&repo, "feature"));
 
-    let again = repo.phantom(&["gc", "--apply"]);
+    let again = repo.mabo(&["gc", "--apply"]);
     assert!(again.status.success(), "{}", text(&again.stderr));
     assert!(text(&again.stdout).contains("Nothing to clean up."));
 }
@@ -6466,11 +6510,11 @@ fn gc_dry_run_keeps_a_merged_worktree_until_apply() {
 fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
     let repo = Repo::new();
     assert!(repo
-        .phantom(&["create", "feature", "--owner", "grok"])
+        .mabo(&["create", "feature", "--owner", "grok"])
         .status
         .success());
     land_branch(&repo, "feature");
-    let plan = repo.phantom(&["gc", "--json"]);
+    let plan = repo.mabo(&["gc", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     assert!(text(&plan.stderr).is_empty(), "{}", text(&plan.stderr));
     let document = json_value(&plan);
@@ -6491,7 +6535,7 @@ fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
         .unwrap()
         .ends_with("/feature"));
 
-    let bad = repo.phantom(&["gc", "--older-than", "14", "--json"]);
+    let bad = repo.mabo(&["gc", "--older-than", "14", "--json"]);
     assert_eq!(bad.status.code(), Some(3));
     assert!(text(&bad.stderr).is_empty(), "{}", text(&bad.stderr));
     let error = json_value(&bad);
@@ -6503,21 +6547,21 @@ fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
 #[test]
 fn gc_skips_dirty_unpushed_current_and_other_agents() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "dirty"]).status.success());
+    assert!(repo.mabo(&["create", "dirty"]).status.success());
     land_branch(&repo, "dirty");
     fs::write(worktree_dir(&repo, "dirty").join("local.txt"), "x\n").expect("dirty");
-    assert!(repo.phantom(&["create", "wip"]).status.success());
+    assert!(repo.mabo(&["create", "wip"]).status.success());
     commit_in_worktree(&repo, "wip");
-    assert!(repo.phantom(&["create", "here"]).status.success());
+    assert!(repo.mabo(&["create", "here"]).status.success());
     land_branch(&repo, "here");
     assert!(repo
-        .phantom(&["create", "bob", "--owner", "bob"])
+        .mabo(&["create", "bob", "--owner", "bob"])
         .status
         .success());
     commit_in_worktree(&repo, "bob");
     age_metadata(&repo, "bob");
 
-    let plan = repo.phantom(&["gc"]);
+    let plan = repo.mabo(&["gc"]);
     assert!(
         plan.status.success(),
         "{}\n{}",
@@ -6531,7 +6575,7 @@ fn gc_skips_dirty_unpushed_current_and_other_agents() {
     assert!(!planned.contains("bob"), "{planned}");
     assert!(worktree_dir(&repo, "dirty").is_dir());
 
-    let aged = repo.phantom(&["gc", "--older-than", "14d"]);
+    let aged = repo.mabo(&["gc", "--older-than", "14d"]);
     assert!(aged.status.success(), "{}", text(&aged.stderr));
     let aged_text = text(&aged.stdout);
     assert!(
@@ -6541,7 +6585,7 @@ fn gc_skips_dirty_unpushed_current_and_other_agents() {
     assert!(!aged_text.contains("would remove dirty"), "{aged_text}");
 
     let current = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["gc", "--apply"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["gc", "--apply"])
         .current_dir(worktree_dir(&repo, "here"))
         .output()
         .expect("gc");
@@ -6558,7 +6602,7 @@ fn gc_skips_dirty_unpushed_current_and_other_agents() {
     assert!(worktree_dir(&repo, "here").is_dir());
     assert!(worktree_dir(&repo, "dirty").is_dir());
 
-    let forced = repo.phantom(&["gc", "--force"]);
+    let forced = repo.mabo(&["gc", "--force"]);
     assert!(forced.status.success(), "{}", text(&forced.stderr));
     let forced_text = text(&forced.stdout);
     assert!(
@@ -6578,14 +6622,14 @@ fn gc_skips_dirty_unpushed_current_and_other_agents() {
 #[test]
 fn gc_drops_a_missing_directory_and_keeps_an_unpushed_branch() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "gone"]).status.success());
+    assert!(repo.mabo(&["create", "gone"]).status.success());
     land_branch(&repo, "gone");
-    assert!(repo.phantom(&["create", "local"]).status.success());
+    assert!(repo.mabo(&["create", "local"]).status.success());
     commit_in_worktree(&repo, "local");
     fs::remove_dir_all(worktree_dir(&repo, "gone")).expect("rm gone");
     fs::remove_dir_all(worktree_dir(&repo, "local")).expect("rm local");
 
-    let applied = repo.phantom(&["gc", "--apply"]);
+    let applied = repo.mabo(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let text = text(&applied.stdout);
     assert!(text.contains("removed gone [merged, orphaned]"), "{text}");
@@ -6603,7 +6647,7 @@ fn gc_drops_a_missing_directory_and_keeps_an_unpushed_branch() {
 fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
     let repo = Repo::new();
     assert!(repo
-        .phantom(&[
+        .mabo(&[
             "create",
             "topic",
             "--pr",
@@ -6627,7 +6671,7 @@ fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
     );
 
     let plan = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["gc", "--pr", "--json"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["gc", "--pr", "--json"])
         .env("PATH", &path)
         .output()
         .expect("gc");
@@ -6641,15 +6685,15 @@ fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
     assert_eq!(document["candidates"][0]["detail"], "unpushed");
     assert!(worktree_dir(&repo, "topic").is_dir());
 
-    fs::create_dir_all(repo.home.join(".config/ptm")).expect("config dir");
+    fs::create_dir_all(repo.home.join(".config/maboroshi")).expect("config dir");
     fs::write(
-        repo.home.join(".config/ptm/config.toml"),
+        repo.home.join(".config/maboroshi/config.toml"),
         "keep-branch = true\n",
     )
     .expect("preference");
     let forced = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["gc", "--pr", "--force", "--json"],
         )
         .env("PATH", &path)
@@ -6667,22 +6711,22 @@ fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
 #[test]
 fn gc_runs_pre_delete_hooks_only_when_applying() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "feature"]).status.success());
+    assert!(repo.mabo(&["create", "feature"]).status.success());
     land_branch(&repo, "feature");
-    assert!(repo.phantom(&["create", "other"]).status.success());
+    assert!(repo.mabo(&["create", "other"]).status.success());
     land_branch(&repo, "other");
     fs::write(
-        repo.repo.join(".ptm.toml"),
-        "[hooks]\npre-delete = [\"test \\\"$PTM_NAME\\\" != feature && touch \\\"$PTM_ROOT_PATH/hooked\\\"\"]\n",
+        repo.repo.join(".mabo.toml"),
+        "[hooks]\npre-delete = [\"test \\\"$MABO_NAME\\\" != feature && touch \\\"$MABO_ROOT_PATH/hooked\\\"\"]\n",
     )
     .expect("hooks");
 
-    let plan = repo.phantom(&["gc"]);
+    let plan = repo.mabo(&["gc"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     assert!(!repo.repo.join("hooked").exists());
     assert!(worktree_dir(&repo, "feature").is_dir());
 
-    let applied = repo.phantom(&["gc", "--apply", "--json"]);
+    let applied = repo.mabo(&["gc", "--apply", "--json"]);
     assert_eq!(applied.status.code(), Some(1), "{}", text(&applied.stdout));
     assert!(
         text(&applied.stderr).is_empty()
@@ -6730,7 +6774,7 @@ fn gh_path(repo: &Repo, body: &str) -> String {
 #[test]
 fn gc_apply_removes_a_merged_worktree_when_another_remote_branch_is_ahead() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "feature"]).status.success());
+    assert!(repo.mabo(&["create", "feature"]).status.success());
     land_branch(&repo, "feature");
     let bare = repo.root.join("origin.git");
     repo.git(&["init", "--bare", bare.to_str().expect("bare")]);
@@ -6743,7 +6787,7 @@ fn gc_apply_removes_a_merged_worktree_when_another_remote_branch_is_ahead() {
     repo.git(&["push", "origin", "ahead"]);
     repo.git(&["checkout", "main"]);
 
-    let applied = repo.phantom(&["gc", "--apply"]);
+    let applied = repo.mabo(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("removed feature [merged]"), "{output}");
@@ -6766,7 +6810,7 @@ fn gc_does_not_remove_a_worktree_checked_out_on_the_default_branch() {
     repo.git(&["push", "origin", "main"]);
     repo.git(&["remote", "set-head", "origin", "main"]);
     repo.git(&["checkout", "-b", "dev"]);
-    let attached = repo.phantom(&["attach", "main"]);
+    let attached = repo.mabo(&["attach", "main"]);
     assert!(
         attached.status.success(),
         "{}\n{}",
@@ -6774,7 +6818,7 @@ fn gc_does_not_remove_a_worktree_checked_out_on_the_default_branch() {
         text(&attached.stderr)
     );
 
-    let applied = repo.phantom(&["gc", "--apply"]);
+    let applied = repo.mabo(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(
@@ -6790,7 +6834,7 @@ fn gc_does_not_remove_a_worktree_checked_out_on_the_default_branch() {
 fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
     let repo = Repo::new();
     repo.git(&["config", "core.logAllRefUpdates", "false"]);
-    let created = repo.phantom(&["create", "fresh", "--json"]);
+    let created = repo.mabo(&["create", "fresh", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let head = json_value(&created)["worktree"]["head"]
         .as_str()
@@ -6802,7 +6846,7 @@ fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
     );
     repo.git(&["commit", "--allow-empty", "-m", "advance"]);
 
-    let applied = repo.phantom(&["gc", "--apply"]);
+    let applied = repo.mabo(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("Nothing to clean up."), "{output}");
@@ -6815,7 +6859,7 @@ fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
     );
 
     age_metadata(&repo, "fresh");
-    let aged = repo.phantom(&["gc", "--older-than", "14d", "--apply"]);
+    let aged = repo.mabo(&["gc", "--older-than", "14d", "--apply"]);
     assert!(aged.status.success(), "{}", text(&aged.stderr));
     let aged_text = text(&aged.stdout);
     assert!(
@@ -6829,13 +6873,13 @@ fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
 #[test]
 fn gc_removes_a_merged_worktree_when_the_branch_reflog_is_missing() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "feature"]).status.success());
+    assert!(repo.mabo(&["create", "feature"]).status.success());
     land_branch(&repo, "feature");
     let reflog = repo.repo.join(".git/logs/refs/heads/feature");
     assert!(reflog.is_file(), "feature reflog");
     fs::remove_file(&reflog).expect("remove reflog");
 
-    let applied = repo.phantom(&["gc", "--apply"]);
+    let applied = repo.mabo(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("removed feature [merged]"), "{output}");
@@ -6852,10 +6896,10 @@ fn gc_removes_an_attached_branch_that_already_moved_past_its_creation_commit() {
     repo.git(&["commit", "-m", "landed"]);
     repo.git(&["checkout", "main"]);
     repo.git(&["merge", "--ff-only", "landed"]);
-    let attached = repo.phantom(&["attach", "landed"]);
+    let attached = repo.mabo(&["attach", "landed"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
 
-    let applied = repo.phantom(&["gc", "--apply"]);
+    let applied = repo.mabo(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("removed landed [merged]"), "{output}");
@@ -6875,10 +6919,10 @@ fn gc_removes_an_attached_merged_branch_when_its_reflog_is_missing() {
     let reflog = repo.repo.join(".git/logs/refs/heads/landed");
     assert!(reflog.is_file(), "landed reflog");
     fs::remove_file(&reflog).expect("remove reflog");
-    let attached = repo.phantom(&["attach", "landed"]);
+    let attached = repo.mabo(&["attach", "landed"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
 
-    let applied = repo.phantom(&["gc", "--apply"]);
+    let applied = repo.mabo(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("removed landed [merged]"), "{output}");
@@ -6889,10 +6933,10 @@ fn gc_removes_an_attached_merged_branch_when_its_reflog_is_missing() {
 #[test]
 fn gc_keeps_an_older_record_by_its_reflog_when_created_from_is_absent() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "fresh"]).status.success());
+    assert!(repo.mabo(&["create", "fresh"]).status.success());
     clear_created_from(&repo, "fresh");
 
-    let applied = repo.phantom(&["gc", "--apply"]);
+    let applied = repo.mabo(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("Nothing to clean up."), "{output}");
@@ -6903,13 +6947,13 @@ fn gc_keeps_an_older_record_by_its_reflog_when_created_from_is_absent() {
 #[test]
 fn gc_keeps_a_worktree_still_at_its_creation_point() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "fresh"]).status.success());
+    assert!(repo.mabo(&["create", "fresh"]).status.success());
     assert!(repo
-        .phantom(&["create", "theirs", "--owner", "other"])
+        .mabo(&["create", "theirs", "--owner", "other"])
         .status
         .success());
 
-    let applied = repo.phantom(&["gc", "--apply"]);
+    let applied = repo.mabo(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("Nothing to clean up."), "{output}");
@@ -6919,7 +6963,7 @@ fn gc_keeps_a_worktree_still_at_its_creation_point() {
     assert!(branch_listed(&repo, "theirs"));
 
     age_metadata(&repo, "fresh");
-    let aged = repo.phantom(&["gc", "--older-than", "14d", "--apply"]);
+    let aged = repo.mabo(&["gc", "--older-than", "14d", "--apply"]);
     assert!(aged.status.success(), "{}", text(&aged.stderr));
     let aged_text = text(&aged.stdout);
     assert!(
@@ -6935,7 +6979,7 @@ fn gc_keeps_a_worktree_still_at_its_creation_point() {
 fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
     let repo = Repo::new();
     assert!(repo
-        .phantom(&[
+        .mabo(&[
             "create",
             "alpha",
             "--pr",
@@ -6944,7 +6988,7 @@ fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
         .status
         .success());
     assert!(repo
-        .phantom(&[
+        .mabo(&[
             "create",
             "beta",
             "--pr",
@@ -6953,7 +6997,7 @@ fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
         .status
         .success());
     assert!(repo
-        .phantom(&["create", "local", "--pr", "4"])
+        .mabo(&["create", "local", "--pr", "4"])
         .status
         .success());
     let log = repo.root.join("gh.log");
@@ -6967,7 +7011,7 @@ fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
 
     let applied = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["gc", "--pr", "--apply", "--json"],
         )
         .env("PATH", &path)
@@ -7011,7 +7055,7 @@ fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
 #[test]
 fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
     let repo = Repo::new();
-    let created = repo.phantom(&["create", "feature", "--json"]);
+    let created = repo.mabo(&["create", "feature", "--json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -7026,16 +7070,16 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
             .unwrap_or(""),
         &path
     ));
-    assert!(!repo.repo.join(".git/ptm/worktrees/feature").exists());
-    assert!(repo.repo.join(".git/ptm/worktrees.json").is_file());
-    let common = phantom::git::canonical_common_dir(&repo.repo).expect("common dir");
-    let marker = fs::read_to_string(managed_root(&repo).join(phantom::paths::PROJECT_MARKER))
+    assert!(!repo.repo.join(".git/maboroshi/worktrees/feature").exists());
+    assert!(repo.repo.join(".git/maboroshi/worktrees.json").is_file());
+    let common = maboroshi::git::canonical_common_dir(&repo.repo).expect("common dir");
+    let marker = fs::read_to_string(managed_root(&repo).join(maboroshi::paths::PROJECT_MARKER))
         .expect("marker");
     assert_eq!(marker.trim_end(), common.to_string_lossy());
 
-    let preference = repo.phantom(&["preferences", "set", "worktrees-directory", "../custom-wt"]);
+    let preference = repo.mabo(&["preferences", "set", "worktrees-directory", "../custom-wt"]);
     assert!(preference.status.success(), "{}", text(&preference.stderr));
-    let custom = repo.phantom(&["create", "custom"]);
+    let custom = repo.mabo(&["create", "custom"]);
     assert!(
         custom.status.success(),
         "{}\n{}",
@@ -7045,7 +7089,7 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
     let custom_path = repo.root.join("custom-wt").join("custom");
     assert!(custom_path.join("README.md").is_file());
     assert!(!managed(&repo, "custom").exists());
-    let removed = repo.phantom(&["delete", "custom"]);
+    let removed = repo.mabo(&["delete", "custom"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
     assert!(!custom_path.exists());
     assert!(
@@ -7053,7 +7097,7 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
         "a preference directory stays when its last worktree is gone"
     );
 
-    let legacy = repo.repo.join(".git/ptm/worktrees/legacy");
+    let legacy = repo.repo.join(".git/maboroshi/worktrees/legacy");
     repo.git(&[
         "worktree",
         "add",
@@ -7062,15 +7106,15 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
         legacy.to_str().expect("legacy"),
         "HEAD",
     ]);
-    let names = repo.phantom(&["list", "--names", "--no-default"]);
+    let names = repo.mabo(&["list", "--names", "--no-default"]);
     assert!(names.status.success(), "{}", text(&names.stderr));
     let listed = text(&names.stdout);
     assert!(listed.lines().any(|line| line == "feature"), "{listed}");
     assert!(listed.lines().any(|line| line == "legacy"), "{listed}");
-    let found = repo.phantom(&["where", "legacy"]);
+    let found = repo.mabo(&["where", "legacy"]);
     assert!(found.status.success(), "{}", text(&found.stderr));
     assert!(paths_match(text(&found.stdout).trim(), &legacy));
-    let refused = repo.phantom(&["delete", "legacy", "--keep-branch"]);
+    let refused = repo.mabo(&["delete", "legacy", "--keep-branch"]);
     assert!(!refused.status.success(), "{}", text(&refused.stdout));
     assert!(
         text(&refused.stderr).contains("outside the managed worktree directory"),
@@ -7084,7 +7128,7 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
 fn relative_xdg_data_home_uses_the_home_fallback() {
     let repo = Repo::new();
     let created = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "feature"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "feature"])
         .env("XDG_DATA_HOME", "relative/data")
         .output()
         .expect("create");
@@ -7094,7 +7138,7 @@ fn relative_xdg_data_home_uses_the_home_fallback() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    let data_home = phantom::paths::data_home(Some(&repo.home), Some(Path::new("relative/data")))
+    let data_home = maboroshi::paths::data_home(Some(&repo.home), Some(Path::new("relative/data")))
         .expect("fallback");
     assert_eq!(data_home, repo.home.join(".local/share"));
     assert!(managed_directory(&repo.repo, &data_home)
@@ -7110,11 +7154,11 @@ fn a_project_directory_owned_by_another_repository_is_refused() {
     let directory = managed_root(&repo);
     fs::create_dir_all(&directory).expect("project dir");
     fs::write(
-        directory.join(phantom::paths::PROJECT_MARKER),
+        directory.join(maboroshi::paths::PROJECT_MARKER),
         "/other/repo/.git\n",
     )
     .expect("foreign marker");
-    let created = repo.phantom(&["create", "feature"]);
+    let created = repo.mabo(&["create", "feature"]);
     assert!(!created.status.success(), "{}", text(&created.stdout));
     let message = format!("{}\n{}", text(&created.stdout), text(&created.stderr));
     assert!(message.contains("belongs to"), "{message}");
@@ -7126,8 +7170,8 @@ fn a_project_directory_owned_by_another_repository_is_refused() {
 fn two_clones_do_not_share_a_worktree_directory() {
     let first = Repo::new();
     let second = Repo::new();
-    assert!(first.phantom(&["create", "feature"]).status.success());
-    assert!(second.phantom(&["create", "feature"]).status.success());
+    assert!(first.mabo(&["create", "feature"]).status.success());
+    assert!(second.mabo(&["create", "feature"]).status.success());
     let left = managed_root(&first);
     let right = managed_root(&second);
     assert_ne!(left, right);
@@ -7144,11 +7188,11 @@ fn symlink_checkout_shares_the_project_directory() {
     let repo = Repo::new();
     let link = repo.root.join("link-name");
     std::os::unix::fs::symlink(&repo.repo, &link).expect("symlink");
-    let created = repo.phantom(&["create", "from-real"]);
+    let created = repo.mabo(&["create", "from-real"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let via_link = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &[
                 "create",
                 "--project",
@@ -7178,7 +7222,7 @@ fn symlink_checkout_shares_the_project_directory() {
     );
     let deleted = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &[
                 "delete",
                 "--project",
@@ -7202,24 +7246,24 @@ fn symlink_checkout_shares_the_project_directory() {
 fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
     let repo = Repo::new();
     assert!(repo
-        .phantom(&[
+        .mabo(&[
             "preferences",
             "set",
             "worktrees-directory",
-            ".git/ptm/worktrees",
+            ".git/maboroshi/worktrees",
         ])
         .status
         .success());
-    let created = repo.phantom(&["create", "feature/topic"]);
+    let created = repo.mabo(&["create", "feature/topic"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let topic = repo.repo.join(".git/ptm/worktrees/feature/topic");
-    let parent = repo.repo.join(".git/ptm/worktrees/feature");
+    let topic = repo.repo.join(".git/maboroshi/worktrees/feature/topic");
+    let parent = repo.repo.join(".git/maboroshi/worktrees/feature");
     assert!(topic.is_dir());
     assert!(repo
-        .phantom(&["preferences", "remove", "worktrees-directory"])
+        .mabo(&["preferences", "remove", "worktrees-directory"])
         .status
         .success());
-    let deleted = repo.phantom(&["delete", "feature/topic"]);
+    let deleted = repo.mabo(&["delete", "feature/topic"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -7228,11 +7272,11 @@ fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
     );
     assert!(!topic.exists());
     assert!(parent.is_dir(), "parents of a recorded worktree stay");
-    assert!(repo.repo.join(".git/ptm/worktrees").is_dir());
+    assert!(repo.repo.join(".git/maboroshi/worktrees").is_dir());
 
     let other = repo.root.join("other-xdg");
     let elsewhere_created = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "elsewhere"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "elsewhere"])
         .env("XDG_DATA_HOME", &other)
         .output()
         .expect("elsewhere");
@@ -7245,7 +7289,7 @@ fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
     let elsewhere = managed_directory(&repo.repo, &other).join("elsewhere");
     assert!(elsewhere.is_dir());
     fs::write(elsewhere.join("dirty.txt"), "dirty\n").expect("dirty");
-    let blocked = repo.phantom(&["delete", "elsewhere"]);
+    let blocked = repo.mabo(&["delete", "elsewhere"]);
     assert!(!blocked.status.success(), "{}", text(&blocked.stdout));
     assert!(
         text(&blocked.stderr).contains("uncommitted"),
@@ -7254,7 +7298,7 @@ fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
     );
     assert!(elsewhere.is_dir());
     fs::remove_file(elsewhere.join("dirty.txt")).expect("clean");
-    let removed = repo.phantom(&["delete", "elsewhere"]);
+    let removed = repo.mabo(&["delete", "elsewhere"]);
     assert!(
         removed.status.success(),
         "{}\n{}",
@@ -7286,14 +7330,14 @@ fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
         assert!(output.status.success(), "{}", text(&output.stderr));
     }
     repo.git(&["merge", "--ff-only", "stray"]);
-    let refused = repo.phantom(&["delete", "stray"]);
+    let refused = repo.mabo(&["delete", "stray"]);
     assert!(!refused.status.success(), "{}", text(&refused.stdout));
     assert!(
         text(&refused.stderr).contains("outside the managed worktree directory"),
         "{}",
         text(&refused.stderr)
     );
-    let cleaned = repo.phantom(&["gc", "--apply"]);
+    let cleaned = repo.mabo(&["gc", "--apply"]);
     assert!(cleaned.status.success(), "{}", text(&cleaned.stderr));
     assert!(
         !text(&cleaned.stdout).contains("stray"),
@@ -7307,17 +7351,17 @@ fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
 fn gc_removes_a_merged_recorded_worktree_outside_the_resolved_directory() {
     let repo = Repo::new();
     assert!(repo
-        .phantom(&[
+        .mabo(&[
             "preferences",
             "set",
             "worktrees-directory",
-            ".git/ptm/worktrees",
+            ".git/maboroshi/worktrees",
         ])
         .status
         .success());
-    let created = repo.phantom(&["create", "landed"]);
+    let created = repo.mabo(&["create", "landed"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let landed = repo.repo.join(".git/ptm/worktrees/landed");
+    let landed = repo.repo.join(".git/maboroshi/worktrees/landed");
     fs::write(landed.join("landed.txt"), "landed\n").expect("note");
     for args in [vec!["add", "landed.txt"], vec!["commit", "-m", "landed"]] {
         let output = repo
@@ -7329,10 +7373,10 @@ fn gc_removes_a_merged_recorded_worktree_outside_the_resolved_directory() {
     }
     repo.git(&["merge", "--ff-only", "landed"]);
     assert!(repo
-        .phantom(&["preferences", "remove", "worktrees-directory"])
+        .mabo(&["preferences", "remove", "worktrees-directory"])
         .status
         .success());
-    let applied = repo.phantom(&["gc", "--apply"]);
+    let applied = repo.mabo(&["gc", "--apply"]);
     assert!(
         applied.status.success(),
         "{}\n{}",
@@ -7345,29 +7389,29 @@ fn gc_removes_a_merged_recorded_worktree_outside_the_resolved_directory() {
         "{stdout}"
     );
     assert!(!landed.exists());
-    assert!(repo.repo.join(".git/ptm/worktrees").is_dir());
+    assert!(repo.repo.join(".git/maboroshi/worktrees").is_dir());
 }
 
 #[test]
 fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
     let repo = Repo::new();
     assert!(repo
-        .phantom(&[
+        .mabo(&[
             "preferences",
             "set",
             "worktrees-directory",
-            ".git/ptm/worktrees",
+            ".git/maboroshi/worktrees",
         ])
         .status
         .success());
-    let detached = repo.phantom(&["create", "next", "--exec", "git checkout -q --detach"]);
+    let detached = repo.mabo(&["create", "next", "--exec", "git checkout -q --detach"]);
     assert!(
         detached.status.success(),
         "{}\n{}",
         text(&detached.stdout),
         text(&detached.stderr)
     );
-    let nested = repo.phantom(&[
+    let nested = repo.mabo(&[
         "create",
         "feature/topic",
         "--exec",
@@ -7379,7 +7423,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         text(&nested.stdout),
         text(&nested.stderr)
     );
-    let branched = repo.phantom(&["create", "kept"]);
+    let branched = repo.mabo(&["create", "kept"]);
     assert!(
         branched.status.success(),
         "{}\n{}",
@@ -7388,13 +7432,13 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
     );
     repo.git(&["branch", "-m", "kept", "moved"]);
     assert!(repo
-        .phantom(&["preferences", "remove", "worktrees-directory"])
+        .mabo(&["preferences", "remove", "worktrees-directory"])
         .status
         .success());
 
-    let next = repo.repo.join(".git/ptm/worktrees/next");
-    let topic = repo.repo.join(".git/ptm/worktrees/feature/topic");
-    let kept = repo.repo.join(".git/ptm/worktrees/kept");
+    let next = repo.repo.join(".git/maboroshi/worktrees/next");
+    let topic = repo.repo.join(".git/maboroshi/worktrees/feature/topic");
+    let kept = repo.repo.join(".git/maboroshi/worktrees/kept");
     let head = repo
         .command("git", &["rev-parse", "--short=7", "HEAD"])
         .current_dir(&next)
@@ -7403,7 +7447,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
     assert!(head.status.success(), "{}", text(&head.stderr));
     let sha = text(&head.stdout);
 
-    let names = repo.phantom(&["list", "--names", "--no-default"]);
+    let names = repo.mabo(&["list", "--names", "--no-default"]);
     assert!(names.status.success(), "{}", text(&names.stderr));
     let listed = text(&names.stdout);
     assert!(listed.lines().any(|line| line == "next"), "{listed}");
@@ -7415,25 +7459,25 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
     assert!(!listed.lines().any(|line| line == sha), "{listed}");
     assert!(!listed.lines().any(|line| line == "moved"), "{listed}");
 
-    let found = repo.phantom(&["where", "next"]);
+    let found = repo.mabo(&["where", "next"]);
     assert!(found.status.success(), "{}", text(&found.stderr));
     assert!(paths_match(text(&found.stdout).trim(), &next));
-    let found_topic = repo.phantom(&["where", "feature/topic"]);
+    let found_topic = repo.mabo(&["where", "feature/topic"]);
     assert!(
         found_topic.status.success(),
         "{}",
         text(&found_topic.stderr)
     );
     assert!(paths_match(text(&found_topic.stdout).trim(), &topic));
-    let found_kept = repo.phantom(&["where", "kept"]);
+    let found_kept = repo.mabo(&["where", "kept"]);
     assert!(found_kept.status.success(), "{}", text(&found_kept.stderr));
     assert!(paths_match(text(&found_kept.stdout).trim(), &kept));
 
-    let ran = repo.phantom(&["exec", "next", "true"]);
+    let ran = repo.mabo(&["exec", "next", "true"]);
     assert!(ran.status.success(), "{}", text(&ran.stderr));
-    let marked = repo.phantom(&["meta", "set", "feature/topic", "--owner", "ada"]);
+    let marked = repo.mabo(&["meta", "set", "feature/topic", "--owner", "ada"]);
     assert!(marked.status.success(), "{}", text(&marked.stderr));
-    let owned = text(&repo.phantom(&["list", "--names", "--owner", "ada"]).stdout);
+    let owned = text(&repo.mabo(&["list", "--names", "--owner", "ada"]).stdout);
     assert_eq!(owned, "feature/topic");
 
     let stray = repo.root.join("stray-detached");
@@ -7450,7 +7494,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         .output()
         .expect("stray head");
     let stray_sha = text(&stray_head.stdout);
-    let after_stray = text(&repo.phantom(&["list", "--names", "--no-default"]).stdout);
+    let after_stray = text(&repo.mabo(&["list", "--names", "--no-default"]).stdout);
     assert!(
         after_stray.lines().any(|line| line == stray_sha),
         "{after_stray}"
@@ -7460,7 +7504,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         "{after_stray}"
     );
 
-    let deleted = repo.phantom(&["delete", "kept", "--keep-branch"]);
+    let deleted = repo.mabo(&["delete", "kept", "--keep-branch"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -7478,7 +7522,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         text(&moved.stdout)
     );
 
-    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let file = repo.repo.join(".git/maboroshi/worktrees.json");
     let mut document: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("store json");
     for record in document["worktrees"].as_array_mut().expect("records") {
@@ -7498,7 +7542,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         ),
     )
     .expect("rewrite");
-    let planned = repo.phantom(&["gc", "--older-than", "1d", "--json"]);
+    let planned = repo.mabo(&["gc", "--older-than", "1d", "--json"]);
     assert!(planned.status.success(), "{}", text(&planned.stderr));
     let candidates = json_value(&planned)["candidates"]
         .as_array()
@@ -7509,7 +7553,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         .find(|entry| entry["name"] == "next")
         .expect("gc names the detached worktree next");
     assert_eq!(next_row["action"], "wouldRemove");
-    let applied = repo.phantom(&["gc", "--older-than", "1d", "--apply", "--json"]);
+    let applied = repo.mabo(&["gc", "--older-than", "1d", "--apply", "--json"]);
     assert!(
         applied.status.success(),
         "{}\n{}",
@@ -7530,9 +7574,9 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
 #[test]
 fn delete_requests_the_same_worktree_once() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "a"]).status.success());
-    assert!(repo.phantom(&["create", "b"]).status.success());
-    let deleted = repo.phantom(&["delete", "a", "b", "a"]);
+    assert!(repo.mabo(&["create", "a"]).status.success());
+    assert!(repo.mabo(&["create", "b"]).status.success());
+    let deleted = repo.mabo(&["delete", "a", "b", "a"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -7558,9 +7602,9 @@ fn delete_requests_the_same_worktree_once() {
     assert!(!managed(&repo, "a").exists());
     assert!(!managed(&repo, "b").exists());
 
-    assert!(repo.phantom(&["create", "alias"]).status.success());
+    assert!(repo.mabo(&["create", "alias"]).status.success());
     repo.git(&["branch", "-m", "alias", "topic"]);
-    let once = repo.phantom(&["delete", "alias", "topic"]);
+    let once = repo.mabo(&["delete", "alias", "topic"]);
     assert!(
         once.status.success(),
         "{}\n{}",
@@ -7588,12 +7632,12 @@ fn delete_requests_the_same_worktree_once() {
 #[test]
 fn list_shows_absolute_or_home_paths() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "inside"]).status.success());
+    assert!(repo.mabo(&["create", "inside"]).status.success());
     let deep = repo.home.join("a/b/c");
     fs::create_dir_all(&deep).expect("deep");
     let listed = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &[
                 "list",
                 "--project",
@@ -7634,7 +7678,7 @@ fn list_shows_absolute_or_home_paths() {
 #[test]
 fn symlink_spelling_keeps_metadata_and_cleans_the_project_directory() {
     let repo = Repo::new();
-    let created = repo.phantom(&["create", "feature", "--owner", "alice", "--json"]);
+    let created = repo.mabo(&["create", "feature", "--owner", "alice", "--json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -7668,18 +7712,18 @@ fn symlink_spelling_keeps_metadata_and_cleans_the_project_directory() {
     let gitdir = repo.repo.join(".git/worktrees/feature/gitdir");
     fs::write(&gitdir, format!("{}\n", spelled.join(".git").display())).expect("gitdir");
 
-    let listed = repo.phantom(&["list", "--json", "--no-default"]);
+    let listed = repo.mabo(&["list", "--json", "--no-default"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let entry = &json_value(&listed)["worktrees"][0];
     assert_eq!(entry["owner"], "alice");
     assert_eq!(entry["createdFrom"], created_from);
     assert_eq!(entry["createdAt"], created_at);
-    let plan = repo.phantom(&["gc", "--json"]);
+    let plan = repo.mabo(&["gc", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let candidate = &json_value(&plan)["candidates"][0];
     assert_eq!(candidate["owner"], "alice");
     assert_eq!(candidate["name"], "feature");
-    let deleted = repo.phantom(&["delete", "feature", "--json"]);
+    let deleted = repo.mabo(&["delete", "feature", "--json"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -7695,7 +7739,8 @@ fn symlink_spelling_keeps_metadata_and_cleans_the_project_directory() {
         !managed_root(&repo).exists(),
         "last worktree inside the resolved directory should remove the project directory"
     );
-    let store = fs::read_to_string(repo.repo.join(".git/ptm/worktrees.json")).unwrap_or_default();
+    let store =
+        fs::read_to_string(repo.repo.join(".git/maboroshi/worktrees.json")).unwrap_or_default();
     assert!(!store.contains("alice"), "{store}");
 }
 
@@ -7707,10 +7752,10 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
     fs::create_dir_all(&real).expect("real xdg");
     std::os::unix::fs::symlink(&real, &link).expect("xdg link");
     let run = |args: &[&str]| {
-        repo.command(env!("CARGO_BIN_EXE_ptm"), args)
+        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
             .env("XDG_DATA_HOME", &link)
             .output()
-            .expect("ptm")
+            .expect("mabo")
     };
     let created = run(&["create", "a", "--json"]);
     assert!(
@@ -7766,7 +7811,7 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
     fs::create_dir_all(&real).expect("real xdg");
     std::os::unix::fs::symlink(&real, &link).expect("xdg link");
     let created = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "feature"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "feature"])
         .env("XDG_DATA_HOME", &link)
         .output()
         .expect("create");
@@ -7778,7 +7823,7 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
     );
     let project = managed_directory(&repo.repo, &real);
     let via_link = link
-        .join("ptm")
+        .join("maboroshi")
         .join("worktrees")
         .join(project.file_name().expect("project name"))
         .join("feature");
@@ -7813,14 +7858,14 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
         std::env::var("PATH").unwrap_or_default()
     );
     let with_logical_top = |args: &[&str]| {
-        repo.command(env!("CARGO_BIN_EXE_ptm"), args)
+        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
             .env("XDG_DATA_HOME", &link)
             .env("PATH", &path_env)
             .env("REAL_TOP", &canonical)
             .env("LOGICAL_TOP", &via_link)
             .current_dir(&via_link)
             .output()
-            .expect("ptm")
+            .expect("mabo")
     };
     let refused = with_logical_top(&["delete", "feature"]);
     assert_eq!(
@@ -7854,7 +7899,7 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
 #[test]
 fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
     let repo = Repo::new();
-    let created = repo.phantom(&[
+    let created = repo.mabo(&[
         "create",
         "issues/7",
         "--owner",
@@ -7923,7 +7968,7 @@ fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
     );
     let again = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &[
                 "github",
                 "checkout",
@@ -7972,16 +8017,16 @@ fn empty_commit(repo: &Repo, dir: &Path, message: &str) {
 #[test]
 fn delete_refuses_a_branch_with_unpushed_commits() {
     let repo = Repo::new();
-    let help = repo.phantom(&["delete", "--help"]);
+    let help = repo.mabo(&["delete", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
     let help_text = text(&help.stdout);
     assert!(help_text.contains("unpushed"), "{help_text}");
     assert!(help_text.contains("current directory"), "{help_text}");
 
-    assert!(repo.phantom(&["create", "u"]).status.success());
+    assert!(repo.mabo(&["create", "u"]).status.success());
     let worktree = managed(&repo, "u");
     empty_commit(&repo, &worktree, "x");
-    let refused = repo.phantom(&["delete", "u"]);
+    let refused = repo.mabo(&["delete", "u"]);
     assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
     let refused_text = text(&refused.stderr);
     assert!(refused_text.contains("unpushed"), "{refused_text}");
@@ -7992,7 +8037,7 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     assert!(worktree.is_dir());
     assert!(branch_listed(&repo, "u"));
 
-    let json = repo.phantom(&["delete", "u", "--json"]);
+    let json = repo.mabo(&["delete", "u", "--json"]);
     assert_eq!(json.status.code(), Some(3));
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let document = json_value(&json);
@@ -8007,10 +8052,10 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     assert!(worktree.is_dir());
     assert!(branch_listed(&repo, "u"));
 
-    assert!(repo.phantom(&["create", "kept"]).status.success());
+    assert!(repo.mabo(&["create", "kept"]).status.success());
     let kept_dir = managed(&repo, "kept");
     empty_commit(&repo, &kept_dir, "keep");
-    let kept = repo.phantom(&["delete", "kept", "--keep-branch"]);
+    let kept = repo.mabo(&["delete", "kept", "--keep-branch"]);
     assert!(
         kept.status.success(),
         "{}\n{}",
@@ -8021,7 +8066,7 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     assert!(!kept_dir.exists());
     assert!(branch_listed(&repo, "kept"));
 
-    let forced = repo.phantom(&["delete", "u", "--force"]);
+    let forced = repo.mabo(&["delete", "u", "--force"]);
     assert!(
         forced.status.success(),
         "{}\n{}",
@@ -8037,11 +8082,11 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     repo.git(&["remote", "add", "origin", bare.to_str().expect("origin")]);
     repo.git(&["push", "-u", "origin", "main"]);
 
-    assert!(repo.phantom(&["create", "shipped"]).status.success());
+    assert!(repo.mabo(&["create", "shipped"]).status.success());
     let shipped = managed(&repo, "shipped");
     empty_commit(&repo, &shipped, "ship");
     repo.git(&["push", "-u", "origin", "shipped"]);
-    let removed = repo.phantom(&["delete", "shipped"]);
+    let removed = repo.mabo(&["delete", "shipped"]);
     assert!(
         removed.status.success(),
         "{}\n{}",
@@ -8051,12 +8096,12 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     assert!(!shipped.exists());
     assert!(!branch_listed(&repo, "shipped"));
 
-    assert!(repo.phantom(&["create", "behind"]).status.success());
+    assert!(repo.mabo(&["create", "behind"]).status.success());
     let behind = managed(&repo, "behind");
     empty_commit(&repo, &behind, "first");
     repo.git(&["push", "-u", "origin", "behind"]);
     empty_commit(&repo, &behind, "second");
-    let behind_refused = repo.phantom(&["delete", "behind"]);
+    let behind_refused = repo.mabo(&["delete", "behind"]);
     assert_eq!(behind_refused.status.code(), Some(3));
     assert!(
         text(&behind_refused.stderr).contains("unpushed"),
@@ -8066,10 +8111,10 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     assert!(behind.is_dir());
     assert!(branch_listed(&repo, "behind"));
 
-    assert!(repo.phantom(&["create", "landed"]).status.success());
+    assert!(repo.mabo(&["create", "landed"]).status.success());
     commit_in_worktree(&repo, "landed");
     repo.git(&["merge", "--ff-only", "landed"]);
-    let landed = repo.phantom(&["delete", "landed"]);
+    let landed = repo.mabo(&["delete", "landed"]);
     assert!(
         landed.status.success(),
         "{}\n{}",
@@ -8083,10 +8128,10 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
 #[test]
 fn delete_refuses_when_unpushed_commits_cannot_be_checked() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "mystery"]).status.success());
+    assert!(repo.mabo(&["create", "mystery"]).status.success());
     repo.git(&["branch", "-m", "main", "trunk"]);
     let mystery = managed(&repo, "mystery");
-    let unknown = repo.phantom(&["delete", "mystery"]);
+    let unknown = repo.mabo(&["delete", "mystery"]);
     assert_eq!(unknown.status.code(), Some(3), "{}", text(&unknown.stdout));
     assert!(
         text(&unknown.stderr).contains("could not be checked"),
@@ -8095,7 +8140,7 @@ fn delete_refuses_when_unpushed_commits_cannot_be_checked() {
     );
     assert!(mystery.is_dir());
     assert!(branch_listed(&repo, "mystery"));
-    let forced = repo.phantom(&["delete", "mystery", "--force"]);
+    let forced = repo.mabo(&["delete", "mystery", "--force"]);
     assert!(
         forced.status.success(),
         "{}\n{}",
@@ -8108,13 +8153,13 @@ fn delete_refuses_when_unpushed_commits_cannot_be_checked() {
 #[test]
 fn delete_refuses_the_worktree_that_contains_the_current_directory() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "inside"]).status.success());
-    assert!(repo.phantom(&["create", "other"]).status.success());
+    assert!(repo.mabo(&["create", "inside"]).status.success());
+    assert!(repo.mabo(&["create", "other"]).status.success());
     let inside = managed(&repo, "inside");
     let other = managed(&repo, "other");
 
     let refused = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["delete", "inside"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["delete", "inside"])
         .current_dir(&inside)
         .output()
         .expect("delete");
@@ -8128,7 +8173,7 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
     assert!(branch_listed(&repo, "inside"));
 
     let json = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["delete", "inside", "--json"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["delete", "inside", "--json"])
         .current_dir(&inside)
         .output()
         .expect("json");
@@ -8141,7 +8186,7 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
     assert!(inside.is_dir());
 
     let neighbor = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["delete", "other"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["delete", "other"])
         .current_dir(&inside)
         .output()
         .expect("other");
@@ -8155,7 +8200,7 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
     assert!(inside.is_dir());
 
     let current = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["delete", "--current"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["delete", "--current"])
         .current_dir(&inside)
         .output()
         .expect("current");
@@ -8167,11 +8212,11 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
     );
     assert!(!inside.exists());
 
-    assert!(repo.phantom(&["create", "both"]).status.success());
+    assert!(repo.mabo(&["create", "both"]).status.success());
     let both = managed(&repo, "both");
     empty_commit(&repo, &both, "local");
     let named = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["delete", "both"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["delete", "both"])
         .current_dir(&both)
         .output()
         .expect("named");
@@ -8183,7 +8228,7 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
     );
     assert!(both.is_dir());
     let via_current = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["delete", "--current"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["delete", "--current"])
         .current_dir(&both)
         .output()
         .expect("current unpushed");
@@ -8196,7 +8241,7 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
     assert!(both.is_dir());
     assert!(branch_listed(&repo, "both"));
     let forced = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["delete", "both", "--force"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["delete", "both", "--force"])
         .current_dir(&both)
         .output()
         .expect("force");
@@ -8227,13 +8272,13 @@ fn rev_parse(repo: &Repo, dir: &Path, spec: &str) -> String {
 #[test]
 fn delete_and_gc_keep_a_branch_shadowed_by_a_tag() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "v1"]).status.success());
+    assert!(repo.mabo(&["create", "v1"]).status.success());
     let worktree = managed(&repo, "v1");
     empty_commit(&repo, &worktree, "only on the branch");
     let commit = rev_parse(&repo, &repo.repo, "refs/heads/v1");
     repo.git(&["tag", "v1", "main"]);
 
-    let refused = repo.phantom(&["delete", "v1"]);
+    let refused = repo.mabo(&["delete", "v1"]);
     assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
     assert!(
         text(&refused.stderr).contains("unpushed"),
@@ -8245,7 +8290,7 @@ fn delete_and_gc_keep_a_branch_shadowed_by_a_tag() {
     assert_eq!(rev_parse(&repo, &repo.repo, "refs/heads/v1"), commit);
 
     age_metadata(&repo, "v1");
-    let cleaned = repo.phantom(&["gc", "--older-than", "14d", "--apply"]);
+    let cleaned = repo.mabo(&["gc", "--older-than", "14d", "--apply"]);
     assert!(
         cleaned.status.success(),
         "{}\n{}",
@@ -8265,7 +8310,7 @@ fn delete_and_gc_keep_a_branch_shadowed_by_a_tag() {
 #[test]
 fn delete_refuses_a_detached_worktree_until_force() {
     let repo = Repo::new();
-    assert!(repo.phantom(&["create", "dt"]).status.success());
+    assert!(repo.mabo(&["create", "dt"]).status.success());
     let worktree = managed(&repo, "dt");
     let detached = repo
         .command("git", &["checkout", "--detach"])
@@ -8276,7 +8321,7 @@ fn delete_refuses_a_detached_worktree_until_force() {
     empty_commit(&repo, &worktree, "only here");
     let commit = rev_parse(&repo, &worktree, "HEAD");
 
-    let refused = repo.phantom(&["delete", "dt"]);
+    let refused = repo.mabo(&["delete", "dt"]);
     assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
     let refused_text = text(&refused.stderr);
     assert!(refused_text.contains("unpushed"), "{refused_text}");
@@ -8285,12 +8330,12 @@ fn delete_refuses_a_detached_worktree_until_force() {
         "{refused_text}"
     );
     assert!(!refused_text.contains("--keep-branch"), "{refused_text}");
-    let kept = repo.phantom(&["delete", "dt", "--keep-branch"]);
+    let kept = repo.mabo(&["delete", "dt", "--keep-branch"]);
     assert_eq!(kept.status.code(), Some(3), "{}", text(&kept.stdout));
     assert!(worktree.is_dir());
     assert_eq!(rev_parse(&repo, &worktree, "HEAD"), commit);
 
-    let forced = repo.phantom(&["delete", "dt", "--force"]);
+    let forced = repo.mabo(&["delete", "dt", "--force"]);
     assert!(
         forced.status.success(),
         "{}\n{}",
@@ -8303,7 +8348,7 @@ fn delete_refuses_a_detached_worktree_until_force() {
     repo.git(&["init", "--bare", bare.to_str().expect("bare")]);
     repo.git(&["remote", "add", "origin", bare.to_str().expect("origin")]);
     repo.git(&["push", "-u", "origin", "main"]);
-    assert!(repo.phantom(&["create", "shipped"]).status.success());
+    assert!(repo.mabo(&["create", "shipped"]).status.success());
     let shipped = managed(&repo, "shipped");
     empty_commit(&repo, &shipped, "on the remote");
     repo.git(&["push", "-u", "origin", "shipped"]);
@@ -8314,7 +8359,7 @@ fn delete_refuses_a_detached_worktree_until_force() {
         .expect("detach shipped");
     assert!(again.status.success(), "{}", text(&again.stderr));
     let pushed = rev_parse(&repo, &shipped, "HEAD");
-    let removed = repo.phantom(&["delete", "shipped"]);
+    let removed = repo.mabo(&["delete", "shipped"]);
     assert!(
         removed.status.success(),
         "{}\n{}",
@@ -8334,19 +8379,19 @@ fn delete_checks_every_name_before_removing_any() {
     let repo = Repo::new();
     let marker = repo.root.join("hook-ran");
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         format!("[hooks]\npre-delete = [\"touch {}\"]\n", marker.display()),
     )
     .expect("hooks");
-    assert!(repo.phantom(&["create", "a"]).status.success());
-    assert!(repo.phantom(&["create", "b"]).status.success());
-    assert!(repo.phantom(&["create", "c"]).status.success());
+    assert!(repo.mabo(&["create", "a"]).status.success());
+    assert!(repo.mabo(&["create", "b"]).status.success());
+    assert!(repo.mabo(&["create", "c"]).status.success());
     let a = managed(&repo, "a");
     let b = managed(&repo, "b");
     let c = managed(&repo, "c");
     empty_commit(&repo, &b, "local");
 
-    let refused = repo.phantom(&["delete", "a", "b", "missing"]);
+    let refused = repo.mabo(&["delete", "a", "b", "missing"]);
     assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
     let stderr = text(&refused.stderr);
     assert!(stderr.contains("unpushed"), "{stderr}");
@@ -8358,7 +8403,7 @@ fn delete_checks_every_name_before_removing_any() {
     assert!(branch_listed(&repo, "a"));
     assert!(branch_listed(&repo, "b"));
 
-    let json = repo.phantom(&["delete", "a", "b", "missing", "--json"]);
+    let json = repo.mabo(&["delete", "a", "b", "missing", "--json"]);
     assert_eq!(json.status.code(), Some(3));
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let document = json_value(&json);
@@ -8379,7 +8424,7 @@ fn delete_checks_every_name_before_removing_any() {
     assert!(a.is_dir());
     assert!(b.is_dir());
 
-    let removed = repo.phantom(&["delete", "a", "c"]);
+    let removed = repo.mabo(&["delete", "a", "c"]);
     assert!(
         removed.status.success(),
         "{}\n{}",

@@ -7,7 +7,7 @@ fn main() {
     for path in build_git::head_watch_paths(&cwd) {
         println!("cargo:rerun-if-changed={}", path.display());
     }
-    println!("cargo:rustc-env=PTM_GIT_SHA={}", git_sha());
+    println!("cargo:rustc-env=MABO_GIT_SHA={}", git_sha());
 }
 
 fn git_sha() -> String {
