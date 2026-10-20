@@ -67,7 +67,7 @@ pub fn main_help() -> Result<String> {
     lines.push(bold("mabo - Workspaces for parallel coding agents"));
     lines.push(String::new());
     lines.push(dim(
-        "Lets many coding agents and humans work in one repository at once without colliding, built on Git worktrees",
+        "Manages local Git workspaces so many coding agents and humans can work independently in one repository",
     ));
     lines.push(String::new());
     lines.push(bold("USAGE"));
