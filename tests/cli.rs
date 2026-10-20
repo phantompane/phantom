@@ -6055,6 +6055,83 @@ fn gc_does_not_remove_a_worktree_checked_out_on_the_default_branch() {
 }
 
 #[test]
+fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
+    let repo = Repo::new();
+    repo.git(&["config", "core.logAllRefUpdates", "false"]);
+    let created = repo.phantom(&["create", "fresh", "--json"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let head = json_value(&created)["worktree"]["head"]
+        .as_str()
+        .expect("head")
+        .to_string();
+    assert!(
+        !repo.repo.join(".git/logs/refs/heads/fresh").exists(),
+        "the fresh branch reflog must be absent"
+    );
+    repo.git(&["commit", "--allow-empty", "-m", "advance"]);
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let output = text(&applied.stdout);
+    assert!(output.contains("Nothing to clean up."), "{output}");
+    assert!(worktree_dir(&repo, "fresh").is_dir());
+    assert!(branch_listed(&repo, "fresh"));
+    assert_eq!(
+        json_value(&created)["worktree"]["createdFrom"],
+        head,
+        "create records the base commit"
+    );
+
+    age_metadata(&repo, "fresh");
+    let aged = repo.phantom(&["gc", "--older-than", "14d", "--apply"]);
+    assert!(aged.status.success(), "{}", text(&aged.stderr));
+    let aged_text = text(&aged.stdout);
+    assert!(
+        aged_text.contains("removed fresh [olderThan]"),
+        "{aged_text}"
+    );
+    assert!(!worktree_dir(&repo, "fresh").is_dir());
+    assert!(!branch_listed(&repo, "fresh"));
+}
+
+#[test]
+fn gc_removes_a_merged_worktree_when_the_branch_reflog_is_missing() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "feature"]).status.success());
+    land_branch(&repo, "feature");
+    let reflog = repo.repo.join(".git/logs/refs/heads/feature");
+    assert!(reflog.is_file(), "feature reflog");
+    fs::remove_file(&reflog).expect("remove reflog");
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let output = text(&applied.stdout);
+    assert!(output.contains("removed feature [merged]"), "{output}");
+    assert!(!worktree_dir(&repo, "feature").is_dir());
+    assert!(!branch_listed(&repo, "feature"));
+}
+
+#[test]
+fn gc_removes_an_attached_branch_that_already_moved_past_its_creation_commit() {
+    let repo = Repo::new();
+    repo.git(&["checkout", "-b", "landed"]);
+    fs::write(repo.repo.join("landed.txt"), "landed\n").expect("landed");
+    repo.git(&["add", "landed.txt"]);
+    repo.git(&["commit", "-m", "landed"]);
+    repo.git(&["checkout", "main"]);
+    repo.git(&["merge", "--ff-only", "landed"]);
+    let attached = repo.phantom(&["attach", "landed"]);
+    assert!(attached.status.success(), "{}", text(&attached.stderr));
+
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let output = text(&applied.stdout);
+    assert!(output.contains("removed landed [merged]"), "{output}");
+    assert!(!worktree_dir(&repo, "landed").is_dir());
+    assert!(!branch_listed(&repo, "landed"));
+}
+
+#[test]
 fn gc_keeps_a_worktree_still_at_its_creation_point() {
     let repo = Repo::new();
     assert!(repo.phantom(&["create", "fresh"]).status.success());
