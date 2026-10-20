@@ -323,6 +323,7 @@
       ],
       "notes": [
         "Shows all worktrees with their paths and associated branches",
+        "Includes records whose worktree is unregistered and directory is missing, marked [orphaned] (orphaned: true in JSON)",
         "The default worktree is included unless --no-default is set",
         "The main worktree is marked as '(bare)' if using a bare repository",
         "Use --names for scripts and automation",
@@ -362,6 +363,7 @@
         "Outputs only the path, making it suitable for use in scripts",
         "Exits with an error code if the worktree doesn't exist",
         "--json prints the worktree object instead of the bare path. The schema is documented in the README",
+        "Orphaned names are refused because the worktree directory is gone",
         "where updates lastUsedAt when the worktree already has a metadata record"
       ]
     },
@@ -427,6 +429,7 @@
         }
       ],
       "notes": [
+        "An orphaned record (no Git registration and no directory) is removed without hooks or branch changes. A live match takes precedence. JSON reports worktree.orphaned: true and branchDeleted: false",
         "By default, deletion will fail if the worktree has uncommitted changes",
         "By default, deletion will fail if the branch has commits that are not on the default branch or any remote, or if that check cannot be completed. --keep-branch still deletes the worktree and leaves the branch",
         "Deleting the worktree that contains the current directory requires --current or --force",
@@ -646,6 +649,7 @@
         "Put --project before the worktree name. All arguments after the worktree name are passed to the command, including options. A -- before the command is accepted but not required",
         "The exit code of the executed command is preserved",
         "The command receives MABO=1, MABO_NAME (the worktree name), and MABO_PATH (the absolute worktree path)",
+        "Orphaned names are refused because the worktree directory is gone",
         "exec updates lastUsedAt when the worktree already has a metadata record"
       ]
     },
