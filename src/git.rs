@@ -51,6 +51,23 @@ pub fn git_common_dir(cwd: &Path) -> Result<PathBuf> {
 
 pub fn git_root(cwd: &Path) -> Result<PathBuf> {
     let common = git_common_dir_text(cwd)?;
+    let common_dir = normalize(&cwd.join(&common));
+    if common_dir.file_name().is_some_and(|name| name == ".git") {
+        let cwd = normalize(cwd);
+        if (cwd == common_dir || crate::paths::is_strictly_inside(&cwd, &common_dir))
+            && !linked_worktree_under(&cwd, &common_dir)
+        {
+            let bare = output(&["rev-parse", "--is-bare-repository"], Some(&cwd), true)?;
+            if bare == "true" {
+                return Ok(common_dir);
+            }
+            return Err(Error::msg(format!(
+                "This command must be run from a work tree. {} is inside the Git directory {}.",
+                cwd.display(),
+                common_dir.display()
+            )));
+        }
+    }
     if common.ends_with("/.git") || common == ".git" {
         let parent = Path::new(&common)
             .parent()
@@ -58,35 +75,81 @@ pub fn git_root(cwd: &Path) -> Result<PathBuf> {
             .unwrap_or_else(|| PathBuf::from("."));
         return Ok(normalize(&cwd.join(parent)));
     }
-    let common_dir = normalize(&cwd.join(&common));
-    if let Some(checkout) = checkout_for_common_dir(&common_dir) {
-        return Ok(checkout);
-    }
-    let bare = output(
-        &["rev-parse", "--is-bare-repository"],
-        Some(&common_dir),
-        true,
-    )?;
-    if bare == "true" {
-        return Ok(common_dir);
-    }
-    let top = output(&["rev-parse", "--show-toplevel"], Some(cwd), true)?;
-    Ok(PathBuf::from(top))
+    checkout_for_common_dir(cwd, &common_dir)
 }
 
 /// Main checkout for a common dir that is not `<checkout>/.git`.
 ///
-/// `git worktree list` reports that common dir as the main worktree, and
-/// `git init --separate-git-dir` leaves `core.worktree` unset. The checkout
-/// is the directory whose `.git` gitfile points at `common`. `core.worktree`
-/// is the explicit form of that pointer when a submodule or the user set it.
-fn checkout_for_common_dir(common: &Path) -> Option<PathBuf> {
+/// The current directory's toplevel wins when its gitfile already points at
+/// `common`. That is the checkout the command is running in. From a linked
+/// worktree, where that gitfile points at `worktrees/<id>` instead, use
+/// `core.worktree` and then the bounded gitfile search. One match is the
+/// checkout. Several matches, or none, are an error. A bare repository's
+/// root is `common`.
+fn checkout_for_common_dir(cwd: &Path, common: &Path) -> Result<PathBuf> {
+    if let Some(checkout) = checkout_containing_cwd(cwd, common) {
+        return Ok(checkout);
+    }
     if let Some(checkout) = configured_worktree(common) {
-        if checkout.is_dir() {
-            return Some(checkout);
+        if gitfile_points_at(&checkout, common) {
+            return Ok(checkout);
+        }
+        return Err(Error::msg(format!(
+            "core.worktree is set to {}, which has no .git gitfile pointing at {}.",
+            checkout.display(),
+            common.display()
+        )));
+    }
+    let mut matches = gitfiles_for_common_dir(common);
+    if matches.len() == 1 {
+        return Ok(matches.swap_remove(0));
+    }
+    if matches.is_empty() {
+        let bare = output(&["rev-parse", "--is-bare-repository"], Some(common), true)?;
+        if bare == "true" {
+            return Ok(common.to_path_buf());
+        }
+        return Err(Error::msg(format!(
+            "No checkout points at git dir {}. Set the main checkout with `git config core.worktree <checkout>`.",
+            common.display()
+        )));
+    }
+    let listed = matches
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(Error::msg(format!(
+        "More than one checkout points at git dir {}: {listed}. Set the main checkout with `git config core.worktree <checkout>`.",
+        common.display()
+    )))
+}
+
+/// A linked worktree stored under `<repo>/.git/ptm/worktrees` has a gitfile
+/// between `cwd` and the common dir. `.git` itself and `.git/refs` do not.
+fn linked_worktree_under(cwd: &Path, common_dir: &Path) -> bool {
+    if cwd == common_dir {
+        return false;
+    }
+    let mut current = cwd.to_path_buf();
+    while current != *common_dir {
+        if current.join(".git").is_file() {
+            return true;
+        }
+        if !current.pop() {
+            return false;
         }
     }
-    checkout_from_gitfile(common)
+    false
+}
+
+/// Toplevel of `cwd` when its `.git` gitfile points at `common`.
+///
+/// This is not a search. The command is already inside that checkout, including
+/// when another directory has a gitfile for the same common dir.
+fn checkout_containing_cwd(cwd: &Path, common: &Path) -> Option<PathBuf> {
+    let top = top_level(cwd).ok()?;
+    gitfile_points_at(&top, common).then(|| normalize(&top))
 }
 
 fn configured_worktree(common: &Path) -> Option<PathBuf> {
@@ -112,67 +175,87 @@ fn configured_worktree(common: &Path) -> Option<PathBuf> {
 
 const CHECKOUT_SEARCH_ANCESTORS: usize = 8;
 const CHECKOUT_SEARCH_DEPTH: usize = 4;
-const CHECKOUT_SEARCH_DIRS: u32 = 4096;
+const CHECKOUT_SEARCH_DIRS: u32 = 256;
 
-fn checkout_from_gitfile(common: &Path) -> Option<PathBuf> {
-    let mut ancestor = common.parent()?.to_path_buf();
+/// Gitfiles under the closest ancestor that has at least one.
+///
+/// The walk stops at that ancestor, so copies beside each other are reported
+/// together. It visits at most [`CHECKOUT_SEARCH_DIRS`] directories and does
+/// not refuse to enter a wide directory.
+fn gitfiles_for_common_dir(common: &Path) -> Vec<PathBuf> {
+    let Some(mut ancestor) = common.parent().map(Path::to_path_buf) else {
+        return Vec::new();
+    };
     let mut visited = 0u32;
     for _ in 0..CHECKOUT_SEARCH_ANCESTORS {
         if ancestor.file_name().is_some_and(|name| name == ".git") {
-            ancestor = ancestor.parent()?.to_path_buf();
+            let Some(parent) = ancestor.parent().map(Path::to_path_buf) else {
+                break;
+            };
+            ancestor = parent;
             continue;
         }
-        if let Some(found) = search_gitfile(&ancestor, common, &mut visited) {
-            return Some(found);
+        let mut found = Vec::new();
+        search_gitfiles(&ancestor, common, &mut visited, &mut found);
+        if !found.is_empty() {
+            found.sort();
+            found.dedup();
+            return found;
         }
         if visited >= CHECKOUT_SEARCH_DIRS {
-            return None;
+            break;
         }
-        let parent = ancestor.parent()?.to_path_buf();
+        let Some(parent) = ancestor.parent().map(Path::to_path_buf) else {
+            break;
+        };
         if parent == ancestor {
             break;
         }
         ancestor = parent;
     }
-    None
+    Vec::new()
 }
 
-fn search_gitfile(start: &Path, common: &Path, visited: &mut u32) -> Option<PathBuf> {
+fn search_gitfiles(start: &Path, common: &Path, visited: &mut u32, found: &mut Vec<PathBuf>) {
     let mut pending = VecDeque::new();
     pending.push_back((start.to_path_buf(), 0usize));
     while let Some((dir, depth)) = pending.pop_front() {
         if *visited >= CHECKOUT_SEARCH_DIRS {
-            return None;
+            return;
         }
         *visited += 1;
         if gitfile_points_at(&dir, common) {
-            return Some(dir);
+            found.push(normalize(&dir));
         }
         if depth == CHECKOUT_SEARCH_DEPTH {
             continue;
         }
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        let mut children = entries
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| is_real_dir(path))
-            .filter(|path| path.file_name().is_some_and(|name| name != ".git"))
-            .filter(|path| normalize(path) != normalize(common))
-            .collect::<Vec<_>>();
-        children.sort();
-        for child in children {
+        for child in checkout_child_dirs(&dir, common) {
             pending.push_back((child, depth + 1));
         }
     }
-    None
 }
 
-fn is_real_dir(path: &Path) -> bool {
-    std::fs::symlink_metadata(path)
-        .map(|meta| meta.file_type().is_dir())
-        .unwrap_or(false)
+fn checkout_child_dirs(dir: &Path, common: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut children = Vec::new();
+    for entry in entries.flatten() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let path = entry.path();
+        if path.file_name().is_some_and(|name| name == ".git") {
+            continue;
+        }
+        if normalize(&path) == normalize(common) {
+            continue;
+        }
+        children.push(path);
+    }
+    children.sort();
+    children
 }
 
 fn gitfile_points_at(dir: &Path, common: &Path) -> bool {
