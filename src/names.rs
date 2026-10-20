@@ -2,7 +2,9 @@ use crate::error::{Error, Result};
 use crate::git;
 use crate::paths;
 use crate::worktree::validate_worktree_name;
+use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const ADJECTIVES: &[&str] = &[
     "amber", "bold", "brave", "bright", "calm", "clever", "crimson", "eager", "fair", "gentle",
@@ -18,9 +20,14 @@ const NOUNS: &[&str] = &[
 
 const MAX_RETRIES: usize = 10;
 
-pub fn generate_unique_name(git_root: &Path, directory: &Path, separator: &str) -> Result<String> {
+pub fn generate_unique_name(
+    git_root: &Path,
+    directory: &Path,
+    separator: &str,
+    remote_branches: &BTreeSet<String>,
+) -> Result<String> {
     for _ in 0..MAX_RETRIES {
-        let name = generate();
+        let name = next_candidate();
         if validate_worktree_name(&name).is_err() {
             continue;
         }
@@ -31,11 +38,33 @@ pub fn generate_unique_name(git_root: &Path, directory: &Path, separator: &str) 
         if git::branch_exists(git_root, &name)? {
             continue;
         }
+        if remote_branches.contains(&name) {
+            continue;
+        }
         return Ok(name);
     }
     Err(Error::msg(
         "Failed to generate a unique worktree name after maximum retries",
     ))
+}
+
+/// `MABO_NAME_CANDIDATES` is a comma-separated list. Tests use it so the first
+/// candidate can collide with a remote-tracking branch and the next one is free.
+static CANDIDATE_INDEX: AtomicUsize = AtomicUsize::new(0);
+
+fn next_candidate() -> String {
+    if let Ok(raw) = std::env::var("MABO_NAME_CANDIDATES") {
+        let names: Vec<&str> = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .collect();
+        let index = CANDIDATE_INDEX.fetch_add(1, Ordering::Relaxed);
+        if let Some(name) = names.get(index) {
+            return (*name).to_string();
+        }
+    }
+    generate()
 }
 
 fn generate() -> String {
