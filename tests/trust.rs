@@ -58,7 +58,6 @@ impl Repo {
             .env_remove("GHQ_ROOT")
             .env_remove("MABO_OUTPUT")
             .env_remove("MABO_NO_INPUT")
-            .env_remove("MABO_LOCK_TIMEOUT")
             .env_remove("MABO_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM");

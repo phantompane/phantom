@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table};
@@ -269,14 +268,6 @@ fn update(body: impl FnOnce(&mut BTreeMap<String, String>) -> bool) -> Result<bo
     };
     fs::create_dir_all(&dir)
         .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))?;
-    let lock = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(dir.join("trust.lock"))
-        .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))?;
-    crate::operation::wait_for_lock(&lock, &dir.join("trust.lock"))?;
     let mut records = load_at(&path)?;
     let dirty = body(&mut records);
     if dirty {
@@ -333,38 +324,9 @@ fn load_at(path: &Path) -> Result<BTreeMap<String, String>> {
     parse_store(path, &content)
 }
 
-fn write_records(path: &Path, dir: &Path, records: &BTreeMap<String, String>) -> Result<()> {
-    let temporary = dir.join(format!(
-        ".trust.toml.tmp-{}-{}",
-        std::process::id(),
-        uuid::Uuid::new_v4()
-    ));
-    let body = render_store(records);
-    let write_result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temporary)
-            .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))?;
-        file.write_all(body.as_bytes())
-            .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))?;
-        file.sync_all()
-            .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))?;
-        Ok(())
-    })();
-    if let Err(error) = write_result {
-        let _ = fs::remove_file(&temporary);
-        return Err(error);
-    }
-    if let Err(error) = fs::rename(&temporary, path) {
-        let _ = fs::remove_file(&temporary);
-        return Err(Error::msg(format!(
-            "Failed to write {}: {error}",
-            path.display()
-        )));
-    }
-    Ok(())
+fn write_records(path: &Path, _dir: &Path, records: &BTreeMap<String, String>) -> Result<()> {
+    crate::atomic::write(path, render_store(records).as_bytes())
+        .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))
 }
 
 fn parse_store(path: &Path, content: &str) -> Result<BTreeMap<String, String>> {

@@ -169,7 +169,6 @@ pub fn selection_from_flags(
 }
 
 pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Report> {
-    let _operation = crate::operation::lock(&context.git_root)?;
     let facts = gather(context, &request.policy, None)?;
     warn_unavailable_pull_requests(&facts, &request.policy);
     let verdicts = classify(&facts, &request.policy);
@@ -178,16 +177,6 @@ pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Repo
         crate::config::pre_delete_commands(context.config.as_ref()),
         request.no_hooks,
     )?;
-    _operation.check_post_release_children(
-        request.apply
-            && !skip_untrusted
-            && !request.no_hooks
-            && !crate::config::pre_delete_commands(context.config.as_ref()).is_empty()
-            && verdicts
-                .iter()
-                .any(|verdict| matches!(verdict, Verdict::Remove(Removal::Delete { .. }))),
-    )?;
-    drop(_operation);
     let mut candidates = Vec::with_capacity(verdicts.len());
     let mut first_failure = None;
     for verdict in verdicts {
@@ -488,10 +477,10 @@ fn removal_kind(facts: &WorktreeFacts, reasons: Vec<Reason>) -> Removal {
     }
 }
 
-// Re-verification must refresh metadata and Git state under the operation lock,
+// Re-verification must refresh metadata and Git state,
 // but observing unrelated worktrees would repeat their GitHub queries per target.
 fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<Vec<WorktreeFacts>> {
-    let stored = metadata::load(&context.git_root)?;
+    let stored = metadata::load_strict(&context.git_root)?;
     let common_dir = git::canonical_common_dir(&context.git_root)?;
     let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
@@ -1080,15 +1069,11 @@ fn apply_drop(
     subject: Subject,
     reasons: Vec<Reason>,
 ) -> CandidateEntry {
-    let _operation = match crate::operation::lock(&context.git_root) {
-        Ok(lock) => lock,
-        Err(error) => return failed(subject, reasons, error.to_string()),
-    };
     let facts = match gather(context, &request.policy, Some(&subject.path)) {
         Ok(facts) => facts,
         Err(error) => return failed(subject, reasons, error.to_string()),
     };
-    // The path can be reused while earlier targets run unlocked project hooks.
+    // The path can be reused while earlier targets run project hooks.
     // Never apply another branch's safety verdict to the planned branch.
     if facts.iter().any(|facts| {
         facts.subject.path == subject.path

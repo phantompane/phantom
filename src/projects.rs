@@ -1,10 +1,6 @@
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -13,14 +9,8 @@ use crate::git;
 use crate::process;
 
 const REGISTRY_FILE: &str = "projects.json";
-const LOCK_DIR: &str = "projects.lock";
-const OWNER_FILE: &str = "owner.json";
-const RECOVERY_DIR: &str = "projects.lock.recovery";
 const REGISTRY_VERSION: u32 = 1;
 const LIST_VERSION: u32 = 2;
-const LOCK_TIMEOUT: Duration = Duration::from_millis(5_000);
-const LOCK_RETRY: Duration = Duration::from_millis(20);
-const STALE_LOCK: Duration = Duration::from_millis(30_000);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -37,66 +27,13 @@ struct RegistryState {
     projects: Vec<ProjectRecord>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LockOwner {
-    token: String,
-    pid: u32,
-    #[serde(rename = "createdAt")]
-    created_at: String,
-    #[serde(rename = "processIdentity")]
-    process_identity: Option<String>,
-}
-
-#[derive(Clone)]
-struct LockObservation {
-    token: Option<String>,
-}
-
-type NowFn = Arc<dyn Fn() -> u64 + Send + Sync>;
-type DelayFn = Arc<dyn Fn(u64) + Send + Sync>;
-type HookFn = Arc<dyn Fn() + Send + Sync>;
-
 pub struct ProjectRegistryStore {
     data_dir: PathBuf,
-    lock_timeout_ms: u64,
-    lock_retry_ms: u64,
-    now_ms: NowFn,
-    delay: DelayFn,
-    on_lock_acquired: Option<HookFn>,
 }
 
 impl ProjectRegistryStore {
     pub fn new(data_dir: PathBuf) -> Self {
-        let started = Instant::now();
-        Self {
-            data_dir,
-            lock_timeout_ms: u64::try_from(LOCK_TIMEOUT.as_millis()).unwrap_or(5_000),
-            lock_retry_ms: u64::try_from(LOCK_RETRY.as_millis()).unwrap_or(20),
-            now_ms: Arc::new(move || {
-                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
-            }),
-            delay: Arc::new(|milliseconds| thread::sleep(Duration::from_millis(milliseconds))),
-            on_lock_acquired: None,
-        }
-    }
-
-    #[cfg(test)]
-    fn controlled(
-        data_dir: PathBuf,
-        lock_timeout_ms: u64,
-        lock_retry_ms: u64,
-        now_ms: NowFn,
-        delay: DelayFn,
-        on_lock_acquired: Option<HookFn>,
-    ) -> Self {
-        Self {
-            data_dir,
-            lock_timeout_ms,
-            lock_retry_ms,
-            now_ms,
-            delay,
-            on_lock_acquired,
-        }
+        Self { data_dir }
     }
 
     pub fn default_store() -> Result<Self> {
@@ -109,53 +46,113 @@ impl ProjectRegistryStore {
 
     pub fn add(&self, root_path: &Path) -> Result<(ProjectRecord, bool)> {
         let normalized = normalize_root(root_path)?;
-        let mut added = None;
-        self.update(|state| {
-            if let Some(existing) = state
-                .projects
-                .iter()
-                .find(|project| project.root_path == normalized)
-            {
-                added = Some((existing.clone(), false));
-                return Ok(());
-            }
-            let project = ProjectRecord {
-                id: format!("proj_{}", uuid::Uuid::new_v4()),
-                name: Path::new(&normalized)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_default(),
-                root_path: normalized.clone(),
-                created_at: iso_now(),
-            };
-            added = Some((project.clone(), true));
-            state.projects.push(project);
-            Ok(())
-        })?;
-        added.ok_or_else(|| Error::Projects("Project add did not produce a record".to_string()))
+        self.ensure_records()?;
+        if let Some(existing) = self
+            .list()?
+            .into_iter()
+            .find(|project| project.root_path == normalized)
+        {
+            return Ok((existing, false));
+        }
+        let project = ProjectRecord {
+            id: format!("proj_{}", uuid::Uuid::new_v4()),
+            name: Path::new(&normalized)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            root_path: normalized,
+            created_at: iso_now(),
+        };
+        save_project(&self.data_dir.join("repos"), &project)?;
+        Ok((project, true))
     }
 
     pub fn remove(&self, id: &str) -> Result<Option<ProjectRecord>> {
-        let mut removed = None;
-        self.update(|state| {
-            if let Some(index) = state.projects.iter().position(|project| project.id == id) {
-                removed = Some(state.projects.remove(index));
+        self.ensure_records()?;
+        let records = self.read_individual()?;
+        let Some(project) = records.iter().find(|project| project.id == id).cloned() else {
+            return Ok(None);
+        };
+        // Remove concurrent duplicate registrations too, so a removed root does
+        // not reappear through the next oldest record.
+        for record in records
+            .iter()
+            .filter(|record| record.root_path == project.root_path)
+        {
+            match fs::remove_file(
+                self.data_dir
+                    .join("repos")
+                    .join(format!("{}.json", record.id)),
+            ) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(Error::Projects(error.to_string())),
             }
-            Ok(())
-        })?;
-        Ok(removed)
+        }
+        Ok(Some(project))
     }
 
-    fn update(&self, mut updater: impl FnMut(&mut RegistryState) -> Result<()>) -> Result<()> {
-        self.with_lock(|| {
-            let mut state = self.load()?;
-            updater(&mut state)?;
-            validate_state(&state)?;
-            self.save(&state)
-        })
+    fn ensure_records(&self) -> Result<()> {
+        let dir = self.data_dir.join("repos");
+        let legacy = self.data_dir.join(REGISTRY_FILE);
+        if legacy.exists() {
+            crate::atomic::import_directory(&dir, &legacy, |staging| {
+                for project in self.load_legacy()?.projects {
+                    save_project(staging, &project)?;
+                }
+                Ok(())
+            })
+        } else {
+            fs::create_dir_all(dir).map_err(|error| Error::Projects(error.to_string()))
+        }
+    }
+
+    fn read_individual(&self) -> Result<Vec<ProjectRecord>> {
+        let mut records = Vec::new();
+        for entry in fs::read_dir(self.data_dir.join("repos"))
+            .map_err(|error| Error::Projects(error.to_string()))?
+        {
+            let path = entry
+                .map_err(|error| Error::Projects(error.to_string()))?
+                .path();
+            if path.extension().is_none_or(|ext| ext != "json") {
+                continue;
+            }
+            let record: ProjectRecord = serde_json::from_slice(
+                &fs::read(&path).map_err(|error| Error::Projects(error.to_string()))?,
+            )
+            .map_err(|error| {
+                Error::Projects(format!("Projects registry contains invalid JSON: {error}"))
+            })?;
+            validate_state(&RegistryState {
+                version: REGISTRY_VERSION,
+                projects: vec![record.clone()],
+            })?;
+            if path.file_stem().and_then(|stem| stem.to_str()) != Some(&record.id) {
+                return Err(Error::Projects(
+                    "Project id does not match its filename".into(),
+                ));
+            }
+            records.push(record);
+        }
+        Ok(records)
     }
 
     fn load(&self) -> Result<RegistryState> {
+        if !self.data_dir.join("repos").exists() {
+            return self.load_legacy();
+        }
+        let mut records = self.read_individual()?;
+        records.sort_by(|a, b| (&a.created_at, &a.id).cmp(&(&b.created_at, &b.id)));
+        let mut roots = std::collections::HashSet::new();
+        records.retain(|record| roots.insert(record.root_path.clone()));
+        Ok(RegistryState {
+            version: REGISTRY_VERSION,
+            projects: records,
+        })
+    }
+
+    fn load_legacy(&self) -> Result<RegistryState> {
         let path = self.data_dir.join(REGISTRY_FILE);
         let content = match fs::read_to_string(&path) {
             Ok(content) => content,
@@ -187,250 +184,13 @@ impl ProjectRegistryStore {
         validate_state(&state)?;
         Ok(state)
     }
+}
 
-    fn save(&self, state: &RegistryState) -> Result<()> {
-        fs::create_dir_all(&self.data_dir).map_err(|error| Error::Projects(error.to_string()))?;
-        let registry = self.data_dir.join(REGISTRY_FILE);
-        let temporary = self.data_dir.join(format!(
-            ".{REGISTRY_FILE}.tmp-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4()
-        ));
-        let body = format!(
-            "{}\n",
-            serde_json::to_string_pretty(state)
-                .map_err(|error| Error::Projects(error.to_string()))?
-        );
-        {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&temporary)
-                .map_err(|error| Error::Projects(error.to_string()))?;
-            file.write_all(body.as_bytes())
-                .map_err(|error| Error::Projects(error.to_string()))?;
-            file.sync_all()
-                .map_err(|error| Error::Projects(error.to_string()))?;
-        }
-        let renamed = fs::rename(&temporary, &registry);
-        if renamed.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        renamed.map_err(|error| Error::Projects(error.to_string()))?;
-        sync_dir(&self.data_dir)?;
-        Ok(())
-    }
-
-    fn with_lock(&self, operation: impl FnOnce() -> Result<()>) -> Result<()> {
-        fs::create_dir_all(&self.data_dir).map_err(|error| Error::Projects(error.to_string()))?;
-        let lock_path = self.data_dir.join(LOCK_DIR);
-        let recovery_path = self.data_dir.join(RECOVERY_DIR);
-        let mut deadline = (self.now_ms)().saturating_add(self.lock_timeout_ms);
-        let mut initialized = false;
-        let mut snapshot: Option<LockObservation> = None;
-        let owner = loop {
-            if self.has_active_recovery(&recovery_path)? {
-                deadline = self.wait_for_lock(
-                    deadline,
-                    &lock_path,
-                    &recovery_path,
-                    &mut initialized,
-                    &mut snapshot,
-                )?;
-                continue;
-            }
-            let candidate = create_owner()?;
-            match mkdir_exclusive(&lock_path) {
-                Ok(()) => {
-                    if let Err(error) = write_owner(&lock_path.join(OWNER_FILE), &candidate) {
-                        self.release_main_lock(&lock_path, &candidate.token, &recovery_path)?;
-                        return Err(error);
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if self.recover_stale_lock(&lock_path, &recovery_path)? {
-                        continue;
-                    }
-                    deadline = self.wait_for_lock(
-                        deadline,
-                        &lock_path,
-                        &recovery_path,
-                        &mut initialized,
-                        &mut snapshot,
-                    )?;
-                    continue;
-                }
-                Err(error) => return Err(Error::Projects(error.to_string())),
-            }
-            if let Some(hook) = &self.on_lock_acquired {
-                hook();
-            }
-            let recovery_active = self.has_active_recovery(&recovery_path)?;
-            let still_owns = directory_owned_by(&lock_path, &candidate.token)?;
-            if recovery_active || !still_owns {
-                if still_owns {
-                    self.release_main_lock(&lock_path, &candidate.token, &recovery_path)?;
-                }
-                deadline = self.wait_for_lock(
-                    deadline,
-                    &lock_path,
-                    &recovery_path,
-                    &mut initialized,
-                    &mut snapshot,
-                )?;
-                continue;
-            }
-            break candidate;
-        };
-        let stop = Arc::new(AtomicBool::new(false));
-        let heartbeat_stop = Arc::clone(&stop);
-        let heartbeat_path = lock_path.clone();
-        let handle = thread::spawn(move || {
-            let interval = STALE_LOCK / 3;
-            let mut elapsed = Duration::ZERO;
-            while !heartbeat_stop.load(Ordering::Relaxed) {
-                thread::sleep(Duration::from_millis(20));
-                elapsed += Duration::from_millis(20);
-                if elapsed >= interval {
-                    elapsed = Duration::ZERO;
-                    if let Ok(file) = File::open(&heartbeat_path) {
-                        let _ = file.set_modified(SystemTime::now());
-                    }
-                }
-            }
-        });
-        let result = operation();
-        stop.store(true, Ordering::Relaxed);
-        let _ = handle.join();
-        self.release_main_lock(&lock_path, &owner.token, &recovery_path)?;
-        result
-    }
-
-    fn recover_stale_lock(&self, lock_path: &Path, recovery_path: &Path) -> Result<bool> {
-        match lock_path.metadata() {
-            Ok(metadata) => {
-                if !is_stale(&metadata)? {
-                    return Ok(false);
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-            Err(error) => return Err(Error::Projects(error.to_string())),
-        }
-        let owner = create_owner()?;
-        fs::create_dir_all(recovery_path).map_err(|error| Error::Projects(error.to_string()))?;
-        let marker = recovery_path.join(&owner.token);
-        mkdir_exclusive(&marker).map_err(|error| Error::Projects(error.to_string()))?;
-        let wrote = write_owner(&marker.join(OWNER_FILE), &owner);
-        if let Err(error) = wrote {
-            let _ = fs::remove_dir_all(&marker);
-            return Err(error);
-        }
-        let recovered = self.recover_with_marker(lock_path, &marker, &owner.token);
-        release_owned_dir(&marker, &owner.token)?;
-        recovered
-    }
-
-    fn recover_with_marker(&self, lock_path: &Path, marker: &Path, token: &str) -> Result<bool> {
-        match lock_path.metadata() {
-            Ok(metadata) => {
-                if !is_stale(&metadata)? {
-                    return Ok(false);
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-            Err(error) => return Err(Error::Projects(error.to_string())),
-        }
-        if let Some(owner) = read_owner(lock_path)? {
-            if owner_alive(&owner) {
-                return Ok(false);
-            }
-        }
-        if !directory_owned_by(marker, token)? {
-            return Ok(false);
-        }
-        let stale = PathBuf::from(format!(
-            "{}.stale-{}",
-            lock_path.display(),
-            uuid::Uuid::new_v4()
-        ));
-        match fs::rename(lock_path, &stale) {
-            Ok(()) => {
-                let _ = fs::remove_dir_all(&stale);
-                Ok(true)
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
-            Err(error) => Err(Error::Projects(error.to_string())),
-        }
-    }
-
-    fn has_active_recovery(&self, recovery_path: &Path) -> Result<bool> {
-        fs::create_dir_all(recovery_path).map_err(|error| Error::Projects(error.to_string()))?;
-        let entries =
-            fs::read_dir(recovery_path).map_err(|error| Error::Projects(error.to_string()))?;
-        for entry in entries {
-            let entry = entry.map_err(|error| Error::Projects(error.to_string()))?;
-            let marker = entry.path();
-            let metadata = match marker.metadata() {
-                Ok(metadata) => metadata,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(Error::Projects(error.to_string())),
-            };
-            if !is_stale(&metadata)? {
-                return Ok(true);
-            }
-            if let Some(owner) = read_owner(&marker)? {
-                if owner_alive(&owner) {
-                    return Ok(true);
-                }
-            }
-            let _ = fs::remove_dir_all(&marker);
-        }
-        let remaining =
-            fs::read_dir(recovery_path).map_err(|error| Error::Projects(error.to_string()))?;
-        Ok(remaining.count() > 0)
-    }
-
-    fn release_main_lock(&self, lock_path: &Path, token: &str, recovery_path: &Path) -> Result<()> {
-        let owner = create_owner()?;
-        fs::create_dir_all(recovery_path).map_err(|error| Error::Projects(error.to_string()))?;
-        let marker = recovery_path.join(&owner.token);
-        mkdir_exclusive(&marker).map_err(|error| Error::Projects(error.to_string()))?;
-        write_owner(&marker.join(OWNER_FILE), &owner)?;
-        if directory_owned_by(lock_path, token)? {
-            let _ = fs::remove_dir_all(lock_path);
-        }
-        release_owned_dir(&marker, &owner.token)?;
-        Ok(())
-    }
-
-    fn wait_for_lock(
-        &self,
-        mut deadline: u64,
-        lock_path: &Path,
-        recovery_path: &Path,
-        initialized: &mut bool,
-        snapshot: &mut Option<LockObservation>,
-    ) -> Result<u64> {
-        let current = read_observation(lock_path)?;
-        let now = (self.now_ms)();
-        if !*initialized {
-            *snapshot = current.clone();
-            *initialized = true;
-        } else if !same_holder(snapshot.as_ref(), current.as_ref()) {
-            *snapshot = current;
-            deadline = now.saturating_add(self.lock_timeout_ms);
-        }
-        if now >= deadline {
-            return Err(Error::Projects(format!(
-                "Timed out waiting for projects registry lock at {}. Inspect {} for abandoned recovery markers.",
-                lock_path.display(),
-                recovery_path.display()
-            )));
-        }
-        (self.delay)(self.lock_retry_ms);
-        Ok(deadline)
-    }
+fn save_project(dir: &Path, project: &ProjectRecord) -> Result<()> {
+    let body =
+        serde_json::to_vec_pretty(project).map_err(|error| Error::Projects(error.to_string()))?;
+    crate::atomic::write(&dir.join(format!("{}.json", project.id)), &body)
+        .map_err(|error| Error::Projects(error.to_string()))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1046,146 +806,6 @@ fn iso_now() -> String {
     format!("{}Z", now.format("%Y-%m-%dT%H:%M:%S%.3f"))
 }
 
-fn create_owner() -> Result<LockOwner> {
-    Ok(LockOwner {
-        token: uuid::Uuid::new_v4().to_string(),
-        pid: std::process::id(),
-        created_at: iso_now(),
-        process_identity: process_identity(std::process::id()),
-    })
-}
-
-fn write_owner(path: &Path, owner: &LockOwner) -> Result<()> {
-    let body = format!(
-        "{}\n",
-        serde_json::to_string(owner).map_err(|error| Error::Projects(error.to_string()))?
-    );
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|error| Error::Projects(error.to_string()))?;
-    file.write_all(body.as_bytes())
-        .map_err(|error| Error::Projects(error.to_string()))?;
-    Ok(())
-}
-
-fn read_owner(lock_path: &Path) -> Result<Option<LockOwner>> {
-    let path = if lock_path.ends_with(OWNER_FILE) {
-        lock_path.to_path_buf()
-    } else {
-        lock_path.join(OWNER_FILE)
-    };
-    let content = match fs::read_to_string(path) {
-        Ok(content) => content,
-        Err(_) => return Ok(None),
-    };
-    Ok(serde_json::from_str(&content).ok())
-}
-
-fn directory_owned_by(directory: &Path, token: &str) -> Result<bool> {
-    Ok(read_owner(directory)?.is_some_and(|owner| owner.token == token))
-}
-
-fn release_owned_dir(directory: &Path, token: &str) -> Result<()> {
-    if directory_owned_by(directory, token)? {
-        let _ = fs::remove_dir_all(directory);
-    }
-    Ok(())
-}
-
-fn read_observation(lock_path: &Path) -> Result<Option<LockObservation>> {
-    if !lock_path.exists() {
-        return Ok(None);
-    }
-    let owner = read_owner(lock_path)?;
-    Ok(Some(LockObservation {
-        token: owner.map(|owner| owner.token),
-    }))
-}
-
-fn same_holder(left: Option<&LockObservation>, right: Option<&LockObservation>) -> bool {
-    match (left, right) {
-        (None, None) => true,
-        (Some(left), Some(right)) => left.token == right.token,
-        _ => false,
-    }
-}
-
-fn is_stale(metadata: &std::fs::Metadata) -> Result<bool> {
-    let modified = metadata
-        .modified()
-        .map_err(|error| Error::Projects(error.to_string()))?;
-    Ok(modified.elapsed().unwrap_or(Duration::ZERO) > STALE_LOCK)
-}
-
-fn owner_alive(owner: &LockOwner) -> bool {
-    if !process_alive(owner.pid) {
-        return false;
-    }
-    match &owner.process_identity {
-        None => true,
-        Some(expected) => match process_identity(owner.pid) {
-            None => true,
-            Some(actual) => actual == *expected,
-        },
-    }
-}
-
-fn process_alive(pid: u32) -> bool {
-    if pid == 0 {
-        return false;
-    }
-    match process::raw("kill", &["-0", &pid.to_string()], None) {
-        Ok(captured) if captured.code == 0 => true,
-        Ok(captured) => {
-            let stderr = captured.stderr.to_ascii_lowercase();
-            stderr.contains("operation not permitted") || stderr.contains("not permitted")
-        }
-        Err(_) => false,
-    }
-}
-
-fn process_identity(pid: u32) -> Option<String> {
-    if pid == 0 {
-        return None;
-    }
-    if let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) {
-        if let Some(command_end) = stat.rfind(')') {
-            let fields = stat[command_end + 1..]
-                .split_whitespace()
-                .collect::<Vec<_>>();
-            if let Some(start) = fields.get(19) {
-                return Some(format!("linux:{start}"));
-            }
-        }
-    }
-    let output =
-        process::capture("ps", &["-o", "lstart=", "-p", &pid.to_string()], None, true).ok()?;
-    let start = output.stdout.trim();
-    if start.is_empty() {
-        None
-    } else {
-        Some(format!("linux:{start}"))
-    }
-}
-
-fn mkdir_exclusive(path: &Path) -> std::io::Result<()> {
-    fs::DirBuilder::new().mode(0o700).create(path)
-}
-
-fn sync_dir(path: &Path) -> Result<()> {
-    let file = File::open(path).map_err(|error| Error::Projects(error.to_string()))?;
-    match file.sync_all() {
-        Ok(()) => Ok(()),
-        Err(error) if matches!(error.raw_os_error(), Some(22) | Some(95)) => Ok(()),
-        Err(error) => Err(Error::Projects(error.to_string())),
-    }
-}
-
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1214,7 +834,7 @@ mod tests {
     }
 
     #[test]
-    fn registry_add_is_idempotent_under_the_lock() {
+    fn registry_add_is_idempotent() {
         let dir = std::env::temp_dir().join(format!("phantom-registry-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("temp");
         let root = dir.join("repo");
@@ -1235,39 +855,24 @@ mod tests {
     }
 
     #[test]
-    fn does_not_time_out_while_queued_behind_live_holders() {
+    fn concurrent_additions_keep_all_eight_records() {
+        use std::{
+            sync::{Arc, Barrier},
+            thread,
+        };
         let dir = std::env::temp_dir().join(format!("phantom-queue-{}", uuid::Uuid::new_v4()));
         let state = dir.join("state");
-        fs::create_dir_all(&state).expect("state");
-        let clock = Arc::new(std::sync::Mutex::new(0_u64));
+        let barrier = Arc::new(Barrier::new(8));
         let stores = (0..8)
-            .map(|_| {
-                let now_clock = Arc::clone(&clock);
-                let hook_clock = Arc::clone(&clock);
-                ProjectRegistryStore::controlled(
-                    state.clone(),
-                    500,
-                    1,
-                    Arc::new(move || {
-                        *now_clock
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    }),
-                    Arc::new(|_| thread::yield_now()),
-                    Some(Arc::new(move || {
-                        *hook_clock
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner) += 100;
-                        thread::yield_now();
-                    })),
-                )
-            })
+            .map(|_| ProjectRegistryStore::new(state.clone()))
             .collect::<Vec<_>>();
         let handles = stores
             .into_iter()
             .enumerate()
             .map(|(index, store)| {
+                let barrier = Arc::clone(&barrier);
                 thread::spawn(move || {
+                    barrier.wait();
                     store
                         .add(Path::new(&format!("/work/project-{index}")))
                         .expect("add");
@@ -1279,76 +884,94 @@ mod tests {
         }
         let listed = ProjectRegistryStore::new(state).list().expect("list");
         assert_eq!(listed.len(), 8);
-        let elapsed = *clock
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert!(elapsed >= 800, "clock advanced {elapsed}");
+        assert_eq!(fs::read_dir(dir.join("state/repos")).unwrap().count(), 8);
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn resets_the_deadline_when_the_lock_holder_changes() {
-        let dir = std::env::temp_dir().join(format!("phantom-holder-{}", uuid::Uuid::new_v4()));
-        let state = dir.join("state");
-        let lock_path = state.join("projects.lock");
-        fs::create_dir_all(&lock_path).expect("lock");
-        let owner_path = lock_path.join("owner.json");
-        let time = Arc::new(std::sync::Mutex::new(0_u64));
-        let stage = Arc::new(std::sync::Mutex::new(0_u8));
-        let timeout = 100_u64;
-        let now_time = Arc::clone(&time);
-        let delay_time = Arc::clone(&time);
-        let delay_stage = Arc::clone(&stage);
-        let delay_owner = owner_path.clone();
-        let delay_lock = lock_path.clone();
-        let store = ProjectRegistryStore::controlled(
-            state.clone(),
-            timeout,
-            10,
-            Arc::new(move || {
-                *now_time
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-            }),
-            Arc::new(move |milliseconds| {
-                let mut stage = delay_stage
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let mut time = delay_time
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if *stage == 0 {
-                    *time += milliseconds;
-                    let owner = serde_json::json!({
-                        "token": "other-holder",
-                        "pid": std::process::id(),
-                        "createdAt": "2026-01-01T00:00:00.000Z",
-                        "processIdentity": null,
-                    });
-                    fs::write(&delay_owner, format!("{owner}\n")).expect("owner");
-                    *stage = 1;
-                } else if *stage == 1 {
-                    *time = timeout + 50;
-                    let _ = fs::remove_file(&delay_owner);
-                    *stage = 2;
-                } else if *stage == 2 {
-                    *time += milliseconds;
-                    let _ = fs::remove_dir_all(&delay_lock);
-                    *stage = 3;
-                } else {
-                    *time += milliseconds;
-                }
-            }),
-            None,
+    fn imports_alpha6_registry_on_first_write_with_existing_ids() {
+        let dir =
+            std::env::temp_dir().join(format!("mabo-project-import-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let fixture = include_str!("../tests/fixtures/alpha6/projects.json");
+        fs::write(dir.join(REGISTRY_FILE), fixture).unwrap();
+        let store = ProjectRegistryStore::new(dir.clone());
+        let before = store.list().unwrap();
+        assert_eq!(before.len(), 2);
+        assert!(!dir.join("repos").exists());
+        store.add(Path::new("/alpha6/new")).unwrap();
+        let after = store.list().unwrap();
+        assert_eq!(after.len(), 3);
+        assert!(before.iter().all(|record| after.contains(record)));
+        assert!(!dir.join(REGISTRY_FILE).exists());
+        assert_eq!(
+            fs::read_to_string(dir.join("projects.json.imported")).unwrap(),
+            fixture
         );
-        let (_project, added) = store.add(Path::new("/work/project")).expect("add");
-        assert!(added);
-        assert_eq!(store.list().expect("list").len(), 1);
-        let elapsed = *time
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert!(elapsed > timeout, "elapsed {elapsed}");
-        let _ = fs::remove_dir_all(&dir);
+        for record in before {
+            assert!(dir
+                .join("repos")
+                .join(format!("{}.json", record.id))
+                .is_file());
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn duplicate_roots_keep_oldest_registration_and_remove_together() {
+        let dir =
+            std::env::temp_dir().join(format!("mabo-project-duplicate-{}", uuid::Uuid::new_v4()));
+        let store = ProjectRegistryStore::new(dir.clone());
+        let (first, _) = store.add(Path::new("/alpha6/duplicate")).unwrap();
+        let mut older = first.clone();
+        older.id = format!("proj_{}", uuid::Uuid::new_v4());
+        older.created_at = "2000-01-01T00:00:00.000Z".into();
+        save_project(&dir.join("repos"), &older).unwrap();
+        assert_eq!(store.list().unwrap(), vec![older.clone()]);
+        assert_eq!(
+            store.add(Path::new("/alpha6/duplicate")).unwrap(),
+            (older.clone(), false)
+        );
+        store.remove(&older.id).unwrap();
+        assert!(store.list().unwrap().is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn simultaneous_registry_imports_keep_old_and_new_projects() {
+        use std::{
+            sync::{Arc, Barrier},
+            thread,
+        };
+        let dir =
+            std::env::temp_dir().join(format!("mabo-project-import-race-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(REGISTRY_FILE),
+            include_str!("../tests/fixtures/alpha6/projects.json"),
+        )
+        .unwrap();
+        let gate = Arc::new(Barrier::new(8));
+        let handles = (0..8)
+            .map(|index| {
+                let dir = dir.clone();
+                let gate = Arc::clone(&gate);
+                thread::spawn(move || {
+                    gate.wait();
+                    ProjectRegistryStore::new(dir)
+                        .add(Path::new(&format!("/alpha6/new-{index}")))
+                        .unwrap();
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(
+            ProjectRegistryStore::new(dir.clone()).list().unwrap().len(),
+            10
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 
     fn candidate(root: &str, canonical: &str, names: &[&str]) -> ProjectCandidate {

@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::fs::{self, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
@@ -10,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::paths;
 
 const FILE_NAME: &str = "worktrees.json";
-const LOCK_NAME: &str = "worktrees.lock";
+const RECORDS_DIR: &str = "workspaces";
 const STORE_VERSION: u32 = 1;
 const OWNER_MAX: usize = 256;
 const PURPOSE_MAX: usize = 1024;
@@ -21,6 +20,8 @@ const PURPOSE_MAX: usize = 1024;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeMetadata {
+    #[serde(default)]
+    pub id: Option<String>,
     #[serde(default)]
     pub owner: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -84,16 +85,18 @@ pub struct MetadataInput {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Store {
     version: u32,
     worktrees: Vec<StoredWorktree>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredWorktree {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    schema: Option<u32>,
     path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     name: Option<String>,
@@ -105,7 +108,7 @@ pub fn path_key(path: &Path) -> String {
     paths::normalize(path).to_string_lossy().into_owned()
 }
 
-/// True when `worktrees.json` records this path. Comparison is canonical when
+/// True when a workspace record contains this path. Comparison is canonical when
 /// the path exists and normalized otherwise.
 pub fn records_path(git_root: &Path, path: &Path) -> Result<bool> {
     Ok(matching_path(git_root, path)?.is_some())
@@ -132,7 +135,7 @@ pub fn metadata_file(git_root: &Path) -> Result<PathBuf> {
 
 /// Records for every path in the store. A missing file is an empty map.
 pub fn load(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>> {
-    let store = validated_store(&metadata_file(git_root)?)?;
+    let (store, _) = read_records(git_root, false)?;
     let mut records = BTreeMap::new();
     for record in store.worktrees {
         let mut metadata = record.metadata;
@@ -140,6 +143,19 @@ pub fn load(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>> {
         records.insert(path_key(Path::new(&record.path)), metadata);
     }
     Ok(records)
+}
+
+/// Strict reads preserve mutation commands' refusal to use corrupt state.
+pub fn load_strict(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>> {
+    let (store, _) = read_records(git_root, true)?;
+    Ok(store
+        .worktrees
+        .into_iter()
+        .map(|mut record| {
+            record.metadata.name = record.name;
+            (path_key(Path::new(&record.path)), record.metadata)
+        })
+        .collect())
 }
 
 /// Replace any record at `path`. Create, attach, and a first checkout use this
@@ -157,10 +173,18 @@ pub fn replace(
     }
     let key = path_key(path);
     with_store(git_root, |store| {
+        let previous_id = store
+            .worktrees
+            .iter()
+            .find(|record| paths::same_location(Path::new(&record.path), path))
+            .map(|record| record.metadata.id.clone());
         store
             .worktrees
             .retain(|record| !paths::same_location(Path::new(&record.path), path));
-        let metadata = fresh_metadata(path, input, origin);
+        let mut metadata = fresh_metadata(path, input, origin);
+        if let Some(previous) = previous_id {
+            metadata.id = previous;
+        }
         store.worktrees.push(stored_worktree(key, metadata.clone()));
         Ok((metadata, true))
     })
@@ -178,6 +202,7 @@ pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<Work
             .find(|record| paths::same_location(Path::new(&record.path), path))
         {
             apply_input(&mut record.metadata, input);
+            record.name = record.metadata.name.clone();
             return Ok((record.metadata.clone(), true));
         }
         let metadata = fresh_metadata(path, input, BranchOrigin::Existing);
@@ -189,6 +214,7 @@ pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<Work
 fn fresh_metadata(path: &Path, input: &MetadataInput, origin: BranchOrigin) -> WorktreeMetadata {
     let now = iso_now();
     let mut metadata = WorktreeMetadata {
+        id: Some(format!("ws_{}", uuid::Uuid::new_v4())),
         created_at: Some(now.clone()),
         last_used_at: Some(now),
         created_from: recorded_creation(path, origin),
@@ -222,7 +248,7 @@ pub fn record_sync_tip(git_root: &Path, path: &Path, tip: &str) -> Result<()> {
 
 /// Bump `lastUsedAt` when a record exists. A worktree with no record is left alone.
 pub fn touch(git_root: &Path, path: &Path) -> Result<Option<WorktreeMetadata>> {
-    if !metadata_file(git_root)?.exists() {
+    if !metadata_file(git_root)?.exists() && !records_dir(git_root)?.exists() {
         return Ok(None);
     }
     with_store(git_root, |store| {
@@ -239,53 +265,47 @@ pub fn touch(git_root: &Path, path: &Path) -> Result<Option<WorktreeMetadata>> {
     })
 }
 
-/// Lock the store, reject a corrupt file, and check that a new file can be
-/// created beside it. Call this before Git creates or removes a worktree.
+/// Reject corrupt records and check that a file can be created before Git mutates.
 pub fn prepare(git_root: &Path) -> Result<()> {
-    let file = metadata_file(git_root)?;
-    let dir = metadata_dir(git_root)?;
+    read_records(git_root, true)?;
+    let dir = if records_dir(git_root)?.exists() {
+        records_dir(git_root)?
+    } else {
+        metadata_dir(git_root)?
+    };
     fs::create_dir_all(&dir).map_err(|error| {
         Error::msg(format!(
-            "Worktree metadata file {} is not writable: {error}",
-            file.display()
+            "Worktree metadata directory {} is not writable: {error}",
+            dir.display()
         ))
     })?;
-    let lock = open_lock(&dir)?;
-    crate::operation::wait_for_lock(&lock, &dir.join(LOCK_NAME))?;
-    let path = dir.join(FILE_NAME);
-    let probe = dir.join(format!(
-        ".{FILE_NAME}.probe-{}-{}",
-        std::process::id(),
-        uuid::Uuid::new_v4()
-    ));
-    let checked = (|| {
-        validated_store(&path)?;
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&probe)
-            .map_err(|error| {
-                Error::msg(format!(
-                    "Worktree metadata file {} is not writable: {error}",
-                    path.display()
-                ))
-            })?;
-        let _ = fs::remove_file(&probe);
-        Ok(())
-    })();
-    let _ = lock.unlock();
-    checked
+    let probe = dir.join(format!(".probe-{}", uuid::Uuid::new_v4()));
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&probe)
+        .map_err(|error| {
+            Error::msg(format!(
+                "Worktree metadata directory {} is not writable: {error}",
+                dir.display()
+            ))
+        })?;
+    fs::remove_file(&probe).map_err(|error| Error::msg(error.to_string()))
 }
 
-/// `None` when the file is missing or valid. `Some` is a warning for readers.
+/// Report corrupt records while allowing readers to use all healthy records.
 pub fn read_problem(git_root: &Path) -> Option<String> {
-    load(git_root).err().map(|error| error.to_string())
+    match read_records(git_root, false) {
+        Ok((_, problems)) if !problems.is_empty() => Some(problems.join("; ")),
+        Err(error) => Some(error.to_string()),
+        _ => None,
+    }
 }
 
 /// Drop the record for `path`. Missing records are already the end state.
 pub fn remove(git_root: &Path, path: &Path) -> Result<()> {
-    if !metadata_file(git_root)?.exists() {
+    if !metadata_file(git_root)?.exists() && !records_dir(git_root)?.exists() {
         return Ok(());
     }
     with_store(git_root, |store| {
@@ -410,6 +430,7 @@ fn link_number(url: &str) -> Option<u64> {
 
 fn stored_worktree(path: String, metadata: WorktreeMetadata) -> StoredWorktree {
     StoredWorktree {
+        schema: Some(2),
         path,
         name: metadata.name.clone(),
         metadata,
@@ -457,38 +478,140 @@ fn save_injected() -> bool {
     }
 }
 
-fn open_lock(dir: &Path) -> Result<File> {
-    OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(dir.join(LOCK_NAME))
-        .map_err(|error| {
+pub fn records_dir(git_root: &Path) -> Result<PathBuf> {
+    Ok(metadata_dir(git_root)?.join(RECORDS_DIR))
+}
+
+fn read_records(git_root: &Path, strict: bool) -> Result<(Store, Vec<String>)> {
+    let dir = records_dir(git_root)?;
+    if !dir.exists() {
+        return Ok((validated_store(&metadata_file(git_root)?)?, Vec::new()));
+    }
+    let mut store = empty_store();
+    let mut problems = Vec::new();
+    let entries = fs::read_dir(&dir).map_err(|error| {
+        Error::msg(format!(
+            "Failed to read worktree metadata {}: {error}",
+            dir.display()
+        ))
+    })?;
+    let mut files = entries
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()
+        .map_err(|error| Error::msg(error.to_string()))?;
+    files.sort();
+    for file in files {
+        // Atomic-write temporary files are deliberately invisible to readers.
+        if file.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        let result = (|| {
+            let bytes = fs::read(&file).map_err(|error| Error::msg(error.to_string()))?;
+            let mut record: StoredWorktree = serde_json::from_slice(&bytes)
+                .map_err(|error| Error::msg(format!("contains invalid JSON or shape: {error}")))?;
+            let id = record
+                .metadata
+                .id
+                .as_deref()
+                .ok_or_else(|| Error::msg("missing id"))?;
+            let valid_id = id
+                .strip_prefix("ws_")
+                .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                .is_some_and(|id| id.get_version_num() == 4);
+            if record.schema != Some(2)
+                || !valid_id
+                || file.file_stem().and_then(|s| s.to_str()) != Some(id)
+            {
+                return Err(Error::msg("unsupported schema or invalid workspace id"));
+            }
+            if path_key(Path::new(&record.path)).is_empty() {
+                return Err(Error::msg("record without a path"));
+            }
+            if store.worktrees.iter().any(|existing| {
+                paths::same_location(Path::new(&existing.path), Path::new(&record.path))
+            }) {
+                return Err(Error::msg("duplicate path"));
+            }
+            record.metadata.name = record.name.clone();
+            Ok(record)
+        })();
+        match result {
+            Ok(record) => store.worktrees.push(record),
+            Err(error) => {
+                let message = format!("Worktree metadata file {} {error}", file.display());
+                if strict {
+                    return Err(Error::msg(message));
+                }
+                problems.push(message);
+            }
+        }
+    }
+    Ok((store, problems))
+}
+
+fn ensure_records(git_root: &Path) -> Result<()> {
+    let dir = records_dir(git_root)?;
+    let legacy = metadata_file(git_root)?;
+    if legacy.exists() {
+        crate::atomic::import_directory(&dir, &legacy, |staging| {
+            let mut store = validated_store(&legacy)?;
+            for record in &mut store.worktrees {
+                record.schema = Some(2);
+                record.metadata.id = Some(format!("ws_{}", uuid::Uuid::new_v4()));
+                save_record(staging, record)?;
+            }
+            Ok(())
+        })?;
+    } else {
+        fs::create_dir_all(&dir).map_err(|error| {
             Error::msg(format!(
-                "Worktree metadata file {} is not writable: {error}",
-                dir.join(FILE_NAME).display()
+                "Worktree metadata directory {} is not writable: {error}",
+                dir.display()
             ))
-        })
+        })?;
+    }
+    Ok(())
+}
+
+fn save_record(dir: &Path, record: &StoredWorktree) -> Result<()> {
+    let id = record
+        .metadata
+        .id
+        .as_deref()
+        .ok_or_else(|| Error::msg("Missing workspace id"))?;
+    let body = serde_json::to_vec_pretty(record).map_err(|error| Error::msg(error.to_string()))?;
+    crate::atomic::write(&dir.join(format!("{id}.json")), &body)
+        .map_err(|error| Error::msg(format!("Failed to save worktree metadata: {error}")))
 }
 
 fn with_store<T>(git_root: &Path, body: impl FnOnce(&mut Store) -> Result<(T, bool)>) -> Result<T> {
-    let dir = metadata_dir(git_root)?;
-    let file = dir.join(FILE_NAME);
-    fs::create_dir_all(&dir).map_err(|error| {
-        Error::msg(format!(
-            "Worktree metadata file {} is not writable: {error}",
-            file.display()
-        ))
-    })?;
-    let lock = open_lock(&dir)?;
-    crate::operation::wait_for_lock(&lock, &dir.join(LOCK_NAME))?;
-    let mut store = validated_store(&file)?;
+    ensure_records(git_root)?;
+    let (mut store, _) = read_records(git_root, true)?;
+    let before = store.worktrees.clone();
     let (value, dirty) = body(&mut store)?;
     if dirty {
-        write_store(&file, &dir, &store)?;
+        let dir = records_dir(git_root)?;
+        for record in &store.worktrees {
+            if !before.contains(record) {
+                save_record(&dir, record)?;
+            }
+        }
+        for record in &before {
+            if !store
+                .worktrees
+                .iter()
+                .any(|after| after.metadata.id == record.metadata.id)
+            {
+                if let Some(id) = &record.metadata.id {
+                    match fs::remove_file(dir.join(format!("{id}.json"))) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(Error::msg(error.to_string())),
+                    }
+                }
+            }
+        }
     }
-    let _ = lock.unlock();
     Ok(value)
 }
 
@@ -554,43 +677,6 @@ fn read_store(path: &Path) -> Result<Store> {
             path.display()
         ))
     })
-}
-
-fn write_store(path: &Path, dir: &Path, store: &Store) -> Result<()> {
-    let temporary = dir.join(format!(
-        ".{FILE_NAME}.tmp-{}-{}",
-        std::process::id(),
-        uuid::Uuid::new_v4()
-    ));
-    let body = format!(
-        "{}\n",
-        serde_json::to_string_pretty(store)
-            .map_err(|error| Error::msg(format!("Failed to encode worktree metadata: {error}")))?
-    );
-    let write_result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temporary)
-            .map_err(|error| Error::msg(format!("Failed to save worktree metadata: {error}")))?;
-        file.write_all(body.as_bytes())
-            .map_err(|error| Error::msg(format!("Failed to save worktree metadata: {error}")))?;
-        file.sync_all()
-            .map_err(|error| Error::msg(format!("Failed to save worktree metadata: {error}")))?;
-        Ok(())
-    })();
-    if let Err(error) = write_result {
-        let _ = fs::remove_file(&temporary);
-        return Err(error);
-    }
-    let renamed = fs::rename(&temporary, path);
-    if renamed.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    renamed.map_err(|error| Error::msg(format!("Failed to save worktree metadata: {error}")))?;
-    let _ = File::open(dir).and_then(|directory| directory.sync_all());
-    Ok(())
 }
 
 fn empty_store() -> Store {
@@ -688,13 +774,14 @@ mod tests {
         remove(&root, &path).expect("missing remove");
 
         let created = write(&root, &path, &MetadataInput::default()).expect("write");
-        let mut document: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(metadata_file(&root).expect("file")).expect("file"),
-        )
-        .expect("json");
-        document["worktrees"][0]["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+        let file = records_dir(&root)
+            .unwrap()
+            .join(format!("{}.json", created.id.as_deref().unwrap()));
+        let mut document: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&file).expect("file")).expect("json");
+        document["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
         fs::write(
-            metadata_file(&root).expect("file"),
+            &file,
             format!(
                 "{}\n",
                 serde_json::to_string_pretty(&document).expect("encode")
@@ -781,6 +868,111 @@ mod tests {
                 .and_then(|item| item.owner.as_deref()),
             Some("two")
         );
+    }
+
+    #[test]
+    fn imports_alpha6_on_first_write_and_preserves_all_fields() {
+        let root = root();
+        let legacy = metadata_file(&root).unwrap();
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        let fixture = include_str!("../tests/fixtures/alpha6/worktrees.json");
+        fs::write(&legacy, fixture).unwrap();
+        let before = load(&root).unwrap();
+        assert_eq!(before.len(), 2);
+        assert!(
+            !records_dir(&root).unwrap().exists(),
+            "read-only load migrated"
+        );
+        write(&root, &root.join("new"), &MetadataInput::default()).unwrap();
+        assert!(!legacy.exists());
+        assert_eq!(
+            fs::read_to_string(legacy.with_extension("json.imported")).unwrap(),
+            fixture
+        );
+        let after = load(&root).unwrap();
+        assert_eq!(after.len(), 3);
+        for (path, old) in before {
+            let mut imported = after[&path].clone();
+            assert!(imported.id.as_deref().unwrap().starts_with("ws_"));
+            imported.id = None;
+            assert_eq!(imported, old);
+        }
+        assert_eq!(
+            fs::read_dir(records_dir(&root).unwrap()).unwrap().count(),
+            3
+        );
+    }
+
+    #[test]
+    fn corrupt_individual_record_keeps_healthy_metadata_readable() {
+        let root = root();
+        let one = write(
+            &root,
+            &root.join("one"),
+            &MetadataInput {
+                owner: Some("one".into()),
+                ..MetadataInput::default()
+            },
+        )
+        .unwrap();
+        write(
+            &root,
+            &root.join("two"),
+            &MetadataInput {
+                owner: Some("two".into()),
+                ..MetadataInput::default()
+            },
+        )
+        .unwrap();
+        let file = records_dir(&root)
+            .unwrap()
+            .join(format!("{}.json", one.id.unwrap()));
+        fs::write(&file, "broken").unwrap();
+        let records = load(&root).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[&path_key(&root.join("two"))].owner.as_deref(),
+            Some("two")
+        );
+        assert!(read_problem(&root)
+            .unwrap()
+            .contains(file.to_str().unwrap()));
+        assert!(write(&root, &root.join("three"), &MetadataInput::default()).is_err());
+        assert_eq!(fs::read_to_string(file).unwrap(), "broken");
+    }
+
+    #[test]
+    fn simultaneous_first_writes_import_legacy_without_losing_records() {
+        let root = Arc::new(root());
+        let legacy = metadata_file(&root).unwrap();
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(
+            &legacy,
+            include_str!("../tests/fixtures/alpha6/worktrees.json"),
+        )
+        .unwrap();
+        let gate = Arc::new(Barrier::new(8));
+        let handles = (0..8)
+            .map(|index| {
+                let root = Arc::clone(&root);
+                let gate = Arc::clone(&gate);
+                thread::spawn(move || {
+                    gate.wait();
+                    write(
+                        &root,
+                        &root.join(format!("new-{index}")),
+                        &MetadataInput::default(),
+                    )
+                    .unwrap();
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(load(&root).unwrap().len(), 10);
+        assert!(!legacy.exists());
+        assert!(legacy.with_extension("json.imported").is_file());
     }
 
     #[test]

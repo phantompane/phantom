@@ -21,14 +21,14 @@ Maboroshi はワークスペースを作成し、既存の作業を引き継い�
 - **更新。** `sync` は fetch し、可能ならデフォルトブランチを fast-forward して、選択したワークスペースにベースの変更を取り込みます。
 - **片付け。** `gc` はマージ済みブランチ、クローズ済みのプルリクエスト、孤立したレコード、経過時間（`--older-than`）を根拠に対象を選びます。
 
-コマンドは非対話で実行できます。`--json` の成功出力にはバージョン（`version`、`sync` では `schema`）がありますが、`project add` と `project remove` は例外で `{status, project}` を返します。エラーは構造化され、安定した終了コードも文書化されています（[Machine-readable JSON](README.md#machine-readable-json) を参照）。`exec` は代わりに、子コマンドの出力と終了コードをそのまま返します。人間も同じコマンドを使い、プレーンテキストの出力で操作します。
+コマンドは非対話で実行できます。JSON 対応の全コマンドは、成功時もエラー時も schema 2 の共通 envelope を返します。`exec` は子コマンドの出力と終了コードをそのまま返します。人間も同じコマンドを使い、プレーンテキストの出力で操作します。
 
 ## デフォルトは安全、違うことをしたいときは明示する
 
 - **マージ済み、所有者なし、古い、という状態は判断材料であり、削除してよいという許可ではありません。** `gc` は `--apply` または `--force` を指定するまで、削除予定を表示するだけです（`--force` は適用も兼ねます）。`--force` がなければ、未コミットの変更がある作業や、公開済みまたは取り込み済みと確認できないコミットを保護します。デフォルトブランチの worktree、実行中のカレントディレクトリがある worktree、Git でロックされた worktree は、`--force` があっても保護します。
 - **所有者は情報であって、アクセス制御ではありません。** `MABO_AGENT_ID` に空白以外の文字が含まれていれば、`sync --mine` はそのエージェントのワークスペースだけを選び、`sync --all` は他のエージェントのワークスペースをスキップします（どちらも `--no-default` がなければデフォルトブランチの更新も試みます）。名前を明示すれば、所有者にかかわらず `sync` で同期できます。`gc` は他のエージェントのものでも、マージ済み、PR がクローズ済み、または孤立したワークスペースを対象にすることがあります。
 - **push 済みの履歴は既定で保ちます。** 変更の取り込みが必要な場合、`sync` は公開済みの作業にベースをマージします。リベースには `--rebase --force` が必要です。ベースに含まれないコミットがひとつでも、既知のリモート追跡参照または fetch 先として設定された参照から到達可能なら、公開済みとして扱います。
-- **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `MABO_AGENT_ID` または `CI` に空白以外の文字が含まれているとき、`--json` を指定したとき、標準入力または標準エラー出力が端末でないときが該当します。未信頼のフックを実行する必要がある操作は、リポジトリを変更する前に終了コード 1 で拒否します（JSON では `untrusted`）。`gc` は代わりに、そのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust --yes` で事前に信頼を記録するか、`--no-hooks` でフックを省略してください。Git の認証やプロジェクトのフックは、入力を求める場合があります。
+- **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。`MABO_AGENT_ID` は所有者の既定値を設定するだけで、プロンプトを抑制しません。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust --yes` で信頼を記録するか、`--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。`--exec` と単体 `exec` は標準入力を引き継ぎます。
 
 ## 目指さないこと
 
@@ -42,3 +42,33 @@ Maboroshi が担わない役割は次のとおりです。
 - セキュリティ上の隔離。所有者は協調のための情報であり、アクセスの境界ではありません。
 
 コマンドの使い方・設定・JSON 出力の詳細は [README.md](README.md)（英語）を参照。
+
+## JSON 出力と終了コード
+
+`--json` は `--output json` の別名です。`--output text` は人間向け出力を選びます。`MABO_OUTPUT=text|json` で既定値を設定でき、明示したフラグが優先されます。`exec`、`version`、ヘルプは環境変数を無視し、`exec --json` は使用方法エラーになります。
+
+```json
+{"schema":2,"command":"list","ok":true,"data":{"worktrees":[]},"warnings":[],"error":null}
+```
+
+標準出力には envelope を1件だけ出し、進捗・フック・Git・`--exec` の出力は標準エラー出力へ出します。`data` は既存のコマンド結果を含み、最上位の `version` / `schema` は含みません。`command` は `meta set` のような空白区切りの名前です。エラーは `{code,message,details?}`、警告は `{code,message}` です。部分的な結果は `data` に残り、gc の dry-run では `data.plan: true` を返します。パーサーは未知のフィールドを無視してください。
+
+| 終了コード | 意味 | 主な error.code |
+| --- | --- | --- |
+| 0 | 成功 | error は null |
+| 1 | 操作の失敗 | `failed` |
+| 2 | 使用方法・曖昧な指定 | `usage`, `ambiguous` |
+| 3 | 見つからない・Git リポジトリでない | `not_found`, `branch_not_found`, `not_repository` |
+| 4 | 安全判定による拒否 | `dirty`, `unpreserved`, `published`, `exists`, `exists_remote`, `untrusted` |
+| 5 | sync の競合 | `conflict` |
+| 6 | 永続的な変更後の部分失敗 | `partial` |
+
+単体 `exec` は子プロセスの終了コードをそのまま返します。`create --exec` の失敗は 6 となり、子の終了コードは `data.exec.exitCode` に入ります。
+
+## メタデータの保存と移行
+
+worktree のメタデータは `<git-common-dir>/maboroshi/workspaces/<id>.json` に1件ずつ保存します。`id` は `ws_<uuid v4>`、各ファイルには `schema: 2`、`id`、`path`、任意の `name` と、既存の `owner`、`base`、`purpose`、`createdAt`、`createdFrom`、`lastUsedAt`、`links` が入ります。JSON 出力の worktree オブジェクトにも `id` が入り、未記録なら null です。検索・置き換え・削除は従来どおり path で行い、削除はそのファイルだけを消します。破損したレコードは警告と null メタデータになり、ほかのレコードは読み続けられます。変更するコマンドは破損があれば拒否して元のファイルを保ちます。`delete` と `gc` はこのメタデータに記録されていれば、設定した保存先の外にある worktree も削除対象にできます。
+
+project registry は `$XDG_STATE_HOME/maboroshi/repos/<id>.json`（既定は `~/.local/state/maboroshi/repos/<id>.json`）に1件ずつ保存し、既存の `proj_<uuid>` ID を引き継ぎます。同じ root の重複は、読み込み時に `createdAt` が古い方へまとめます。同時刻なら ID の辞書順で決めます。
+
+旧 `maboroshi/worktrees.json` と `$XDG_STATE_HOME/maboroshi/projects.json` は読み取り専用コマンドでも読めます。最初の書き込みで全件を個別ファイルへ移し、旧ファイルを `*.json.imported` に改名します。移行に失敗した場合は旧ファイルを保ちます。mabo 内部のファイルロックはありません。各レコードと、単一ファイルの `trust.toml`・ユーザー設定 `config.toml` は、同じディレクトリの一時ファイルへの書き込み、fsync、rename でアトミックに置き換えます。別レコードの同時追加は両方残り、同じレコードの同時更新は後勝ちです。

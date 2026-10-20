@@ -1,3 +1,5 @@
+#[path = "common/records.rs"]
+mod records;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -70,7 +72,6 @@ impl Repo {
             .env("GIT_TEMPLATE_DIR", self.root.join("template"))
             .env_remove("MABO_OUTPUT")
             .env_remove("MABO_NO_INPUT")
-            .env_remove("MABO_LOCK_TIMEOUT")
             .env_remove("MABO_AGENT_ID")
             .env_remove("GIT_CONFIG_COUNT")
             .env_remove("GIT_CONFIG_PARAMETERS");
@@ -684,13 +685,13 @@ fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
         r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
         "base-gone"
     );
-    let file = r.main.join(".git/maboroshi/worktrees.json");
-    let mut stored: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    let file = r.main.join(".git/maboroshi/workspaces");
+    let mut stored: Value = serde_json::from_slice(&records::read(&file).unwrap()).unwrap();
     stored["worktrees"][0]
         .as_object_mut()
         .unwrap()
         .remove("base");
-    fs::write(&file, serde_json::to_vec(&stored).unwrap()).unwrap();
+    records::write(&file, serde_json::to_vec(&stored).unwrap()).unwrap();
     assert_eq!(
         r.sync(&tree, &[], 0)["data"]["worktrees"][0]["base"],
         "refs/remotes/origin/main"
@@ -763,105 +764,6 @@ fn json_schema_snapshot_and_project_selection() {
             ["name"],
         "topic"
     );
-}
-
-#[test]
-fn sync_and_delete_serialize_during_fetch() {
-    use std::os::unix::fs::PermissionsExt;
-    use std::sync::mpsc;
-    use std::time::{Duration, Instant};
-    let r = Repo::new();
-    let tree = r.create("topic");
-    r.write_commit(&tree, "local", "local\n");
-    r.advance();
-    let gate = r.root.join("gate");
-    assert!(Command::new("mkfifo")
-        .arg(&gate)
-        .status()
-        .unwrap()
-        .success());
-    let entered = r.root.join("entered");
-    let script = r.root.join("upload-pack");
-    fs::write(
-        &script,
-        format!(
-            "#!/bin/sh\nprintf ready > '{}'\nread release < '{}'\nexec git-upload-pack \"$@\"\n",
-            entered.display(),
-            gate.display()
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
-    r.git(
-        &r.main,
-        &[
-            "config",
-            "remote.origin.uploadpack",
-            script.to_str().unwrap(),
-        ],
-    );
-    let mut sync = r
-        .command(
-            env!("CARGO_BIN_EXE_mabo"),
-            &r.main,
-            &["sync", "topic", "--json"],
-        )
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !entered.exists() {
-        assert!(
-            sync.try_wait().unwrap().is_none(),
-            "sync exited before fetch"
-        );
-        assert!(Instant::now() < deadline, "fetch did not start");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    let mut delete = r.command(
-        env!("CARGO_BIN_EXE_mabo"),
-        &r.main,
-        &["delete", "topic", "--force", "--no-hooks", "--json"],
-    );
-    let (tx, rx) = mpsc::channel();
-    let mut child = delete
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let (waiting_tx, waiting_rx) = mpsc::channel();
-    let diagnostic = std::thread::spawn(move || {
-        use std::io::BufRead;
-        let mut lines = std::io::BufReader::new(stderr).lines();
-        waiting_tx.send(lines.next().unwrap().unwrap()).unwrap();
-        assert!(
-            lines.next().is_none(),
-            "only one lock waiting line is allowed"
-        );
-    });
-    let waiter = std::thread::spawn(move || {
-        tx.send(child.wait_with_output().unwrap()).unwrap();
-    });
-    let waiting = waiting_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(waiting.starts_with("Waiting for another mabo operation to finish ("));
-    assert!(
-        rx.try_recv().is_err(),
-        "delete passed the lock during sync fetch"
-    );
-    assert!(tree.exists());
-    fs::write(&gate, "release\n").unwrap();
-    let synced = sync.wait_with_output().unwrap();
-    assert!(
-        synced.status.success(),
-        "{}",
-        String::from_utf8_lossy(&synced.stdout)
-    );
-    let deleted = rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(deleted.status.success());
-    waiter.join().unwrap();
-    diagnostic.join().unwrap();
-    assert!(!tree.exists());
 }
 
 #[test]
@@ -1216,12 +1118,12 @@ fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
     );
     // Legacy metadata uses the very same reflog fallback as gc.
     let legacy = r.create("legacy");
-    let file = r.main.join(".git/maboroshi/worktrees.json");
-    let mut stored: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    let file = r.main.join(".git/maboroshi/workspaces");
+    let mut stored: Value = serde_json::from_slice(&records::read(&file).unwrap()).unwrap();
     for record in stored["worktrees"].as_array_mut().unwrap() {
         record.as_object_mut().unwrap().remove("createdFrom");
     }
-    fs::write(file, serde_json::to_vec(&stored).unwrap()).unwrap();
+    records::write(file, serde_json::to_vec(&stored).unwrap()).unwrap();
     r.write_commit(&r.upstream, "more", "more\n");
     r.git(&r.upstream, &["pull", "--no-rebase", "origin", "main"]);
     r.git(&r.upstream, &["push", "origin", "main"]);
@@ -1252,8 +1154,8 @@ fn unrecorded_fresh_syncs_keep_null_metadata_and_gc_keeps_them() {
                 "origin/main",
             ],
         );
-        let store = r.main.join(".git/maboroshi/worktrees.json");
-        let before = fs::read(&store).unwrap();
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let before = records::read(&store).unwrap();
         r.advance();
         assert_eq!(
             r.sync(&r.main, &["topic"], 0)["data"]["worktrees"][0]["status"],
@@ -1273,7 +1175,7 @@ fn unrecorded_fresh_syncs_keep_null_metadata_and_gc_keeps_them() {
         assert!(gc.status.success());
         let doc: Value = serde_json::from_slice(&gc.stdout).unwrap();
         assert!(!doc.to_string().contains("topic"), "{doc}");
-        assert_eq!(fs::read(store).unwrap(), before);
+        assert_eq!(records::read(store).unwrap(), before);
         if !no_reflog {
             r.write_commit(&r.upstream, "third", "third\n");
             r.git(&r.upstream, &["push", "origin", "main"]);
@@ -1371,7 +1273,7 @@ fn finish_child(mut child: std::process::Child) -> Output {
 }
 
 #[test]
-fn git_hooks_can_reenter_the_operation_lock() {
+fn git_hooks_can_run_mabo() {
     use std::os::unix::fs::PermissionsExt;
     for hook_name in ["post-checkout", "reference-transaction"] {
         let r = Repo::new();
@@ -1384,7 +1286,7 @@ fn git_hooks_can_reenter_the_operation_lock() {
             &hook,
             format!(
                 r#"#!/bin/sh
-# Bound the nested command so a regression cannot leave orphaned lock waiters.
+# Bound the nested command so a regression cannot leave orphaned child processes.
 '{bin}' gc --json > '{output}' 2>&1 &
 nested=$!
 (sleep 3; kill "$nested" 2>/dev/null) >/dev/null 2>&1 &
@@ -1427,34 +1329,67 @@ exit "$result"
 }
 
 #[test]
-fn operation_lock_token_is_not_exported_to_project_hooks_or_exec() {
+fn git_hook_can_run_mabo_exec_and_create_with_project_hooks_and_exec() {
+    use std::os::unix::fs::PermissionsExt;
     let r = Repo::new();
+    r.create("victim");
+    let bin = env!("CARGO_BIN_EXE_mabo");
+    let gate = r.root.join("hook-entered");
+    let status = r.root.join("hook-status");
+    let standalone = r.root.join("standalone-exec");
+    let post_create = r.root.join("post-create");
+    let create_exec = r.root.join("create-exec");
     fs::write(
         r.main.join(".mabo.toml"),
-        "[hooks]\npost-create = ['test -z \"${MABO_OPERATION_LOCK+x}\"']\npre-delete = ['test -z \"${MABO_OPERATION_LOCK+x}\"']\n",
-    ).unwrap();
-    for args in [
-        vec![
-            "create",
-            "topic",
-            "--json",
-            "--exec",
-            "test -z \"${MABO_OPERATION_LOCK+x}\"",
-        ],
-        vec!["delete", "topic", "--force", "--json"],
-    ] {
-        let out = r
-            .command(env!("CARGO_BIN_EXE_mabo"), &r.main, &args)
-            .env("MABO_TRUST_ALL", "1")
-            .env("MABO_OPERATION_LOCK", "stale-inherited-token")
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{} {}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+        format!(
+            "[hooks]\npost-create = [\"touch '{}'\"]\n",
+            post_create.display()
+        ),
+    )
+    .unwrap();
+    let hook = r.main.join(".git/hooks/post-checkout");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(
+        &hook,
+        format!(
+            r#"#!/bin/sh
+[ -e '{gate}' ] && exit 0
+touch '{gate}'
+cd '{main}'
+'{bin}' exec victim sh -c "touch '{standalone}'" &&
+'{bin}' create nested --exec "touch '{create_exec}'"
+echo $? > '{status}'
+"#,
+            gate = gate.display(),
+            main = r.main.display(),
+            standalone = standalone.display(),
+            create_exec = create_exec.display(),
+            status = status.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    let child = r
+        .command(bin, &r.main, &["create", "outer", "--no-hooks"])
+        .env("MABO_TRUST_ALL", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = finish_child(child);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(status).unwrap().trim(),
+        "0",
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for marker in [standalone, post_create, create_exec] {
+        assert!(marker.is_file(), "{}", marker.display());
     }
 }
 
@@ -1498,7 +1433,7 @@ fn post_create_hook_can_list_and_create_and_pre_delete_hook_can_create() {
 }
 
 #[test]
-fn create_exec_releases_lock_while_command_is_running() {
+fn other_commands_can_run_while_create_exec_is_running() {
     let r = Repo::new();
     let other = r.create("other");
     let gate = r.root.join("exec-gate");
@@ -1606,7 +1541,7 @@ fn attach_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
     );
     assert!(!tree.exists());
     assert!(r.mabo(&r.main, &["where", "from-gc"]).status.success());
-    // A hook can change the target while unlocked; the old preflight is stale.
+    // A hook can change the target; the old preflight is stale.
     fs::write(
         r.main.join(".mabo.toml"),
         "[hooks]\npre-delete = [\"git commit --allow-empty -m changed-by-hook\"]\n",
@@ -2383,8 +2318,8 @@ fn metadata_failure_after_fast_forward_restores_worktree() {
     for fail_rollback in ["0", "1", "silent"] {
         let r = Repo::new();
         let tree = r.create("topic");
-        let store = r.main.join(".git/maboroshi/worktrees.json");
-        let original_store = fs::read(&store).unwrap();
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let original_store = records::read(&store).unwrap();
         r.advance();
         let before = r.snapshot(&tree);
         let fsmonitor = r.install_fsmonitor();
@@ -2406,7 +2341,7 @@ done
 for arg do
     if [ "$arg" = merge ]; then
         "$REAL_GIT" "$@" || exit $?
-        printf 'invalid json' > "$STORE"
+        for record in "$STORE"/*.json; do printf 'invalid json' > "$record"; done
         exit 0
     fi
 done
@@ -2450,7 +2385,7 @@ exec "$REAL_GIT" "$@"
             assert!(detail.contains("worktree restored"), "{detail}");
             assert_eq!(item["before"], item["after"]);
             assert_eq!(r.snapshot(&tree), before);
-            fs::write(&store, &original_store).unwrap();
+            records::write(&store, &original_store).unwrap();
             assert_eq!(
                 r.sync(&tree, &["--no-default"], 0)["data"]["worktrees"][0]["status"],
                 "updated"
@@ -2590,7 +2525,7 @@ fn fetch_failures_exit_one_even_with_a_published_rebase_refusal() {
 }
 
 #[test]
-fn git_hook_read_only_intermediary_preserves_lock_reentry() {
+fn git_hook_read_only_intermediary_can_run_nested_mabo() {
     use std::os::unix::{fs::PermissionsExt, process::CommandExt};
     let r = Repo::new();
     r.create("existing");
@@ -2661,160 +2596,6 @@ printf 'token\000/\000'
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(fs::read_to_string(nested_status).unwrap().trim(), "0");
-}
-
-#[test]
-fn borrowed_lock_actions_and_project_hooks_are_refused_before_changes() {
-    use std::os::unix::{fs::PermissionsExt, process::CommandExt};
-    for action in [
-        "gh-child",
-        "standalone-exec",
-        "standalone-shell",
-        "standalone-git",
-        "create-exec",
-        "attach-exec",
-        "create-hook",
-        "attach-hook",
-        "delete-hook",
-        "gc-hook",
-    ] {
-        let r = Repo::new();
-        let victim = r.create("victim");
-        r.write_commit(&victim, "landed", "landed\n");
-        r.git(&r.main, &["merge", "--ff-only", "victim"]);
-        r.git(&r.main, &["push", "origin", "main"]);
-        r.git(&r.main, &["branch", "existing"]);
-        let bin = env!("CARGO_BIN_EXE_mabo");
-        let marker = r.root.join("hook-entered");
-        let output = r.root.join("nested-output");
-        let status = r.root.join("nested-status");
-        let hook = r.main.join(".git/hooks/post-checkout");
-        fs::create_dir_all(hook.parent().unwrap()).unwrap();
-        let nested = match action {
-            "gh-child" => {
-                let gh = r.root.join("gh");
-                fs::write(&gh, format!("#!/bin/sh\n'{bin}' gc --json\n")).unwrap();
-                fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
-                format!(
-                    "PATH='{}':\"$PATH\" '{bin}' github checkout 7",
-                    r.root.display()
-                )
-            }
-            "standalone-git" => {
-                format!("'{bin}' exec victim git -c \"alias.cleanup=!'{bin}' gc --json\" cleanup")
-            }
-            "standalone-exec" => format!("'{bin}' exec victim '{bin}' gc --json"),
-            "standalone-shell" => format!("'{bin}' exec victim sh -c \"'{bin}' gc --json\""),
-            "create-exec" => {
-                format!("'{bin}' create nested --no-hooks --exec \"'{bin}' gc --json\"")
-            }
-            "attach-exec" => {
-                format!("'{bin}' attach existing --no-hooks --exec \"'{bin}' gc --json\"")
-            }
-            _ => {
-                fs::write(r.main.join(".mabo.toml"), format!("[hooks]\npost-create = [\"'{bin}' gc --json\"]\npre-delete = [\"'{bin}' gc --json\"]\n")).unwrap();
-                match action {
-                    "create-hook" => format!("'{bin}' create nested"),
-                    "attach-hook" => format!("'{bin}' attach existing"),
-                    "delete-hook" => format!("'{bin}' delete victim"),
-                    "gc-hook" => format!("'{bin}' gc --apply --json"),
-                    _ => unreachable!(),
-                }
-            }
-        };
-        fs::write(&hook, format!("#!/bin/sh\n[ -e '{marker}' ] && exit 0\ntouch '{marker}'\ncd '{main}'\n{nested} > '{output}' 2>&1\necho $? > '{status}'\nexit 0\n", marker=marker.display(), main=r.main.display(), output=output.display(), status=status.display())).unwrap();
-        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
-        let mut child = r
-            .command(bin, &r.main, &["create", "outer", "--no-hooks"])
-            .env("MABO_TRUST_ALL", "1")
-            .process_group(0)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let timed_out = loop {
-            if child.try_wait().unwrap().is_some() {
-                break false;
-            }
-            if std::time::Instant::now() >= deadline {
-                Command::new("kill")
-                    .args(["-KILL", "--", &format!("-{}", child.id())])
-                    .status()
-                    .unwrap();
-                break true;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        };
-        let out = child.wait_with_output().unwrap();
-        let nested_output = fs::read_to_string(output).unwrap();
-        assert!(!timed_out, "{action} deadlocked: {nested_output}");
-        assert!(
-            out.status.success(),
-            "{action}: {} {nested_output}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(
-            fs::read_to_string(status).unwrap().trim(),
-            "1",
-            "{action}: {nested_output}"
-        );
-        assert!(
-            nested_output.contains("Cannot run project hooks or --exec while borrowing"),
-            "{action}: {nested_output}"
-        );
-        assert!(victim.exists());
-        assert_eq!(r.git(&r.main, &["branch", "--list", "nested"]), "");
-        let listed: Value =
-            serde_json::from_slice(&r.mabo(&r.main, &["list", "--json"]).stdout).unwrap();
-        assert!(!listed["data"]["worktrees"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|tree| tree["name"] == "nested" || tree["name"] == "existing"));
-    }
-}
-
-#[test]
-fn operation_lock_token_is_not_exported_to_gh() {
-    use std::os::unix::fs::PermissionsExt;
-    let r = Repo::new();
-    let out = r.mabo(
-        &r.main,
-        &[
-            "create",
-            "topic",
-            "--pr",
-            "https://github.com/acme/demo/pull/7",
-        ],
-    );
-    assert!(out.status.success());
-    let bin = r.root.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let observed = r.root.join("gh-token");
-    let gh = bin.join("gh");
-    fs::write(&gh, format!("#!/bin/sh\nprintf '%s' \"${{MABO_OPERATION_LOCK-unset}}\" > '{}'\nprintf '%s\\n' '{{\"state\":\"MERGED\"}}'\n", observed.display())).unwrap();
-    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
-    let out = r
-        .command(
-            env!("CARGO_BIN_EXE_mabo"),
-            &r.main,
-            &["gc", "--pr", "--json"],
-        )
-        .env(
-            "PATH",
-            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
-        )
-        .env("MABO_OPERATION_LOCK", "stale-inherited-token")
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(
-        doc["data"]["candidates"][0]["action"], "wouldRemove",
-        "{doc}"
-    );
-    assert_eq!(fs::read_to_string(observed).unwrap(), "unset");
 }
 
 #[test]
@@ -3408,12 +3189,12 @@ fn gc_unresolved_default_keeps_branch_worktrees_even_with_force() {
                 ],
             );
         }
-        let store = r.main.join(".git/maboroshi/worktrees.json");
-        let mut doc: Value = serde_json::from_slice(&fs::read(&store).unwrap()).unwrap();
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let mut doc: Value = serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
         for record in doc["worktrees"].as_array_mut().unwrap() {
             record["lastUsedAt"] = json!("2000-01-01T00:00:00.000Z");
         }
-        fs::write(&store, serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
+        records::write(&store, serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
         let before = r.snapshot(&tree);
         let out = r.mabo(
             &r.main,

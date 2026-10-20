@@ -24,17 +24,11 @@ pub fn run(args: &[String]) -> Result<i32> {
     let mut prefix = 0;
     while let Some(arg) = args.get(prefix) {
         let name = arg.split('=').next().unwrap_or(arg);
-        if !matches!(
-            name,
-            "--json" | "--output" | "--no-input" | "--lock-timeout"
-        ) {
+        if !matches!(name, "--json" | "--output" | "--no-input") {
             break;
         }
         prefix += 1;
-        if matches!(name, "--output" | "--lock-timeout")
-            && !arg.contains('=')
-            && prefix < args.len()
-        {
+        if matches!(name, "--output") && !arg.contains('=') && prefix < args.len() {
             prefix += 1;
         }
     }
@@ -89,25 +83,11 @@ pub fn run(args: &[String]) -> Result<i32> {
                     | "project remove"
                     | "github checkout"
             );
-            let locks = matches!(
-                key,
-                "create"
-                    | "attach"
-                    | "delete"
-                    | "sync"
-                    | "gc"
-                    | "meta set"
-                    | "where"
-                    | "exec"
-                    | "github checkout"
-                    | "trust"
-                    | "untrust"
-            );
             crate::output::begin(
                 key,
                 supports_json && std::env::var("MABO_OUTPUT").ok().as_deref() == Some("json"),
             );
-            let result = crate::runtime::prepare(remaining, supports_json, locks, key)
+            let result = crate::runtime::prepare(remaining, supports_json, key)
                 .and_then(|args| (command.run)(&args));
             let exit = match result {
                 Ok(exit) => exit,
@@ -527,7 +507,6 @@ fn delete(args: &[String]) -> Result<i32> {
         Ok(context) => context,
         Err(error) => return fail_project(&error, args, &parsed, json),
     };
-    let operation = crate::operation::lock(&context.git_root)?;
     let keep_branch =
         parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false);
     let names = if delete_current {
@@ -554,15 +533,10 @@ fn delete(args: &[String]) -> Result<i32> {
         allow_current: delete_current,
         published_tip: None,
     };
-    operation.check_post_release_children(
-        !parsed.flag("no-hooks")
-            && !crate::config::pre_delete_commands(context.config.as_ref()).is_empty(),
-    )?;
     let plans = match worktree::preflight_deletes(&context, &names, &options) {
         Ok(plans) => plans,
         Err(refusals) => return report_delete_refusals(refusals, json),
     };
-    drop(operation);
     let mut deleted = Vec::new();
     for plan in plans {
         match worktree::commit_delete(
@@ -611,7 +585,7 @@ fn delete(args: &[String]) -> Result<i32> {
                 let error = &failure.error;
                 let code = if deleted.is_empty() {
                     match error {
-                        Error::Untrusted(_) | Error::LockTimeout(_) => error.exit_code(),
+                        Error::Untrusted(_) => error.exit_code(),
                         _ => GENERAL,
                     }
                 } else {

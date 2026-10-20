@@ -6,7 +6,6 @@ pub const NOT_REPOSITORY: i32 = NOT_FOUND;
 pub const REFUSED: i32 = 4;
 pub const CONFLICT: i32 = 5;
 pub const PARTIAL: i32 = 6;
-pub const LOCK_TIMEOUT: i32 = 7;
 
 /// Version of the common machine-readable envelope.
 pub const JSON_VERSION: u32 = 2;
@@ -15,8 +14,6 @@ pub const JSON_VERSION: u32 = 2;
 pub enum Error {
     #[error("{message}")]
     Status { code: &'static str, message: String },
-    #[error("Timed out waiting for lock {0}; another mabo is running")]
-    LockTimeout(std::path::PathBuf),
     #[error("{0}")]
     Message(String),
     #[error("{0}")]
@@ -127,7 +124,6 @@ impl Error {
     pub fn json_code(&self, requested: i32) -> &'static str {
         match self {
             Self::Status { code, .. } => code,
-            Self::LockTimeout(_) => "lock_timeout",
             Self::WorktreeNotFound(_) | Self::ProjectNotFound(_) | Self::PathNotFound(_) => {
                 "not_found"
             }
@@ -156,7 +152,6 @@ pub fn exit_for_code(code: &str) -> i32 {
         | "refused" => REFUSED,
         "conflict" => CONFLICT,
         "partial" => PARTIAL,
-        "lock_timeout" => LOCK_TIMEOUT,
         _ => GENERAL,
     }
 }
@@ -168,7 +163,6 @@ pub fn status_code(exit: i32) -> &'static str {
         REFUSED => "dirty",
         CONFLICT => "conflict",
         PARTIAL => "partial",
-        LOCK_TIMEOUT => "lock_timeout",
         _ => "failed",
     }
 }
@@ -225,7 +219,6 @@ mod tests {
             ),
             ("conflict", CONFLICT),
             ("partial", PARTIAL),
-            ("lock_timeout", LOCK_TIMEOUT),
         ] {
             for code in codes.split_whitespace() {
                 assert_eq!(exit_for_code(code), exit, "{code}");

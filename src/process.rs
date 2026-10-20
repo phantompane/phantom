@@ -73,7 +73,6 @@ pub fn raw_with_env(
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
-    crate::operation::configure_command(&mut cmd, command, cwd)?;
     let output = cmd.output().map_err(|error| spawn_error(command, &error))?;
     Ok(Captured {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -93,7 +92,6 @@ pub fn capture(
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
-    crate::operation::configure_command(&mut cmd, command, cwd)?;
     let output = cmd.output().map_err(|error| spawn_error(command, &error))?;
     let stdout_raw = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr_raw = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -151,7 +149,6 @@ pub fn inherit(
     for (key, value) in env {
         cmd.env(key, value);
     }
-    crate::operation::configure_command(&mut cmd, command, cwd)?;
     let status = cmd.status().map_err(|error| spawn_error(command, &error))?;
     exit_code(command, status)
 }
@@ -159,7 +156,6 @@ pub fn inherit(
 pub fn run_with_timeout(command: &str, args: &[&str], timeout: Duration) -> Result<Captured> {
     let mut cmd = self::command(command);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
-    crate::operation::configure_command(&mut cmd, command, None)?;
     let mut child = cmd.spawn().map_err(|error| spawn_error(command, &error))?;
     let started = std::time::Instant::now();
     loop {
