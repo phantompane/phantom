@@ -81,6 +81,10 @@ pub struct CandidateEntry {
     pub action: Action,
     pub detail: Option<String>,
     pub branch_deleted: Option<bool>,
+    /// A checkout, registration, or metadata record was removed, even if a
+    /// later step failed. This is independent of the candidate's action.
+    #[serde(skip)]
+    changed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -98,11 +102,7 @@ pub struct Report {
 impl Report {
     pub fn exit_code(&self) -> i32 {
         if self.error.is_some() {
-            if self
-                .candidates
-                .iter()
-                .any(|entry| entry.action == Action::Removed)
-            {
+            if self.candidates.iter().any(|entry| entry.changed) {
                 error::PARTIAL
             } else {
                 error::GENERAL
@@ -951,6 +951,7 @@ fn preview(verdict: Verdict) -> CandidateEntry {
             action: Action::Skipped,
             detail: Some(hold.detail().to_string()),
             branch_deleted: None,
+            changed: false,
         },
     }
 }
@@ -975,6 +976,7 @@ fn apply_verdict(
             action: Action::Skipped,
             detail: Some(hold.detail().to_string()),
             branch_deleted: None,
+            changed: false,
         },
         Verdict::Remove(Removal::Delete {
             subject,
@@ -1047,6 +1049,7 @@ fn apply_delete(
                 },
                 detail: outcome.metadata_error.or(outcome.branch_error),
                 branch_deleted: Some(outcome.branch_deleted),
+                changed: true,
             }
         }
         Err(error) if matches!(error.error, Error::Untrusted(_)) => CandidateEntry {
@@ -1058,6 +1061,7 @@ fn apply_delete(
             action: Action::Skipped,
             detail: Some(Hold::Untrusted.detail().to_string()),
             branch_deleted: None,
+            changed: false,
         },
         Err(error) => failed(subject, reasons, error.error.to_string()),
     }
@@ -1088,6 +1092,7 @@ fn apply_drop(
             action: Action::Skipped,
             detail: Some("Worktree branch or HEAD changed since gc planning".into()),
             branch_deleted: None,
+            changed: false,
         };
     }
     let fresh = classify(&facts, &request.policy);
@@ -1124,6 +1129,7 @@ fn apply_drop(
             action: Action::Failed,
             detail: Some(error.to_string()),
             branch_deleted: Some(false),
+            changed: git_listed,
         };
     }
     let (branch_deleted, detail) =
@@ -1137,6 +1143,7 @@ fn apply_drop(
         action: Action::Removed,
         detail,
         branch_deleted: Some(branch_deleted),
+        changed: true,
     }
 }
 
@@ -1185,6 +1192,7 @@ fn failed(subject: Subject, reasons: Vec<Reason>, detail: String) -> CandidateEn
         action: Action::Failed,
         detail: Some(detail),
         branch_deleted: None,
+        changed: false,
     }
 }
 
@@ -1211,6 +1219,7 @@ fn entry_from_removal(
         action,
         detail,
         branch_deleted,
+        changed: false,
     }
 }
 

@@ -483,6 +483,33 @@ pub fn records_dir(git_root: &Path) -> Result<PathBuf> {
 }
 
 fn read_records(git_root: &Path, strict: bool) -> Result<(Store, Vec<String>)> {
+    let (mut store, problems) = read_all_records(git_root, strict)?;
+    deduplicate(&mut store);
+    Ok((store, problems))
+}
+
+/// Concurrent first writers can publish different IDs for the same path. Keep
+/// the oldest record intact; the next write removes the other files it read.
+fn deduplicate(store: &mut Store) {
+    store.worktrees.sort_by(|a, b| {
+        (&a.metadata.created_at, &a.metadata.id).cmp(&(&b.metadata.created_at, &b.metadata.id))
+    });
+    let mut paths = Vec::new();
+    store.worktrees.retain(|record| {
+        let path = Path::new(&record.path);
+        if paths
+            .iter()
+            .any(|existing: &PathBuf| paths::same_location(existing, path))
+        {
+            false
+        } else {
+            paths.push(path.to_path_buf());
+            true
+        }
+    });
+}
+
+fn read_all_records(git_root: &Path, strict: bool) -> Result<(Store, Vec<String>)> {
     let dir = records_dir(git_root)?;
     if !dir.exists() {
         return Ok((validated_store(&metadata_file(git_root)?)?, Vec::new()));
@@ -526,11 +553,6 @@ fn read_records(git_root: &Path, strict: bool) -> Result<(Store, Vec<String>)> {
             }
             if path_key(Path::new(&record.path)).is_empty() {
                 return Err(Error::msg("record without a path"));
-            }
-            if store.worktrees.iter().any(|existing| {
-                paths::same_location(Path::new(&existing.path), Path::new(&record.path))
-            }) {
-                return Err(Error::msg("duplicate path"));
             }
             record.metadata.name = record.name.clone();
             Ok(record)
@@ -586,10 +608,12 @@ fn save_record(dir: &Path, record: &StoredWorktree) -> Result<()> {
 
 fn with_store<T>(git_root: &Path, body: impl FnOnce(&mut Store) -> Result<(T, bool)>) -> Result<T> {
     ensure_records(git_root)?;
-    let (mut store, _) = read_records(git_root, true)?;
+    let (mut store, _) = read_all_records(git_root, true)?;
     let before = store.worktrees.clone();
+    deduplicate(&mut store);
+    let duplicates = before.len() != store.worktrees.len();
     let (value, dirty) = body(&mut store)?;
-    if dirty {
+    if dirty || duplicates {
         let dir = records_dir(git_root)?;
         for record in &store.worktrees {
             if !before.contains(record) {
@@ -827,6 +851,89 @@ mod tests {
         assert!(fs::read_to_string(&file)
             .expect("kept")
             .contains("\"version\": 2"));
+    }
+
+    #[test]
+    fn simultaneous_first_writes_to_one_path_converge_on_the_oldest_record() {
+        // The smaller ID must lose when its timestamp is newer, and win ties.
+        for dates in [
+            ["2026-10-21T00:00:01Z", "2026-10-21T00:00:00Z"],
+            ["2026-10-21T00:00:00Z", "2026-10-21T00:00:00Z"],
+        ] {
+            let root = Arc::new(root());
+            let path = root.join("topic");
+            let barrier = Arc::new(Barrier::new(2));
+            let mut handles = Vec::new();
+            for (index, date) in dates.into_iter().enumerate() {
+                let root = Arc::clone(&root);
+                let barrier = Arc::clone(&barrier);
+                let path = path.clone();
+                handles.push(thread::spawn(move || {
+                    with_store(&root, |store| {
+                        assert!(store.worktrees.is_empty());
+                        // Both writers have read the empty store before either
+                        // publishes a file, just like competing first meta sets.
+                        barrier.wait();
+                        let metadata = WorktreeMetadata {
+                            id: Some(format!("ws_00000000-0000-4000-8000-{index:012}")),
+                            owner: Some(format!("owner-{index}")),
+                            purpose: Some(format!("purpose-{index}")),
+                            base: Some(format!("base-{index}")),
+                            created_at: Some(date.into()),
+                            name: Some(format!("name-{index}")),
+                            ..WorktreeMetadata::default()
+                        };
+                        store
+                            .worktrees
+                            .push(stored_worktree(path_key(&path), metadata.clone()));
+                        Ok((metadata, true))
+                    })
+                    .unwrap()
+                }));
+            }
+            let written = handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>();
+            let winner = if dates[0] == dates[1] {
+                &written[0]
+            } else {
+                &written[1]
+            };
+            let dir = records_dir(&root).unwrap();
+            assert_eq!(fs::read_dir(&dir).unwrap().count(), 2);
+            assert_eq!(load(&root).unwrap()[&path_key(&path)], *winner);
+            assert_eq!(load_strict(&root).unwrap()[&path_key(&path)], *winner);
+            assert!(read_problem(&root).is_none());
+            assert_eq!(
+                fs::read_dir(&dir).unwrap().count(),
+                2,
+                "readers do not write"
+            );
+
+            // Any subsequent write removes the duplicates it read, even when
+            // it updates another path. Canonical fields stay together.
+            write(&root, &root.join("other"), &MetadataInput::default()).unwrap();
+            assert_eq!(fs::read_dir(&dir).unwrap().count(), 2);
+            assert_eq!(load_strict(&root).unwrap()[&path_key(&path)], *winner);
+            let patched = write(
+                &root,
+                &path,
+                &MetadataInput {
+                    purpose: Some("patched".into()),
+                    ..MetadataInput::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(patched.id, winner.id);
+            assert_eq!(patched.owner, winner.owner);
+            assert_eq!(patched.base, winner.base);
+            assert_eq!(patched.purpose.as_deref(), Some("patched"));
+            remove(&root, &path).unwrap();
+            assert_eq!(load_strict(&root).unwrap().len(), 1);
+            assert!(!load(&root).unwrap().contains_key(&path_key(&path)));
+            fs::remove_dir_all(root.as_path()).unwrap();
+        }
     }
 
     #[test]

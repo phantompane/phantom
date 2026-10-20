@@ -6521,12 +6521,13 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 #[test]
-fn duplicate_metadata_paths_block_mutations() {
+fn duplicate_legacy_metadata_paths_block_mutations() {
     let repo = Repo::new();
     let created = repo.mabo(&["create", "kept", "--owner", "creator"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     repo.git(&["branch", "side"]);
-    let file = repo.repo.join(".git/maboroshi/workspaces");
+    fs::remove_dir_all(repo.repo.join(".git/maboroshi/workspaces")).expect("remove records");
+    let file = repo.repo.join(".git/maboroshi/worktrees.json");
     let body = "{\n  \"version\": 1,\n  \"worktrees\": [\n    {\"path\": \"/tmp/one\", \"owner\": \"a\"},\n    {\"path\": \"/tmp/one\", \"owner\": \"b\"}\n  ]\n}\n";
     records::write(&file, body).expect("duplicate");
     let before = records::read_to_string(&file).expect("snapshot");
@@ -7094,6 +7095,104 @@ fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
     assert_eq!(removed["data"]["candidates"][0]["branchDeleted"], false);
     assert!(!worktree_dir(&repo, "topic").is_dir());
     assert!(branch_listed(&repo, "topic"));
+}
+
+#[test]
+fn gc_metadata_io_failure_after_removal_exits_partial_for_a_single_candidate() {
+    use std::os::unix::fs::PermissionsExt;
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
+        .map(|dir| dir.join("git"))
+        .find(|file| file.is_file())
+        .expect("git");
+    for missing in [false, true] {
+        for json in [false, true] {
+            let repo = Repo::new();
+            assert!(repo.mabo(&["create", "feature"]).status.success());
+            land_branch(&repo, "feature");
+            if missing {
+                fs::remove_dir_all(worktree_dir(&repo, "feature")).expect("missing checkout");
+            }
+            let bin = repo.root.join("bin");
+            fs::create_dir(&bin).expect("bin");
+            let wrapper = bin.join("git");
+            // Let Git really remove the checkout/registration, then replace
+            // the records directory with a file to cause a real I/O failure.
+            fs::write(
+                &wrapper,
+                r#"#!/bin/sh
+case " $* " in
+  *" worktree remove "*)
+    "$REAL_GIT" "$@" || exit $?
+    mv "$METADATA_DIR" "$METADATA_DIR.saved" || exit $?
+    printf 'not a directory' > "$METADATA_DIR"
+    ;;
+  *) exec "$REAL_GIT" "$@" ;;
+esac
+"#,
+            )
+            .expect("wrapper");
+            fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).expect("chmod");
+            let mut paths = vec![bin];
+            paths.extend(std::env::split_paths(
+                &std::env::var_os("PATH").expect("PATH"),
+            ));
+            let mut args = vec![
+                "gc",
+                "--apply",
+                if missing { "--orphaned" } else { "--merged" },
+            ];
+            if json {
+                args.push("--json");
+            }
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .env("PATH", std::env::join_paths(paths).expect("paths"))
+                .env("REAL_GIT", &real_git)
+                .env("METADATA_DIR", repo.repo.join(".git/maboroshi/workspaces"))
+                .output()
+                .expect("gc");
+            assert_eq!(
+                out.status.code(),
+                Some(6),
+                "{} {}",
+                text(&out.stdout),
+                text(&out.stderr)
+            );
+            assert!(!worktree_dir(&repo, "feature").exists());
+            assert!(!worktree_registered(&repo, "feature"));
+            if json {
+                let value = assert_envelope(&out, "gc");
+                assert_eq!(value["error"]["code"], "partial");
+                let candidates = value["data"]["candidates"].as_array().expect("candidates");
+                assert_eq!(candidates.len(), 1);
+                assert_eq!(candidates[0]["action"], "failed");
+                let detail = candidates[0]["detail"].as_str().expect("detail");
+                assert!(
+                    detail.contains("metadata") && detail.contains("not writable"),
+                    "{detail}"
+                );
+            } else {
+                assert!(text(&out.stdout).contains("Failed 1"));
+            }
+        }
+    }
+}
+
+#[test]
+fn gc_failure_before_removal_exits_failure() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "feature"]).status.success());
+    land_branch(&repo, "feature");
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        "[hooks]\npre-delete = [\"exit 42\"]\n",
+    )
+    .expect("hook");
+    let out = repo.mabo(&["gc", "--merged", "--apply", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(assert_envelope(&out, "gc")["error"]["code"], "failed");
+    assert!(worktree_dir(&repo, "feature").is_dir());
+    assert!(worktree_registered(&repo, "feature"));
 }
 
 #[test]
@@ -9550,6 +9649,7 @@ fn help_describes_remote_aware_attach_and_create() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(attach.contains("mabo does not fetch"));
+    assert!(attach.contains("attach exits 2 and lists those remotes"));
     assert!(!attach.contains("must already exist locally"));
     assert!(!attach.contains("first checkout the branch with git"));
     let create_help = repo.mabo(&["create", "--help"]);
@@ -9563,6 +9663,10 @@ fn help_describes_remote_aware_attach_and_create() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(create.contains("mabo attach <name>"));
+    assert!(create.contains("create exits 4"));
+    let meta = repo.mabo(&["meta", "set", "--help"]);
+    assert!(meta.status.success());
+    assert!(text(&meta.stdout).contains("A missing name exits 3"));
 }
 
 // Deterministic name candidates are only supported in debug builds.
@@ -9806,6 +9910,61 @@ fn assert_envelope(output: &std::process::Output, command: &str) -> serde_json::
         assert!(value["error"]["message"].is_string());
     }
     value
+}
+
+#[test]
+fn unresolved_usage_errors_honor_json_output_and_explicit_text() {
+    let repo = Repo::new();
+    for (args, mode, command) in [
+        (vec!["frobnicate", "--json"], "text", "frobnicate"),
+        (vec!["frobnicate", "--json"], "json", "frobnicate"),
+        (vec!["frobnicate", "--output", "json"], "text", "frobnicate"),
+        (vec!["frobnicate", "--output=json"], "text", "frobnicate"),
+        (vec!["frobnicate"], "json", "frobnicate"),
+        (vec!["--json", "frobnicate"], "text", "frobnicate"),
+        (vec!["--json"], "text", ""),
+        (vec!["--output", "json"], "text", ""),
+        (vec!["--output=json"], "text", ""),
+        (vec!["--no-input"], "json", ""),
+        (vec!["--json", "--output"], "text", ""),
+    ] {
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("MABO_OUTPUT", mode)
+            .output()
+            .expect("mabo");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{args:?}: {}",
+            text(&out.stdout)
+        );
+        let value = assert_envelope(&out, command);
+        assert_eq!(value["error"]["code"], "usage");
+        assert!(value["data"].is_null());
+    }
+    for args in [
+        vec!["frobnicate", "--output", "text"],
+        vec!["--output", "text"],
+    ] {
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("MABO_OUTPUT", "json")
+            .output()
+            .expect("mabo");
+        assert_eq!(out.status.code(), Some(2));
+        assert!(text(&out.stdout).contains("USAGE"));
+        assert!(!text(&out.stderr).is_empty());
+    }
+    for args in [vec!["--help"], vec!["version"], vec!["list", "--help"]] {
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("MABO_OUTPUT", "json")
+            .output()
+            .expect("mabo");
+        assert!(out.status.success());
+        assert!(serde_json::from_slice::<serde_json::Value>(&out.stdout).is_err());
+    }
 }
 
 #[test]

@@ -570,6 +570,140 @@ fn pushed_branch_containing_base_is_up_to_date_without_force() {
 }
 
 #[test]
+fn corrupt_custom_base_metadata_refuses_sync_before_fetch_or_updates() {
+    let r = Repo::new();
+    let tree = r.create("topic");
+    r.create("healthy");
+    r.git(&r.main, &["branch", "stack"]);
+    r.write_commit(&tree, "own", "own commit\n");
+    assert!(r
+        .mabo(&r.main, &["meta", "set", "topic", "--base", "stack"])
+        .status
+        .success());
+    let dir = r.main.join(".git/maboroshi/workspaces");
+    let record = fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|file| {
+            let record: Value = serde_json::from_slice(&fs::read(file).unwrap()).unwrap();
+            record["path"] == tree.to_str().unwrap()
+        })
+        .unwrap();
+    let mut body: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
+    assert_eq!(body["base"], "refs/heads/stack");
+    body["owner"] = json!({"invalid": "shape"});
+    let corrupt = serde_json::to_vec(&body).unwrap();
+    fs::write(&record, &corrupt).unwrap();
+    r.advance();
+    let refs = r.git(&r.main, &["for-each-ref"]);
+    let before = r.snapshot(&tree);
+    let main_before = r.snapshot(&r.main);
+    let doc = r.sync(&r.main, &["topic", "healthy"], 1);
+    assert_eq!(doc["error"]["code"], "failed");
+    assert!(doc["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("invalid JSON or shape"));
+    assert!(doc["data"].is_null());
+    assert_eq!(r.git(&r.main, &["for-each-ref"]), refs);
+    assert_eq!(r.snapshot(&tree), before);
+    assert_eq!(r.snapshot(&r.main), main_before);
+    assert_eq!(fs::read(&record).unwrap(), corrupt);
+    let listed = r.mabo(&r.main, &["list", "--json"]);
+    assert!(listed.status.success());
+    let doc: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert!(!doc["warnings"].as_array().unwrap().is_empty());
+    assert!(doc["data"]["worktrees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["name"] == "healthy" && item["id"].is_string()));
+}
+
+#[test]
+fn updates_with_failures_conflicts_or_published_refusals_exit_partial() {
+    for update_default in [true, false] {
+        for outcome in ["conflict", "kept-conflict", "published", "failure"] {
+            let r = Repo::new();
+            let tree = r.create("topic");
+            r.write_commit(&tree, "file", "topic edit\n");
+            if outcome == "published" {
+                r.git(&tree, &["push", "origin", "topic"]);
+            }
+            if outcome == "failure" {
+                r.git(
+                    &r.main,
+                    &[
+                        "remote",
+                        "add",
+                        "broken",
+                        r.root.join("remote.git").to_str().unwrap(),
+                    ],
+                );
+                r.git(&r.main, &["fetch", "broken"]);
+                assert!(r
+                    .mabo(&r.main, &["meta", "set", "topic", "--base", "broken/main"])
+                    .status
+                    .success());
+                r.git(
+                    &r.main,
+                    &[
+                        "remote",
+                        "set-url",
+                        "broken",
+                        r.root.join("absent.git").to_str().unwrap(),
+                    ],
+                );
+            }
+            let good = r.create("good");
+            r.write_commit(&good, "own", "independent edit\n");
+            r.write_commit(&r.upstream, "file", "remote edit\n");
+            r.git(&r.upstream, &["push", "origin", "main"]);
+            let before = r.snapshot(&tree);
+            let mut args = vec!["topic", "--rebase"];
+            if !update_default {
+                // Deliberately update the other item before visiting topic.
+                args = vec!["good", "topic", "--rebase", "--no-default"];
+            }
+            if outcome == "kept-conflict" {
+                args.push("--keep-conflicts");
+                // keep-conflicts requires exactly one worktree target.
+                if !update_default {
+                    continue;
+                }
+            }
+            let doc = r.sync(&r.main, &args, 6);
+            assert_eq!(doc["error"]["code"], "partial");
+            let topic = doc["data"]["worktrees"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["name"] == "topic")
+                .unwrap();
+            if outcome == "published" {
+                assert_eq!(topic["code"], "published");
+            } else if outcome == "failure" {
+                assert_eq!(topic["status"], "failed");
+            } else {
+                assert_eq!(topic["status"], "conflict");
+            }
+            if outcome != "kept-conflict" {
+                assert_eq!(r.snapshot(&tree), before);
+            } else {
+                assert!(r.git(&tree, &["status", "--porcelain=v2"]).contains("u "));
+            }
+            let updated = if update_default {
+                &doc["data"]["default"]
+            } else {
+                &doc["data"]["worktrees"][0]
+            };
+            assert_eq!(updated["status"], "updated");
+            assert_ne!(updated["before"], updated["after"]);
+        }
+    }
+}
+
+#[test]
 fn pushed_auto_merge_and_rebase_refusal_force_preserve_upstream() {
     let r = Repo::new();
     let tree = r.create("topic");
@@ -577,7 +711,7 @@ fn pushed_auto_merge_and_rebase_refusal_force_preserve_upstream() {
     let before = r.git(&tree, &["rev-parse", "HEAD"]);
     r.git(&tree, &["push", "-u", "origin", "topic"]);
     r.advance();
-    let refused = r.sync(&r.main, &["topic", "--rebase"], 4);
+    let refused = r.sync(&r.main, &["topic", "--rebase", "--no-default"], 4);
     assert_eq!(refused["data"]["worktrees"][0]["code"], "published");
     assert_eq!(r.git(&tree, &["rev-parse", "HEAD"]), before);
     let forced = r.sync(&r.main, &["topic", "--rebase", "--force"], 0);
@@ -625,7 +759,7 @@ fn conflicts_restore_everything_and_keep_conflicts_is_single_target_only() {
         );
         fs::write(r.root.join("ignore"), "ignored\n").unwrap();
         let before = r.snapshot(&tree);
-        let doc = r.sync(&tree, &[strategy], 5);
+        let doc = r.sync(&tree, &[strategy, "--no-default"], 5);
         assert_eq!(doc["data"]["worktrees"][0]["status"], "conflict");
         assert_eq!(doc["data"]["worktrees"][0]["conflicts"], json!(["file"]));
         assert_eq!(r.snapshot(&tree), before);
@@ -633,7 +767,7 @@ fn conflicts_restore_everything_and_keep_conflicts_is_single_target_only() {
             fs::read(tree.join("ignored")).unwrap(),
             b"ignored contents\n"
         );
-        let doc = r.sync(&tree, &[strategy, "--keep-conflicts"], 5);
+        let doc = r.sync(&tree, &[strategy, "--keep-conflicts", "--no-default"], 5);
         assert_eq!(doc["data"]["worktrees"][0]["status"], "conflict");
         assert!(r.git(&tree, &["status", "--porcelain=v2"]).contains("u "));
         r.git(
@@ -1234,7 +1368,7 @@ fn conflict_output_is_short_in_human_and_json_formats() {
         r.write_commit(&r.upstream, "file", "remote\n");
         r.git(&r.upstream, &["push", "origin", "main"]);
         let flag = format!("--{strategy}");
-        let doc = r.sync(&tree, &[&flag], 5);
+        let doc = r.sync(&tree, &[&flag, "--no-default"], 5);
         assert_eq!(
             doc["data"]["worktrees"][0]["detail"],
             format!("{strategy} aborted; worktree unchanged")
@@ -3263,7 +3397,7 @@ fn sync_never_runs_fsmonitor_for_noop_update_or_conflict_abort() {
         if mode.starts_with("merge") {
             args.push("--merge");
         }
-        let doc = r.sync(&r.main, &args, if conflict { 5 } else { 0 });
+        let doc = r.sync(&r.main, &args, if conflict { 6 } else { 0 });
         assert_eq!(
             doc["data"]["worktrees"][0]["status"],
             if conflict {

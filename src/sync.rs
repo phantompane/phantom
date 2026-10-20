@@ -486,7 +486,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
     if request.mine && request.agent.is_none() {
         return Err(Error::validation("--mine requires MABO_AGENT_ID"));
     }
-    let stored = metadata::load(&context.git_root)?;
+    let stored = metadata::load_strict(&context.git_root)?;
     let listed = worktree::list_worktrees(context, true, true)?;
     let mut targets = Vec::new();
     if request.all || request.mine {
@@ -652,14 +652,14 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         .iter()
         .any(|item| item.code.as_deref() == Some("published"));
     let items = || report.default.iter().chain(&report.worktrees);
-    let changed = items().any(|item| item.before != item.after);
+    // Leaving a conflict in progress can move HEAD during rebase. It still
+    // returns exit 5 when no other item changed.
+    let changed = items().any(|item| item.status != "conflict" && item.before != item.after);
     let conflict = items().any(|item| item.status == "conflict");
-    report.exit = if ordinary_failure {
-        if changed {
-            crate::error::PARTIAL
-        } else {
-            crate::error::GENERAL
-        }
+    report.exit = if changed && (ordinary_failure || conflict || refused) {
+        crate::error::PARTIAL
+    } else if ordinary_failure {
+        crate::error::GENERAL
     } else if conflict {
         crate::error::CONFLICT
     } else if refused {

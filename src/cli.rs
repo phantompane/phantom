@@ -34,9 +34,7 @@ pub fn run(args: &[String]) -> Result<i32> {
     }
     if prefix > 0 {
         if prefix == args.len() {
-            return Err(Error::validation(
-                "A command is required after common options",
-            ));
+            return unresolved_usage(args, "", "A command is required after common options");
         }
         let rest = &args[prefix..];
         let consumed = find(rest, COMMANDS)
@@ -96,12 +94,28 @@ pub fn run(args: &[String]) -> Result<i32> {
             crate::output::finish(exit)?;
             Ok(exit)
         }
-        None => {
-            eprintln!("Error: Unknown command '{}'\n", args.join(" "));
-            println!("{}", help::main_help()?);
-            Ok(VALIDATION)
-        }
+        None => unresolved_usage(
+            args,
+            &args[0],
+            &format!("Unknown command '{}'", args.join(" ")),
+        ),
     }
+}
+
+fn unresolved_usage(args: &[String], command: &str, message: &str) -> Result<i32> {
+    crate::output::begin(
+        command,
+        std::env::var("MABO_OUTPUT").ok().as_deref() == Some("json"),
+    );
+    let error = crate::runtime::prepare(args, true, command)
+        .err()
+        .unwrap_or_else(|| Error::validation(message));
+    let exit = fail_with(&error, VALIDATION, crate::output::json())?;
+    if !crate::output::json() {
+        println!("{}", help::main_help()?);
+    }
+    crate::output::finish(exit)?;
+    Ok(exit)
 }
 
 fn find<'a>(args: &'a [String], commands: &'a [Command]) -> Option<(&'a Command, &'a [String])> {

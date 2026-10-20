@@ -175,8 +175,8 @@
       ],
       "notes": [
         "If name is omitted, a random human-readable name is generated automatically",
-        "The worktree name will be used as the branch name",
-        "When the name is already a branch on a configured remote, create exits 3 and tells you to run mabo attach <name>. It does not fetch. A worktree that already exists is still reported as already existing.",
+        "The worktree name will be used as the branch name. An existing worktree is refused with exit 4; failures after creation, including metadata, copy, hooks, or --exec, exit 6",
+        "When the name is already a branch on a configured remote, create exits 4 and tells you to run mabo attach <name>. It does not fetch. A worktree that already exists is still reported as already existing.",
         "Gitignored files matching .worktreeinclude at the checkout root are copied into the new worktree",
         ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
         "Files that already exist in the new worktree are left unchanged",
@@ -284,9 +284,9 @@
         }
       ],
       "notes": [
-        "A local branch is attached as itself. The worktree uses that branch name.",
+        "A local branch is attached as itself. The worktree uses that branch name. A missing branch exits 3; failures after creation, including metadata, copy, hooks, or --exec, exit 6",
         "When no local branch has that name and exactly one configured remote already has it, attach creates the local branch tracking that remote. mabo does not fetch.",
-        "When more than one configured remote has the name, attach exits 3 and lists those remotes. Pass <remote>/<name>. The remote is a configured remote name. A slash in a branch name is not itself a remote.",
+        "When more than one configured remote has the name, attach exits 2 and lists those remotes. Pass <remote>/<name>. The remote is a configured remote name. A slash in a branch name is not itself a remote.",
         "<remote>/<name> attaches local branch <name> when that remote is configured and the remote-tracking ref exists. The worktree name omits the remote. An existing local branch keeps its upstream.",
         "Gitignored files matching .worktreeinclude at the checkout root are copied into the new worktree",
         ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
@@ -408,7 +408,7 @@
       ],
       "notes": [
         "Outputs only the path, making it suitable for use in scripts",
-        "Exits with an error code if the worktree doesn't exist",
+        "Exits 3 if the worktree does not exist",
         "--json prints the worktree object instead of the bare path. The schema is documented in the README",
         "Orphaned names are refused because the worktree directory is gone",
         "where updates lastUsedAt when the worktree already has a metadata record",
@@ -491,7 +491,7 @@
         "By default, deletion will fail if the worktree has uncommitted changes",
         "By default, deletion will fail if the branch has commits that are not on the default branch or any remote, or if that check cannot be completed. --keep-branch still deletes the worktree and leaves the branch",
         "Deleting the worktree that contains the current directory requires --current or --force",
-        "You can pass multiple worktree names to delete them at once. If any name is refused, no worktree is deleted",
+        "You can pass multiple worktree names to delete them at once. A safety refusal exits 4 before deleting any worktree. Later failures exit 6 if a persistent removal occurred, otherwise 1",
         "The associated branch will also be deleted if it's not checked out elsewhere",
         "Use --keep-branch to delete only the worktree and preserve the branch",
         ".mabo.toml is read from the source checkout, the checkout where the command runs. [hooks] pre-delete commands run in the worktree before it is removed, in order, and stop at the first failure",
@@ -604,7 +604,7 @@
         "A stored pull request URL is passed to gh pr view. A number with no URL is checked only when gh can name the current repository. When gh is missing or cannot answer, gc reports that the pull request status is unavailable",
         "Another agent's worktree is removed only when it is merged, its pull request is closed or merged, it is orphaned, or --owner names that agent",
         "Dirty worktrees and worktrees with commits that are not on the default branch or a remote are skipped unless --force",
-        "Live removals run [hooks] pre-delete from .mabo.toml and then the same deletion as mabo delete. A hook failure skips that worktree and continues",
+        "Live removals run [hooks] pre-delete from .mabo.toml and then the same deletion as mabo delete. A hook failure marks that worktree failed and continues. Failures exit 6 if any persistent removal occurred, including when metadata cleanup fails after removal; otherwise they exit 1",
         "gc never asks for trust. An untrusted repository with pre-delete hooks is skipped, and the detail is 'untrusted hooks'. --no-hooks removes those worktrees without running hooks. MABO_TRUST_ALL=1 trusts every repository for that process",
         "--json lists each candidate, why it matched, and the action taken. The schema is documented in the README",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
@@ -845,9 +845,9 @@
       "notes": [
         "At least one of --owner, --purpose, --pr, or --issue is required",
         "Omitted fields keep their current values. A worktree with no record yet gets createdAt and lastUsedAt",
-        "The worktree must already exist. A missing name exits 2",
+        "The worktree must already exist. A missing name exits 3",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
-        "Workspace records use schema 2 and ws_<uuid v4> IDs. Each file is replaced atomically. The first write imports legacy worktrees.json and renames it to worktrees.json.imported; read-only commands can read the legacy file before import."
+        "Workspace records use schema 2 and ws_<uuid v4> IDs. Each file is replaced atomically. Concurrent first registrations for the same path use the oldest createdAt, then the smallest ID; all fields come from that record. The next write removes extra files. The first write imports legacy worktrees.json and renames it to worktrees.json.imported; read-only commands can read the legacy file before import."
       ]
     },
     "preferences": {
@@ -1066,7 +1066,7 @@
         "When that path is already the same repository root, mabo registers it and prints the path instead of cloning again. --update fetches origin in that case.",
         "remoteUrl omits http and https userinfo, including a token used as the username. ssh and scp-style URLs keep the login name. file:// URLs and absolute scp-style paths are rejected.",
         "--branch and --depth apply only when cloning. updated is true only when an existing repository was fetched.",
-        "If the path exists but is not that repository, the command exits with a validation error.",
+        "If the path exists but is not that repository, the command exits 2 with a usage error.",
         "The project is always registered. New worktrees for that repository are created under $XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash> unless worktrees-directory is set.",
         "Authentication is left to Git. mabo does not call gh.",
         "Git progress is written to stderr. With --json, stdout is the schema 2 envelope; data contains: path, host, owner, repo, remoteUrl, cloned, and updated.",
@@ -1217,7 +1217,7 @@
       ],
       "notes": [
         "The project can be specified by id, name, or root path.",
-        "If a name matches multiple projects, use an id or path instead.",
+        "If a name matches multiple projects, the command exits 2; use an id or path instead. A missing project exits 3.",
         "This command never deletes the Git repository or its worktrees.",
         "A repository discovered through ghq remains visible after its registry record is removed.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
@@ -1519,6 +1519,7 @@
         }
       ],
       "notes": [
+        "sync validates all metadata before fetching or updating. After any item changes, a failure, conflict, or published refusal exits 6. Without changes, failures exit 1, conflicts 5, and published refusals 4. Usage errors exit 2",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     }

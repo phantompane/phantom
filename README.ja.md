@@ -63,11 +63,13 @@ Maboroshi が担わない役割は次のとおりです。
 | 5 | sync の競合 | `conflict` |
 | 6 | 永続的な変更後の部分失敗 | `partial` |
 
+コマンドが不明な場合や共通オプションの後にコマンドがない場合も、JSON 出力が選択されていれば使用方法エラーの envelope（終了コード 2）を返します。`sync` はいずれかの対象を更新した後に失敗・競合・公開済み履歴の拒否が起きると、終了コード 6 を優先します。変更がなければ、それぞれ 1・5・4 です。`gc` は checkout や Git 登録の削除後にメタデータ削除が失敗した場合も終了コード 6 を返します。
+
 単体 `exec` は子プロセスの終了コードをそのまま返します。`create --exec` の失敗は 6 となり、子の終了コードは `data.exec.exitCode` に入ります。
 
 ## メタデータの保存と移行
 
-worktree のメタデータは `<git-common-dir>/maboroshi/workspaces/<id>.json` に1件ずつ保存します。`id` は `ws_<uuid v4>`、各ファイルには `schema: 2`、`id`、`path`、任意の `name` と、既存の `owner`、`base`、`purpose`、`createdAt`、`createdFrom`、`lastUsedAt`、`links` が入ります。JSON 出力の worktree オブジェクトにも `id` が入り、未記録なら null です。検索・置き換え・削除は従来どおり path で行い、削除はそのファイルだけを消します。破損したレコードは警告と null メタデータになり、ほかのレコードは読み続けられます。変更するコマンドは破損があれば拒否して元のファイルを保ちます。`delete` と `gc` はこのメタデータに記録されていれば、設定した保存先の外にある worktree も削除対象にできます。
+worktree のメタデータは `<git-common-dir>/maboroshi/workspaces/<id>.json` に1件ずつ保存します。`id` は `ws_<uuid v4>`、各ファイルには `schema: 2`、`id`、`path`、任意の `name` と、既存の `owner`、`base`、`purpose`、`createdAt`、`createdFrom`、`lastUsedAt`、`links` が入ります。JSON 出力の worktree オブジェクトにも `id` が入り、未記録なら null です。検索・置き換え・削除は従来どおり path で行い、削除はそのファイルだけを消します。破損したレコードは警告と null メタデータになり、ほかのレコードは読み続けられます。変更するコマンドは破損があれば拒否して元のファイルを保ちます。`sync` も fetch や対象の更新前にメタデータを厳密に検証します。同じ path の初回同時登録で重複ができた場合は、`createdAt` が古いレコード、同時刻なら `id` の辞書順で小さいレコードに読み取り時にまとめます。全フィールドはそのレコードを採用し、次のメタデータ書き込みで余分なファイルを削除します。`delete` と `gc` はこのメタデータに記録されていれば、設定した保存先の外にある worktree も削除対象にできます。
 
 project registry は `$XDG_STATE_HOME/maboroshi/repos/<id>.json`（既定は `~/.local/state/maboroshi/repos/<id>.json`）に1件ずつ保存し、既存の `proj_<uuid>` ID を引き継ぎます。同じ root の重複は、読み込み時に `createdAt` が古い方へまとめます。同時刻なら ID の辞書順で決めます。
 
