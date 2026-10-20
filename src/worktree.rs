@@ -107,10 +107,10 @@ pub fn list_worktrees(
     include_prunable: bool,
 ) -> Result<Vec<WorktreeInfo>> {
     let git_root_string = context.git_root.to_string_lossy().to_string();
-    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let stored = metadata::load(&context.git_root).unwrap_or_default();
     let mut infos = Vec::new();
     let common_dir = git::git_common_dir(&context.git_root)?;
+    let canonical_common = git::canonical_common_dir(&context.git_root)?;
     let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
     for mut worktree in listed {
@@ -121,10 +121,16 @@ pub fn list_worktrees(
         if exclude_default && worktree.path == git_root_string {
             continue;
         }
-        let record = metadata::find_in(&stored, Path::new(&worktree.path))
-            .map(|(_, record)| record.clone())
-            .unwrap_or_default();
-        infos.push(info_from_git(&worktree, &cwd, context, record));
+        let found = metadata::find_in(&stored, Path::new(&worktree.path));
+        let recorded_path = found.map(|(key, _)| PathBuf::from(key.as_str()));
+        let record = found.map(|(_, record)| record.clone()).unwrap_or_default();
+        infos.push(info_from_git(
+            &worktree,
+            context,
+            record,
+            recorded_path.as_deref(),
+            &canonical_common,
+        ));
     }
     Ok(infos)
 }
@@ -143,9 +149,10 @@ fn main_checkout_path(path: &str, git_root: &Path, common_dir: &Path) -> String 
 
 fn info_from_git(
     worktree: &GitWorktree,
-    cwd: &Path,
     context: &Context,
     metadata: metadata::WorktreeMetadata,
+    recorded_path: Option<&Path>,
+    common_dir: &Path,
 ) -> WorktreeInfo {
     let short_head = worktree
         .head
@@ -157,22 +164,24 @@ fn info_from_git(
         _ => "(detached HEAD)".to_string(),
     };
     let detached = branch == "(detached HEAD)";
-    let path = PathBuf::from(&worktree.path);
-    let directory_name = directory_name(&path, &context.worktrees_directory);
-    let name = directory_name.unwrap_or_else(|| if detached { short_head } else { branch.clone() });
-    let relative = paths::relative(cwd, &path);
+    let original = PathBuf::from(&worktree.path);
+    let path = paths::canonical_location(&original);
+    let name = resolve_worktree_name(
+        &original,
+        &context.worktrees_directory,
+        recorded_path,
+        common_dir,
+        worktree.branch.as_deref(),
+        &short_head,
+    );
     WorktreeInfo {
         name,
-        path: worktree.path.clone(),
-        path_to_display: if relative.is_empty() {
-            ".".to_string()
-        } else {
-            relative
-        },
+        path: path.to_string_lossy().into_owned(),
+        path_to_display: paths::list_path(&path),
         branch,
         is_clean: git::is_clean(&path),
         head: recorded_head(worktree.head.as_deref()),
-        is_default: worktree.path == context.git_root.to_string_lossy(),
+        is_default: paths::same_location(&original, &context.git_root),
         detached,
         metadata,
     }
@@ -182,6 +191,65 @@ fn info_from_git(
 fn recorded_head(head: Option<&str>) -> Option<String> {
     head.filter(|sha| !sha.is_empty() && sha.bytes().any(|byte| byte != b'0'))
         .map(ToOwned::to_owned)
+}
+
+pub(crate) fn resolve_worktree_name(
+    path: &Path,
+    worktrees_directory: &Path,
+    recorded_path: Option<&Path>,
+    common_dir: &Path,
+    branch: Option<&str>,
+    short_head: &str,
+) -> String {
+    if let Some(name) = directory_name(path, worktrees_directory) {
+        return name;
+    }
+    if let Some(recorded) = recorded_path {
+        return name_from_recorded_path(recorded, common_dir);
+    }
+    match branch {
+        Some(name) if !name.is_empty() && name != "(detached HEAD)" => name.to_string(),
+        _ => short_head.to_string(),
+    }
+}
+
+/// The name ptm stored by placing the worktree under `ptm/worktrees`.
+///
+/// The default layout inserts `<checkout>-<hash>` before the name. A configured
+/// directory, including the previous `.git/ptm/worktrees` layout, does not.
+fn name_from_recorded_path(path: &Path, common_dir: &Path) -> String {
+    let normalized = paths::normalize(path);
+    let components = normalized
+        .components()
+        .map(|component| component.as_os_str().to_os_string())
+        .collect::<Vec<_>>();
+    if let Some(index) = components
+        .windows(2)
+        .rposition(|pair| pair[0] == "ptm" && pair[1] == "worktrees")
+    {
+        let rest = &components[index + 2..];
+        if let Some((project, name)) = rest.split_first() {
+            if !name.is_empty() && paths::is_project_directory(project, common_dir) {
+                return join_components(name);
+            }
+            if !rest.is_empty() {
+                return join_components(rest);
+            }
+        }
+    }
+    normalized
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| normalized.display().to_string())
+}
+
+fn join_components(components: &[std::ffi::OsString]) -> String {
+    components
+        .iter()
+        .map(|component| component.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub(crate) fn directory_name(path: &Path, worktrees_directory: &Path) -> Option<String> {
@@ -325,7 +393,7 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
     )?;
     request.logger.log(&format!(
         "Created worktree '{name}' at {}",
-        created.path.display()
+        paths::canonical_location(&created.path).display()
     ));
     if let Some(error) = &created.metadata_error {
         request.logger.warn(&format!("Warning: {error}"));
@@ -411,7 +479,7 @@ impl HookFailure {
         format!(
             "Warning: Post-create command {reason}: {}\nThe worktree was created at {}",
             self.command,
-            path.display()
+            paths::canonical_location(path).display()
         )
     }
 }
@@ -696,6 +764,56 @@ pub fn preflight_delete(
         inside,
         changed,
     })
+}
+
+/// Preflight every requested name. A repeated name, or a second spelling of a
+/// worktree already requested, is skipped. The first spelling is the one deleted.
+pub fn preflight_deletes(
+    context: &Context,
+    names: &[String],
+    options: &DeleteOptions,
+) -> std::result::Result<Vec<DeletePlan>, Vec<DeleteError>> {
+    let mut plans = Vec::new();
+    let mut refusals = Vec::new();
+    for name in unique_delete_names(context, names) {
+        match preflight_delete(context, &name, options, None) {
+            Ok(plan) => plans.push(plan),
+            Err(failure) => refusals.push(failure),
+        }
+    }
+    if refusals.is_empty() {
+        Ok(plans)
+    } else {
+        Err(refusals)
+    }
+}
+
+fn unique_delete_names(context: &Context, names: &[String]) -> Vec<String> {
+    let mut seen_paths: Vec<PathBuf> = Vec::new();
+    let mut seen_unresolved = Vec::new();
+    let mut unique = Vec::new();
+    for name in names {
+        match find_worktree(context, name, true, None) {
+            Ok(worktree) => {
+                let path = PathBuf::from(&worktree.path);
+                if seen_paths
+                    .iter()
+                    .any(|seen| paths::same_location(seen, &path))
+                {
+                    continue;
+                }
+                seen_paths.push(path);
+            }
+            Err(_) => {
+                if seen_unresolved.iter().any(|seen| seen == name) {
+                    continue;
+                }
+                seen_unresolved.push(name.clone());
+            }
+        }
+        unique.push(name.clone());
+    }
+    unique
 }
 
 pub fn delete_worktree(
@@ -1411,7 +1529,9 @@ fn absolute_path(path: &str) -> String {
     } else {
         path.to_path_buf()
     };
-    paths::normalize(&absolute).to_string_lossy().into_owned()
+    paths::canonical_location(&absolute)
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[cfg(test)]
@@ -1505,6 +1625,62 @@ mod tests {
             select_worktree(vec![sample("a", "other")], "topic"),
             Err(Error::WorktreeNotFound(_))
         ));
+    }
+
+    #[test]
+    fn recorded_path_keeps_slash_names_and_skips_the_project_directory() {
+        let common = Path::new("/repo/.git");
+        assert_eq!(
+            name_from_recorded_path(Path::new("/repo/.git/ptm/worktrees/next"), common),
+            "next"
+        );
+        assert_eq!(
+            name_from_recorded_path(Path::new("/repo/.git/ptm/worktrees/feature/topic"), common),
+            "feature/topic"
+        );
+        let project = paths::project_directory_name("repo", common);
+        let nested = PathBuf::from(format!("/data/ptm/worktrees/{project}/feature/topic"));
+        assert_eq!(name_from_recorded_path(&nested, common), "feature/topic");
+        let single = PathBuf::from(format!("/data/ptm/worktrees/{project}/inside"));
+        assert_eq!(name_from_recorded_path(&single, common), "inside");
+        assert_eq!(
+            name_from_recorded_path(Path::new("/tmp/custom-wt/alias"), common),
+            "alias"
+        );
+        let directory = Path::new("/data/wt");
+        assert_eq!(
+            resolve_worktree_name(
+                Path::new("/data/wt/next"),
+                directory,
+                Some(Path::new("/repo/.git/ptm/worktrees/other")),
+                common,
+                None,
+                "abcdef0",
+            ),
+            "next"
+        );
+        assert_eq!(
+            resolve_worktree_name(
+                Path::new("/tmp/stray"),
+                directory,
+                None,
+                common,
+                Some("legacy"),
+                "abcdef0",
+            ),
+            "legacy"
+        );
+        assert_eq!(
+            resolve_worktree_name(
+                Path::new("/tmp/stray"),
+                directory,
+                None,
+                common,
+                None,
+                "abcdef0",
+            ),
+            "abcdef0"
+        );
     }
 
     #[test]

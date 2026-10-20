@@ -7528,6 +7528,64 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
 }
 
 #[test]
+fn delete_requests_the_same_worktree_once() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "a"]).status.success());
+    assert!(repo.phantom(&["create", "b"]).status.success());
+    let deleted = repo.phantom(&["delete", "a", "b", "a"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    let stdout = text(&deleted.stdout);
+    assert_eq!(
+        stdout.matches("Deleted worktree 'a'").count(),
+        1,
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout.matches("Deleted worktree 'b'").count(),
+        1,
+        "{stdout}"
+    );
+    assert!(
+        !text(&deleted.stderr).contains("not a working tree"),
+        "{}",
+        text(&deleted.stderr)
+    );
+    assert!(!managed(&repo, "a").exists());
+    assert!(!managed(&repo, "b").exists());
+
+    assert!(repo.phantom(&["create", "alias"]).status.success());
+    repo.git(&["branch", "-m", "alias", "topic"]);
+    let once = repo.phantom(&["delete", "alias", "topic"]);
+    assert!(
+        once.status.success(),
+        "{}\n{}",
+        text(&once.stdout),
+        text(&once.stderr)
+    );
+    let once_stdout = text(&once.stdout);
+    assert_eq!(
+        once_stdout.matches("Deleted worktree").count(),
+        1,
+        "{once_stdout}"
+    );
+    assert!(
+        once_stdout.contains("Deleted worktree 'alias'"),
+        "{once_stdout}"
+    );
+    assert!(!managed(&repo, "alias").exists());
+    assert!(
+        !text(&once.stderr).contains("not a working tree"),
+        "{}",
+        text(&once.stderr)
+    );
+}
+
+#[test]
 fn list_shows_absolute_or_home_paths() {
     let repo = Repo::new();
     assert!(repo.phantom(&["create", "inside"]).status.success());
