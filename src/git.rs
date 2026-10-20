@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
@@ -58,6 +59,9 @@ pub fn git_root(cwd: &Path) -> Result<PathBuf> {
         return Ok(normalize(&cwd.join(parent)));
     }
     let common_dir = normalize(&cwd.join(&common));
+    if let Some(checkout) = checkout_for_common_dir(&common_dir) {
+        return Ok(checkout);
+    }
     let bare = output(
         &["rev-parse", "--is-bare-repository"],
         Some(&common_dir),
@@ -68,6 +72,138 @@ pub fn git_root(cwd: &Path) -> Result<PathBuf> {
     }
     let top = output(&["rev-parse", "--show-toplevel"], Some(cwd), true)?;
     Ok(PathBuf::from(top))
+}
+
+/// Main checkout for a common dir that is not `<checkout>/.git`.
+///
+/// `git worktree list` reports that common dir as the main worktree, and
+/// `git init --separate-git-dir` leaves `core.worktree` unset. The checkout
+/// is the directory whose `.git` gitfile points at `common`. `core.worktree`
+/// is the explicit form of that pointer when a submodule or the user set it.
+fn checkout_for_common_dir(common: &Path) -> Option<PathBuf> {
+    if let Some(checkout) = configured_worktree(common) {
+        if checkout.is_dir() {
+            return Some(checkout);
+        }
+    }
+    checkout_from_gitfile(common)
+}
+
+fn configured_worktree(common: &Path) -> Option<PathBuf> {
+    let config = common.join("config");
+    let config = config.to_str()?;
+    let value = output(
+        &["config", "--file", config, "--get", "core.worktree"],
+        Some(common),
+        true,
+    )
+    .ok()?;
+    if value.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(value);
+    let resolved = if path.is_absolute() {
+        path
+    } else {
+        common.join(path)
+    };
+    Some(normalize(&resolved))
+}
+
+const CHECKOUT_SEARCH_ANCESTORS: usize = 8;
+const CHECKOUT_SEARCH_DEPTH: usize = 4;
+const CHECKOUT_SEARCH_DIRS: u32 = 4096;
+
+fn checkout_from_gitfile(common: &Path) -> Option<PathBuf> {
+    let mut ancestor = common.parent()?.to_path_buf();
+    let mut visited = 0u32;
+    for _ in 0..CHECKOUT_SEARCH_ANCESTORS {
+        if ancestor.file_name().is_some_and(|name| name == ".git") {
+            ancestor = ancestor.parent()?.to_path_buf();
+            continue;
+        }
+        if let Some(found) = search_gitfile(&ancestor, common, &mut visited) {
+            return Some(found);
+        }
+        if visited >= CHECKOUT_SEARCH_DIRS {
+            return None;
+        }
+        let parent = ancestor.parent()?.to_path_buf();
+        if parent == ancestor {
+            break;
+        }
+        ancestor = parent;
+    }
+    None
+}
+
+fn search_gitfile(start: &Path, common: &Path, visited: &mut u32) -> Option<PathBuf> {
+    let mut pending = VecDeque::new();
+    pending.push_back((start.to_path_buf(), 0usize));
+    while let Some((dir, depth)) = pending.pop_front() {
+        if *visited >= CHECKOUT_SEARCH_DIRS {
+            return None;
+        }
+        *visited += 1;
+        if gitfile_points_at(&dir, common) {
+            return Some(dir);
+        }
+        if depth == CHECKOUT_SEARCH_DEPTH {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut children = entries
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| is_real_dir(path))
+            .filter(|path| path.file_name().is_some_and(|name| name != ".git"))
+            .filter(|path| normalize(path) != normalize(common))
+            .collect::<Vec<_>>();
+        children.sort();
+        for child in children {
+            pending.push_back((child, depth + 1));
+        }
+    }
+    None
+}
+
+fn is_real_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_dir())
+        .unwrap_or(false)
+}
+
+fn gitfile_points_at(dir: &Path, common: &Path) -> bool {
+    let gitfile = dir.join(".git");
+    if !gitfile.is_file() {
+        return false;
+    }
+    let Ok(text) = std::fs::read_to_string(&gitfile) else {
+        return false;
+    };
+    let Some(raw) = text.trim().strip_prefix("gitdir:") else {
+        return false;
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return false;
+    }
+    let target = Path::new(raw);
+    let resolved = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        dir.join(target)
+    };
+    same_path(&resolved, common)
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => normalize(left) == normalize(right),
+    }
 }
 
 pub fn current_branch(cwd: &Path) -> Result<String> {
