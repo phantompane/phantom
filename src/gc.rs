@@ -161,7 +161,7 @@ pub fn selection_from_flags(
 
 pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Report> {
     let _operation = crate::operation::lock(&context.git_root)?;
-    let facts = gather(context, &request.policy)?;
+    let facts = gather(context, &request.policy, None)?;
     warn_unavailable_pull_requests(&facts, &request.policy);
     let verdicts = classify(&facts, &request.policy);
     let skip_untrusted = crate::trust::blocks_gc(
@@ -469,7 +469,9 @@ fn removal_kind(facts: &WorktreeFacts, reasons: Vec<Reason>) -> Removal {
     }
 }
 
-fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
+// Re-verification must refresh metadata and Git state under the operation lock,
+// but observing unrelated worktrees would repeat their GitHub queries per target.
+fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<Vec<WorktreeFacts>> {
     let stored = metadata::load(&context.git_root)?;
     let common_dir = git::canonical_common_dir(&context.git_root)?;
     let listed = git::list_worktrees(&context.git_root)
@@ -480,6 +482,9 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
     let mut rows = BTreeMap::new();
     for worktree in &listed {
         let path = PathBuf::from(&worktree.path);
+        if target.is_some_and(|target| !paths::same_location(target, &path)) {
+            continue;
+        }
         if paths::same_location(&path, &context.git_root) {
             continue;
         }
@@ -531,6 +536,9 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
             continue;
         }
         let path = PathBuf::from(key);
+        if target.is_some_and(|target| !paths::same_location(target, &path)) {
+            continue;
+        }
         if paths::normalize(&path) == paths::normalize(&context.git_root) {
             continue;
         }
@@ -989,7 +997,7 @@ fn apply_delete(
             prompt: false,
         },
         || {
-            let facts = gather(context, &request.policy)?;
+            let facts = gather(context, &request.policy, Some(&subject.path))?;
             if classify(&facts, &request.policy).iter().any(|verdict| matches!(verdict,
                 Verdict::Remove(Removal::Delete { subject: current, .. }) if current.path == subject.path)) {
                 Ok(())
@@ -1039,7 +1047,7 @@ fn apply_drop(
         Ok(lock) => lock,
         Err(error) => return failed(subject, reasons, error.to_string()),
     };
-    let fresh = match gather(context, &request.policy) {
+    let fresh = match gather(context, &request.policy, Some(&subject.path)) {
         Ok(facts) => classify(&facts, &request.policy),
         Err(error) => return failed(subject, reasons, error.to_string()),
     };

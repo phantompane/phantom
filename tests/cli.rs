@@ -6673,6 +6673,137 @@ fn gc_drops_a_missing_directory_and_keeps_an_unpushed_branch() {
 }
 
 #[test]
+fn gc_apply_rechecks_only_each_target_pull_request() {
+    use std::os::unix::fs::PermissionsExt;
+    for kind in ["live", "missing", "orphan"] {
+        let repo = Repo::new();
+        let count = 4;
+        for number in 1..=count {
+            let name = format!("topic-{number}");
+            let url = format!("https://github.com/acme/demo/pull/{number}");
+            let created = repo.mabo(&["create", &name, "--pr", &url]);
+            assert!(created.status.success(), "{}", text(&created.stderr));
+            if kind == "missing" {
+                fs::remove_dir_all(managed(&repo, &name)).unwrap();
+            } else if kind == "orphan" {
+                repo.git(&[
+                    "worktree",
+                    "remove",
+                    "--force",
+                    managed(&repo, &name).to_str().unwrap(),
+                ]);
+            }
+        }
+        let bin = repo.root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let gh = bin.join("gh");
+        let calls = repo.root.join("gh-calls");
+        fs::write(
+            &gh,
+            format!(
+                r#"#!/bin/sh
+test "$1 $2" = 'pr view' || exit 1
+printf '%s\n' "$3" >> '{}'
+printf '%s\n' '{{"state":"MERGED"}}'
+"#,
+                calls.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let out = repo
+            .command(
+                env!("CARGO_BIN_EXE_mabo"),
+                &["gc", "--pr", "--apply", "--force", "--json"],
+            )
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{} {}",
+            text(&out.stdout),
+            text(&out.stderr)
+        );
+        let doc = json_value(&out);
+        let candidates = doc["candidates"].as_array().unwrap();
+        assert_eq!(candidates.len(), count);
+        assert!(candidates.iter().all(|item| item["action"] == "removed"));
+        let calls = fs::read_to_string(calls).unwrap();
+        assert_eq!(calls.lines().count(), 2 * count, "{kind}: {calls}");
+        for number in 1..=count {
+            let url = format!("https://github.com/acme/demo/pull/{number}");
+            assert_eq!(calls.lines().filter(|line| *line == url).count(), 2);
+        }
+    }
+}
+
+#[test]
+fn gc_rechecks_pull_request_eligibility_after_pre_delete_hooks() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    assert!(repo
+        .mabo(&[
+            "create",
+            "topic",
+            "--pr",
+            "https://github.com/acme/demo/pull/7"
+        ])
+        .status
+        .success());
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let state = repo.root.join("pr-state");
+    fs::write(&state, "{\"state\":\"MERGED\"}\n").unwrap();
+    let gh = bin.join("gh");
+    fs::write(&gh, format!("#!/bin/sh\ncat '{}'\n", state.display())).unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        format!(
+            r#"[hooks]
+pre-delete = ["echo '{{\"state\":\"OPEN\"}}' > '{}' "]
+"#,
+            state.display()
+        ),
+    )
+    .unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["gc", "--pr", "--force", "--json"],
+        )
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    let doc = json_value(&out);
+    assert_eq!(doc["candidates"][0]["action"], "failed");
+    assert!(doc["candidates"][0]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("no longer qualifies"));
+    assert!(managed(&repo, "topic").exists());
+    assert!(branch_listed(&repo, "topic"));
+}
+
+#[test]
 fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
     let repo = Repo::new();
     assert!(repo
