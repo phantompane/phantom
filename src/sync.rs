@@ -319,24 +319,38 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             "--keep-conflicts requires exactly one worktree target",
         ));
     }
-    let fallback = if !request.no_default || targets.iter().any(|tree| tree.metadata.base.is_none())
-    {
-        fallback_base(&context.git_root)?
-    } else {
-        String::new()
+    // Resolve the default identity independently of a worktree's recorded base.
+    let fallback = match fallback_base(&context.git_root) {
+        Ok(base) => base,
+        Err(error)
+            if !request.no_default || targets.iter().any(|tree| tree.metadata.base.is_none()) =>
+        {
+            return Err(error);
+        }
+        Err(_) => String::new(),
     };
-    let bases: Vec<String> = targets
-        .iter()
-        .map(|tree| {
-            tree.metadata
-                .base
-                .clone()
-                .unwrap_or_else(|| fallback.clone())
-        })
-        .collect();
     let remotes: Vec<String> = git::output(&["remote"], Some(&context.git_root), true)?
         .lines()
         .map(str::to_string)
+        .collect();
+    let default_name = default_local_name(&fallback, &remotes).ok();
+    targets.retain(|tree| {
+        tree.detached
+            || Some(tree.branch.as_str()) != default_name
+            || (request.no_default && !request.names.is_empty())
+    });
+    let bases: Vec<String> = targets
+        .iter()
+        .map(|tree| {
+            if !tree.detached && Some(tree.branch.as_str()) == default_name {
+                fallback.clone()
+            } else {
+                tree.metadata
+                    .base
+                    .clone()
+                    .unwrap_or_else(|| fallback.clone())
+            }
+        })
         .collect();
     let mut involved = BTreeSet::new();
     for base in bases
@@ -401,7 +415,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         return Ok(report);
     }
     for (tree, base) in targets.iter().zip(&bases) {
-        let item = match sync_tree(context, tree, base, request) {
+        let item = match sync_tree(context, tree, base, request, &fallback, &remotes) {
             Ok(item) => item,
             Err(error) => {
                 let mut item = tree_item(tree, base);
@@ -540,7 +554,7 @@ fn branch_reservation(context: &Context, local: &str) -> Result<Option<(String, 
     Ok(None)
 }
 
-fn sync_default(context: &Context, base: &str, remotes: &[String]) -> Result<Item> {
+fn default_local_name<'a>(base: &'a str, remotes: &'a [String]) -> Result<&'a str> {
     let local_name = if let Some(rest) = base.strip_prefix("refs/remotes/") {
         crate::tracking::split_remote(rest, remotes)
             .map(|(_, branch)| branch)
@@ -553,6 +567,11 @@ fn sync_default(context: &Context, base: &str, remotes: &[String]) -> Result<Ite
         base.strip_prefix("refs/heads/")
             .ok_or_else(|| Error::msg("Default branch must name a branch"))?
     };
+    Ok(local_name)
+}
+
+fn sync_default(context: &Context, base: &str, remotes: &[String]) -> Result<Item> {
+    let local_name = default_local_name(base, remotes)?;
     let local = format!("refs/heads/{local_name}");
     let root = &context.git_root;
     let before = commit(root, &local)?;
@@ -660,7 +679,18 @@ fn sync_tree(
     tree: &worktree::WorktreeInfo,
     base: &str,
     request: &Request,
+    default_base: &str,
+    remotes: &[String],
 ) -> Result<Item> {
+    // Keep this guard at the integration boundary, regardless of selector/strategy.
+    if !tree.detached
+        && !default_base.is_empty()
+        && tree.branch == default_local_name(default_base, remotes)?
+    {
+        let mut item = sync_default(context, default_base, remotes)?;
+        item.name = tree.name.clone();
+        return Ok(item);
+    }
     let mut item = tree_item(tree, base);
     let path = Path::new(&tree.path);
     if !path.is_dir() || tree.orphaned {

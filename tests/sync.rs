@@ -156,6 +156,98 @@ fn default_only_and_linked_implicit_including_subdirectory_and_detached() {
 }
 
 #[test]
+fn linked_default_is_only_integrated_fast_forward_once() {
+    for diverged in [false, true] {
+        let r = Repo::new();
+        r.git(&r.main, &["checkout", "-b", "other"]);
+        let tree = r.root.join("default-tree");
+        r.git(
+            &r.main,
+            &["worktree", "add", tree.to_str().unwrap(), "main"],
+        );
+        let out = r.mabo(
+            &r.main,
+            &[
+                "meta", "set", "main", "--owner", "tester", "--base", "other",
+            ],
+        );
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if diverged {
+            r.write_commit(&tree, "own-main", "local\n");
+        }
+        r.advance();
+        let before = r.snapshot(&tree);
+        let other = r.git(&r.main, &["rev-parse", "HEAD"]);
+        for args in [vec!["--no-default"], vec!["--no-default", "--all"]] {
+            let doc = r.sync(&tree, &args, 0);
+            assert!(doc["default"].is_null());
+            assert_eq!(doc["worktrees"], json!([]));
+            assert_eq!(r.snapshot(&tree), before);
+        }
+        let mut cmd = r.command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &tree,
+            &["sync", "--mine", "--no-default", "--json"],
+        );
+        let out = cmd.env("MABO_AGENT_ID", "tester").output().unwrap();
+        assert!(out.status.success());
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(doc["worktrees"], json!([]));
+        assert_eq!(r.snapshot(&tree), before);
+        let status = if diverged { "diverged" } else { "updated" };
+        let doc = r.sync(&tree, &["main", "--no-default", "--rebase", "--force"], 0);
+        assert!(doc["default"].is_null());
+        assert_eq!(doc["worktrees"].as_array().unwrap().len(), 1);
+        assert_eq!(doc["worktrees"][0]["status"], status);
+        assert_eq!(doc["worktrees"][0]["strategy"], "ff-only");
+        if diverged {
+            assert_eq!(r.snapshot(&tree), before);
+        } else {
+            r.write_commit(&r.upstream, "remote-two", "two\n");
+            r.git(&r.upstream, &["push", "origin", "main"]);
+        }
+        for (i, args) in [vec![], vec!["--all"], vec!["main", "--merge"]]
+            .iter()
+            .enumerate()
+        {
+            let doc = r.sync(&tree, args, if diverged { 1 } else { 0 });
+            assert_eq!(doc["worktrees"], json!([]));
+            assert_eq!(
+                doc["default"]["status"],
+                if diverged {
+                    "diverged"
+                } else if i == 0 {
+                    "updated"
+                } else {
+                    "up-to-date"
+                }
+            );
+            assert_eq!(doc["default"]["path"], tree.to_str().unwrap());
+            if diverged {
+                assert_eq!(r.snapshot(&tree), before);
+            }
+        }
+        let out = r
+            .command(
+                env!("CARGO_BIN_EXE_mabo"),
+                &tree,
+                &["sync", "--mine", "--json"],
+            )
+            .env("MABO_AGENT_ID", "tester")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(if diverged { 1 } else { 0 }));
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(doc["worktrees"], json!([]));
+        assert_eq!(r.git(&r.main, &["rev-parse", "HEAD"]), other);
+    }
+}
+
+#[test]
 fn default_ref_update_linked_checkout_diverged_and_dirty() {
     let r = Repo::new();
     r.git(&r.main, &["checkout", "-b", "other"]);
