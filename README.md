@@ -160,7 +160,7 @@ A command that does not produce a result writes this object to stdout:
 
 ### Sync
 
-`mabo sync` maps bases to remotes through their configured fetch refspecs, fetches each involved remote once, fast-forwards the default branch, and integrates worktree bases. It never pushes, changes upstream configuration, or runs hooks. A repository operation lock serializes sync with create, attach, delete, gc, and GitHub checkout.
+`mabo sync` maps bases to remotes through their configured fetch refspecs, fetches each involved remote once, fast-forwards the default branch, and integrates worktree bases. It never pushes, changes upstream configuration, or runs hooks; every Git call during sync, including status checks and rollback, disables Git hooks and fsmonitor. A repository operation lock serializes sync with create, attach, delete, gc, and GitHub checkout.
 
 ```sh
 # Human: from the main checkout, update only the default branch.

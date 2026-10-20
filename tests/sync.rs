@@ -118,6 +118,25 @@ impl Repo {
         self.git(path, &["add", file]);
         self.git(path, &["commit", "-m", file]);
     }
+    fn install_fsmonitor(&self) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let marker = self.root.join("fsmonitor-ran");
+        let hook = self.root.join("fsmonitor-hook");
+        fs::write(
+            &hook,
+            format!("#!/bin/sh\ntouch '{}'\nprintf '/\\000'\n", marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        self.git(
+            &self.main,
+            &["config", "core.fsmonitor", hook.to_str().unwrap()],
+        );
+        self.git(&self.main, &["status", "--porcelain"]);
+        assert!(marker.exists());
+        fs::remove_file(&marker).unwrap();
+        marker
+    }
     fn advance(&self) {
         self.write_commit(&self.upstream, "remote-file", "remote\n");
         self.git(&self.upstream, &["push", "origin", "main"]);
@@ -1616,6 +1635,7 @@ fn successful_but_incomplete_integration_is_failed_and_restored() {
         fs::write(tree.join("ignored"), b"precious\0bytes").unwrap();
         r.advance();
         let before = r.snapshot(&tree);
+        let fsmonitor = r.install_fsmonitor();
         let bin = r.root.join("bin");
         fs::create_dir(&bin).unwrap();
         let wrapper = bin.join("git");
@@ -1632,9 +1652,9 @@ for arg do
     case "$arg" in
         merge|rebase)
             case '{mode}' in
-                merge) "$REAL_GIT" -c core.hooksPath=/dev/null merge --no-commit origin/main ;;
-                squash) "$REAL_GIT" -c core.hooksPath=/dev/null merge --squash origin/main ;;
-                rebase) "$REAL_GIT" -c core.hooksPath=/dev/null rebase --exec false origin/main ;;
+                merge) "$REAL_GIT" -c core.hooksPath=/dev/null -c core.fsmonitor=false merge --no-commit origin/main ;;
+                squash) "$REAL_GIT" -c core.hooksPath=/dev/null -c core.fsmonitor=false merge --squash origin/main ;;
+                rebase) "$REAL_GIT" -c core.hooksPath=/dev/null -c core.fsmonitor=false rebase --exec false origin/main ;;
             esac
             exit 0 ;;
     esac
@@ -1675,6 +1695,11 @@ exec "$REAL_GIT" "$@"
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(doc["worktrees"][0]["status"], "failed");
+        assert!(
+            !fsmonitor.exists(),
+            "fsmonitor ran during incomplete integration rollback"
+        );
+        r.git(&r.main, &["config", "core.fsmonitor", "false"]);
         assert_eq!(r.snapshot(&tree), before, "{mode}");
         for state in ["MERGE_HEAD", "rebase-merge", "rebase-apply"] {
             assert!(!tree
@@ -2053,6 +2078,7 @@ fn metadata_failure_after_fast_forward_restores_worktree() {
         let original_store = fs::read(&store).unwrap();
         r.advance();
         let before = r.snapshot(&tree);
+        let fsmonitor = r.install_fsmonitor();
         let bin = r.root.join("bin");
         fs::create_dir(&bin).unwrap();
         let wrapper = bin.join("git");
@@ -2095,6 +2121,11 @@ exec "$REAL_GIT" "$@"
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
         let item = &doc["worktrees"][0];
         assert_eq!(item["status"], "failed");
+        assert!(
+            !fsmonitor.exists(),
+            "fsmonitor ran during metadata rollback"
+        );
+        r.git(&r.main, &["config", "core.fsmonitor", "false"]);
         let detail = item["detail"].as_str().unwrap();
         assert!(detail.contains("metadata update failed"), "{detail}");
         if fail_rollback {
@@ -2933,4 +2964,82 @@ fn gc_orphaned_survives_unresolvable_default_mapping() {
     let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(doc["candidates"][0]["name"], "gone");
     assert_eq!(doc["candidates"][0]["action"], "removed");
+}
+
+#[test]
+fn sync_never_runs_fsmonitor_for_noop_update_or_conflict_abort() {
+    for mode in [
+        "noop",
+        "rebase",
+        "merge",
+        "rebase-conflict",
+        "merge-conflict",
+    ] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        let conflict = mode.ends_with("conflict");
+        r.write_commit(&tree, if conflict { "file" } else { "own" }, "own\n");
+        if mode != "noop" {
+            if conflict {
+                r.write_commit(&r.upstream, "file", "conflicting remote\n");
+                r.git(&r.upstream, &["push", "origin", "main"]);
+            } else {
+                r.advance();
+            }
+        }
+        let before = r.snapshot(&tree);
+        let marker = r.install_fsmonitor();
+        let mut args = vec!["topic"];
+        if mode.starts_with("merge") {
+            args.push("--merge");
+        }
+        let doc = r.sync(&r.main, &args, if conflict { 1 } else { 0 });
+        assert_eq!(
+            doc["worktrees"][0]["status"],
+            if conflict {
+                "conflict"
+            } else if mode == "noop" {
+                "up-to-date"
+            } else {
+                "updated"
+            }
+        );
+        assert!(!marker.exists(), "fsmonitor ran for {mode}");
+        r.sync(&r.main, &[], 0);
+        assert!(!marker.exists(), "fsmonitor ran for default-only {mode}");
+        r.git(&r.main, &["config", "core.fsmonitor", "false"]);
+        if conflict {
+            assert_eq!(r.snapshot(&tree), before);
+        }
+    }
+}
+
+#[test]
+fn rebase_keeps_own_commits_after_upstream_rewind_with_forkpoint_config() {
+    for explicit in [false, true] {
+        let r = Repo::new();
+        let initial = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+        r.write_commit(&r.upstream, "old-upstream", "must survive rewind\n");
+        r.git(&r.upstream, &["push", "origin", "main"]);
+        r.git(&r.main, &["fetch", "origin"]);
+        r.git(&r.main, &["merge", "--ff-only", "origin/main"]);
+        let tree = r.create("topic");
+        r.write_commit(&tree, "own", "own\n");
+        r.git(&r.upstream, &["reset", "--hard", &initial]);
+        r.write_commit(&r.upstream, "new-upstream", "new upstream\n");
+        r.git(&r.upstream, &["push", "--force", "origin", "main"]);
+        r.git(&tree, &["config", "rebase.forkPoint", "true"]);
+        let args = if explicit {
+            vec!["--no-default", "--rebase"]
+        } else {
+            vec!["--no-default"]
+        };
+        let doc = r.sync(&tree, &args, 0);
+        assert_eq!(doc["worktrees"][0]["status"], "updated");
+        assert_eq!(
+            fs::read_to_string(tree.join("old-upstream")).unwrap(),
+            "must survive rewind\n"
+        );
+        assert_eq!(fs::read_to_string(tree.join("own")).unwrap(), "own\n");
+    }
 }

@@ -428,6 +428,7 @@ fn unsafe_merge(path: &Path, base: &str) -> Result<Option<String>> {
 }
 
 pub fn run(context: &Context, request: &Request) -> Result<Report> {
+    let _hooks = crate::process::suppress_git_hooks();
     let _operation = crate::operation::lock(&context.git_root)?;
     if (request.all && request.mine)
         || ((request.all || request.mine) && !request.names.is_empty())

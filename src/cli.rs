@@ -56,6 +56,7 @@ fn find<'a>(args: &'a [String], commands: &'a [Command]) -> Option<(&'a Command,
 }
 
 fn sync(args: &[String]) -> Result<i32> {
+    let _hooks = crate::process::suppress_git_hooks();
     let json = wants_json(args);
     let parsed = match args::parse(
         args,
