@@ -510,11 +510,86 @@ pub fn fetch(cwd: &Path, remote: &str, refspec: &str) -> Result<()> {
         .map_err(|error| Error::msg(format!("git fetch failed: {error}")))
 }
 
+/// True when `origin` advertises `refs/heads/<branch>` exactly.
+pub fn remote_has_branch(git_root: &Path, remote: &str, branch: &str) -> Result<bool> {
+    let captured = raw_git(git_root, &["ls-remote", "--heads", remote, branch])
+        .map_err(|error| Error::msg(format!("git ls-remote failed: {error}")))?;
+    if captured.code != 0 {
+        let detail = first_output(&captured);
+        return Err(Error::msg(format!("git ls-remote failed: {detail}")));
+    }
+    let wanted = format!("refs/heads/{branch}");
+    Ok(captured.stdout.lines().any(|line| {
+        line.split(['\t', ' '])
+            .nth(1)
+            .is_some_and(|name| name == wanted)
+    }))
+}
+
+/// SHA advertised as `refs/pull/<number>/head`, when the remote answers.
+pub(crate) fn remote_pull_head(git_root: &Path, number: u64) -> Option<String> {
+    let spec = format!("refs/pull/{number}/head");
+    let captured = raw_git(git_root, &["ls-remote", "origin", &spec]).ok()?;
+    if captured.code != 0 {
+        return None;
+    }
+    captured.stdout.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        let sha = parts.next()?;
+        let name = parts.next()?;
+        (name == spec).then(|| sha.to_string())
+    })
+}
+
+/// Create `name` at `start`, or fast-forward it there.
+pub fn ensure_branch(git_root: &Path, name: &str, start: &str) -> Result<()> {
+    if !branch_exists(git_root, name)? {
+        return run(&["branch", name, start], Some(git_root))
+            .map_err(|error| Error::msg(format!("Failed to create branch {name}: {error}")));
+    }
+    let ancestor = raw_git(git_root, &["merge-base", "--is-ancestor", name, start])?;
+    if ancestor.code != 0 {
+        return Err(Error::msg(format!(
+            "Local branch {name} has commits that are not in {start}"
+        )));
+    }
+    let current = raw_git(git_root, &["rev-parse", name])?;
+    let target = raw_git(git_root, &["rev-parse", start])?;
+    if current.code != 0 || target.code != 0 {
+        return Err(Error::msg(format!(
+            "Failed to resolve branch {name} or {start}"
+        )));
+    }
+    if current.stdout.trim() == target.stdout.trim() {
+        return Ok(());
+    }
+    run(&["branch", "-f", name, start], Some(git_root))
+        .map_err(|error| Error::msg(format!("Failed to update branch {name}: {error}")))
+}
+
 pub fn set_upstream(git_root: &Path, branch: &str, upstream: &str) -> Result<()> {
     run(
         &["branch", "--set-upstream-to", upstream, branch],
         Some(git_root),
     )
+}
+
+/// Drop `branch.<name>.remote` and `branch.<name>.merge` when they are set.
+pub fn clear_branch_upstream(git_root: &Path, branch: &str) {
+    let _ = run(&["branch", "--unset-upstream", branch], Some(git_root));
+    for suffix in ["remote", "merge"] {
+        let key = format!("branch.{branch}.{suffix}");
+        let _ = raw_git(git_root, &["config", "--unset", &key]);
+    }
+}
+
+fn first_output(captured: &process::Captured) -> String {
+    let stderr = captured.stderr.trim();
+    if !stderr.is_empty() {
+        stderr.to_string()
+    } else {
+        captured.stdout.trim().to_string()
+    }
 }
 
 pub fn parse_worktrees(stdout: &str) -> Vec<GitWorktree> {

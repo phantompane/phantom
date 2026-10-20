@@ -25,8 +25,29 @@ pub struct Checkout {
 }
 
 pub enum GithubSubject {
-    PullRequest { number: u64, head_ref: String },
-    Issue { number: u64 },
+    PullRequest {
+        number: u64,
+        head_ref: String,
+        source: Option<PullSource>,
+    },
+    Issue {
+        number: u64,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub enum PullSource {
+    Branch,
+    PullHead,
+}
+
+impl PullSource {
+    fn json_name(self) -> &'static str {
+        match self {
+            Self::Branch => "branch",
+            Self::PullHead => "pullHead",
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -47,15 +68,24 @@ struct GithubSubjectOutput {
     number: u64,
     head_ref: Option<String>,
     already_exists: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<&'static str>,
 }
 
 impl Checkout {
     pub fn to_json(&self) -> Result<Value> {
-        let (kind, number, head_ref) = match &self.subject {
-            GithubSubject::PullRequest { number, head_ref } => {
-                ("pullRequest", *number, Some(head_ref.clone()))
-            }
-            GithubSubject::Issue { number } => ("issue", *number, None),
+        let (kind, number, head_ref, source) = match &self.subject {
+            GithubSubject::PullRequest {
+                number,
+                head_ref,
+                source,
+            } => (
+                "pullRequest",
+                *number,
+                Some(head_ref.clone()),
+                source.map(PullSource::json_name),
+            ),
+            GithubSubject::Issue { number } => ("issue", *number, None, None),
         };
         serde_json::to_value(GithubCheckoutOutput {
             version: error::JSON_VERSION,
@@ -65,6 +95,7 @@ impl Checkout {
                 number,
                 head_ref,
                 already_exists: self.already_exists,
+                source,
             },
             copy_files: worktree::copy_files_outcome(self.copy_error.as_deref()),
             post_create: worktree::post_create_outcome(self.hooks_ran, self.hook_failure.as_ref()),
@@ -131,6 +162,51 @@ fn pull_head_refspec(number: u64, local_branch: &str) -> String {
     format!("refs/pull/{number}/head:{local_branch}")
 }
 
+enum PullFetch {
+    Branch { upstream: String },
+    Fork,
+    DeletedHead,
+}
+
+fn fetch_pull_head(git_root: &Path, pull: &PullRequest, local_branch: &str) -> Result<PullFetch> {
+    if pull.fork {
+        git::fetch(
+            git_root,
+            "origin",
+            &pull_head_refspec(pull.number, local_branch),
+        )?;
+        git::clear_branch_upstream(git_root, local_branch);
+        return Ok(PullFetch::Fork);
+    }
+    if git::remote_has_branch(git_root, "origin", &pull.head_ref)? {
+        match fetch_head_branch(git_root, &pull.head_ref, local_branch) {
+            Ok(upstream) => return Ok(PullFetch::Branch { upstream }),
+            Err(error) if missing_remote_ref(&error) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    git::fetch(
+        git_root,
+        "origin",
+        &pull_head_refspec(pull.number, local_branch),
+    )?;
+    git::clear_branch_upstream(git_root, local_branch);
+    Ok(PullFetch::DeletedHead)
+}
+
+fn fetch_head_branch(git_root: &Path, head_ref: &str, local_branch: &str) -> Result<String> {
+    let tracking = format!("+refs/heads/{head_ref}:refs/remotes/origin/{head_ref}");
+    git::fetch(git_root, "origin", &tracking)?;
+    let upstream = format!("origin/{head_ref}");
+    git::ensure_branch(git_root, local_branch, &upstream)?;
+    git::set_upstream(git_root, local_branch, &upstream)?;
+    Ok(upstream)
+}
+
+fn missing_remote_ref(error: &Error) -> bool {
+    error.to_string().contains("couldn't find remote ref")
+}
+
 fn checkout_pull_request(
     pull: &PullRequest,
     repo: &RepoIdentity,
@@ -170,16 +246,11 @@ fn checkout_pull_request(
                 subject: GithubSubject::PullRequest {
                     number: pull.number,
                     head_ref: pull.head_ref.clone(),
+                    source: None,
                 },
             });
         }
     }
-    let upstream = if pull.fork {
-        format!("origin/pull/{}/head", pull.number)
-    } else {
-        format!("origin/{}", pull.head_ref)
-    };
-    let refspec = pull_head_refspec(pull.number, &worktree_name);
     let post = post_commands(&context);
     let commands = crate::trust::authorize(
         git_root,
@@ -189,22 +260,34 @@ fn checkout_pull_request(
         hooks,
     )?;
     metadata::prepare(git_root)?;
-    git::fetch(git_root, "origin", &refspec)?;
-    if let Err(error) = git::set_upstream(git_root, &worktree_name, &upstream) {
-        eprintln!("Warning: Could not set upstream branch: {error}");
-    }
+    let fetched = fetch_pull_head(git_root, pull, &worktree_name)?;
     let attached =
         worktree::attach_worktree(&context, &worktree_name, &[], &commands, logger, &metadata)?;
-    let message = if pull.fork {
-        format!(
-            "Checked out PR #{} from fork {}",
-            pull.number, pull.head_repo
-        )
-    } else {
-        format!(
-            "Checked out PR #{} from branch {}",
-            pull.number, pull.head_ref
-        )
+    let (message, base, source) = match fetched {
+        PullFetch::Branch { upstream } => (
+            format!(
+                "Checked out PR #{} from branch {}",
+                pull.number, pull.head_ref
+            ),
+            Some(upstream),
+            Some(PullSource::Branch),
+        ),
+        PullFetch::Fork => (
+            format!(
+                "Checked out PR #{} from fork {}",
+                pull.number, pull.head_repo
+            ),
+            None,
+            Some(PullSource::PullHead),
+        ),
+        PullFetch::DeletedHead => (
+            format!(
+                "Checked out PR #{} from pull/{}/head (head branch deleted; no upstream)",
+                pull.number, pull.number
+            ),
+            None,
+            Some(PullSource::PullHead),
+        ),
     };
     let info = worktree::worktree_at_path(&context, &attached.path)?;
     Ok(Checkout {
@@ -217,10 +300,11 @@ fn checkout_pull_request(
         hooks_ran: attached.hooks_ran,
         metadata_error: attached.metadata_error,
         info,
-        base: Some(upstream),
+        base,
         subject: GithubSubject::PullRequest {
             number: pull.number,
             head_ref: pull.head_ref.clone(),
+            source,
         },
     })
 }
