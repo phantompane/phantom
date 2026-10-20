@@ -51,6 +51,7 @@ impl Repo {
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_STATE_HOME", self.root.join("state"))
+            .env("XDG_DATA_HOME", self.root.join("xdg"))
             .env_remove("GHQ_ROOT")
             .env_remove("PTM_AGENT_ID")
             .env_remove("PHANTOM_AGENT_ID")
@@ -80,6 +81,19 @@ impl Drop for Repo {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+fn managed_directory(git_root: &Path, xdg: &Path) -> PathBuf {
+    let common = phantom::git::canonical_common_dir(git_root).expect("common dir");
+    phantom::paths::default_worktrees_directory(git_root, &common, xdg).path
+}
+
+fn managed(repo: &Repo, relative: &str) -> PathBuf {
+    managed_directory(&repo.repo, &repo.root.join("xdg")).join(relative)
+}
+
+fn managed_root(repo: &Repo) -> PathBuf {
+    managed_directory(&repo.repo, &repo.root.join("xdg"))
 }
 
 fn uuid() -> String {
@@ -371,7 +385,7 @@ fn create_list_where_delete_and_attach() {
     let created = repo.phantom(&["create", "feature/add-tests"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(text(&created.stdout).contains("Created worktree 'feature/add-tests' at "));
-    let worktree = repo.repo.join(".git/ptm/worktrees/feature/add-tests");
+    let worktree = managed(&repo, "feature/add-tests");
     assert!(worktree.join("README.md").is_file());
     assert!(!repo.repo.join(".git/phantom").exists());
 
@@ -436,10 +450,7 @@ fn invalid_config_names_the_file_and_the_problem() {
         stderr.contains("parse") || stderr.contains("expected") || stderr.contains("invalid"),
         "stderr should describe the TOML problem: {stderr}"
     );
-    assert!(!repo
-        .repo
-        .join(".git/ptm/worktrees/feature/bad-toml")
-        .exists());
+    assert!(!managed(&repo, "feature/bad-toml").exists());
 
     fs::write(
         repo.repo.join(".ptm.toml"),
@@ -520,7 +531,7 @@ fn post_create_failure_reports_the_created_worktree() {
     )
     .expect("config");
     let created = repo.phantom(&["create", "feature/hooks"]);
-    let worktree = repo.repo.join(".git/ptm/worktrees/feature/hooks");
+    let worktree = managed(&repo, "feature/hooks");
     assert!(
         worktree.join("README.md").is_file(),
         "worktree should exist after a post-create failure"
@@ -552,7 +563,7 @@ fn post_create_failure_reports_the_created_worktree() {
 
     repo.git(&["branch", "existing-hook"]);
     let attached = repo.phantom(&["attach", "existing-hook"]);
-    let attached_path = repo.repo.join(".git/ptm/worktrees/existing-hook");
+    let attached_path = managed(&repo, "existing-hook");
     assert!(attached_path.join("README.md").is_file());
     assert!(
         text(&attached.stdout).contains("Attached worktree: existing-hook"),
@@ -585,7 +596,7 @@ fn copies_worktreeinclude_files_and_runs_post_create() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    let worktree = repo.repo.join(".git/ptm/worktrees/feature/config");
+    let worktree = managed(&repo, "feature/config");
     assert_eq!(
         fs::read_to_string(worktree.join(".env.local")).expect("copied"),
         "API_KEY=test-value\n"
@@ -624,7 +635,7 @@ pre-delete = [
     .expect("toml");
 
     let created = repo.phantom(&["create", "feature/hooks-order"]);
-    let worktree = repo.repo.join(".git/ptm/worktrees/feature/hooks-order");
+    let worktree = managed(&repo, "feature/hooks-order");
     assert_eq!(created.status.code(), Some(1), "{}", text(&created.stderr));
     assert_eq!(
         fs::read_to_string(worktree.join("root-path.txt")).expect("root path"),
@@ -683,7 +694,7 @@ fn hooks_follow_the_source_checkout_when_run_from_a_worktree() {
         text(&source_created.stdout),
         text(&source_created.stderr)
     );
-    let source = repo.repo.join(".git/ptm/worktrees/feature/source");
+    let source = managed(&repo, "feature/source");
     fs::write(
         repo.repo.join(".ptm.toml"),
         "[hooks]\npost-create = [\"touch from-main.txt\"]\npre-delete = [\"touch pre-from-main.txt\"]\n",
@@ -717,7 +728,7 @@ pre-delete = ["printf '%s' \"$PTM_ROOT_PATH\" > \"$PTM_ROOT_PATH/pre-root.txt\""
         text(&created.stdout),
         text(&created.stderr)
     );
-    let child = repo.repo.join(".git/ptm/worktrees/feature/child");
+    let child = managed(&repo, "feature/child");
     assert_eq!(
         fs::read_to_string(child.join("root-path.txt")).expect("root path"),
         source_path
@@ -756,10 +767,7 @@ fn phantom_config_json_is_not_read() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    assert!(repo
-        .repo
-        .join(".git/ptm/worktrees/feature/no-json/README.md")
-        .is_file());
+    assert!(managed(&repo, "feature/no-json/README.md").is_file());
 }
 
 #[test]
@@ -992,12 +1000,13 @@ fn preferences_file_uses_xdg_config_home() {
 #[test]
 fn keep_branch_preference_applies_to_delete() {
     let repo = Repo::new();
+    let removable = managed(&repo, "removable");
     repo.git(&[
         "worktree",
         "add",
         "-b",
         "removable",
-        ".git/ptm/worktrees/removable",
+        removable.to_str().expect("path"),
         "HEAD",
     ]);
     repo.phantom(&["preferences", "set", "keep-branch", "true"]);
@@ -1230,7 +1239,7 @@ fn worktreeinclude_copies_only_matching_gitignored_files() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    let worktree = repo.repo.join(".git/ptm/worktrees/copied");
+    let worktree = managed(&repo, "copied");
     assert_eq!(read_copy(&worktree.join("secret.env")), "secret\n");
     assert_eq!(
         read_copy(&worktree.join("nested/deep/inner.env")),
@@ -1246,7 +1255,7 @@ fn worktreeinclude_copies_only_matching_gitignored_files() {
     repo.git(&["branch", "attached"]);
     let attached = repo.phantom(&["attach", "attached"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
-    let attached_path = repo.repo.join(".git/ptm/worktrees/attached");
+    let attached_path = managed(&repo, "attached");
     assert_eq!(read_copy(&attached_path.join("secret.env")), "secret\n");
     assert!(!attached_path.join("nested/skip.env").exists());
     assert!(!attached_path.join("other.log").exists());
@@ -1282,7 +1291,7 @@ fn copies_gitignored_files_from_the_checkout_the_command_runs_in() {
         text(&created.stderr)
     );
     assert_eq!(
-        read_copy(&repo.repo.join(".git/ptm/worktrees/copied/secret.env")),
+        read_copy(&managed(&repo, "copied/secret.env")),
         "from-source\n"
     );
 }
@@ -1331,11 +1340,15 @@ fn copy_file_globs_ignore_brackets_in_the_repository_path() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_DATA_HOME", root.join("xdg"))
         .output()
         .expect("phantom");
     assert!(output.status.success(), "{}", text(&output.stderr));
     assert_eq!(
-        fs::read_to_string(repo_dir.join(".git/ptm/worktrees/copied/kept.env")).expect("copied"),
+        fs::read_to_string(
+            managed_directory(&repo_dir, &root.join("xdg")).join("copied/kept.env"),
+        )
+        .expect("copied"),
         "kept\n"
     );
     let _ = fs::remove_dir_all(root);
@@ -1389,7 +1402,7 @@ fn create_and_attach_exec_export_ptm_env() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    let worktree = repo.repo.join(".git/ptm/worktrees/feature/env");
+    let worktree = managed(&repo, "feature/env");
     assert_ptm_env(&worktree, "feature/env");
 
     repo.git(&["branch", "attached-env"]);
@@ -1400,10 +1413,7 @@ fn create_and_attach_exec_export_ptm_env() {
         text(&attached.stdout),
         text(&attached.stderr)
     );
-    assert_ptm_env(
-        &repo.repo.join(".git/ptm/worktrees/attached-env"),
-        "attached-env",
-    );
+    assert_ptm_env(&managed(&repo, "attached-env"), "attached-env");
 
     let execed = repo.phantom(&["exec", "feature/env", "--", "sh", "-c", script]);
     assert!(execed.status.success(), "{}", text(&execed.stderr));
@@ -1430,7 +1440,7 @@ fn parent_cleanup_failure_still_deletes_the_branch() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "cursor/foo"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let root = repo.repo.join(".git/ptm/worktrees");
+    let root = managed_root(&repo);
     use std::os::unix::fs::PermissionsExt;
     let _reset = ModeReset(&root);
     let mut perms = fs::metadata(&root).expect("meta").permissions();
@@ -1521,33 +1531,41 @@ fn delete_removes_empty_parent_directories() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "cursor/foo"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let root = repo.repo.join(".git/ptm/worktrees");
-    let parent = root.join("cursor");
+    let project = managed_root(&repo);
+    let ceiling = project.parent().expect("ptm/worktrees");
+    let parent = project.join("cursor");
     assert!(parent.join("foo").is_dir());
     let deleted = repo.phantom(&["delete", "cursor/foo"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     assert!(!parent.join("foo").exists());
     assert!(!parent.exists(), "empty parent directory should be removed");
-    assert!(root.is_dir(), "worktrees root should stay");
+    assert!(
+        !project.exists(),
+        "empty project directory should be removed"
+    );
+    assert!(ceiling.is_dir(), "ptm/worktrees should stay");
 
     assert!(repo.phantom(&["create", "cursor/foo"]).status.success());
     assert!(repo.phantom(&["create", "cursor/bar"]).status.success());
     assert!(repo.phantom(&["delete", "cursor/foo"]).status.success());
     assert!(parent.join("bar").is_dir());
     assert!(parent.is_dir(), "parent still holds another worktree");
+    assert!(project.is_dir(), "project directory still holds a worktree");
     assert!(repo.phantom(&["delete", "cursor/bar"]).status.success());
     assert!(!parent.exists());
+    assert!(!project.exists());
+    assert!(ceiling.is_dir());
 
     assert!(repo.phantom(&["create", "a/b/c"]).status.success());
     assert!(repo.phantom(&["delete", "a/b/c"]).status.success());
-    assert!(!root.join("a").exists());
-    assert!(root.is_dir());
+    assert!(!managed(&repo, "a").exists());
+    assert!(ceiling.is_dir());
 }
 
 #[test]
 fn detached_worktree_keeps_its_directory_name() {
     let repo = Repo::new();
-    let worktree = repo.repo.join(".git/ptm/worktrees/next");
+    let worktree = managed(&repo, "next");
     repo.git(&[
         "worktree",
         "add",
@@ -1596,15 +1614,12 @@ fn detached_worktree_keeps_its_directory_name() {
         "add",
         "-b",
         "topic",
-        repo.repo
-            .join(".git/ptm/worktrees/alias")
-            .to_str()
-            .expect("path"),
+        managed(&repo, "alias").to_str().expect("path"),
         "HEAD",
     ]);
     let by_directory = repo.phantom(&["where", "alias"]);
     let by_branch = repo.phantom(&["where", "topic"]);
-    let alias = repo.repo.join(".git/ptm/worktrees/alias");
+    let alias = managed(&repo, "alias");
     assert_eq!(text(&by_directory.stdout), alias.to_string_lossy());
     assert_eq!(text(&by_branch.stdout), alias.to_string_lossy());
     let both = repo.phantom(&["list", "--names", "--no-default"]);
@@ -1617,8 +1632,8 @@ fn detached_worktree_keeps_its_directory_name() {
 #[test]
 fn directory_name_is_preferred_over_another_worktrees_branch() {
     let repo = Repo::new();
-    let branch_topic = repo.repo.join(".git/ptm/worktrees/a");
-    let directory_topic = repo.repo.join(".git/ptm/worktrees/topic");
+    let branch_topic = managed(&repo, "a");
+    let directory_topic = managed(&repo, "topic");
     repo.git(&[
         "worktree",
         "add",
@@ -1738,7 +1753,8 @@ fn local_branch(repo: &Repo, name: &str) -> String {
 fn pr_checkout_requires_the_branch_not_only_the_directory() {
     let repo = Repo::new();
     let path = fake_gh_for_topic_pr(&repo);
-    let directory = repo.repo.join(".git/ptm/worktrees/topic");
+    let directory = managed(&repo, "topic");
+    reserve_project_dir(&repo.repo, &repo.root.join("xdg"));
     repo.git(&[
         "worktree",
         "add",
@@ -1766,7 +1782,7 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
 
     let matching = Repo::new();
     let matching_path = fake_gh_for_topic_pr(&matching);
-    let checked_out = matching.repo.join(".git/ptm/worktrees/topic");
+    let checked_out = managed(&matching, "topic");
     matching.git(&[
         "worktree",
         "add",
@@ -1849,7 +1865,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     assert_worktree_object(
         &created_json["worktree"],
         "feature/json",
-        &repo.repo.join(".git/ptm/worktrees/feature/json"),
+        &managed(&repo, "feature/json"),
     );
     assert_eq!(created_json["worktree"]["branch"], "feature/json");
     assert_eq!(created_json["worktree"]["head"], head);
@@ -1895,7 +1911,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     assert_eq!(feature["dirty"], false);
     assert!(feature["base"].is_null());
 
-    let worktree = repo.repo.join(".git/ptm/worktrees/feature/json");
+    let worktree = managed(&repo, "feature/json");
     fs::write(worktree.join("README.md"), "dirty\n").expect("dirty");
     let dirty = repo.phantom(&["list", "--json", "--no-default"]);
     let dirty_json = json_value(&dirty);
@@ -1932,7 +1948,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     assert_worktree_object(
         &attached_json["worktree"],
         "existing-json",
-        &repo.repo.join(".git/ptm/worktrees/existing-json"),
+        &managed(&repo, "existing-json"),
     );
     assert!(attached_json["worktree"]["base"].is_null());
     assert_eq!(attached_json["worktree"]["branch"], "existing-json");
@@ -2057,10 +2073,7 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     assert_eq!(failed_json["worktree"]["name"], "feature/hook-fail");
     assert!(!text(&failed.stdout).contains("HOOK_FAIL_MARKER"));
     assert!(text(&failed.stderr).contains("HOOK_FAIL_MARKER"));
-    assert!(repo
-        .repo
-        .join(".git/ptm/worktrees/feature/hook-fail/README.md")
-        .is_file());
+    assert!(managed(&repo, "feature/hook-fail/README.md").is_file());
 
     fs::write(repo.repo.join(".ptm.toml"), "").expect("clear hooks");
     let exec_failed = repo.phantom(&[
@@ -2084,7 +2097,8 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
 #[test]
 fn json_reports_detached_head_and_copy_errors() {
     let repo = Repo::new();
-    let detached = repo.repo.join(".git/ptm/worktrees/next");
+    let detached = managed(&repo, "next");
+    reserve_project_dir(&repo.repo, &repo.root.join("xdg"));
     repo.git(&[
         "worktree",
         "add",
@@ -2260,7 +2274,7 @@ fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
             );
         }
     }
-    assert!(!repo.repo.join(".git/ptm/worktrees/a/../x").exists());
+    assert!(!managed(&repo, "a/../x").exists());
 
     let missing_delete = repo.phantom(&["delete", "nope"]);
     assert_eq!(missing_delete.status.code(), Some(2));
@@ -2295,7 +2309,7 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
     assert_eq!(signaled_json["exec"]["exitCode"], 143);
     assert_eq!(signaled_json["exec"]["signal"], "SIGTERM");
     assert!(signaled_json["exec"]["error"].is_null());
-    assert!(repo.repo.join(".git/ptm/worktrees/sig/README.md").is_file());
+    assert!(managed(&repo, "sig/README.md").is_file());
 
     repo.git(&["branch", "attach-sig"]);
     let attached = repo.phantom(&["attach", "attach-sig", "--json", "--exec", "kill -TERM $$"]);
@@ -2342,10 +2356,7 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
         spawn_error.contains("ENOENT") && spawn_error.contains("/no/such/ptm-shell"),
         "{spawn_error}"
     );
-    assert!(repo
-        .repo
-        .join(".git/ptm/worktrees/spawn/README.md")
-        .is_file());
+    assert!(managed(&repo, "spawn/README.md").is_file());
 
     repo.git(&["branch", "attach-spawn"]);
     let attach_spawn = repo
@@ -2407,7 +2418,7 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     assert_eq!(created_json["postCreate"]["exitCode"], 143);
     assert_eq!(created_json["postCreate"]["signal"], "SIGTERM");
     assert!(created_json["postCreate"]["error"].is_null());
-    assert!(repo.repo.join(".git/ptm/worktrees/h/README.md").is_file());
+    assert!(managed(&repo, "h/README.md").is_file());
 
     repo.git(&["branch", "attach-hook"]);
     let attached = repo.phantom(&["attach", "attach-hook", "--json"]);
@@ -2455,10 +2466,7 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
         spawn_error.contains("ENOENT") && spawn_error.contains("/nonexistent"),
         "{spawn_error}"
     );
-    assert!(repo
-        .repo
-        .join(".git/ptm/worktrees/hook-spawn/README.md")
-        .is_file());
+    assert!(managed(&repo, "hook-spawn/README.md").is_file());
 
     repo.git(&["branch", "attach-hook-spawn"]);
     let attach_spawn = repo
@@ -2477,10 +2485,7 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
         .unwrap_or("")
         .contains("ENOENT"));
     assert!(attach_json.get("error").is_none(), "{attach_json}");
-    assert!(repo
-        .repo
-        .join(".git/ptm/worktrees/attach-hook-spawn/README.md")
-        .is_file());
+    assert!(managed(&repo, "attach-hook-spawn/README.md").is_file());
 
     fs::write(
         repo.repo.join(".ptm.toml"),
@@ -2503,9 +2508,9 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
         deleted_json["deleted"][0]["worktree"]["path"]
             .as_str()
             .unwrap_or(""),
-        &repo.repo.join(".git/ptm/worktrees/h")
+        &managed(&repo, "h")
     ));
-    assert!(repo.repo.join(".git/ptm/worktrees/h").is_dir());
+    assert!(managed(&repo, "h").is_dir());
 
     fs::write(
         repo.repo.join(".ptm.toml"),
@@ -2529,9 +2534,9 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
         pre_json["deleted"][0]["worktree"]["path"]
             .as_str()
             .unwrap_or(""),
-        &repo.repo.join(".git/ptm/worktrees/attach-hook")
+        &managed(&repo, "attach-hook")
     ));
-    assert!(repo.repo.join(".git/ptm/worktrees/attach-hook").is_dir());
+    assert!(managed(&repo, "attach-hook").is_dir());
 }
 
 #[test]
@@ -2554,7 +2559,7 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
     );
     assert!(!text(&created.stderr).contains("not found"));
     assert!(text(&created.stdout).contains("Created worktree 'feature/topic'"));
-    let directory = repo.repo.join(".git/ptm/worktrees/feature-topic");
+    let directory = managed(&repo, "feature-topic");
     assert!(directory.join("README.md").is_file());
     let abbrev = repo
         .command("git", &["rev-parse", "--abbrev-ref", "HEAD"])
@@ -2589,7 +2594,7 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
         json_value_created["worktree"]["path"]
             .as_str()
             .unwrap_or(""),
-        &repo.repo.join(".git/ptm/worktrees/feature-json-topic")
+        &managed(&repo, "feature-json-topic")
     ));
 
     repo.git(&["branch", "feature/attached"]);
@@ -2612,7 +2617,7 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
     assert_eq!(attached_json["worktree"]["detached"], true);
     assert!(paths_match(
         attached_json["worktree"]["path"].as_str().unwrap_or(""),
-        &repo.repo.join(".git/ptm/worktrees/feature-attached")
+        &managed(&repo, "feature-attached")
     ));
 
     fs::write(
@@ -2658,7 +2663,7 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
     assert_eq!(checkout_json["postCreate"]["ok"], true);
     assert!(paths_match(
         checkout_json["worktree"]["path"].as_str().unwrap_or(""),
-        &repo.repo.join(".git/ptm/worktrees/issues-7")
+        &managed(&repo, "issues-7")
     ));
 }
 
@@ -2705,7 +2710,7 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     assert_worktree_object(
         &checkout_json["worktree"],
         "issues/7",
-        &repo.repo.join(".git/ptm/worktrees/issues/7"),
+        &managed(&repo, "issues/7"),
     );
     assert_eq!(checkout_json["worktree"]["branch"], "issues/7");
     assert_eq!(checkout_json["worktree"]["base"], "HEAD");
@@ -2728,7 +2733,7 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
 
     let matching = Repo::new();
     let matching_path = fake_gh_for_topic_pr(&matching);
-    let checked_out = matching.repo.join(".git/ptm/worktrees/topic");
+    let checked_out = managed(&matching, "topic");
     matching.git(&[
         "worktree",
         "add",
@@ -2989,7 +2994,7 @@ fn repeated_exec_options_are_rejected() {
         text(&created.stderr)
     );
     assert_eq!(text(&created.stdout), "");
-    assert!(!repo.repo.join(".git/ptm/worktrees/a").exists());
+    assert!(!managed(&repo, "a").exists());
 
     let quoted = repo.phantom(&["create", "b", "--exec=echo one", "--exec=echo two"]);
     assert_eq!(quoted.status.code(), Some(3), "{}", text(&quoted.stderr));
@@ -2998,7 +3003,7 @@ fn repeated_exec_options_are_rejected() {
         "{}",
         text(&quoted.stderr)
     );
-    assert!(!repo.repo.join(".git/ptm/worktrees/b").exists());
+    assert!(!managed(&repo, "b").exists());
 
     let mixed = repo.phantom(&["create", "c", "-xecho", "--exec=true"]);
     assert_eq!(mixed.status.code(), Some(3), "{}", text(&mixed.stderr));
@@ -3018,10 +3023,7 @@ fn repeated_exec_options_are_rejected() {
         text(&attached.stderr)
     );
     assert_eq!(text(&attached.stdout), "");
-    assert!(!repo
-        .repo
-        .join(".git/ptm/worktrees/attached-repeat")
-        .exists());
+    assert!(!managed(&repo, "attached-repeat").exists());
 
     let attached_short = repo.phantom(&["attach", "attached-repeat", "-xecho", "-xtrue"]);
     assert_eq!(
@@ -3229,7 +3231,9 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    assert!(destination.join(".git/ptm/worktrees/topic").is_dir());
+    assert!(managed_directory(&destination, &repo.root.join("xdg"))
+        .join("topic")
+        .is_dir());
 
     let mismatch_path = root.join("github.com/example/other");
     fs::create_dir_all(&mismatch_path).expect("mismatch dir");
@@ -3879,7 +3883,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
 
     let created = repo.phantom(&["create", "feature"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let worktree = repo.repo.join(".git/ptm/worktrees/feature");
+    let worktree = managed(&repo, "feature");
     let nested = worktree.join("nested");
     fs::create_dir_all(&nested).expect("nested");
     let sub = repo.repo.join("sub");
@@ -3958,7 +3962,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         text(&created_from_link.stdout),
         text(&created_from_link.stderr)
     );
-    assert!(repo.repo.join(".git/ptm/worktrees/from-link").is_dir());
+    assert!(managed(&repo, "from-link").is_dir());
     assert!(!worktree.join(".git/ptm/worktrees/from-link").exists());
 
     let file = run(
@@ -4056,7 +4060,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         text(&checkout.stdout),
         text(&checkout.stderr)
     );
-    assert!(repo.repo.join(".git/ptm/worktrees/issues/9").is_dir());
+    assert!(managed(&repo, "issues/9").is_dir());
     let missing_checkout = run(
         &[
             "gh",
@@ -4098,7 +4102,9 @@ fn exec_project_option_passes_later_options_to_the_command() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    assert!(project.join(".git/ptm/worktrees/foo").is_dir());
+    assert!(managed_directory(&project, &repo.root.join("xdg"))
+        .join("foo")
+        .is_dir());
 
     let passed = run(&[
         "exec",
@@ -4236,9 +4242,11 @@ fn project_option_ignores_the_callers_config_and_matches_directory_names() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    assert!(tool.join(".git/ptm/worktrees/z1").is_dir());
+    assert!(managed_directory(&tool, &repo.root.join("xdg"))
+        .join("z1")
+        .is_dir());
     assert!(!text(&created.stderr).contains("Invalid .ptm.toml"));
-    assert!(!repo.repo.join(".git/ptm/worktrees/z1").exists());
+    assert!(!managed(&repo, "z1").exists());
 
     let by_directory = run(&["where", "-p", "localname", "main"]);
     assert!(
@@ -4355,7 +4363,9 @@ fn github_checkout_project_passes_the_selected_host() {
         text(&checkout.stderr)
     );
     assert!(!text(&checkout.stderr).contains("Invalid .ptm.toml"));
-    assert!(tool.join(".git/ptm/worktrees/issues/3").is_dir());
+    assert!(managed_directory(&tool, &repo.root.join("xdg"))
+        .join("issues/3")
+        .is_dir());
     let recorded = fs::read_to_string(&log).expect("gh log");
     assert!(
         recorded.contains("--hostname ghe.corp.example"),
@@ -4763,7 +4773,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
         .as_str()
         .unwrap_or("")
         .contains("worktrees.json"));
-    assert!(!repo.repo.join(".git/ptm/worktrees/after-corrupt").exists());
+    assert!(!managed(&repo, "after-corrupt").exists());
     assert_eq!(fs::read_to_string(&file).expect("kept"), "{not json");
 }
 
@@ -4868,7 +4878,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
         "corrupt store left {}",
         local_branch(&corrupt, "topic")
     );
-    assert!(!corrupt.repo.join(".git/ptm/worktrees/topic").exists());
+    assert!(!managed(&corrupt, "topic").exists());
 
     let locked = Repo::new();
     publish_pr_topic(&locked);
@@ -4913,7 +4923,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
         "unwritable store left {}",
         local_branch(&locked, "topic")
     );
-    assert!(!locked.repo.join(".git/ptm/worktrees/topic").exists());
+    assert!(!managed(&locked, "topic").exists());
     drop(_restore);
     assert_eq!(
         fs::read_to_string(metadata_dir.join("worktrees.json")).expect("kept"),
@@ -4946,7 +4956,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     assert_eq!(checked_out_json["github"]["headRef"], "topic");
     assert_eq!(checked_out_json["github"]["alreadyExists"], false);
     assert_eq!(checked_out_json["metadata"]["ok"], true);
-    assert!(ready.repo.join(".git/ptm/worktrees/topic").is_dir());
+    assert!(managed(&ready, "topic").is_dir());
     assert!(
         local_branch(&ready, "topic").contains("topic"),
         "{}",
@@ -4980,7 +4990,7 @@ fn delete_refuses_when_metadata_is_not_writable() {
         .unwrap_or("")
         .contains("worktrees.json"));
     assert_eq!(deleted_json["error"]["exitCode"], 1);
-    assert!(repo.repo.join(".git/ptm/worktrees/doomed").is_dir());
+    assert!(managed(&repo, "doomed").is_dir());
     drop(_restore);
     assert_eq!(
         fs::read_to_string(metadata_dir.join("worktrees.json")).expect("kept"),
@@ -5005,7 +5015,7 @@ fn create_replaces_a_record_left_by_git_worktree_remove() {
         .as_str()
         .expect("created")
         .to_string();
-    let path = repo.repo.join(".git/ptm/worktrees/feature");
+    let path = managed(&repo, "feature");
     repo.git(&["worktree", "remove", path.to_str().expect("path")]);
     repo.git(&["branch", "-D", "feature"]);
     let again = repo.phantom(&[
@@ -5061,10 +5071,7 @@ fn metadata_save_failure_after_create_still_runs_hooks() {
         .contains("injected"));
     assert_eq!(created_json["postCreate"]["ok"], true);
     assert_eq!(created_json["copyFiles"]["ok"], true);
-    assert!(repo
-        .repo
-        .join(".git/ptm/worktrees/feature/hook-ran")
-        .is_file());
+    assert!(managed(&repo, "feature/hook-ran").is_file());
     assert!(text(&created.stderr).contains("Warning"));
     assert!(text(&created.stderr).contains("injected"));
     assert!(!text(&created.stdout).contains("Warning"));
@@ -5122,7 +5129,7 @@ fn owner_flag_rejects_a_value_that_looks_like_an_option() {
     let created = repo.phantom(&["create", "feature", "--purpose", "--json"]);
     assert_eq!(created.status.code(), Some(3));
     assert_eq!(json_value(&created)["error"]["code"], "validation");
-    assert!(!repo.repo.join(".git/ptm/worktrees/feature").exists());
+    assert!(!managed(&repo, "feature").exists());
 }
 
 #[test]
@@ -5146,7 +5153,7 @@ fn exec_command_json_flag_does_not_switch_ptm_to_json() {
 }
 
 #[test]
-fn separate_git_dir_creates_the_default_worktree_in_the_common_dir() {
+fn separate_git_dir_creates_the_default_worktree_under_xdg() {
     let root =
         std::env::temp_dir().join(format!("ptm-sep-default-{}-{}", std::process::id(), uuid()));
     let home = root.join("home");
@@ -5205,6 +5212,7 @@ fn separate_git_dir_creates_the_default_worktree_in_the_common_dir() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_DATA_HOME", root.join("xdg"))
         .env_remove("PTM_AGENT_ID")
         .output()
         .expect("ptm");
@@ -5216,9 +5224,11 @@ fn separate_git_dir_creates_the_default_worktree_in_the_common_dir() {
     );
     let created_json = json_value(&created);
     assert_eq!(created_json["version"], 1);
-    let worktree = sep.join("ptm").join("worktrees").join("feature");
+    let worktree = managed_directory(&checkout, &root.join("xdg")).join("feature");
     assert_worktree_object(&created_json["worktree"], "feature", &worktree);
     assert!(worktree.is_dir());
+    assert!(!sep.join("ptm").join("worktrees").join("feature").exists());
+    assert!(sep.join("ptm").join("worktrees.json").is_file());
     assert!(checkout.join(".git").is_file(), ".git stayed a gitdir file");
     assert!(!checkout.join(".git").join("ptm").exists());
     let _ = fs::remove_dir_all(&root);
@@ -5282,6 +5292,7 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_DATA_HOME", root.join("xdg"))
             .env_remove("PTM_AGENT_ID")
             .output()
             .expect("ptm")
@@ -5383,6 +5394,7 @@ impl SeparateCheckout {
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_STATE_HOME", self.root.join("state"))
+            .env("XDG_DATA_HOME", self.root.join("xdg"))
             .env_remove("GHQ_ROOT")
             .env_remove("PTM_AGENT_ID")
             .env_remove("PHANTOM_AGENT_ID")
@@ -5422,8 +5434,17 @@ fn separate_git_dir_delete_current_removes_the_linked_worktree() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    let linked = repo.git_dir.join("ptm").join("worktrees").join("linked");
-    assert!(linked.is_dir(), "default worktree lives in the common dir");
+    let linked = managed_directory(&repo.checkout, &repo.root.join("xdg")).join("linked");
+    assert!(
+        linked.is_dir(),
+        "default worktree lives under XDG data home"
+    );
+    assert!(!repo
+        .git_dir
+        .join("ptm")
+        .join("worktrees")
+        .join("linked")
+        .exists());
     let deleted = repo.ptm(&linked, &["delete", "--current"]);
     let stdout = text(&deleted.stdout);
     let stderr = text(&deleted.stderr);
@@ -5583,6 +5604,7 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_DATA_HOME", root.join("xdg"))
             .env_remove("PTM_AGENT_ID")
             .output()
             .expect("ptm")
@@ -5594,7 +5616,10 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
         text(&created.stdout),
         text(&created.stderr)
     );
-    let linked = superproject.join(".git/modules/sub/ptm/worktrees/linked");
+    let linked = managed_directory(&checkout, &root.join("xdg")).join("linked");
+    assert!(!superproject
+        .join(".git/modules/sub/ptm/worktrees/linked")
+        .exists());
     assert!(linked.is_dir());
     let deleted = ptm(&linked, &["delete", "--current"]);
     assert!(
@@ -5692,6 +5717,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_DATA_HOME", root.join("xdg"))
             .env_remove("PTM_AGENT_ID")
             .output()
             .expect("ptm")
@@ -5827,6 +5853,7 @@ fn missing_separate_checkout_names_the_git_dir() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_DATA_HOME", root.join("xdg"))
         .env_remove("PTM_AGENT_ID")
         .output()
         .expect("ptm");
@@ -5868,6 +5895,7 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_DATA_HOME", root.join("xdg"))
             .env_remove("PTM_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
@@ -5977,7 +6005,7 @@ fn core_worktree_without_a_gitfile_names_that_path() {
     let empty = repo.root.join("empty");
     fs::create_dir_all(&empty).expect("empty");
     repo.git(&["config", "core.worktree", empty.to_str().expect("empty")]);
-    let linked = repo.git_dir.join("ptm").join("worktrees").join("linked");
+    let linked = managed_directory(&repo.checkout, &repo.root.join("xdg")).join("linked");
     let listed = repo.ptm(&linked, &["list"]);
     assert_eq!(
         listed.status.code(),
@@ -6016,7 +6044,7 @@ fn separate_git_dir_lists_and_execs_the_main_checkout() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    let linked = repo.git_dir.join("ptm").join("worktrees").join("linked");
+    let linked = managed_directory(&repo.checkout, &repo.root.join("xdg")).join("linked");
     assert_main_checkout(&repo, &linked, &repo.checkout, &repo.git_dir);
 }
 
@@ -6092,6 +6120,7 @@ fn submodule_lists_and_execs_the_main_checkout() {
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_DATA_HOME", root.join("xdg"))
             .env_remove("PTM_AGENT_ID")
             .output()
             .expect("ptm")
@@ -6104,7 +6133,13 @@ fn submodule_lists_and_execs_the_main_checkout() {
         text(&created.stderr)
     );
     let git_dir = superproject.join(".git").join("modules").join("sub");
-    let linked = git_dir.join("ptm").join("worktrees").join("linked");
+    let linked = managed_directory(&checkout, &root.join("xdg")).join("linked");
+    assert!(git_dir.join("ptm").join("worktrees.json").is_file());
+    assert!(!git_dir
+        .join("ptm")
+        .join("worktrees")
+        .join("linked")
+        .exists());
     let listed = ptm(&linked, &["list"]);
     assert!(
         listed.status.success(),
@@ -6302,13 +6337,13 @@ fn duplicate_metadata_paths_block_mutations() {
         assert!(message.contains("duplicate path"), "{args:?}\n{message}");
         assert_eq!(fs::read_to_string(&file).expect("kept"), body, "{args:?}");
     }
-    assert!(repo.repo.join(".git/ptm/worktrees/kept").is_dir());
-    assert!(!repo.repo.join(".git/ptm/worktrees/other").exists());
-    assert!(!repo.repo.join(".git/ptm/worktrees/side").exists());
+    assert!(managed(&repo, "kept").is_dir());
+    assert!(!managed(&repo, "other").exists());
+    assert!(!managed(&repo, "side").exists());
 }
 
 fn worktree_dir(repo: &Repo, name: &str) -> PathBuf {
-    repo.repo.join(".git/ptm/worktrees").join(name)
+    managed_root(repo).join(name)
 }
 
 fn branch_listed(repo: &Repo, name: &str) -> bool {
@@ -6324,8 +6359,14 @@ fn worktree_registered(repo: &Repo, name: &str) -> bool {
         .command("git", &["worktree", "list", "--porcelain"])
         .output()
         .expect("worktrees");
-    text(&output.stdout).contains(&format!("worktrees/{name}\n"))
-        || text(&output.stdout).ends_with(&format!("worktrees/{name}"))
+    let path = worktree_dir(repo, name);
+    text(&output.stdout).contains(&path.to_string_lossy().to_string())
+}
+
+fn reserve_project_dir(git_root: &Path, xdg: &Path) {
+    let common = phantom::git::canonical_common_dir(git_root).expect("common dir");
+    let directory = phantom::paths::default_worktrees_directory(git_root, &common, xdg).path;
+    phantom::paths::ensure_worktrees_directory(&directory, Some(&common)).expect("project dir");
 }
 
 fn land_branch(repo: &Repo, name: &str) {
@@ -6973,4 +7014,567 @@ fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
         "{logged}"
     );
     assert!(!logged.contains("pr view 4"), "{logged}");
+}
+
+#[test]
+fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "feature", "--json"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let path = managed(&repo, "feature");
+    assert!(path.join("README.md").is_file());
+    assert!(paths_match(
+        json_value(&created)["worktree"]["path"]
+            .as_str()
+            .unwrap_or(""),
+        &path
+    ));
+    assert!(!repo.repo.join(".git/ptm/worktrees/feature").exists());
+    assert!(repo.repo.join(".git/ptm/worktrees.json").is_file());
+    let common = phantom::git::canonical_common_dir(&repo.repo).expect("common dir");
+    let marker = fs::read_to_string(managed_root(&repo).join(phantom::paths::PROJECT_MARKER))
+        .expect("marker");
+    assert_eq!(marker.trim_end(), common.to_string_lossy());
+
+    let preference = repo.phantom(&["preferences", "set", "worktrees-directory", "../custom-wt"]);
+    assert!(preference.status.success(), "{}", text(&preference.stderr));
+    let custom = repo.phantom(&["create", "custom"]);
+    assert!(
+        custom.status.success(),
+        "{}\n{}",
+        text(&custom.stdout),
+        text(&custom.stderr)
+    );
+    let custom_path = repo.root.join("custom-wt").join("custom");
+    assert!(custom_path.join("README.md").is_file());
+    assert!(!managed(&repo, "custom").exists());
+    let removed = repo.phantom(&["delete", "custom"]);
+    assert!(removed.status.success(), "{}", text(&removed.stderr));
+    assert!(!custom_path.exists());
+    assert!(
+        custom_path.parent().expect("custom dir").is_dir(),
+        "a preference directory stays when its last worktree is gone"
+    );
+
+    let legacy = repo.repo.join(".git/ptm/worktrees/legacy");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "legacy",
+        legacy.to_str().expect("legacy"),
+        "HEAD",
+    ]);
+    let names = repo.phantom(&["list", "--names", "--no-default"]);
+    assert!(names.status.success(), "{}", text(&names.stderr));
+    let listed = text(&names.stdout);
+    assert!(listed.lines().any(|line| line == "feature"), "{listed}");
+    assert!(listed.lines().any(|line| line == "legacy"), "{listed}");
+    let found = repo.phantom(&["where", "legacy"]);
+    assert!(found.status.success(), "{}", text(&found.stderr));
+    assert!(paths_match(text(&found.stdout).trim(), &legacy));
+    let refused = repo.phantom(&["delete", "legacy", "--keep-branch"]);
+    assert!(!refused.status.success(), "{}", text(&refused.stdout));
+    assert!(
+        text(&refused.stderr).contains("outside the managed worktree directory"),
+        "{}",
+        text(&refused.stderr)
+    );
+    assert!(legacy.is_dir());
+}
+
+#[test]
+fn relative_xdg_data_home_uses_the_home_fallback() {
+    let repo = Repo::new();
+    let created = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "feature"])
+        .env("XDG_DATA_HOME", "relative/data")
+        .output()
+        .expect("create");
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let data_home = phantom::paths::data_home(Some(&repo.home), Some(Path::new("relative/data")))
+        .expect("fallback");
+    assert_eq!(data_home, repo.home.join(".local/share"));
+    assert!(managed_directory(&repo.repo, &data_home)
+        .join("feature")
+        .is_dir());
+    assert!(!repo.root.join("relative/data").exists());
+    assert!(!managed(&repo, "feature").exists());
+}
+
+#[test]
+fn a_project_directory_owned_by_another_repository_is_refused() {
+    let repo = Repo::new();
+    let directory = managed_root(&repo);
+    fs::create_dir_all(&directory).expect("project dir");
+    fs::write(
+        directory.join(phantom::paths::PROJECT_MARKER),
+        "/other/repo/.git\n",
+    )
+    .expect("foreign marker");
+    let created = repo.phantom(&["create", "feature"]);
+    assert!(!created.status.success(), "{}", text(&created.stdout));
+    let message = format!("{}\n{}", text(&created.stdout), text(&created.stderr));
+    assert!(message.contains("belongs to"), "{message}");
+    assert!(message.contains("/other/repo/.git"), "{message}");
+    assert!(!directory.join("feature").exists());
+}
+
+#[test]
+fn two_clones_do_not_share_a_worktree_directory() {
+    let first = Repo::new();
+    let second = Repo::new();
+    assert!(first.phantom(&["create", "feature"]).status.success());
+    assert!(second.phantom(&["create", "feature"]).status.success());
+    let left = managed_root(&first);
+    let right = managed_root(&second);
+    assert_ne!(left, right);
+    assert!(left.join("feature").is_dir());
+    assert!(right.join("feature").is_dir());
+    assert!(left
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("repo-")));
+}
+
+#[test]
+fn symlink_checkout_shares_the_project_directory() {
+    let repo = Repo::new();
+    let link = repo.root.join("link-name");
+    std::os::unix::fs::symlink(&repo.repo, &link).expect("symlink");
+    let created = repo.phantom(&["create", "from-real"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let via_link = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "create",
+                "--project",
+                link.to_str().expect("link"),
+                "from-link",
+            ],
+        )
+        .output()
+        .expect("create");
+    assert!(
+        via_link.status.success(),
+        "{}\n{}",
+        text(&via_link.stdout),
+        text(&via_link.stderr)
+    );
+    let project = managed_root(&repo);
+    assert!(project.join("from-real").is_dir());
+    assert!(project.join("from-link").is_dir());
+    let projects = fs::read_dir(project.parent().expect("ceiling"))
+        .expect("ceiling")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
+        .count();
+    assert_eq!(
+        projects, 1,
+        "symlink spelling created a second project directory"
+    );
+    let deleted = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "delete",
+                "--project",
+                link.to_str().expect("link"),
+                "from-real",
+            ],
+        )
+        .output()
+        .expect("delete");
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(!project.join("from-real").exists());
+    assert!(project.join("from-link").is_dir());
+}
+
+#[test]
+fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
+    let repo = Repo::new();
+    assert!(repo
+        .phantom(&[
+            "preferences",
+            "set",
+            "worktrees-directory",
+            ".git/ptm/worktrees",
+        ])
+        .status
+        .success());
+    let created = repo.phantom(&["create", "feature/topic"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let topic = repo.repo.join(".git/ptm/worktrees/feature/topic");
+    let parent = repo.repo.join(".git/ptm/worktrees/feature");
+    assert!(topic.is_dir());
+    assert!(repo
+        .phantom(&["preferences", "remove", "worktrees-directory"])
+        .status
+        .success());
+    let deleted = repo.phantom(&["delete", "feature/topic"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(!topic.exists());
+    assert!(parent.is_dir(), "parents of a recorded worktree stay");
+    assert!(repo.repo.join(".git/ptm/worktrees").is_dir());
+
+    let other = repo.root.join("other-xdg");
+    let elsewhere_created = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "elsewhere"])
+        .env("XDG_DATA_HOME", &other)
+        .output()
+        .expect("elsewhere");
+    assert!(
+        elsewhere_created.status.success(),
+        "{}\n{}",
+        text(&elsewhere_created.stdout),
+        text(&elsewhere_created.stderr)
+    );
+    let elsewhere = managed_directory(&repo.repo, &other).join("elsewhere");
+    assert!(elsewhere.is_dir());
+    fs::write(elsewhere.join("dirty.txt"), "dirty\n").expect("dirty");
+    let blocked = repo.phantom(&["delete", "elsewhere"]);
+    assert!(!blocked.status.success(), "{}", text(&blocked.stdout));
+    assert!(
+        text(&blocked.stderr).contains("uncommitted"),
+        "{}",
+        text(&blocked.stderr)
+    );
+    assert!(elsewhere.is_dir());
+    fs::remove_file(elsewhere.join("dirty.txt")).expect("clean");
+    let removed = repo.phantom(&["delete", "elsewhere"]);
+    assert!(
+        removed.status.success(),
+        "{}\n{}",
+        text(&removed.stdout),
+        text(&removed.stderr)
+    );
+    assert!(!elsewhere.exists());
+    assert!(
+        elsewhere.parent().expect("project dir").is_dir(),
+        "the other data directory's project dir stays"
+    );
+
+    let stray = repo.root.join("stray");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "stray",
+        stray.to_str().expect("stray"),
+        "HEAD",
+    ]);
+    fs::write(stray.join("stray.txt"), "stray\n").expect("stray note");
+    for args in [vec!["add", "stray.txt"], vec!["commit", "-m", "stray"]] {
+        let output = repo
+            .command("git", &args)
+            .current_dir(&stray)
+            .output()
+            .expect("commit stray");
+        assert!(output.status.success(), "{}", text(&output.stderr));
+    }
+    repo.git(&["merge", "--ff-only", "stray"]);
+    let refused = repo.phantom(&["delete", "stray"]);
+    assert!(!refused.status.success(), "{}", text(&refused.stdout));
+    assert!(
+        text(&refused.stderr).contains("outside the managed worktree directory"),
+        "{}",
+        text(&refused.stderr)
+    );
+    let cleaned = repo.phantom(&["gc", "--apply"]);
+    assert!(cleaned.status.success(), "{}", text(&cleaned.stderr));
+    assert!(
+        !text(&cleaned.stdout).contains("stray"),
+        "{}",
+        text(&cleaned.stdout)
+    );
+    assert!(stray.is_dir());
+}
+
+#[test]
+fn gc_removes_a_merged_recorded_worktree_outside_the_resolved_directory() {
+    let repo = Repo::new();
+    assert!(repo
+        .phantom(&[
+            "preferences",
+            "set",
+            "worktrees-directory",
+            ".git/ptm/worktrees",
+        ])
+        .status
+        .success());
+    let created = repo.phantom(&["create", "landed"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let landed = repo.repo.join(".git/ptm/worktrees/landed");
+    fs::write(landed.join("landed.txt"), "landed\n").expect("note");
+    for args in [vec!["add", "landed.txt"], vec!["commit", "-m", "landed"]] {
+        let output = repo
+            .command("git", &args)
+            .current_dir(&landed)
+            .output()
+            .expect("commit");
+        assert!(output.status.success(), "{}", text(&output.stderr));
+    }
+    repo.git(&["merge", "--ff-only", "landed"]);
+    assert!(repo
+        .phantom(&["preferences", "remove", "worktrees-directory"])
+        .status
+        .success());
+    let applied = repo.phantom(&["gc", "--apply"]);
+    assert!(
+        applied.status.success(),
+        "{}\n{}",
+        text(&applied.stdout),
+        text(&applied.stderr)
+    );
+    let stdout = text(&applied.stdout);
+    assert!(
+        stdout.contains("landed") && stdout.contains("Removed"),
+        "{stdout}"
+    );
+    assert!(!landed.exists());
+    assert!(repo.repo.join(".git/ptm/worktrees").is_dir());
+}
+
+#[test]
+fn symlink_spelling_keeps_metadata_and_cleans_the_project_directory() {
+    let repo = Repo::new();
+    let created = repo.phantom(&["create", "feature", "--owner", "alice", "--json"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let created_json = json_value(&created);
+    let real = PathBuf::from(created_json["worktree"]["path"].as_str().expect("path"));
+    let created_from = created_json["worktree"]["createdFrom"]
+        .as_str()
+        .expect("createdFrom")
+        .to_string();
+    let created_at = created_json["worktree"]["createdAt"]
+        .as_str()
+        .expect("createdAt")
+        .to_string();
+    fs::write(real.join("landed.txt"), "landed\n").expect("note");
+    for args in [vec!["add", "landed.txt"], vec!["commit", "-m", "landed"]] {
+        let output = repo
+            .command("git", &args)
+            .current_dir(&real)
+            .output()
+            .expect("commit");
+        assert!(output.status.success(), "{}", text(&output.stderr));
+    }
+    repo.git(&["merge", "--ff-only", "feature"]);
+
+    let via = repo.root.join("via-project");
+    std::os::unix::fs::symlink(real.parent().expect("project"), &via).expect("symlink");
+    let spelled = via.join("feature");
+    let gitdir = repo.repo.join(".git/worktrees/feature/gitdir");
+    fs::write(&gitdir, format!("{}\n", spelled.join(".git").display())).expect("gitdir");
+
+    let listed = repo.phantom(&["list", "--json", "--no-default"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let entry = &json_value(&listed)["worktrees"][0];
+    assert_eq!(entry["owner"], "alice");
+    assert_eq!(entry["createdFrom"], created_from);
+    assert_eq!(entry["createdAt"], created_at);
+    let plan = repo.phantom(&["gc", "--json"]);
+    assert!(plan.status.success(), "{}", text(&plan.stderr));
+    let candidate = &json_value(&plan)["candidates"][0];
+    assert_eq!(candidate["owner"], "alice");
+    assert_eq!(candidate["name"], "feature");
+    let deleted = repo.phantom(&["delete", "feature", "--json"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    let removed = &json_value(&deleted)["deleted"][0]["worktree"];
+    assert_eq!(removed["owner"], "alice");
+    assert_eq!(removed["createdFrom"], created_from);
+    assert_eq!(removed["createdAt"], created_at);
+    assert!(!real.exists());
+    assert!(
+        !managed_root(&repo).exists(),
+        "last worktree inside the resolved directory should remove the project directory"
+    );
+    let store = fs::read_to_string(repo.repo.join(".git/ptm/worktrees.json")).unwrap_or_default();
+    assert!(!store.contains("alice"), "{store}");
+}
+
+#[test]
+fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
+    let repo = Repo::new();
+    let real = repo.root.join("real-xdg");
+    let link = repo.root.join("link-xdg");
+    fs::create_dir_all(&real).expect("real xdg");
+    std::os::unix::fs::symlink(&real, &link).expect("xdg link");
+    let run = |args: &[&str]| {
+        repo.command(env!("CARGO_BIN_EXE_ptm"), args)
+            .env("XDG_DATA_HOME", &link)
+            .output()
+            .expect("ptm")
+    };
+    let created = run(&["create", "a", "--json"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let created_json = json_value(&created);
+    assert!(created_json.get("error").is_none(), "{created_json}");
+    assert_eq!(created_json["worktree"]["name"], "a");
+    assert!(created_json["metadata"]["ok"].as_bool().unwrap_or(false));
+
+    repo.git(&["branch", "attached"]);
+    let attached = run(&["attach", "attached", "--json"]);
+    assert!(
+        attached.status.success(),
+        "{}\n{}",
+        text(&attached.stdout),
+        text(&attached.stderr)
+    );
+    let attached_json = json_value(&attached);
+    assert!(attached_json.get("error").is_none(), "{attached_json}");
+    assert_eq!(attached_json["worktree"]["name"], "attached");
+
+    let executed = run(&["create", "b", "--json", "--exec", "true"]);
+    assert!(
+        executed.status.success(),
+        "{}\n{}",
+        text(&executed.stdout),
+        text(&executed.stderr)
+    );
+    let executed_json = json_value(&executed);
+    assert!(executed_json.get("error").is_none(), "{executed_json}");
+    assert_eq!(executed_json["exec"]["ok"], true);
+    assert_eq!(executed_json["worktree"]["name"], "b");
+}
+
+#[test]
+fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
+    let repo = Repo::new();
+    let created = repo.phantom(&[
+        "create",
+        "issues/7",
+        "--owner",
+        "alice",
+        "--purpose",
+        "keep me",
+        "--json",
+    ]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let created_json = json_value(&created);
+    let real = PathBuf::from(created_json["worktree"]["path"].as_str().expect("path"));
+    let created_at = created_json["worktree"]["createdAt"]
+        .as_str()
+        .expect("createdAt")
+        .to_string();
+    let created_from = created_json["worktree"]["createdFrom"]
+        .as_str()
+        .expect("createdFrom")
+        .to_string();
+    let last_used = created_json["worktree"]["lastUsedAt"]
+        .as_str()
+        .expect("lastUsedAt")
+        .to_string();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let via = repo.root.join("via-project");
+    std::os::unix::fs::symlink(real.parent().expect("project"), &via).expect("symlink");
+    let git_dir = repo
+        .command("git", &["rev-parse", "--git-dir"])
+        .current_dir(&real)
+        .output()
+        .expect("git dir");
+    assert!(git_dir.status.success(), "{}", text(&git_dir.stderr));
+    let printed = PathBuf::from(text(&git_dir.stdout).trim());
+    let git_admin = if printed.is_absolute() {
+        printed
+    } else {
+        real.join(printed)
+    };
+    let gitdir = git_admin.join("gitdir");
+    fs::write(
+        &gitdir,
+        format!("{}\n", via.join("7").join(".git").display()),
+    )
+    .expect("gitdir");
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let gh = bin.join("gh");
+    fs::write(
+        &gh,
+        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"url\":\"https://github.com/acme/demo\",\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":7}'\nexit 0\n",
+    )
+    .expect("gh");
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(&gh).expect("meta").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&gh, perms).expect("chmod");
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let again = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "github",
+                "checkout",
+                "7",
+                "--owner",
+                "bob",
+                "--purpose",
+                "replace",
+                "--json",
+            ],
+        )
+        .env("PATH", &path)
+        .output()
+        .expect("checkout");
+    assert!(
+        again.status.success(),
+        "{}\n{}",
+        text(&again.stdout),
+        text(&again.stderr)
+    );
+    let again_json = json_value(&again);
+    assert!(again_json.get("error").is_none(), "{again_json}");
+    assert_eq!(again_json["github"]["alreadyExists"], true);
+    let worktree = &again_json["worktree"];
+    assert_eq!(worktree["owner"], "alice");
+    assert_eq!(worktree["purpose"], "keep me");
+    assert_eq!(worktree["createdAt"], created_at);
+    assert_eq!(worktree["createdFrom"], created_from);
+    assert_ne!(worktree["lastUsedAt"], last_used);
+    assert_eq!(worktree["links"]["issue"]["number"], 7);
 }

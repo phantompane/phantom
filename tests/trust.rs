@@ -52,6 +52,7 @@ impl Repo {
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_STATE_HOME", self.root.join("state"))
+            .env("XDG_DATA_HOME", self.root.join("xdg"))
             .env_remove("PTM_TRUST_ALL")
             .env_remove("CI")
             .env_remove("GHQ_ROOT")
@@ -92,7 +93,10 @@ fn hooks(repo: &Repo, post: &str, pre: &str) {
 }
 
 fn worktree(repo: &Repo, name: &str) -> PathBuf {
-    repo.repo.join(".git/ptm/worktrees").join(name)
+    let common = phantom::git::canonical_common_dir(&repo.repo).expect("common dir");
+    phantom::paths::default_worktrees_directory(&repo.repo, &common, &repo.root.join("xdg"))
+        .path
+        .join(name)
 }
 
 fn trust_file(repo: &Repo) -> PathBuf {
@@ -169,7 +173,7 @@ fn non_tty_refusal_creates_nothing() {
         .output()
         .expect("list");
     assert!(
-        !text(&listed.stdout).contains("worktrees/topic"),
+        !text(&listed.stdout).contains(&worktree(&repo, "topic").to_string_lossy().to_string()),
         "{}",
         text(&listed.stdout)
     );

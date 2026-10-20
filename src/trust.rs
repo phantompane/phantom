@@ -301,11 +301,7 @@ fn is_trusted_root(git_root: &Path) -> Result<bool> {
 }
 
 pub fn common_dir_key(git_root: &Path) -> Result<PathBuf> {
-    let common = git::git_common_dir(git_root)?;
-    match fs::canonicalize(&common) {
-        Ok(path) => Ok(path),
-        Err(_) => Ok(common),
-    }
+    git::canonical_common_dir(git_root)
 }
 
 fn trust_path() -> Result<PathBuf> {

@@ -12,6 +12,9 @@ pub struct Context {
     /// Checkout the command is running in. `.ptm.toml` is loaded from here.
     pub source_checkout: PathBuf,
     pub worktrees_directory: PathBuf,
+    /// Canonical git common dir when `worktrees_directory` is the default
+    /// project directory. Unset when `worktrees-directory` overrides it.
+    pub project_common_dir: Option<PathBuf>,
     pub directory_name_separator: String,
     pub config: Option<PtmConfig>,
     pub preferences: Preferences,
@@ -46,15 +49,23 @@ fn assemble(git_root: &Path, source_checkout: PathBuf) -> Result<Context> {
         .clone()
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "/".to_string());
-    let common_dir = git::git_common_dir(git_root)?;
+    let common_dir = git::canonical_common_dir(git_root)?;
+    let location = match preferences
+        .worktrees_directory
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        Some(directory) => paths::configured_worktrees_directory(git_root, directory),
+        None => {
+            let data_home = paths::data_home_from_env()?;
+            paths::default_worktrees_directory(git_root, &common_dir, &data_home)
+        }
+    };
     Ok(Context {
         git_root: git_root.to_path_buf(),
         source_checkout,
-        worktrees_directory: paths::worktrees_directory(
-            git_root,
-            &common_dir,
-            preferences.worktrees_directory.as_deref(),
-        ),
+        worktrees_directory: location.path,
+        project_common_dir: location.project_common_dir,
         directory_name_separator: separator,
         config,
         preferences,
