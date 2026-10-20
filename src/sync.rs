@@ -517,11 +517,6 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             Ok(item) => item,
             Err(error) => failed_item("default", error),
         };
-        if item.status == "failed"
-            || (targets.is_empty() && matches!(item.status.as_str(), "dirty" | "diverged"))
-        {
-            report.exit = 1;
-        }
         report.default = Some(item);
     }
     for (tree, base) in targets.iter().zip(&bases) {
@@ -555,17 +550,29 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
                 item
             }
         };
-        if item.code.as_deref() == Some("pushed") {
-            report.exit = 3;
-        } else if matches!(item.status.as_str(), "failed" | "conflict") && report.exit != 3 {
-            report.exit = 1;
-        }
         report.worktrees.push(item);
     }
-    // Fetch failure remains exit 1 even if another target refuses a rebase.
-    if !fetch_errors.is_empty() {
-        report.exit = 1;
-    }
+    let ordinary_failure = !fetch_errors.is_empty()
+        || report.default.iter().chain(&report.worktrees).any(|item| {
+            item.status == "conflict"
+                || (item.status == "failed" && item.code.as_deref() != Some("pushed"))
+        })
+        || (targets.is_empty()
+            && report
+                .default
+                .as_ref()
+                .is_some_and(|item| matches!(item.status.as_str(), "dirty" | "diverged")));
+    let refused = report
+        .worktrees
+        .iter()
+        .any(|item| item.code.as_deref() == Some("pushed"));
+    report.exit = if ordinary_failure {
+        1
+    } else if refused {
+        3
+    } else {
+        0
+    };
     Ok(report)
 }
 

@@ -2615,3 +2615,64 @@ fn unresolved_default_does_not_block_recorded_bases() {
     assert_eq!(doc["worktrees"][0]["status"], "failed");
     assert_eq!(doc["worktrees"][1]["status"], "up-to-date");
 }
+
+#[test]
+fn ordinary_failures_take_precedence_over_pushed_refusals() {
+    let r = Repo::new();
+    let conflict = r.create("conflict");
+    let published = r.create("published");
+    r.write_commit(&conflict, "file", "conflicting local edit\n");
+    r.write_commit(&published, "own", "published\n");
+    r.git(&published, &["push", "origin", "published"]);
+    r.write_commit(&r.upstream, "file", "conflicting remote edit\n");
+    r.git(&r.upstream, &["push", "origin", "main"]);
+    let before = r.snapshot(&conflict);
+    for names in [["conflict", "published"], ["published", "conflict"]] {
+        let doc = r.sync(
+            &r.main,
+            &[names[0], names[1], "--no-default", "--rebase"],
+            1,
+        );
+        let items = doc["worktrees"].as_array().unwrap();
+        assert!(
+            items.iter().any(|item| item["status"] == "conflict"),
+            "{doc}"
+        );
+        assert!(items.iter().any(|item| item["code"] == "pushed"), "{doc}");
+        assert_eq!(r.snapshot(&conflict), before);
+    }
+    let doc = r.sync(&r.main, &["published", "--no-default", "--rebase"], 3);
+    assert_eq!(doc["worktrees"][0]["code"], "pushed");
+
+    // A default failure is ordinary too, even alongside a sole refusal.
+    r.git(&r.main, &["update-ref", "refs/remotes/stale/main", "HEAD"]);
+    r.git(
+        &r.main,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/stale/main",
+        ],
+    );
+    let doc = r.sync(&r.main, &["published", "--rebase"], 1);
+    assert_eq!(doc["default"]["status"], "failed");
+    assert_eq!(doc["worktrees"][0]["code"], "pushed");
+
+    // A target inspection failure must also survive either ordering.
+    fs::write(conflict.join(".git"), "gitdir: /does/not/exist\n").unwrap();
+    for names in [["conflict", "published"], ["published", "conflict"]] {
+        let doc = r.sync(
+            &r.main,
+            &[names[0], names[1], "--no-default", "--rebase"],
+            1,
+        );
+        let items = doc["worktrees"].as_array().unwrap();
+        assert!(
+            items
+                .iter()
+                .any(|item| item["status"] == "failed" && item["code"].is_null()),
+            "{doc}"
+        );
+        assert!(items.iter().any(|item| item["code"] == "pushed"), "{doc}");
+    }
+}
