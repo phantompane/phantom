@@ -643,15 +643,15 @@ fn sync_tree(
         "rebase"
     };
     item.strategy = Some(strategy.into());
+    if ancestor(path, base, "HEAD")? {
+        return Ok(item);
+    }
     if request.rebase && pushed && !request.force {
         item.status(
             "failed",
             Some("Published commits require --force with --rebase".into()),
         );
         item.code = Some("pushed".into());
-        return Ok(item);
-    }
-    if ancestor(path, base, "HEAD")? {
         return Ok(item);
     }
     if ignored_would_be_overwritten(path, base, strategy == "rebase")? {

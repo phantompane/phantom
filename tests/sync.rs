@@ -195,6 +195,30 @@ fn default_ref_update_linked_checkout_diverged_and_dirty() {
 }
 
 #[test]
+fn pushed_branch_containing_base_is_up_to_date_without_force() {
+    let r = Repo::new();
+    let tree = r.create("topic");
+    r.write_commit(&tree, "own", "own\n");
+    r.git(&tree, &["push", "origin", "topic"]);
+    let before = r.snapshot(&tree);
+    let head = r.git(&tree, &["rev-parse", "HEAD"]);
+    for (args, strategy) in [
+        (vec!["topic", "--rebase"], "rebase"),
+        (vec!["topic"], "merge"),
+        (vec!["topic", "--merge"], "merge"),
+    ] {
+        let doc = r.sync(&r.main, &args, 0);
+        let item = &doc["worktrees"][0];
+        assert_eq!(item["status"], "up-to-date");
+        assert_eq!(item["strategy"], strategy);
+        assert_eq!(item["before"], head);
+        assert_eq!(item["after"], head);
+        assert_eq!(item["code"], Value::Null);
+        assert_eq!(r.snapshot(&tree), before);
+    }
+}
+
+#[test]
 fn pushed_auto_merge_and_rebase_refusal_force_preserve_upstream() {
     let r = Repo::new();
     let tree = r.create("topic");
