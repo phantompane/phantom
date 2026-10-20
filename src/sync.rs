@@ -168,7 +168,7 @@ fn dirty(path: &Path) -> Result<bool> {
 }
 
 // Checkout during rebase may overwrite ignored files. Preserve those contents too.
-fn ignored_would_be_overwritten(path: &Path, base: &str) -> Result<bool> {
+fn ignored_would_be_overwritten(path: &Path, base: &str, rebase: bool) -> Result<bool> {
     let ignored = git::output(
         &[
             "ls-files",
@@ -184,19 +184,53 @@ fn ignored_would_be_overwritten(path: &Path, base: &str) -> Result<bool> {
     if ignored.is_empty() {
         return Ok(false);
     }
-    // Merge/rebase can check out intermediate base paths, even when HEAD has
-    // the same final contents. Include every path changed since the fork point.
+    // Disable rename detection so both ends of renames and copies are included.
+    // -m also includes paths changed relative to each parent of merge commits.
     let fork = git::output(&["merge-base", "HEAD", base], Some(path), true)?;
     let changed = git::output(
-        &["diff", "--name-only", "-z", &fork, base, "--"],
+        &[
+            "log",
+            "--name-only",
+            "--format=",
+            "-z",
+            "--no-renames",
+            "-m",
+            &format!("{fork}..{base}"),
+            "--",
+        ],
         Some(path),
         false,
     )?;
-    let checkout = git::output(
-        &["diff", "--name-only", "-z", "HEAD", base, "--"],
-        Some(path),
-        false,
-    )?;
+    let checkout = if rebase {
+        git::output(
+            &[
+                "log",
+                "--name-only",
+                "--format=",
+                "-z",
+                "--no-renames",
+                "-m",
+                &format!("{fork}..HEAD"),
+                "--",
+            ],
+            Some(path),
+            false,
+        )?
+    } else {
+        git::output(
+            &[
+                "diff",
+                "--name-only",
+                "--no-renames",
+                "-z",
+                "HEAD",
+                base,
+                "--",
+            ],
+            Some(path),
+            false,
+        )?
+    };
     let targets: HashSet<&str> = changed
         .split('\0')
         .chain(checkout.split('\0'))
@@ -463,7 +497,7 @@ fn sync_default(context: &Context, base: &str) -> Result<Item> {
     }
     if let Some(tree) = checked {
         let path = Path::new(&tree.path);
-        if ignored_would_be_overwritten(path, base)? {
+        if ignored_would_be_overwritten(path, base, false)? {
             item.status("dirty", Some("Ignored files would be overwritten".into()));
             return Ok(item);
         }
@@ -610,7 +644,7 @@ fn sync_tree(tree: &worktree::WorktreeInfo, base: &str, request: &Request) -> Re
     if ancestor(path, base, "HEAD")? {
         return Ok(item);
     }
-    if ignored_would_be_overwritten(path, base)? {
+    if ignored_would_be_overwritten(path, base, strategy == "rebase")? {
         item.status("dirty", Some("Ignored files would be overwritten".into()));
         return Ok(item);
     }

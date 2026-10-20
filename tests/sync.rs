@@ -1027,3 +1027,66 @@ fn rebase_checkout_preserves_ignored_paths_deleted_by_local_commits() {
     assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "dirty");
     assert_eq!(fs::read_to_string(tree.join("file")).unwrap(), "precious\n");
 }
+
+#[test]
+fn ignored_paths_touched_by_intermediate_commits_are_preserved() {
+    for side in ["local", "base"] {
+        for shape in ["delete", "rename", "copy", "directory", "file"] {
+            for strategy in ["rebase", "merge"] {
+                if side == "local" && strategy == "merge" {
+                    continue;
+                }
+                let r = Repo::new();
+                let tree = r.create("topic");
+                let history = if side == "local" { &tree } else { &r.upstream };
+                let touched = if shape == "directory" {
+                    "cache/child"
+                } else {
+                    "cache"
+                };
+                if shape == "directory" {
+                    fs::create_dir(history.join("cache")).unwrap();
+                }
+                r.write_commit(history, touched, "temporary\n");
+                if shape == "rename" {
+                    r.git(history, &["mv", touched, "renamed"]);
+                } else if shape == "copy" {
+                    fs::copy(history.join(touched), history.join("copied")).unwrap();
+                    r.git(history, &["add", "copied"]);
+                    r.git(history, &["rm", touched]);
+                } else {
+                    r.git(history, &["rm", touched]);
+                }
+                r.git(history, &["commit", "-m", "remove temporary path"]);
+                // Keep a real own diff so landed detection does not skip integration.
+                r.write_commit(&tree, "own", "own\n");
+                r.advance();
+                let ignore = r.root.join("ignore");
+                fs::write(&ignore, "cache\n").unwrap();
+                r.git(
+                    &tree,
+                    &["config", "core.excludesFile", ignore.to_str().unwrap()],
+                );
+                let protected = if shape == "file" {
+                    fs::create_dir(tree.join("cache")).unwrap();
+                    "cache/private"
+                } else {
+                    "cache"
+                };
+                fs::write(tree.join(protected), "user data").unwrap();
+                let before = r.git(&tree, &["rev-parse", "HEAD"]);
+                let flag = format!("--{strategy}");
+                assert_eq!(
+                    r.sync(&tree, &[&flag], 0)["worktrees"][0]["status"],
+                    "dirty",
+                    "{side} {shape} {strategy}"
+                );
+                assert_eq!(
+                    fs::read_to_string(tree.join(protected)).unwrap(),
+                    "user data"
+                );
+                assert_eq!(r.git(&tree, &["rev-parse", "HEAD"]), before);
+            }
+        }
+    }
+}
