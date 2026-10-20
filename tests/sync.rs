@@ -2742,48 +2742,138 @@ fn operation_lock_token_is_not_exported_to_gh() {
 
 #[test]
 fn gc_protects_linked_default_with_a_remapped_tracking_namespace() {
-    let r = Repo::new();
-    r.git(
-        &r.main,
-        &[
-            "config",
-            "remote.origin.fetch",
+    for (refspec, destination) in [
+        (
             "+refs/heads/*:refs/remotes/cache/*",
-        ],
-    );
-    r.git(&r.main, &["fetch", "origin"]);
-    r.git(
-        &r.main,
-        &[
-            "symbolic-ref",
-            "refs/remotes/origin/HEAD",
             "refs/remotes/cache/main",
-        ],
-    );
-    r.git(&r.main, &["checkout", "-b", "other"]);
-    assert!(r.mabo(&r.main, &["attach", "main"]).status.success());
-    // main has moved since creation, so only the default-branch guard protects it.
-    r.advance();
-    let doc = r.sync(&r.main, &[], 0);
-    let tree = PathBuf::from(doc["default"]["path"].as_str().unwrap());
-    let before = r.snapshot(&tree);
-    let out = r.mabo(&r.main, &["gc", "--merged", "--apply", "--json"]);
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(tree.exists(), "default worktree removed: {doc}");
-    assert_eq!(r.snapshot(&tree), before);
-    assert!(
-        !doc["candidates"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|item| item["action"] == "removed"),
-        "{doc}"
-    );
+        ),
+        ("+refs/heads/*:refs/cache/*", "refs/cache/main"),
+        ("+refs/heads/main:refs/cache/main", "refs/cache/main"),
+        ("+refs/heads/m*in:refs/cache/m*in", "refs/cache/main"),
+    ] {
+        let r = Repo::new();
+        r.git(&r.main, &["config", "remote.origin.fetch", refspec]);
+        r.git(&r.main, &["fetch", "origin"]);
+        r.git(
+            &r.main,
+            &["symbolic-ref", "refs/remotes/origin/HEAD", destination],
+        );
+        let landed = r.create("landed");
+        r.write_commit(&landed, "landed", "landed change\n");
+        r.git(&r.main, &["merge", "--ff-only", "landed"]);
+        r.git(&r.main, &["push", "origin", "main"]);
+        r.git(&r.upstream, &["pull", "--ff-only"]);
+        r.git(&r.main, &["checkout", "-b", "other"]);
+        assert!(r.mabo(&r.main, &["attach", "main"]).status.success());
+        // main has moved since creation, so only the default-branch guard protects it.
+        r.advance();
+        let doc = r.sync(&r.main, &[], 0);
+        let tree = PathBuf::from(doc["default"]["path"].as_str().unwrap());
+        let before = r.snapshot(&tree);
+        let out = r.mabo(&r.main, &["gc", "--merged", "--apply", "--json"]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(tree.exists(), "default worktree removed: {doc}");
+        assert_eq!(r.snapshot(&tree), before);
+        assert!(
+            !doc["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["branch"] == "main" && item["action"] == "removed"),
+            "{doc}"
+        );
+        assert!(
+            doc["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["branch"] == "landed" && item["action"] == "removed"),
+            "landed branch was not selected: {doc}"
+        );
+        assert!(!landed.exists());
+    }
+}
+
+#[test]
+fn gc_local_branch_named_like_a_remapped_default_is_not_the_default() {
+    for ambiguous_refs in ["true", "false"] {
+        let r = Repo::new();
+        r.git(
+            &r.main,
+            &["config", "core.warnAmbiguousRefs", ambiguous_refs],
+        );
+        r.git(
+            &r.main,
+            &[
+                "config",
+                "remote.origin.fetch",
+                "+refs/heads/*:refs/remotes/cache/*",
+            ],
+        );
+        r.git(&r.main, &["fetch", "origin"]);
+        r.git(
+            &r.main,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/cache/main",
+            ],
+        );
+        let collision = r.create("cache/main");
+        r.write_commit(&collision, "landed", "landed change\n");
+        r.git(&r.main, &["merge", "--ff-only", "cache/main"]);
+        r.git(&r.main, &["push", "origin", "main"]);
+        r.git(&r.main, &["fetch", "origin"]);
+        r.git(&r.main, &["checkout", "-b", "other"]);
+        let out = r.mabo(&r.main, &["attach", "main", "--json"]);
+        assert!(out.status.success());
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let default_path = PathBuf::from(doc["worktree"]["path"].as_str().unwrap());
+        let before = r.snapshot(&default_path);
+        let out = r.mabo(&r.main, &["gc", "--merged", "--json"]);
+        assert!(out.status.success());
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(
+            doc["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["branch"] == "cache/main" && item["action"] == "wouldRemove"),
+            "local cache/main was mistaken for the default: {doc}"
+        );
+        assert!(
+            !doc["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["branch"] == "main" && item["action"] == "wouldRemove"),
+            "default main was selected: {doc}"
+        );
+        assert_eq!(r.snapshot(&default_path), before);
+        let out = r.mabo(&r.main, &["gc", "--merged", "--apply", "--json"]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(
+            doc["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["branch"] == "cache/main" && item["action"] == "removed"),
+            "{doc}"
+        );
+        assert!(!collision.exists());
+        assert!(default_path.exists(), "{doc}");
+        assert_eq!(r.snapshot(&default_path), before);
+    }
 }
 
 #[test]
@@ -3206,6 +3296,80 @@ fn gc_orphaned_survives_unresolvable_default_mapping() {
     let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(doc["candidates"][0]["name"], "gone");
     assert_eq!(doc["candidates"][0]["action"], "removed");
+}
+
+#[test]
+fn gc_unresolved_default_keeps_branch_worktrees_even_with_force() {
+    for missing_base in [false, true] {
+        let r = Repo::new();
+        let tree = r.create("possibly-default");
+        let gone = r.create("gone");
+        r.git(
+            &r.main,
+            &["worktree", "remove", "--force", gone.to_str().unwrap()],
+        );
+        if missing_base {
+            r.git(&r.main, &["branch", "-m", "develop"]);
+            r.git(&r.main, &["remote", "remove", "origin"]);
+        } else {
+            r.git(
+                &r.main,
+                &["update-ref", "refs/remotes/unmapped/main", "HEAD"],
+            );
+            r.git(
+                &r.main,
+                &[
+                    "symbolic-ref",
+                    "refs/remotes/origin/HEAD",
+                    "refs/remotes/unmapped/main",
+                ],
+            );
+        }
+        let store = r.main.join(".git/maboroshi/worktrees.json");
+        let mut doc: Value = serde_json::from_slice(&fs::read(&store).unwrap()).unwrap();
+        for record in doc["worktrees"].as_array_mut().unwrap() {
+            record["lastUsedAt"] = json!("2000-01-01T00:00:00.000Z");
+        }
+        fs::write(&store, serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
+        let before = r.snapshot(&tree);
+        let out = r.mabo(
+            &r.main,
+            &[
+                "gc",
+                "--older-than",
+                "1d",
+                "--orphaned",
+                "--force",
+                "--json",
+            ],
+        );
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr)
+                .contains("cannot resolve the default branch; keeping all branch worktrees"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let candidates = doc["candidates"].as_array().unwrap();
+        assert!(
+            candidates
+                .iter()
+                .any(|item| item["name"] == "possibly-default" && item["action"] == "skipped"),
+            "{doc}"
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|item| item["name"] == "gone" && item["action"] == "removed"),
+            "{doc}"
+        );
+        assert_eq!(r.snapshot(&tree), before);
+    }
 }
 
 #[test]
