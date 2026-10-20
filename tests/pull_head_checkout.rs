@@ -328,6 +328,97 @@ fn unfetched_branch_gets_an_upstream() {
 }
 
 #[test]
+fn narrow_fetch_refspec_checkout_sets_tracking_and_creates_worktree() {
+    let tree = TempTree::new();
+    let (clone, commit) = live_branch(&tree.path, "live-feature");
+    git(
+        &clone,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/main:refs/remotes/origin/main",
+        ],
+    );
+    git(
+        &clone,
+        &["update-ref", "-d", "refs/remotes/origin/live-feature"],
+    );
+    let bin = tree.path.join("bin");
+    install_gh(&bin, &same_repo_pull("754", "live-feature"));
+    let output = mabo(
+        &clone,
+        &bin,
+        &["gh", "checkout", "754", "--no-hooks", "--json"],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    assert_eq!(document["github"]["source"], "branch");
+    let worktree = Path::new(document["worktree"]["path"].as_str().expect("path"));
+    assert!(worktree.is_dir());
+    assert_eq!(git_text(worktree, &["rev-parse", "HEAD"]), commit);
+    assert_eq!(
+        git_text(worktree, &["branch", "--show-current"]),
+        "live-feature"
+    );
+    assert_eq!(
+        branch_config(&clone, "live-feature", "remote").as_deref(),
+        Some("origin")
+    );
+    assert_eq!(
+        branch_config(&clone, "live-feature", "merge").as_deref(),
+        Some("refs/heads/live-feature")
+    );
+}
+
+#[test]
+fn failed_worktree_attachment_only_removes_a_new_branch() {
+    for preexisting in [false, true] {
+        let tree = TempTree::new();
+        let (clone, commit) = live_branch(&tree.path, "live-feature");
+        if preexisting {
+            git(&clone, &["branch", "live-feature", &commit]);
+        }
+        let bin = tree.path.join("bin");
+        install_gh(&bin, &same_repo_pull("754", "live-feature"));
+        let preference = mabo(
+            &clone,
+            &bin,
+            &["preferences", "set", "worktrees-directory", "../blocked"],
+        );
+        assert!(
+            preference.status.success(),
+            "{}",
+            String::from_utf8_lossy(&preference.stderr)
+        );
+        let blocked = tree.path.join("blocked/live-feature");
+        fs::create_dir_all(&blocked).expect("block worktree path");
+        let output = mabo(&clone, &bin, &["gh", "checkout", "754", "--no-hooks"]);
+        assert!(!output.status.success());
+        assert_eq!(
+            git_output(&clone, &["show-ref", "--verify", "refs/heads/live-feature"])
+                .status
+                .success(),
+            preexisting
+        );
+        if !preexisting {
+            assert!(branch_config(&clone, "live-feature", "remote").is_none());
+            assert!(branch_config(&clone, "live-feature", "merge").is_none());
+        }
+        fs::remove_dir(&blocked).expect("unblock worktree path");
+        let retry = mabo(&clone, &bin, &["gh", "checkout", "754", "--no-hooks"]);
+        assert!(
+            retry.status.success(),
+            "{}",
+            String::from_utf8_lossy(&retry.stderr)
+        );
+        assert!(blocked.is_dir());
+    }
+}
+
+#[test]
 fn already_fetched_branch_keeps_its_remote_tip() {
     let tree = TempTree::new();
     let (clone, _) = live_branch(&tree.path, "live-feature");

@@ -199,7 +199,7 @@ fn fetch_head_branch(git_root: &Path, head_ref: &str, local_branch: &str) -> Res
     git::fetch(git_root, "origin", &tracking)?;
     let upstream = format!("origin/{head_ref}");
     git::ensure_branch(git_root, local_branch, &upstream)?;
-    git::set_upstream(git_root, local_branch, &upstream)?;
+    git::set_branch_tracking(git_root, local_branch, "origin", head_ref)?;
     Ok(upstream)
 }
 
@@ -260,9 +260,28 @@ fn checkout_pull_request(
         hooks,
     )?;
     metadata::prepare(git_root)?;
-    let fetched = fetch_pull_head(git_root, pull, &worktree_name)?;
-    let attached =
-        worktree::attach_worktree(&context, &worktree_name, &[], &commands, logger, &metadata)?;
+    let branch_existed = git::branch_exists(git_root, &worktree_name)?;
+    let result = (|| {
+        let fetched = fetch_pull_head(git_root, pull, &worktree_name)?;
+        let attached =
+            worktree::attach_worktree(&context, &worktree_name, &[], &commands, logger, &metadata)?;
+        Ok((fetched, attached))
+    })();
+    let (fetched, attached) = match result {
+        Ok(checkout) => checkout,
+        Err(error) => {
+            // Git refuses to delete a branch attached to a worktree. Only remove
+            // branches created by this attempt, never a pre-existing branch.
+            if !branch_existed && git::branch_exists(git_root, &worktree_name)? {
+                if let Err(cleanup) = git::delete_branch(git_root, &worktree_name) {
+                    return Err(Error::msg(format!(
+                        "{error}; branch cleanup failed: {cleanup}"
+                    )));
+                }
+            }
+            return Err(error);
+        }
+    };
     let (message, base, source) = match fetched {
         PullFetch::Branch { upstream } => (
             format!(

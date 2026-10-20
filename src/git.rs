@@ -567,9 +567,23 @@ pub fn ensure_branch(git_root: &Path, name: &str, start: &str) -> Result<()> {
         .map_err(|error| Error::msg(format!("Failed to update branch {name}: {error}")))
 }
 
-pub fn set_upstream(git_root: &Path, branch: &str, upstream: &str) -> Result<()> {
+/// Configure tracking even when the remote's fetch refspec excludes this branch.
+pub fn set_branch_tracking(
+    git_root: &Path,
+    branch: &str,
+    remote: &str,
+    head_ref: &str,
+) -> Result<()> {
     run(
-        &["branch", "--set-upstream-to", upstream, branch],
+        &["config", &format!("branch.{branch}.remote"), remote],
+        Some(git_root),
+    )?;
+    run(
+        &[
+            "config",
+            &format!("branch.{branch}.merge"),
+            &format!("refs/heads/{head_ref}"),
+        ],
         Some(git_root),
     )
 }
