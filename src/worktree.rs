@@ -694,9 +694,9 @@ pub fn attach_worktree(
     logger: &Logger,
     metadata: &MetadataInput,
 ) -> Result<AttachedWorktree> {
-    validate_worktree_name(name)?;
-    metadata::prepare(&context.git_root)?;
     let lookup = crate::tracking::lookup_attach(&context.git_root, name)?;
+    validate_worktree_name(&lookup.directory)?;
+    metadata::prepare(&context.git_root)?;
     let path = paths::worktree_path(
         &context.worktrees_directory,
         &lookup.directory,

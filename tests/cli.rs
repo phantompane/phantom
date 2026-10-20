@@ -8983,6 +8983,29 @@ fn attach_qualified_remote_drops_the_remote_prefix() {
 }
 
 #[test]
+fn attach_qualified_remote_allows_special_characters_in_the_remote_name() {
+    let repo = Repo::new();
+    repo.git(&["config", "branch.autoSetupMerge", "false"]);
+    publish_tracking_branch(&repo, "origin", "feature");
+    publish_tracking_branch(&repo, "user@host", "feature");
+
+    let ambiguous = repo.mabo(&["attach", "feature"]);
+    assert_eq!(ambiguous.status.code(), Some(3));
+    assert!(text(&ambiguous.stderr).contains("origin, user@host"));
+
+    let attached = repo.mabo(&["attach", "user@host/feature"]);
+    assert!(attached.status.success(), "{}", text(&attached.stderr));
+    assert!(text(&attached.stdout).contains("Attached worktree: feature"));
+    assert_eq!(upstream_name(&repo, "feature"), "user@host/feature");
+    assert!(managed(&repo, "feature").join("README.md").is_file());
+    assert!(local_branch(&repo, "user@host/feature").is_empty());
+
+    let invalid = repo.mabo(&["attach", "invalid@name"]);
+    assert_eq!(invalid.status.code(), Some(3), "{}", text(&invalid.stderr));
+    assert!(text(&invalid.stderr).contains("Worktree name can only contain"));
+}
+
+#[test]
 fn attach_lists_every_remote_that_has_the_name() {
     let repo = Repo::new();
     repo.git(&["config", "branch.autoSetupMerge", "false"]);
