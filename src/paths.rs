@@ -100,6 +100,33 @@ pub fn project_directory_name(checkout_name: &str, common_dir_key: &Path) -> Str
     )
 }
 
+/// True when `name` is the `<checkout>-<hash>` directory under `ptm/worktrees`.
+pub fn is_project_directory(name: &std::ffi::OsStr, common_dir: &Path) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    let digest = common_dir_digest(common_dir);
+    let Some((prefix, suffix)) = name.rsplit_once('-') else {
+        return false;
+    };
+    !prefix.is_empty() && suffix == digest
+}
+
+/// Absolute path for `ptm list`. Paths under `HOME` use a `~` prefix.
+pub fn list_path(path: &Path) -> String {
+    let absolute = canonical_location(path);
+    if let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) {
+        let home = canonical_location(Path::new(&home));
+        if absolute == home {
+            return "~".to_string();
+        }
+        if is_strictly_inside(&absolute, &home) {
+            return format!("~/{}", relative(&home, &absolute));
+        }
+    }
+    absolute.to_string_lossy().into_owned()
+}
+
 /// `$XDG_DATA_HOME` when it is absolute. An unset, empty, or relative value
 /// falls back to `~/.local/share`.
 pub fn data_home(home: Option<&Path>, xdg_data_home: Option<&Path>) -> Result<PathBuf> {

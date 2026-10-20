@@ -262,7 +262,10 @@ fn checkout_issue(
         worktree::create_worktree(&context, &name, base, &[], &commands, logger, &metadata)?;
     let info = worktree::worktree_at_path(&context, &created.path)?;
     Ok(Checkout {
-        message: format!("Created worktree '{name}' at {}", created.path.display()),
+        message: format!(
+            "Created worktree '{name}' at {}",
+            crate::paths::canonical_location(&created.path).display()
+        ),
         worktree: name,
         path: created.path,
         already_exists: false,

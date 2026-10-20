@@ -378,17 +378,10 @@ fn delete(args: &[String]) -> Result<i32> {
         keep_branch,
         allow_current: delete_current,
     };
-    let mut plans = Vec::new();
-    let mut refusals = Vec::new();
-    for name in &names {
-        match worktree::preflight_delete(&context, name, &options, None) {
-            Ok(plan) => plans.push(plan),
-            Err(failure) => refusals.push(failure),
-        }
-    }
-    if !refusals.is_empty() {
-        return report_delete_refusals(refusals, json);
-    }
+    let plans = match worktree::preflight_deletes(&context, &names, &options) {
+        Ok(plans) => plans,
+        Err(refusals) => return report_delete_refusals(refusals, json),
+    };
     let mut deleted = Vec::new();
     for plan in plans {
         match worktree::commit_delete(
