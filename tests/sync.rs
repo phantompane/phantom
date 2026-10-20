@@ -152,6 +152,102 @@ impl Drop for Repo {
 }
 
 #[test]
+fn default_upstream_precedes_other_remote_heads_without_origin_head() {
+    for existing_trunk in [false, true] {
+        let r = Repo::new();
+        r.git(&r.main, &["remote", "set-head", "origin", "--delete"]);
+        r.git(
+            &r.main,
+            &["branch", "--set-upstream-to=origin/main", "main"],
+        );
+        let second = r.root.join("second.git");
+        r.git(
+            &r.main,
+            &[
+                "clone",
+                "--bare",
+                r.root.join("remote.git").to_str().unwrap(),
+                second.to_str().unwrap(),
+            ],
+        );
+        r.git(&second, &["branch", "trunk", "main"]);
+        r.git(&second, &["symbolic-ref", "HEAD", "refs/heads/trunk"]);
+        r.git(
+            &r.main,
+            &["remote", "add", "upstream", second.to_str().unwrap()],
+        );
+        r.git(&r.main, &["fetch", "upstream"]);
+        r.git(&r.main, &["remote", "set-head", "upstream", "trunk"]);
+        let second_before = r.git(&r.main, &["for-each-ref", "refs/remotes/upstream"]);
+        if existing_trunk {
+            r.git(&r.main, &["branch", "trunk", "main"]);
+        }
+        let trunk_before = r.git(&r.main, &["for-each-ref", "refs/heads/trunk"]);
+        // Make the second remote stale too: sync must fetch only origin.
+        r.write_commit(&r.upstream, "second-only", "second remote\n");
+        r.git(
+            &r.upstream,
+            &["push", second.to_str().unwrap(), "main:trunk"],
+        );
+        r.git(&r.upstream, &["reset", "--hard", "origin/main"]);
+        r.advance();
+        let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+        let doc = r.sync(&r.main, &[], 0);
+        assert_eq!(doc["default"]["status"], "updated", "{doc}");
+        assert_eq!(doc["default"]["branch"], "refs/heads/main");
+        assert_eq!(doc["default"]["base"], "refs/remotes/origin/main");
+        assert_eq!(r.git(&r.main, &["rev-parse", "main"]), expected);
+        assert_eq!(r.git(&r.main, &["rev-parse", "origin/main"]), expected);
+        assert_eq!(
+            r.git(&r.main, &["for-each-ref", "refs/heads/trunk"]),
+            trunk_before
+        );
+        assert_eq!(
+            r.git(&r.main, &["for-each-ref", "refs/remotes/upstream"]),
+            second_before
+        );
+        assert_eq!(r.git(&r.main, &["rev-parse", "main@{upstream}"]), expected);
+        assert_eq!(r.sync(&r.main, &[], 0)["default"]["status"], "up-to-date");
+    }
+}
+
+#[test]
+fn other_remote_head_remains_a_fallback_for_unresolved_default_upstream() {
+    let r = Repo::new();
+    let before = r.git(&r.main, &["rev-parse", "main"]);
+    r.git(&r.main, &["remote", "set-head", "origin", "--delete"]);
+    r.git(&r.main, &["config", "branch.main.remote", "origin"]);
+    r.git(
+        &r.main,
+        &["config", "branch.main.merge", "refs/heads/missing"],
+    );
+    r.git(&r.upstream, &["push", "origin", "main:trunk"]);
+    r.git(
+        &r.main,
+        &[
+            "remote",
+            "add",
+            "upstream",
+            r.root.join("remote.git").to_str().unwrap(),
+        ],
+    );
+    r.git(&r.main, &["fetch", "upstream"]);
+    r.git(&r.main, &["remote", "set-head", "upstream", "trunk"]);
+    r.advance();
+    r.git(&r.upstream, &["push", "origin", "main:trunk"]);
+    let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+    let doc = r.sync(&r.main, &[], 0);
+    assert_eq!(doc["default"]["status"], "updated", "{doc}");
+    assert_eq!(doc["default"]["base"], "refs/remotes/upstream/trunk");
+    assert_eq!(r.git(&r.main, &["rev-parse", "trunk"]), expected);
+    assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
+    assert_eq!(
+        r.git(&r.main, &["config", "branch.main.merge"]),
+        "refs/heads/missing"
+    );
+}
+
+#[test]
 fn default_upstream_ignores_child_branch_without_remote_head() {
     for has_upstream in [false, true] {
         let r = Repo::new();

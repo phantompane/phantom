@@ -114,6 +114,11 @@ pub fn fallback_base(root: &Path) -> Result<String> {
     {
         return normalize_base(root, default);
     }
+    if let Some(default) = detected.as_deref() {
+        if let Some(upstream) = default_upstream(root, default)? {
+            return Ok(upstream);
+        }
+    }
     let specs = fetch_refspecs(root)?;
     let remotes = checked_output(&["remote"], root, true)?;
     for remote in remotes.lines() {
@@ -147,9 +152,6 @@ pub fn fallback_base(root: &Path) -> Result<String> {
             return Err(Error::msg("Cannot determine the default branch"));
         }
     };
-    if let Some(upstream) = default_upstream(root, &default)? {
-        return Ok(upstream);
-    }
     let configured = git::raw_git(
         root,
         &["config", "--get", &format!("branch.{default}.remote")],
