@@ -53,6 +53,7 @@ impl Repo {
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env_remove("PTM_TRUST_ALL")
+            .env_remove("CI")
             .env_remove("GHQ_ROOT")
             .env_remove("PTM_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
@@ -362,6 +363,89 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
     assert!(!repo.repo.join("pre-delete.txt").exists());
 }
 
+fn an_agent_environment_does_not_prompt_on_a_terminal(name: &str, value: &str, json: bool) {
+    let repo = Repo::new();
+    hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
+    let args: &[&str] = if json {
+        &["create", "topic", "--json"]
+    } else {
+        &["create", "topic"]
+    };
+    let output = pty_env(&repo, args, Some("y\n"), &[(name, value)]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout {}\nstderr {}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    let shown = text(&output.stdout);
+    assert!(
+        !shown.contains("Trust this project and run its hooks?"),
+        "{shown}"
+    );
+    if json {
+        let document: serde_json::Value = serde_json::from_str(&shown).expect(&shown);
+        assert_eq!(document["error"]["code"], "untrusted");
+        assert_eq!(document["error"]["exitCode"], 1);
+    } else {
+        assert!(shown.contains("Untrusted project"), "{shown}");
+        assert!(shown.contains("--no-hooks"), "{shown}");
+    }
+    assert!(!worktree(&repo, "topic").exists());
+    assert!(!trust_file(&repo).exists());
+}
+
+#[test]
+fn ci_on_a_terminal_does_not_prompt_or_create() {
+    an_agent_environment_does_not_prompt_on_a_terminal("CI", "true", true);
+}
+
+#[test]
+fn ci_still_honors_no_hooks_and_trust_all() {
+    let repo = Repo::new();
+    hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
+    let skipped = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &["create", "skipped", "--no-hooks"],
+        )
+        .env("CI", "1")
+        .output()
+        .expect("ptm");
+    assert!(skipped.status.success(), "{}", text(&skipped.stderr));
+    assert!(worktree(&repo, "skipped").is_dir());
+    assert!(!worktree(&repo, "skipped").join("hook-ran.txt").exists());
+
+    let trusted = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "all"])
+        .env("CI", "1")
+        .env("PTM_TRUST_ALL", "1")
+        .output()
+        .expect("ptm");
+    assert!(trusted.status.success(), "{}", text(&trusted.stderr));
+    assert!(worktree(&repo, "all").join("hook-ran.txt").is_file());
+    assert!(!trust_file(&repo).exists());
+}
+
+#[test]
+fn ci_does_not_prompt_for_ptm_trust() {
+    let repo = Repo::new();
+    let output = pty_env(&repo, &["trust"], Some("y\n"), &[("CI", "1")]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    assert!(
+        !text(&output.stdout).contains("Trust this project?"),
+        "{}",
+        text(&output.stdout)
+    );
+    assert!(!trust_file(&repo).exists());
+}
+
+#[test]
+fn agent_id_on_a_terminal_does_not_prompt_or_create() {
+    an_agent_environment_does_not_prompt_on_a_terminal("PTM_AGENT_ID", "grok", false);
+}
+
 #[test]
 fn a_terminal_yes_trusts_and_runs_the_hook() {
     let repo = Repo::new();
@@ -462,6 +546,15 @@ fn a_broken_trust_file_still_allows_skip_paths() {
 }
 
 fn pty(repo: &Repo, args: &[&str], answer: Option<&str>) -> std::process::Output {
+    pty_env(repo, args, answer, &[])
+}
+
+fn pty_env(
+    repo: &Repo,
+    args: &[&str],
+    answer: Option<&str>,
+    env: &[(&str, &str)],
+) -> std::process::Output {
     let script = r#"
 import os, pty, select, subprocess, sys, time
 argv = sys.argv[1:]
@@ -508,6 +601,9 @@ raise SystemExit(code if code is not None else 1)
         command.env("PTM_TEST_ANSWER", answer);
     } else {
         command.env_remove("PTM_TEST_ANSWER");
+    }
+    for (key, value) in env {
+        command.env(key, value);
     }
     command.output().expect("python pty")
 }

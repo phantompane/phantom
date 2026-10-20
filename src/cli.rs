@@ -1,4 +1,3 @@
-use std::io::IsTerminal;
 use std::path::Path;
 
 use crate::args::{self, Opt, Parsed};
@@ -1299,10 +1298,10 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
         Err(error) => return fail_with(&error, error.exit_code(), json),
     };
     if !parsed.flag("yes") {
-        if json || !std::io::stdin().is_terminal() {
+        if json || !trust::prompts() {
             return fail_with(
                 &Error::msg(
-                    "No terminal is available to confirm trust. Re-run with --yes to trust this project.",
+                    "ptm will not ask for trust in this environment. Re-run with --yes to trust this project.",
                 ),
                 GENERAL,
                 json,
