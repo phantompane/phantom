@@ -58,6 +58,13 @@ impl Repo {
             .env_remove("GIT_CONFIG_SYSTEM")
             .env_remove("GIT_CONFIG_COUNT")
             .env_remove("GIT_CONFIG_PARAMETERS");
+        if std::path::Path::new(program)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some("ptm")
+        {
+            command.env("PTM_TRUST_ALL", "1");
+        }
         // Parallel `git init` hardlinks the shared template and can fail with
         // "File exists" on the hook samples. Give each repo an empty template.
         if program.ends_with("git") && args.first() == Some(&"init") {
@@ -5383,6 +5390,13 @@ impl SeparateCheckout {
             .env_remove("GIT_CONFIG_SYSTEM")
             .env_remove("GIT_CONFIG_COUNT")
             .env_remove("GIT_CONFIG_PARAMETERS");
+        if std::path::Path::new(program)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some("ptm")
+        {
+            command.env("PTM_TRUST_ALL", "1");
+        }
         if program.ends_with("git") && args.first() == Some(&"init") {
             let template = self.root.join("git-template");
             fs::create_dir_all(&template).expect("git template");

@@ -1,0 +1,513 @@
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
+
+struct Repo {
+    root: PathBuf,
+    repo: PathBuf,
+    home: PathBuf,
+}
+
+impl Repo {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "ptm-trust-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let repo = root.join("repo");
+        let home = root.join("home");
+        fs::create_dir_all(home.join(".config/git")).expect("home");
+        fs::create_dir_all(&repo).expect("repo");
+        fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+        let repo_ctx = Repo { root, repo, home };
+        repo_ctx.git(&["init", "-b", "main"]);
+        repo_ctx.git(&["config", "user.name", "Phantom Rust"]);
+        repo_ctx.git(&["config", "user.email", "phantom-rust@example.com"]);
+        fs::write(repo_ctx.repo.join("README.md"), "# phantom\n").expect("readme");
+        repo_ctx.git(&["add", "README.md"]);
+        repo_ctx.git(&["commit", "-m", "initial commit"]);
+        repo_ctx
+    }
+
+    fn git(&self, args: &[&str]) {
+        let output = self.command("git", args).output().expect("git");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            text(&output.stderr)
+        );
+    }
+
+    fn command(&self, program: &str, args: &[&str]) -> Command {
+        let mut command = Command::new(program);
+        command
+            .args(args)
+            .current_dir(&self.repo)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &self.home)
+            .env("XDG_CONFIG_HOME", self.home.join(".config"))
+            .env("XDG_STATE_HOME", self.root.join("state"))
+            .env_remove("PTM_TRUST_ALL")
+            .env_remove("GHQ_ROOT")
+            .env_remove("PTM_AGENT_ID")
+            .env_remove("GIT_CONFIG_GLOBAL")
+            .env_remove("GIT_CONFIG_SYSTEM");
+        if program.ends_with("git") && args.first() == Some(&"init") {
+            let template = self.root.join("git-template");
+            fs::create_dir_all(&template).expect("git template");
+            command.env("GIT_TEMPLATE_DIR", &template);
+        }
+        command
+    }
+
+    fn ptm(&self, args: &[&str]) -> std::process::Output {
+        self.command(env!("CARGO_BIN_EXE_ptm"), args)
+            .output()
+            .expect("ptm")
+    }
+}
+
+impl Drop for Repo {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).trim_end().to_string()
+}
+
+fn hooks(repo: &Repo, post: &str, pre: &str) {
+    fs::write(
+        repo.repo.join(".ptm.toml"),
+        format!("[hooks]\npost-create = [{post}]\npre-delete = [{pre}]\n"),
+    )
+    .expect("hooks");
+}
+
+fn worktree(repo: &Repo, name: &str) -> PathBuf {
+    repo.repo.join(".git/ptm/worktrees").join(name)
+}
+
+fn trust_file(repo: &Repo) -> PathBuf {
+    repo.root.join("state/ptm/trust.toml")
+}
+
+fn common_dir(repo: &Repo) -> String {
+    let output = repo
+        .command("git", &["rev-parse", "--git-common-dir"])
+        .output()
+        .expect("common dir");
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let path = repo.repo.join(text(&output.stdout).trim());
+    fs::canonicalize(&path)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string()
+}
+
+#[test]
+fn included_files_copy_without_trust() {
+    let repo = Repo::new();
+    fs::write(repo.repo.join(".gitignore"), "*.env\n").expect("gitignore");
+    fs::write(repo.repo.join(".worktreeinclude"), "*.env\n").expect("include");
+    fs::write(repo.repo.join("secret.env"), "secret\n").expect("secret");
+    repo.git(&["add", ".gitignore", ".worktreeinclude"]);
+    repo.git(&["commit", "-m", "include"]);
+    let created = repo.ptm(&["create", "copied"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert_eq!(
+        fs::read_to_string(worktree(&repo, "copied").join("secret.env")).expect("copied"),
+        "secret\n"
+    );
+    assert!(!trust_file(&repo).exists());
+}
+
+#[test]
+fn a_repository_with_no_hooks_never_prompts() {
+    let repo = Repo::new();
+    let created = repo.ptm(&["create", "plain"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert!(
+        !text(&created.stderr).contains("Trust this project"),
+        "{}",
+        text(&created.stderr)
+    );
+    assert!(worktree(&repo, "plain").is_dir());
+    assert!(!trust_file(&repo).exists());
+}
+
+#[test]
+fn non_tty_refusal_creates_nothing() {
+    let repo = Repo::new();
+    hooks(&repo, "\"touch hook-ran.txt\"", "\"touch pre-delete.txt\"");
+    let created = repo.ptm(&["create", "topic"]);
+    assert_eq!(created.status.code(), Some(1));
+    let stderr = text(&created.stderr);
+    assert!(stderr.contains("ptm trust"), "{stderr}");
+    assert!(stderr.contains("--no-hooks"), "{stderr}");
+    assert!(stderr.contains("touch hook-ran.txt"), "{stderr}");
+    assert!(
+        !stderr.contains("Trust this project and run its hooks?"),
+        "{stderr}"
+    );
+    assert!(
+        text(&created.stdout).is_empty(),
+        "{}",
+        text(&created.stdout)
+    );
+    assert!(!worktree(&repo, "topic").exists());
+    assert!(!trust_file(&repo).exists());
+    let listed = repo
+        .command("git", &["worktree", "list", "--porcelain"])
+        .output()
+        .expect("list");
+    assert!(
+        !text(&listed.stdout).contains("worktrees/topic"),
+        "{}",
+        text(&listed.stdout)
+    );
+}
+
+#[test]
+fn json_refusal_keeps_stdout_to_one_document() {
+    let repo = Repo::new();
+    hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
+    let created = repo.ptm(&["create", "topic", "--json"]);
+    assert_eq!(created.status.code(), Some(1));
+    assert!(
+        text(&created.stderr).is_empty(),
+        "{}",
+        text(&created.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&created.stdout).expect("json");
+    assert_eq!(document["version"], 1);
+    assert_eq!(document["error"]["code"], "untrusted");
+    assert_eq!(document["error"]["exitCode"], 1);
+    let message = document["error"]["message"].as_str().expect("message");
+    assert!(message.contains("ptm trust"), "{message}");
+    assert!(message.contains("--no-hooks"), "{message}");
+    assert!(!worktree(&repo, "topic").exists());
+}
+
+#[test]
+fn no_hooks_creates_the_worktree_and_does_not_trust_it() {
+    let repo = Repo::new();
+    hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
+    let created = repo.ptm(&["create", "topic", "--no-hooks"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert!(worktree(&repo, "topic").is_dir());
+    assert!(!worktree(&repo, "topic").join("hook-ran.txt").exists());
+    assert!(!trust_file(&repo).exists());
+}
+
+#[test]
+fn trust_untrust_and_list_round_trip() {
+    let repo = Repo::new();
+    hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
+    let refused = repo.ptm(&["trust"]);
+    assert_eq!(refused.status.code(), Some(1), "{}", text(&refused.stderr));
+    assert!(!trust_file(&repo).exists());
+
+    let trusted = repo.ptm(&["trust", "--yes"]);
+    assert!(trusted.status.success(), "{}", text(&trusted.stderr));
+    let key = common_dir(&repo);
+    assert!(
+        text(&trusted.stdout).contains(&key),
+        "{}",
+        text(&trusted.stdout)
+    );
+    let stored = fs::read_to_string(trust_file(&repo)).expect("trust file");
+    assert!(stored.contains(&key), "{stored}");
+    assert!(stored.contains("trustedAt"), "{stored}");
+
+    let listed = repo.ptm(&["trust", "--list"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    assert!(
+        text(&listed.stdout).contains(&key),
+        "{}",
+        text(&listed.stdout)
+    );
+
+    let json = repo.ptm(&["trust", "--list", "--json"]);
+    assert!(json.status.success(), "{}", text(&json.stderr));
+    let document: serde_json::Value = serde_json::from_slice(&json.stdout).expect("json");
+    assert_eq!(document["projects"][0]["path"], key);
+
+    let created = repo.ptm(&["create", "topic"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert!(worktree(&repo, "topic").join("hook-ran.txt").is_file());
+
+    hooks(&repo, "\"touch changed-hook.txt\"", "\"true\"");
+    let again = repo.ptm(&["create", "other"]);
+    assert!(again.status.success(), "{}", text(&again.stderr));
+    assert!(
+        !text(&again.stderr).contains("Trust this project and run its hooks?"),
+        "{}",
+        text(&again.stderr)
+    );
+    assert!(worktree(&repo, "other").join("changed-hook.txt").is_file());
+
+    let removed = repo.ptm(&["untrust"]);
+    assert!(removed.status.success(), "{}", text(&removed.stderr));
+    assert!(
+        text(&removed.stdout).contains("Removed trust"),
+        "{}",
+        text(&removed.stdout)
+    );
+    let empty = repo.ptm(&["trust", "--list"]);
+    assert_eq!(text(&empty.stdout), "No trusted projects");
+    let missing = repo.ptm(&["untrust"]);
+    assert!(missing.status.success(), "{}", text(&missing.stderr));
+    assert!(
+        text(&missing.stdout).contains("Not trusted"),
+        "{}",
+        text(&missing.stdout)
+    );
+
+    let blocked = repo.ptm(&["create", "third"]);
+    assert_eq!(blocked.status.code(), Some(1));
+    assert!(!worktree(&repo, "third").exists());
+}
+
+#[test]
+fn trust_all_runs_hooks_without_writing_trust() {
+    let repo = Repo::new();
+    hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
+    let created = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "topic"])
+        .env("PTM_TRUST_ALL", "1")
+        .output()
+        .expect("ptm");
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert!(worktree(&repo, "topic").join("hook-ran.txt").is_file());
+    assert!(!trust_file(&repo).exists());
+}
+
+#[test]
+fn delete_without_a_terminal_keeps_the_worktree() {
+    let repo = Repo::new();
+    assert!(repo.ptm(&["create", "topic"]).status.success());
+    hooks(&repo, "\"true\"", "\"touch pre-delete.txt\"");
+    let deleted = repo.ptm(&["delete", "topic"]);
+    assert_eq!(deleted.status.code(), Some(1));
+    assert!(
+        text(&deleted.stderr).contains("--no-hooks"),
+        "{}",
+        text(&deleted.stderr)
+    );
+    assert!(worktree(&repo, "topic").is_dir());
+    assert!(!repo.repo.join("pre-delete.txt").exists());
+    let skipped = repo.ptm(&["delete", "topic", "--no-hooks"]);
+    assert!(skipped.status.success(), "{}", text(&skipped.stderr));
+    assert!(!worktree(&repo, "topic").exists());
+    assert!(!repo.repo.join("pre-delete.txt").exists());
+}
+
+#[test]
+fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
+    let repo = Repo::new();
+    assert!(repo.ptm(&["create", "feature"]).status.success());
+    let dir = worktree(&repo, "feature");
+    fs::write(dir.join("feature.txt"), "feature\n").expect("note");
+    for args in [vec!["add", "feature.txt"], vec!["commit", "-m", "feature"]] {
+        let output = repo
+            .command("git", &args)
+            .current_dir(&dir)
+            .output()
+            .expect("commit");
+        assert!(output.status.success(), "{}", text(&output.stderr));
+    }
+    repo.git(&["merge", "--ff-only", "feature"]);
+    hooks(&repo, "\"true\"", "\"touch pre-delete.txt\"");
+
+    let plan = repo.ptm(&["gc", "--json"]);
+    assert!(plan.status.success(), "{}", text(&plan.stderr));
+    let document: serde_json::Value = serde_json::from_slice(&plan.stdout).expect("json");
+    assert_eq!(document["candidates"][0]["action"], "skipped");
+    assert_eq!(document["candidates"][0]["detail"], "untrusted hooks");
+    assert!(
+        !text(&plan.stdout).contains("Trust this project and run its hooks?"),
+        "{}",
+        text(&plan.stdout)
+    );
+    assert!(
+        !text(&plan.stderr).contains("Trust this project and run its hooks?"),
+        "{}",
+        text(&plan.stderr)
+    );
+
+    let applied = repo.ptm(&["gc", "--apply", "--json"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let applied_doc: serde_json::Value = serde_json::from_slice(&applied.stdout).expect("json");
+    assert_eq!(applied_doc["candidates"][0]["action"], "skipped");
+    assert_eq!(applied_doc["candidates"][0]["detail"], "untrusted hooks");
+    assert!(dir.is_dir());
+    assert!(!repo.repo.join("pre-delete.txt").exists());
+    assert!(!dir.join("pre-delete.txt").exists());
+
+    let removed = repo.ptm(&["gc", "--apply", "--no-hooks"]);
+    assert!(removed.status.success(), "{}", text(&removed.stderr));
+    assert!(
+        text(&removed.stdout).contains("removed feature"),
+        "{}",
+        text(&removed.stdout)
+    );
+    assert!(!dir.exists());
+    assert!(!repo.repo.join("pre-delete.txt").exists());
+}
+
+#[test]
+fn a_terminal_yes_trusts_and_runs_the_hook() {
+    let repo = Repo::new();
+    hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
+    let output = pty(&repo, &["create", "topic"], Some("y\n"));
+    assert!(
+        output.status.success(),
+        "stdout {}\nstderr {}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    let shown = text(&output.stdout);
+    assert!(
+        shown.contains("Trust this project and run its hooks? [y/N]"),
+        "{shown}"
+    );
+    assert!(shown.contains("Project:"), "{shown}");
+    assert!(shown.contains("touch hook-ran.txt"), "{shown}");
+    assert!(worktree(&repo, "topic").join("hook-ran.txt").is_file());
+    let stored = fs::read_to_string(trust_file(&repo)).expect("trust file");
+    assert!(stored.contains(&common_dir(&repo)), "{stored}");
+}
+
+#[test]
+fn a_terminal_no_creates_nothing() {
+    let repo = Repo::new();
+    hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
+    let output = pty(&repo, &["create", "topic"], Some("n\n"));
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    assert!(
+        text(&output.stdout).contains("Trust this project and run its hooks? [y/N]"),
+        "{}",
+        text(&output.stdout)
+    );
+    assert!(!worktree(&repo, "topic").exists());
+    assert!(!trust_file(&repo).exists());
+}
+
+#[test]
+fn gc_on_a_terminal_does_not_ask() {
+    let repo = Repo::new();
+    assert!(repo.ptm(&["create", "feature"]).status.success());
+    let dir = worktree(&repo, "feature");
+    fs::write(dir.join("feature.txt"), "feature\n").expect("note");
+    for args in [vec!["add", "feature.txt"], vec!["commit", "-m", "feature"]] {
+        let output = repo
+            .command("git", &args)
+            .current_dir(&dir)
+            .output()
+            .expect("commit");
+        assert!(output.status.success(), "{}", text(&output.stderr));
+    }
+    repo.git(&["merge", "--ff-only", "feature"]);
+    hooks(&repo, "\"true\"", "\"touch pre-delete.txt\"");
+    let output = pty(&repo, &["gc", "--apply"], None);
+    assert!(
+        output.status.success(),
+        "stdout {}\nstderr {}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    let shown = text(&output.stdout);
+    assert!(!shown.contains("Trust this project"), "{shown}");
+    assert!(shown.contains("untrusted hooks"), "{shown}");
+    assert!(dir.is_dir());
+}
+
+#[test]
+fn a_broken_trust_file_still_allows_skip_paths() {
+    let repo = Repo::new();
+    fs::create_dir_all(repo.root.join("state/ptm")).expect("state");
+    fs::write(trust_file(&repo), "[[project]]\npath = 1\n").expect("broken");
+
+    let plain = repo.ptm(&["create", "plain"]);
+    assert!(plain.status.success(), "{}", text(&plain.stderr));
+
+    hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
+    let skipped = repo.ptm(&["create", "skipped", "--no-hooks"]);
+    assert!(skipped.status.success(), "{}", text(&skipped.stderr));
+    assert!(!worktree(&repo, "skipped").join("hook-ran.txt").exists());
+
+    let trusted = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "ci"])
+        .env("PTM_TRUST_ALL", "1")
+        .output()
+        .expect("ptm");
+    assert!(trusted.status.success(), "{}", text(&trusted.stderr));
+    assert!(worktree(&repo, "ci").join("hook-ran.txt").is_file());
+
+    let blocked = repo.ptm(&["create", "needs-trust"]);
+    assert_eq!(blocked.status.code(), Some(1));
+    assert!(
+        text(&blocked.stderr).contains("trust.toml"),
+        "{}",
+        text(&blocked.stderr)
+    );
+    assert!(!worktree(&repo, "needs-trust").exists());
+}
+
+fn pty(repo: &Repo, args: &[&str], answer: Option<&str>) -> std::process::Output {
+    let script = r#"
+import os, pty, select, subprocess, sys, time
+argv = sys.argv[1:]
+master, slave = pty.openpty()
+proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
+os.close(slave)
+answer = os.environ.get("PTM_TEST_ANSWER", "").encode()
+buf = b""
+sent = False
+deadline = time.time() + 15
+while time.time() < deadline:
+    if proc.poll() is not None:
+        while select.select([master], [], [], 0)[0]:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                break
+            buf += chunk
+        break
+    ready, _, _ = select.select([master], [], [], 0.2)
+    if not ready:
+        continue
+    try:
+        chunk = os.read(master, 4096)
+    except OSError:
+        break
+    if not chunk:
+        break
+    buf += chunk
+    if answer and not sent and b"Trust this project and run its hooks? [y/N]" in buf:
+        os.write(master, answer)
+        sent = True
+code = proc.wait(timeout=5)
+sys.stdout.buffer.write(buf)
+raise SystemExit(code if code is not None else 1)
+"#;
+    let mut command = repo.command("python3", &[]);
+    command.arg("-c").arg(script);
+    command.arg(env!("CARGO_BIN_EXE_ptm"));
+    command.args(args);
+    if let Some(answer) = answer {
+        command.env("PTM_TEST_ANSWER", answer);
+    } else {
+        command.env_remove("PTM_TEST_ANSWER");
+    }
+    command.output().expect("python pty")
+}

@@ -26,6 +26,7 @@ pub mod preferences;
 pub mod process;
 pub mod projects;
 pub mod repository;
+pub mod trust;
 pub mod worktree;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -72,7 +72,19 @@ post-create = ["pnpm install"]
 pre-delete = ["./scripts/teardown.sh"]
 ```
 
-`ptm create` and `ptm attach` run `post-create` in the new worktree. `ptm delete` runs `pre-delete` in the worktree before removing it. Commands run in order and stop at the first failure. Unknown keys are rejected.
+`ptm create`, `ptm attach`, and `ptm github checkout` run `post-create` in the new worktree. `ptm delete` and `ptm gc --apply` run `pre-delete` in the worktree before removing it. Commands run in order and stop at the first failure. Unknown keys are rejected.
+
+Hooks run only when that repository is trusted. `.worktreeinclude` copies are not hooks and do not need trust. A repository with no hook commands never asks.
+
+On a terminal, ptm prints the project path and the hook commands, then asks `Trust this project and run its hooks? [y/N]`. `y` or `yes` saves trust and runs the hooks. Anything else, a non-terminal, or `--json` stops before the command changes the repository. The process exits 1. With `--json`, stdout is only the error object and `code` is `untrusted`. The message tells you to run `ptm trust` or pass `--no-hooks`.
+
+`ptm trust [path]` shows the hooks and asks `Trust this project? [y/N]`. `--yes` skips the question. `ptm untrust [path]` removes that repository. `ptm trust --list` prints each trusted git common directory and when it was trusted. Trust is the canonical git common directory, so the main checkout and its linked worktrees share one record. Editing the hook commands later does not ask again.
+
+The record is `$XDG_STATE_HOME/ptm/trust.toml` when `XDG_STATE_HOME` is an absolute path, otherwise `~/.local/state/ptm/trust.toml`. Each entry stores `path` and `trustedAt`.
+
+`PTM_TRUST_ALL=1` trusts every repository for that process and does not write the file. The value has to be the single character `1`. Use it in CI and containers. `--no-hooks` on `create`, `attach`, `delete`, `gc`, and `github checkout` does the worktree change and skips hooks. It does not write trust.
+
+`ptm gc` never asks, including on a terminal. An untrusted repository that has `pre-delete` hooks is skipped. The candidate detail is `untrusted hooks`. Other candidates still run. `--no-hooks` removes those worktrees without running hooks.
 
 Each hook receives:
 
@@ -112,7 +124,7 @@ A command that does not produce a result writes this object to stdout:
 }
 ```
 
-`code` is the stable machine code. `exitCode` is the process status: `1` general, `2` not found (`where`, `delete`, and `exec`, and a `--project` name or path that matches nothing), `3` validation (an invalid worktree name, an unknown or incomplete option on any command, or a `--project` name that matches more than one project), `4` not a repository. `code` values include `not_found`, `already_exists`, `branch_not_found`, `not_repository`, `uncommitted`, `validation`, `command_failed`, `spawn`, `signaled`, `projects`, and `error`.
+`code` is the stable machine code. `exitCode` is the process status: `1` general, `2` not found (`where`, `delete`, and `exec`, and a `--project` name or path that matches nothing), `3` validation (an invalid worktree name, an unknown or incomplete option on any command, or a `--project` name that matches more than one project), `4` not a repository. `code` values include `not_found`, `already_exists`, `branch_not_found`, `not_repository`, `uncommitted`, `validation`, `command_failed`, `spawn`, `signaled`, `projects`, `untrusted`, and `error`. `untrusted` exits 1. It means project hooks would have run and the repository is not trusted. Nothing was created or deleted.
 
 `delete --json` is the exception that can include both deleted entries and a top-level `error`. Entries that were removed stay in `deleted`. The failed name has `worktree: null` and a string `error`. The process still exits nonzero.
 

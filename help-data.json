@@ -25,6 +25,14 @@
       "description": "Remove stale Git worktrees"
     },
     {
+      "name": "trust",
+      "description": "Trust a repository so its project hooks can run"
+    },
+    {
+      "name": "untrust",
+      "description": "Forget trust for a repository"
+    },
+    {
       "name": "exec",
       "description": "Execute a command in a worktree directory"
     },
@@ -115,6 +123,11 @@
           "example": "--issue 12"
         },
         {
+          "name": "no-hooks",
+          "type": "boolean",
+          "description": "Create the worktree without running project hooks. This does not trust the repository"
+        },
+        {
           "name": "json",
           "type": "boolean",
           "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook and --exec output go to stderr"
@@ -154,6 +167,7 @@
         "Files that already exist in the new worktree are left unchanged",
         "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
         ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] post-create commands run in the new worktree, in order, and stop at the first failure",
+        "post-create hooks run only after the repository is trusted. On a terminal, ptm shows the project path and the hook commands and asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, or --json fails before creating the worktree. Run ptm trust or pass --no-hooks. PTM_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
         "Owner, purpose, and links are stored in ptm/worktrees.json under the Git common directory. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty. where and exec refresh lastUsedAt"
@@ -210,6 +224,11 @@
           "example": "--issue 12"
         },
         {
+          "name": "no-hooks",
+          "type": "boolean",
+          "description": "Attach the worktree without running project hooks. This does not trust the repository"
+        },
+        {
           "name": "json",
           "type": "boolean",
           "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook and --exec output go to stderr"
@@ -238,6 +257,7 @@
         "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
         "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
+        "post-create hooks run only after the repository is trusted. The prompt, refusal, ptm trust, --no-hooks, and PTM_TRUST_ALL=1 behave the same as ptm create",
         "Owner, purpose, and links are stored in ptm/worktrees.json under the Git common directory. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty"
       ]
     },
@@ -362,6 +382,11 @@
           "description": "Delete the worktree but keep its branch"
         },
         {
+          "name": "no-hooks",
+          "type": "boolean",
+          "description": "Delete the worktree without running pre-delete hooks. This does not trust the repository"
+        },
+        {
           "name": "json",
           "type": "boolean",
           "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook output goes to stderr"
@@ -396,6 +421,7 @@
         "Use --keep-branch to delete only the worktree and preserve the branch",
         ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] pre-delete commands run in the worktree before it is removed, in order, and stop at the first failure",
         "Pre-delete hooks receive PTM=1, PTM_NAME (the worktree name), PTM_PATH (the absolute worktree path), and PTM_ROOT_PATH (the source checkout path)",
+        "pre-delete hooks run only after the repository is trusted. On a terminal, ptm asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, or --json fails before deleting. Run ptm trust or pass --no-hooks. PTM_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "--json reports each deleted worktree, whether its branch was deleted, and per-item errors. The schema is documented in the README"
       ]
     },
@@ -455,6 +481,11 @@
           "description": "Remove the worktree but keep its branch. Also implied by the keep-branch preference"
         },
         {
+          "name": "no-hooks",
+          "type": "boolean",
+          "description": "Remove matching worktrees without running pre-delete hooks. This does not trust the repository. gc never asks for trust"
+        },
+        {
           "name": "json",
           "type": "boolean",
           "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook output goes to stderr"
@@ -486,7 +517,77 @@
         "Another agent's worktree is removed only when it is merged, its pull request is closed or merged, it is orphaned, or --owner names that agent",
         "Dirty worktrees and worktrees with commits that are not on the default branch or a remote are skipped unless --force",
         "Live removals run [hooks] pre-delete from .ptm.toml and then the same deletion as ptm delete. A hook failure skips that worktree and continues",
+        "gc never asks for trust. An untrusted repository with pre-delete hooks is skipped, and the detail is 'untrusted hooks'. --no-hooks removes those worktrees without running hooks. PTM_TRUST_ALL=1 trusts every repository for that process",
         "--json lists each candidate, why it matched, and the action taken. The schema is documented in the README"
+      ]
+    },
+    "trust": {
+      "name": "trust",
+      "description": "Trust a repository so its project hooks can run",
+      "usage": "ptm trust [path] [options]",
+      "options": [
+        {
+          "name": "yes",
+          "short": "y",
+          "type": "boolean",
+          "description": "Trust the repository without asking. Use this when there is no terminal, including with --json"
+        },
+        {
+          "name": "list",
+          "type": "boolean",
+          "description": "List trusted repositories. Each line is the git common directory and the time it was trusted. --list does not take a path or --yes"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout"
+        }
+      ],
+      "examples": [
+        {
+          "description": "Trust the repository in the current directory",
+          "command": "ptm trust"
+        },
+        {
+          "description": "Trust a repository without a prompt",
+          "command": "ptm trust --yes /path/to/repo"
+        },
+        {
+          "description": "List trusted repositories",
+          "command": "ptm trust --list"
+        }
+      ],
+      "notes": [
+        "The trust record is the canonical git common directory (git rev-parse --git-common-dir). The main checkout and its linked worktrees share one record. Changing hook commands does not ask again",
+        "The file is $XDG_STATE_HOME/ptm/trust.toml when XDG_STATE_HOME is an absolute path, otherwise ~/.local/state/ptm/trust.toml. Each entry has path and trustedAt",
+        "ptm trust shows the post-create and pre-delete commands from the checkout you name, then asks 'Trust this project? [y/N]'. A repository with no hooks can still be trusted",
+        "PTM_TRUST_ALL=1 treats every repository as trusted for that process and does not write trust.toml. Set it to the single character 1. This is for CI and containers"
+      ]
+    },
+    "untrust": {
+      "name": "untrust",
+      "description": "Forget trust for a repository",
+      "usage": "ptm untrust [path] [options]",
+      "options": [
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout"
+        }
+      ],
+      "examples": [
+        {
+          "description": "Forget trust for the current repository",
+          "command": "ptm untrust"
+        },
+        {
+          "description": "Forget trust for a repository by path",
+          "command": "ptm untrust /path/to/repo"
+        }
+      ],
+      "notes": [
+        "Removes the git common directory from trust.toml. A repository that is not trusted is left unchanged and the command exits 0",
+        "PTM_TRUST_ALL=1 is not stored, so untrust does not turn that environment variable off"
       ]
     },
     "exec": {
@@ -947,6 +1048,11 @@
           "example": "--purpose 'review the pull request'"
         },
         {
+          "name": "no-hooks",
+          "type": "boolean",
+          "description": "Check out the pull request or issue without running post-create hooks. This does not trust the repository"
+        },
+        {
           "name": "json",
           "type": "boolean",
           "description": "Print a versioned JSON object to stdout, including the worktree and PR or issue info. Errors are JSON on stdout. Hook output goes to stderr"
@@ -1031,6 +1137,11 @@
           "type": "string",
           "description": "Free-text description of the task this worktree is for",
           "example": "--purpose 'review the pull request'"
+        },
+        {
+          "name": "no-hooks",
+          "type": "boolean",
+          "description": "Check out the pull request or issue without running post-create hooks. This does not trust the repository"
         },
         {
           "name": "json",

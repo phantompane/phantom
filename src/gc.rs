@@ -17,6 +17,7 @@ pub struct Request {
     pub policy: Policy,
     pub apply: bool,
     pub keep_branch: bool,
+    pub no_hooks: bool,
 }
 
 #[derive(Clone)]
@@ -162,9 +163,19 @@ pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Repo
     let facts = gather(context, &request.policy)?;
     warn_unavailable_pull_requests(&facts, &request.policy);
     let verdicts = classify(&facts, &request.policy);
+    let skip_untrusted = crate::trust::blocks_gc(
+        &context.git_root,
+        crate::config::pre_delete_commands(context.config.as_ref()),
+        request.no_hooks,
+    )?;
     let mut candidates = Vec::with_capacity(verdicts.len());
     let mut first_failure = None;
     for verdict in verdicts {
+        let verdict = if skip_untrusted {
+            hold_untrusted(verdict)
+        } else {
+            verdict
+        };
         let entry = if request.apply {
             apply_verdict(context, request, logger, verdict)
         } else {
@@ -239,6 +250,7 @@ enum Hold {
     Dirty,
     Unpushed,
     PrUnavailable,
+    Untrusted,
 }
 
 impl Hold {
@@ -252,6 +264,7 @@ impl Hold {
             Self::StatusUnknown => "status unknown",
             Self::Dirty => "dirty",
             Self::Unpushed => "unpushed",
+            Self::Untrusted => "untrusted hooks",
         }
     }
 }
@@ -832,6 +845,17 @@ fn git(git_root: &Path, args: &[&str]) -> Result<process::Captured> {
     process::raw("git", args, Some(git_root))
 }
 
+fn hold_untrusted(verdict: Verdict) -> Verdict {
+    match verdict {
+        Verdict::Remove(Removal::Delete { subject, reasons }) => Verdict::Skip {
+            subject,
+            reasons,
+            hold: Hold::Untrusted,
+        },
+        other => other,
+    }
+}
+
 fn preview(verdict: Verdict) -> CandidateEntry {
     match verdict {
         Verdict::Remove(removal) => entry_from_removal(&removal, Action::WouldRemove, None, None),
@@ -914,6 +938,11 @@ fn apply_delete(
         request.keep_branch,
         Some(&subject.path),
         logger,
+        crate::trust::HookControl {
+            no_hooks: request.no_hooks,
+            json: false,
+            prompt: false,
+        },
     ) {
         Ok(outcome) => {
             let failed_metadata = outcome.metadata_error.is_some();
@@ -932,6 +961,16 @@ fn apply_delete(
                 branch_deleted: Some(outcome.branch_deleted),
             }
         }
+        Err(error) if matches!(error.error, Error::Untrusted(_)) => CandidateEntry {
+            name: subject.name,
+            path: subject.path.display().to_string(),
+            branch: subject.branch,
+            owner: subject.owner,
+            reasons,
+            action: Action::Skipped,
+            detail: Some(Hold::Untrusted.detail().to_string()),
+            branch_deleted: None,
+        },
         Err(error) => failed(subject, reasons, error.error.to_string()),
     }
 }
