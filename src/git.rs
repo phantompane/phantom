@@ -390,7 +390,15 @@ pub fn add_worktree(
     let path = path.to_string_lossy();
     if create_branch {
         run(
-            &["worktree", "add", path.as_ref(), "-b", branch, base],
+            &[
+                "worktree",
+                "add",
+                "--no-track",
+                path.as_ref(),
+                "-b",
+                branch,
+                base,
+            ],
             Some(git_root),
         )
     } else {
