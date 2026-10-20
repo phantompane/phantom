@@ -17,8 +17,8 @@ Workspaces separate files and branches, not processes, ports, databases, or cred
 Maboroshi creates, takes over, and prepares workspaces, keeps them current with their base, and retires them:
 
 - **Allocate and prepare.** `clone` places a repository in the ghq layout. `create`, `attach`, and `github checkout` (alias `gh checkout`) give each piece of work its own worktree, copy ignored files matched by `.worktreeinclude`, and run project hooks in repositories you trust.
-- **Identify.** `meta set` records the owner, purpose, linked pull request or issue, and base. New workspaces use `MABO_AGENT_ID` as the owner when set, unless `--owner` overrides it; owner and purpose can be left unset. `list` and `where` show what exists and where.
-- **Update.** `sync` fetches, fast-forwards the default branch when possible, and brings selected workspaces up to date with their base. It skips dirty worktrees and refuses to advance a diverged default branch.
+- **Identify.** `meta set` records the owner, purpose, linked pull request or issue, and base. New workspaces use `MABO_AGENT_ID` as the owner when nonblank, unless `--owner` overrides it; owner and purpose can be left unset. `list` and `where` show what exists and where.
+- **Update.** `sync` fetches, fast-forwards the default branch when possible, and brings selected workspaces up to date with their base.
 - **Retire.** `gc` selects workspaces on evidence: merged branches, closed pull requests, orphaned records, and age (`--older-than`).
 
 Every command can run non-interactively. `--json` success output is versioned (`version`, or `schema` for `sync`), except `project add` and `project remove`, which return `{status, project}`. Errors are structured, with stable, documented exit codes (see [Machine-readable JSON](#machine-readable-json)). `exec` passes through the child command's output and exit code instead. Humans use the same commands with plain-text output.
@@ -26,9 +26,9 @@ Every command can run non-interactively. `--json` success output is versioned (`
 ## Safe by default, explicit when you want otherwise
 
 - **Merged, unowned, or old are signals, not permission to delete.** `gc` only prints its plan until you pass `--apply` or `--force` (`--force` also applies the plan). It keeps dirty work and commits it cannot confirm as published or landed unless you pass `--force`. The default-branch, current, and Git-locked worktrees remain protected even with `--force`.
-- **Ownership is information, not enforcement.** With `MABO_AGENT_ID` set, `sync --mine` selects that agent's workspaces and `sync --all` skips other agents'. Naming a workspace explicitly lets `sync` work on it whoever owns it. `gc` can still select other agents' merged, closed-PR, or orphaned workspaces.
+- **Ownership is information, not enforcement.** Naming a workspace explicitly lets `sync` work on it whoever owns it. `gc` can still select other agents' merged, closed-PR, or orphaned workspaces.
 - **Pushed history is kept by default.** When integration is needed, `sync` merges the base into published work; rebasing it takes `--rebase --force`. A workspace counts as published when at least one commit beyond its base is reachable from a known remote-tracking ref or configured fetch destination.
-- **Non-interactive runs never wait at a prompt.** With a nonempty `MABO_AGENT_ID` or `CI`, with `--json`, or when stdin or stderr is not a terminal, `mabo` itself does not ask questions. If an operation would run untrusted hooks, it refuses before changing the repository and exits 1 (`untrusted` in JSON); `gc` instead skips removals requiring those hooks, without treating the skip as an error. Record trust in advance with `mabo trust --yes`, or skip hooks with `--no-hooks`. Git authentication and your own hooks can still prompt.
+- **Non-interactive runs never wait at a prompt.** With a nonblank `MABO_AGENT_ID` or `CI`, with `--json`, or when stdin or stderr is not a terminal, `mabo` itself does not ask questions. If an operation would run untrusted hooks, it refuses before changing the repository and exits 1 (`untrusted` in JSON); `gc` instead skips removals requiring those hooks, without treating the skip as an error. Record trust in advance with `mabo trust --yes`, or skip hooks with `--no-hooks`. Git authentication and your own hooks can still prompt.
 
 ## Non-goals
 
