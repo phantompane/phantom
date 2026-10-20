@@ -50,13 +50,13 @@ mod tests {
     #[test]
     fn version_line_marks_the_rust_build() {
         assert_eq!(
-            format_version("7.0.0-alpha.3", None),
-            "ptm v7.0.0-alpha.3+rust"
+            format_version("7.0.0-alpha.4", None),
+            "ptm v7.0.0-alpha.4+rust"
         );
         assert_eq!(
-            format_version("7.0.0-alpha.3", Some("abc1234")),
-            "ptm v7.0.0-alpha.3+rust (abc1234)"
+            format_version("7.0.0-alpha.4", Some("abc1234")),
+            "ptm v7.0.0-alpha.4+rust (abc1234)"
         );
-        assert_ne!(format_version("7.0.0-alpha.3", None), "ptm v7.0.0-alpha.3");
+        assert_ne!(format_version("7.0.0-alpha.4", None), "ptm v7.0.0-alpha.4");
     }
 }
