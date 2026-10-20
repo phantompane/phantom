@@ -9220,3 +9220,120 @@ fn create_sets_no_upstream_from_the_base() {
     );
     assert_no_upstream(&repo, "from-head");
 }
+
+#[test]
+fn orphaned_records_are_listed_and_deleted_without_hooks_or_branch_changes() {
+    let repo = Repo::new();
+    for name in ["gone", "json-gone"] {
+        let created = repo.mabo(&["create", name]);
+        assert!(created.status.success(), "{}", text(&created.stderr));
+        repo.git(&[
+            "worktree",
+            "remove",
+            managed(&repo, name).to_str().expect("path"),
+        ]);
+    }
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        "[hooks]\npre-delete = [\"exit 99\"]\n",
+    )
+    .expect("hooks");
+    let listed = repo.mabo(&["list"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    assert!(text(&listed.stdout)
+        .lines()
+        .any(|line| line.starts_with("gone (") && line.ends_with("[orphaned]")));
+    let listed = repo.mabo(&["list", "--json"]);
+    assert!(listed.status.success(), "{}", text(&listed.stderr));
+    let document = json_value(&listed);
+    let entries = document["worktrees"].as_array().expect("worktrees");
+    assert_eq!(
+        entries
+            .iter()
+            .find(|item| item["name"] == "gone")
+            .expect("gone")["orphaned"],
+        true
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .find(|item| item["default"] == true)
+            .expect("default")["orphaned"],
+        false
+    );
+    for command in ["where", "exec"] {
+        let args = if command == "exec" {
+            vec![command, "gone", "pwd"]
+        } else {
+            vec![command, "gone"]
+        };
+        let output = repo.mabo(&args);
+        assert!(!output.status.success());
+        assert!(
+            text(&output.stderr).contains("orphaned"),
+            "{}",
+            text(&output.stderr)
+        );
+    }
+    let deleted = repo.mabo(&["delete", "gone"]);
+    assert_eq!(deleted.status.code(), Some(0), "{}", text(&deleted.stderr));
+    assert!(text(&deleted.stdout).contains("already gone; removed only the stale record"));
+    assert!(branch_listed(&repo, "gone"));
+    let deleted = repo.mabo(&["delete", "json-gone", "--json"]);
+    assert_eq!(deleted.status.code(), Some(0), "{}", text(&deleted.stderr));
+    let document = json_value(&deleted);
+    assert_eq!(document["deleted"][0]["worktree"]["orphaned"], true);
+    assert_eq!(document["deleted"][0]["branchDeleted"], false);
+    assert!(branch_listed(&repo, "json-gone"));
+    let records: serde_json::Value = serde_json::from_slice(
+        &fs::read(repo.repo.join(".git/maboroshi/worktrees.json")).expect("records"),
+    )
+    .expect("json");
+    assert_eq!(records["worktrees"], serde_json::json!([]));
+    assert_eq!(repo.mabo(&["delete", "gone"]).status.code(), Some(2));
+}
+
+#[test]
+fn delete_prefers_a_live_worktree_over_an_orphaned_record_with_the_same_name() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "shared"]).status.success());
+    let records_path = repo.repo.join(".git/maboroshi/worktrees.json");
+    let mut records: serde_json::Value =
+        serde_json::from_slice(&fs::read(&records_path).expect("records")).expect("json");
+    let missing = repo.root.join("missing");
+    records["worktrees"]
+        .as_array_mut()
+        .expect("records")
+        .push(serde_json::json!({"path": missing, "name": "shared"}));
+    fs::write(&records_path, serde_json::to_vec(&records).expect("json")).expect("records");
+    let deleted = repo.mabo(&["delete", "shared"]);
+    assert_eq!(deleted.status.code(), Some(0), "{}", text(&deleted.stderr));
+    assert!(!managed(&repo, "shared").exists());
+    let records: serde_json::Value =
+        serde_json::from_slice(&fs::read(records_path).expect("records")).expect("json");
+    assert_eq!(records["worktrees"].as_array().expect("records").len(), 1);
+    assert_eq!(
+        records["worktrees"][0]["path"],
+        missing.to_str().expect("path")
+    );
+}
+
+#[test]
+fn ambiguous_orphaned_names_leave_all_records_untouched() {
+    let repo = Repo::new();
+    let records_path = repo.repo.join(".git/maboroshi/worktrees.json");
+    fs::create_dir_all(records_path.parent().expect("parent")).expect("directory");
+    let records = serde_json::json!({
+        "version": 1,
+        "worktrees": [
+            {"path": repo.root.join("missing-one"), "name": "shared"},
+            {"path": repo.root.join("missing-two"), "name": "shared"}
+        ]
+    });
+    let original = serde_json::to_vec(&records).expect("json");
+    fs::write(&records_path, &original).expect("records");
+    let deleted = repo.mabo(&["delete", "shared"]);
+    assert!(!deleted.status.success());
+    assert!(text(&deleted.stderr).contains("More than one worktree is named"));
+    assert_eq!(fs::read(records_path).expect("records"), original);
+}

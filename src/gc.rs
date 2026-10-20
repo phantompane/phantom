@@ -476,7 +476,7 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
     let current = current_worktree_path(context);
     let mut pull_requests = BTreeMap::new();
     let mut rows = BTreeMap::new();
-    for worktree in listed {
+    for worktree in &listed {
         let path = PathBuf::from(&worktree.path);
         if paths::same_location(&path, &context.git_root) {
             continue;
@@ -500,7 +500,7 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
             policy,
             &base,
             current.as_deref(),
-            &worktree,
+            worktree,
             record,
             &mut pull_requests,
         );
@@ -532,7 +532,7 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
         if paths::normalize(&path) == paths::normalize(&context.git_root) {
             continue;
         }
-        if directory_state(&path) != DirState::Absent {
+        if !orphaned_record(&path, &listed) {
             continue;
         }
         let mut facts = observe_record(context, policy, &path, record, &mut pull_requests);
@@ -769,6 +769,14 @@ fn pull_request_query(git_root: &Path, link: &WorktreeLink) -> Option<PullReques
         key: format!("{repo}#{number}"),
         view: number.to_string(),
     })
+}
+
+/// A stale metadata record has neither a Git registration nor a directory.
+pub(crate) fn orphaned_record(path: &Path, listed: &[git::GitWorktree]) -> bool {
+    !listed
+        .iter()
+        .any(|worktree| paths::same_location(path, Path::new(&worktree.path)))
+        && directory_state(path) == DirState::Absent
 }
 
 fn directory_state(path: &Path) -> DirState {

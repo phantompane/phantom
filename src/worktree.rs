@@ -25,6 +25,7 @@ pub struct WorktreeInfo {
     pub head: Option<String>,
     pub is_default: bool,
     pub detached: bool,
+    pub orphaned: bool,
     pub metadata: metadata::WorktreeMetadata,
 }
 
@@ -113,7 +114,7 @@ pub fn list_worktrees(
     let canonical_common = git::canonical_common_dir(&context.git_root)?;
     let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
-    for mut worktree in listed {
+    for mut worktree in listed.iter().cloned() {
         worktree.path = main_checkout_path(&worktree.path, &context.git_root, &common_dir);
         if !include_prunable && worktree.prunable {
             continue;
@@ -131,6 +132,34 @@ pub fn list_worktrees(
             recorded_path.as_deref(),
             &canonical_common,
         ));
+    }
+    for (key, record) in &stored {
+        let path = Path::new(key);
+        if !crate::gc::orphaned_record(path, &listed)
+            || paths::same_location(path, &context.git_root)
+        {
+            continue;
+        }
+        infos.push(WorktreeInfo {
+            name: resolve_worktree_name(
+                path,
+                &context.worktrees_directory,
+                Some(path),
+                record.name.as_deref(),
+                &canonical_common,
+                None,
+                "HEAD",
+            ),
+            path: key.clone(),
+            path_to_display: paths::list_path(path),
+            branch: "(detached HEAD)".to_string(),
+            is_clean: true,
+            head: None,
+            is_default: false,
+            detached: false,
+            orphaned: true,
+            metadata: record.clone(),
+        });
     }
     Ok(infos)
 }
@@ -184,6 +213,7 @@ fn info_from_git(
         head: recorded_head(worktree.head.as_deref()),
         is_default: paths::same_location(&original, &context.git_root),
         detached,
+        orphaned: false,
         metadata,
     }
 }
@@ -352,7 +382,13 @@ fn same_worktree(worktree: &WorktreeInfo, name: &str) -> bool {
     worktree.name == name || (worktree.branch != "(detached HEAD)" && worktree.branch == name)
 }
 
-fn select_worktree(worktrees: Vec<WorktreeInfo>, name: &str) -> Result<WorktreeInfo> {
+fn select_worktree(mut worktrees: Vec<WorktreeInfo>, name: &str) -> Result<WorktreeInfo> {
+    if worktrees
+        .iter()
+        .any(|worktree| !worktree.orphaned && same_worktree(worktree, name))
+    {
+        worktrees.retain(|worktree| !worktree.orphaned);
+    }
     let directories = worktrees
         .iter()
         .filter(|worktree| worktree.name == name)
@@ -384,7 +420,9 @@ fn select_worktree(worktrees: Vec<WorktreeInfo>, name: &str) -> Result<WorktreeI
 pub fn worktree_at_path(context: &Context, path: &Path) -> Result<WorktreeInfo> {
     list_worktrees(context, false, true)?
         .into_iter()
-        .find(|worktree| paths::same_location(Path::new(&worktree.path), path))
+        .find(|worktree| {
+            !worktree.orphaned && paths::same_location(Path::new(&worktree.path), path)
+        })
         .ok_or_else(|| {
             Error::msg(format!(
                 "Worktree at {} is no longer registered",
@@ -399,8 +437,29 @@ pub fn find_worktree(
     exclude_default: bool,
     expected_path: Option<&Path>,
 ) -> Result<WorktreeInfo> {
-    let worktrees = list_worktrees(context, exclude_default, true)?
+    let found = find_including_orphaned(context, name, exclude_default, expected_path)?;
+    if found.orphaned {
+        return Err(Error::msg(format!(
+            "Worktree '{name}' is orphaned: its directory is gone. Use mabo delete to remove the stale record."
+        )));
+    }
+    Ok(found)
+}
+
+fn find_including_orphaned(
+    context: &Context,
+    name: &str,
+    exclude_default: bool,
+    expected_path: Option<&Path>,
+) -> Result<WorktreeInfo> {
+    let listed = list_worktrees(context, false, true)?;
+    let live_match = listed
+        .iter()
+        .any(|worktree| !worktree.orphaned && same_worktree(worktree, name));
+    let worktrees = listed
         .into_iter()
+        .filter(|worktree| !(exclude_default && worktree.is_default))
+        .filter(|worktree| !live_match || !worktree.orphaned)
         .filter(|worktree| {
             expected_path.is_none_or(|path| paths::same_location(Path::new(&worktree.path), path))
         })
@@ -411,7 +470,7 @@ pub fn find_worktree(
 pub fn ensure_absent(context: &Context, name: &str) -> Result<()> {
     if list_worktrees(context, false, true)?
         .iter()
-        .any(|worktree| same_worktree(worktree, name))
+        .any(|worktree| !worktree.orphaned && same_worktree(worktree, name))
     {
         Err(Error::WorktreeAlreadyExists(name.to_string()))
     } else {
@@ -839,7 +898,8 @@ pub fn preflight_delete(
 ) -> std::result::Result<DeletePlan, DeleteError> {
     let force = options.force;
     let keep_branch = options.keep_branch;
-    let worktree = find_worktree(context, name, true, expected_path).map_err(DeleteError::bare)?;
+    let worktree =
+        find_including_orphaned(context, name, true, expected_path).map_err(DeleteError::bare)?;
     let path = PathBuf::from(&worktree.path);
     let inside = paths::is_strictly_inside(&path, &context.worktrees_directory);
     let recorded = metadata::records_path(&context.git_root, &path)
@@ -852,6 +912,17 @@ pub fn preflight_delete(
             )),
             &worktree,
         ));
+    }
+    if worktree.orphaned {
+        metadata::prepare(&context.git_root)
+            .map_err(|error| DeleteError::kept(error, &worktree))?;
+        return Ok(DeletePlan {
+            name: name.to_string(),
+            worktree,
+            path,
+            inside,
+            changed: 0,
+        });
     }
     let changed = git::status_count(&path).unwrap_or(0);
     if changed > 0 && !force {
@@ -931,7 +1002,7 @@ fn unique_delete_names(context: &Context, names: &[String]) -> Vec<String> {
     let mut seen_unresolved = Vec::new();
     let mut unique = Vec::new();
     for name in names {
-        match find_worktree(context, name, true, None) {
+        match find_including_orphaned(context, name, true, None) {
             Ok(worktree) => {
                 let path = PathBuf::from(&worktree.path);
                 if seen_paths
@@ -980,6 +1051,27 @@ pub fn commit_delete(
         inside,
         changed,
     } = plan;
+    if worktree.orphaned {
+        let listed = git::list_worktrees(&context.git_root)
+            .map_err(|error| DeleteError::kept(error, &worktree))?;
+        if !crate::gc::orphaned_record(&path, &listed) {
+            return Err(DeleteError::kept(
+                Error::msg(format!(
+                    "Worktree '{name}' is no longer orphaned; refusing to remove its record."
+                )),
+                &worktree,
+            ));
+        }
+        metadata::remove(&context.git_root, &path)
+            .map_err(|error| DeleteError::kept(error, &worktree))?;
+        return Ok(DeleteOutcome {
+            message: format!("Worktree '{name}' was already gone; removed only the stale record."),
+            worktree,
+            branch_deleted: false,
+            branch_error: None,
+            metadata_error: None,
+        });
+    }
     let force = options.force;
     let keep_branch = options.keep_branch;
     let commands = trust::authorize(
@@ -1497,6 +1589,7 @@ pub struct WorktreeJson {
     #[serde(rename = "default")]
     pub is_default: bool,
     pub detached: bool,
+    pub orphaned: bool,
     #[serde(flatten)]
     pub metadata: metadata::WorktreeMetadata,
 }
@@ -1587,7 +1680,7 @@ impl WorktreeInfo {
         WorktreeJson {
             name: self.name.clone(),
             path: absolute_path(&self.path),
-            branch: if self.detached {
+            branch: if self.detached || self.orphaned {
                 None
             } else {
                 Some(self.branch.clone())
@@ -1597,6 +1690,7 @@ impl WorktreeInfo {
             dirty: !self.is_clean,
             is_default: self.is_default,
             detached: self.detached,
+            orphaned: self.orphaned,
             metadata: self.metadata.clone(),
         }
     }
@@ -1685,6 +1779,7 @@ mod tests {
             head: Some("abc1234".to_string()),
             is_default: false,
             detached: branch == "(detached HEAD)",
+            orphaned: false,
             metadata: metadata::WorktreeMetadata::default(),
         }
     }
