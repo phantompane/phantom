@@ -827,7 +827,9 @@ pub fn preflight_delete(
             .map_err(|error| DeleteError::kept(error, &worktree))?;
         let branch = (!worktree.detached).then_some(worktree.branch.as_str());
         let refusal =
-            match git::unpushed_tip(&context.git_root, branch, worktree.head.as_deref(), &base) {
+            match git::tip_reachability(&context.git_root, branch, worktree.head.as_deref(), &base)
+                .unpushed
+            {
                 Some(false) => None,
                 Some(true) => Some(false),
                 None => Some(true),
