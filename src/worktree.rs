@@ -1119,6 +1119,30 @@ pub(crate) fn commit_delete_checked(
         path,
         ..
     } = plan;
+    let force = options.force;
+    let keep_branch = options.keep_branch;
+    let commands = if worktree.orphaned {
+        Vec::new()
+    } else {
+        trust::authorize(
+            &context.git_root,
+            config::post_create_commands(context.config.as_ref()),
+            config::pre_delete_commands(context.config.as_ref()),
+            trust::HookKind::PreDelete,
+            hooks,
+        )
+        .map_err(|error| DeleteError::kept(error, &worktree))?
+    };
+    metadata::prepare(&context.git_root).map_err(|error| DeleteError::kept(error, &worktree))?;
+    if !commands.is_empty() {
+        logger.log("\nRunning pre-delete commands...");
+        if let Err(error) = run_hook_commands(context, &name, &commands, false, logger) {
+            return Err(DeleteError::kept(error, &worktree));
+        }
+    }
+    let _operation = crate::operation::lock(&context.git_root)
+        .map_err(|error| DeleteError::kept(error, &worktree))?;
+    check().map_err(|error| DeleteError::kept(error, &worktree))?;
     if worktree.orphaned {
         let listed = git::list_worktrees(&context.git_root)
             .map_err(|error| DeleteError::kept(error, &worktree))?;
@@ -1140,26 +1164,6 @@ pub(crate) fn commit_delete_checked(
             metadata_error: None,
         });
     }
-    let force = options.force;
-    let keep_branch = options.keep_branch;
-    let commands = trust::authorize(
-        &context.git_root,
-        config::post_create_commands(context.config.as_ref()),
-        config::pre_delete_commands(context.config.as_ref()),
-        trust::HookKind::PreDelete,
-        hooks,
-    )
-    .map_err(|error| DeleteError::kept(error, &worktree))?;
-    metadata::prepare(&context.git_root).map_err(|error| DeleteError::kept(error, &worktree))?;
-    if !commands.is_empty() {
-        logger.log("\nRunning pre-delete commands...");
-        if let Err(error) = run_hook_commands(context, &name, &commands, false, logger) {
-            return Err(DeleteError::kept(error, &worktree));
-        }
-    }
-    let _operation = crate::operation::lock(&context.git_root)
-        .map_err(|error| DeleteError::kept(error, &worktree))?;
-    check().map_err(|error| DeleteError::kept(error, &worktree))?;
     let fresh = preflight_delete(context, &name, options, Some(&path))?;
     if fresh.worktree.head != worktree.head || fresh.worktree.branch != worktree.branch {
         return Err(DeleteError::kept(
