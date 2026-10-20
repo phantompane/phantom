@@ -232,8 +232,11 @@ struct WorktreeFacts {
     locked: bool,
     dirty: Dirty,
     /// `Some(true)` means commits on the tip are outside the default branch and
-    /// outside every remote-tracking ref. `None` means the query did not run.
+    /// outside every remote-tracking ref, and they are not already landed there.
+    /// `None` means the query did not run.
     unpushed: Option<bool>,
+    /// Set when this tip is exactly a merged `refs/pull/<n>/head`.
+    published_tip: Option<String>,
     merged: bool,
     pr: PullRequestState,
     last_used_at: Option<SystemTime>,
@@ -282,6 +285,7 @@ enum Removal {
     Delete {
         subject: Subject,
         reasons: Vec<Reason>,
+        published_tip: Option<String>,
     },
     DropRegistration {
         subject: Subject,
@@ -448,7 +452,11 @@ fn qualifies_other_agent(reasons: &[Reason]) -> bool {
 fn removal_kind(facts: &WorktreeFacts, reasons: Vec<Reason>) -> Removal {
     let subject = facts.subject.clone();
     if facts.registered && facts.directory == DirState::Present {
-        return Removal::Delete { subject, reasons };
+        return Removal::Delete {
+            subject,
+            reasons,
+            published_tip: facts.published_tip.clone(),
+        };
     }
     Removal::DropRegistration {
         subject,
@@ -564,10 +572,17 @@ fn observe_listed(
         None => false,
     };
     let created_from = record.and_then(|item| item.created_from.as_deref());
+    let reachability = git::tip_reachability(
+        &context.git_root,
+        branch.as_deref(),
+        worktree.head.as_deref(),
+        base,
+    );
     let merged = match (&branch, base) {
-        (Some(branch), Some(base)) => {
-            is_ancestor(&context.git_root, branch, base)
-                && !still_at_creation_point(&context.git_root, branch, created_from)
+        (Some(name), Some(base_name)) => {
+            let moved = !still_at_creation_point(&context.git_root, name, created_from);
+            let ancestor = is_ancestor(&context.git_root, name, base_name);
+            moved && (ancestor || reachability.landed)
         }
         _ => false,
     };
@@ -575,12 +590,22 @@ fn observe_listed(
         (Some(branch), Some(base)) => branch == local_default_name(base),
         _ => false,
     };
-    let unpushed = git::unpushed_tip(
+    let unpushed = reachability.unpushed;
+    let pr_link = record.and_then(|item| item.links.pr.as_ref());
+    let pr = pull_state(policy, &context.git_root, pr_link, pull_requests);
+    let published_tip = merged_pull_head(
+        policy,
         &context.git_root,
-        branch.as_deref(),
+        pr_link,
         worktree.head.as_deref(),
-        base,
+        unpushed,
+        pull_requests,
     );
+    let unpushed = if published_tip.is_some() {
+        Some(false)
+    } else {
+        unpushed
+    };
     let dirty = match directory {
         DirState::Absent => Dirty::Absent,
         DirState::Unknown => Dirty::Unknown,
@@ -608,13 +633,9 @@ fn observe_listed(
         locked: worktree.locked,
         dirty,
         unpushed,
+        published_tip,
         merged,
-        pr: pull_state(
-            policy,
-            &context.git_root,
-            metadata.links.pr.as_ref(),
-            pull_requests,
-        ),
+        pr,
         last_used_at: metadata.last_used_at.as_deref().and_then(parse_time),
         created_at: metadata.created_at.as_deref().and_then(parse_time),
     }
@@ -643,6 +664,7 @@ fn observe_record(
         locked: false,
         dirty: Dirty::Absent,
         unpushed: None,
+        published_tip: None,
         merged: false,
         pr: pull_state(
             policy,
@@ -653,6 +675,33 @@ fn observe_record(
         last_used_at: record.last_used_at.as_deref().and_then(parse_time),
         created_at: record.created_at.as_deref().and_then(parse_time),
     }
+}
+
+/// A merged pull request whose worktree is still exactly `refs/pull/<n>/head`.
+/// Local commits on top stay unpushed.
+fn merged_pull_head(
+    policy: &Policy,
+    git_root: &Path,
+    link: Option<&WorktreeLink>,
+    head: Option<&str>,
+    unpushed: Option<bool>,
+    pull_requests: &BTreeMap<String, PullRequestStatus>,
+) -> Option<String> {
+    if unpushed != Some(true) || !policy.selection.pull_request {
+        return None;
+    }
+    let link = link?;
+    let number = link.number?;
+    let query = pull_request_query(git_root, link)?;
+    if pull_requests.get(&query.key).copied() != Some(PullRequestStatus::Merged) {
+        return None;
+    }
+    let pull_head = git::remote_pull_head(git_root, number)?;
+    let head = head?.trim();
+    if !head.eq_ignore_ascii_case(pull_head.trim()) {
+        return None;
+    }
+    Some(pull_head)
 }
 
 fn warn_unavailable_pull_requests(facts: &[WorktreeFacts], policy: &Policy) {
@@ -808,7 +857,9 @@ fn git(git_root: &Path, args: &[&str]) -> Result<process::Captured> {
 
 fn hold_untrusted(verdict: Verdict) -> Verdict {
     match verdict {
-        Verdict::Remove(Removal::Delete { subject, reasons }) => Verdict::Skip {
+        Verdict::Remove(Removal::Delete {
+            subject, reasons, ..
+        }) => Verdict::Skip {
             subject,
             reasons,
             hold: Hold::Untrusted,
@@ -858,9 +909,11 @@ fn apply_verdict(
             detail: Some(hold.detail().to_string()),
             branch_deleted: None,
         },
-        Verdict::Remove(Removal::Delete { subject, reasons }) => {
-            apply_delete(context, request, logger, subject, reasons)
-        }
+        Verdict::Remove(Removal::Delete {
+            subject,
+            reasons,
+            published_tip,
+        }) => apply_delete(context, request, logger, subject, reasons, published_tip),
         Verdict::Remove(Removal::DropRegistration {
             subject,
             reasons,
@@ -885,6 +938,7 @@ fn apply_delete(
     logger: &Logger,
     subject: Subject,
     reasons: Vec<Reason>,
+    published_tip: Option<String>,
 ) -> CandidateEntry {
     let info = match worktree::worktree_at_path(context, &subject.path) {
         Ok(info) => info,
@@ -899,6 +953,7 @@ fn apply_delete(
             force: request.policy.force,
             keep_branch: request.keep_branch,
             allow_current: false,
+            published_tip,
         },
         Some(&subject.path),
         logger,
@@ -1034,7 +1089,9 @@ fn entry_from_removal(
     branch_deleted: Option<bool>,
 ) -> CandidateEntry {
     let (subject, reasons) = match removal {
-        Removal::Delete { subject, reasons }
+        Removal::Delete {
+            subject, reasons, ..
+        }
         | Removal::DropRegistration {
             subject, reasons, ..
         } => (subject, reasons),
@@ -1154,6 +1211,7 @@ mod tests {
             unpushed: Some(false),
             merged: true,
             pr: PullRequestState::Unlinked,
+            published_tip: None,
             last_used_at: None,
             created_at: None,
         }

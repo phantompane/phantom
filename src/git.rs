@@ -403,7 +403,15 @@ pub fn add_worktree(git_root: &Path, path: &Path, add: WorktreeAdd<'_>) -> Resul
     let args: Vec<&str> = match add {
         WorktreeAdd::Existing { branch } => vec!["worktree", "add", path.as_ref(), branch],
         WorktreeAdd::New { branch, base } => {
-            vec!["worktree", "add", path.as_ref(), "-b", branch, base]
+            vec![
+                "worktree",
+                "add",
+                "--no-track",
+                path.as_ref(),
+                "-b",
+                branch,
+                base,
+            ]
         }
         WorktreeAdd::Track {
             branch,
@@ -464,43 +472,129 @@ pub(crate) fn default_branch(git_root: &Path) -> Result<Option<String>> {
     Ok(None)
 }
 
-pub(crate) fn unpushed_tip(
+pub(crate) struct TipReachability {
+    /// `Some(true)` means commits on the tip are outside the default branch and
+    /// outside every remote-tracking ref. `Some(false)` means those commits are
+    /// safe to drop. `None` means the reachability query did not run.
+    pub unpushed: Option<bool>,
+    /// The upstream ref is gone, the tip differs from the merge base, and a
+    /// clean merge into the default branch leaves that branch's tree unchanged.
+    pub landed: bool,
+}
+
+pub(crate) fn tip_reachability(
     git_root: &Path,
     branch: Option<&str>,
     head: Option<&str>,
     base: &Option<String>,
-) -> Option<bool> {
-    let base = base.as_deref()?;
+) -> TipReachability {
+    let Some(base) = base.as_deref() else {
+        return TipReachability {
+            unpushed: None,
+            landed: false,
+        };
+    };
     // A bare name prefers `refs/tags` over `refs/heads`, so a tag with the
     // branch's name hides the branch tip and those commits look pushed.
-    let tip = match branch {
-        Some(name) => format!("refs/heads/{name}"),
-        None => head
-            .filter(|sha| sha.bytes().any(|byte| byte != b'0'))?
-            .to_string(),
+    let Some(tip) = branch_tip_spec(branch, head) else {
+        return TipReachability {
+            unpushed: None,
+            landed: false,
+        };
     };
+    let Some(unpushed) = commits_outside_base_and_remotes(git_root, &tip, base) else {
+        return TipReachability {
+            unpushed: None,
+            landed: false,
+        };
+    };
+    if !unpushed {
+        return TipReachability {
+            unpushed: Some(false),
+            landed: false,
+        };
+    }
+    let landed = branch.is_some_and(|name| {
+        upstream_missing(git_root, name) && changes_landed(git_root, &tip, base)
+    });
+    TipReachability {
+        unpushed: Some(!landed),
+        landed,
+    }
+}
+
+fn branch_tip_spec(branch: Option<&str>, head: Option<&str>) -> Option<String> {
+    match branch {
+        Some(name) => Some(format!("refs/heads/{name}")),
+        None => head
+            .filter(|sha| sha.bytes().any(|byte| byte != b'0'))
+            .map(ToOwned::to_owned),
+    }
+}
+
+fn commits_outside_base_and_remotes(git_root: &Path, tip: &str, base: &str) -> Option<bool> {
     // `--not` stays in effect for `--remotes`, so those commits are excluded.
     // A second `--not` would include them again. The trailing `--` keeps a
     // branch name that matches a worktree directory from being read as a path.
-    let Ok(captured) = raw_git(
+    let captured = raw_git(
         git_root,
-        &[
-            "rev-list",
-            "--count",
-            &tip,
-            "--not",
-            base,
-            "--remotes",
-            "--",
-        ],
-    ) else {
-        return None;
-    };
+        &["rev-list", "--count", tip, "--not", base, "--remotes", "--"],
+    )
+    .ok()?;
     if captured.code != 0 {
         return None;
     }
     let count = captured.stdout.trim().parse::<u64>().ok()?;
     Some(count > 0)
+}
+
+fn upstream_missing(git_root: &Path, branch: &str) -> bool {
+    let spec = format!("refs/heads/{branch}@{{upstream}}");
+    match raw_git(git_root, &["rev-parse", "--verify", "--quiet", &spec]) {
+        Ok(captured) => captured.code != 0 || captured.stdout.trim().is_empty(),
+        Err(_) => false,
+    }
+}
+
+fn changes_landed(git_root: &Path, tip: &str, base: &str) -> bool {
+    let Ok(merge_base) = raw_git(git_root, &["merge-base", base, tip]) else {
+        return false;
+    };
+    if merge_base.code != 0 {
+        return false;
+    }
+    let merge_base = merge_base.stdout.trim();
+    if merge_base.is_empty() {
+        return false;
+    }
+    // An empty diff merges cleanly into every tree. Those commits are still
+    // absent from the default branch, so only a non-empty diff can count.
+    let Ok(diff) = raw_git(git_root, &["diff", "--quiet", merge_base, tip]) else {
+        return false;
+    };
+    if diff.code != 1 {
+        return false;
+    }
+    let Ok(merged) = raw_git(git_root, &["merge-tree", "--write-tree", base, tip]) else {
+        return false;
+    };
+    if merged.code != 0 {
+        return false;
+    }
+    let Some(tree) = merged
+        .stdout
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    else {
+        return false;
+    };
+    let spec = format!("{base}^{{tree}}");
+    let Ok(base_tree) = raw_git(git_root, &["rev-parse", "--verify", "--quiet", &spec]) else {
+        return false;
+    };
+    base_tree.code == 0 && base_tree.stdout.trim() == tree
 }
 
 fn verify_commit(git_root: &Path, name: &str) -> Result<bool> {
@@ -532,11 +626,104 @@ pub fn fetch(cwd: &Path, remote: &str, refspec: &str) -> Result<()> {
         .map_err(|error| Error::msg(format!("git fetch failed: {error}")))
 }
 
-pub fn set_upstream(git_root: &Path, branch: &str, upstream: &str) -> Result<()> {
+/// True when `origin` advertises `refs/heads/<branch>` exactly.
+pub fn remote_has_branch(git_root: &Path, remote: &str, branch: &str) -> Result<bool> {
+    let captured = raw_git(git_root, &["ls-remote", "--heads", remote, branch])
+        .map_err(|error| Error::msg(format!("git ls-remote failed: {error}")))?;
+    if captured.code != 0 {
+        let detail = first_output(&captured);
+        return Err(Error::msg(format!("git ls-remote failed: {detail}")));
+    }
+    let wanted = format!("refs/heads/{branch}");
+    Ok(captured.stdout.lines().any(|line| {
+        line.split(['\t', ' '])
+            .nth(1)
+            .is_some_and(|name| name == wanted)
+    }))
+}
+
+/// SHA advertised as `refs/pull/<number>/head`, when the remote answers.
+pub(crate) fn remote_pull_head(git_root: &Path, number: u64) -> Option<String> {
+    let spec = format!("refs/pull/{number}/head");
+    let captured = raw_git(git_root, &["ls-remote", "origin", &spec]).ok()?;
+    if captured.code != 0 {
+        return None;
+    }
+    captured.stdout.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        let sha = parts.next()?;
+        let name = parts.next()?;
+        (name == spec).then(|| sha.to_string())
+    })
+}
+
+/// Create `name` at `start`, or fast-forward it there.
+pub fn ensure_branch(git_root: &Path, name: &str, start: &str) -> Result<()> {
+    if !branch_exists(git_root, name)? {
+        return run(&["branch", name, start], Some(git_root))
+            .map_err(|error| Error::msg(format!("Failed to create branch {name}: {error}")));
+    }
+    let branch_ref = format!("refs/heads/{name}");
+    let ancestor = raw_git(
+        git_root,
+        &["merge-base", "--is-ancestor", &branch_ref, start],
+    )?;
+    if ancestor.code != 0 {
+        return Err(Error::msg(format!(
+            "Local branch {name} has commits that are not in {start}"
+        )));
+    }
+    let current = raw_git(git_root, &["rev-parse", &branch_ref])?;
+    let target = raw_git(git_root, &["rev-parse", start])?;
+    if current.code != 0 || target.code != 0 {
+        return Err(Error::msg(format!(
+            "Failed to resolve branch {name} or {start}"
+        )));
+    }
+    if current.stdout.trim() == target.stdout.trim() {
+        return Ok(());
+    }
+    run(&["branch", "-f", name, start], Some(git_root))
+        .map_err(|error| Error::msg(format!("Failed to update branch {name}: {error}")))
+}
+
+/// Configure tracking even when the remote's fetch refspec excludes this branch.
+pub fn set_branch_tracking(
+    git_root: &Path,
+    branch: &str,
+    remote: &str,
+    head_ref: &str,
+) -> Result<()> {
     run(
-        &["branch", "--set-upstream-to", upstream, branch],
+        &["config", &format!("branch.{branch}.remote"), remote],
+        Some(git_root),
+    )?;
+    run(
+        &[
+            "config",
+            &format!("branch.{branch}.merge"),
+            &format!("refs/heads/{head_ref}"),
+        ],
         Some(git_root),
     )
+}
+
+/// Drop `branch.<name>.remote` and `branch.<name>.merge` when they are set.
+pub fn clear_branch_upstream(git_root: &Path, branch: &str) {
+    let _ = run(&["branch", "--unset-upstream", branch], Some(git_root));
+    for suffix in ["remote", "merge"] {
+        let key = format!("branch.{branch}.{suffix}");
+        let _ = raw_git(git_root, &["config", "--unset", &key]);
+    }
+}
+
+fn first_output(captured: &process::Captured) -> String {
+    let stderr = captured.stderr.trim();
+    if !stderr.is_empty() {
+        stderr.to_string()
+    } else {
+        captured.stdout.trim().to_string()
+    }
 }
 
 pub fn parse_worktrees(stdout: &str) -> Vec<GitWorktree> {

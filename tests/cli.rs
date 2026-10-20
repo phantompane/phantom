@@ -1773,6 +1773,7 @@ fn publish_pr_topic(repo: &Repo) {
     repo.git(&["add", "topic.txt"]);
     repo.git(&["commit", "-m", "topic"]);
     repo.git(&["push", "origin", "main", "topic"]);
+    repo.git(&["push", "origin", "topic:refs/pull/7/head"]);
     repo.git(&["checkout", "main"]);
     repo.git(&["branch", "-D", "topic"]);
 }
@@ -6412,10 +6413,14 @@ fn land_branch(repo: &Repo, name: &str) {
 }
 
 fn commit_in_worktree(repo: &Repo, name: &str) {
-    let dir = worktree_dir(repo, name);
     let file = format!("{name}.txt");
-    fs::write(dir.join(&file), format!("{name}\n")).expect("note");
-    for args in [vec!["add", &file], vec!["commit", "-m", &file]] {
+    commit_file(repo, name, &file, &format!("{name}\n"));
+}
+
+fn commit_file(repo: &Repo, name: &str, file: &str, body: &str) {
+    let dir = worktree_dir(repo, name);
+    fs::write(dir.join(file), body).expect("note");
+    for args in [vec!["add", file], vec!["commit", "-m", file]] {
         let output = repo
             .command("git", &args)
             .current_dir(&dir)
@@ -6427,6 +6432,27 @@ fn commit_in_worktree(repo: &Repo, name: &str) {
             text(&output.stderr),
             text(&output.stdout)
         );
+    }
+}
+
+fn publish_branch(repo: &Repo, name: &str) {
+    let bare = repo.root.join("origin.git");
+    let spec = bare.to_str().expect("bare path");
+    if !bare.exists() {
+        repo.git(&["init", "--bare", spec]);
+        repo.git(&["remote", "add", "origin", spec]);
+        repo.git(&["push", "-u", "origin", "main"]);
+    }
+    repo.git(&["push", "-u", "origin", name]);
+}
+
+fn squash_onto_main(repo: &Repo, name: &str) {
+    repo.git(&["merge", "--squash", name]);
+    let message = format!("squash {name}");
+    repo.git(&["commit", "-m", &message]);
+    if repo.root.join("origin.git").exists() {
+        repo.git(&["push", "origin", "main"]);
+        repo.git(&["push", "origin", "--delete", name]);
     }
 }
 
@@ -8162,6 +8188,129 @@ fn delete_refuses_when_unpushed_commits_cannot_be_checked() {
 }
 
 #[test]
+fn gc_and_delete_accept_a_squash_merged_branch_whose_remote_is_gone() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "feature"]).status.success());
+    commit_in_worktree(&repo, "feature");
+    commit_file(&repo, "feature", "more.txt", "more\n");
+    publish_branch(&repo, "feature");
+    squash_onto_main(&repo, "feature");
+
+    let plan = repo.mabo(&["gc"]);
+    assert!(plan.status.success(), "{}", text(&plan.stderr));
+    let planned = text(&plan.stdout);
+    assert!(
+        planned.contains("would remove feature [merged]"),
+        "{planned}"
+    );
+    assert!(worktree_dir(&repo, "feature").is_dir());
+    assert!(branch_listed(&repo, "feature"));
+
+    let deleted = repo.mabo(&["delete", "feature"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(
+        text(&deleted.stdout).contains("and its branch 'feature'"),
+        "{}",
+        text(&deleted.stdout)
+    );
+    assert!(!worktree_dir(&repo, "feature").exists());
+    assert!(!branch_listed(&repo, "feature"));
+}
+
+#[test]
+fn delete_refuses_a_squash_merged_branch_with_a_later_commit() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "feature"]).status.success());
+    commit_in_worktree(&repo, "feature");
+    publish_branch(&repo, "feature");
+    squash_onto_main(&repo, "feature");
+    commit_file(&repo, "feature", "later.txt", "later\n");
+
+    let refused = repo.mabo(&["delete", "feature"]);
+    assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    assert!(
+        text(&refused.stderr).contains("unpushed"),
+        "{}",
+        text(&refused.stderr)
+    );
+    assert!(worktree_dir(&repo, "feature").is_dir());
+    assert!(branch_listed(&repo, "feature"));
+
+    let plan = repo.mabo(&["gc"]);
+    assert!(plan.status.success(), "{}", text(&plan.stderr));
+    let planned = text(&plan.stdout);
+    assert!(!planned.contains("would remove feature"), "{planned}");
+    assert!(worktree_dir(&repo, "feature").is_dir());
+    assert!(branch_listed(&repo, "feature"));
+}
+
+#[test]
+fn gc_and_delete_accept_a_rebase_merged_branch() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "feature"]).status.success());
+    commit_in_worktree(&repo, "feature");
+    commit_file(&repo, "feature", "more.txt", "more\n");
+    publish_branch(&repo, "feature");
+    repo.git(&["cherry-pick", "feature~1"]);
+    repo.git(&["cherry-pick", "feature"]);
+    repo.git(&["push", "origin", "main"]);
+    repo.git(&["push", "origin", "--delete", "feature"]);
+
+    let plan = repo.mabo(&["gc"]);
+    assert!(plan.status.success(), "{}", text(&plan.stderr));
+    let planned = text(&plan.stdout);
+    assert!(
+        planned.contains("would remove feature [merged]"),
+        "{planned}"
+    );
+
+    let deleted = repo.mabo(&["delete", "feature"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(!worktree_dir(&repo, "feature").exists());
+    assert!(!branch_listed(&repo, "feature"));
+}
+
+#[test]
+fn gc_applies_a_squash_merged_branch_with_no_remote_and_keeps_a_local_one() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "local"]).status.success());
+    commit_in_worktree(&repo, "local");
+    assert!(repo.mabo(&["create", "squashed"]).status.success());
+    commit_in_worktree(&repo, "squashed");
+    squash_onto_main(&repo, "squashed");
+
+    let refused = repo.mabo(&["delete", "local"]);
+    assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    assert!(
+        text(&refused.stderr).contains("unpushed"),
+        "{}",
+        text(&refused.stderr)
+    );
+    assert!(worktree_dir(&repo, "local").is_dir());
+    assert!(branch_listed(&repo, "local"));
+
+    let applied = repo.mabo(&["gc", "--apply"]);
+    assert!(applied.status.success(), "{}", text(&applied.stderr));
+    let removed = text(&applied.stdout);
+    assert!(removed.contains("removed squashed [merged]"), "{removed}");
+    assert!(!removed.contains("local"), "{removed}");
+    assert!(!worktree_dir(&repo, "squashed").exists());
+    assert!(!branch_listed(&repo, "squashed"));
+    assert!(worktree_dir(&repo, "local").is_dir());
+    assert!(branch_listed(&repo, "local"));
+}
+
+#[test]
 fn delete_refuses_the_worktree_that_contains_the_current_directory() {
     let repo = Repo::new();
     assert!(repo.mabo(&["create", "inside"]).status.success());
@@ -8942,4 +9091,75 @@ fn nameless_create_skips_a_remote_tracking_candidate() {
     assert!(local_branch(&repo, "bold-badger").is_empty());
     assert!(local_branch(&repo, "calm-comet").contains("calm-comet"));
     assert!(managed(&repo, "calm-comet").is_dir());
+}
+
+fn assert_no_upstream(repo: &Repo, branch: &str) {
+    let spec = format!("{branch}@{{upstream}}");
+    let output = repo
+        .command("git", &["rev-parse", "--abbrev-ref", &spec])
+        .output()
+        .expect("upstream");
+    let stderr = text(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "{branch} tracks {}",
+        text(&output.stdout)
+    );
+    assert!(
+        stderr.contains("no upstream configured"),
+        "{branch} upstream check: {stderr}"
+    );
+    assert!(managed(repo, branch).is_dir(), "{branch} worktree missing");
+}
+
+#[test]
+fn create_sets_no_upstream_from_the_base() {
+    let repo = Repo::new();
+    let origin = repo.root.join("origin.git");
+    repo.git(&[
+        "init",
+        "--bare",
+        "-b",
+        "next",
+        origin.to_str().expect("origin path"),
+    ]);
+    repo.git(&["branch", "next"]);
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        origin.to_str().expect("origin path"),
+    ]);
+    repo.git(&["push", "origin", "next"]);
+    repo.git(&["branch", "local-base"]);
+    // `always` makes a local base and HEAD track too. Default git already
+    // tracks a remote-tracking base. Create must refuse both.
+    repo.git(&["config", "branch.autoSetupMerge", "always"]);
+
+    let remote = repo.mabo(&["create", "x", "--base", "origin/next"]);
+    assert!(
+        remote.status.success(),
+        "{}\n{}",
+        text(&remote.stdout),
+        text(&remote.stderr)
+    );
+    assert_no_upstream(&repo, "x");
+
+    let local = repo.mabo(&["create", "from-local", "--base", "local-base"]);
+    assert!(
+        local.status.success(),
+        "{}\n{}",
+        text(&local.stdout),
+        text(&local.stderr)
+    );
+    assert_no_upstream(&repo, "from-local");
+
+    let default_base = repo.mabo(&["create", "from-head"]);
+    assert!(
+        default_base.status.success(),
+        "{}\n{}",
+        text(&default_base.stdout),
+        text(&default_base.stderr)
+    );
+    assert_no_upstream(&repo, "from-head");
 }

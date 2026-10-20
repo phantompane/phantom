@@ -768,6 +768,9 @@ pub struct DeleteOptions {
     pub force: bool,
     pub keep_branch: bool,
     pub allow_current: bool,
+    /// Tip that gc already matched to a merged `refs/pull/<n>/head`.
+    /// A worktree still at this commit is not treated as unpushed.
+    pub published_tip: Option<String>,
 }
 
 pub struct DeleteOutcome {
@@ -806,6 +809,26 @@ pub struct DeletePlan {
     path: PathBuf,
     inside: bool,
     changed: usize,
+}
+
+fn published_tip_matches(options: &DeleteOptions, worktree: &WorktreeInfo) -> bool {
+    let Some(published) = options.published_tip.as_deref() else {
+        return false;
+    };
+    let Some(head) = worktree.head.as_deref() else {
+        return false;
+    };
+    let published = published.trim();
+    let head = head.trim();
+    published.eq_ignore_ascii_case(head)
+        || (published.len() >= 7
+            && head
+                .to_ascii_lowercase()
+                .starts_with(&published.to_ascii_lowercase()))
+        || (head.len() >= 7
+            && published
+                .to_ascii_lowercase()
+                .starts_with(&head.to_ascii_lowercase()))
 }
 
 pub fn preflight_delete(
@@ -852,12 +875,19 @@ pub fn preflight_delete(
         let base = git::default_branch(&context.git_root)
             .map_err(|error| DeleteError::kept(error, &worktree))?;
         let branch = (!worktree.detached).then_some(worktree.branch.as_str());
-        let refusal =
-            match git::unpushed_tip(&context.git_root, branch, worktree.head.as_deref(), &base) {
-                Some(false) => None,
-                Some(true) => Some(false),
-                None => Some(true),
-            };
+        let unpushed =
+            git::tip_reachability(&context.git_root, branch, worktree.head.as_deref(), &base)
+                .unpushed;
+        let unpushed = if unpushed == Some(true) && published_tip_matches(options, &worktree) {
+            Some(false)
+        } else {
+            unpushed
+        };
+        let refusal = match unpushed {
+            Some(false) => None,
+            Some(true) => Some(false),
+            None => Some(true),
+        };
         if let Some(unknown) = refusal {
             return Err(DeleteError::kept(
                 Error::unpushed_delete(name, worktree.detached, unknown),
