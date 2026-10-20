@@ -126,6 +126,11 @@ struct PullRequest {
     head_repo: String,
 }
 
+/// `refs/pull/<n>/head` still exists after GitHub deletes the head branch.
+fn pull_head_refspec(number: u64, local_branch: &str) -> String {
+    format!("refs/pull/{number}/head:{local_branch}")
+}
+
 fn checkout_pull_request(
     pull: &PullRequest,
     repo: &RepoIdentity,
@@ -174,7 +179,7 @@ fn checkout_pull_request(
     } else {
         format!("origin/{}", pull.head_ref)
     };
-    let refspec = format!("{}:{worktree_name}", upstream.trim_start_matches("origin/"));
+    let refspec = pull_head_refspec(pull.number, &worktree_name);
     let post = post_commands(&context);
     let commands = crate::trust::authorize(
         git_root,

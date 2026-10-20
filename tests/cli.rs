@@ -1772,6 +1772,7 @@ fn publish_pr_topic(repo: &Repo) {
     repo.git(&["add", "topic.txt"]);
     repo.git(&["commit", "-m", "topic"]);
     repo.git(&["push", "origin", "main", "topic"]);
+    repo.git(&["push", "origin", "topic:refs/pull/7/head"]);
     repo.git(&["checkout", "main"]);
     repo.git(&["branch", "-D", "topic"]);
 }
