@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::config::{self, PtmConfig};
+use crate::config::{self, MaboConfig};
 use crate::error::{Error, Result};
 use crate::git;
 use crate::paths;
@@ -9,14 +9,14 @@ use crate::preferences::{self, Preferences};
 #[derive(Debug, Clone)]
 pub struct Context {
     pub git_root: PathBuf,
-    /// Checkout the command is running in. `.ptm.toml` is loaded from here.
+    /// Checkout the command is running in. `.mabo.toml` is loaded from here.
     pub source_checkout: PathBuf,
     pub worktrees_directory: PathBuf,
     /// Canonical git common dir when `worktrees_directory` is the default
     /// project directory. Unset when `worktrees-directory` overrides it.
     pub project_common_dir: Option<PathBuf>,
     pub directory_name_separator: String,
-    pub config: Option<PtmConfig>,
+    pub config: Option<MaboConfig>,
     pub preferences: Preferences,
 }
 

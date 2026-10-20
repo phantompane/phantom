@@ -213,10 +213,10 @@ pub(crate) fn resolve_worktree_name(
     }
 }
 
-/// The name ptm stored by placing the worktree under `ptm/worktrees`.
+/// Name recorded under `maboroshi/worktrees`.
 ///
-/// The default layout inserts `<checkout>-<hash>` before the name. A configured
-/// directory, including the previous `.git/ptm/worktrees` layout, does not.
+/// The default directory is `maboroshi/worktrees/<checkout>-<hash>/<name>`.
+/// A configured directory, including `.git/maboroshi/worktrees/<name>`, has no hash segment.
 fn name_from_recorded_path(path: &Path, common_dir: &Path) -> String {
     let normalized = paths::normalize(path);
     let components = normalized
@@ -225,7 +225,7 @@ fn name_from_recorded_path(path: &Path, common_dir: &Path) -> String {
         .collect::<Vec<_>>();
     if let Some(index) = components
         .windows(2)
-        .rposition(|pair| pair[0] == "ptm" && pair[1] == "worktrees")
+        .rposition(|pair| pair[0] == "maboroshi" && pair[1] == "worktrees")
     {
         let rest = &components[index + 2..];
         if let Some((project, name)) = rest.split_first() {
@@ -974,7 +974,7 @@ pub fn exec_in_worktree(
     if let Err(error) = metadata::touch(&context.git_root, &path) {
         eprintln!("Warning: {error}");
     }
-    let owned = ptm_env(&worktree.name, &path);
+    let owned = mabo_env(&worktree.name, &path);
     let mut pairs = owned
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -1023,7 +1023,7 @@ fn run_action(
             logger.log(&format!(
                 "\nExecuting command in worktree '{name}': {shown}"
             ));
-            let env = ptm_env(name, path);
+            let env = mabo_env(name, path);
             let pairs = env
                 .iter()
                 .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -1067,11 +1067,11 @@ fn run_action(
     }
 }
 
-pub fn ptm_env(name: &str, path: &Path) -> Vec<(String, String)> {
+pub fn mabo_env(name: &str, path: &Path) -> Vec<(String, String)> {
     vec![
-        ("PTM".to_string(), "1".to_string()),
-        ("PTM_NAME".to_string(), name.to_string()),
-        ("PTM_PATH".to_string(), path.display().to_string()),
+        ("MABO".to_string(), "1".to_string()),
+        ("MABO_NAME".to_string(), name.to_string()),
+        ("MABO_PATH".to_string(), path.display().to_string()),
     ]
 }
 
@@ -1118,7 +1118,7 @@ fn run_hook_commands(
             name,
             &shell,
             &["-c", command],
-            &[("PTM_ROOT_PATH", root_path.as_str())],
+            &[("MABO_ROOT_PATH", root_path.as_str())],
             logger.json,
         ) {
             Ok(code) => code,
@@ -1630,17 +1630,20 @@ mod tests {
     fn recorded_path_keeps_slash_names_and_skips_the_project_directory() {
         let common = Path::new("/repo/.git");
         assert_eq!(
-            name_from_recorded_path(Path::new("/repo/.git/ptm/worktrees/next"), common),
+            name_from_recorded_path(Path::new("/repo/.git/maboroshi/worktrees/next"), common),
             "next"
         );
         assert_eq!(
-            name_from_recorded_path(Path::new("/repo/.git/ptm/worktrees/feature/topic"), common),
+            name_from_recorded_path(
+                Path::new("/repo/.git/maboroshi/worktrees/feature/topic"),
+                common
+            ),
             "feature/topic"
         );
         let project = paths::project_directory_name("repo", common);
-        let nested = PathBuf::from(format!("/data/ptm/worktrees/{project}/feature/topic"));
+        let nested = PathBuf::from(format!("/data/maboroshi/worktrees/{project}/feature/topic"));
         assert_eq!(name_from_recorded_path(&nested, common), "feature/topic");
-        let single = PathBuf::from(format!("/data/ptm/worktrees/{project}/inside"));
+        let single = PathBuf::from(format!("/data/maboroshi/worktrees/{project}/inside"));
         assert_eq!(name_from_recorded_path(&single, common), "inside");
         assert_eq!(
             name_from_recorded_path(Path::new("/tmp/custom-wt/alias"), common),
@@ -1651,7 +1654,7 @@ mod tests {
             resolve_worktree_name(
                 Path::new("/data/wt/next"),
                 directory,
-                Some(Path::new("/repo/.git/ptm/worktrees/other")),
+                Some(Path::new("/repo/.git/maboroshi/worktrees/other")),
                 common,
                 None,
                 "abcdef0",
@@ -1704,17 +1707,22 @@ mod tests {
     }
 
     #[test]
-    fn ptm_env_exports_ptm_variables() {
-        let env = ptm_env("feature/env", Path::new("/worktrees/feature/env"));
+    fn mabo_env_exports_mabo_variables() {
+        let env = mabo_env("feature/env", Path::new("/worktrees/feature/env"));
         assert_eq!(
             env,
             vec![
-                ("PTM".to_string(), "1".to_string()),
-                ("PTM_NAME".to_string(), "feature/env".to_string()),
-                ("PTM_PATH".to_string(), "/worktrees/feature/env".to_string()),
+                ("MABO".to_string(), "1".to_string()),
+                ("MABO_NAME".to_string(), "feature/env".to_string()),
+                (
+                    "MABO_PATH".to_string(),
+                    "/worktrees/feature/env".to_string()
+                ),
             ]
         );
-        assert!(env.iter().all(|(key, _)| !key.starts_with("PHANTOM")));
+        assert!(env
+            .iter()
+            .all(|(key, _)| !key.starts_with("PHANTOM") && !key.starts_with("PTM")));
     }
 
     #[test]

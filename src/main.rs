@@ -14,7 +14,7 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    match phantom::cli::run(&args) {
+    match maboroshi::cli::run(&args) {
         Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
         Err(error) => {
             let code = u8::try_from(error.exit_code()).unwrap_or(1);

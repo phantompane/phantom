@@ -1,14 +1,14 @@
 [package]
-name = "phantom"
+name = "maboroshi"
 version = "7.0.0-alpha.4"
 edition = "2021"
 rust-version = "1.89"
 publish = false
-description = "Rust prototype of the phantom Git worktree manager"
+description = "Maboroshi, a Git worktree manager"
 license = "MIT"
 
 [[bin]]
-name = "ptm"
+name = "mabo"
 path = "src/main.rs"
 
 [dependencies]

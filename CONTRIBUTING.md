@@ -1,6 +1,6 @@
-# 🤝 Contributing to Phantom
+# 🤝 Contributing to Maboroshi
 
-Thank you for your interest in contributing to Phantom! This guide will help you get started with development.
+Thank you for your interest in contributing to Maboroshi! This guide will help you get started with development.
 
 ## 📋 Table of Contents
 
@@ -33,7 +33,7 @@ git checkout next
 cargo run --locked -- --help
 ```
 
-The built binary is `ptm` (`ptm --help`, `ptm create`). The Cargo package name stays `phantom`. There is no `phantom` binary alias.
+The built binary is `mabo` (`mabo --help`, `mabo create`). The Cargo package name is `maboroshi`. There is no `ptm` or `phantom` binary.
 
 ### Development Workflow
 
@@ -119,15 +119,15 @@ When contributing documentation:
 
 ## 🚀 Release Process
 
-To release a new version of Phantom:
+To release a new version of Maboroshi:
 
 1. **Open a version pull request against `next`**
 
-   Change the version by hand in a dedicated pull request. Do not bump it in a feature pull request. Edit `version` in `Cargo.toml` and the `phantom` package entry in `Cargo.lock` so they match.
+   Change the version by hand in a dedicated pull request. Do not bump it in a feature pull request. Edit `version` in `Cargo.toml` and the `maboroshi` package entry in `Cargo.lock` so they match.
 
    ```bash
-   # After editing Cargo.toml, refresh only the phantom entry in Cargo.lock:
-   cargo update -p phantom --precise <version>
+   # After editing Cargo.toml, refresh only the maboroshi entry in Cargo.lock:
+   cargo update -p maboroshi --precise <version>
    ```
 
    Title the pull request `chore(version): vX.Y.Z`, for example `chore(version): v7.0.0-alpha.4`. `.github/workflows/tag-on-merge.yml` creates that git tag when the pull request merges into `next`. `ci.yml` and `release-compile.yml` do not bump the version.
@@ -142,18 +142,18 @@ To release a new version of Phantom:
    ```bash
    # Create a release with automatically generated notes
    gh release create v<version> \
-     --title "ptm v<version>" \
+     --title "mabo v<version>" \
      --generate-notes \
      --target next
 
    # Example for v1.3.0:
    gh release create v1.3.0 \
-     --title "ptm v1.3.0" \
+     --title "mabo v1.3.0" \
      --generate-notes \
      --target next
    ```
 
-   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `ptm-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains the `ptm` binary. npm is not published. Monitor the workflow run in GitHub Actions.
+   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `maboroshi-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains the `mabo` binary. npm is not published. Monitor the workflow run in GitHub Actions.
 
 4. **Update release notes for clarity**
    - Review the auto-generated release notes using `gh release view v<version>`
@@ -207,7 +207,7 @@ To release a new version of Phantom:
 
 ## 🙏 Thank You!
 
-Your contributions make Phantom better for everyone. If you have questions, feel free to:
+Your contributions make Maboroshi better for everyone. If you have questions, feel free to:
 
 - Open an issue for bugs or feature requests
 - Start a discussion for general questions

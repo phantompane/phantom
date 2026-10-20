@@ -11,7 +11,7 @@ struct Repo {
 impl Repo {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
-            "ptm-trust-{}-{}",
+            "mabo-trust-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -53,10 +53,10 @@ impl Repo {
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_DATA_HOME", self.root.join("xdg"))
-            .env_remove("PTM_TRUST_ALL")
+            .env_remove("MABO_TRUST_ALL")
             .env_remove("CI")
             .env_remove("GHQ_ROOT")
-            .env_remove("PTM_AGENT_ID")
+            .env_remove("MABO_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM");
         if program.ends_with("git") && args.first() == Some(&"init") {
@@ -67,10 +67,10 @@ impl Repo {
         command
     }
 
-    fn ptm(&self, args: &[&str]) -> std::process::Output {
-        self.command(env!("CARGO_BIN_EXE_ptm"), args)
+    fn mabo(&self, args: &[&str]) -> std::process::Output {
+        self.command(env!("CARGO_BIN_EXE_mabo"), args)
             .output()
-            .expect("ptm")
+            .expect("mabo")
     }
 }
 
@@ -86,21 +86,21 @@ fn text(bytes: &[u8]) -> String {
 
 fn hooks(repo: &Repo, post: &str, pre: &str) {
     fs::write(
-        repo.repo.join(".ptm.toml"),
+        repo.repo.join(".mabo.toml"),
         format!("[hooks]\npost-create = [{post}]\npre-delete = [{pre}]\n"),
     )
     .expect("hooks");
 }
 
 fn worktree(repo: &Repo, name: &str) -> PathBuf {
-    let common = phantom::git::canonical_common_dir(&repo.repo).expect("common dir");
-    phantom::paths::default_worktrees_directory(&repo.repo, &common, &repo.root.join("xdg"))
+    let common = maboroshi::git::canonical_common_dir(&repo.repo).expect("common dir");
+    maboroshi::paths::default_worktrees_directory(&repo.repo, &common, &repo.root.join("xdg"))
         .path
         .join(name)
 }
 
 fn trust_file(repo: &Repo) -> PathBuf {
-    repo.root.join("state/ptm/trust.toml")
+    repo.root.join("state/maboroshi/trust.toml")
 }
 
 fn common_dir(repo: &Repo) -> String {
@@ -124,7 +124,7 @@ fn included_files_copy_without_trust() {
     fs::write(repo.repo.join("secret.env"), "secret\n").expect("secret");
     repo.git(&["add", ".gitignore", ".worktreeinclude"]);
     repo.git(&["commit", "-m", "include"]);
-    let created = repo.ptm(&["create", "copied"]);
+    let created = repo.mabo(&["create", "copied"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert_eq!(
         fs::read_to_string(worktree(&repo, "copied").join("secret.env")).expect("copied"),
@@ -136,7 +136,7 @@ fn included_files_copy_without_trust() {
 #[test]
 fn a_repository_with_no_hooks_never_prompts() {
     let repo = Repo::new();
-    let created = repo.ptm(&["create", "plain"]);
+    let created = repo.mabo(&["create", "plain"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(
         !text(&created.stderr).contains("Trust this project"),
@@ -151,10 +151,10 @@ fn a_repository_with_no_hooks_never_prompts() {
 fn non_tty_refusal_creates_nothing() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"touch pre-delete.txt\"");
-    let created = repo.ptm(&["create", "topic"]);
+    let created = repo.mabo(&["create", "topic"]);
     assert_eq!(created.status.code(), Some(1));
     let stderr = text(&created.stderr);
-    assert!(stderr.contains("ptm trust"), "{stderr}");
+    assert!(stderr.contains("mabo trust"), "{stderr}");
     assert!(stderr.contains("--no-hooks"), "{stderr}");
     assert!(stderr.contains("touch hook-ran.txt"), "{stderr}");
     assert!(
@@ -183,7 +183,7 @@ fn non_tty_refusal_creates_nothing() {
 fn json_refusal_keeps_stdout_to_one_document() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
-    let created = repo.ptm(&["create", "topic", "--json"]);
+    let created = repo.mabo(&["create", "topic", "--json"]);
     assert_eq!(created.status.code(), Some(1));
     assert!(
         text(&created.stderr).is_empty(),
@@ -195,7 +195,7 @@ fn json_refusal_keeps_stdout_to_one_document() {
     assert_eq!(document["error"]["code"], "untrusted");
     assert_eq!(document["error"]["exitCode"], 1);
     let message = document["error"]["message"].as_str().expect("message");
-    assert!(message.contains("ptm trust"), "{message}");
+    assert!(message.contains("mabo trust"), "{message}");
     assert!(message.contains("--no-hooks"), "{message}");
     assert!(!worktree(&repo, "topic").exists());
 }
@@ -204,7 +204,7 @@ fn json_refusal_keeps_stdout_to_one_document() {
 fn no_hooks_creates_the_worktree_and_does_not_trust_it() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
-    let created = repo.ptm(&["create", "topic", "--no-hooks"]);
+    let created = repo.mabo(&["create", "topic", "--no-hooks"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(worktree(&repo, "topic").is_dir());
     assert!(!worktree(&repo, "topic").join("hook-ran.txt").exists());
@@ -215,11 +215,11 @@ fn no_hooks_creates_the_worktree_and_does_not_trust_it() {
 fn trust_untrust_and_list_round_trip() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
-    let refused = repo.ptm(&["trust"]);
+    let refused = repo.mabo(&["trust"]);
     assert_eq!(refused.status.code(), Some(1), "{}", text(&refused.stderr));
     assert!(!trust_file(&repo).exists());
 
-    let trusted = repo.ptm(&["trust", "--yes"]);
+    let trusted = repo.mabo(&["trust", "--yes"]);
     assert!(trusted.status.success(), "{}", text(&trusted.stderr));
     let key = common_dir(&repo);
     assert!(
@@ -231,7 +231,7 @@ fn trust_untrust_and_list_round_trip() {
     assert!(stored.contains(&key), "{stored}");
     assert!(stored.contains("trustedAt"), "{stored}");
 
-    let listed = repo.ptm(&["trust", "--list"]);
+    let listed = repo.mabo(&["trust", "--list"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     assert!(
         text(&listed.stdout).contains(&key),
@@ -239,17 +239,17 @@ fn trust_untrust_and_list_round_trip() {
         text(&listed.stdout)
     );
 
-    let json = repo.ptm(&["trust", "--list", "--json"]);
+    let json = repo.mabo(&["trust", "--list", "--json"]);
     assert!(json.status.success(), "{}", text(&json.stderr));
     let document: serde_json::Value = serde_json::from_slice(&json.stdout).expect("json");
     assert_eq!(document["projects"][0]["path"], key);
 
-    let created = repo.ptm(&["create", "topic"]);
+    let created = repo.mabo(&["create", "topic"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(worktree(&repo, "topic").join("hook-ran.txt").is_file());
 
     hooks(&repo, "\"touch changed-hook.txt\"", "\"true\"");
-    let again = repo.ptm(&["create", "other"]);
+    let again = repo.mabo(&["create", "other"]);
     assert!(again.status.success(), "{}", text(&again.stderr));
     assert!(
         !text(&again.stderr).contains("Trust this project and run its hooks?"),
@@ -258,16 +258,16 @@ fn trust_untrust_and_list_round_trip() {
     );
     assert!(worktree(&repo, "other").join("changed-hook.txt").is_file());
 
-    let removed = repo.ptm(&["untrust"]);
+    let removed = repo.mabo(&["untrust"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
     assert!(
         text(&removed.stdout).contains("Removed trust"),
         "{}",
         text(&removed.stdout)
     );
-    let empty = repo.ptm(&["trust", "--list"]);
+    let empty = repo.mabo(&["trust", "--list"]);
     assert_eq!(text(&empty.stdout), "No trusted projects");
-    let missing = repo.ptm(&["untrust"]);
+    let missing = repo.mabo(&["untrust"]);
     assert!(missing.status.success(), "{}", text(&missing.stderr));
     assert!(
         text(&missing.stdout).contains("Not trusted"),
@@ -275,7 +275,7 @@ fn trust_untrust_and_list_round_trip() {
         text(&missing.stdout)
     );
 
-    let blocked = repo.ptm(&["create", "third"]);
+    let blocked = repo.mabo(&["create", "third"]);
     assert_eq!(blocked.status.code(), Some(1));
     assert!(!worktree(&repo, "third").exists());
 }
@@ -285,10 +285,10 @@ fn trust_all_runs_hooks_without_writing_trust() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
     let created = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "topic"])
-        .env("PTM_TRUST_ALL", "1")
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "topic"])
+        .env("MABO_TRUST_ALL", "1")
         .output()
-        .expect("ptm");
+        .expect("mabo");
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(worktree(&repo, "topic").join("hook-ran.txt").is_file());
     assert!(!trust_file(&repo).exists());
@@ -297,9 +297,9 @@ fn trust_all_runs_hooks_without_writing_trust() {
 #[test]
 fn delete_without_a_terminal_keeps_the_worktree() {
     let repo = Repo::new();
-    assert!(repo.ptm(&["create", "topic"]).status.success());
+    assert!(repo.mabo(&["create", "topic"]).status.success());
     hooks(&repo, "\"true\"", "\"touch pre-delete.txt\"");
-    let deleted = repo.ptm(&["delete", "topic"]);
+    let deleted = repo.mabo(&["delete", "topic"]);
     assert_eq!(deleted.status.code(), Some(1));
     assert!(
         text(&deleted.stderr).contains("--no-hooks"),
@@ -308,7 +308,7 @@ fn delete_without_a_terminal_keeps_the_worktree() {
     );
     assert!(worktree(&repo, "topic").is_dir());
     assert!(!repo.repo.join("pre-delete.txt").exists());
-    let skipped = repo.ptm(&["delete", "topic", "--no-hooks"]);
+    let skipped = repo.mabo(&["delete", "topic", "--no-hooks"]);
     assert!(skipped.status.success(), "{}", text(&skipped.stderr));
     assert!(!worktree(&repo, "topic").exists());
     assert!(!repo.repo.join("pre-delete.txt").exists());
@@ -317,7 +317,7 @@ fn delete_without_a_terminal_keeps_the_worktree() {
 #[test]
 fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
     let repo = Repo::new();
-    assert!(repo.ptm(&["create", "feature"]).status.success());
+    assert!(repo.mabo(&["create", "feature"]).status.success());
     let dir = worktree(&repo, "feature");
     fs::write(dir.join("feature.txt"), "feature\n").expect("note");
     for args in [vec!["add", "feature.txt"], vec!["commit", "-m", "feature"]] {
@@ -331,7 +331,7 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
     repo.git(&["merge", "--ff-only", "feature"]);
     hooks(&repo, "\"true\"", "\"touch pre-delete.txt\"");
 
-    let plan = repo.ptm(&["gc", "--json"]);
+    let plan = repo.mabo(&["gc", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let document: serde_json::Value = serde_json::from_slice(&plan.stdout).expect("json");
     assert_eq!(document["candidates"][0]["action"], "skipped");
@@ -347,7 +347,7 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
         text(&plan.stderr)
     );
 
-    let applied = repo.ptm(&["gc", "--apply", "--json"]);
+    let applied = repo.mabo(&["gc", "--apply", "--json"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let applied_doc: serde_json::Value = serde_json::from_slice(&applied.stdout).expect("json");
     assert_eq!(applied_doc["candidates"][0]["action"], "skipped");
@@ -356,7 +356,7 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
     assert!(!repo.repo.join("pre-delete.txt").exists());
     assert!(!dir.join("pre-delete.txt").exists());
 
-    let removed = repo.ptm(&["gc", "--apply", "--no-hooks"]);
+    let removed = repo.mabo(&["gc", "--apply", "--no-hooks"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
     assert!(
         text(&removed.stdout).contains("removed feature"),
@@ -411,29 +411,29 @@ fn ci_still_honors_no_hooks_and_trust_all() {
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
     let skipped = repo
         .command(
-            env!("CARGO_BIN_EXE_ptm"),
+            env!("CARGO_BIN_EXE_mabo"),
             &["create", "skipped", "--no-hooks"],
         )
         .env("CI", "1")
         .output()
-        .expect("ptm");
+        .expect("mabo");
     assert!(skipped.status.success(), "{}", text(&skipped.stderr));
     assert!(worktree(&repo, "skipped").is_dir());
     assert!(!worktree(&repo, "skipped").join("hook-ran.txt").exists());
 
     let trusted = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "all"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "all"])
         .env("CI", "1")
-        .env("PTM_TRUST_ALL", "1")
+        .env("MABO_TRUST_ALL", "1")
         .output()
-        .expect("ptm");
+        .expect("mabo");
     assert!(trusted.status.success(), "{}", text(&trusted.stderr));
     assert!(worktree(&repo, "all").join("hook-ran.txt").is_file());
     assert!(!trust_file(&repo).exists());
 }
 
 #[test]
-fn ci_does_not_prompt_for_ptm_trust() {
+fn ci_does_not_prompt_for_mabo_trust() {
     let repo = Repo::new();
     let output = pty_env(&repo, &["trust"], Some("y\n"), &[("CI", "1")]);
     assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
@@ -447,7 +447,7 @@ fn ci_does_not_prompt_for_ptm_trust() {
 
 #[test]
 fn agent_id_on_a_terminal_does_not_prompt_or_create() {
-    an_agent_environment_does_not_prompt_on_a_terminal("PTM_AGENT_ID", "grok", false);
+    an_agent_environment_does_not_prompt_on_a_terminal("MABO_AGENT_ID", "grok", false);
 }
 
 #[test]
@@ -491,7 +491,7 @@ fn a_terminal_no_creates_nothing() {
 #[test]
 fn gc_on_a_terminal_does_not_ask() {
     let repo = Repo::new();
-    assert!(repo.ptm(&["create", "feature"]).status.success());
+    assert!(repo.mabo(&["create", "feature"]).status.success());
     let dir = worktree(&repo, "feature");
     fs::write(dir.join("feature.txt"), "feature\n").expect("note");
     for args in [vec!["add", "feature.txt"], vec!["commit", "-m", "feature"]] {
@@ -520,26 +520,26 @@ fn gc_on_a_terminal_does_not_ask() {
 #[test]
 fn a_broken_trust_file_still_allows_skip_paths() {
     let repo = Repo::new();
-    fs::create_dir_all(repo.root.join("state/ptm")).expect("state");
+    fs::create_dir_all(repo.root.join("state/maboroshi")).expect("state");
     fs::write(trust_file(&repo), "[[project]]\npath = 1\n").expect("broken");
 
-    let plain = repo.ptm(&["create", "plain"]);
+    let plain = repo.mabo(&["create", "plain"]);
     assert!(plain.status.success(), "{}", text(&plain.stderr));
 
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
-    let skipped = repo.ptm(&["create", "skipped", "--no-hooks"]);
+    let skipped = repo.mabo(&["create", "skipped", "--no-hooks"]);
     assert!(skipped.status.success(), "{}", text(&skipped.stderr));
     assert!(!worktree(&repo, "skipped").join("hook-ran.txt").exists());
 
     let trusted = repo
-        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "ci"])
-        .env("PTM_TRUST_ALL", "1")
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "ci"])
+        .env("MABO_TRUST_ALL", "1")
         .output()
-        .expect("ptm");
+        .expect("mabo");
     assert!(trusted.status.success(), "{}", text(&trusted.stderr));
     assert!(worktree(&repo, "ci").join("hook-ran.txt").is_file());
 
-    let blocked = repo.ptm(&["create", "needs-trust"]);
+    let blocked = repo.mabo(&["create", "needs-trust"]);
     assert_eq!(blocked.status.code(), Some(1));
     assert!(
         text(&blocked.stderr).contains("trust.toml"),
@@ -565,7 +565,7 @@ argv = sys.argv[1:]
 master, slave = pty.openpty()
 proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
 os.close(slave)
-answer = os.environ.get("PTM_TEST_ANSWER", "").encode()
+answer = os.environ.get("MABO_TEST_ANSWER", "").encode()
 buf = b""
 sent = False
 deadline = time.time() + 15
@@ -599,12 +599,12 @@ raise SystemExit(code if code is not None else 1)
 "#;
     let mut command = repo.command("python3", &[]);
     command.arg("-c").arg(script);
-    command.arg(env!("CARGO_BIN_EXE_ptm"));
+    command.arg(env!("CARGO_BIN_EXE_mabo"));
     command.args(args);
     if let Some(answer) = answer {
-        command.env("PTM_TEST_ANSWER", answer);
+        command.env("MABO_TEST_ANSWER", answer);
     } else {
-        command.env_remove("PTM_TEST_ANSWER");
+        command.env_remove("MABO_TEST_ANSWER");
     }
     for (key, value) in env {
         command.env(key, value);

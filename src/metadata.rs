@@ -128,7 +128,7 @@ pub fn load(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>> {
 }
 
 /// Replace any record at `path`. Create, attach, and a first checkout use this
-/// so a worktree removed outside ptm does not keep the previous owner.
+/// so a worktree removed outside mabo does not keep the previous owner.
 pub fn replace(
     git_root: &Path,
     path: &Path,
@@ -403,16 +403,19 @@ fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
     }
 }
 
-/// `ptm/` inside the Git common directory. A custom `worktrees-directory` does
+/// `maboroshi/` inside the Git common directory. A custom `worktrees-directory` does
 /// not move this file, and a checkout whose `.git` is a file still shares it.
 fn metadata_dir(git_root: &Path) -> Result<PathBuf> {
-    Ok(crate::git::git_common_dir(git_root)?.join("ptm"))
+    Ok(crate::git::git_common_dir(git_root)?.join("maboroshi"))
 }
 
 fn save_injected() -> bool {
     #[cfg(debug_assertions)]
     {
-        std::env::var("PTM_TEST_FAIL_METADATA_SAVE").ok().as_deref() == Some("1")
+        std::env::var("MABO_TEST_FAIL_METADATA_SAVE")
+            .ok()
+            .as_deref()
+            == Some("1")
     }
     #[cfg(not(debug_assertions))]
     {
@@ -581,7 +584,7 @@ mod tests {
 
     fn root() -> PathBuf {
         let path = std::env::temp_dir().join(format!(
-            "ptm-metadata-{}-{}",
+            "mabo-metadata-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));

@@ -32,14 +32,14 @@ pub mod worktree;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn version_line() -> String {
-    let sha = option_env!("PTM_GIT_SHA").filter(|sha| !sha.is_empty());
+    let sha = option_env!("MABO_GIT_SHA").filter(|sha| !sha.is_empty());
     format_version(VERSION, sha)
 }
 
 fn format_version(version: &str, sha: Option<&str>) -> String {
     match sha {
-        Some(sha) => format!("ptm v{version}+rust ({sha})"),
-        None => format!("ptm v{version}+rust"),
+        Some(sha) => format!("mabo v{version}+rust ({sha})"),
+        None => format!("mabo v{version}+rust"),
     }
 }
 
@@ -51,12 +51,12 @@ mod tests {
     fn version_line_marks_the_rust_build() {
         assert_eq!(
             format_version("7.0.0-alpha.4", None),
-            "ptm v7.0.0-alpha.4+rust"
+            "mabo v7.0.0-alpha.4+rust"
         );
         assert_eq!(
             format_version("7.0.0-alpha.4", Some("abc1234")),
-            "ptm v7.0.0-alpha.4+rust (abc1234)"
+            "mabo v7.0.0-alpha.4+rust (abc1234)"
         );
-        assert_ne!(format_version("7.0.0-alpha.4", None), "ptm v7.0.0-alpha.4");
+        assert_ne!(format_version("7.0.0-alpha.4", None), "mabo v7.0.0-alpha.4");
     }
 }

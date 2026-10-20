@@ -66,8 +66,8 @@ jobs:
         shell: bash
         run: |
           version=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
-          archive="ptm-v${version}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}.tar.gz"
-          tar -C "target/${{ matrix.target }}/release" -czf "$archive" ptm
+          archive="maboroshi-v${version}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}.tar.gz"
+          tar -C "target/${{ matrix.target }}/release" -czf "$archive" mabo
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
 
       - name: Upload release asset

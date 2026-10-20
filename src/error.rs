@@ -26,7 +26,7 @@ pub enum Error {
     ProjectNotFound(String),
     #[error("Path '{0}' does not exist")]
     PathNotFound(String),
-    #[error("Not a git repository. Run ptm from inside a Git repository.")]
+    #[error("Not a git repository. Run mabo from inside a Git repository.")]
     NotARepository,
     #[error(
         "Worktree '{name}' has uncommitted changes ({files} files). Use --force to delete anyway."
@@ -213,11 +213,11 @@ mod tests {
             "Worktree 'topic' has unpushed commits. Use --keep-branch to keep the branch, or --force to delete it."
         );
         assert_eq!(
-            Error::msg("Usage: ptm where <worktree-name>").json_code(VALIDATION),
+            Error::msg("Usage: mabo where <worktree-name>").json_code(VALIDATION),
             "validation"
         );
         assert_eq!(Error::msg("boom").json_code(GENERAL), "error");
-        let untrusted = Error::Untrusted("run ptm trust".to_string());
+        let untrusted = Error::Untrusted("run mabo trust".to_string());
         assert_eq!(untrusted.exit_code(), GENERAL);
         assert_eq!(untrusted.json_code(GENERAL), "untrusted");
         assert_eq!(untrusted.to_json(GENERAL).error.code, "untrusted");
