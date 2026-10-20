@@ -1,5 +1,5 @@
 //! Fetch and integrate bases without changing published history or upstreams.
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
 use serde::Serialize;
@@ -405,7 +405,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             involved.insert(remote);
         }
     }
-    let mut fetch_errors = Vec::new();
+    let mut fetch_errors = BTreeMap::new();
     for remote in involved {
         let fetched = git::raw_git(
             &context.git_root,
@@ -419,7 +419,10 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             ],
         )?;
         if fetched.code != 0 {
-            fetch_errors.push(format!("Fetch {remote} failed: {}", fetched.stderr.trim()));
+            fetch_errors.insert(
+                remote.clone(),
+                format!("Fetch {remote} failed: {}", fetched.stderr.trim()),
+            );
         }
     }
     let mut report = Report {
@@ -428,8 +431,13 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         worktrees: Vec::new(),
         exit: 0,
     };
-    if !request.no_default && fetch_errors.is_empty() {
-        let item = sync_default(context, &fallback, &remotes);
+    let fetch_error =
+        |base: &str| remote_for(base, &remotes).and_then(|remote| fetch_errors.get(&remote));
+    if !request.no_default {
+        let item = match fetch_error(&fallback) {
+            Some(error) => Err(Error::msg(error.clone())),
+            None => sync_default(context, &fallback, &remotes),
+        };
         let item = match item {
             Ok(item) => item,
             Err(error) => failed_item("default", error),
@@ -441,25 +449,13 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         }
         report.default = Some(item);
     }
-    // A failed fetch must never silently integrate stale remote information.
-    if !fetch_errors.is_empty() {
-        let detail = fetch_errors.join("; ");
-        if !request.no_default && report.default.is_none() {
-            report.default = Some(failed_item("default", Error::msg(detail.clone())));
-        }
-        if let Some(item) = &mut report.default {
-            item.status("failed", Some(detail.clone()));
-        }
-        for (tree, base) in targets.iter().zip(&bases) {
-            let mut item = tree_item(tree, base);
-            item.status("failed", Some(detail.clone()));
-            report.worktrees.push(item);
-        }
-        report.exit = 1;
-        return Ok(report);
-    }
     for (tree, base) in targets.iter().zip(&bases) {
-        let item = match sync_tree(context, tree, base, request, &fallback, &remotes) {
+        // Only targets using the failed remote must refuse their stale base.
+        let result = match fetch_error(base) {
+            Some(error) => Err(Error::msg(error.clone())),
+            None => sync_tree(context, tree, base, request, &fallback, &remotes),
+        };
+        let item = match result {
             Ok(item) => item,
             Err(error) => {
                 let mut item = tree_item(tree, base);
@@ -473,6 +469,10 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             report.exit = 1;
         }
         report.worktrees.push(item);
+    }
+    // Fetch failure remains exit 1 even if another target refuses a rebase.
+    if !fetch_errors.is_empty() {
+        report.exit = 1;
     }
     Ok(report)
 }

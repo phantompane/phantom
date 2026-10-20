@@ -2125,3 +2125,89 @@ fn default_branch_merge_options_cannot_autostash_local_edits() {
     assert_eq!(r.git(&r.main, &["stash", "list"]), stash);
     assert!(!r.main.join(".git/MERGE_AUTOSTASH").exists());
 }
+
+#[test]
+fn failed_default_remote_does_not_block_a_healthy_base_remote() {
+    let r = Repo::new();
+    let healthy = r.create("healthy");
+    let stale = r.create("stale");
+    r.write_commit(&healthy, "own", "own\n");
+    r.write_commit(&stale, "local", "local\n");
+    r.git(
+        &r.main,
+        &[
+            "remote",
+            "add",
+            "healthy",
+            r.root.join("remote.git").to_str().unwrap(),
+        ],
+    );
+    r.git(&r.main, &["fetch", "healthy"]);
+    assert!(r
+        .mabo(
+            &r.main,
+            &["meta", "set", "healthy", "--base", "healthy/main"]
+        )
+        .status
+        .success());
+    r.advance();
+    r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
+    let default_before = r.snapshot(&r.main);
+    let stale_before = r.snapshot(&stale);
+    let doc = r.sync(&r.main, &["healthy", "stale"], 1);
+    assert_eq!(doc["default"]["status"], "failed");
+    assert_eq!(doc["worktrees"][0]["status"], "updated", "{doc}");
+    assert_eq!(doc["worktrees"][1]["status"], "failed");
+    for item in [&doc["default"], &doc["worktrees"][1]] {
+        assert!(item["detail"]
+            .as_str()
+            .unwrap()
+            .contains("Fetch origin failed"));
+    }
+    assert!(healthy.join("remote-file").exists());
+    assert_eq!(r.snapshot(&r.main), default_before);
+    assert_eq!(r.snapshot(&stale), stale_before);
+}
+
+#[test]
+fn fetch_failures_exit_one_even_with_a_published_rebase_refusal() {
+    let r = Repo::new();
+    let tree = r.create("published");
+    let stale = r.create("stale");
+    r.write_commit(&tree, "own", "own\n");
+    r.git(
+        &r.main,
+        &[
+            "remote",
+            "add",
+            "healthy",
+            r.root.join("remote.git").to_str().unwrap(),
+        ],
+    );
+    r.git(&tree, &["push", "healthy", "published"]);
+    r.git(&r.main, &["fetch", "healthy"]);
+    assert!(r
+        .mabo(
+            &r.main,
+            &["meta", "set", "published", "--base", "healthy/main"]
+        )
+        .status
+        .success());
+    r.advance();
+    r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
+    let before = r.snapshot(&tree);
+    for args in [
+        vec!["published", "--rebase"],
+        vec!["--no-default", "published", "stale", "--rebase"],
+        vec!["--no-default", "stale", "published", "--rebase"],
+    ] {
+        let doc = r.sync(&r.main, &args, 1);
+        assert!(doc["worktrees"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["code"] == "pushed"));
+        assert_eq!(r.snapshot(&tree), before);
+        assert!(!stale.join("remote-file").exists());
+    }
+}
