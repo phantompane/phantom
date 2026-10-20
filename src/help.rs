@@ -64,10 +64,10 @@ fn data() -> Result<&'static HelpFile> {
 pub fn main_help() -> Result<String> {
     let file = data()?;
     let mut lines = Vec::new();
-    lines.push(bold("mabo - Git Worktree Manager"));
+    lines.push(bold("mabo - Workspaces for parallel coding agents"));
     lines.push(String::new());
     lines.push(dim(
-        "A CLI tool for managing Git worktrees with enhanced functionality",
+        "Lets many coding agents and humans work in one repository at once without colliding, built on Git worktrees",
     ));
     lines.push(String::new());
     lines.push(bold("USAGE"));
@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn rendered_help_names_the_mabo_command() {
         let main = main_help().expect("main help");
-        assert!(main.contains("mabo - Git Worktree Manager"));
+        assert!(main.contains("mabo - Workspaces for parallel coding agents"));
         assert!(main.contains("mabo <command> [options]"));
         assert!(main.contains("Run 'mabo <command> --help'"));
         assert!(!main.contains("Phantom"), "{main}");

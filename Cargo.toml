@@ -4,7 +4,9 @@ version = "7.0.0-alpha.6"
 edition = "2021"
 rust-version = "1.89"
 publish = false
-description = "Maboroshi, a Git worktree manager"
+description = "Workspaces for parallel coding agents: many agents, one Git repository, no collisions"
+keywords = ["git", "worktree", "workspace", "agents", "cli"]
+categories = ["command-line-utilities", "development-tools"]
 license = "MIT"
 
 [[bin]]
