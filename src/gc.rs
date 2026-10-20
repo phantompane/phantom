@@ -461,6 +461,7 @@ fn removal_kind(facts: &WorktreeFacts, reasons: Vec<Reason>) -> Removal {
 
 fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
     let stored = metadata::load(&context.git_root)?;
+    let common_dir = git::canonical_common_dir(&context.git_root)?;
     let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
     let base = git::default_branch(&context.git_root)?;
@@ -478,25 +479,41 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
         if !inside && !recorded {
             continue;
         }
-        let key = found
-            .map(|(key, _)| key.clone())
+        let recorded_path = found.map(|(key, _)| key.clone());
+        let key = recorded_path
+            .clone()
             .unwrap_or_else(|| metadata::path_key(&path));
         let record = found.map(|(_, record)| record);
         if !owner_in_scan(record.and_then(|record| record.owner.as_deref()), policy) {
             continue;
         }
-        rows.insert(
-            key,
-            observe_listed(
-                context,
-                policy,
-                &base,
-                current.as_deref(),
-                &worktree,
-                record,
-                &mut pull_requests,
-            ),
+        let mut facts = observe_listed(
+            context,
+            policy,
+            &base,
+            current.as_deref(),
+            &worktree,
+            record,
+            &mut pull_requests,
         );
+        let short_head = worktree
+            .head
+            .as_deref()
+            .map(|head| head.chars().take(7).collect::<String>())
+            .unwrap_or_else(|| "HEAD".to_string());
+        let branch_name = worktree
+            .branch
+            .as_deref()
+            .filter(|branch| !branch.is_empty() && *branch != "(detached HEAD)");
+        facts.subject.name = worktree::resolve_worktree_name(
+            &path,
+            &context.worktrees_directory,
+            recorded_path.as_deref().map(Path::new),
+            &common_dir,
+            branch_name,
+            &short_head,
+        );
+        rows.insert(key, facts);
     }
     for (key, record) in &stored {
         if rows.contains_key(key) || !owner_in_scan(record.owner.as_deref(), policy) {
@@ -509,10 +526,16 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
         if directory_state(&path) != DirState::Absent {
             continue;
         }
-        rows.insert(
-            key.clone(),
-            observe_record(context, policy, &path, record, &mut pull_requests),
+        let mut facts = observe_record(context, policy, &path, record, &mut pull_requests);
+        facts.subject.name = worktree::resolve_worktree_name(
+            &path,
+            &context.worktrees_directory,
+            Some(&path),
+            &common_dir,
+            None,
+            "HEAD",
         );
+        rows.insert(key.clone(), facts);
     }
     Ok(rows.into_values().collect())
 }
@@ -568,7 +591,7 @@ fn observe_listed(
     let metadata = record.cloned().unwrap_or_default();
     WorktreeFacts {
         subject: Subject {
-            name: display_name(&path, &context.worktrees_directory, branch.as_deref()),
+            name: String::new(),
             path,
             branch,
             owner: metadata.owner.clone(),
@@ -605,7 +628,7 @@ fn observe_record(
 ) -> WorktreeFacts {
     WorktreeFacts {
         subject: Subject {
-            name: display_name(path, &context.worktrees_directory, None),
+            name: String::new(),
             path: path.to_path_buf(),
             branch: None,
             owner: record.owner.clone(),
@@ -696,18 +719,6 @@ fn pull_request_query(git_root: &Path, link: &WorktreeLink) -> Option<PullReques
         key: format!("{repo}#{number}"),
         view: number.to_string(),
     })
-}
-
-fn display_name(path: &Path, worktrees_directory: &Path, branch: Option<&str>) -> String {
-    if let Some(name) = worktree::directory_name(path, worktrees_directory) {
-        return name;
-    }
-    if let Some(branch) = branch {
-        return branch.to_string();
-    }
-    path.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string())
 }
 
 fn directory_state(path: &Path) -> DirState {
