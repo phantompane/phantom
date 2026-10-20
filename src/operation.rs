@@ -14,7 +14,7 @@ const LOCK_ENV: &str = "MABO_OPERATION_LOCK";
 
 thread_local! {
     // Keep tokens out of the process environment: only Git children receive them.
-    static ACTIVE: RefCell<Vec<(uuid::Uuid, String)>> = const { RefCell::new(Vec::new()) };
+    static ACTIVE: RefCell<Vec<(uuid::Uuid, String, bool)>> = const { RefCell::new(Vec::new()) };
 }
 
 pub struct OperationLock {
@@ -27,16 +27,14 @@ pub struct OperationLock {
 impl OperationLock {
     pub(crate) fn check_post_release_children(&self, has_children: bool) -> Result<()> {
         if self._file.is_none() && has_children {
-            return Err(Error::msg(
-                "Cannot run project hooks or --exec while borrowing an ancestor's mabo operation lock; use --no-hooks and omit --exec",
-            ));
+            return Err(child_refusal());
         }
         Ok(())
     }
 
     fn register(file: Option<File>, token: String) -> Self {
         let id = uuid::Uuid::new_v4();
-        ACTIVE.with_borrow_mut(|active| active.push((id, token)));
+        ACTIVE.with_borrow_mut(|active| active.push((id, token, file.is_none())));
         Self {
             _file: file,
             id,
@@ -47,20 +45,51 @@ impl OperationLock {
 
 impl Drop for OperationLock {
     fn drop(&mut self) {
-        ACTIVE.with_borrow_mut(|active| active.retain(|(id, _)| *id != self.id));
+        ACTIVE.with_borrow_mut(|active| active.retain(|(id, _, _)| *id != self.id));
     }
 }
 
-pub(crate) fn configure_command(command: &mut Command, program: &str) {
+fn child_refusal() -> Error {
+    Error::msg("Cannot run project hooks or --exec while borrowing an ancestor's mabo operation lock; standalone exec, shell commands, and gh children are also refused")
+}
+
+pub(crate) fn check_user_command(cwd: Option<&Path>) -> Result<()> {
+    if ACTIVE.with_borrow(|active| active.iter().any(|(_, _, borrowed)| *borrowed)) {
+        return Err(child_refusal());
+    }
+    // Standalone exec and gh can be reached before registering a guard.
+    // Validate inherited tokens against the flock, including stale tokens.
+    if std::env::var_os(LOCK_ENV).is_some() && ACTIVE.with_borrow(|active| active.is_empty()) {
+        let directory = cwd
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok());
+        if let Some(root) = directory.and_then(|path| crate::git::top_level(&path).ok()) {
+            lock(&root)?.check_post_release_children(true)?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn configure_command(
+    command: &mut Command,
+    program: &str,
+    cwd: Option<&Path>,
+) -> Result<()> {
+    if program != "git" {
+        check_user_command(cwd)?;
+    }
     // Also strip inherited tokens from project hooks, --exec and gh subprocesses.
     command.env_remove(LOCK_ENV);
     if program == "git" {
-        ACTIVE.with_borrow(|active| {
-            if let Some((_, token)) = active.last() {
-                command.env(LOCK_ENV, token);
-            }
-        });
+        let token = ACTIVE
+            .with_borrow(|active| active.last().map(|(_, token, _)| token.clone()))
+            .or_else(|| std::env::var(LOCK_ENV).ok());
+        if let Some(token) = token {
+            // Read-only intermediaries may not register a guard of their own.
+            command.env(LOCK_ENV, token);
+        }
     }
+    Ok(())
 }
 
 pub fn lock(root: &Path) -> Result<OperationLock> {
@@ -83,7 +112,8 @@ pub fn lock(root: &Path) -> Result<OperationLock> {
             let inherited = std::env::var(LOCK_ENV).ok();
             let matches = !token.is_empty()
                 && (inherited.as_deref() == Some(token.as_str())
-                    || ACTIVE.with_borrow(|active| active.iter().any(|(_, held)| held == &token)));
+                    || ACTIVE
+                        .with_borrow(|active| active.iter().any(|(_, held, _)| held == &token)));
             if matches {
                 // Git waits for its hooks while the ancestor retains the flock.
                 return Ok(OperationLock::register(None, token));

@@ -1303,6 +1303,7 @@ pub fn exec_in_worktree(
     env: &[(&str, &str)],
     redirect_stdout_to_stderr: bool,
 ) -> Result<i32> {
+    crate::operation::check_user_command(Some(&context.git_root))?;
     let worktree = find_worktree(context, name, false, None)?;
     let path = PathBuf::from(&worktree.path);
     if let Err(error) = metadata::touch(&context.git_root, &path) {

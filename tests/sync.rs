@@ -2213,9 +2213,87 @@ fn fetch_failures_exit_one_even_with_a_published_rebase_refusal() {
 }
 
 #[test]
+fn git_hook_read_only_intermediary_preserves_lock_reentry() {
+    use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+    let r = Repo::new();
+    r.create("existing");
+    let bin = env!("CARGO_BIN_EXE_mabo");
+    let marker = r.root.join("monitor-entered");
+    let nested_status = r.root.join("monitor-status");
+    let monitor = r.root.join("monitor");
+    fs::write(
+        &monitor,
+        format!(
+            r#"#!/bin/sh
+if [ ! -e '{marker}' ]; then
+    touch '{marker}'
+    '{bin}' gc --json > '{output}' 2>&1
+    echo $? > '{status}'
+fi
+printf 'token\000/\000'
+"#,
+            marker = marker.display(),
+            output = r.root.join("nested-output").display(),
+            status = nested_status.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&monitor, fs::Permissions::from_mode(0o755)).unwrap();
+    let hook = r.main.join(".git/hooks/post-checkout");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\ncd '{}'\ngit config core.fsmonitor '{}'\n'{bin}' list --json\n",
+            r.main.display(),
+            monitor.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut child = r
+        .command(bin, &r.main, &["create", "outer", "--no-hooks"])
+        .process_group(0)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let timed_out = loop {
+        if child.try_wait().unwrap().is_some() {
+            break false;
+        }
+        if std::time::Instant::now() >= deadline {
+            Command::new("kill")
+                .args(["-KILL", "--", &format!("-{}", child.id())])
+                .status()
+                .unwrap();
+            break true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        !timed_out,
+        "read-only Git intermediary deadlocked: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(fs::read_to_string(nested_status).unwrap().trim(), "0");
+}
+
+#[test]
 fn borrowed_lock_actions_and_project_hooks_are_refused_before_changes() {
     use std::os::unix::{fs::PermissionsExt, process::CommandExt};
     for action in [
+        "gh-child",
+        "standalone-exec",
+        "standalone-shell",
+        "standalone-git",
         "create-exec",
         "attach-exec",
         "create-hook",
@@ -2236,6 +2314,20 @@ fn borrowed_lock_actions_and_project_hooks_are_refused_before_changes() {
         let hook = r.main.join(".git/hooks/post-checkout");
         fs::create_dir_all(hook.parent().unwrap()).unwrap();
         let nested = match action {
+            "gh-child" => {
+                let gh = r.root.join("gh");
+                fs::write(&gh, format!("#!/bin/sh\n'{bin}' gc --json\n")).unwrap();
+                fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+                format!(
+                    "PATH='{}':\"$PATH\" '{bin}' github checkout 7",
+                    r.root.display()
+                )
+            }
+            "standalone-git" => {
+                format!("'{bin}' exec victim git -c \"alias.cleanup=!'{bin}' gc --json\" cleanup")
+            }
+            "standalone-exec" => format!("'{bin}' exec victim '{bin}' gc --json"),
+            "standalone-shell" => format!("'{bin}' exec victim sh -c \"'{bin}' gc --json\""),
             "create-exec" => {
                 format!("'{bin}' create nested --no-hooks --exec \"'{bin}' gc --json\"")
             }
