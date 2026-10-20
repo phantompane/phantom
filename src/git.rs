@@ -463,10 +463,10 @@ pub(crate) fn default_branch(git_root: &Path) -> Result<Option<String>> {
             return Ok(Some(name.to_string()));
         }
     }
-    if verify_commit(git_root, "main")? {
+    if verify_commit(git_root, "refs/heads/main")? {
         return Ok(Some("main".to_string()));
     }
-    if verify_commit(git_root, "master")? {
+    if verify_commit(git_root, "refs/heads/master")? {
         return Ok(Some("master".to_string()));
     }
     Ok(None)

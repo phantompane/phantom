@@ -486,11 +486,16 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
     let common_dir = git::canonical_common_dir(&context.git_root)?;
     let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
-    let base = git::default_branch(&context.git_root)?;
+    let base = git::default_branch(&context.git_root)?.map(|base| {
+        if base.starts_with("origin/") {
+            format!("refs/remotes/{base}")
+        } else {
+            format!("refs/heads/{base}")
+        }
+    });
     let name = base
         .as_deref()
-        .map(|base| crate::sync::default_local_branch(&context.git_root, base))
-        .transpose()?;
+        .and_then(|base| crate::sync::default_local_branch(&context.git_root, base).ok());
     let default = DefaultBranch { base, name };
     let current = current_worktree_path(context);
     let mut pull_requests = BTreeMap::new();
@@ -623,9 +628,11 @@ fn observe_listed(
         }
         _ => false,
     };
-    let is_default = branch
-        .as_deref()
-        .is_some_and(|branch| default.name.as_deref() == Some(branch));
+    // An unresolved remote mapping must not prevent orphan-record cleanup or
+    // accidentally allow deletion of the checkout holding the default branch.
+    let is_default = branch.as_deref().is_some_and(|branch| {
+        default.name.as_deref() == Some(branch) || (base.is_some() && default.name.is_none())
+    });
     let unpushed = reachability.unpushed;
     let pr_link = record.and_then(|item| item.links.pr.as_ref());
     let pr = pull_state(policy, &context.git_root, pr_link, pull_requests);

@@ -2847,3 +2847,90 @@ fn published_commits_in_fetch_destinations_outside_remotes_are_protected() {
         }
     }
 }
+
+#[test]
+fn gc_default_uses_local_branch_when_a_same_name_tag_exists() {
+    for annotated in [false, true] {
+        let r = Repo::new();
+        let gone = r.create("gone");
+        r.git(&r.main, &["remote", "set-head", "origin", "--delete"]);
+        if annotated {
+            r.git(&r.main, &["tag", "-a", "main", "-m", "same-name tag"]);
+        } else {
+            r.git(&r.main, &["tag", "main"]);
+        }
+        r.write_commit(&r.main, "local-default", "keep default\n");
+        r.git(&r.main, &["checkout", "-b", "other"]);
+        assert!(r.mabo(&r.main, &["attach", "main"]).status.success());
+        let default_path = PathBuf::from(
+            r.git(&r.main, &["worktree", "list", "--porcelain"])
+                .lines()
+                .filter_map(|line| line.strip_prefix("worktree "))
+                .find(|path| {
+                    Path::new(path).join("local-default").exists() && Path::new(path) != r.main
+                })
+                .unwrap(),
+        );
+        r.git(
+            &r.main,
+            &["worktree", "remove", "--force", gone.to_str().unwrap()],
+        );
+        let before = r.snapshot(&default_path);
+        for args in [
+            vec!["gc", "--orphaned", "--json"],
+            vec!["gc", "--merged", "--apply", "--json"],
+        ] {
+            let out = r.mabo(&r.main, &args);
+            assert!(
+                out.status.success(),
+                "{} {}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert!(default_path.exists(), "{doc}");
+            assert_eq!(r.snapshot(&default_path), before);
+            if args.contains(&"--orphaned") {
+                assert!(
+                    doc["candidates"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|item| item["name"] == "gone"),
+                    "{doc}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn gc_orphaned_survives_unresolvable_default_mapping() {
+    let r = Repo::new();
+    let gone = r.create("gone");
+    r.git(
+        &r.main,
+        &["worktree", "remove", "--force", gone.to_str().unwrap()],
+    );
+    r.git(
+        &r.main,
+        &["update-ref", "refs/remotes/unmapped/main", "HEAD"],
+    );
+    r.git(
+        &r.main,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/unmapped/main",
+        ],
+    );
+    let out = r.mabo(&r.main, &["gc", "--orphaned", "--apply", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(doc["candidates"][0]["name"], "gone");
+    assert_eq!(doc["candidates"][0]["action"], "removed");
+}
