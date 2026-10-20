@@ -1,8 +1,45 @@
 # Maboroshi
 
-Maboroshi (幻) is a Git worktree manager for working with AI agents. The Rust rewrite on `next` is in progress. The previous TypeScript version stays on `main`.
+Maboroshi (幻, "phantom space") — workspaces for parallel coding agents.
 
-The previous version's README is at <https://github.com/phantompane/phantom/blob/main/README.md>.
+Maboroshi manages local Git workspaces so that many coding agents and humans can work independently in the same repository at the same time. A workspace is one checkout of one repository plus what Git doesn't track about it: its name, its owner, its purpose (pull request, issue, base), and its observed state. Today each checkout is a Git worktree.
+
+The Rust rewrite lives on `next` and ships as `v7.0.0-alpha` prereleases on [GitHub Releases](https://github.com/phantompane/phantom/releases) (it is not on npm yet). The previous TypeScript version stays on `main`; its README is at <https://github.com/phantompane/phantom/blob/main/README.md>.
+
+## Why
+
+Git records the code and the checkouts. It does not record who is responsible for a checkout, why it exists, or whether it can be retired. With many agents working in one repository at once, those are the questions nobody can answer. Maboroshi fills that gap on top of plain Git: repositories, branches, and worktrees stay ordinary Git, and `git` keeps working alongside `mabo`.
+
+Workspaces separate files and branches, not processes, ports, databases, or credentials. Maboroshi coordinates workspace boundaries and its own operations; running services side by side is up to your project and its hooks.
+
+## What it does
+
+Maboroshi creates, takes over, and prepares workspaces, keeps them current with their base, and retires them:
+
+- **Allocate and prepare.** `clone` places a repository in the ghq layout. `create`, `attach`, and `github checkout` (alias `gh checkout`) give each piece of work its own worktree, copy ignored files matched by `.worktreeinclude`, and run project hooks in repositories you trust.
+- **Identify.** `meta set` records the owner, purpose, linked pull request or issue, and base. New workspaces use `MABO_AGENT_ID` as the owner when nonblank, unless `--owner` overrides it; owner and purpose can be left unset. `list` and `where` show what exists and where.
+- **Update.** `sync` fetches, fast-forwards the default branch when possible, and brings selected workspaces up to date with their base.
+- **Retire.** `gc` selects workspaces on evidence: merged branches, closed pull requests, orphaned records, and age (`--older-than`).
+
+Every command can run non-interactively. `--json` success output is versioned (`version`, or `schema` for `sync`), except `project add` and `project remove`, which return `{status, project}`. Errors are structured, with stable, documented exit codes (see [Machine-readable JSON](#machine-readable-json)). `exec` passes through the child command's output and exit code instead. Humans use the same commands with plain-text output.
+
+## Safe by default, explicit when you want otherwise
+
+- **Merged, unowned, or old are signals, not permission to delete.** `gc` only prints its plan until you pass `--apply` or `--force` (`--force` also applies the plan). It keeps dirty work and commits it cannot confirm as published or landed unless you pass `--force`. The default-branch, current, and Git-locked worktrees remain protected even with `--force`.
+- **Ownership is information, not enforcement.** With a nonblank `MABO_AGENT_ID`, `sync --mine` selects only that agent's workspaces and `sync --all` skips other agents' (both also attempt to update the default branch unless `--no-default` is set). Naming a workspace explicitly lets `sync` work on it whoever owns it. `gc` can still select other agents' merged, closed-PR, or orphaned workspaces.
+- **Pushed history is kept by default.** When integration is needed, `sync` merges the base into published work; rebasing it takes `--rebase --force`. A workspace counts as published when at least one commit beyond its base is reachable from a known remote-tracking ref or configured fetch destination.
+- **Non-interactive runs never wait at a prompt.** With a nonblank `MABO_AGENT_ID` or `CI`, with `--json`, or when stdin or stderr is not a terminal, `mabo` itself does not ask questions. If an operation would run untrusted hooks, it refuses before changing the repository and exits 1 (`untrusted` in JSON); `gc` instead skips removals requiring those hooks, without treating the skip as an error. Record trust in advance with `mabo trust --yes`, or skip hooks with `--no-hooks`. Git authentication and your own hooks can still prompt.
+
+## Non-goals
+
+Maboroshi will not become:
+
+- an agent runner or scheduler (launching, supervising, or assigning agents);
+- a task tracker or PR bot (assignments, reviews, comments, merges);
+- a replacement for everyday Git (commit, push, history editing; only integrating with the base is in scope);
+- a sandbox or environment platform (containers, dependencies, secrets, ports, databases); it only runs project hooks;
+- a terminal or session manager (tmux, panes, dashboards); it gives you a path;
+- security isolation. Ownership is cooperative information, not an access boundary.
 
 ## User preferences
 
