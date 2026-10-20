@@ -121,9 +121,8 @@ pub fn list_worktrees(
         if exclude_default && worktree.path == git_root_string {
             continue;
         }
-        let record = stored
-            .get(&metadata::path_key(Path::new(&worktree.path)))
-            .cloned()
+        let record = metadata::find_in(&stored, Path::new(&worktree.path))
+            .map(|(_, record)| record.clone())
             .unwrap_or_default();
         infos.push(info_from_git(&worktree, &cwd, context, record));
     }
@@ -189,7 +188,10 @@ pub(crate) fn directory_name(path: &Path, worktrees_directory: &Path) -> Option<
     if !paths::is_strictly_inside(path, worktrees_directory) {
         return None;
     }
-    let relative = paths::relative(worktrees_directory, path);
+    let relative = paths::relative(
+        &paths::canonical_location(worktrees_directory),
+        &paths::canonical_location(path),
+    );
     if relative.is_empty() {
         None
     } else {
@@ -231,13 +233,9 @@ fn select_worktree(worktrees: Vec<WorktreeInfo>, name: &str) -> Result<WorktreeI
 
 /// The worktree Git has registered at `path`, independent of its branch or directory name.
 pub fn worktree_at_path(context: &Context, path: &Path) -> Result<WorktreeInfo> {
-    let wanted = paths::normalize(path);
     list_worktrees(context, false, true)?
         .into_iter()
-        .find(|worktree| {
-            let listed = Path::new(&worktree.path);
-            listed == path || paths::normalize(listed) == wanted
-        })
+        .find(|worktree| paths::same_location(Path::new(&worktree.path), path))
         .ok_or_else(|| {
             Error::msg(format!(
                 "Worktree at {} is no longer registered",
@@ -254,7 +252,9 @@ pub fn find_worktree(
 ) -> Result<WorktreeInfo> {
     let worktrees = list_worktrees(context, exclude_default, true)?
         .into_iter()
-        .filter(|worktree| expected_path.is_none_or(|path| Path::new(&worktree.path) == path))
+        .filter(|worktree| {
+            expected_path.is_none_or(|path| paths::same_location(Path::new(&worktree.path), path))
+        })
         .collect();
     select_worktree(worktrees, name)
 }
@@ -427,15 +427,20 @@ pub fn create_worktree(
 ) -> Result<CreatedWorktree> {
     validate_worktree_name(name)?;
     metadata::prepare(&context.git_root)?;
-    fs::create_dir_all(&context.worktrees_directory)
-        .map_err(|error| Error::msg(error.to_string()))?;
-    ensure_absent(context, name)?;
     let path = paths::worktree_path(
         &context.worktrees_directory,
         name,
         &context.directory_name_separator,
     );
-    git::add_worktree(&context.git_root, &path, name, base, true)?;
+    paths::with_worktrees_directory(
+        &context.worktrees_directory,
+        context.project_common_dir.as_deref(),
+        || {
+            ensure_absent(context, name)?;
+            git::add_worktree(&context.git_root, &path, name, base, true)?;
+            Ok(())
+        },
+    )?;
     let metadata_error = metadata::replace(&context.git_root, &path, metadata, BranchOrigin::New)
         .err()
         .map(|error| error.to_string());
@@ -543,16 +548,21 @@ pub fn attach_worktree(
     if !git::branch_exists(&context.git_root, name)? {
         return Err(Error::BranchNotFound(name.to_string()));
     }
-    fs::create_dir_all(&context.worktrees_directory)
-        .map_err(|error| Error::msg(error.to_string()))?;
-    git::add_worktree(&context.git_root, &path, name, "HEAD", false).map_err(|error| {
-        let message = error.to_string();
-        if let Some(stripped) = message.strip_prefix("worktree add failed: ") {
-            Error::msg(stripped.to_string())
-        } else {
-            error
-        }
-    })?;
+    paths::with_worktrees_directory(
+        &context.worktrees_directory,
+        context.project_common_dir.as_deref(),
+        || {
+            git::add_worktree(&context.git_root, &path, name, "HEAD", false).map_err(|error| {
+                let message = error.to_string();
+                if let Some(stripped) = message.strip_prefix("worktree add failed: ") {
+                    Error::msg(stripped.to_string())
+                } else {
+                    error
+                }
+            })?;
+            Ok(())
+        },
+    )?;
     let metadata_error =
         metadata::replace(&context.git_root, &path, metadata, BranchOrigin::Existing)
             .err()
@@ -620,7 +630,10 @@ pub fn delete_worktree(
 ) -> std::result::Result<DeleteOutcome, DeleteError> {
     let worktree = find_worktree(context, name, true, expected_path).map_err(DeleteError::bare)?;
     let path = PathBuf::from(&worktree.path);
-    if !paths::is_strictly_inside(&path, &context.worktrees_directory) {
+    let inside = paths::is_strictly_inside(&path, &context.worktrees_directory);
+    let recorded = metadata::records_path(&context.git_root, &path)
+        .map_err(|error| DeleteError::kept(error, &worktree))?;
+    if !inside && !recorded {
         return Err(DeleteError::kept(
             Error::msg(format!(
                 "Worktree '{name}' is outside the managed worktree directory and cannot be deleted."
@@ -653,13 +666,29 @@ pub fn delete_worktree(
             return Err(DeleteError::kept(error, &worktree));
         }
     }
+    let recorded_path = metadata::matching_path(&context.git_root, &path)
+        .map_err(|error| DeleteError::kept(error, &worktree))?;
     if let Err(error) = git::remove_worktree(&context.git_root, &path, force) {
         return Err(DeleteError::kept(error, &worktree));
     }
-    let metadata_error = metadata::remove(&context.git_root, &path)
-        .err()
-        .map(|error| error.to_string());
-    let cleanup_warning = remove_empty_parents(&path, &context.worktrees_directory);
+    let metadata_error = metadata::remove(
+        &context.git_root,
+        recorded_path
+            .as_deref()
+            .map(Path::new)
+            .unwrap_or(path.as_path()),
+    )
+    .err()
+    .map(|error| error.to_string());
+    let cleanup_warning = if inside {
+        remove_empty_parents(
+            &path,
+            &context.worktrees_directory,
+            context.project_common_dir.as_deref(),
+        )
+    } else {
+        None
+    };
     let (message, branch_deleted, branch_error) = if worktree.branch == "(detached HEAD)" {
         (format!("Deleted worktree '{name}'"), false, None)
     } else if keep_branch {
@@ -915,7 +944,11 @@ fn run_hook_commands(
     Ok(None)
 }
 
-fn remove_empty_parents(path: &Path, root: &Path) -> Option<String> {
+fn remove_empty_parents(
+    path: &Path,
+    root: &Path,
+    project_common_dir: Option<&Path>,
+) -> Option<String> {
     let mut current = path.parent().map(Path::to_path_buf);
     while let Some(dir) = current {
         if !paths::is_strictly_inside(&dir, root) {
@@ -933,7 +966,11 @@ fn remove_empty_parents(path: &Path, root: &Path) -> Option<String> {
             }
         }
     }
-    None
+    let common_dir = project_common_dir?;
+    match paths::remove_project_directory_if_empty(root, common_dir) {
+        Ok(removal) => removal.warning,
+        Err(error) => Some(error.to_string()),
+    }
 }
 
 /// Copy gitignored files matched by `.worktreeinclude` and extra gitignore patterns.

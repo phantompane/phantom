@@ -92,6 +92,27 @@ pub fn path_key(path: &Path) -> String {
     paths::normalize(path).to_string_lossy().into_owned()
 }
 
+/// True when `worktrees.json` records this path. Comparison is canonical when
+/// the path exists and normalized otherwise.
+pub fn records_path(git_root: &Path, path: &Path) -> Result<bool> {
+    Ok(matching_path(git_root, path)?.is_some())
+}
+
+/// Stored path string for `path`, resolved while the directory still exists.
+pub fn matching_path(git_root: &Path, path: &Path) -> Result<Option<String>> {
+    Ok(find_in(&load(git_root)?, path).map(|(key, _)| key.clone()))
+}
+
+/// The stored record for `path`, matched the same way as [`records_path`].
+pub fn find_in<'a>(
+    stored: &'a BTreeMap<String, WorktreeMetadata>,
+    path: &Path,
+) -> Option<(&'a String, &'a WorktreeMetadata)> {
+    stored
+        .iter()
+        .find(|(key, _)| paths::same_location(Path::new(key), path))
+}
+
 pub fn metadata_file(git_root: &Path) -> Result<PathBuf> {
     Ok(metadata_dir(git_root)?.join(FILE_NAME))
 }
@@ -121,7 +142,9 @@ pub fn replace(
     }
     let key = path_key(path);
     with_store(git_root, |store| {
-        store.worktrees.retain(|record| record.path != key);
+        store
+            .worktrees
+            .retain(|record| !paths::same_location(Path::new(&record.path), path));
         let metadata = fresh_metadata(path, input, origin);
         store.worktrees.push(StoredWorktree {
             path: key,
@@ -137,7 +160,11 @@ pub fn replace(
 pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<WorktreeMetadata> {
     let key = path_key(path);
     with_store(git_root, |store| {
-        if let Some(record) = store.worktrees.iter_mut().find(|record| record.path == key) {
+        if let Some(record) = store
+            .worktrees
+            .iter_mut()
+            .find(|record| paths::same_location(Path::new(&record.path), path))
+        {
             apply_input(&mut record.metadata, input);
             return Ok((record.metadata.clone(), true));
         }
@@ -174,9 +201,12 @@ pub fn touch(git_root: &Path, path: &Path) -> Result<Option<WorktreeMetadata>> {
     if !metadata_file(git_root)?.exists() {
         return Ok(None);
     }
-    let key = path_key(path);
     with_store(git_root, |store| {
-        let Some(record) = store.worktrees.iter_mut().find(|record| record.path == key) else {
+        let Some(record) = store
+            .worktrees
+            .iter_mut()
+            .find(|record| paths::same_location(Path::new(&record.path), path))
+        else {
             return Ok((None, false));
         };
         record.metadata.last_used_at = Some(iso_now());
@@ -238,10 +268,11 @@ pub fn remove(git_root: &Path, path: &Path) -> Result<()> {
     if !metadata_file(git_root)?.exists() {
         return Ok(());
     }
-    let key = path_key(path);
     with_store(git_root, |store| {
         let before = store.worktrees.len();
-        store.worktrees.retain(|record| record.path != key);
+        store
+            .worktrees
+            .retain(|record| !paths::same_location(Path::new(&record.path), path));
         Ok(((), store.worktrees.len() != before))
     })
 }
