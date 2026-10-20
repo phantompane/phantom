@@ -40,6 +40,8 @@ pub enum Error {
     Spawn { command: String, details: String },
     #[error("{0}")]
     Projects(String),
+    #[error("{0}")]
+    Untrusted(String),
 }
 
 impl Error {
@@ -89,6 +91,7 @@ impl Error {
             Self::Spawn { .. } => "spawn",
             Self::Projects(_) => "projects",
             Self::Validation(_) => "validation",
+            Self::Untrusted(_) => "untrusted",
             Self::Message(_) => match exit_code {
                 NOT_FOUND => "not_found",
                 VALIDATION => "validation",
@@ -178,6 +181,10 @@ mod tests {
             "validation"
         );
         assert_eq!(Error::msg("boom").json_code(GENERAL), "error");
+        let untrusted = Error::Untrusted("run ptm trust".to_string());
+        assert_eq!(untrusted.exit_code(), GENERAL);
+        assert_eq!(untrusted.json_code(GENERAL), "untrusted");
+        assert_eq!(untrusted.to_json(GENERAL).error.code, "untrusted");
         assert_eq!(Error::Signaled("SIGTERM".to_string()).exit_code(), 143);
         assert_eq!(Error::Signaled("SIGINT".to_string()).exit_code(), 130);
         assert_eq!(Error::Signaled("SIGKILL".to_string()).exit_code(), 137);

@@ -13,6 +13,7 @@ use crate::metadata::{self, BranchOrigin, MetadataInput};
 use crate::names;
 use crate::paths;
 use crate::process;
+use crate::trust::{self, HookControl};
 
 #[derive(Debug, Clone)]
 pub struct WorktreeInfo {
@@ -264,6 +265,7 @@ pub struct CreateRequest<'a> {
     /// Main checkout selected with `--project`. `None` uses the current directory.
     pub repository: Option<&'a Path>,
     pub metadata: MetadataInput,
+    pub hooks: HookControl,
 }
 
 pub struct CreateOutcome {
@@ -291,13 +293,19 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
         )?,
     };
     let base = request.base.unwrap_or("HEAD");
-    let commands = config::post_create_commands(context.config.as_ref());
+    let commands = trust::authorize(
+        &context.git_root,
+        config::post_create_commands(context.config.as_ref()),
+        config::pre_delete_commands(context.config.as_ref()),
+        trust::HookKind::PostCreate,
+        request.hooks,
+    )?;
     let created = create_worktree(
         &context,
         &name,
         base,
         request.copy_files,
-        commands,
+        &commands,
         &request.logger,
         &request.metadata,
     )?;
@@ -444,17 +452,24 @@ pub struct AttachRequest<'a> {
     /// Main checkout selected with `--project`. `None` uses the current directory.
     pub repository: Option<&'a Path>,
     pub metadata: MetadataInput,
+    pub hooks: HookControl,
 }
 
 pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action = resolve_action(&request.action)?;
     let context = context::open(request.repository)?;
-    let commands = config::post_create_commands(context.config.as_ref());
+    let commands = trust::authorize(
+        &context.git_root,
+        config::post_create_commands(context.config.as_ref()),
+        config::pre_delete_commands(context.config.as_ref()),
+        trust::HookKind::PostCreate,
+        request.hooks,
+    )?;
     let attached = attach_worktree(
         &context,
         request.name,
         request.copy_files,
-        commands,
+        &commands,
         &request.logger,
         &request.metadata,
     )?;
@@ -587,9 +602,9 @@ pub fn delete_worktree(
     keep_branch: bool,
     expected_path: Option<&Path>,
     logger: &Logger,
+    hooks: HookControl,
 ) -> std::result::Result<DeleteOutcome, DeleteError> {
     let worktree = find_worktree(context, name, true, expected_path).map_err(DeleteError::bare)?;
-    metadata::prepare(&context.git_root).map_err(|error| DeleteError::kept(error, &worktree))?;
     let path = PathBuf::from(&worktree.path);
     if !paths::is_strictly_inside(&path, &context.worktrees_directory) {
         return Err(DeleteError::kept(
@@ -609,10 +624,18 @@ pub fn delete_worktree(
             &worktree,
         ));
     }
-    let commands = config::pre_delete_commands(context.config.as_ref());
+    let commands = trust::authorize(
+        &context.git_root,
+        config::post_create_commands(context.config.as_ref()),
+        config::pre_delete_commands(context.config.as_ref()),
+        trust::HookKind::PreDelete,
+        hooks,
+    )
+    .map_err(|error| DeleteError::kept(error, &worktree))?;
+    metadata::prepare(&context.git_root).map_err(|error| DeleteError::kept(error, &worktree))?;
     if !commands.is_empty() {
         logger.log("\nRunning pre-delete commands...");
-        if let Err(error) = run_hook_commands(context, name, commands, false, logger) {
+        if let Err(error) = run_hook_commands(context, name, &commands, false, logger) {
             return Err(DeleteError::kept(error, &worktree));
         }
     }
