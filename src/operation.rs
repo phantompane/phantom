@@ -15,6 +15,20 @@ pub fn lock(root: &Path) -> Result<File> {
         .mode(0o600)
         .open(dir.join("operation.lock"))
         .map_err(|error| Error::msg(format!("Mabo operation lock is not writable: {error}")))?;
+    match file.try_lock() {
+        Ok(()) => return Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            eprintln!(
+                "Waiting for another mabo operation to finish ({})…",
+                dir.join("operation.lock").display()
+            );
+        }
+        Err(error) => {
+            return Err(Error::msg(format!(
+                "Cannot acquire mabo operation lock: {error}"
+            )))
+        }
+    }
     file.lock()
         .map_err(|error| Error::msg(format!("Cannot acquire mabo operation lock: {error}")))?;
     Ok(file)

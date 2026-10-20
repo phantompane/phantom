@@ -117,7 +117,6 @@ pub fn checkout(
         Some(path) => path.to_path_buf(),
         None => std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?,
     };
-    let _operation = crate::operation::lock(&cwd)?;
     let repo = repo_info(&cwd)?;
     let issue = fetch_issue(&cwd, &repo.host, &repo.owner, &repo.name, number)?;
     let Some(issue) = issue else {
@@ -217,6 +216,7 @@ fn checkout_pull_request(
     hooks: crate::trust::HookControl,
 ) -> Result<Checkout> {
     let context = context::open(repository)?;
+    let operation = crate::operation::lock(&context.git_root)?;
     let git_root = &context.git_root;
     let worktree_name = if pull.fork {
         let owner = pull.head_repo.split('/').next().unwrap_or("");
@@ -264,13 +264,21 @@ fn checkout_pull_request(
     let branch_existed = git::branch_exists(git_root, &worktree_name)?;
     let result = (|| {
         let fetched = fetch_pull_head(git_root, pull, &worktree_name)?;
-        let attached =
-            worktree::attach_worktree(&context, &worktree_name, &[], &commands, logger, &metadata)?;
+        let attached = worktree::attach_worktree_locked(
+            operation,
+            &context,
+            &worktree_name,
+            &[],
+            &commands,
+            logger,
+            &metadata,
+        )?;
         Ok((fetched, attached))
     })();
     let (fetched, attached) = match result {
         Ok(checkout) => checkout,
         Err(error) => {
+            let _operation = crate::operation::lock(git_root)?;
             // Git refuses to delete a branch attached to a worktree. Only remove
             // branches created by this attempt, never a pre-existing branch.
             if !branch_existed && git::branch_exists(git_root, &worktree_name)? {
@@ -339,6 +347,7 @@ fn checkout_issue(
     hooks: crate::trust::HookControl,
 ) -> Result<Checkout> {
     let context = context::open(repository)?;
+    let operation = crate::operation::lock(&context.git_root)?;
     let name = format!("issues/{number}");
     metadata.issue = Some(subject_link(repo, number, "issues"));
     if let Ok(existing) = worktree::find_worktree(&context, &name, false, None) {
@@ -367,8 +376,16 @@ fn checkout_issue(
         hooks,
     )?;
     let base = base.unwrap_or("HEAD");
-    let created =
-        worktree::create_worktree(&context, &name, base, &[], &commands, logger, &metadata)?;
+    let created = worktree::create_worktree_locked(
+        operation,
+        &context,
+        &name,
+        base,
+        &[],
+        &commands,
+        logger,
+        &metadata,
+    )?;
     let info = worktree::worktree_at_path(&context, &created.path)?;
     Ok(Checkout {
         message: format!(

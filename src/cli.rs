@@ -121,14 +121,21 @@ fn sync(args: &[String]) -> Result<i32> {
                 .join(" ");
             if !item.conflicts.is_empty() {
                 let files = item.conflicts.join(", ").replace(['\n', '\r'], " ");
-                detail = format!("conflicts: {files}; {detail}");
+                detail = format!("{files} ({detail})");
             }
             println!("{}  {}  {}", item.name, item.status, detail);
         }
+        let mut counts = std::collections::BTreeMap::new();
+        for item in report.default.iter().chain(&report.worktrees) {
+            *counts.entry(item.status.as_str()).or_insert(0usize) += 1;
+        }
         println!(
-            "Sync complete: {} items, exit {}",
-            report.worktrees.len() + usize::from(report.default.is_some()),
-            report.exit
+            "Sync complete: {}",
+            counts
+                .into_iter()
+                .map(|(status, count)| format!("{count} {status}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
     Ok(report.exit)
@@ -432,7 +439,7 @@ fn delete(args: &[String]) -> Result<i32> {
         Ok(context) => context,
         Err(error) => return fail_project(&error, args, &parsed, json),
     };
-    let _operation = crate::operation::lock(&context.git_root)?;
+    let operation = crate::operation::lock(&context.git_root)?;
     let keep_branch =
         parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false);
     let names = if delete_current {
@@ -463,6 +470,7 @@ fn delete(args: &[String]) -> Result<i32> {
         Ok(plans) => plans,
         Err(refusals) => return report_delete_refusals(refusals, json),
     };
+    drop(operation);
     let mut deleted = Vec::new();
     for plan in plans {
         match worktree::commit_delete(

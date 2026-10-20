@@ -220,6 +220,10 @@ fn pushed_auto_merge_and_rebase_refusal_force_preserve_upstream() {
     let doc = s.sync(&s.main, &["pushed"], 0);
     assert_eq!(doc["worktrees"][0]["strategy"], "merge");
     assert_eq!(
+        s.git(&tree, &["log", "-1", "--format=%s"]),
+        "Merge origin/main into pushed"
+    );
+    assert_eq!(
         s.git(&tree, &["rev-list", "--parents", "-n", "1", "HEAD"])
             .split_whitespace()
             .count(),
@@ -436,12 +440,29 @@ fn sync_and_delete_serialize_during_fetch() {
         &["delete", "topic", "--force", "--no-hooks", "--json"],
     );
     let (tx, rx) = mpsc::channel();
-    let child = delete.stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let mut child = delete
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let (waiting_tx, waiting_rx) = mpsc::channel();
+    let diagnostic = std::thread::spawn(move || {
+        use std::io::BufRead;
+        let mut lines = std::io::BufReader::new(stderr).lines();
+        waiting_tx.send(lines.next().unwrap().unwrap()).unwrap();
+        assert!(
+            lines.next().is_none(),
+            "only one lock waiting line is allowed"
+        );
+    });
     let waiter = std::thread::spawn(move || {
         tx.send(child.wait_with_output().unwrap()).unwrap();
     });
+    let waiting = waiting_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(waiting.starts_with("Waiting for another mabo operation to finish ("));
     assert!(
-        rx.recv_timeout(Duration::from_millis(150)).is_err(),
+        rx.try_recv().is_err(),
         "delete passed the lock during sync fetch"
     );
     assert!(tree.exists());
@@ -455,6 +476,7 @@ fn sync_and_delete_serialize_during_fetch() {
     let deleted = rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(deleted.status.success());
     waiter.join().unwrap();
+    diagnostic.join().unwrap();
     assert!(!tree.exists());
 }
 
@@ -705,4 +727,303 @@ fn human_output_and_usage_errors() {
     ] {
         r.sync(&r.main, &args, 2);
     }
+}
+
+#[test]
+fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
+    let r = Repo::new();
+    let tree = r.create("fresh");
+    assert_eq!(
+        r.sync(&tree, &[], 0)["worktrees"][0]["status"],
+        "up-to-date"
+    );
+    r.advance();
+    assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "updated");
+    assert_eq!(
+        r.git(&tree, &["rev-parse", "HEAD"]),
+        r.git(&r.main, &["rev-parse", "origin/main"])
+    );
+    let landed = r.create("landed");
+    r.write_commit(&landed, "work", "work\n");
+    r.git(&r.main, &["merge", "--ff-only", "landed"]);
+    r.git(&r.main, &["push", "origin", "main"]);
+    assert_eq!(r.sync(&landed, &[], 0)["worktrees"][0]["status"], "merged");
+    // Legacy metadata uses the very same reflog fallback as gc.
+    let legacy = r.create("legacy");
+    let file = r.main.join(".git/maboroshi/worktrees.json");
+    let mut stored: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    for record in stored["worktrees"].as_array_mut().unwrap() {
+        record.as_object_mut().unwrap().remove("createdFrom");
+    }
+    fs::write(file, serde_json::to_vec(&stored).unwrap()).unwrap();
+    r.write_commit(&r.upstream, "more", "more\n");
+    r.git(&r.upstream, &["pull", "--no-rebase", "origin", "main"]);
+    r.git(&r.upstream, &["push", "origin", "main"]);
+    assert_eq!(r.sync(&legacy, &[], 0)["worktrees"][0]["status"], "updated");
+}
+
+#[test]
+fn ignored_directories_collapse_and_only_incoming_paths_block_sync() {
+    for collision in [false, true] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        let ignore = r.root.join("ignore");
+        fs::write(&ignore, "cache/\n").unwrap();
+        r.git(
+            &tree,
+            &["config", "core.excludesFile", ignore.to_str().unwrap()],
+        );
+        fs::create_dir(tree.join("cache")).unwrap();
+        for i in 0..2000 {
+            fs::write(tree.join(format!("cache/{i}")), "ignored data").unwrap();
+        }
+        if collision {
+            // A tracked file replacing an ignored directory must be protected.
+            r.write_commit(&r.upstream, "cache", "incoming file\n");
+        } else {
+            r.advance();
+        }
+        r.git(&r.upstream, &["push", "origin", "main"]);
+        let doc = r.sync(&tree, &[], 0);
+        assert_eq!(
+            doc["worktrees"][0]["status"],
+            if collision { "dirty" } else { "updated" }
+        );
+        assert_eq!(
+            fs::read_to_string(tree.join("cache/1999")).unwrap(),
+            "ignored data"
+        );
+    }
+}
+
+#[test]
+fn conflict_output_is_short_in_human_and_json_formats() {
+    for strategy in ["rebase", "merge"] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        r.write_commit(&tree, "file", "local\n");
+        r.write_commit(&r.upstream, "file", "remote\n");
+        r.git(&r.upstream, &["push", "origin", "main"]);
+        let flag = format!("--{strategy}");
+        let doc = r.sync(&tree, &[&flag], 1);
+        assert_eq!(
+            doc["worktrees"][0]["detail"],
+            format!("{strategy} aborted; worktree unchanged")
+        );
+        let out = r.mabo(&tree, &["sync", &flag, "--no-default"]);
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), format!("topic  conflict  file ({strategy} aborted; worktree unchanged)\nSync complete: 1 conflict\n"));
+        let out = r.mabo(&tree, &["sync", &flag, "--no-default", "--keep-conflicts"]);
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap(),
+            format!(
+                "topic  conflict  file ({strategy} left in progress)\nSync complete: 1 conflict\n"
+            )
+        );
+    }
+}
+
+fn finish_child(mut child: std::process::Child) -> Output {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            return child.wait_with_output().unwrap();
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            let out = child.wait_with_output().unwrap();
+            panic!(
+                "command did not finish: {} {}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn post_create_hook_can_list_and_create_and_pre_delete_hook_can_create() {
+    let r = Repo::new();
+    let bin = env!("CARGO_BIN_EXE_mabo");
+    fs::write(r.main.join(".mabo.toml"), format!("[hooks]\npost-create = [\"'{bin}' list --json\", \"'{bin}' create nested --no-hooks\"]\n")).unwrap();
+    let child = r
+        .command(bin, &r.main, &["create", "outer"])
+        .env("MABO_TRUST_ALL", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = finish_child(child);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    fs::write(
+        r.main.join(".mabo.toml"),
+        format!("[hooks]\npre-delete = [\"'{bin}' create from-delete --no-hooks\"]\n"),
+    )
+    .unwrap();
+    let child = r
+        .command(bin, &r.main, &["delete", "outer", "--force"])
+        .env("MABO_TRUST_ALL", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = finish_child(child);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(r.mabo(&r.main, &["where", "from-delete"]).status.success());
+}
+
+#[test]
+fn create_exec_releases_lock_while_command_is_running() {
+    let r = Repo::new();
+    let other = r.create("other");
+    let gate = r.root.join("exec-gate");
+    assert!(Command::new("mkfifo")
+        .arg(&gate)
+        .status()
+        .unwrap()
+        .success());
+    let marker = r.root.join("exec-entered");
+    let command = format!(
+        "touch '{}'; read release < '{}'",
+        marker.display(),
+        gate.display()
+    );
+    let mut create = r
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &r.main,
+            &["create", "agent", "--exec", &command],
+        )
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !marker.exists() {
+        assert!(
+            create.try_wait().unwrap().is_none(),
+            "create exited before exec"
+        );
+        assert!(std::time::Instant::now() < deadline, "exec did not start");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let delete = r
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &r.main,
+            &["delete", "other", "--force", "--no-hooks", "--json"],
+        )
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deleted = finish_child(delete);
+    assert!(
+        deleted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&deleted.stderr)
+    );
+    assert!(!other.exists());
+    assert!(
+        create.try_wait().unwrap().is_none(),
+        "exec must still be waiting at gate"
+    );
+    fs::write(gate, "release\n").unwrap();
+    assert!(finish_child(create).status.success());
+}
+
+#[test]
+fn attach_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
+    let r = Repo::new();
+    let bin = env!("CARGO_BIN_EXE_mabo");
+    r.git(&r.main, &["branch", "existing"]);
+    fs::write(
+        r.main.join(".mabo.toml"),
+        format!("[hooks]\npost-create = [\"'{bin}' create from-attach --no-hooks\"]\n"),
+    )
+    .unwrap();
+    let child = r
+        .command(bin, &r.main, &["attach", "existing"])
+        .env("MABO_TRUST_ALL", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = finish_child(child);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    fs::write(r.main.join(".mabo.toml"), "").unwrap();
+    let tree = r.create("landed");
+    r.write_commit(&tree, "work", "work\n");
+    r.git(&r.main, &["merge", "--ff-only", "landed"]);
+    r.git(&r.main, &["push", "origin", "main"]);
+    fs::write(
+        r.main.join(".mabo.toml"),
+        format!("[hooks]\npre-delete = [\"'{bin}' create from-gc --no-hooks\"]\n"),
+    )
+    .unwrap();
+    let child = r
+        .command(bin, &r.main, &["gc", "--merged", "--apply", "--json"])
+        .env("MABO_TRUST_ALL", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = finish_child(child);
+    assert!(
+        out.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!tree.exists());
+    assert!(r.mabo(&r.main, &["where", "from-gc"]).status.success());
+    // A hook can change the target while unlocked; the old preflight is stale.
+    fs::write(
+        r.main.join(".mabo.toml"),
+        "[hooks]\npre-delete = [\"git commit --allow-empty -m changed-by-hook\"]\n",
+    )
+    .unwrap();
+    let child = r
+        .command(bin, &r.main, &["delete", "from-attach", "--force"])
+        .env("MABO_TRUST_ALL", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = finish_child(child);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("Worktree changed"));
+    assert!(r.mabo(&r.main, &["where", "from-attach"]).status.success());
+}
+
+#[test]
+fn rebase_checkout_preserves_ignored_paths_deleted_by_local_commits() {
+    let r = Repo::new();
+    let tree = r.create("topic");
+    r.git(&tree, &["rm", "file"]);
+    r.git(&tree, &["commit", "-m", "delete file"]);
+    let ignore = r.root.join("ignore");
+    fs::write(&ignore, "file\n").unwrap();
+    r.git(
+        &tree,
+        &["config", "core.excludesFile", ignore.to_str().unwrap()],
+    );
+    fs::write(tree.join("file"), "precious\n").unwrap();
+    r.advance();
+    assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "dirty");
+    assert_eq!(fs::read_to_string(tree.join("file")).unwrap(), "precious\n");
 }

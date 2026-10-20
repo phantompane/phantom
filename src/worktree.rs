@@ -447,7 +447,7 @@ pub struct CreateOutcome {
 pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
     let action = resolve_action(&request.action)?;
     let context = context::open(request.repository)?;
-    let _operation = crate::operation::lock(&context.git_root)?;
+    let operation = crate::operation::lock(&context.git_root)?;
     let name = match request.name {
         Some(name) => name.to_string(),
         None => {
@@ -473,7 +473,8 @@ pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
         trust::HookKind::PostCreate,
         request.hooks,
     )?;
-    let created = create_worktree(
+    let created = create_worktree_locked(
+        operation,
         &context,
         &name,
         base,
@@ -499,7 +500,7 @@ pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
     }
     let exec = run_action(&name, &created.path, action, &request.logger)?;
     if exec.is_some() {
-        if let Err(error) = metadata::touch(&context.git_root, &created.path) {
+        if let Err(error) = touch_after_action(&context, &created.path) {
             request
                 .logger
                 .warn(&format!("Warning: Failed to update lastUsedAt: {error}"));
@@ -576,7 +577,35 @@ impl HookFailure {
     }
 }
 
+fn touch_after_action(context: &Context, path: &Path) -> Result<()> {
+    let _operation = crate::operation::lock(&context.git_root)?;
+    // The command may have deleted this worktree. Never recreate its record.
+    if metadata::records_path(&context.git_root, path)? {
+        worktree_at_path(context, path)?;
+        metadata::touch(&context.git_root, path)?;
+    }
+    Ok(())
+}
+
 pub fn create_worktree(
+    context: &Context,
+    name: &str,
+    base: &str,
+    copy_files: &[String],
+    commands: &[String],
+    logger: &Logger,
+    metadata: &MetadataInput,
+) -> Result<CreatedWorktree> {
+    let operation = crate::operation::lock(&context.git_root)?;
+    create_worktree_locked(
+        operation, context, name, base, copy_files, commands, logger, metadata,
+    )
+}
+
+// The caller may already hold the lock while preparing branch state.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_worktree_locked(
+    operation: std::fs::File,
     context: &Context,
     name: &str,
     base: &str,
@@ -612,6 +641,7 @@ pub fn create_worktree(
     let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
         .err()
         .map(|error| error.to_string());
+    drop(operation);
     let hooks_ran = !commands.is_empty();
     let hook_failure = if hooks_ran {
         logger.log("\nRunning post-create commands...");
@@ -642,7 +672,7 @@ pub struct AttachRequest<'a> {
 pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action = resolve_action(&request.action)?;
     let context = context::open(request.repository)?;
-    let _operation = crate::operation::lock(&context.git_root)?;
+    let operation = crate::operation::lock(&context.git_root)?;
     let commands = trust::authorize(
         &context.git_root,
         config::post_create_commands(context.config.as_ref()),
@@ -650,7 +680,8 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
         trust::HookKind::PostCreate,
         request.hooks,
     )?;
-    let attached = attach_worktree(
+    let attached = attach_worktree_locked(
+        operation,
         &context,
         request.name,
         request.copy_files,
@@ -669,7 +700,7 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     }
     let exec = run_action(&attached.name, &attached.path, action, &request.logger)?;
     if exec.is_some() {
-        if let Err(error) = metadata::touch(&context.git_root, &attached.path) {
+        if let Err(error) = touch_after_action(&context, &attached.path) {
             request
                 .logger
                 .warn(&format!("Warning: Failed to update lastUsedAt: {error}"));
@@ -694,6 +725,23 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
 }
 
 pub fn attach_worktree(
+    context: &Context,
+    name: &str,
+    copy_files: &[String],
+    commands: &[String],
+    logger: &Logger,
+    metadata: &MetadataInput,
+) -> Result<AttachedWorktree> {
+    let operation = crate::operation::lock(&context.git_root)?;
+    attach_worktree_locked(
+        operation, context, name, copy_files, commands, logger, metadata,
+    )
+}
+
+// The caller may already hold the lock while preparing branch state.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn attach_worktree_locked(
+    operation: std::fs::File,
     context: &Context,
     name: &str,
     copy_files: &[String],
@@ -754,6 +802,7 @@ pub fn attach_worktree(
             logger.warn(&format!("Warning: Failed to copy some files: {error}"));
             error.to_string()
         });
+    drop(operation);
     let hooks_ran = !commands.is_empty();
     let hook_failure = if hooks_ran {
         logger.log("\nRunning post-create commands...");
@@ -980,12 +1029,22 @@ pub fn commit_delete(
     logger: &Logger,
     hooks: HookControl,
 ) -> std::result::Result<DeleteOutcome, DeleteError> {
+    commit_delete_checked(context, plan, options, logger, hooks, || Ok(()))
+}
+
+pub(crate) fn commit_delete_checked(
+    context: &Context,
+    plan: DeletePlan,
+    options: &DeleteOptions,
+    logger: &Logger,
+    hooks: HookControl,
+    check: impl FnOnce() -> Result<()>,
+) -> std::result::Result<DeleteOutcome, DeleteError> {
     let DeletePlan {
         name,
         worktree,
         path,
-        inside,
-        changed,
+        ..
     } = plan;
     let force = options.force;
     let keep_branch = options.keep_branch;
@@ -1004,6 +1063,23 @@ pub fn commit_delete(
             return Err(DeleteError::kept(error, &worktree));
         }
     }
+    let _operation = crate::operation::lock(&context.git_root)
+        .map_err(|error| DeleteError::kept(error, &worktree))?;
+    check().map_err(|error| DeleteError::kept(error, &worktree))?;
+    let fresh = preflight_delete(context, &name, options, Some(&path))?;
+    if fresh.worktree.head != worktree.head || fresh.worktree.branch != worktree.branch {
+        return Err(DeleteError::kept(
+            Error::msg("Worktree changed while running pre-delete commands"),
+            &fresh.worktree,
+        ));
+    }
+    let DeletePlan {
+        worktree,
+        path,
+        inside,
+        changed,
+        ..
+    } = fresh;
     let recorded_path = metadata::matching_path(&context.git_root, &path)
         .map_err(|error| DeleteError::kept(error, &worktree))?;
     if let Err(error) = git::remove_worktree(&context.git_root, &path, force) {

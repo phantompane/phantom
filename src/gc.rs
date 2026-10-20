@@ -169,6 +169,7 @@ pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Repo
         crate::config::pre_delete_commands(context.config.as_ref()),
         request.no_hooks,
     )?;
+    drop(_operation);
     let mut candidates = Vec::with_capacity(verdicts.len());
     let mut first_failure = None;
     for verdict in verdicts {
@@ -800,7 +801,11 @@ fn local_default_name(base: &str) -> &str {
     base.strip_prefix("origin/").unwrap_or(base)
 }
 
-fn still_at_creation_point(git_root: &Path, branch: &str, created_from: Option<&str>) -> bool {
+pub(crate) fn still_at_creation_point(
+    git_root: &Path,
+    branch: &str,
+    created_from: Option<&str>,
+) -> bool {
     let Some(tip_sha) = branch_tip(git_root, branch) else {
         return false;
     };
@@ -916,20 +921,8 @@ fn apply_verdict(
             published_tip,
         }) => apply_delete(context, request, logger, subject, reasons, published_tip),
         Verdict::Remove(Removal::DropRegistration {
-            subject,
-            reasons,
-            git_listed,
-            unpushed,
-            branch_missing,
-        }) => apply_drop(
-            context,
-            request,
-            subject,
-            reasons,
-            git_listed,
-            unpushed,
-            branch_missing,
-        ),
+            subject, reasons, ..
+        }) => apply_drop(context, request, subject, reasons),
     }
 }
 
@@ -947,21 +940,35 @@ fn apply_delete(
             return failed(subject, reasons, error.to_string());
         }
     };
-    match worktree::delete_worktree(
+    let options = worktree::DeleteOptions {
+        force: request.policy.force,
+        keep_branch: request.keep_branch,
+        allow_current: false,
+        published_tip,
+    };
+    let plan = match worktree::preflight_delete(context, &info.name, &options, Some(&subject.path))
+    {
+        Ok(plan) => plan,
+        Err(error) => return failed(subject, reasons, error.error.to_string()),
+    };
+    match worktree::commit_delete_checked(
         context,
-        &info.name,
-        &worktree::DeleteOptions {
-            force: request.policy.force,
-            keep_branch: request.keep_branch,
-            allow_current: false,
-            published_tip,
-        },
-        Some(&subject.path),
+        plan,
+        &options,
         logger,
         crate::trust::HookControl {
             no_hooks: request.no_hooks,
             json: false,
             prompt: false,
+        },
+        || {
+            let facts = gather(context, &request.policy)?;
+            if classify(&facts, &request.policy).iter().any(|verdict| matches!(verdict,
+                Verdict::Remove(Removal::Delete { subject: current, .. }) if current.path == subject.path)) {
+                Ok(())
+            } else {
+                Err(Error::msg("Worktree no longer qualifies for gc after pre-delete commands"))
+            }
         },
     ) {
         Ok(outcome) => {
@@ -1000,10 +1007,33 @@ fn apply_drop(
     request: &Request,
     subject: Subject,
     reasons: Vec<Reason>,
-    git_listed: bool,
-    unpushed: Option<bool>,
-    branch_missing: bool,
 ) -> CandidateEntry {
+    let _operation = match crate::operation::lock(&context.git_root) {
+        Ok(lock) => lock,
+        Err(error) => return failed(subject, reasons, error.to_string()),
+    };
+    let fresh = match gather(context, &request.policy) {
+        Ok(facts) => classify(&facts, &request.policy),
+        Err(error) => return failed(subject, reasons, error.to_string()),
+    };
+    let Some((git_listed, unpushed, branch_missing)) =
+        fresh.iter().find_map(|verdict| match verdict {
+            Verdict::Remove(Removal::DropRegistration {
+                subject: current,
+                git_listed,
+                unpushed,
+                branch_missing,
+                ..
+            }) if current.path == subject.path => Some((*git_listed, *unpushed, *branch_missing)),
+            _ => None,
+        })
+    else {
+        return failed(
+            subject,
+            reasons,
+            "Worktree no longer qualifies for gc".into(),
+        );
+    };
     if git_listed {
         if let Err(error) = unregister(&context.git_root, &subject.path) {
             return failed(subject, reasons, error.to_string());

@@ -1,5 +1,5 @@
 //! Fetch and integrate bases without changing published history or upstreams.
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
 use serde::Serialize;
@@ -39,7 +39,7 @@ pub struct Item {
 impl Item {
     fn status(&mut self, status: &str, detail: Option<String>) {
         self.status = status.to_string();
-        self.detail = detail;
+        self.detail = detail.map(|value| short_detail(&value));
     }
 }
 
@@ -175,6 +175,7 @@ fn ignored_would_be_overwritten(path: &Path, base: &str) -> Result<bool> {
             "--others",
             "--ignored",
             "--exclude-standard",
+            "--directory",
             "-z",
         ],
         Some(path),
@@ -183,24 +184,45 @@ fn ignored_would_be_overwritten(path: &Path, base: &str) -> Result<bool> {
     if ignored.is_empty() {
         return Ok(false);
     }
-    let tracked = git::output(
-        &["ls-tree", "-r", "--name-only", "-z", base],
+    // Merge/rebase can check out intermediate base paths, even when HEAD has
+    // the same final contents. Include every path changed since the fork point.
+    let fork = git::output(&["merge-base", "HEAD", base], Some(path), true)?;
+    let changed = git::output(
+        &["diff", "--name-only", "-z", &fork, base, "--"],
         Some(path),
         false,
     )?;
-    Ok(ignored
+    let checkout = git::output(
+        &["diff", "--name-only", "-z", "HEAD", base, "--"],
+        Some(path),
+        false,
+    )?;
+    let targets: HashSet<&str> = changed
         .split('\0')
-        .filter(|file| !file.is_empty())
-        .any(|file| {
-            tracked
-                .split('\0')
-                .filter(|target| !target.is_empty())
-                .any(|target| {
-                    file == target
-                        || file.starts_with(&format!("{target}/"))
-                        || target.starts_with(&format!("{file}/"))
-                })
-        }))
+        .chain(checkout.split('\0'))
+        .filter(|p| !p.is_empty())
+        .collect();
+    let mut prefixes = HashSet::new();
+    for target in &targets {
+        let mut parent = *target;
+        while let Some((prefix, _)) = parent.rsplit_once('/') {
+            prefixes.insert(prefix);
+            parent = prefix;
+        }
+    }
+    for entry in ignored.split('\0').filter(|p| !p.is_empty()) {
+        let mut entry = entry.trim_end_matches('/');
+        if prefixes.contains(entry) || targets.contains(entry) {
+            return Ok(true);
+        }
+        while let Some((parent, _)) = entry.rsplit_once('/') {
+            if targets.contains(parent) {
+                return Ok(true);
+            }
+            entry = parent;
+        }
+    }
+    Ok(false)
 }
 
 fn remote_for(base: &str, remotes: &[String]) -> Option<String> {
@@ -360,6 +382,15 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
     Ok(report)
 }
 
+fn short_detail(value: &str) -> String {
+    value
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+        .to_string()
+}
+
 fn failed_item(name: &str, error: Error) -> Item {
     Item {
         name: name.to_string(),
@@ -371,7 +402,7 @@ fn failed_item(name: &str, error: Error) -> Item {
         before: None,
         after: None,
         conflicts: Vec::new(),
-        detail: Some(error.to_string()),
+        detail: Some(short_detail(&error.to_string())),
         code: None,
     }
 }
@@ -526,9 +557,15 @@ fn sync_tree(tree: &worktree::WorktreeInfo, base: &str, request: &Request) -> Re
         tree.head.as_deref(),
         &Some(base.to_string()),
     );
-    if ancestor(path, "HEAD", base)?
-        || reachability.landed
-        || git::changes_landed(path, "HEAD", base)
+    let moved = !crate::gc::still_at_creation_point(
+        path,
+        &tree.branch,
+        tree.metadata.created_from.as_deref(),
+    );
+    if moved
+        && (ancestor(path, "HEAD", base)?
+            || reachability.landed
+            || git::changes_landed(path, "HEAD", base))
     {
         item.status(
             "merged",
@@ -577,6 +614,11 @@ fn sync_tree(tree: &worktree::WorktreeInfo, base: &str, request: &Request) -> Re
         item.status("dirty", Some("Ignored files would be overwritten".into()));
         return Ok(item);
     }
+    let short_base = base
+        .strip_prefix("refs/remotes/")
+        .or_else(|| base.strip_prefix("refs/heads/"))
+        .unwrap_or(base);
+    let message = format!("Merge {short_base} into {}", tree.branch);
     let args = if strategy == "merge" {
         vec![
             "-c",
@@ -586,6 +628,8 @@ fn sync_tree(tree: &worktree::WorktreeInfo, base: &str, request: &Request) -> Re
             "merge",
             "--no-edit",
             "--no-verify",
+            "-m",
+            &message,
             base,
         ]
     } else {
@@ -644,7 +688,13 @@ fn sync_tree(tree: &worktree::WorktreeInfo, base: &str, request: &Request) -> Re
             } else {
                 "conflict"
             },
-            Some(result.stderr.trim().into()),
+            Some(if item.conflicts.is_empty() {
+                short_detail(&result.stderr)
+            } else if request.keep_conflicts {
+                format!("{strategy} left in progress")
+            } else {
+                format!("{strategy} aborted; worktree unchanged")
+            }),
         );
         return Ok(item);
     }
