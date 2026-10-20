@@ -282,7 +282,7 @@ fn where_cmd(args: &[String]) -> Result<i32> {
     let json = parsed.flag("json") || wants_json(args);
     if parsed.positionals.is_empty() {
         return fail_with(
-            &Error::msg("Usage: ptm where <worktree-name>"),
+            &Error::msg("Usage: mabo where <worktree-name>"),
             VALIDATION,
             json,
         );
@@ -465,7 +465,7 @@ fn exec(args: &[String]) -> Result<i32> {
     let parsed = args::parse_with(args, &[project_flag()], true, Some(1))?;
     if parsed.positionals.len() < 2 {
         return fail(
-            &Error::msg("Usage: ptm exec <worktree-name> <command> [args...]"),
+            &Error::msg("Usage: mabo exec <worktree-name> <command> [args...]"),
             VALIDATION,
         );
     }
@@ -524,7 +524,7 @@ fn preferences_root(args: &[String]) -> Result<i32> {
 fn preferences_get(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &[], true)?;
     if parsed.positionals.len() != 1 {
-        return fail(&Error::msg("Usage: ptm preferences get <key>"), VALIDATION);
+        return fail(&Error::msg("Usage: mabo preferences get <key>"), VALIDATION);
     }
     let key = &parsed.positionals[0];
     if let Err(error) = preferences::require_key(key) {
@@ -550,7 +550,7 @@ fn preferences_get(args: &[String]) -> Result<i32> {
 fn preferences_set(args: &[String]) -> Result<i32> {
     if args.len() < 2 {
         return fail(
-            &Error::msg("Usage: ptm preferences set <key> <value>"),
+            &Error::msg("Usage: mabo preferences set <key> <value>"),
             VALIDATION,
         );
     }
@@ -580,7 +580,7 @@ fn preferences_remove(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &[], true)?;
     if parsed.positionals.len() != 1 {
         return fail(
-            &Error::msg("Usage: ptm preferences remove <key>"),
+            &Error::msg("Usage: mabo preferences remove <key>"),
             VALIDATION,
         );
     }
@@ -621,7 +621,7 @@ fn clone_cmd(args: &[String]) -> Result<i32> {
     if parsed.positionals.len() != 1 {
         return fail_with(
             &Error::validation(
-                "Usage: ptm clone <url|host/owner/repo|owner/repo> [--branch <branch>] [--depth <n>] [--update] [--json]",
+                "Usage: mabo clone <url|host/owner/repo|owner/repo> [--branch <branch>] [--depth <n>] [--update] [--json]",
             ),
             VALIDATION,
             json,
@@ -667,7 +667,7 @@ fn project_add(args: &[String]) -> Result<i32> {
     let json = parsed.flag("json") || wants_json(args);
     if parsed.positionals.len() > 1 {
         return fail_with(
-            &Error::msg("Usage: ptm project add [path] [--json]"),
+            &Error::msg("Usage: mabo project add [path] [--json]"),
             VALIDATION,
             json,
         );
@@ -792,7 +792,7 @@ fn project_remove(args: &[String]) -> Result<i32> {
     let json = parsed.flag("json") || wants_json(args);
     if parsed.positionals.len() != 1 {
         return fail_with(
-            &Error::msg("Usage: ptm project remove <id|name|path> [--json]"),
+            &Error::msg("Usage: mabo project remove <id|name|path> [--json]"),
             VALIDATION,
             json,
         );
@@ -985,7 +985,7 @@ fn meta_set(args: &[String]) -> Result<i32> {
     let json = parsed.flag("json") || wants_json(args);
     if parsed.positionals.len() != 1 {
         return fail_with(
-            &Error::msg("Usage: ptm meta set <worktree-name> [options]"),
+            &Error::msg("Usage: mabo meta set <worktree-name> [options]"),
             VALIDATION,
             json,
         );
@@ -1044,7 +1044,7 @@ fn action_from(parsed: &Parsed) -> Result<ActionRequest> {
 
 fn requests_help(command: &Command, args: &[String]) -> bool {
     match command.name {
-        // `ptm exec <name> <command> [args...]`: help flags after the name
+        // `mabo exec <name> <command> [args...]`: help flags after the name
         // belong to the command.
         "exec" => help_before_positionals(args, 1),
         // `create`/`attach --exec <command> [args...]`: help flags after
@@ -1114,7 +1114,7 @@ fn metadata_options() -> [Opt; 4] {
 
 fn metadata_input(parsed: &Parsed, use_env: bool) -> Result<MetadataInput> {
     let env = use_env
-        .then(|| std::env::var("PTM_AGENT_ID").ok())
+        .then(|| std::env::var("MABO_AGENT_ID").ok())
         .flatten();
     Ok(MetadataInput {
         owner: metadata::resolve_owner(single_value(parsed, "owner")?, env.as_deref())?,
@@ -1203,7 +1203,7 @@ fn gc(args: &[String]) -> Result<i32> {
         Ok(context) => context,
         Err(error) => return fail_project(&error, args, &parsed, json),
     };
-    let agent_id = std::env::var("PTM_AGENT_ID")
+    let agent_id = std::env::var("MABO_AGENT_ID")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
@@ -1282,7 +1282,7 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
     if parsed.flag("list") {
         if parsed.flag("yes") || !parsed.positionals.is_empty() {
             return fail_with(
-                &Error::validation("ptm trust --list does not take a path or --yes"),
+                &Error::validation("mabo trust --list does not take a path or --yes"),
                 VALIDATION,
                 json,
             );
@@ -1291,7 +1291,7 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
     }
     if parsed.positionals.len() > 1 {
         return fail_with(
-            &Error::validation("Usage: ptm trust [path]"),
+            &Error::validation("Usage: mabo trust [path]"),
             VALIDATION,
             json,
         );
@@ -1308,7 +1308,7 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
         if json || !trust::prompts() {
             return fail_with(
                 &Error::msg(
-                    "ptm will not ask for trust in this environment. Re-run with --yes to trust this project.",
+                    "mabo will not ask for trust in this environment. Re-run with --yes to trust this project.",
                 ),
                 GENERAL,
                 json,
@@ -1352,7 +1352,7 @@ fn untrust_cmd(args: &[String]) -> Result<i32> {
     let json = parsed.flag("json") || wants_json(args);
     if parsed.positionals.len() > 1 {
         return fail_with(
-            &Error::validation("Usage: ptm untrust [path]"),
+            &Error::validation("Usage: mabo untrust [path]"),
             VALIDATION,
             json,
         );

@@ -1,14 +1,12 @@
-# Phantom
+# Maboroshi
 
-Development of Phantom, the Git worktree manager, has ended.
-
-Phantom is being rebuilt from scratch as a tool designed to work closely with AI agents. That work is in progress.
+Maboroshi (幻) is a Git worktree manager for working with AI agents. The Rust rewrite on `next` is in progress. The previous TypeScript version stays on `main`.
 
 The previous version's README is at <https://github.com/phantompane/phantom/blob/main/README.md>.
 
 ## User preferences
 
-`ptm` stores user preferences in `$XDG_CONFIG_HOME/ptm/config.toml` (default `~/.config/ptm/config.toml`). `ptm preferences get`, `set`, and `remove` read and write that file. The first `set` creates the directory and file.
+`mabo` stores user preferences in `$XDG_CONFIG_HOME/maboroshi/config.toml` (default `~/.config/maboroshi/config.toml`). `mabo preferences get`, `set`, and `remove` read and write that file. The first `set` creates the directory and file.
 
 ```toml
 worktrees-directory = "../phantom-worktrees"
@@ -18,32 +16,32 @@ ghq-discovery = true
 root = "~/ghq"
 ```
 
-When `worktrees-directory` is unset, `ptm create` and `ptm attach` place the new worktree at `$XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash>/<name>`. The fallback is `~/.local/share/ptm/worktrees/...` when `XDG_DATA_HOME` is unset, empty, or not absolute. `<checkout>` is the canonical main checkout directory name, with characters outside letters, numbers, `.`, `_`, and `-` replaced by `-`. A symlink to that checkout uses the same directory. `<hash>` is the first 8 hexadecimal digits of the SHA-256 of the canonical Git common directory. Two clones of the same remote get different directories. `directory-name-separator` still applies only inside that project directory. Deleting the last worktree inside that directory removes the project directory only when `.ptm-common-dir` names this repository, and does not remove `ptm/worktrees`. `delete` and `gc` also remove a linked worktree recorded in `ptm/worktrees.json`, including one created under `.git/ptm/worktrees` or a different data directory. An unrecorded worktree outside the resolved directory stays. Parent cleanup runs only for a worktree inside the resolved directory. A set `worktrees-directory` is still a path relative to the repository root, and that directory is left in place when it becomes empty.
+When `worktrees-directory` is unset, `mabo create` and `mabo attach` place the new worktree at `$XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash>/<name>`. The fallback is `~/.local/share/maboroshi/worktrees/...` when `XDG_DATA_HOME` is unset, empty, or not absolute. `<checkout>` is the canonical main checkout directory name, with characters outside letters, numbers, `.`, `_`, and `-` replaced by `-`. A symlink to that checkout uses the same directory. `<hash>` is the first 8 hexadecimal digits of the SHA-256 of the canonical Git common directory. Two clones of the same remote get different directories. `directory-name-separator` still applies only inside that project directory. Deleting the last worktree inside that directory removes the project directory only when `.maboroshi-common-dir` names this repository, and does not remove `maboroshi/worktrees`. `delete` and `gc` also remove a linked worktree recorded in `maboroshi/worktrees.json`, including one created under `.git/maboroshi/worktrees` or a different data directory. An unrecorded worktree outside the resolved directory stays. Parent cleanup runs only for a worktree inside the resolved directory. A set `worktrees-directory` is still a path relative to the repository root, and that directory is left in place when it becomes empty.
 
-`root` is where `ptm clone` places repositories. It is an absolute path or a path starting with `~/`. When `root` is unset, `ptm clone` uses the first `git config ghq.root` value, then `$GHQ_ROOT`, then `~/ghq`. A configured `root` is used without reading git config. If reading `ghq.root` fails, `ptm` warns and continues with `$GHQ_ROOT` or `~/ghq`. `project list` scans that same directory.
+`root` is where `mabo clone` places repositories. It is an absolute path or a path starting with `~/`. When `root` is unset, `mabo clone` uses the first `git config ghq.root` value, then `$GHQ_ROOT`, then `~/ghq`. A configured `root` is used without reading git config. If reading `ghq.root` fails, `mabo` warns and continues with `$GHQ_ROOT` or `~/ghq`. `project list` scans that same directory.
 
 ## Cloning repositories
 
-`ptm clone` clones a Git repository into `<root>/<host>/<owner>/<repo>` and registers it. `owner/repo` uses `github.com`. The command accepts `https` and `http` URLs, `ssh://` URLs, scp-style `git@host:owner/repo` paths, `host/owner/repo`, and `owner/repo`. The host directory is lowercased, and a URL port is part of it (`example.net:9443`). `file://` URLs are rejected. A local path has no host, owner, and repository to place under that layout. A clone that exits early can leave a hidden `.ptm-clone-<pid>-<uuid>` directory beside the destination. A later clone in that directory removes it when the recorded process is no longer running.
+`mabo clone` clones a Git repository into `<root>/<host>/<owner>/<repo>` and registers it. `owner/repo` uses `github.com`. The command accepts `https` and `http` URLs, `ssh://` URLs, scp-style `git@host:owner/repo` paths, `host/owner/repo`, and `owner/repo`. The host directory is lowercased, and a URL port is part of it (`example.net:9443`). `file://` URLs are rejected. A local path has no host, owner, and repository to place under that layout. A clone that exits early can leave a hidden `.maboroshi-clone-<pid>-<uuid>` directory beside the destination. A later clone in that directory removes it when the recorded process is no longer running.
 
 ```bash
-ptm clone aku11i/phantom
-ptm clone git@github.com:aku11i/phantom.git --branch next
-ptm clone github.com/aku11i/phantom --depth 1
-ptm clone aku11i/phantom --update
+mabo clone aku11i/phantom
+mabo clone git@github.com:aku11i/phantom.git --branch next
+mabo clone github.com/aku11i/phantom --depth 1
+mabo clone aku11i/phantom --update
 ```
 
-If that path is already the same repository, `ptm` registers it and prints the path instead of cloning again. `--update` fetches `origin` in that case. If the path exists but is a different repository, the command exits with a validation error. `--branch` and `--depth` apply only to a new clone.
+If that path is already the same repository, `mabo` registers it and prints the path instead of cloning again. `--update` fetches `origin` in that case. If the path exists but is a different repository, the command exits with a validation error. `--branch` and `--depth` apply only to a new clone.
 
-Authentication is left to Git. `ptm` does not call `gh`. Git's progress is written to stderr. New worktrees for the cloned repository are created under `$XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash>` (`~/.local/share/ptm/worktrees/...` when `XDG_DATA_HOME` is unset, empty, or relative). `<checkout>` is the canonical main checkout directory name, so a symlink or a non-canonical path uses the same directory. `<hash>` is the first 8 hexadecimal digits of the SHA-256 of the canonical Git common directory, the same path `ptm trust` records. A `worktrees-directory` preference still overrides that location and is joined to the repository root.
+Authentication is left to Git. `mabo` does not call `gh`. Git's progress is written to stderr. New worktrees for the cloned repository are created under `$XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash>` (`~/.local/share/maboroshi/worktrees/...` when `XDG_DATA_HOME` is unset, empty, or relative). `<checkout>` is the canonical main checkout directory name, so a symlink or a non-canonical path uses the same directory. `<hash>` is the first 8 hexadecimal digits of the SHA-256 of the canonical Git common directory, the same path `mabo trust` records. A `worktrees-directory` preference still overrides that location and is joined to the repository root.
 
 ## Targeting a project
 
-Worktree commands (`create`, `attach`, `list`, `where`, `delete`, `exec`, and `github checkout`) accept `--project <ref>` (`-p`) so they can run against a repository other than the current directory. Those commands accept it anywhere their other options are accepted. `ptm exec` is the exception: it parses ptm options only before the worktree name, and passes everything after that name to the command. This runs `pwd --project y` inside the `feature` worktree of `owner/repo`:
+Worktree commands (`create`, `attach`, `list`, `where`, `delete`, `exec`, and `github checkout`) accept `--project <ref>` (`-p`) so they can run against a repository other than the current directory. Those commands accept it anywhere their other options are accepted. `mabo exec` is the exception: it parses mabo options only before the worktree name, and passes everything after that name to the command. This runs `pwd --project y` inside the `feature` worktree of `owner/repo`:
 
 ```bash
-ptm exec --project owner/repo feature pwd --project y
-ptm list --project ~/src/foo --json
+mabo exec --project owner/repo feature pwd --project y
+mabo list --project ~/src/foo --json
 ```
 
 A ref that starts with `/`, `.`, or `~` is a directory. It can be anywhere inside the repository, including a linked worktree, and resolves to the main checkout. Hooks and `.worktreeinclude` are read from that main checkout.
@@ -52,7 +50,7 @@ Any other ref is matched against registered projects and discovered checkouts (t
 
 ## Copying gitignored files
 
-`ptm create` and `ptm attach` read `.worktreeinclude` from the root of the source checkout. The file uses gitignore syntax. A file is copied only when a pattern matches it and Git ignores it, so tracked files are never duplicated.
+`mabo create` and `mabo attach` read `.worktreeinclude` from the root of the source checkout. The file uses gitignore syntax. A file is copied only when a pattern matches it and Git ignores it, so tracked files are never duplicated.
 
 ```text
 .env
@@ -66,7 +64,7 @@ Files that already exist in the new worktree are left unchanged. Symlinks are sk
 
 ## Project hooks
 
-`.ptm.toml` is read from the source checkout: the checkout where the command runs (`git rev-parse --show-toplevel`). `.worktreeinclude` is read from that same checkout.
+`.mabo.toml` is read from the source checkout: the checkout where the command runs (`git rev-parse --show-toplevel`). `.worktreeinclude` is read from that same checkout.
 
 ```toml
 [hooks]
@@ -74,34 +72,34 @@ post-create = ["pnpm install"]
 pre-delete = ["./scripts/teardown.sh"]
 ```
 
-`ptm create`, `ptm attach`, and `ptm github checkout` run `post-create` in the new worktree. `ptm delete` and `ptm gc --apply` run `pre-delete` in the worktree before removing it. Commands run in order and stop at the first failure. Unknown keys are rejected.
+`mabo create`, `mabo attach`, and `mabo github checkout` run `post-create` in the new worktree. `mabo delete` and `mabo gc --apply` run `pre-delete` in the worktree before removing it. Commands run in order and stop at the first failure. Unknown keys are rejected.
 
 Hooks run only when that repository is trusted. `.worktreeinclude` copies are not hooks and do not need trust. A repository with no hook commands never asks.
 
-On a terminal, ptm prints the project path and the hook commands, then asks `Trust this project and run its hooks? [y/N]`. `y` or `yes` saves trust and runs the hooks. ptm does not ask when `CI` is set, when `PTM_AGENT_ID` is set, when stdin or stderr is not a terminal, or when `--json` is set. An empty value counts as unset. It then exits 1 before changing the repository, the same as a non-terminal. With `--json`, stdout is only the error object and `code` is `untrusted`. The message tells you to run `ptm trust --yes` or pass `--no-hooks`.
+On a terminal, mabo prints the project path and the hook commands, then asks `Trust this project and run its hooks? [y/N]`. `y` or `yes` saves trust and runs the hooks. mabo does not ask when `CI` is set, when `MABO_AGENT_ID` is set, when stdin or stderr is not a terminal, or when `--json` is set. An empty value counts as unset. It then exits 1 before changing the repository, the same as a non-terminal. With `--json`, stdout is only the error object and `code` is `untrusted`. The message tells you to run `mabo trust --yes` or pass `--no-hooks`.
 
-`ptm trust [path]` shows the hooks and asks `Trust this project? [y/N]`. `--yes` skips the question. The same `CI`, `PTM_AGENT_ID`, and terminal rules apply, and `--yes` is how a non-interactive run records trust. `ptm untrust [path]` removes that repository. `ptm trust --list` prints each trusted git common directory and when it was trusted. Trust is keyed by the path of the canonical git common directory, so the main checkout and its linked worktrees share one record. Deleting the checkout and cloning it again at the same path keeps that record. `ptm untrust` clears it. Editing the hook commands later does not ask again.
+`mabo trust [path]` shows the hooks and asks `Trust this project? [y/N]`. `--yes` skips the question. The same `CI`, `MABO_AGENT_ID`, and terminal rules apply, and `--yes` is how a non-interactive run records trust. `mabo untrust [path]` removes that repository. `mabo trust --list` prints each trusted git common directory and when it was trusted. Trust is keyed by the path of the canonical git common directory, so the main checkout and its linked worktrees share one record. Deleting the checkout and cloning it again at the same path keeps that record. `mabo untrust` clears it. Editing the hook commands later does not ask again.
 
-The record is `$XDG_STATE_HOME/ptm/trust.toml` when `XDG_STATE_HOME` is an absolute path, otherwise `~/.local/state/ptm/trust.toml`. Each entry stores `path` and `trustedAt`.
+The record is `$XDG_STATE_HOME/maboroshi/trust.toml` when `XDG_STATE_HOME` is an absolute path, otherwise `~/.local/state/maboroshi/trust.toml`. Each entry stores `path` and `trustedAt`.
 
-`PTM_TRUST_ALL=1` trusts every repository for that process and does not write the file. The value has to be the single character `1`. Use it in CI and containers. `--no-hooks` on `create`, `attach`, `delete`, `gc`, and `github checkout` does the worktree change and skips hooks. It does not write trust.
+`MABO_TRUST_ALL=1` trusts every repository for that process and does not write the file. The value has to be the single character `1`. Use it in CI and containers. `--no-hooks` on `create`, `attach`, `delete`, `gc`, and `github checkout` does the worktree change and skips hooks. It does not write trust.
 
-`ptm gc` never asks, including on a terminal. An untrusted repository that has `pre-delete` hooks is skipped. The candidate detail is `untrusted hooks`. Other candidates still run. `--no-hooks` removes those worktrees without running hooks.
+`mabo gc` never asks, including on a terminal. An untrusted repository that has `pre-delete` hooks is skipped. The candidate detail is `untrusted hooks`. Other candidates still run. `--no-hooks` removes those worktrees without running hooks.
 
 Each hook receives:
 
-- `PTM` — `1`
-- `PTM_NAME` — worktree name
-- `PTM_PATH` — absolute path of the worktree directory
-- `PTM_ROOT_PATH` — path of the source checkout
+- `MABO` — `1`
+- `MABO_NAME` — worktree name
+- `MABO_PATH` — absolute path of the worktree directory
+- `MABO_ROOT_PATH` — path of the source checkout
 
 ## Worktree environment
 
-`ptm exec` and `--exec` export:
+`mabo exec` and `--exec` export:
 
-- `PTM` — `1`
-- `PTM_NAME` — worktree name
-- `PTM_PATH` — absolute path of the worktree directory
+- `MABO` — `1`
+- `MABO_NAME` — worktree name
+- `MABO_PATH` — absolute path of the worktree directory
 
 ## Machine-readable JSON
 
@@ -139,7 +137,7 @@ A command that does not produce a result writes this object to stdout:
 ```json
 {
   "name": "feature/add-tests",
-  "path": "/home/user/.local/share/ptm/worktrees/repo-6b4ca2db/feature/add-tests",
+  "path": "/home/user/.local/share/maboroshi/worktrees/repo-6b4ca2db/feature/add-tests",
   "branch": "feature/add-tests",
   "head": "0123456789abcdef0123456789abcdef01234567",
   "base": "HEAD",
@@ -158,7 +156,7 @@ A command that does not produce a result writes this object to stdout:
 }
 ```
 
-`owner`, `purpose`, `createdAt`, `createdFrom`, `lastUsedAt`, and `links` come from `ptm/worktrees.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `ptm create`, `ptm attach`, and `ptm github checkout` write a record. `owner` is `--owner` or `PTM_AGENT_ID`, and null when neither is set. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `github checkout` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `where` and `exec` refresh `lastUsedAt` when a record already exists. A failure to update it is a warning on stderr and does not change the exit code. `delete` removes the record after Git removes the worktree. `create` and `attach` replace any record already stored at that path. `meta set` and a second `github checkout` of a worktree that already exists patch the record. `create --json` and `attach --json` include `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the worktree exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 1. The stdout document is the result object, not the error envelope. A corrupt `worktrees.json` makes `list`, `where`, and `exec` continue with null metadata fields and a stderr warning. `create`, `attach`, `delete`, `meta set`, and `github checkout` refuse and leave the file unchanged. `createdFrom` is the full commit the branch was created from. `create` stores the new branch's HEAD. A record for a branch that already existed stores the oldest `refs/heads` reflog entry, or null when that reflog is missing. `meta set` and a later checkout leave it unchanged. A record written before this field existed has `createdFrom` null. `ptm meta set` patches the fields you pass and leaves the others. A worktree Git created outside `ptm`, including the default checkout, has null metadata fields until `meta set` or `github checkout` records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
+`owner`, `purpose`, `createdAt`, `createdFrom`, `lastUsedAt`, and `links` come from `maboroshi/worktrees.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `mabo create`, `mabo attach`, and `mabo github checkout` write a record. `owner` is `--owner` or `MABO_AGENT_ID`, and null when neither is set. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `github checkout` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `where` and `exec` refresh `lastUsedAt` when a record already exists. A failure to update it is a warning on stderr and does not change the exit code. `delete` removes the record after Git removes the worktree. `create` and `attach` replace any record already stored at that path. `meta set` and a second `github checkout` of a worktree that already exists patch the record. `create --json` and `attach --json` include `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the worktree exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 1. The stdout document is the result object, not the error envelope. A corrupt `worktrees.json` makes `list`, `where`, and `exec` continue with null metadata fields and a stderr warning. `create`, `attach`, `delete`, `meta set`, and `github checkout` refuse and leave the file unchanged. `createdFrom` is the full commit the branch was created from. `create` stores the new branch's HEAD. A record for a branch that already existed stores the oldest `refs/heads` reflog entry, or null when that reflog is missing. `meta set` and a later checkout leave it unchanged. A record written before this field existed has `createdFrom` null. `mabo meta set` patches the fields you pass and leaves the others. A worktree Git created outside `mabo`, including the default checkout, has null metadata fields until `meta set` or `github checkout` records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
 
 ### Commands
 
@@ -218,7 +216,7 @@ A command that does not produce a result writes this object to stdout:
   "candidates": [
     {
       "name": "feature",
-      "path": "/home/user/.local/share/ptm/worktrees/repo-6b4ca2db/feature",
+      "path": "/home/user/.local/share/maboroshi/worktrees/repo-6b4ca2db/feature",
       "branch": "feature",
       "owner": "grok",
       "reasons": ["merged"],

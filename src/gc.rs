@@ -25,7 +25,7 @@ pub struct Policy {
     pub selection: Selection,
     pub now: SystemTime,
     pub force: bool,
-    /// `PTM_AGENT_ID` after trimming. Empty and unset are `None`.
+    /// `MABO_AGENT_ID` after trimming. Empty and unset are `None`.
     pub agent_id: Option<String>,
     pub owner_filter: Option<String>,
 }
@@ -1138,7 +1138,7 @@ mod tests {
     fn feature() -> WorktreeFacts {
         WorktreeFacts {
             subject: Subject {
-                path: PathBuf::from("/repo/.git/ptm/worktrees/feature"),
+                path: PathBuf::from("/repo/.git/maboroshi/worktrees/feature"),
                 name: "feature".to_string(),
                 branch: Some("feature".to_string()),
                 owner: None,

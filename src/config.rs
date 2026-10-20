@@ -5,11 +5,11 @@ use serde::Deserialize;
 
 use crate::error::{Error, Result};
 
-const FILE_NAME: &str = ".ptm.toml";
+const FILE_NAME: &str = ".mabo.toml";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct PtmConfig {
+pub struct MaboConfig {
     pub hooks: Hooks,
 }
 
@@ -20,7 +20,7 @@ pub struct Hooks {
     pub pre_delete: Vec<String>,
 }
 
-pub fn load_config(git_root: &Path) -> Result<Option<PtmConfig>> {
+pub fn load_config(git_root: &Path) -> Result<Option<MaboConfig>> {
     let path = git_root.join(FILE_NAME);
     let content = match fs::read_to_string(&path) {
         Ok(content) => content,
@@ -37,21 +37,21 @@ pub fn load_config(git_root: &Path) -> Result<Option<PtmConfig>> {
         .map_err(|error| Error::msg(format!("{}: {error}", path.display())))
 }
 
-pub fn post_create_commands(config: Option<&PtmConfig>) -> &[String] {
+pub fn post_create_commands(config: Option<&MaboConfig>) -> &[String] {
     match config {
         Some(config) => &config.hooks.post_create,
         None => &[],
     }
 }
 
-pub fn pre_delete_commands(config: Option<&PtmConfig>) -> &[String] {
+pub fn pre_delete_commands(config: Option<&MaboConfig>) -> &[String] {
     match config {
         Some(config) => &config.hooks.pre_delete,
         None => &[],
     }
 }
 
-fn parse_config(content: &str) -> Result<PtmConfig> {
+fn parse_config(content: &str) -> Result<MaboConfig> {
     toml_edit::de::from_str(content)
         .map_err(|error| Error::msg(format!("Invalid {FILE_NAME}: {error}")))
 }

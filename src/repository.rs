@@ -156,7 +156,7 @@ pub fn scan_repository_root(root: &Path) -> Vec<String> {
             };
             for repo in repos.flatten() {
                 let repo_path = repo.path();
-                // `.ptm-clone-*` is an in-progress staging checkout, not a project.
+                // `.maboroshi-clone-*` is an in-progress staging checkout, not a project.
                 if !is_project_directory(&repo_path) || !repo_path.join(".git").exists() {
                     continue;
                 }
@@ -234,7 +234,7 @@ fn place_clone(
     // stays on one filesystem. POSIX rename fails when the destination is a
     // non-empty directory, which is the racing clone we must not delete.
     let staging = parent.join(format!(
-        ".ptm-clone-{}-{}",
+        ".maboroshi-clone-{}-{}",
         std::process::id(),
         uuid::Uuid::new_v4()
     ));
@@ -870,7 +870,7 @@ fn is_project_directory(path: &Path) -> bool {
 
 fn is_staging_directory(path: &Path) -> bool {
     path.file_name()
-        .is_some_and(|name| name.as_encoded_bytes().starts_with(b".ptm-clone-"))
+        .is_some_and(|name| name.as_encoded_bytes().starts_with(b".maboroshi-clone-"))
 }
 
 fn reap_stale_staging(parent: Option<&Path>, keep: &Path) {
@@ -899,7 +899,7 @@ fn reap_stale_staging(parent: Option<&Path>, keep: &Path) {
 
 fn staging_owner_pid(name: &std::ffi::OsStr) -> Option<u32> {
     let name = name.to_str()?;
-    let rest = name.strip_prefix(".ptm-clone-")?;
+    let rest = name.strip_prefix(".maboroshi-clone-")?;
     let (pid, id) = rest.split_once('-')?;
     let pid = pid.parse::<u32>().ok()?;
     if pid == 0 {
@@ -1418,7 +1418,7 @@ mod tests {
     #[test]
     fn scan_finds_only_host_owner_repo_checkouts() {
         let root = std::env::temp_dir().join(format!(
-            "ptm-scan-{}-{}",
+            "mabo-scan-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1433,7 +1433,7 @@ mod tests {
         let staging = root
             .join("github.com")
             .join("owner")
-            .join(".ptm-clone-1-abc");
+            .join(".maboroshi-clone-1-abc");
         fs::create_dir_all(staging.join(".git")).expect("staging");
         for path in [
             root.join("github.com").join("acme").join(".dotfiles"),
@@ -1468,7 +1468,7 @@ mod tests {
             "{found:?}"
         );
         assert!(
-            found.iter().all(|path| !path.contains(".ptm-clone")),
+            found.iter().all(|path| !path.contains(".maboroshi-clone")),
             "{found:?}"
         );
         assert_eq!(found.len(), 4, "{found:?}");
@@ -1610,7 +1610,7 @@ mod tests {
             None,
         );
         fs::write(destination.join("keep.txt"), "safe").expect("keep");
-        let staging = root.join(".ptm-clone-test");
+        let staging = root.join(".maboroshi-clone-test");
         fs::create_dir_all(&staging).expect("temp");
         fs::write(staging.join("new.txt"), "temp").expect("new");
         let spec = RepoSpec {
@@ -1641,7 +1641,7 @@ mod tests {
             ],
             None,
         );
-        let staging = root.join(".ptm-clone-mismatch");
+        let staging = root.join(".maboroshi-clone-mismatch");
         fs::create_dir_all(&staging).expect("temp");
         fs::write(staging.join("new.txt"), "temp").expect("new");
         let error = publish_clone(&staging, &destination, &spec, false).expect_err("mismatch");
@@ -1681,7 +1681,7 @@ mod tests {
         let leftovers = fs::read_dir(&owner)
             .expect("owner")
             .map(|entry| entry.expect("entry").file_name())
-            .filter(|name| name.to_string_lossy().starts_with(".ptm-clone-"))
+            .filter(|name| name.to_string_lossy().starts_with(".maboroshi-clone-"))
             .collect::<Vec<_>>();
         assert!(leftovers.is_empty(), "{leftovers:?}");
         let _ = fs::remove_dir_all(root);
@@ -1742,20 +1742,20 @@ mod tests {
         fs::create_dir_all(&sibling).expect("sibling");
         fs::write(sibling.join("keep.txt"), "safe").expect("keep");
         let dead = owner.join(format!(
-            ".ptm-clone-{}-{}",
+            ".maboroshi-clone-{}-{}",
             unused_pid(),
             uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(dead.join(".git")).expect("dead");
         fs::write(dead.join("keep.txt"), "stale").expect("stale");
         let live = owner.join(format!(
-            ".ptm-clone-{}-{}",
+            ".maboroshi-clone-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(&live).expect("live");
         fs::write(live.join("keep.txt"), "live").expect("live");
-        let malformed = owner.join(".ptm-clone-not-a-pid");
+        let malformed = owner.join(".maboroshi-clone-not-a-pid");
         fs::create_dir_all(&malformed).expect("malformed");
         let destination = owner.join("widget");
         let spec = RepoSpec {
@@ -1794,7 +1794,7 @@ mod tests {
             None,
         );
         let dead_again = owner.join(format!(
-            ".ptm-clone-{}-{}",
+            ".maboroshi-clone-{}-{}",
             unused_pid(),
             uuid::Uuid::new_v4()
         ));
@@ -1809,13 +1809,13 @@ mod tests {
 
     #[test]
     fn reserved_staging_name_is_rejected_and_a_plain_dot_name_is_kept() {
-        let reserved = format!("example.com/acme/.ptm-clone-9-{}", uuid::Uuid::nil());
+        let reserved = format!("example.com/acme/.maboroshi-clone-9-{}", uuid::Uuid::nil());
         let error = parse_clone_source(&reserved).expect_err("reserved");
         assert!(matches!(error, Error::Validation(_)), "{error}");
         assert_eq!(error.exit_code(), 3, "{error}");
         assert!(error.to_string().contains("reserved"), "{error}");
-        let kept = spec("example.com/acme/.ptm-clone-notes");
-        assert_eq!(kept.repo, ".ptm-clone-notes");
+        let kept = spec("example.com/acme/.maboroshi-clone-notes");
+        assert_eq!(kept.repo, ".maboroshi-clone-notes");
     }
 
     #[test]
@@ -1835,10 +1835,16 @@ mod tests {
     fn reap_keeps_the_destination_and_removes_a_dead_sibling() {
         let root = temp_dir("keep-dest");
         let dead_pid = unused_pid();
-        let destination = root.join(format!(".ptm-clone-{dead_pid}-{}", uuid::Uuid::new_v4()));
+        let destination = root.join(format!(
+            ".maboroshi-clone-{dead_pid}-{}",
+            uuid::Uuid::new_v4()
+        ));
         fs::create_dir_all(destination.join(".git")).expect("dest");
         fs::write(destination.join("keep.txt"), "safe").expect("keep");
-        let sibling = root.join(format!(".ptm-clone-{dead_pid}-{}", uuid::Uuid::new_v4()));
+        let sibling = root.join(format!(
+            ".maboroshi-clone-{dead_pid}-{}",
+            uuid::Uuid::new_v4()
+        ));
         fs::create_dir_all(&sibling).expect("sibling");
         reap_stale_staging(Some(&root), &destination);
         assert_eq!(
@@ -1867,7 +1873,7 @@ mod tests {
 
     fn temp_dir(label: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
-            "ptm-{label}-{}-{}",
+            "mabo-{label}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

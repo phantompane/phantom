@@ -4,8 +4,8 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::{Error, Result};
 
-pub const PROJECT_MARKER: &str = ".ptm-common-dir";
-const WORKTREES_LOCK: &str = ".ptm-worktrees.lock";
+pub const PROJECT_MARKER: &str = ".maboroshi-common-dir";
+const WORKTREES_LOCK: &str = ".maboroshi-worktrees.lock";
 
 pub fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -78,8 +78,8 @@ pub fn configured_worktrees_directory(git_root: &Path, configured: &str) -> Work
     }
 }
 
-/// `$XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash>`, or
-/// `~/.local/share/ptm/worktrees/...` when the caller already applied the fallback.
+/// `$XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash>`, or
+/// `~/.local/share/maboroshi/worktrees/...` when the caller already applied the fallback.
 pub fn default_worktrees_directory(
     git_root: &Path,
     common_dir_key: &Path,
@@ -87,7 +87,7 @@ pub fn default_worktrees_directory(
 ) -> WorktreesLocation {
     let name = project_directory_name(&checkout_component(git_root), common_dir_key);
     WorktreesLocation {
-        path: normalize(&data_home.join("ptm").join("worktrees").join(name)),
+        path: normalize(&data_home.join("maboroshi").join("worktrees").join(name)),
         project_common_dir: Some(common_dir_key.to_path_buf()),
     }
 }
@@ -100,7 +100,7 @@ pub fn project_directory_name(checkout_name: &str, common_dir_key: &Path) -> Str
     )
 }
 
-/// True when `name` is the `<checkout>-<hash>` directory under `ptm/worktrees`.
+/// True when `name` is the `<checkout>-<hash>` directory under `maboroshi/worktrees`.
 pub fn is_project_directory(name: &std::ffi::OsStr, common_dir: &Path) -> bool {
     let Some(name) = name.to_str() else {
         return false;
@@ -112,7 +112,7 @@ pub fn is_project_directory(name: &std::ffi::OsStr, common_dir: &Path) -> bool {
     !prefix.is_empty() && suffix == digest
 }
 
-/// Absolute path for `ptm list`. Paths under `HOME` use a `~` prefix.
+/// Absolute path for `mabo list`. Paths under `HOME` use a `~` prefix.
 pub fn list_path(path: &Path) -> String {
     let absolute = canonical_location(path);
     if let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) {
@@ -197,8 +197,8 @@ pub struct ProjectDirRemoval {
 
 /// Remove the project directory when it holds nothing but this repository's marker.
 ///
-/// A missing or different `.ptm-common-dir` leaves the directory in place.
-/// The parent `ptm/worktrees` directory is never removed.
+/// A missing or different `.maboroshi-common-dir` leaves the directory in place.
+/// The parent `maboroshi/worktrees` directory is never removed.
 pub fn remove_project_directory_if_empty(
     directory: &Path,
     common_dir: &Path,
@@ -405,7 +405,7 @@ fn read_marker(directory: &Path) -> Result<Option<String>> {
 }
 
 fn write_marker(parent: &Path, directory: &Path, identity: &str) -> Result<()> {
-    let temp = parent.join(".ptm-common-dir.tmp");
+    let temp = parent.join(".maboroshi-common-dir.tmp");
     let target = directory.join(PROJECT_MARKER);
     let written = write_marker_file(&temp, &target, directory, identity);
     if written.is_err() {
@@ -501,19 +501,19 @@ pub fn worktree_path(directory: &Path, name: &str, separator: &str) -> PathBuf {
     normalize(&directory.join(directory_name))
 }
 
-/// `$XDG_CONFIG_HOME/ptm/config.toml`, or `~/.config/ptm/config.toml` when
+/// `$XDG_CONFIG_HOME/maboroshi/config.toml`, or `~/.config/maboroshi/config.toml` when
 /// `XDG_CONFIG_HOME` is unset, empty, or relative.
 pub fn user_config_file(home: &Path, xdg_config_home: Option<&Path>) -> PathBuf {
     let config_home = match xdg_config_home {
         Some(path) if path.is_absolute() => path.to_path_buf(),
         _ => home.join(".config"),
     };
-    ptm_config_file(&config_home)
+    mabo_config_file(&config_home)
 }
 
 pub fn user_config_path() -> Result<PathBuf> {
     if let Some(xdg) = absolute_xdg_config_home() {
-        return Ok(ptm_config_file(&xdg));
+        return Ok(mabo_config_file(&xdg));
     }
     let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) else {
         return Err(Error::msg("HOME is not set"));
@@ -521,8 +521,8 @@ pub fn user_config_path() -> Result<PathBuf> {
     Ok(user_config_file(Path::new(&home), None))
 }
 
-fn ptm_config_file(config_home: &Path) -> PathBuf {
-    config_home.join("ptm").join("config.toml")
+fn mabo_config_file(config_home: &Path) -> PathBuf {
+    config_home.join("maboroshi").join("config.toml")
 }
 
 fn absolute_xdg_config_home() -> Option<PathBuf> {
@@ -550,7 +550,7 @@ mod tests {
     #[test]
     fn symlink_inside_the_worktrees_directory_is_inside() {
         let root = std::env::temp_dir().join(format!(
-            "ptm-inside-{}-{}",
+            "mabo-inside-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -574,9 +574,9 @@ mod tests {
         assert_eq!(
             relative(
                 Path::new("/repo"),
-                Path::new("/repo/.git/ptm/worktrees/listed")
+                Path::new("/repo/.git/maboroshi/worktrees/listed")
             ),
-            ".git/ptm/worktrees/listed"
+            ".git/maboroshi/worktrees/listed"
         );
         assert_eq!(relative(Path::new("/repo/a"), Path::new("/repo/b")), "../b");
     }
@@ -590,13 +590,13 @@ mod tests {
         let location = default_worktrees_directory(root, git_dir, data);
         assert_eq!(
             location.path,
-            PathBuf::from("/home/u/.local/share/ptm/worktrees/repo-6b4ca2db")
+            PathBuf::from("/home/u/.local/share/maboroshi/worktrees/repo-6b4ca2db")
         );
         assert_eq!(location.project_common_dir.as_deref(), Some(git_dir));
         let separate_location = default_worktrees_directory(root, separate, data);
         assert_eq!(
             separate_location.path,
-            PathBuf::from("/home/u/.local/share/ptm/worktrees/repo-0d78ac9a")
+            PathBuf::from("/home/u/.local/share/maboroshi/worktrees/repo-0d78ac9a")
         );
         assert_ne!(location.path, separate_location.path);
         assert_eq!(
@@ -621,7 +621,7 @@ mod tests {
     #[test]
     fn symlink_checkout_uses_the_canonical_directory_name() {
         let root = std::env::temp_dir().join(format!(
-            "ptm-spell-{}-{}",
+            "mabo-spell-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -645,7 +645,7 @@ mod tests {
         assert_eq!(from_real.path, from_indirect.path);
         assert_eq!(
             from_real.path,
-            PathBuf::from("/home/u/.local/share/ptm/worktrees/real-name-0d78ac9a")
+            PathBuf::from("/home/u/.local/share/maboroshi/worktrees/real-name-0d78ac9a")
         );
         let _ = fs::remove_dir_all(&root);
     }
@@ -690,14 +690,14 @@ mod tests {
     #[test]
     fn project_directory_claim_rejects_a_different_repository() {
         let root = std::env::temp_dir().join(format!(
-            "ptm-claim-{}-{}",
+            "mabo-claim-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos()
         ));
-        let directory = root.join("ptm/worktrees/repo-abcdef12");
+        let directory = root.join("maboroshi/worktrees/repo-abcdef12");
         let first = Path::new("/repos/one/.git");
         let second = Path::new("/repos/two/.git");
         ensure_worktrees_directory(&directory, Some(first)).expect("claim");
@@ -720,14 +720,14 @@ mod tests {
     #[test]
     fn project_directory_is_removed_only_when_empty() {
         let root = std::env::temp_dir().join(format!(
-            "ptm-empty-{}-{}",
+            "mabo-empty-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos()
         ));
-        let ceiling = root.join("ptm/worktrees");
+        let ceiling = root.join("maboroshi/worktrees");
         let directory = ceiling.join("repo-abcdef12");
         let common = Path::new("/repos/one/.git");
         ensure_worktrees_directory(&directory, Some(common)).expect("claim");
@@ -752,7 +752,7 @@ mod tests {
     #[test]
     fn project_directory_removal_requires_this_repository_marker() {
         let root = std::env::temp_dir().join(format!(
-            "ptm-marker-{}-{}",
+            "mabo-marker-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -796,14 +796,14 @@ mod tests {
     #[test]
     fn empty_unmarked_project_directory_is_claimed() {
         let root = std::env::temp_dir().join(format!(
-            "ptm-reclaim-{}-{}",
+            "mabo-reclaim-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos()
         ));
-        let directory = root.join("ptm/worktrees/repo-abcdef12");
+        let directory = root.join("maboroshi/worktrees/repo-abcdef12");
         fs::create_dir_all(&directory).expect("empty");
         let common = Path::new("/repos/one/.git");
         ensure_worktrees_directory(&directory, Some(common)).expect("reclaim");
@@ -819,7 +819,7 @@ mod tests {
     #[test]
     fn claim_accepts_a_marker_for_the_same_canonical_directory() {
         let root = std::env::temp_dir().join(format!(
-            "ptm-marker-link-{}-{}",
+            "mabo-marker-link-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -830,7 +830,7 @@ mod tests {
         fs::create_dir_all(&real).expect("real");
         let link = root.join("link.git");
         std::os::unix::fs::symlink(&real, &link).expect("symlink");
-        let directory = root.join("ptm/worktrees/repo");
+        let directory = root.join("maboroshi/worktrees/repo");
         fs::create_dir_all(&directory).expect("project");
         fs::write(
             directory.join(PROJECT_MARKER),
@@ -844,7 +844,7 @@ mod tests {
     #[test]
     fn failed_marker_rename_removes_the_temp_file() {
         let root = std::env::temp_dir().join(format!(
-            "ptm-marker-tmp-{}-{}",
+            "mabo-marker-tmp-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -857,21 +857,21 @@ mod tests {
         fs::create_dir(directory.join(PROJECT_MARKER)).expect("block rename");
         let error = write_marker(&parent, &directory, "/repos/one/.git").expect_err("rename");
         assert!(error.to_string().contains("Failed to record"), "{error}");
-        assert!(!parent.join(".ptm-common-dir.tmp").exists());
+        assert!(!parent.join(".maboroshi-common-dir.tmp").exists());
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
     fn create_holds_the_project_directory_until_the_worktree_exists() {
         let root = std::env::temp_dir().join(format!(
-            "ptm-hold-{}-{}",
+            "mabo-hold-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos()
         ));
-        let directory = root.join("ptm/worktrees/repo-abcdef12");
+        let directory = root.join("maboroshi/worktrees/repo-abcdef12");
         let common = Path::new("/repos/one/.git");
         let handle = with_worktrees_directory(&directory, Some(common), || {
             let dir = directory.clone();
@@ -908,14 +908,14 @@ mod tests {
     #[test]
     fn concurrent_claims_for_the_same_repository_succeed() {
         let root = std::env::temp_dir().join(format!(
-            "ptm-race-{}-{}",
+            "mabo-race-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos()
         ));
-        let directory = root.join("ptm/worktrees/repo-abcdef12");
+        let directory = root.join("maboroshi/worktrees/repo-abcdef12");
         let common = Path::new("/repos/one/.git");
         std::thread::scope(|scope| {
             for _ in 0..8 {
@@ -941,19 +941,19 @@ mod tests {
         let xdg = Path::new("/tmp/xdg");
         assert_eq!(
             user_config_file(home, Some(xdg)),
-            PathBuf::from("/tmp/xdg/ptm/config.toml")
+            PathBuf::from("/tmp/xdg/maboroshi/config.toml")
         );
         assert_eq!(
             user_config_file(home, None),
-            PathBuf::from("/home/phantom/.config/ptm/config.toml")
+            PathBuf::from("/home/phantom/.config/maboroshi/config.toml")
         );
         assert_eq!(
             user_config_file(home, Some(Path::new("relative"))),
-            PathBuf::from("/home/phantom/.config/ptm/config.toml")
+            PathBuf::from("/home/phantom/.config/maboroshi/config.toml")
         );
         assert_eq!(
             user_config_file(home, Some(Path::new(""))),
-            PathBuf::from("/home/phantom/.config/ptm/config.toml")
+            PathBuf::from("/home/phantom/.config/maboroshi/config.toml")
         );
     }
 }
