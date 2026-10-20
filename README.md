@@ -183,7 +183,7 @@ mabo sync feature/auth --keep-conflicts
 mabo meta set feature/auth --base origin/main
 ```
 
-`create` records a sync `base`: an explicit `--base` is normalized to a full ref, otherwise the remote-tracking default branch when available, then the local default branch. Commit bases remain supported. When a clone has no discoverable default branch, creation retains its existing HEAD-based behavior and records that ref. Older metadata without `base` uses the same default-branch fallback at sync time. `meta set --base <ref>` validates and replaces the base; a removed base is skipped as `base-gone` with a repair hint.
+`create`, `attach`, and new GitHub issue checkouts record a sync `base`: an explicit `--base` is normalized to a full ref, otherwise the remote-tracking default branch when available, then the local default branch. Commit bases remain supported. When a clone has no discoverable default branch, creation retains its existing HEAD-based behavior and records that ref. PR checkout records the PR target as a full `origin` remote-tracking ref when present locally, otherwise the same fallback. A second GitHub checkout preserves an existing base, including one set by the user. Older metadata without `base` uses the same default-branch fallback at sync time. `meta set --base <ref>` validates and replaces the base; a removed base is skipped as `base-gone` with a repair hint.
 
 Auto strategy rebases when none of the worktree's own commits (`base..branch`) is reachable from any remote-tracking ref; otherwise it merges. `--rebase` refuses published commits with code `pushed` and exit 3 unless `--force` is given. `--merge` always selects merge. `--force` only permits local history rewriting. Dirty worktrees (including untracked, non-ignored files), detached worktrees, and already landed branches are skipped. Landed branches suggest `mabo gc`. With `--all` and `MABO_AGENT_ID`, worktrees owned by another agent are skipped as `owned`; explicitly naming one is allowed. `--mine` requires that environment variable.
 
@@ -243,7 +243,7 @@ Orphaned records have neither a Git worktree registration nor an existing direct
 
 `copyFiles.ok` is false when copying `.worktreeinclude` matches fails. The worktree is still created. `postCreate.ran` is false when no hook is configured. On success, `exitCode` is 0 and `command`, `signal`, and `error` are null. On failure, `command` is the hook that failed and `exitCode` is its status. `exec` is null when `--exec` was not passed. Otherwise it is `{ "ok": true, "command": "npm test", "exitCode": 0, "signal": null, "error": null }`. For both `postCreate` and `exec`, `signal` is the signal name when the process was killed, and `exitCode` is `128` plus the signal number (`143` for `SIGTERM`, `130` for `SIGINT`, `137` for `SIGKILL`, `129` for `SIGHUP`). `error` is set when the shell or program failed to start. `ok` is false in both cases, and the worktree object is still returned.
 
-`attach` leaves `worktree.base` null. `create` sets it to the requested base (`HEAD` when omitted).
+`attach` exposes its recorded sync base in `worktree.base`. `create` sets it to the requested base (`HEAD` when omitted).
 
 `delete --json`:
 

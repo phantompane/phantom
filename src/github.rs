@@ -155,6 +155,7 @@ struct PullRequest {
     fork: bool,
     head_ref: String,
     head_repo: String,
+    base_ref: Option<String>,
 }
 
 /// `refs/pull/<n>/head` still exists after GitHub deletes the head branch.
@@ -264,6 +265,19 @@ fn checkout_pull_request(
     let branch_existed = git::branch_exists(git_root, &worktree_name)?;
     let result = (|| {
         let fetched = fetch_pull_head(git_root, pull, &worktree_name)?;
+        // All PR fetch paths use the base repository's origin remote.
+        metadata.base = Some(match pull.base_ref.as_deref() {
+            Some(base)
+                if crate::sync::normalize_base(
+                    git_root,
+                    &format!("refs/remotes/origin/{base}"),
+                )
+                .is_ok() =>
+            {
+                format!("refs/remotes/origin/{base}")
+            }
+            _ => crate::sync::creation_base(git_root, None)?,
+        });
         let attached = worktree::attach_worktree_locked(
             operation,
             &context,
@@ -375,6 +389,7 @@ fn checkout_issue(
         crate::trust::HookKind::PostCreate,
         hooks,
     )?;
+    metadata.base = Some(crate::sync::creation_base(&context.git_root, base)?);
     let base = base.unwrap_or("HEAD");
     let created = worktree::create_worktree_locked(
         operation,
@@ -609,6 +624,10 @@ fn fetch_pull(
         fork: !head_repo.is_empty() && head_repo != base_repo,
         head_ref,
         head_repo,
+        base_ref: value
+            .pointer("/base/ref")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 

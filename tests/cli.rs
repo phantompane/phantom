@@ -1988,7 +1988,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
         "existing-json",
         &managed(&repo, "existing-json"),
     );
-    assert!(attached_json["worktree"]["base"].is_null());
+    assert!(attached_json["worktree"]["base"].as_str().is_some());
     assert_eq!(attached_json["worktree"]["branch"], "existing-json");
     assert_eq!(attached_json["copyFiles"]["ok"], true);
     assert!(attached_json["exec"].is_null());
@@ -4766,7 +4766,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     let attached_json = json_value(&attached);
     assert_eq!(attached_json["worktree"]["owner"], "reviewer");
     assert_eq!(attached_json["worktree"]["links"]["pr"]["number"], 12);
-    assert!(attached_json["worktree"]["base"].is_null());
+    assert!(attached_json["worktree"]["base"].as_str().is_some());
 
     let deleted = repo.mabo(&["delete", "feature", "--keep-branch", "--json"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));

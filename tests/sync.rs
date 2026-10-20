@@ -1665,7 +1665,6 @@ fn missing_default_checkout_and_broken_target_do_not_block_live_target() {
     );
 }
 
-
 #[test]
 fn context_errors_use_shared_exit_codes() {
     let r = Repo::new();

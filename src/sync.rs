@@ -81,6 +81,13 @@ pub fn normalize_base(root: &Path, reference: &str) -> Result<String> {
     Ok(full)
 }
 
+pub fn creation_base(root: &Path, explicit: Option<&str>) -> Result<String> {
+    match explicit {
+        Some(base) => normalize_base(root, base),
+        None => fallback_base(root).or_else(|_| normalize_base(root, "HEAD")),
+    }
+}
+
 pub fn fallback_base(root: &Path) -> Result<String> {
     let detected = git::default_branch(root)?;
     if let Some(default) = detected

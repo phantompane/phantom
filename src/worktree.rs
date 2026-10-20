@@ -521,11 +521,7 @@ pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
             )?
         }
     };
-    request.metadata.base = Some(match request.base {
-        Some(base) => crate::sync::normalize_base(&context.git_root, base)?,
-        None => crate::sync::fallback_base(&context.git_root)
-            .or_else(|_| crate::sync::normalize_base(&context.git_root, "HEAD"))?,
-    });
+    request.metadata.base = Some(crate::sync::creation_base(&context.git_root, request.base)?);
     let base = request.base.unwrap_or("HEAD");
     let commands = trust::authorize(
         &context.git_root,
@@ -730,10 +726,11 @@ pub struct AttachRequest<'a> {
     pub hooks: HookControl,
 }
 
-pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
+pub fn run_attach(mut request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action = resolve_action(&request.action)?;
     let context = context::open(request.repository)?;
     let operation = crate::operation::lock(&context.git_root)?;
+    request.metadata.base = Some(crate::sync::creation_base(&context.git_root, None)?);
     let commands = trust::authorize(
         &context.git_root,
         config::post_create_commands(context.config.as_ref()),
