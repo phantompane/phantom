@@ -5604,6 +5604,478 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
 }
 
 #[test]
+fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
+    let root = std::env::temp_dir().join(format!("ptm-ambiguous-{}", uuid()));
+    let home = root.join("home");
+    let real = root.join("zz-real");
+    let copy = root.join("aa-copy");
+    let git_dir = root.join("var").join("sep.git");
+    fs::create_dir_all(home.join(".config/git")).expect("home");
+    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    fs::create_dir_all(&real).expect("checkout");
+    fs::create_dir_all(git_dir.parent().expect("parent")).expect("var");
+    let git = |cwd: &Path, args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &home)
+            .env("GIT_TEMPLATE_DIR", {
+                let template = root.join("git-template");
+                fs::create_dir_all(&template).expect("template");
+                template
+            })
+            .env_remove("GIT_CONFIG_GLOBAL")
+            .env_remove("GIT_CONFIG_SYSTEM")
+            .output()
+            .expect("git");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(
+        &real,
+        &[
+            "init",
+            "--separate-git-dir",
+            git_dir.to_str().expect("git dir"),
+            "-b",
+            "main",
+        ],
+    );
+    git(&real, &["config", "user.name", "Phantom Rust"]);
+    git(&real, &["config", "user.email", "phantom-rust@example.com"]);
+    git(&real, &["commit", "--allow-empty", "-m", "initial"]);
+    copy_dir(&real, &copy);
+    let linked = git_dir.join("ptm").join("worktrees").join("q");
+    git(
+        &real,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "q",
+            linked.to_str().expect("linked"),
+        ],
+    );
+    let ptm = |cwd: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_ptm"))
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env_remove("PTM_AGENT_ID")
+            .output()
+            .expect("ptm")
+    };
+
+    let listed = ptm(&linked, &["list"]);
+    assert_eq!(
+        listed.status.code(),
+        Some(1),
+        "two gitfiles must not resolve to the first sorted checkout\n{}\n{}",
+        text(&listed.stdout),
+        text(&listed.stderr)
+    );
+    let stderr = text(&listed.stderr);
+    assert!(stderr.contains(real.to_str().expect("real")), "{stderr}");
+    assert!(stderr.contains(copy.to_str().expect("copy")), "{stderr}");
+    assert!(stderr.contains("core.worktree"), "{stderr}");
+    assert!(!stderr.to_ascii_lowercase().contains("fatal:"), "{stderr}");
+    assert!(text(&listed.stdout).is_empty(), "{}", text(&listed.stdout));
+
+    let json_error = ptm(&linked, &["list", "--json"]);
+    assert_eq!(json_error.status.code(), Some(1));
+    assert!(
+        text(&json_error.stderr).is_empty(),
+        "{}",
+        text(&json_error.stderr)
+    );
+    let error = json_value(&json_error);
+    assert_eq!(error["version"], 1);
+    assert_eq!(error["error"]["code"], "error");
+    assert_eq!(error["error"]["exitCode"], 1);
+    let message = error["error"]["message"].as_str().unwrap_or("");
+    assert!(message.contains(real.to_str().expect("real")), "{message}");
+    assert!(message.contains(copy.to_str().expect("copy")), "{message}");
+    assert!(message.contains("core.worktree"), "{message}");
+    assert!(
+        !message.to_ascii_lowercase().contains("fatal:"),
+        "{message}"
+    );
+
+    git(
+        &real,
+        &["config", "core.worktree", real.to_str().expect("real")],
+    );
+    let resolved = ptm(&linked, &["list", "--json"]);
+    assert!(
+        resolved.status.success(),
+        "{}\n{}",
+        text(&resolved.stdout),
+        text(&resolved.stderr)
+    );
+    let main = default_worktree(&json_value(&resolved));
+    assert!(
+        paths_match(main["path"].as_str().unwrap_or(""), &real),
+        "core.worktree selects zz-real, got {}",
+        main["path"]
+    );
+    assert_eq!(main["default"], true);
+    let ran = ptm(&linked, &["exec", "main", "pwd"]);
+    assert!(
+        ran.status.success(),
+        "{}\n{}",
+        text(&ran.stdout),
+        text(&ran.stderr)
+    );
+    assert!(
+        paths_match(text(&ran.stdout).trim(), &real),
+        "exec main ran in {}",
+        text(&ran.stdout)
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn missing_separate_checkout_names_the_git_dir() {
+    let root = std::env::temp_dir().join(format!("ptm-missing-checkout-{}", uuid()));
+    let home = root.join("home");
+    let checkout = root.join("deep").join("checkout");
+    let git_dir = root.join("var").join("sep.git");
+    fs::create_dir_all(home.join(".config/git")).expect("home");
+    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    fs::create_dir_all(&checkout).expect("checkout");
+    fs::create_dir_all(git_dir.parent().expect("parent")).expect("var");
+    let init = Command::new("git")
+        .args([
+            "init",
+            "--separate-git-dir",
+            git_dir.to_str().expect("git dir"),
+            "-b",
+            "main",
+        ])
+        .current_dir(&checkout)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", &home)
+        .env_remove("GIT_CONFIG_GLOBAL")
+        .output()
+        .expect("init");
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    fs::remove_dir_all(&checkout).expect("remove checkout");
+    let listed = Command::new(env!("CARGO_BIN_EXE_ptm"))
+        .args(["list", "--json"])
+        .current_dir(&git_dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env_remove("PTM_AGENT_ID")
+        .output()
+        .expect("ptm");
+    assert_eq!(
+        listed.status.code(),
+        Some(1),
+        "{}\n{}",
+        text(&listed.stdout),
+        text(&listed.stderr)
+    );
+    assert!(text(&listed.stderr).is_empty(), "{}", text(&listed.stderr));
+    let error = json_value(&listed);
+    let message = error["error"]["message"].as_str().unwrap_or("");
+    assert!(
+        message.contains(git_dir.to_str().expect("git dir")),
+        "{message}"
+    );
+    assert!(message.contains("core.worktree"), "{message}");
+    assert!(
+        !message.to_ascii_lowercase().contains("fatal:"),
+        "{message}"
+    );
+    assert_eq!(error["error"]["code"], "error");
+    assert_eq!(error["error"]["exitCode"], 1);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn separate_git_dir_lists_and_execs_the_main_checkout() {
+    let repo = SeparateCheckout::new();
+    let created = repo.ptm(&repo.checkout, &["create", "linked"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let linked = repo.git_dir.join("ptm").join("worktrees").join("linked");
+    assert_main_checkout(&repo, &linked, &repo.checkout, &repo.git_dir);
+}
+
+#[test]
+fn submodule_lists_and_execs_the_main_checkout() {
+    let root = std::env::temp_dir().join(format!("ptm-sub-list-{}", uuid()));
+    let home = root.join("home");
+    let remote = root.join("remote");
+    let superproject = root.join("super");
+    let checkout = superproject.join("sub");
+    fs::create_dir_all(home.join(".config/git")).expect("home");
+    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    fs::create_dir_all(&remote).expect("remote");
+    fs::create_dir_all(&superproject).expect("super");
+    let git = |cwd: &Path, args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &home)
+            .env_remove("GIT_CONFIG_GLOBAL")
+            .env_remove("GIT_CONFIG_SYSTEM")
+            .output()
+            .expect("git");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&remote, &["init", "-b", "main"]);
+    git(&remote, &["config", "user.name", "Phantom Rust"]);
+    git(
+        &remote,
+        &["config", "user.email", "phantom-rust@example.com"],
+    );
+    fs::write(remote.join("f"), "hi\n").expect("file");
+    git(&remote, &["add", "f"]);
+    git(&remote, &["commit", "-m", "initial"]);
+    git(&superproject, &["init", "-b", "main"]);
+    git(&superproject, &["config", "user.name", "Phantom Rust"]);
+    git(
+        &superproject,
+        &["config", "user.email", "phantom-rust@example.com"],
+    );
+    let added = Command::new("git")
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            remote.to_str().expect("remote"),
+            "sub",
+        ])
+        .current_dir(&superproject)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", &home)
+        .env_remove("GIT_CONFIG_GLOBAL")
+        .output()
+        .expect("submodule add");
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    git(&superproject, &["commit", "-m", "add submodule"]);
+    let ptm = |cwd: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_ptm"))
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env_remove("PTM_AGENT_ID")
+            .output()
+            .expect("ptm")
+    };
+    let created = ptm(&checkout, &["create", "linked"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let git_dir = superproject.join(".git").join("modules").join("sub");
+    let linked = git_dir.join("ptm").join("worktrees").join("linked");
+    let listed = ptm(&linked, &["list"]);
+    assert!(
+        listed.status.success(),
+        "{}\n{}",
+        text(&listed.stdout),
+        text(&listed.stderr)
+    );
+    let stdout = text(&listed.stdout);
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.starts_with("main (") && line.contains("sub)")),
+        "main entry should be the submodule checkout\n{stdout}"
+    );
+    let json = ptm(&linked, &["list", "--json"]);
+    assert!(json.status.success(), "{}", text(&json.stderr));
+    assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
+    let main = default_worktree(&json_value(&json));
+    assert!(
+        paths_match(main["path"].as_str().unwrap_or(""), &checkout),
+        "{}",
+        main["path"]
+    );
+    assert_eq!(main["default"], true);
+    let hidden = ptm(&linked, &["list", "--no-default", "--json"]);
+    assert!(hidden.status.success(), "{}", text(&hidden.stderr));
+    let hidden_rows = json_value(&hidden)["worktrees"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        hidden_rows.iter().all(|row| row["default"] != true
+            && !paths_match(row["path"].as_str().unwrap_or(""), &checkout)),
+        "{hidden_rows:?}"
+    );
+    assert!(
+        hidden_rows.iter().any(|row| row["name"] == "linked"),
+        "{hidden_rows:?}"
+    );
+    let ran = ptm(&linked, &["exec", "main", "pwd"]);
+    assert!(
+        ran.status.success(),
+        "{}\n{}",
+        text(&ran.stdout),
+        text(&ran.stderr)
+    );
+    assert!(
+        paths_match(text(&ran.stdout).trim(), &checkout),
+        "exec main ran in {}",
+        text(&ran.stdout)
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn running_inside_dot_git_returns_a_ptm_error() {
+    let repo = Repo::new();
+    for cwd in [repo.repo.join(".git"), repo.repo.join(".git").join("refs")] {
+        let listed = repo
+            .command(env!("CARGO_BIN_EXE_ptm"), &["list"])
+            .current_dir(&cwd)
+            .output()
+            .expect("ptm");
+        assert_eq!(
+            listed.status.code(),
+            Some(1),
+            "{} should not be a work tree\n{}\n{}",
+            cwd.display(),
+            text(&listed.stdout),
+            text(&listed.stderr)
+        );
+        let stderr = text(&listed.stderr);
+        assert!(stderr.contains("work tree"), "{stderr}");
+        assert!(!stderr.to_ascii_lowercase().contains("fatal:"), "{stderr}");
+        assert!(text(&listed.stdout).is_empty(), "{}", text(&listed.stdout));
+
+        let json = repo
+            .command(env!("CARGO_BIN_EXE_ptm"), &["list", "--json"])
+            .current_dir(&cwd)
+            .output()
+            .expect("ptm");
+        assert_eq!(json.status.code(), Some(1), "{}", cwd.display());
+        assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
+        let error = json_value(&json);
+        assert_eq!(error["version"], 1);
+        assert_eq!(error["error"]["code"], "error");
+        assert_eq!(error["error"]["exitCode"], 1);
+        let message = error["error"]["message"].as_str().unwrap_or("");
+        assert!(message.contains("work tree"), "{message}");
+        assert!(
+            !message.to_ascii_lowercase().contains("fatal:"),
+            "{message}"
+        );
+        assert!(error["worktrees"].is_null());
+    }
+}
+
+fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path, git_dir: &Path) {
+    let listed = repo.ptm(linked, &["list"]);
+    assert!(
+        listed.status.success(),
+        "{}\n{}",
+        text(&listed.stdout),
+        text(&listed.stderr)
+    );
+    let stdout = text(&listed.stdout);
+    assert!(
+        stdout.contains("deep/checkout"),
+        "human list should name the checkout\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("sep.git"),
+        "human list should not show the git dir\n{stdout}"
+    );
+    let json = repo.ptm(linked, &["list", "--json"]);
+    assert!(json.status.success(), "{}", text(&json.stderr));
+    assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
+    let document = json_value(&json);
+    assert_eq!(document["version"], 1);
+    let rows = document["worktrees"].as_array().expect("worktrees");
+    assert!(
+        rows.iter()
+            .all(|row| !paths_match(row["path"].as_str().unwrap_or(""), git_dir)),
+        "git dir is still a worktree path: {rows:?}"
+    );
+    let main = default_worktree(&document);
+    assert!(
+        paths_match(main["path"].as_str().unwrap_or(""), checkout),
+        "{}",
+        main["path"]
+    );
+    assert_eq!(main["default"], true);
+    let hidden = repo.ptm(linked, &["list", "--no-default"]);
+    assert!(hidden.status.success(), "{}", text(&hidden.stderr));
+    let hidden_text = text(&hidden.stdout);
+    assert!(
+        !hidden_text.lines().any(|line| line.starts_with("main ")),
+        "--no-default still shows main\n{hidden_text}"
+    );
+    assert!(hidden_text.contains("linked"), "{hidden_text}");
+    let ran = repo.ptm(linked, &["exec", "main", "pwd"]);
+    assert!(
+        ran.status.success(),
+        "{}\n{}",
+        text(&ran.stdout),
+        text(&ran.stderr)
+    );
+    assert!(
+        paths_match(text(&ran.stdout).trim(), checkout),
+        "exec main ran in {}",
+        text(&ran.stdout)
+    );
+}
+
+fn default_worktree(document: &serde_json::Value) -> serde_json::Value {
+    document["worktrees"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["default"] == true))
+        .cloned()
+        .unwrap_or_else(|| panic!("no default worktree in {document}"))
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    let status = Command::new("cp")
+        .args(["-a", from.to_str().expect("from"), to.to_str().expect("to")])
+        .status()
+        .expect("cp");
+    assert!(status.success(), "cp failed");
+}
+
+#[test]
 fn duplicate_metadata_paths_block_mutations() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "kept", "--owner", "creator"]);
