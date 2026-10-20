@@ -1195,6 +1195,94 @@ fn finish_child(mut child: std::process::Child) -> Output {
 }
 
 #[test]
+fn git_hooks_can_reenter_the_operation_lock() {
+    use std::os::unix::fs::PermissionsExt;
+    for hook_name in ["post-checkout", "reference-transaction"] {
+        let r = Repo::new();
+        r.git(&r.main, &["branch", "existing"]);
+        let hook = r.main.join(".git/hooks").join(hook_name);
+        fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        let status = r.root.join("nested-status");
+        let output = r.root.join("nested-output");
+        fs::write(
+            &hook,
+            format!(
+                r#"#!/bin/sh
+# Bound the nested command so a regression cannot leave orphaned lock waiters.
+'{bin}' gc --json > '{output}' 2>&1 &
+nested=$!
+(sleep 3; kill "$nested" 2>/dev/null) >/dev/null 2>&1 &
+watcher=$!
+wait "$nested"
+result=$?
+kill "$watcher" 2>/dev/null
+wait "$watcher" 2>/dev/null
+echo "$result" >> '{status}'
+exit "$result"
+"#,
+                bin = env!("CARGO_BIN_EXE_mabo"),
+                output = output.display(),
+                status = status.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        for args in [
+            vec!["create", "topic", "--json"],
+            vec!["attach", "existing", "--json"],
+            vec!["delete", "topic", "--force", "--json"],
+        ] {
+            let out = r.mabo(&r.main, &args);
+            assert!(
+                out.status.success(),
+                "{args:?}: {} {}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let statuses = fs::read_to_string(&status).unwrap();
+        assert!(!statuses.is_empty());
+        assert!(
+            statuses.lines().all(|line| line == "0"),
+            "{hook_name}: {statuses}; {}",
+            fs::read_to_string(output).unwrap()
+        );
+    }
+}
+
+#[test]
+fn operation_lock_token_is_not_exported_to_project_hooks_or_exec() {
+    let r = Repo::new();
+    fs::write(
+        r.main.join(".mabo.toml"),
+        "[hooks]\npost-create = ['test -z \"${MABO_OPERATION_LOCK+x}\"']\npre-delete = ['test -z \"${MABO_OPERATION_LOCK+x}\"']\n",
+    ).unwrap();
+    for args in [
+        vec![
+            "create",
+            "topic",
+            "--json",
+            "--exec",
+            "test -z \"${MABO_OPERATION_LOCK+x}\"",
+        ],
+        vec!["delete", "topic", "--force", "--json"],
+    ] {
+        let out = r
+            .command(env!("CARGO_BIN_EXE_mabo"), &r.main, &args)
+            .env("MABO_TRUST_ALL", "1")
+            .env("MABO_OPERATION_LOCK", "stale-inherited-token")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
 fn post_create_hook_can_list_and_create_and_pre_delete_hook_can_create() {
     let r = Repo::new();
     let bin = env!("CARGO_BIN_EXE_mabo");

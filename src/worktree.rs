@@ -662,7 +662,7 @@ pub fn create_worktree(
 // The caller may already hold the lock while preparing branch state.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn create_worktree_locked(
-    operation: std::fs::File,
+    operation: crate::operation::OperationLock,
     context: &Context,
     name: &str,
     base: &str,
@@ -798,7 +798,7 @@ pub fn attach_worktree(
 // The caller may already hold the lock while preparing branch state.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn attach_worktree_locked(
-    operation: std::fs::File,
+    operation: crate::operation::OperationLock,
     context: &Context,
     name: &str,
     copy_files: &[String],
