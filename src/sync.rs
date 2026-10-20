@@ -52,19 +52,37 @@ pub struct Report {
     pub exit: i32,
 }
 
+// git::output accepts a nonzero exit when stderr is empty. Sync must fail closed
+// for both safety queries and mutations, including rollback commands.
+fn checked_output(args: &[&str], root: &Path, trim: bool) -> Result<String> {
+    let result = git::raw_git(root, args)?;
+    if result.code != 0 {
+        return Err(Error::msg(if result.stderr.trim().is_empty() {
+            format!("Git {} failed (exit {})", args.join(" "), result.code)
+        } else {
+            result.stderr.trim().to_string()
+        }));
+    }
+    Ok(if trim {
+        result.stdout.trim().to_string()
+    } else {
+        result.stdout
+    })
+}
+
 pub fn normalize_base(root: &Path, reference: &str) -> Result<String> {
     if reference.starts_with('-') || reference.is_empty() {
         return Err(Error::validation("Base must be an existing ref"));
     }
-    let full = git::output(
+    let full = checked_output(
         &["rev-parse", "--symbolic-full-name", "--verify", reference],
-        Some(root),
+        root,
         true,
     )?;
     if full.is_empty() || full == "HEAD" {
-        return git::output(
+        return checked_output(
             &["rev-parse", "--verify", &format!("{reference}^{{commit}}")],
-            Some(root),
+            root,
             true,
         );
     }
@@ -73,9 +91,9 @@ pub fn normalize_base(root: &Path, reference: &str) -> Result<String> {
             "Base '{reference}' must name an existing ref"
         )));
     }
-    git::output(
+    checked_output(
         &["rev-parse", "--verify", &format!("{full}^{{commit}}")],
-        Some(root),
+        root,
         true,
     )?;
     Ok(full)
@@ -97,7 +115,7 @@ pub fn fallback_base(root: &Path) -> Result<String> {
         return normalize_base(root, default);
     }
     let specs = fetch_refspecs(root)?;
-    let remotes = git::output(&["remote"], Some(root), true)?;
+    let remotes = checked_output(&["remote"], root, true)?;
     for remote in remotes.lines() {
         let head = git::raw_git(
             root,
@@ -107,6 +125,13 @@ pub fn fallback_base(root: &Path) -> Result<String> {
                 &format!("refs/remotes/{remote}/HEAD"),
             ],
         )?;
+        if head.code != 0 && head.code != 1 {
+            return Err(Error::msg(format!(
+                "Cannot resolve {remote}/HEAD (exit {}): {}",
+                head.code,
+                head.stderr.trim()
+            )));
+        }
         if head.code == 0 && commit(root, head.stdout.trim())?.is_some() {
             return Ok(head.stdout.trim().to_string());
         }
@@ -129,6 +154,13 @@ pub fn fallback_base(root: &Path) -> Result<String> {
         root,
         &["config", "--get", &format!("branch.{default}.remote")],
     )?;
+    if configured.code != 0 && configured.code != 1 {
+        return Err(Error::msg(format!(
+            "Cannot read branch.{default}.remote (exit {}): {}",
+            configured.code,
+            configured.stderr.trim()
+        )));
+    }
     let remote_name = if configured.code == 0 && configured.stdout.trim() != "." {
         configured.stdout.trim()
     } else {
@@ -193,10 +225,23 @@ fn ancestor(root: &Path, a: &str, b: &str) -> Result<bool> {
     }
 }
 
+fn common_base(root: &Path, tip: &str, base: &str) -> Result<String> {
+    let result = git::raw_git(root, &["merge-base", tip, base])?;
+    match result.code {
+        0 if !result.stdout.trim().is_empty() => Ok(result.stdout.trim().to_string()),
+        1 => Err(Error::msg(format!("no common history with {base}"))),
+        _ => Err(Error::msg(format!(
+            "Cannot determine common history with {base} (exit {}): {}",
+            result.code,
+            result.stderr.trim()
+        ))),
+    }
+}
+
 fn dirty(path: &Path) -> Result<bool> {
-    Ok(!git::output(
+    Ok(!checked_output(
         &["status", "--porcelain=v2", "--untracked-files=all"],
-        Some(path),
+        path,
         false,
     )?
     .is_empty())
@@ -204,7 +249,8 @@ fn dirty(path: &Path) -> Result<bool> {
 
 // Checkout during rebase may overwrite ignored files. Preserve those contents too.
 fn ignored_would_be_overwritten(path: &Path, base: &str, rebase: bool) -> Result<bool> {
-    let ignored = git::output(
+    let fork = common_base(path, "HEAD", base)?;
+    let ignored = checked_output(
         &[
             "ls-files",
             "--others",
@@ -213,7 +259,7 @@ fn ignored_would_be_overwritten(path: &Path, base: &str, rebase: bool) -> Result
             "--directory",
             "-z",
         ],
-        Some(path),
+        path,
         false,
     )?;
     if ignored.is_empty() {
@@ -221,8 +267,7 @@ fn ignored_would_be_overwritten(path: &Path, base: &str, rebase: bool) -> Result
     }
     // Disable rename detection so both ends of renames and copies are included.
     // -m also includes paths changed relative to each parent of merge commits.
-    let fork = git::output(&["merge-base", "HEAD", base], Some(path), true)?;
-    let changed = git::output(
+    let changed = checked_output(
         &[
             "log",
             "--name-only",
@@ -233,11 +278,11 @@ fn ignored_would_be_overwritten(path: &Path, base: &str, rebase: bool) -> Result
             &format!("{fork}..{base}"),
             "--",
         ],
-        Some(path),
+        path,
         false,
     )?;
     let checkout = if rebase {
-        git::output(
+        checked_output(
             &[
                 "log",
                 "--name-only",
@@ -248,11 +293,11 @@ fn ignored_would_be_overwritten(path: &Path, base: &str, rebase: bool) -> Result
                 &format!("{fork}..HEAD"),
                 "--",
             ],
-            Some(path),
+            path,
             false,
         )?
     } else {
-        git::output(
+        checked_output(
             &[
                 "diff",
                 "--name-only",
@@ -262,7 +307,7 @@ fn ignored_would_be_overwritten(path: &Path, base: &str, rebase: bool) -> Result
                 base,
                 "--",
             ],
-            Some(path),
+            path,
             false,
         )?
     };
@@ -318,7 +363,7 @@ struct FetchRefspec {
 // Fetch refspecs can store a remote's branches in any tracking namespace.
 fn fetch_refspecs(root: &Path) -> Result<Vec<FetchRefspec>> {
     let mut specs = Vec::new();
-    for remote in git::output(&["remote"], Some(root), true)?.lines() {
+    for remote in checked_output(&["remote"], root, true)?.lines() {
         let configured = git::raw_git(
             root,
             &["config", "--get-all", &format!("remote.{remote}.fetch")],
@@ -391,7 +436,7 @@ fn remote_for(base: &str, specs: &[FetchRefspec]) -> Option<String> {
 // Flattening a merge drops its resolution and any changes made only in that
 // commit. Compare trees without checking out either parent or touching the index.
 fn unsafe_merge(path: &Path, base: &str) -> Result<Option<String>> {
-    let merges = git::output(
+    let merges = checked_output(
         &[
             "log",
             "--no-show-signature",
@@ -400,7 +445,7 @@ fn unsafe_merge(path: &Path, base: &str) -> Result<Option<String>> {
             &format!("{base}..HEAD"),
             "--",
         ],
-        Some(path),
+        path,
         true,
     )?;
     for merge in merges.lines() {
@@ -418,7 +463,7 @@ fn unsafe_merge(path: &Path, base: &str) -> Result<Option<String>> {
             )));
         }
         if automatic.code == 1 || automatic.stdout.lines().next() != Some(*tree) {
-            let short = git::output(&["rev-parse", "--short", sha], Some(path), true)?;
+            let short = checked_output(&["rev-parse", "--short", sha], path, true)?;
             return Ok(Some(format!(
                 "merge commit {short} has changes of its own; use --merge"
             )));
@@ -669,7 +714,7 @@ fn operation_state(path: &Path, state: &str) -> Result<Option<String>> {
 }
 
 fn active_operation(path: &Path) -> Result<Option<&'static str>> {
-    let git_dir = git::output(&["rev-parse", "--absolute-git-dir"], Some(path), true)?;
+    let git_dir = checked_output(&["rev-parse", "--absolute-git-dir"], path, true)?;
     for (state, operation) in [
         ("rebase-merge", "rebase"),
         ("rebase-apply", "rebase"),
@@ -817,6 +862,7 @@ fn sync_default(context: &Context, base: &str, remotes: &[FetchRefspec]) -> Resu
         return Ok(item);
     }
     if let Some(before) = &before {
+        common_base(root, before, base)?;
         if !ancestor(root, before, &target)? {
             item.status("diverged", None);
             return Ok(item);
@@ -853,7 +899,7 @@ fn sync_default(context: &Context, base: &str, remotes: &[FetchRefspec]) -> Resu
             return Ok(item);
         }
     } else {
-        git::output(
+        checked_output(
             &[
                 "-c",
                 "core.hooksPath=/dev/null",
@@ -862,7 +908,7 @@ fn sync_default(context: &Context, base: &str, remotes: &[FetchRefspec]) -> Resu
                 &target,
                 before.as_deref().unwrap_or(""),
             ],
-            Some(root),
+            root,
             true,
         )?;
     }
@@ -971,20 +1017,17 @@ fn sync_tree(
         item.status("owned", None);
         return Ok(item);
     }
-    let own = git::output(
-        &["rev-list", &format!("{base}..HEAD"), "--"],
-        Some(path),
-        true,
-    )?;
+    common_base(path, "HEAD", base)?;
+    let own = checked_output(&["rev-list", &format!("{base}..HEAD"), "--"], path, true)?;
     let specs = fetch_refspecs(path)?;
-    let refs = git::output(&["for-each-ref", "--format=%(refname)"], Some(path), true)?;
+    let refs = checked_output(&["for-each-ref", "--format=%(refname)"], path, true)?;
     let mut unpublished_args = vec!["rev-list", "HEAD", "--not", base, "--remotes"];
     unpublished_args.extend(
         refs.lines()
             .filter(|reference| source_for(reference, &specs).is_some()),
     );
     unpublished_args.push("--");
-    let unpublished = git::output(&unpublished_args, Some(path), true)?;
+    let unpublished = checked_output(&unpublished_args, path, true)?;
     let unpublished: BTreeSet<&str> = unpublished.lines().collect();
     let pushed = own.lines().any(|sha| !unpublished.contains(sha));
     let strategy = if request.merge || (!request.rebase && pushed) {
@@ -1085,7 +1128,7 @@ fn sync_tree(
     // A successful exit alone does not prove integration finished (e.g. --no-commit).
     let mut pending = None;
     for state in ["MERGE_HEAD", "rebase-merge", "rebase-apply"] {
-        let state_path = git::output(&["rev-parse", "--git-path", state], Some(path), true)?;
+        let state_path = checked_output(&["rev-parse", "--git-path", state], path, true)?;
         if path.join(state_path).exists() {
             pending = Some(if state == "MERGE_HEAD" {
                 "merge"
@@ -1097,9 +1140,9 @@ fn sync_tree(
     }
     let incomplete = result.code == 0 && (pending.is_some() || dirty(path)?);
     if result.code != 0 || incomplete {
-        let files = git::output(
+        let files = checked_output(
             &["diff", "--name-only", "--diff-filter=U", "-z"],
-            Some(path),
+            path,
             false,
         )?;
         item.conflicts = files
@@ -1123,20 +1166,20 @@ fn sync_tree(
             // Squash can leave an index without operation state to abort. The
             // preflight required a clean tree; reset --merge preserves ignored files.
             if let Some(before) = item.before.as_deref() {
-                git::output(
+                checked_output(
                     &["-c", "core.hooksPath=/dev/null", "reset", "--merge", before],
-                    Some(path),
+                    path,
                     true,
                 )?;
             }
-            item.after = git::head_commit(path);
+            item.after = commit(path, "HEAD")?;
             item.status(
                 "failed",
                 Some(format!("{strategy} incomplete; worktree restored")),
             );
             return Ok(item);
         }
-        item.after = git::head_commit(path);
+        item.after = commit(path, "HEAD")?;
         item.status(
             if item.conflicts.is_empty() {
                 "failed"
@@ -1153,20 +1196,20 @@ fn sync_tree(
         );
         return Ok(item);
     }
-    item.after = git::head_commit(path);
+    item.after = commit(path, "HEAD")?;
     if own.is_empty() {
         if let Some(tip) = item.after.as_deref() {
             if let Err(error) = metadata::record_sync_tip(&context.git_root, path, tip) {
                 let rollback = match item.before.as_deref() {
-                    Some(before) => git::output(
+                    Some(before) => checked_output(
                         &["-c", "core.hooksPath=/dev/null", "reset", "--keep", before],
-                        Some(path),
+                        path,
                         true,
                     )
                     .map(|_| ()),
                     None => Err(Error::msg("Original HEAD is unavailable")),
                 };
-                item.after = git::head_commit(path);
+                item.after = commit(path, "HEAD")?;
                 let detail = match rollback {
                     Ok(()) => format!("metadata update failed: {error}; worktree restored"),
                     Err(rollback) => {

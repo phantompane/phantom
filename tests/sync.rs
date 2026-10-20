@@ -1487,6 +1487,149 @@ fn rebase_checkout_preserves_ignored_paths_deleted_by_local_commits() {
 }
 
 #[test]
+fn unrelated_default_history_fails_without_changing_the_checkout() {
+    let r = Repo::new();
+    r.git(&r.main, &["checkout", "--orphan", "replacement"]);
+    r.git(&r.main, &["rm", "-rf", "."]);
+    r.write_commit(&r.main, "unrelated", "local main\n");
+    r.git(&r.main, &["branch", "-M", "main"]);
+    let before = r.snapshot(&r.main);
+    let refs = r.git(&r.main, &["show-ref"]);
+    let doc = r.sync(&r.main, &[], 1);
+    assert_eq!(doc["default"]["status"], "failed");
+    assert!(doc["default"]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("no common history with refs/remotes/origin/main"));
+    assert_eq!(r.snapshot(&r.main), before);
+    assert_eq!(r.git(&r.main, &["show-ref"]), refs);
+}
+
+#[test]
+fn silent_git_failures_are_checked_before_sync_mutations() {
+    use std::os::unix::fs::PermissionsExt;
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join("git"))
+        .find(|file| file.is_file())
+        .unwrap();
+    for command in [
+        "status",
+        "ls-files",
+        "log",
+        "rev-list",
+        "for-each-ref",
+        "update-ref",
+    ] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        r.write_commit(&tree, "own", "local work\n");
+        r.write_commit(&tree, ".gitignore", "valuable\n");
+        fs::write(tree.join("valuable"), "precious\n").unwrap();
+        let default_only = command == "update-ref";
+        if default_only {
+            r.git(&r.main, &["checkout", "-b", "other"]);
+        }
+        r.advance();
+        // Keep the fetch outside the snapshot so only sync's integration is tested.
+        r.git(&r.main, &["fetch", "origin"]);
+        let before = r.snapshot(&tree);
+        let main_before = r.snapshot(&r.main);
+        let refs = r.git(&r.main, &["show-ref"]);
+        let bin = r.root.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let wrapper = bin.join("git");
+        fs::write(
+            &wrapper,
+            "#!/bin/sh\nfor arg do\n    if [ \"$arg\" = \"$FAIL_COMMAND\" ]; then exit 2; fi\ndone\nexec \"$REAL_GIT\" \"$@\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        let args = if default_only {
+            vec!["sync", "--json"]
+        } else {
+            vec!["sync", "--no-default", "--json"]
+        };
+        let out = r
+            .command(
+                env!("CARGO_BIN_EXE_mabo"),
+                if default_only { &r.main } else { &tree },
+                &args,
+            )
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("REAL_GIT", &real_git)
+            .env("FAIL_COMMAND", command)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{command}: {out:?}");
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let item = if default_only {
+            &doc["default"]
+        } else {
+            &doc["worktrees"][0]
+        };
+        assert_eq!(item["status"], "failed", "{command}: {doc}");
+        assert!(item["detail"].as_str().unwrap().contains("exit 2"), "{doc}");
+        assert_eq!(r.snapshot(&tree), before, "{command}");
+        assert_eq!(r.snapshot(&r.main), main_before, "{command}");
+        assert_eq!(r.git(&r.main, &["show-ref"]), refs, "{command}");
+    }
+}
+
+#[test]
+fn unrelated_histories_fail_without_touching_worktree_or_ignored_files() {
+    for strategy in [None, Some("--rebase"), Some("--merge")] {
+        for has_ignored_file in [true, false] {
+            let r = Repo::new();
+            let tree = r.create("topic");
+            r.git(&tree, &["checkout", "--orphan", "orphan"]);
+            r.git(&tree, &["rm", "-rf", "."]);
+            r.write_commit(&tree, ".gitignore", "valuable\n");
+            fs::write(tree.join("valuable"), "temporary history contents\n").unwrap();
+            r.git(&tree, &["add", "-f", "valuable"]);
+            r.git(&tree, &["commit", "-m", "temporary path"]);
+            r.git(&tree, &["rm", "valuable"]);
+            r.git(&tree, &["commit", "-m", "remove temporary path"]);
+            r.write_commit(&tree, "own", "unrelated work\n");
+            if has_ignored_file {
+                fs::write(tree.join("valuable"), b"precious\0ignored data\n").unwrap();
+            }
+            let merge_base = r
+                .command("git", &tree, &["merge-base", "HEAD", "origin/main"])
+                .output()
+                .unwrap();
+            assert_eq!(merge_base.status.code(), Some(1));
+            assert!(merge_base.stdout.is_empty());
+            assert!(merge_base.stderr.is_empty());
+            let before = r.snapshot(&tree);
+            let refs = r.git(&tree, &["show-ref"]);
+            let mut args = vec!["--no-default"];
+            args.extend(strategy);
+            let doc = r.sync(&tree, &args, 1);
+            let item = &doc["worktrees"][0];
+            assert_eq!(item["status"], "failed", "{doc}");
+            assert!(
+                item["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("no common history with refs/remotes/origin/main"),
+                "{doc}"
+            );
+            assert_eq!(r.snapshot(&tree), before);
+            assert_eq!(r.git(&tree, &["show-ref"]), refs);
+            assert_eq!(item["before"], item["after"]);
+            if has_ignored_file {
+                assert_eq!(
+                    fs::read(tree.join("valuable")).unwrap(),
+                    b"precious\0ignored data\n"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn ignored_paths_touched_by_intermediate_commits_are_preserved() {
     for side in ["local", "base"] {
         for shape in ["delete", "rename", "copy", "directory", "file"] {
@@ -2071,7 +2214,7 @@ fn metadata_failure_after_fast_forward_restores_worktree() {
         .map(|dir| dir.join("git"))
         .find(|file| file.is_file())
         .unwrap();
-    for fail_rollback in [false, true] {
+    for fail_rollback in ["0", "1", "silent"] {
         let r = Repo::new();
         let tree = r.create("topic");
         let store = r.main.join(".git/maboroshi/worktrees.json");
@@ -2088,6 +2231,9 @@ fn metadata_failure_after_fast_forward_restores_worktree() {
 for arg do
     if [ "$arg" = --keep ] && [ "$FAIL_ROLLBACK" = 1 ]; then
         echo "injected rollback failure" >&2
+        exit 1
+    fi
+    if [ "$arg" = --keep ] && [ "$FAIL_ROLLBACK" = silent ]; then
         exit 1
     fi
 done
@@ -2114,7 +2260,7 @@ exec "$REAL_GIT" "$@"
             .env("PATH", std::env::join_paths(paths).unwrap())
             .env("REAL_GIT", &real_git)
             .env("STORE", &store)
-            .env("FAIL_ROLLBACK", if fail_rollback { "1" } else { "0" })
+            .env("FAIL_ROLLBACK", fail_rollback)
             .output()
             .unwrap();
         assert_eq!(out.status.code(), Some(1), "{out:?}");
@@ -2128,7 +2274,7 @@ exec "$REAL_GIT" "$@"
         r.git(&r.main, &["config", "core.fsmonitor", "false"]);
         let detail = item["detail"].as_str().unwrap();
         assert!(detail.contains("metadata update failed"), "{detail}");
-        if fail_rollback {
+        if fail_rollback != "0" {
             assert!(detail.contains("rollback failed"), "{detail}");
         } else {
             assert!(detail.contains("worktree restored"), "{detail}");
