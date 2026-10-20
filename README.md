@@ -18,6 +18,8 @@ ghq-discovery = true
 root = "~/ghq"
 ```
 
+When `worktrees-directory` is unset, `ptm create` and `ptm attach` place the new worktree at `$XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash>/<name>`. The fallback is `~/.local/share/ptm/worktrees/...` when `XDG_DATA_HOME` is unset, empty, or not absolute. `<checkout>` is the main checkout directory name, with characters outside letters, numbers, `.`, `_`, and `-` replaced by `-`. `<hash>` is the first 8 hexadecimal digits of the SHA-256 of the canonical Git common directory. Two clones of the same remote get different directories. `directory-name-separator` still applies only inside that project directory. Deleting the last worktree removes the project directory and does not remove `ptm/worktrees`. A set `worktrees-directory` is still a path relative to the repository root, and that directory is left in place when it becomes empty.
+
 `root` is where `ptm clone` places repositories. It is an absolute path or a path starting with `~/`. When `root` is unset, `ptm clone` uses the first `git config ghq.root` value, then `$GHQ_ROOT`, then `~/ghq`. A configured `root` is used without reading git config. If reading `ghq.root` fails, `ptm` warns and continues with `$GHQ_ROOT` or `~/ghq`. `project list` scans that same directory.
 
 ## Cloning repositories
@@ -33,7 +35,7 @@ ptm clone aku11i/phantom --update
 
 If that path is already the same repository, `ptm` registers it and prints the path instead of cloning again. `--update` fetches `origin` in that case. If the path exists but is a different repository, the command exits with a validation error. `--branch` and `--depth` apply only to a new clone.
 
-Authentication is left to Git. `ptm` does not call `gh`. Git's progress is written to stderr. Worktrees for the cloned repository stay under its `.git/ptm/worktrees` directory.
+Authentication is left to Git. `ptm` does not call `gh`. Git's progress is written to stderr. New worktrees for the cloned repository are created under `$XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash>` (`~/.local/share/ptm/worktrees/...` when `XDG_DATA_HOME` is unset, empty, or relative). `<checkout>` is the main checkout's directory name. `<hash>` is the first 8 hexadecimal digits of the SHA-256 of the canonical Git common directory, the same path `ptm trust` records. A `worktrees-directory` preference still overrides that location and is joined to the repository root.
 
 ## Targeting a project
 
@@ -137,7 +139,7 @@ A command that does not produce a result writes this object to stdout:
 ```json
 {
   "name": "feature/add-tests",
-  "path": "/repo/.git/ptm/worktrees/feature/add-tests",
+  "path": "/home/user/.local/share/ptm/worktrees/repo-6b4ca2db/feature/add-tests",
   "branch": "feature/add-tests",
   "head": "0123456789abcdef0123456789abcdef01234567",
   "base": "HEAD",
@@ -216,7 +218,7 @@ A command that does not produce a result writes this object to stdout:
   "candidates": [
     {
       "name": "feature",
-      "path": "/repo/.git/ptm/worktrees/feature",
+      "path": "/home/user/.local/share/ptm/worktrees/repo-6b4ca2db/feature",
       "branch": "feature",
       "owner": "grok",
       "reasons": ["merged"],

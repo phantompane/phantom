@@ -43,7 +43,7 @@
 ## Security & Configuration Tips
 
 - Never commit tokens or GitHub credentials. `github checkout` uses the `gh` CLI (`GH_TOKEN` / `GH_HOST`).
-- Keep worktrees under `.git/ptm/worktrees/` unless overridden with the `worktreesDirectory` preference. Avoid leaking local paths in logs.
+- New worktrees go under `$XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash>/` (`~/.local/share/ptm/worktrees/...` when `XDG_DATA_HOME` is unset, empty, or relative) unless overridden with the `worktrees-directory` preference, which stays relative to the repository root. Avoid leaking local paths in logs.
 - Reuse `validate_worktree_name` rather than re-implementing name parsing.
 
 ## Releases

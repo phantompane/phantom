@@ -427,8 +427,10 @@ pub fn create_worktree(
 ) -> Result<CreatedWorktree> {
     validate_worktree_name(name)?;
     metadata::prepare(&context.git_root)?;
-    fs::create_dir_all(&context.worktrees_directory)
-        .map_err(|error| Error::msg(error.to_string()))?;
+    paths::ensure_worktrees_directory(
+        &context.worktrees_directory,
+        context.project_common_dir.as_deref(),
+    )?;
     ensure_absent(context, name)?;
     let path = paths::worktree_path(
         &context.worktrees_directory,
@@ -543,8 +545,10 @@ pub fn attach_worktree(
     if !git::branch_exists(&context.git_root, name)? {
         return Err(Error::BranchNotFound(name.to_string()));
     }
-    fs::create_dir_all(&context.worktrees_directory)
-        .map_err(|error| Error::msg(error.to_string()))?;
+    paths::ensure_worktrees_directory(
+        &context.worktrees_directory,
+        context.project_common_dir.as_deref(),
+    )?;
     git::add_worktree(&context.git_root, &path, name, "HEAD", false).map_err(|error| {
         let message = error.to_string();
         if let Some(stripped) = message.strip_prefix("worktree add failed: ") {
@@ -659,7 +663,11 @@ pub fn delete_worktree(
     let metadata_error = metadata::remove(&context.git_root, &path)
         .err()
         .map(|error| error.to_string());
-    let cleanup_warning = remove_empty_parents(&path, &context.worktrees_directory);
+    let cleanup_warning = remove_empty_parents(
+        &path,
+        &context.worktrees_directory,
+        context.project_common_dir.is_some(),
+    );
     let (message, branch_deleted, branch_error) = if worktree.branch == "(detached HEAD)" {
         (format!("Deleted worktree '{name}'"), false, None)
     } else if keep_branch {
@@ -915,7 +923,7 @@ fn run_hook_commands(
     Ok(None)
 }
 
-fn remove_empty_parents(path: &Path, root: &Path) -> Option<String> {
+fn remove_empty_parents(path: &Path, root: &Path, remove_root: bool) -> Option<String> {
     let mut current = path.parent().map(Path::to_path_buf);
     while let Some(dir) = current {
         if !paths::is_strictly_inside(&dir, root) {
@@ -933,7 +941,13 @@ fn remove_empty_parents(path: &Path, root: &Path) -> Option<String> {
             }
         }
     }
-    None
+    if !remove_root {
+        return None;
+    }
+    match paths::remove_project_directory_if_empty(root) {
+        Ok(_) => None,
+        Err(error) => Some(error.to_string()),
+    }
 }
 
 /// Copy gitignored files matched by `.worktreeinclude` and extra gitignore patterns.

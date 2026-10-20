@@ -49,6 +49,18 @@ pub fn git_common_dir(cwd: &Path) -> Result<PathBuf> {
     Ok(normalize(&cwd.join(git_common_dir_text(cwd)?)))
 }
 
+/// Canonical common dir used by trust and the default worktree directory.
+///
+/// `canonicalize` resolves symlinks. When the directory does not exist yet,
+/// the absolute `git rev-parse --git-common-dir` path is the key.
+pub fn canonical_common_dir(cwd: &Path) -> Result<PathBuf> {
+    let common = git_common_dir(cwd)?;
+    match std::fs::canonicalize(&common) {
+        Ok(path) => Ok(normalize(&path)),
+        Err(_) => Ok(common),
+    }
+}
+
 pub fn git_root(cwd: &Path) -> Result<PathBuf> {
     let common = git_common_dir_text(cwd)?;
     let common_dir = normalize(&cwd.join(&common));
@@ -125,8 +137,8 @@ fn checkout_for_common_dir(cwd: &Path, common: &Path) -> Result<PathBuf> {
     )))
 }
 
-/// A linked worktree stored under `<repo>/.git/ptm/worktrees` has a gitfile
-/// between `cwd` and the common dir. `.git` itself and `.git/refs` do not.
+/// A linked worktree whose checkout sits inside the common dir has a gitfile
+/// between `cwd` and that dir. `.git` itself and `.git/refs` do not.
 fn linked_worktree_under(cwd: &Path, common_dir: &Path) -> bool {
     if cwd == common_dir {
         return false;

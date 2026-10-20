@@ -170,6 +170,7 @@
         "post-create hooks run only after the repository is trusted. On a terminal, ptm shows the project path and the hook commands and asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, CI or PTM_AGENT_ID being set, or --json fails before creating the worktree. An empty value counts as unset. Run ptm trust --yes or pass --no-hooks. PTM_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "--exec receives PTM=1, PTM_NAME (the worktree name), and PTM_PATH (the absolute worktree path). Post-create hooks also receive PTM_ROOT_PATH (the source checkout path)",
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
+        "New worktrees are created under $XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash> (default ~/.local/share/ptm/worktrees/...). <checkout> is the main checkout directory name. <hash> is the first 8 hex digits of the SHA-256 of the canonical Git common directory. A relative XDG_DATA_HOME is ignored. worktrees-directory overrides this and is joined to the repository root",
         "Owner, purpose, and links are stored in ptm/worktrees.json under the Git common directory. --owner overrides PTM_AGENT_ID. Omit both to leave the owner empty. where and exec refresh lastUsedAt"
       ]
     },
@@ -743,7 +744,7 @@
         "Preferences are stored in $XDG_CONFIG_HOME/ptm/config.toml (default ~/.config/ptm/config.toml).",
         "The file and directory are created on the first set. Comments and formatting are preserved.",
         "Supported keys:",
-        "  worktrees-directory - path relative to the Git repo root for storing worktrees (defaults to .git/ptm/worktrees)",
+        "  worktrees-directory - path relative to the Git repo root for storing worktrees (default is $XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash>, or ~/.local/share/ptm/worktrees/...)",
         "  directory-name-separator - replaces '/' in worktree directory names only (defaults to / for nested directories)",
         "  keep-branch - keeps the branch when deleting a worktree (defaults to false)",
         "  ghq-discovery - discovers ghq-managed repositories as projects (defaults to true)",
@@ -800,7 +801,7 @@
       ],
       "notes": [
         "Supported keys: worktrees-directory, directory-name-separator, keep-branch, ghq-discovery, root",
-        "For worktrees-directory, provide a path relative to the Git repository root; defaults to .git/ptm/worktrees when unset",
+        "For worktrees-directory, provide a path relative to the Git repository root. When unset, new worktrees go to $XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash> (or ~/.local/share/ptm/worktrees/... when XDG_DATA_HOME is unset, empty, or relative)",
         "For directory-name-separator, '/' keeps nested directories; any other string replaces '/' only in the directory path",
         "For keep-branch, use true to preserve branches on delete or false to keep the default branch deletion behavior",
         "For ghq-discovery, use false to list only projects registered directly with ptm",
@@ -887,7 +888,7 @@
         "remoteUrl omits http and https userinfo, including a token used as the username. ssh and scp-style URLs keep the login name. file:// URLs and absolute scp-style paths are rejected.",
         "--branch and --depth apply only when cloning. updated is true only when an existing repository was fetched.",
         "If the path exists but is not that repository, the command exits with a validation error.",
-        "The project is always registered. Worktrees still live under the repository's .git/ptm/worktrees directory.",
+        "The project is always registered. New worktrees for that repository are created under $XDG_DATA_HOME/ptm/worktrees/<checkout>-<hash> unless worktrees-directory is set.",
         "Authentication is left to Git. ptm does not call gh.",
         "Git progress is written to stderr. With --json, stdout is only the version 1 result: path, host, owner, repo, remoteUrl, cloned, and updated."
       ]
