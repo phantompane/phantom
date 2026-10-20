@@ -226,7 +226,7 @@ fn gh_checkout_uses_pull_head_when_the_branch_is_deleted() {
     assert_eq!(document["worktree"]["branch"], "deleted-feature");
     assert_eq!(document["worktree"]["detached"], false);
     assert_eq!(document["worktree"]["head"], commit);
-    assert!(document["worktree"]["base"].is_null());
+    assert!(document["worktree"]["base"].as_str().is_some());
     let worktree = document["worktree"]["path"].as_str().expect("path");
     let checked_out = git_text(Path::new(worktree), &["rev-parse", "HEAD"]);
     assert_eq!(checked_out, commit);
@@ -784,4 +784,107 @@ fn cloned_before_branch_delete(root: &Path) -> (PathBuf, String) {
     );
     git(&seed, &["push", "origin", ":deleted-feature"]);
     (clone, commit)
+}
+
+#[test]
+fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
+    for present in [false, true] {
+        let tree = TempTree::new();
+        let (clone, _) = deleted_pr_remote(&tree.path);
+        let bin = tree.path.join("bin");
+        let fallback = "refs/remotes/origin/main".to_string();
+        if present {
+            git(&clone, &["update-ref", "refs/remotes/origin/next", "HEAD"]);
+        }
+        let script = same_repo_pull("843", "deleted-feature")
+            .replace("\"base\":{", "\"base\":{\"ref\":\"next\",");
+        install_gh(&bin, &script);
+        let out = mabo(
+            &clone,
+            &bin,
+            &["gh", "checkout", "843", "--no-hooks", "--json"],
+        );
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let expected = if present {
+            "refs/remotes/origin/next"
+        } else {
+            &fallback
+        };
+        let list = mabo(&clone, &bin, &["list", "--json"]);
+        let doc: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+        assert!(doc.to_string().contains(expected), "{doc}");
+
+        let out = mabo(
+            &clone,
+            &bin,
+            &["meta", "set", "deleted-feature", "--base", "HEAD"],
+        );
+        assert!(out.status.success());
+        let out = mabo(
+            &clone,
+            &bin,
+            &["gh", "checkout", "843", "--no-hooks", "--json"],
+        );
+        assert!(out.status.success());
+        let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(doc["worktree"]["base"], "refs/heads/main");
+
+        install_gh(
+            &bin,
+            &script.replace("{\"number\":843,\"pull_request\":{}}", "{\"number\":843}"),
+        );
+        for (number, explicit) in [("844", false), ("845", true)] {
+            install_gh(
+                &bin,
+                &same_repo_pull(number, "unused").replace(
+                    &format!("{{\"number\":{number},\"pull_request\":{{}}}}"),
+                    &format!("{{\"number\":{number}}}"),
+                ),
+            );
+            let mut args = vec!["gh", "checkout", number, "--no-hooks", "--json"];
+            if explicit {
+                args.extend(["--base", "HEAD"]);
+            }
+            let out = mabo(&clone, &bin, &args);
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let store: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            let worktree = store["worktree"]["path"].as_str().unwrap();
+            let listed = mabo(
+                &clone,
+                &bin,
+                &["where", &format!("issues/{number}"), "--json"],
+            );
+            let doc: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+            assert_eq!(
+                doc["worktree"]["base"],
+                if explicit {
+                    "refs/heads/main"
+                } else {
+                    &fallback
+                },
+                "{worktree} {doc}"
+            );
+        }
+        git(&clone, &["branch", "attached", "HEAD"]);
+        let out = mabo(
+            &clone,
+            &bin,
+            &["attach", "attached", "--no-hooks", "--json"],
+        );
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(doc["worktree"]["base"].is_null());
+    }
 }

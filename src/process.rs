@@ -1,9 +1,44 @@
+use std::cell::Cell;
 use std::io::Read;
+use std::marker::PhantomData;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::rc::Rc;
 use std::time::Duration;
 
 use crate::error::{Error, Result};
+
+thread_local! {
+    static GIT_HOOK_SUPPRESSION: Cell<usize> = const { Cell::new(0) };
+}
+
+// A scoped setting also covers Git calls made by shared worktree/git helpers.
+// Keep it thread-local, without changing the user's config or process environment.
+pub(crate) struct GitHookSuppression(PhantomData<Rc<()>>);
+
+pub(crate) fn suppress_git_hooks() -> GitHookSuppression {
+    GIT_HOOK_SUPPRESSION.with(|depth| depth.set(depth.get() + 1));
+    GitHookSuppression(PhantomData)
+}
+
+impl Drop for GitHookSuppression {
+    fn drop(&mut self) {
+        GIT_HOOK_SUPPRESSION.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
+fn command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    if program == "git" && GIT_HOOK_SUPPRESSION.with(|depth| depth.get() > 0) {
+        cmd.args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+        ]);
+    }
+    cmd
+}
 
 #[derive(Debug)]
 pub struct Captured {
@@ -22,7 +57,7 @@ pub fn raw_with_env(
     cwd: Option<&Path>,
     env: &[(&str, &str)],
 ) -> Result<Captured> {
-    let mut cmd = Command::new(command);
+    let mut cmd = self::command(command);
     cmd.args(args);
     for (key, value) in env {
         cmd.env(key, value);
@@ -30,6 +65,7 @@ pub fn raw_with_env(
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
+    crate::operation::configure_command(&mut cmd, command, cwd)?;
     let output = cmd.output().map_err(|error| spawn_error(command, &error))?;
     Ok(Captured {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -44,11 +80,12 @@ pub fn capture(
     cwd: Option<&Path>,
     trim_stdout: bool,
 ) -> Result<Captured> {
-    let mut cmd = Command::new(command);
+    let mut cmd = self::command(command);
     cmd.args(args);
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
+    crate::operation::configure_command(&mut cmd, command, cwd)?;
     let output = cmd.output().map_err(|error| spawn_error(command, &error))?;
     let stdout_raw = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr_raw = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -85,7 +122,7 @@ pub fn inherit(
     env: &[(&str, &str)],
     redirect_stdout_to_stderr: bool,
 ) -> Result<i32> {
-    let mut cmd = Command::new(command);
+    let mut cmd = self::command(command);
     cmd.args(args)
         .stdin(Stdio::inherit())
         .stderr(Stdio::inherit());
@@ -100,17 +137,16 @@ pub fn inherit(
     for (key, value) in env {
         cmd.env(key, value);
     }
+    crate::operation::configure_command(&mut cmd, command, cwd)?;
     let status = cmd.status().map_err(|error| spawn_error(command, &error))?;
     exit_code(command, status)
 }
 
 pub fn run_with_timeout(command: &str, args: &[&str], timeout: Duration) -> Result<Captured> {
-    let mut child = Command::new(command)
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| spawn_error(command, &error))?;
+    let mut cmd = self::command(command);
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    crate::operation::configure_command(&mut cmd, command, None)?;
+    let mut child = cmd.spawn().map_err(|error| spawn_error(command, &error))?;
     let started = std::time::Instant::now();
     loop {
         if let Some(status) = child

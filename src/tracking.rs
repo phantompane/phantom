@@ -193,20 +193,15 @@ impl Catalog {
     }
 }
 
-fn split_remote<'a>(rest: &'a str, remotes: &'a [String]) -> Option<(&'a str, &'a str)> {
-    for remote in remotes {
-        let Some(after) = rest.strip_prefix(remote.as_str()) else {
-            continue;
-        };
-        let Some(branch) = after.strip_prefix('/') else {
-            continue;
-        };
-        if branch.is_empty() {
-            continue;
-        }
-        return Some((remote.as_str(), branch));
-    }
-    None
+/// Split at the longest configured remote prefix, including slash-containing names.
+pub(crate) fn split_remote<'a>(rest: &'a str, remotes: &'a [String]) -> Option<(&'a str, &'a str)> {
+    remotes
+        .iter()
+        .filter_map(|remote| {
+            let branch = rest.strip_prefix(remote.as_str())?.strip_prefix('/')?;
+            (!branch.is_empty()).then_some((remote.as_str(), branch))
+        })
+        .max_by_key(|(remote, _)| remote.len())
 }
 
 fn decide(catalog: &Catalog, name: &str) -> AttachLookup {

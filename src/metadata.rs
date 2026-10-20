@@ -23,6 +23,8 @@ const PURPOSE_MAX: usize = 1024;
 pub struct WorktreeMetadata {
     #[serde(default)]
     pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
     #[serde(default)]
     pub purpose: Option<String>,
     #[serde(default)]
@@ -74,6 +76,7 @@ pub enum BranchOrigin {
 #[derive(Debug, Clone, Default)]
 pub struct MetadataInput {
     pub owner: Option<String>,
+    pub base: Option<String>,
     pub purpose: Option<String>,
     pub pr: Option<WorktreeLink>,
     pub issue: Option<WorktreeLink>,
@@ -200,6 +203,21 @@ fn recorded_creation(path: &Path, origin: BranchOrigin) -> Option<String> {
         BranchOrigin::New => crate::git::head_commit(path),
         BranchOrigin::Existing => crate::git::reflog_creation_commit(path),
     }
+}
+
+/// Record the tip sync integrated while the branch had no commits of its own.
+pub fn record_sync_tip(git_root: &Path, path: &Path, tip: &str) -> Result<()> {
+    with_store(git_root, |store| {
+        let Some(record) = store
+            .worktrees
+            .iter_mut()
+            .find(|record| paths::same_location(Path::new(&record.path), path))
+        else {
+            return Ok(((), false));
+        };
+        record.metadata.created_from = Some(tip.to_string());
+        Ok(((), true))
+    })
 }
 
 /// Bump `lastUsedAt` when a record exists. A worktree with no record is left alone.
@@ -404,6 +422,9 @@ fn stored_worktree(path: String, metadata: WorktreeMetadata) -> StoredWorktree {
 }
 
 fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
+    if input.base.is_some() {
+        metadata.base = input.base.clone();
+    }
     if input.owner.is_some() {
         metadata.owner = input.owner.clone();
     }

@@ -155,6 +155,7 @@ struct PullRequest {
     fork: bool,
     head_ref: String,
     head_repo: String,
+    base_ref: Option<String>,
 }
 
 /// `refs/pull/<n>/head` still exists after GitHub deletes the head branch.
@@ -216,6 +217,7 @@ fn checkout_pull_request(
     hooks: crate::trust::HookControl,
 ) -> Result<Checkout> {
     let context = context::open(repository)?;
+    let operation = crate::operation::lock(&context.git_root)?;
     let git_root = &context.git_root;
     let worktree_name = if pull.fork {
         let owner = pull.head_repo.split('/').next().unwrap_or("");
@@ -259,17 +261,39 @@ fn checkout_pull_request(
         crate::trust::HookKind::PostCreate,
         hooks,
     )?;
+    operation.check_post_release_children(!commands.is_empty())?;
     metadata::prepare(git_root)?;
     let branch_existed = git::branch_exists(git_root, &worktree_name)?;
     let result = (|| {
         let fetched = fetch_pull_head(git_root, pull, &worktree_name)?;
-        let attached =
-            worktree::attach_worktree(&context, &worktree_name, &[], &commands, logger, &metadata)?;
+        // All PR fetch paths use the base repository's origin remote.
+        metadata.base = Some(match pull.base_ref.as_deref() {
+            Some(base)
+                if crate::sync::normalize_base(
+                    git_root,
+                    &format!("refs/remotes/origin/{base}"),
+                )
+                .is_ok() =>
+            {
+                format!("refs/remotes/origin/{base}")
+            }
+            _ => crate::sync::creation_base(git_root, None)?,
+        });
+        let attached = worktree::attach_worktree_locked(
+            operation,
+            &context,
+            &worktree_name,
+            &[],
+            &commands,
+            logger,
+            &metadata,
+        )?;
         Ok((fetched, attached))
     })();
     let (fetched, attached) = match result {
         Ok(checkout) => checkout,
         Err(error) => {
+            let _operation = crate::operation::lock(git_root)?;
             // Git refuses to delete a branch attached to a worktree. Only remove
             // branches created by this attempt, never a pre-existing branch.
             if !branch_existed && git::branch_exists(git_root, &worktree_name)? {
@@ -338,6 +362,7 @@ fn checkout_issue(
     hooks: crate::trust::HookControl,
 ) -> Result<Checkout> {
     let context = context::open(repository)?;
+    let operation = crate::operation::lock(&context.git_root)?;
     let name = format!("issues/{number}");
     metadata.issue = Some(subject_link(repo, number, "issues"));
     if let Ok(existing) = worktree::find_worktree(&context, &name, false, None) {
@@ -365,9 +390,18 @@ fn checkout_issue(
         crate::trust::HookKind::PostCreate,
         hooks,
     )?;
+    metadata.base = Some(crate::sync::creation_base(&context.git_root, base)?);
     let base = base.unwrap_or("HEAD");
-    let created =
-        worktree::create_worktree(&context, &name, base, &[], &commands, logger, &metadata)?;
+    let created = worktree::create_worktree_locked(
+        operation,
+        &context,
+        &name,
+        base,
+        &[],
+        &commands,
+        logger,
+        &metadata,
+    )?;
     let info = worktree::worktree_at_path(&context, &created.path)?;
     Ok(Checkout {
         message: format!(
@@ -591,6 +625,10 @@ fn fetch_pull(
         fork: !head_repo.is_empty() && head_repo != base_repo,
         head_ref,
         head_repo,
+        base_ref: value
+            .pointer("/base/ref")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 
