@@ -719,7 +719,7 @@
       "description": "Manage user preferences stored in $XDG_CONFIG_HOME/maboroshi/config.toml",
       "examples": [
         {
-          "command": "mabo preferences set worktrees-directory ../phantom-worktrees",
+          "command": "mabo preferences set worktrees-directory ../maboroshi-worktrees",
           "description": "Store a custom worktrees directory (relative to the Git repository root) for all commands"
         },
         {
@@ -787,8 +787,8 @@
       "description": "Set a preference value in $XDG_CONFIG_HOME/maboroshi/config.toml",
       "examples": [
         {
-          "command": "mabo preferences set worktrees-directory ../phantom-worktrees",
-          "description": "Store worktrees in ../phantom-worktrees relative to the Git repository root"
+          "command": "mabo preferences set worktrees-directory ../maboroshi-worktrees",
+          "description": "Store worktrees in ../maboroshi-worktrees relative to the Git repository root"
         },
         {
           "command": "mabo preferences set directory-name-separator \"-\"",

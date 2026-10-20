@@ -9,7 +9,7 @@ The previous version's README is at <https://github.com/phantompane/phantom/blob
 `mabo` stores user preferences in `$XDG_CONFIG_HOME/maboroshi/config.toml` (default `~/.config/maboroshi/config.toml`). `mabo preferences get`, `set`, and `remove` read and write that file. The first `set` creates the directory and file.
 
 ```toml
-worktrees-directory = "../phantom-worktrees"
+worktrees-directory = "../maboroshi-worktrees"
 directory-name-separator = "-"
 keep-branch = false
 ghq-discovery = true
@@ -261,14 +261,14 @@ A command that does not produce a result writes this object to stdout:
       "id": "proj_550e8400-e29b-41d4-a716-446655440000",
       "name": "phantom",
       "canonicalName": "github.com/aku11i/phantom",
-      "rootPath": "/home/phantom/ghq/github.com/aku11i/phantom",
+      "rootPath": "/home/maboroshi/ghq/github.com/aku11i/phantom",
       "createdAt": "2026-01-01T00:00:00.000Z"
     },
     {
       "source": "ghq",
       "name": "repo",
       "canonicalName": "github.com/owner/repo",
-      "rootPath": "/home/phantom/ghq/github.com/owner/repo"
+      "rootPath": "/home/maboroshi/ghq/github.com/owner/repo"
     }
   ]
 }
@@ -283,7 +283,7 @@ A command that does not produce a result writes this object to stdout:
 ```json
 {
   "version": 1,
-  "path": "/home/phantom/ghq/github.com/aku11i/phantom",
+  "path": "/home/maboroshi/ghq/github.com/aku11i/phantom",
   "host": "github.com",
   "owner": "aku11i",
   "repo": "phantom",
