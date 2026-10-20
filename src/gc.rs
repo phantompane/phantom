@@ -232,7 +232,8 @@ struct WorktreeFacts {
     locked: bool,
     dirty: Dirty,
     /// `Some(true)` means commits on the tip are outside the default branch and
-    /// outside every remote-tracking ref. `None` means the query did not run.
+    /// outside every remote-tracking ref, and they are not already landed there.
+    /// `None` means the query did not run.
     unpushed: Option<bool>,
     /// Set when this tip is exactly a merged `refs/pull/<n>/head`.
     published_tip: Option<String>,
@@ -571,10 +572,17 @@ fn observe_listed(
         None => false,
     };
     let created_from = record.and_then(|item| item.created_from.as_deref());
+    let reachability = git::tip_reachability(
+        &context.git_root,
+        branch.as_deref(),
+        worktree.head.as_deref(),
+        base,
+    );
     let merged = match (&branch, base) {
-        (Some(branch), Some(base)) => {
-            is_ancestor(&context.git_root, branch, base)
-                && !still_at_creation_point(&context.git_root, branch, created_from)
+        (Some(name), Some(base_name)) => {
+            let moved = !still_at_creation_point(&context.git_root, name, created_from);
+            let ancestor = is_ancestor(&context.git_root, name, base_name);
+            moved && (ancestor || reachability.landed)
         }
         _ => false,
     };
@@ -582,12 +590,7 @@ fn observe_listed(
         (Some(branch), Some(base)) => branch == local_default_name(base),
         _ => false,
     };
-    let unpushed = git::unpushed_tip(
-        &context.git_root,
-        branch.as_deref(),
-        worktree.head.as_deref(),
-        base,
-    );
+    let unpushed = reachability.unpushed;
     let pr_link = record.and_then(|item| item.links.pr.as_ref());
     let pr = pull_state(policy, &context.git_root, pr_link, pull_requests);
     let published_tip = merged_pull_head(

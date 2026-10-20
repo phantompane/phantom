@@ -850,7 +850,8 @@ pub fn preflight_delete(
             .map_err(|error| DeleteError::kept(error, &worktree))?;
         let branch = (!worktree.detached).then_some(worktree.branch.as_str());
         let unpushed =
-            git::unpushed_tip(&context.git_root, branch, worktree.head.as_deref(), &base);
+            git::tip_reachability(&context.git_root, branch, worktree.head.as_deref(), &base)
+                .unpushed;
         let unpushed = if unpushed == Some(true) && published_tip_matches(options, &worktree) {
             Some(false)
         } else {
