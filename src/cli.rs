@@ -350,8 +350,9 @@ fn list(args: &[String]) -> Result<i32> {
         } else {
             let dirty = if worktree.is_clean { "" } else { " [dirty]" };
             let suffix = metadata::list_suffix(&worktree.metadata);
+            let orphaned = if worktree.orphaned { " [orphaned]" } else { "" };
             println!(
-                "{} ({}){dirty}{suffix}",
+                "{} ({}){dirty}{suffix}{orphaned}",
                 worktree.name, worktree.path_to_display
             );
         }

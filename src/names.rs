@@ -4,6 +4,7 @@ use crate::paths;
 use crate::worktree::validate_worktree_name;
 use std::collections::BTreeSet;
 use std::path::Path;
+#[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const ADJECTIVES: &[&str] = &[
@@ -50,9 +51,12 @@ pub fn generate_unique_name(
 
 /// `MABO_NAME_CANDIDATES` is a comma-separated list. Tests use it so the first
 /// candidate can collide with a remote-tracking branch and the next one is free.
+#[cfg(debug_assertions)]
 static CANDIDATE_INDEX: AtomicUsize = AtomicUsize::new(0);
 
 fn next_candidate() -> String {
+    // Deterministic candidates support debug integration tests, never release builds.
+    #[cfg(debug_assertions)]
     if let Ok(raw) = std::env::var("MABO_NAME_CANDIDATES") {
         let names: Vec<&str> = raw
             .split(',')

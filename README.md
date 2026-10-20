@@ -213,6 +213,8 @@ Human output has one `<name>  <status>  [detail]` line per item, followed by sta
 
 Statuses are `updated`, `up-to-date`, `dirty`, `diverged`, `merged`, `detached`, `owned`, `base-gone`, `conflict`, and `failed`. Exit 0 means successful updates or skips; exit 1 means any conflict/failure, or a default-only `dirty`/`diverged` result; exit 2 means invalid usage; exit 3 means a refusal to rewrite published history.
 
+Orphaned records have neither a Git worktree registration nor an existing directory. `list` includes them with a trailing `[orphaned]`; the shared JSON worktree object has `orphaned: true` (false for existing entries), with null `branch` and `head`. `where` and `exec` refuse orphaned names. `delete <name>` removes only the stale record, exits 0, and reports that the worktree was already gone; it runs no hooks and leaves branches alone. Its existing JSON result uses `worktree.orphaned: true` and `branchDeleted: false`. A live worktree matching the same name takes precedence; multiple orphaned records with the same resolved name are refused as ambiguous. Orphaned records do not reserve names for live worktrees. When a live worktree takes the same name, the orphan remains visible in `list`; use `gc --apply` to remove it, since `delete <name>` resolves to the live worktree.
+
 ### Commands
 
 `list --json`:
@@ -302,6 +304,8 @@ Statuses are `updated`, `up-to-date`, `dirty`, `diverged`, `merged`, `detached`,
 ```
 
 `github.kind` is `pullRequest` or `issue`. `headRef` is the pull request head ref, and null for an issue. `worktree.base` is the fetched upstream for a new pull request, the requested base for a new issue, and null when the worktree already existed.
+
+In a single-branch or otherwise narrow-refspec clone, `github checkout` writes `branch.<b>.remote/merge` so `git pull` works, but `@{upstream}` and ahead/behind do not resolve because mabo does not change `remote.origin.fetch`.
 
 ### Project list
 
