@@ -160,7 +160,8 @@ pub fn selection_from_flags(
 }
 
 pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Report> {
-    let facts = gather(context, &request.policy)?;
+    let _operation = crate::operation::lock(&context.git_root)?;
+    let facts = gather(context, &request.policy, None)?;
     warn_unavailable_pull_requests(&facts, &request.policy);
     let verdicts = classify(&facts, &request.policy);
     let skip_untrusted = crate::trust::blocks_gc(
@@ -168,6 +169,16 @@ pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Repo
         crate::config::pre_delete_commands(context.config.as_ref()),
         request.no_hooks,
     )?;
+    _operation.check_post_release_children(
+        request.apply
+            && !skip_untrusted
+            && !request.no_hooks
+            && !crate::config::pre_delete_commands(context.config.as_ref()).is_empty()
+            && verdicts
+                .iter()
+                .any(|verdict| matches!(verdict, Verdict::Remove(Removal::Delete { .. }))),
+    )?;
+    drop(_operation);
     let mut candidates = Vec::with_capacity(verdicts.len());
     let mut first_failure = None;
     for verdict in verdicts {
@@ -194,6 +205,7 @@ struct Subject {
     path: PathBuf,
     name: String,
     branch: Option<String>,
+    head: Option<String>,
     owner: Option<String>,
 }
 
@@ -467,17 +479,29 @@ fn removal_kind(facts: &WorktreeFacts, reasons: Vec<Reason>) -> Removal {
     }
 }
 
-fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
+// Re-verification must refresh metadata and Git state under the operation lock,
+// but observing unrelated worktrees would repeat their GitHub queries per target.
+fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<Vec<WorktreeFacts>> {
     let stored = metadata::load(&context.git_root)?;
     let common_dir = git::canonical_common_dir(&context.git_root)?;
     let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
-    let base = git::default_branch(&context.git_root)?;
+    let base = crate::sync::fallback_base(&context.git_root).ok();
+    let name = base
+        .as_deref()
+        .and_then(|base| crate::sync::default_local_branch(&context.git_root, base).ok());
+    if name.is_none() {
+        eprintln!("Warning: cannot resolve the default branch; keeping all branch worktrees");
+    }
+    let default = DefaultBranch { base, name };
     let current = current_worktree_path(context);
     let mut pull_requests = BTreeMap::new();
     let mut rows = BTreeMap::new();
     for worktree in &listed {
         let path = PathBuf::from(&worktree.path);
+        if target.is_some_and(|target| !paths::same_location(target, &path)) {
+            continue;
+        }
         if paths::same_location(&path, &context.git_root) {
             continue;
         }
@@ -498,7 +522,7 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
         let mut facts = observe_listed(
             context,
             policy,
-            &base,
+            &default,
             current.as_deref(),
             worktree,
             record,
@@ -529,6 +553,9 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
             continue;
         }
         let path = PathBuf::from(key);
+        if target.is_some_and(|target| !paths::same_location(target, &path)) {
+            continue;
+        }
         if paths::normalize(&path) == paths::normalize(&context.git_root) {
             continue;
         }
@@ -550,15 +577,21 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
     Ok(rows.into_values().collect())
 }
 
+struct DefaultBranch {
+    base: Option<String>,
+    name: Option<String>,
+}
+
 fn observe_listed(
     context: &Context,
     policy: &Policy,
-    base: &Option<String>,
+    default: &DefaultBranch,
     current: Option<&Path>,
     worktree: &git::GitWorktree,
     record: Option<&WorktreeMetadata>,
     pull_requests: &mut BTreeMap<String, PullRequestStatus>,
 ) -> WorktreeFacts {
+    let base = &default.base;
     let path = PathBuf::from(&worktree.path);
     let directory = directory_state(&path);
     let detached = worktree.branch.as_deref() == Some("(detached HEAD)");
@@ -580,16 +613,23 @@ fn observe_listed(
     );
     let merged = match (&branch, base) {
         (Some(name), Some(base_name)) => {
-            let moved = !still_at_creation_point(&context.git_root, name, created_from);
+            let moved = !still_at_creation_point(
+                &context.git_root,
+                name,
+                created_from,
+                base_name,
+                record.is_none(),
+            );
             let ancestor = is_ancestor(&context.git_root, name, base_name);
             moved && (ancestor || reachability.landed)
         }
         _ => false,
     };
-    let is_default = match (&branch, base) {
-        (Some(branch), Some(base)) => branch == local_default_name(base),
-        _ => false,
-    };
+    // An unresolved remote mapping must not prevent orphan-record cleanup or
+    // accidentally allow deletion of the checkout holding the default branch.
+    let is_default = branch
+        .as_deref()
+        .is_some_and(|branch| default.name.as_deref() == Some(branch) || default.name.is_none());
     let unpushed = reachability.unpushed;
     let pr_link = record.and_then(|item| item.links.pr.as_ref());
     let pr = pull_state(policy, &context.git_root, pr_link, pull_requests);
@@ -621,6 +661,7 @@ fn observe_listed(
             name: String::new(),
             path,
             branch,
+            head: worktree.head.clone(),
             owner: metadata.owner.clone(),
         },
         registered: true,
@@ -653,6 +694,7 @@ fn observe_record(
             name: String::new(),
             path: path.to_path_buf(),
             branch: None,
+            head: None,
             owner: record.owner.clone(),
         },
         registered: false,
@@ -803,11 +845,13 @@ fn parse_time(value: &str) -> Option<SystemTime> {
     Some(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
 }
 
-fn local_default_name(base: &str) -> &str {
-    base.strip_prefix("origin/").unwrap_or(base)
-}
-
-fn still_at_creation_point(git_root: &Path, branch: &str, created_from: Option<&str>) -> bool {
+pub(crate) fn still_at_creation_point(
+    git_root: &Path,
+    branch: &str,
+    created_from: Option<&str>,
+    base: &str,
+    unrecorded: bool,
+) -> bool {
     let Some(tip_sha) = branch_tip(git_root, branch) else {
         return false;
     };
@@ -818,22 +862,33 @@ fn still_at_creation_point(git_root: &Path, branch: &str, created_from: Option<&
         return created.eq_ignore_ascii_case(&tip_sha);
     }
     let spec = format!("refs/heads/{branch}");
-    let Ok(reflog) = git(git_root, &["reflog", "show", "--format=%H", &spec]) else {
-        return false;
+    let Ok(reflog) = git(git_root, &["reflog", "show", "--format=%H%x09%gs", &spec]) else {
+        return unrecorded;
     };
     if reflog.code != 0 {
-        return false;
+        return unrecorded;
     }
-    let Some(oldest) = reflog
-        .stdout
-        .lines()
-        .next_back()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-    else {
-        return false;
+    let mut entries: Vec<_> = reflog.stdout.lines().collect();
+    let Some(oldest) = entries.pop() else {
+        return unrecorded;
     };
-    oldest.eq_ignore_ascii_case(&tip_sha)
+    let Some((creation, subject)) = oldest.split_once('\t') else {
+        return unrecorded;
+    };
+    if creation.eq_ignore_ascii_case(&tip_sha) {
+        return true;
+    }
+    // An expired creation entry cannot establish whether this branch had work.
+    // Keep it rather than infer a landing from incomplete history.
+    if !subject.starts_with("branch: Created from ") {
+        return true;
+    }
+    entries.iter().all(|entry| {
+        entry.split_once('\t').is_some_and(|(_, subject)| {
+            subject.starts_with("mabo sync: fast-forward to ")
+                && subject.ends_with(": Fast-forward")
+        })
+    }) && is_ancestor(git_root, branch, base)
 }
 
 fn branch_tip(git_root: &Path, branch: &str) -> Option<String> {
@@ -923,20 +978,8 @@ fn apply_verdict(
             published_tip,
         }) => apply_delete(context, request, logger, subject, reasons, published_tip),
         Verdict::Remove(Removal::DropRegistration {
-            subject,
-            reasons,
-            git_listed,
-            unpushed,
-            branch_missing,
-        }) => apply_drop(
-            context,
-            request,
-            subject,
-            reasons,
-            git_listed,
-            unpushed,
-            branch_missing,
-        ),
+            subject, reasons, ..
+        }) => apply_drop(context, request, subject, reasons),
     }
 }
 
@@ -954,21 +997,35 @@ fn apply_delete(
             return failed(subject, reasons, error.to_string());
         }
     };
-    match worktree::delete_worktree(
+    let options = worktree::DeleteOptions {
+        force: request.policy.force,
+        keep_branch: request.keep_branch,
+        allow_current: false,
+        published_tip,
+    };
+    let plan = match worktree::preflight_delete(context, &info.name, &options, Some(&subject.path))
+    {
+        Ok(plan) => plan,
+        Err(error) => return failed(subject, reasons, error.error.to_string()),
+    };
+    match worktree::commit_delete_checked(
         context,
-        &info.name,
-        &worktree::DeleteOptions {
-            force: request.policy.force,
-            keep_branch: request.keep_branch,
-            allow_current: false,
-            published_tip,
-        },
-        Some(&subject.path),
+        plan,
+        &options,
         logger,
         crate::trust::HookControl {
             no_hooks: request.no_hooks,
             json: false,
             prompt: false,
+        },
+        || {
+            let facts = gather(context, &request.policy, Some(&subject.path))?;
+            if classify(&facts, &request.policy).iter().any(|verdict| matches!(verdict,
+                Verdict::Remove(Removal::Delete { subject: current, .. }) if current.path == subject.path)) {
+                Ok(())
+            } else {
+                Err(Error::msg("Worktree no longer qualifies for gc after pre-delete commands"))
+            }
         },
     ) {
         Ok(outcome) => {
@@ -1007,10 +1064,51 @@ fn apply_drop(
     request: &Request,
     subject: Subject,
     reasons: Vec<Reason>,
-    git_listed: bool,
-    unpushed: Option<bool>,
-    branch_missing: bool,
 ) -> CandidateEntry {
+    let _operation = match crate::operation::lock(&context.git_root) {
+        Ok(lock) => lock,
+        Err(error) => return failed(subject, reasons, error.to_string()),
+    };
+    let facts = match gather(context, &request.policy, Some(&subject.path)) {
+        Ok(facts) => facts,
+        Err(error) => return failed(subject, reasons, error.to_string()),
+    };
+    // The path can be reused while earlier targets run unlocked project hooks.
+    // Never apply another branch's safety verdict to the planned branch.
+    if facts.iter().any(|facts| {
+        facts.subject.path == subject.path
+            && (facts.subject.branch != subject.branch || facts.subject.head != subject.head)
+    }) {
+        return CandidateEntry {
+            name: subject.name,
+            path: subject.path.display().to_string(),
+            branch: subject.branch,
+            owner: subject.owner,
+            reasons,
+            action: Action::Skipped,
+            detail: Some("Worktree branch or HEAD changed since gc planning".into()),
+            branch_deleted: None,
+        };
+    }
+    let fresh = classify(&facts, &request.policy);
+    let Some((git_listed, unpushed, branch_missing)) =
+        fresh.iter().find_map(|verdict| match verdict {
+            Verdict::Remove(Removal::DropRegistration {
+                subject: current,
+                git_listed,
+                unpushed,
+                branch_missing,
+                ..
+            }) if current.path == subject.path => Some((*git_listed, *unpushed, *branch_missing)),
+            _ => None,
+        })
+    else {
+        return failed(
+            subject,
+            reasons,
+            "Worktree no longer qualifies for gc".into(),
+        );
+    };
     if git_listed {
         if let Err(error) = unregister(&context.git_root, &subject.path) {
             return failed(subject, reasons, error.to_string());
@@ -1206,6 +1304,7 @@ mod tests {
                 path: PathBuf::from("/repo/.git/maboroshi/worktrees/feature"),
                 name: "feature".to_string(),
                 branch: Some("feature".to_string()),
+                head: None,
                 owner: None,
             },
             registered: true,

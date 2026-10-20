@@ -463,10 +463,10 @@ pub(crate) fn default_branch(git_root: &Path) -> Result<Option<String>> {
             return Ok(Some(name.to_string()));
         }
     }
-    if verify_commit(git_root, "main")? {
+    if verify_commit(git_root, "refs/heads/main")? {
         return Ok(Some("main".to_string()));
     }
-    if verify_commit(git_root, "master")? {
+    if verify_commit(git_root, "refs/heads/master")? {
         return Ok(Some("master".to_string()));
     }
     Ok(None)
@@ -556,7 +556,7 @@ fn upstream_missing(git_root: &Path, branch: &str) -> bool {
     }
 }
 
-fn changes_landed(git_root: &Path, tip: &str, base: &str) -> bool {
+pub(crate) fn changes_landed(git_root: &Path, tip: &str, base: &str) -> bool {
     let Ok(merge_base) = raw_git(git_root, &["merge-base", base, tip]) else {
         return false;
     };
@@ -603,8 +603,16 @@ fn verify_commit(git_root: &Path, name: &str) -> Result<bool> {
     Ok(captured.code == 0)
 }
 
-fn raw_git(git_root: &Path, args: &[&str]) -> Result<process::Captured> {
+pub(crate) fn raw_git(git_root: &Path, args: &[&str]) -> Result<process::Captured> {
     process::raw("git", args, Some(git_root))
+}
+
+pub(crate) fn raw_git_with_env(
+    git_root: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Result<process::Captured> {
+    process::raw_with_env("git", args, Some(git_root), env)
 }
 
 pub fn status_count(cwd: &Path) -> Result<usize> {
