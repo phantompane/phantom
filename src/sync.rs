@@ -506,7 +506,12 @@ fn sync_default(context: &Context, base: &str) -> Result<Item> {
             &[
                 "-c",
                 "core.hooksPath=/dev/null",
+                "-c",
+                "merge.autoStash=false",
                 "merge",
+                "--no-squash",
+                "--commit",
+                "--no-verify-signatures",
                 "--ff-only",
                 "--no-edit",
                 base,
@@ -664,7 +669,14 @@ fn sync_tree(
             "core.hooksPath=/dev/null",
             "-c",
             "merge.autoStash=false",
+            "-c",
+            "commit.gpgSign=false",
             "merge",
+            "--no-squash",
+            "--commit",
+            "--ff",
+            "--no-gpg-sign",
+            "--no-verify-signatures",
             "--no-edit",
             "--no-verify",
             "-m",
@@ -677,14 +689,35 @@ fn sync_tree(
             "core.hooksPath=/dev/null",
             "-c",
             "rebase.autoStash=false",
+            "-c",
+            "rebase.autoSquash=false",
+            "-c",
+            "rebase.rebaseMerges=false",
+            "-c",
+            "rebase.updateRefs=false",
+            "-c",
+            "commit.gpgSign=false",
             "rebase",
             "--no-autostash",
-            "--no-update-refs",
             base,
         ]
     };
     let result = git::raw_git(path, &args)?;
-    if result.code != 0 {
+    // A successful exit alone does not prove integration finished (e.g. --no-commit).
+    let mut pending = None;
+    for state in ["MERGE_HEAD", "rebase-merge", "rebase-apply"] {
+        let state_path = git::output(&["rev-parse", "--git-path", state], Some(path), true)?;
+        if path.join(state_path).exists() {
+            pending = Some(if state == "MERGE_HEAD" {
+                "merge"
+            } else {
+                "rebase"
+            });
+            break;
+        }
+    }
+    let incomplete = result.code == 0 && (pending.is_some() || dirty(path)?);
+    if result.code != 0 || incomplete {
         let files = git::output(
             &["diff", "--name-only", "--diff-filter=U", "-z"],
             Some(path),
@@ -695,30 +728,34 @@ fn sync_tree(
             .filter(|file| !file.is_empty())
             .map(str::to_string)
             .collect();
-        let in_progress = if strategy == "merge" {
-            "MERGE_HEAD"
-        } else {
-            "rebase-merge"
-        };
-        let state = git::output(&["rev-parse", "--git-path", in_progress], Some(path), true)?;
-        let rebase_apply = git::output(
-            &["rev-parse", "--git-path", "rebase-apply"],
-            Some(path),
-            true,
-        )?;
-        let started =
-            path.join(state).exists() || (strategy == "rebase" && path.join(rebase_apply).exists());
-        if started && !request.keep_conflicts {
+        if let Some(operation) = pending.filter(|_| incomplete || !request.keep_conflicts) {
             let abort = git::raw_git(
                 path,
-                &["-c", "core.hooksPath=/dev/null", strategy, "--abort"],
+                &["-c", "core.hooksPath=/dev/null", operation, "--abort"],
             )?;
             if abort.code != 0 {
                 return Err(Error::msg(format!(
-                    "Cannot abort {strategy}: {}",
+                    "Cannot abort {operation}: {}",
                     abort.stderr
                 )));
             }
+        }
+        if incomplete {
+            // Squash can leave an index without operation state to abort. The
+            // preflight required a clean tree; reset --merge preserves ignored files.
+            if let Some(before) = item.before.as_deref() {
+                git::output(
+                    &["-c", "core.hooksPath=/dev/null", "reset", "--merge", before],
+                    Some(path),
+                    true,
+                )?;
+            }
+            item.after = git::head_commit(path);
+            item.status(
+                "failed",
+                Some(format!("{strategy} incomplete; worktree restored")),
+            );
+            return Ok(item);
         }
         item.after = git::head_commit(path);
         item.status(

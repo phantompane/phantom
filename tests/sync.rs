@@ -1098,3 +1098,183 @@ fn ignored_paths_touched_by_intermediate_commits_are_preserved() {
         }
     }
 }
+
+#[test]
+fn merge_ignores_user_options_and_signing_configuration() {
+    for options in [
+        "--no-commit",
+        "--squash",
+        "--ff-only",
+        "--verify-signatures --gpg-sign",
+    ] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        r.write_commit(&tree, "own", "own\n");
+        let before = r.git(&tree, &["rev-parse", "HEAD"]);
+        r.git(&tree, &["push", "origin", "topic"]);
+        r.advance();
+        r.git(&tree, &["config", "branch.topic.mergeOptions", options]);
+        r.git(&tree, &["config", "merge.ff", "only"]);
+        r.git(&tree, &["config", "merge.verifySignatures", "true"]);
+        r.git(&tree, &["config", "merge.autoStash", "true"]);
+        r.git(&tree, &["config", "commit.gpgSign", "true"]);
+        r.git(&tree, &["config", "gpg.program", "/does/not/exist"]);
+        let doc = r.sync(&tree, &["--no-default"], 0);
+        assert_eq!(doc["worktrees"][0]["status"], "updated", "{options}");
+        assert_eq!(doc["worktrees"][0]["strategy"], "merge");
+        assert_eq!(r.git(&tree, &["rev-parse", "HEAD^1"]), before);
+        assert_eq!(
+            r.git(&tree, &["rev-parse", "HEAD^2"]),
+            r.git(&tree, &["rev-parse", "origin/main"])
+        );
+        assert_eq!(r.git(&tree, &["status", "--porcelain=v2"]), "");
+        assert!(!tree
+            .join(r.git(&tree, &["rev-parse", "--git-path", "MERGE_HEAD"]))
+            .exists());
+        assert_eq!(r.git(&tree, &["stash", "list"]), "");
+    }
+}
+
+#[test]
+fn rebase_preserves_fixup_commits_and_disables_user_rebase_configuration() {
+    let r = Repo::new();
+    let tree = r.create("topic");
+    r.write_commit(&tree, "own", "own\n");
+    fs::write(tree.join("own"), "fixed\n").unwrap();
+    r.git(&tree, &["add", "own"]);
+    r.git(&tree, &["commit", "--fixup", "HEAD"]);
+    let subjects = r.git(&tree, &["log", "--format=%s", "origin/main..HEAD"]);
+    r.git(&tree, &["branch", "other-ref"]);
+    let other = r.git(&tree, &["rev-parse", "other-ref"]);
+    for key in [
+        "rebase.autoSquash",
+        "rebase.rebaseMerges",
+        "rebase.updateRefs",
+        "rebase.autoStash",
+        "commit.gpgSign",
+    ] {
+        r.git(&tree, &["config", key, "true"]);
+    }
+    r.git(&tree, &["config", "gpg.program", "/does/not/exist"]);
+    r.advance();
+    let doc = r.sync(&tree, &["--no-default"], 0);
+    assert_eq!(doc["worktrees"][0]["status"], "updated");
+    assert_eq!(
+        r.git(&tree, &["log", "--format=%s", "origin/main..HEAD"]),
+        subjects
+    );
+    assert_eq!(r.git(&tree, &["rev-parse", "other-ref"]), other);
+    assert_eq!(r.git(&tree, &["status", "--porcelain=v2"]), "");
+    assert_eq!(r.git(&tree, &["stash", "list"]), "");
+}
+
+#[test]
+fn successful_but_incomplete_integration_is_failed_and_restored() {
+    use std::os::unix::fs::PermissionsExt;
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join("git"))
+        .find(|file| file.is_file())
+        .unwrap();
+    for mode in ["merge", "squash", "rebase"] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        r.write_commit(&tree, "own", "own\n");
+        fs::write(tree.join(".gitignore"), "ignored\n").unwrap();
+        r.git(&tree, &["add", ".gitignore"]);
+        r.git(&tree, &["commit", "-m", "ignore"]);
+        fs::write(tree.join("ignored"), b"precious\0bytes").unwrap();
+        r.advance();
+        let before = r.snapshot(&tree);
+        let bin = r.root.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let wrapper = bin.join("git");
+        // Simulate a Git process returning success after leaving real operation
+        // state or a squash index behind, despite our explicit command options.
+        fs::write(
+            &wrapper,
+            format!(
+                r#"#!/bin/sh
+for arg do
+    if [ "$arg" = --abort ]; then exec "$REAL_GIT" "$@"; fi
+done
+for arg do
+    case "$arg" in
+        merge|rebase)
+            case '{mode}' in
+                merge) "$REAL_GIT" -c core.hooksPath=/dev/null merge --no-commit origin/main ;;
+                squash) "$REAL_GIT" -c core.hooksPath=/dev/null merge --squash origin/main ;;
+                rebase) "$REAL_GIT" -c core.hooksPath=/dev/null rebase --exec false origin/main ;;
+            esac
+            exit 0 ;;
+    esac
+done
+exec "$REAL_GIT" "$@"
+"#
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        let out = r
+            .command(
+                env!("CARGO_BIN_EXE_mabo"),
+                &tree,
+                &[
+                    "sync",
+                    "--json",
+                    "--no-default",
+                    "--keep-conflicts",
+                    if mode == "rebase" {
+                        "--rebase"
+                    } else {
+                        "--merge"
+                    },
+                ],
+            )
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("REAL_GIT", &real_git)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(doc["worktrees"][0]["status"], "failed");
+        assert_eq!(r.snapshot(&tree), before, "{mode}");
+        for state in ["MERGE_HEAD", "rebase-merge", "rebase-apply"] {
+            assert!(!tree
+                .join(r.git(&tree, &["rev-parse", "--git-path", state]))
+                .exists());
+        }
+    }
+}
+
+#[test]
+fn rebase_does_not_preserve_merges_from_user_config() {
+    let r = Repo::new();
+    let tree = r.create("topic");
+    r.write_commit(&tree, "own", "own\n");
+    r.git(&tree, &["checkout", "-b", "side"]);
+    r.write_commit(&tree, "side", "side\n");
+    r.git(&tree, &["checkout", "topic"]);
+    r.write_commit(&tree, "other", "other\n");
+    r.git(&tree, &["merge", "--no-ff", "--no-edit", "side"]);
+    r.git(&tree, &["config", "rebase.rebaseMerges", "true"]);
+    r.advance();
+    assert_eq!(
+        r.sync(&tree, &["--no-default"], 0)["worktrees"][0]["status"],
+        "updated"
+    );
+    assert_eq!(
+        r.git(&tree, &["rev-list", "--merges", "origin/main..HEAD"]),
+        ""
+    );
+    assert_eq!(
+        r.git(&tree, &["rev-list", "--count", "origin/main..HEAD"]),
+        "3"
+    );
+}
