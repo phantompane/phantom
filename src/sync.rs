@@ -1018,6 +1018,10 @@ fn sync_tree(
             "-c",
             "commit.gpgSign=false",
             "rebase",
+            "--merge",
+            "--reapply-cherry-picks",
+            "--keep-empty",
+            "--empty=keep",
             "--no-autostash",
             base,
         ]

@@ -2676,3 +2676,62 @@ fn ordinary_failures_take_precedence_over_pushed_refusals() {
         assert!(items.iter().any(|item| item["code"] == "pushed"), "{doc}");
     }
 }
+
+#[test]
+fn rebase_reapplies_upstream_cherry_pick_that_was_reverted() {
+    for explicit in [false, true] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        r.write_commit(&tree, "local-change", "must survive\n");
+        let local = r.git(&tree, &["rev-parse", "HEAD"]);
+        r.advance();
+        r.git(&r.upstream, &["fetch", r.main.to_str().unwrap(), "topic"]);
+        r.git(&r.upstream, &["cherry-pick", &local]);
+        r.git(&r.upstream, &["revert", "--no-edit", "HEAD"]);
+        r.git(&r.upstream, &["push", "origin", "main"]);
+        let args = if explicit {
+            vec!["--no-default", "--rebase"]
+        } else {
+            vec!["--no-default"]
+        };
+        let doc = r.sync(&tree, &args, 0);
+        assert_eq!(doc["worktrees"][0]["strategy"], "rebase");
+        assert_eq!(doc["worktrees"][0]["status"], "updated");
+        assert_eq!(
+            fs::read_to_string(tree.join("local-change")).unwrap(),
+            "must survive\n"
+        );
+    }
+}
+
+#[test]
+fn rebase_preserves_intentionally_empty_and_newly_empty_commits() {
+    for explicit in [false, true] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        r.git(
+            &tree,
+            &["commit", "--allow-empty", "-m", "intentional-empty"],
+        );
+        r.write_commit(&tree, "shared", "shared\n");
+        r.write_commit(&tree, "own", "own\n");
+        r.write_commit(&r.upstream, "shared", "shared\n");
+        r.git(&r.upstream, &["push", "origin", "main"]);
+        r.git(&tree, &["config", "rebase.backend", "apply"]);
+        r.git(&tree, &["config", "rebase.missingCommitsCheck", "ignore"]);
+        let args = if explicit {
+            vec!["--no-default", "--rebase"]
+        } else {
+            vec!["--no-default"]
+        };
+        let doc = r.sync(&tree, &args, 0);
+        assert_eq!(doc["worktrees"][0]["status"], "updated");
+        assert_eq!(
+            r.git(&tree, &["rev-list", "--count", "origin/main..HEAD"]),
+            "3"
+        );
+        assert!(r
+            .git(&tree, &["log", "--format=%s", "origin/main..HEAD"])
+            .contains("intentional-empty"));
+    }
+}
