@@ -21,6 +21,10 @@
       "description": "Delete a Git worktree"
     },
     {
+      "name": "gc",
+      "description": "Remove stale Git worktrees"
+    },
+    {
       "name": "exec",
       "description": "Execute a command in a worktree directory"
     },
@@ -393,6 +397,96 @@
         ".ptm.toml is read from the source checkout, the checkout where the command runs. [hooks] pre-delete commands run in the worktree before it is removed, in order, and stop at the first failure",
         "Pre-delete hooks receive PTM=1, PTM_NAME (the worktree name), PTM_PATH (the absolute worktree path), and PTM_ROOT_PATH (the source checkout path)",
         "--json reports each deleted worktree, whether its branch was deleted, and per-item errors. The schema is documented in the README"
+      ]
+    },
+    "gc": {
+      "name": "gc",
+      "description": "Remove stale Git worktrees",
+      "usage": "ptm gc [--project <ref>] [options]",
+      "options": [
+        {
+          "name": "project",
+          "short": "p",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--project owner/repo"
+        },
+        {
+          "name": "apply",
+          "type": "boolean",
+          "description": "Remove the worktrees the dry run would remove. Without --apply or --force, gc only prints the plan"
+        },
+        {
+          "name": "force",
+          "short": "f",
+          "type": "boolean",
+          "description": "Remove matching worktrees even when they are dirty or have unpushed commits. Implies --apply. Does not remove the current worktree, a locked worktree, or another agent's worktree that matched only on age"
+        },
+        {
+          "name": "merged",
+          "type": "boolean",
+          "description": "Select worktrees whose branch is contained in the default branch. With no criterion flag, merged, closed pull requests, and orphaned worktrees are all selected"
+        },
+        {
+          "name": "pr",
+          "type": "boolean",
+          "description": "Select worktrees whose linked pull request is closed or merged. gh is queried when it is available. A missing gh does not fail the command and does not select the worktree"
+        },
+        {
+          "name": "orphaned",
+          "type": "boolean",
+          "description": "Select worktrees whose directory is missing, whose git registration is prunable, or whose branch ref is gone. A metadata record whose directory is already gone is dropped without deleting a directory git does not list"
+        },
+        {
+          "name": "older-than",
+          "type": "string",
+          "description": "Select worktrees last used, or created when never used, at least this long ago. The value is a positive integer plus m (minutes), h, d, or w, such as 14d. Age alone does not remove another agent's worktree",
+          "example": "--older-than 14d"
+        },
+        {
+          "name": "owner",
+          "type": "string",
+          "description": "Only consider worktrees recorded for this owner. Unowned worktrees are excluded",
+          "example": "--owner grok"
+        },
+        {
+          "name": "keep-branch",
+          "type": "boolean",
+          "description": "Remove the worktree but keep its branch. Also implied by the keep-branch preference"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook output goes to stderr"
+        }
+      ],
+      "examples": [
+        {
+          "description": "Show what would be removed",
+          "command": "ptm gc"
+        },
+        {
+          "description": "Remove merged, closed, and orphaned worktrees",
+          "command": "ptm gc --apply"
+        },
+        {
+          "description": "Remove worktrees that have not been used for 14 days",
+          "command": "ptm gc --older-than 14d --apply"
+        },
+        {
+          "description": "Remove one agent's stale worktrees, including dirty ones",
+          "command": "ptm gc --owner grok --force"
+        }
+      ],
+      "notes": [
+        "gc is a dry run until --apply or --force. A second apply removes nothing",
+        "The current worktree, the primary checkout, and any worktree checked out on the default branch are never removed. The default branch is origin/HEAD when that ref exists, otherwise main, otherwise master",
+        "A branch that still points at the commit it was created from is not merged. It can still match --older-than or --orphaned",
+        "A stored pull request URL is passed to gh pr view. A number with no URL is checked only when gh can name the current repository. When gh is missing or cannot answer, gc reports that the pull request status is unavailable",
+        "Another agent's worktree is removed only when it is merged, its pull request is closed or merged, it is orphaned, or --owner names that agent",
+        "Dirty worktrees and worktrees with commits that are not on the default branch or a remote are skipped unless --force",
+        "Live removals run [hooks] pre-delete from .ptm.toml and then the same deletion as ptm delete. A hook failure skips that worktree and continues",
+        "--json lists each candidate, why it matched, and the action taken. The schema is documented in the README"
       ]
     },
     "exec": {

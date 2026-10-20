@@ -1146,6 +1146,81 @@ fn selected_repository(parsed: &Parsed) -> Result<Option<std::path::PathBuf>> {
     }
 }
 
+fn gc(args: &[String]) -> Result<i32> {
+    let json = wants_json(args);
+    let parsed = match args::parse(
+        args,
+        &[
+            project_flag(),
+            flag("apply", None),
+            flag("force", Some('f')),
+            flag("merged", None),
+            flag("pr", None),
+            flag("orphaned", None),
+            value_flag("older-than", None),
+            value_flag("owner", None),
+            flag("keep-branch", None),
+            flag("json", None),
+        ],
+        false,
+    ) {
+        Ok(parsed) => parsed,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let json = parsed.flag("json") || wants_json(args);
+    let older_than = match parsed.value("older-than") {
+        Some(value) => match crate::gc::parse_duration(value) {
+            Ok(duration) => Some(duration),
+            Err(error) => return fail_with(&error, error.exit_code(), json),
+        },
+        None => None,
+    };
+    let owner_filter = match parsed.value("owner") {
+        Some(value) => match metadata::parse_owner(value) {
+            Ok(owner) => Some(owner),
+            Err(error) => return fail_with(&error, error.exit_code(), json),
+        },
+        None => None,
+    };
+    let context = match command_context(&parsed) {
+        Ok(context) => context,
+        Err(error) => return fail_project(&error, args, &parsed, json),
+    };
+    let agent_id = std::env::var("PTM_AGENT_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let force = parsed.flag("force");
+    let request = crate::gc::Request {
+        policy: crate::gc::Policy {
+            selection: crate::gc::selection_from_flags(
+                parsed.flag("merged"),
+                parsed.flag("pr"),
+                parsed.flag("orphaned"),
+                older_than,
+            ),
+            now: std::time::SystemTime::now(),
+            force,
+            agent_id,
+            owner_filter,
+        },
+        apply: parsed.flag("apply") || force,
+        keep_branch: parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false),
+    };
+    let report = match crate::gc::run(&context, &request, &logger_for(json)) {
+        Ok(report) => report,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    if json {
+        emit_json(&report)?;
+        return Ok(report.exit_code());
+    }
+    for line in &report.lines {
+        println!("{line}");
+    }
+    Ok(report.exit_code())
+}
+
 fn command_context(parsed: &Parsed) -> Result<crate::context::Context> {
     let repository = selected_repository(parsed)?;
     crate::context::open(repository.as_deref())
@@ -1377,6 +1452,12 @@ static COMMANDS: &[Command] = &[
         name: "delete",
         help_key: "delete",
         run: delete,
+        children: &[],
+    },
+    Command {
+        name: "gc",
+        help_key: "gc",
+        run: gc,
         children: &[],
     },
     Command {

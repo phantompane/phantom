@@ -15,6 +15,7 @@ pub mod cli;
 pub mod config;
 pub mod context;
 pub mod error;
+pub mod gc;
 pub mod git;
 pub mod github;
 pub mod help;
@@ -48,13 +49,13 @@ mod tests {
     #[test]
     fn version_line_marks_the_rust_build() {
         assert_eq!(
-            format_version("7.0.0-alpha.2", None),
-            "ptm v7.0.0-alpha.2+rust"
+            format_version("7.0.0-alpha.3", None),
+            "ptm v7.0.0-alpha.3+rust"
         );
         assert_eq!(
-            format_version("7.0.0-alpha.2", Some("abc1234")),
-            "ptm v7.0.0-alpha.2+rust (abc1234)"
+            format_version("7.0.0-alpha.3", Some("abc1234")),
+            "ptm v7.0.0-alpha.3+rust (abc1234)"
         );
-        assert_ne!(format_version("7.0.0-alpha.2", None), "ptm v7.0.0-alpha.2");
+        assert_ne!(format_version("7.0.0-alpha.3", None), "ptm v7.0.0-alpha.3");
     }
 }
