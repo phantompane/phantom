@@ -7349,6 +7349,231 @@ fn gc_removes_a_merged_recorded_worktree_outside_the_resolved_directory() {
 }
 
 #[test]
+fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
+    let repo = Repo::new();
+    assert!(repo
+        .phantom(&[
+            "preferences",
+            "set",
+            "worktrees-directory",
+            ".git/ptm/worktrees",
+        ])
+        .status
+        .success());
+    let detached = repo.phantom(&["create", "next", "--exec", "git checkout -q --detach"]);
+    assert!(
+        detached.status.success(),
+        "{}\n{}",
+        text(&detached.stdout),
+        text(&detached.stderr)
+    );
+    let nested = repo.phantom(&[
+        "create",
+        "feature/topic",
+        "--exec",
+        "git checkout -q --detach",
+    ]);
+    assert!(
+        nested.status.success(),
+        "{}\n{}",
+        text(&nested.stdout),
+        text(&nested.stderr)
+    );
+    let branched = repo.phantom(&["create", "kept"]);
+    assert!(
+        branched.status.success(),
+        "{}\n{}",
+        text(&branched.stdout),
+        text(&branched.stderr)
+    );
+    repo.git(&["branch", "-m", "kept", "moved"]);
+    assert!(repo
+        .phantom(&["preferences", "remove", "worktrees-directory"])
+        .status
+        .success());
+
+    let next = repo.repo.join(".git/ptm/worktrees/next");
+    let topic = repo.repo.join(".git/ptm/worktrees/feature/topic");
+    let kept = repo.repo.join(".git/ptm/worktrees/kept");
+    let head = repo
+        .command("git", &["rev-parse", "--short=7", "HEAD"])
+        .current_dir(&next)
+        .output()
+        .expect("short head");
+    assert!(head.status.success(), "{}", text(&head.stderr));
+    let sha = text(&head.stdout);
+
+    let names = repo.phantom(&["list", "--names", "--no-default"]);
+    assert!(names.status.success(), "{}", text(&names.stderr));
+    let listed = text(&names.stdout);
+    assert!(listed.lines().any(|line| line == "next"), "{listed}");
+    assert!(
+        listed.lines().any(|line| line == "feature/topic"),
+        "{listed}"
+    );
+    assert!(listed.lines().any(|line| line == "kept"), "{listed}");
+    assert!(!listed.lines().any(|line| line == sha), "{listed}");
+    assert!(!listed.lines().any(|line| line == "moved"), "{listed}");
+
+    let found = repo.phantom(&["where", "next"]);
+    assert!(found.status.success(), "{}", text(&found.stderr));
+    assert!(paths_match(text(&found.stdout).trim(), &next));
+    let found_topic = repo.phantom(&["where", "feature/topic"]);
+    assert!(
+        found_topic.status.success(),
+        "{}",
+        text(&found_topic.stderr)
+    );
+    assert!(paths_match(text(&found_topic.stdout).trim(), &topic));
+    let found_kept = repo.phantom(&["where", "kept"]);
+    assert!(found_kept.status.success(), "{}", text(&found_kept.stderr));
+    assert!(paths_match(text(&found_kept.stdout).trim(), &kept));
+
+    let ran = repo.phantom(&["exec", "next", "true"]);
+    assert!(ran.status.success(), "{}", text(&ran.stderr));
+    let marked = repo.phantom(&["meta", "set", "feature/topic", "--owner", "ada"]);
+    assert!(marked.status.success(), "{}", text(&marked.stderr));
+    let owned = text(&repo.phantom(&["list", "--names", "--owner", "ada"]).stdout);
+    assert_eq!(owned, "feature/topic");
+
+    let stray = repo.root.join("stray-detached");
+    repo.git(&[
+        "worktree",
+        "add",
+        "--detach",
+        stray.to_str().expect("stray"),
+        "HEAD",
+    ]);
+    let stray_head = repo
+        .command("git", &["rev-parse", "--short=7", "HEAD"])
+        .current_dir(&stray)
+        .output()
+        .expect("stray head");
+    let stray_sha = text(&stray_head.stdout);
+    let after_stray = text(&repo.phantom(&["list", "--names", "--no-default"]).stdout);
+    assert!(
+        after_stray.lines().any(|line| line == stray_sha),
+        "{after_stray}"
+    );
+    assert!(
+        !after_stray.lines().any(|line| line == "stray-detached"),
+        "{after_stray}"
+    );
+
+    let deleted = repo.phantom(&["delete", "kept", "--keep-branch"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(!kept.exists());
+    let moved = repo
+        .command("git", &["branch", "--list", "moved"])
+        .output()
+        .expect("branch");
+    assert!(
+        text(&moved.stdout).contains("moved"),
+        "{}",
+        text(&moved.stdout)
+    );
+
+    let file = repo.repo.join(".git/ptm/worktrees.json");
+    let mut document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&file).expect("store")).expect("store json");
+    for record in document["worktrees"].as_array_mut().expect("records") {
+        if record["path"]
+            .as_str()
+            .unwrap_or("")
+            .ends_with("/worktrees/next")
+        {
+            record["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+        }
+    }
+    fs::write(
+        &file,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&document).expect("encode")
+        ),
+    )
+    .expect("rewrite");
+    let planned = repo.phantom(&["gc", "--older-than", "1d", "--json"]);
+    assert!(planned.status.success(), "{}", text(&planned.stderr));
+    let candidates = json_value(&planned)["candidates"]
+        .as_array()
+        .expect("candidates")
+        .clone();
+    let next_row = candidates
+        .iter()
+        .find(|entry| entry["name"] == "next")
+        .expect("gc names the detached worktree next");
+    assert_eq!(next_row["action"], "wouldRemove");
+    let applied = repo.phantom(&["gc", "--older-than", "1d", "--apply", "--json"]);
+    assert!(
+        applied.status.success(),
+        "{}\n{}",
+        text(&applied.stdout),
+        text(&applied.stderr)
+    );
+    let removed = json_value(&applied)["candidates"]
+        .as_array()
+        .expect("candidates")
+        .iter()
+        .find(|entry| entry["name"] == "next")
+        .expect("removed next")
+        .clone();
+    assert_eq!(removed["action"], "removed");
+    assert!(!next.exists());
+}
+
+#[test]
+fn list_shows_absolute_or_home_paths() {
+    let repo = Repo::new();
+    assert!(repo.phantom(&["create", "inside"]).status.success());
+    let deep = repo.home.join("a/b/c");
+    fs::create_dir_all(&deep).expect("deep");
+    let listed = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "list",
+                "--project",
+                repo.repo.to_str().expect("repo"),
+                "--no-default",
+            ],
+        )
+        .current_dir(&deep)
+        .output()
+        .expect("list");
+    assert!(
+        listed.status.success(),
+        "{}\n{}",
+        text(&listed.stdout),
+        text(&listed.stderr)
+    );
+    let stdout = text(&listed.stdout);
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with("inside ("))
+        .expect("inside");
+    assert!(
+        !line.contains("../"),
+        "list should not print a long relative path\n{line}"
+    );
+    let path = line.trim_start_matches("inside (").trim_end_matches(')');
+    assert!(path.starts_with('/') || path.starts_with("~/"), "{line}");
+    let home = repo.home.canonicalize().expect("home");
+    let worktree = managed(&repo, "inside").canonicalize().expect("worktree");
+    if worktree.starts_with(&home) {
+        let rest = worktree.strip_prefix(&home).expect("under home");
+        assert_eq!(path, format!("~/{}", rest.display()));
+    } else {
+        assert_eq!(path, worktree.to_string_lossy());
+    }
+}
+
+#[test]
 fn symlink_spelling_keeps_metadata_and_cleans_the_project_directory() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "feature", "--owner", "alice", "--json"]);
@@ -7440,6 +7665,15 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
     assert!(created_json.get("error").is_none(), "{created_json}");
     assert_eq!(created_json["worktree"]["name"], "a");
     assert!(created_json["metadata"]["ok"].as_bool().unwrap_or(false));
+    let json_path = created_json["worktree"]["path"].as_str().expect("path");
+    let canonical = fs::canonicalize(Path::new(json_path)).expect("canonical");
+    assert_eq!(Path::new(json_path), canonical);
+    let message = text(&created.stderr);
+    assert!(
+        message.contains(json_path),
+        "human message and JSON should use the same path\n{message}\n{json_path}"
+    );
+    assert!(!message.contains(link.to_str().expect("link")), "{message}");
 
     repo.git(&["branch", "attached"]);
     let attached = run(&["attach", "attached", "--json"]);
