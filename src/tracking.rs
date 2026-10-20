@@ -265,8 +265,17 @@ fn ambiguous(branch: &str, remotes: &[String]) -> String {
 }
 
 fn remote_taken(branch: &str, remotes: &[String]) -> String {
+    let commands = if remotes.len() == 1 {
+        format!("`mabo attach {branch}`")
+    } else {
+        remotes
+            .iter()
+            .map(|remote| format!("`mabo attach {remote}/{branch}`"))
+            .collect::<Vec<_>>()
+            .join(" or ")
+    };
     format!(
-        "Branch '{branch}' already exists as a remote-tracking branch ({}). Run `mabo attach {branch}`.",
+        "Branch '{branch}' already exists as a remote-tracking branch ({}). Run {commands}.",
         remotes.join(", ")
     )
 }

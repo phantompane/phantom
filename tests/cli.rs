@@ -8967,6 +8967,40 @@ fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
 }
 
 #[test]
+fn create_with_multiple_remotes_suggests_working_qualified_attach_commands() {
+    for remote in ["origin", "upstream"] {
+        let repo = Repo::new();
+        repo.git(&["config", "branch.autoSetupMerge", "false"]);
+        publish_tracking_branch(&repo, "origin", "feature/teammate");
+        publish_tracking_branch(&repo, "upstream", "feature/teammate");
+
+        let created = repo.mabo(&["create", "feature/teammate"]);
+        assert_eq!(created.status.code(), Some(3), "{}", text(&created.stderr));
+        let message = text(&created.stderr);
+        assert_eq!(
+            message,
+            "Branch 'feature/teammate' already exists as a remote-tracking branch (origin, upstream). Run `mabo attach origin/feature/teammate` or `mabo attach upstream/feature/teammate`."
+        );
+        assert!(local_branch(&repo, "feature/teammate").is_empty());
+        assert!(!managed(&repo, "feature/teammate").exists());
+
+        let qualified = format!("{remote}/feature/teammate");
+        let command = message
+            .split('`')
+            .find(|command| *command == format!("mabo attach {qualified}"))
+            .expect("suggested attach command");
+        let args: Vec<_> = command.split_whitespace().skip(1).collect();
+        let attached = repo.mabo(&args);
+        assert!(attached.status.success(), "{}", text(&attached.stderr));
+        assert!(text(&attached.stdout).contains("Attached worktree: feature/teammate"));
+        assert_eq!(upstream_name(&repo, "feature/teammate"), qualified);
+        assert!(managed(&repo, "feature/teammate")
+            .join("README.md")
+            .is_file());
+    }
+}
+
+#[test]
 fn attach_qualified_remote_drops_the_remote_prefix() {
     let repo = Repo::new();
     repo.git(&["config", "branch.autoSetupMerge", "false"]);
