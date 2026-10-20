@@ -518,7 +518,7 @@ fn clone_root_for_names(include_ghq: bool, warnings: &mut Vec<String>) -> Option
         Ok((root, root_warnings)) => {
             if include_ghq {
                 for warning in root_warnings {
-                    eprintln!("Warning: {warning}");
+                    crate::output::warning("project_discovery", format!("Warning: {warning}"));
                 }
             }
             Some(root)
@@ -610,7 +610,7 @@ pub fn resolve_project_ref(reference: &str) -> Result<PathBuf> {
     let include_ghq = preferences_include_discovery()?;
     let catalog = list_catalog(include_ghq)?;
     for warning in &catalog.warnings {
-        eprintln!("Warning: {warning}");
+        crate::output::warning("project_discovery", format!("Warning: {warning}"));
     }
     select_named_project(reference, &candidates(&catalog))
 }
@@ -759,9 +759,10 @@ fn select_named_project(reference: &str, projects: &[ProjectCandidate]) -> Resul
     match matches.as_slice() {
         [] => Err(Error::ProjectNotFound(reference.to_string())),
         [project] => Ok(project.root.clone()),
-        many => Err(Error::validation(ambiguous_project_message(
-            reference, many,
-        ))),
+        many => Err(Error::Status {
+            code: "ambiguous",
+            message: ambiguous_project_message(reference, many),
+        }),
     }
 }
 
@@ -1416,7 +1417,13 @@ mod tests {
             ),
         ];
         let error = select_named_project("widget", &projects).expect_err("ambiguous");
-        assert!(matches!(error, Error::Validation(_)));
+        assert!(matches!(
+            error,
+            Error::Status {
+                code: "ambiguous",
+                ..
+            }
+        ));
         assert_eq!(error.exit_code(), crate::error::VALIDATION);
         let message = error.to_string();
         assert!(message.starts_with("Project 'widget' matches multiple projects:\n"));
@@ -1463,7 +1470,13 @@ mod tests {
             "/work/localname"
         );
         let error = select_named_project("localname", &projects).expect_err("ambiguous");
-        assert!(matches!(error, Error::Validation(_)));
+        assert!(matches!(
+            error,
+            Error::Status {
+                code: "ambiguous",
+                ..
+            }
+        ));
         assert_eq!(error.exit_code(), crate::error::VALIDATION);
         let message = error.to_string();
         assert!(message.contains("github.com/acme/widget"), "{message}");

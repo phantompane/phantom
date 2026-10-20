@@ -88,6 +88,7 @@ pub struct CandidateEntry {
 pub struct Report {
     pub version: u32,
     pub applied: bool,
+    pub plan: bool,
     pub candidates: Vec<CandidateEntry>,
     #[serde(skip)]
     pub lines: Vec<String>,
@@ -97,7 +98,15 @@ pub struct Report {
 impl Report {
     pub fn exit_code(&self) -> i32 {
         if self.error.is_some() {
-            error::GENERAL
+            if self
+                .candidates
+                .iter()
+                .any(|entry| entry.action == Action::Removed)
+            {
+                error::PARTIAL
+            } else {
+                error::GENERAL
+            }
         } else {
             error::SUCCESS
         }
@@ -491,7 +500,10 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
         .as_deref()
         .and_then(|base| crate::sync::default_local_branch(&context.git_root, base).ok());
     if name.is_none() {
-        eprintln!("Warning: cannot resolve the default branch; keeping all branch worktrees");
+        crate::output::warning(
+            "default_branch_unavailable",
+            "Warning: cannot resolve the default branch; keeping all branch worktrees",
+        );
     }
     let default = DefaultBranch { base, name };
     let current = current_worktree_path(context);
@@ -752,9 +764,12 @@ fn warn_unavailable_pull_requests(facts: &[WorktreeFacts], policy: &Policy) {
     }
     for facts in facts {
         if facts.pr == PullRequestState::Unavailable {
-            eprintln!(
-                "Warning: pull request status unavailable for {}",
-                facts.subject.name
+            crate::output::warning(
+                "pull_request_unavailable",
+                format!(
+                    "Warning: pull request status unavailable for {}",
+                    facts.subject.name
+                ),
             );
         }
     }
@@ -1219,12 +1234,13 @@ fn finish(candidates: Vec<CandidateEntry>, applied: bool, first_failure: Option<
     lines.push(summary(&candidates, applied));
     let error = first_failure.map(|message| JsonErrorBody {
         message,
-        code: "error".to_string(),
-        exit_code: error::GENERAL,
+        code: "failed".to_string(),
+        details: None,
     });
     Report {
         version: error::JSON_VERSION,
         applied,
+        plan: !applied,
         candidates,
         lines,
         error,

@@ -251,12 +251,7 @@ pub fn prepare(git_root: &Path) -> Result<()> {
         ))
     })?;
     let lock = open_lock(&dir)?;
-    lock.lock().map_err(|error| {
-        Error::msg(format!(
-            "Worktree metadata file {} is not writable: {error}",
-            file.display()
-        ))
-    })?;
+    crate::operation::wait_for_lock(&lock, &dir.join(LOCK_NAME))?;
     let path = dir.join(FILE_NAME);
     let probe = dir.join(format!(
         ".{FILE_NAME}.probe-{}-{}",
@@ -487,12 +482,7 @@ fn with_store<T>(git_root: &Path, body: impl FnOnce(&mut Store) -> Result<(T, bo
         ))
     })?;
     let lock = open_lock(&dir)?;
-    lock.lock().map_err(|error| {
-        Error::msg(format!(
-            "Worktree metadata file {} is not writable: {error}",
-            file.display()
-        ))
-    })?;
+    crate::operation::wait_for_lock(&lock, &dir.join(LOCK_NAME))?;
     let mut store = validated_store(&file)?;
     let (value, dirty) = body(&mut store)?;
     if dirty {

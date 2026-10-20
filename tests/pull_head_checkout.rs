@@ -219,15 +219,15 @@ fn gh_checkout_uses_pull_head_when_the_branch_is_deleted() {
         "deleted branch checkout mentioned upstream\n{stderr}"
     );
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(document["github"]["kind"], "pullRequest");
-    assert_eq!(document["github"]["number"], 843);
-    assert_eq!(document["github"]["headRef"], "deleted-feature");
-    assert_eq!(document["github"]["source"], "pullHead");
-    assert_eq!(document["worktree"]["branch"], "deleted-feature");
-    assert_eq!(document["worktree"]["detached"], false);
-    assert_eq!(document["worktree"]["head"], commit);
-    assert!(document["worktree"]["base"].as_str().is_some());
-    let worktree = document["worktree"]["path"].as_str().expect("path");
+    assert_eq!(document["data"]["github"]["kind"], "pullRequest");
+    assert_eq!(document["data"]["github"]["number"], 843);
+    assert_eq!(document["data"]["github"]["headRef"], "deleted-feature");
+    assert_eq!(document["data"]["github"]["source"], "pullHead");
+    assert_eq!(document["data"]["worktree"]["branch"], "deleted-feature");
+    assert_eq!(document["data"]["worktree"]["detached"], false);
+    assert_eq!(document["data"]["worktree"]["head"], commit);
+    assert!(document["data"]["worktree"]["base"].as_str().is_some());
+    let worktree = document["data"]["worktree"]["path"].as_str().expect("path");
     let checked_out = git_text(Path::new(worktree), &["rev-parse", "HEAD"]);
     assert_eq!(checked_out, commit);
     let branch = git_text(Path::new(worktree), &["branch", "--show-current"]);
@@ -286,8 +286,8 @@ fn stale_remote_ref_does_not_become_upstream() {
     assert!(output.status.success(), "{stdout}\n{stderr}");
     assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(document["github"]["source"], "pullHead");
-    assert_eq!(document["worktree"]["head"], commit);
+    assert_eq!(document["data"]["github"]["source"], "pullHead");
+    assert_eq!(document["data"]["worktree"]["head"], commit);
     assert!(branch_config(&clone, "deleted-feature", "merge").is_none());
     assert!(branch_config(&clone, "deleted-feature", "remote").is_none());
     assert!(upstream(&clone, "deleted-feature").is_none());
@@ -313,8 +313,8 @@ fn unfetched_branch_gets_an_upstream() {
     assert!(output.status.success(), "{stdout}\n{stderr}");
     assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(document["github"]["source"], "branch");
-    assert_eq!(document["github"]["headRef"], "live-feature");
+    assert_eq!(document["data"]["github"]["source"], "branch");
+    assert_eq!(document["data"]["github"]["headRef"], "live-feature");
     assert_eq!(
         upstream(&clone, "live-feature").as_deref(),
         Some("origin/live-feature")
@@ -355,8 +355,8 @@ fn narrow_fetch_refspec_checkout_sets_tracking_and_creates_worktree() {
     assert!(output.status.success(), "{stdout}\n{stderr}");
     assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(document["github"]["source"], "branch");
-    let worktree = Path::new(document["worktree"]["path"].as_str().expect("path"));
+    assert_eq!(document["data"]["github"]["source"], "branch");
+    let worktree = Path::new(document["data"]["worktree"]["path"].as_str().expect("path"));
     assert!(worktree.is_dir());
     assert_eq!(git_text(worktree, &["rev-parse", "HEAD"]), commit);
     assert_eq!(
@@ -472,7 +472,7 @@ fn already_fetched_branch_keeps_its_remote_tip() {
     assert!(output.status.success(), "{stdout}\n{stderr}");
     assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(document["github"]["source"], "branch");
+    assert_eq!(document["data"]["github"]["source"], "branch");
     assert_eq!(
         git_text(&clone, &["rev-parse", "refs/remotes/origin/live-feature"]),
         before
@@ -539,7 +539,7 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
     let stdout = String::from_utf8_lossy(&checked_out.stdout);
     assert!(checked_out.status.success(), "{stdout}");
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
-    let worktree = document["worktree"]["path"]
+    let worktree = document["data"]["worktree"]["path"]
         .as_str()
         .expect("path")
         .to_string();
@@ -556,7 +556,9 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
     let extra_stdout = String::from_utf8_lossy(&extra_out.stdout);
     assert!(extra_out.status.success(), "{extra_stdout}");
     let extra_doc: serde_json::Value = serde_json::from_str(&extra_stdout).expect("json");
-    let extra_worktree = extra_doc["worktree"]["path"].as_str().expect("path");
+    let extra_worktree = extra_doc["data"]["worktree"]["path"]
+        .as_str()
+        .expect("path");
     fs::write(Path::new(extra_worktree).join("local.txt"), "local\n").expect("local");
     git(Path::new(extra_worktree), &["add", "local.txt"]);
     git(Path::new(extra_worktree), &["commit", "-m", "local"]);
@@ -568,8 +570,8 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
         "{skipped_stdout}\n{skipped_stderr}"
     );
     let skipped_doc: serde_json::Value = serde_json::from_str(&skipped_stdout).expect("json");
-    assert_eq!(skipped_doc["candidates"][0]["action"], "skipped");
-    assert_eq!(skipped_doc["candidates"][0]["detail"], "unpushed");
+    assert_eq!(skipped_doc["data"]["candidates"][0]["action"], "skipped");
+    assert_eq!(skipped_doc["data"]["candidates"][0]["detail"], "unpushed");
     assert!(Path::new(extra_worktree).is_dir());
 
     let collected = mabo(&clone, &bin, &["gc", "--pr", "--apply", "--json"]);
@@ -581,10 +583,10 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
     );
     let collected_doc: serde_json::Value = serde_json::from_str(&collected_stdout).expect("json");
     assert_eq!(
-        collected_doc["candidates"][0]["reasons"],
+        collected_doc["data"]["candidates"][0]["reasons"],
         serde_json::json!(["pullRequest"])
     );
-    assert_eq!(collected_doc["candidates"][0]["action"], "removed");
+    assert_eq!(collected_doc["data"]["candidates"][0]["action"], "removed");
     assert!(!Path::new(&worktree).exists());
 }
 
@@ -831,7 +833,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
         );
         assert!(out.status.success());
         let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(doc["worktree"]["base"], "refs/heads/main");
+        assert_eq!(doc["data"]["worktree"]["base"], "refs/heads/main");
 
         install_gh(
             &bin,
@@ -856,7 +858,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
                 String::from_utf8_lossy(&out.stderr)
             );
             let store: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-            let worktree = store["worktree"]["path"].as_str().unwrap();
+            let worktree = store["data"]["worktree"]["path"].as_str().unwrap();
             let listed = mabo(
                 &clone,
                 &bin,
@@ -864,7 +866,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
             );
             let doc: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
             assert_eq!(
-                doc["worktree"]["base"],
+                doc["data"]["worktree"]["base"],
                 if explicit {
                     "refs/heads/main"
                 } else {
@@ -885,6 +887,6 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
             String::from_utf8_lossy(&out.stderr)
         );
         let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert!(doc["worktree"]["base"].is_null());
+        assert!(doc["data"]["worktree"]["base"].is_null());
     }
 }

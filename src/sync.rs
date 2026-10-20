@@ -45,7 +45,6 @@ impl Item {
 
 #[derive(Serialize)]
 pub struct Report {
-    pub schema: u32,
     pub default: Option<Item>,
     pub worktrees: Vec<Item>,
     #[serde(skip)]
@@ -588,7 +587,6 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         }
     }
     let mut report = Report {
-        schema: 1,
         default: None,
         worktrees: Vec::new(),
         exit: 0,
@@ -640,10 +638,11 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         report.worktrees.push(item);
     }
     let ordinary_failure = !fetch_errors.is_empty()
-        || report.default.iter().chain(&report.worktrees).any(|item| {
-            item.status == "conflict"
-                || (item.status == "failed" && item.code.as_deref() != Some("pushed"))
-        })
+        || report
+            .default
+            .iter()
+            .chain(&report.worktrees)
+            .any(|item| item.status == "failed" && item.code.as_deref() != Some("published"))
         || (targets.is_empty()
             && report
                 .default
@@ -652,13 +651,22 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
     let refused = report
         .worktrees
         .iter()
-        .any(|item| item.code.as_deref() == Some("pushed"));
+        .any(|item| item.code.as_deref() == Some("published"));
+    let items = || report.default.iter().chain(&report.worktrees);
+    let changed = items().any(|item| item.before != item.after);
+    let conflict = items().any(|item| item.status == "conflict");
     report.exit = if ordinary_failure {
-        1
+        if changed {
+            crate::error::PARTIAL
+        } else {
+            crate::error::GENERAL
+        }
+    } else if conflict {
+        crate::error::CONFLICT
     } else if refused {
-        3
+        crate::error::REFUSED
     } else {
-        0
+        crate::error::SUCCESS
     };
     Ok(report)
 }
@@ -1046,7 +1054,7 @@ fn sync_tree(
             "failed",
             Some("Published commits require --force with --rebase".into()),
         );
-        item.code = Some("pushed".into());
+        item.code = Some("published".into());
         return Ok(item);
     }
     if strategy == "rebase" {

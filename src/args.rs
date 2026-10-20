@@ -293,7 +293,7 @@ mod tests {
         );
         assert!(matches!(error, Error::Validation(_)));
         assert_eq!(error.exit_code(), crate::error::VALIDATION);
-        assert_eq!(error.json_code(error.exit_code()), "validation");
+        assert_eq!(error.json_code(error.exit_code()), "usage");
     }
 
     #[test]

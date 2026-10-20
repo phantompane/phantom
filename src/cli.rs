@@ -19,6 +19,40 @@ struct Command {
 }
 
 pub fn run(args: &[String]) -> Result<i32> {
+    // Common options may precede the command as well as follow it. Keep the
+    // command path in front so exec/remainder boundaries retain their meaning.
+    let mut prefix = 0;
+    while let Some(arg) = args.get(prefix) {
+        let name = arg.split('=').next().unwrap_or(arg);
+        if !matches!(
+            name,
+            "--json" | "--output" | "--no-input" | "--lock-timeout"
+        ) {
+            break;
+        }
+        prefix += 1;
+        if matches!(name, "--output" | "--lock-timeout")
+            && !arg.contains('=')
+            && prefix < args.len()
+        {
+            prefix += 1;
+        }
+    }
+    if prefix > 0 {
+        if prefix == args.len() {
+            return Err(Error::validation(
+                "A command is required after common options",
+            ));
+        }
+        let rest = &args[prefix..];
+        let consumed = find(rest, COMMANDS)
+            .map(|(_, remaining)| rest.len() - remaining.len())
+            .unwrap_or(1);
+        let mut reordered = rest[..consumed].to_vec();
+        reordered.extend_from_slice(&args[..prefix]);
+        reordered.extend_from_slice(&rest[consumed..]);
+        return run(&reordered);
+    }
     if args.is_empty() || args[0] == "-h" || args[0] == "--help" {
         println!("{}", help::main_help()?);
         return Ok(SUCCESS);
@@ -35,11 +69,57 @@ pub fn run(args: &[String]) -> Result<i32> {
             }
             Ok(SUCCESS)
         }
-        Some((command, remaining)) => (command.run)(remaining),
+        Some((command, remaining)) => {
+            let key = command.help_key;
+            let supports_json = matches!(
+                key,
+                "create"
+                    | "attach"
+                    | "list"
+                    | "where"
+                    | "delete"
+                    | "sync"
+                    | "gc"
+                    | "trust"
+                    | "untrust"
+                    | "meta set"
+                    | "clone"
+                    | "project add"
+                    | "project list"
+                    | "project remove"
+                    | "github checkout"
+            );
+            let locks = matches!(
+                key,
+                "create"
+                    | "attach"
+                    | "delete"
+                    | "sync"
+                    | "gc"
+                    | "meta set"
+                    | "where"
+                    | "exec"
+                    | "github checkout"
+                    | "trust"
+                    | "untrust"
+            );
+            crate::output::begin(
+                key,
+                supports_json && std::env::var("MABO_OUTPUT").ok().as_deref() == Some("json"),
+            );
+            let result = crate::runtime::prepare(remaining, supports_json, locks, key)
+                .and_then(|args| (command.run)(&args));
+            let exit = match result {
+                Ok(exit) => exit,
+                Err(error) => fail_with(&error, error.exit_code(), crate::output::json())?,
+            };
+            crate::output::finish(exit)?;
+            Ok(exit)
+        }
         None => {
             eprintln!("Error: Unknown command '{}'\n", args.join(" "));
             println!("{}", help::main_help()?);
-            Ok(GENERAL)
+            Ok(VALIDATION)
         }
     }
 }
@@ -96,20 +176,24 @@ fn sync(args: &[String]) -> Result<i32> {
     };
     let report = match crate::sync::run(&context, &request) {
         Ok(report) => report,
-        Err(error) => {
-            return fail_with(
-                &error,
-                if matches!(error, Error::Validation(_) | Error::WorktreeNotFound(_)) {
-                    2
-                } else {
-                    1
-                },
-                json,
-            )
-        }
+        Err(error) => return fail_with(&error, error.exit_code(), json),
     };
     if json {
         emit_json(&report)?;
+        if report.exit != 0 {
+            crate::output::failure(
+                Error::Status {
+                    code: if report.exit == crate::error::REFUSED {
+                        "published"
+                    } else {
+                        crate::error::status_code(report.exit)
+                    },
+                    message: "Sync did not complete successfully".into(),
+                }
+                .to_json(report.exit)
+                .error,
+            );
+        }
     } else {
         for item in report.default.iter().chain(&report.worktrees) {
             // Git diagnostics can contain newlines; human output stays one line per item.
@@ -309,7 +393,7 @@ fn list(args: &[String]) -> Result<i32> {
     };
     let exclude_default = parsed.flag("no-default");
     if let Some(warning) = metadata::read_problem(&context.git_root) {
-        eprintln!("Warning: {warning}");
+        crate::output::warning("metadata_read", format!("Warning: {warning}"));
     }
     let worktrees = match worktree::list_worktrees(&context, exclude_default, false) {
         Ok(worktrees) => worktrees,
@@ -385,7 +469,9 @@ fn where_cmd(args: &[String]) -> Result<i32> {
             match metadata::touch(&context.git_root, Path::new(&worktree.path)) {
                 Ok(Some(updated)) => worktree.metadata = updated,
                 Ok(None) => {}
-                Err(error) => eprintln!("Warning: {error}"),
+                Err(error) => {
+                    crate::output::warning("last_used_update", format!("Warning: {error}"))
+                }
             }
             if json {
                 emit_json(&worktree::WorktreeRefOutput {
@@ -502,11 +588,14 @@ fn delete(args: &[String]) -> Result<i32> {
                         emit_json(&worktree::DeleteOutput {
                             version: crate::error::JSON_VERSION,
                             deleted,
-                            error: Some(error.to_json(GENERAL).error),
+                            error: Some(error.to_json(crate::error::PARTIAL).error),
                         })?;
-                        return Ok(GENERAL);
+                        return Ok(crate::error::PARTIAL);
                     }
-                    return fail(&error, GENERAL);
+                    return fail(
+                        &Error::status(crate::error::PARTIAL, error.to_string()),
+                        crate::error::PARTIAL,
+                    );
                 }
                 if !json {
                     println!("{}", outcome.message);
@@ -520,10 +609,13 @@ fn delete(args: &[String]) -> Result<i32> {
             }
             Err(failure) => {
                 let error = &failure.error;
-                let code = match error {
-                    Error::WorktreeNotFound(_) => NOT_FOUND,
-                    Error::Uncommitted { .. } => VALIDATION,
-                    other => other.exit_code(),
+                let code = if deleted.is_empty() {
+                    match error {
+                        Error::Untrusted(_) | Error::LockTimeout(_) => error.exit_code(),
+                        _ => GENERAL,
+                    }
+                } else {
+                    crate::error::PARTIAL
                 };
                 if json {
                     deleted.push(worktree::DeletedEntry {
@@ -538,11 +630,11 @@ fn delete(args: &[String]) -> Result<i32> {
                     emit_json(&worktree::DeleteOutput {
                         version: crate::error::JSON_VERSION,
                         deleted,
-                        error: Some(error.to_json(code).error),
+                        error: Some(error.aggregate_json(code)),
                     })?;
                     return Ok(code);
                 }
-                return fail(error, code);
+                return fail(&Error::status(code, error.to_string()), code);
             }
         }
     }
@@ -574,7 +666,7 @@ fn exec(args: &[String]) -> Result<i32> {
         let code = if matches!(error, Error::WorktreeNotFound(_)) {
             NOT_FOUND
         } else {
-            error.exit_code()
+            error.child_exit_code()
         };
         return fail(&error, code);
     }
@@ -596,7 +688,7 @@ fn exec(args: &[String]) -> Result<i32> {
             let code = if matches!(error, Error::WorktreeNotFound(_)) {
                 NOT_FOUND
             } else {
-                error.exit_code()
+                error.child_exit_code()
             };
             fail(&error, code)
         }
@@ -610,7 +702,7 @@ fn preferences_root(args: &[String]) -> Result<i32> {
         }
         return Ok(SUCCESS);
     }
-    Err(Error::msg(format!(
+    Err(Error::validation(format!(
         "Unknown preferences subcommand: {}",
         args[0]
     )))
@@ -747,7 +839,7 @@ fn project_root(args: &[String]) -> Result<i32> {
         }
         return Ok(SUCCESS);
     }
-    Err(Error::msg(format!(
+    Err(Error::validation(format!(
         "Unknown project subcommand: {}",
         args[0]
     )))
@@ -836,7 +928,7 @@ fn project_list(args: &[String]) -> Result<i32> {
         Err(error) => return bubble(error, json),
     };
     for warning in &catalog.warnings {
-        eprintln!("Warning: {warning}");
+        crate::output::warning("project_discovery", format!("Warning: {warning}"));
     }
     if json {
         return emit_json(&catalog_json(&catalog.projects, catalog.version));
@@ -952,9 +1044,10 @@ fn find_project(projects: &[ProjectRecord], identifier: &str) -> Result<Option<P
         return Ok(Some(name_matches[0].clone()));
     }
     if name_matches.len() > 1 {
-        return Err(Error::msg(format!(
-            "Project '{identifier}' is ambiguous; use its id or path"
-        )));
+        return Err(Error::Status {
+            code: "ambiguous",
+            message: format!("Project '{identifier}' is ambiguous; use its id or path"),
+        });
     }
     if let Ok(root) = projects::resolve_project_root(Path::new(identifier)) {
         let root = root.to_string_lossy().to_string();
@@ -973,7 +1066,7 @@ fn github_root(args: &[String]) -> Result<i32> {
         }
         return Ok(SUCCESS);
     }
-    Err(Error::msg(format!(
+    Err(Error::validation(format!(
         "Unknown github subcommand: {}",
         args[0]
     )))
@@ -1020,6 +1113,9 @@ fn github_checkout(args: &[String]) -> Result<i32> {
         Ok(checkout) => checkout,
         Err(error) => return fail_with(&error, error.exit_code(), json),
     };
+    let partial = checkout.hook_failure.is_some()
+        || checkout.metadata_error.is_some()
+        || checkout.copy_error.is_some();
     if json {
         let document = match checkout.to_json() {
             Ok(document) => document,
@@ -1030,18 +1126,17 @@ fn github_checkout(args: &[String]) -> Result<i32> {
         println!("{}", checkout.message);
     }
     if let Some(error) = &checkout.metadata_error {
-        eprintln!("Warning: {error}");
+        crate::output::warning("metadata_save", format!("Warning: {error}"));
     }
     if let Some(failure) = &checkout.hook_failure {
         let _ = std::io::Write::flush(&mut std::io::stdout());
-        eprintln!("{}", failure.warning(&checkout.path));
+        crate::output::warning("post_create", failure.warning(&checkout.path));
     }
-    let status = checkout
-        .hook_failure
-        .as_ref()
-        .map(|failure| failure.code)
-        .or(checkout.metadata_error.as_ref().map(|_| GENERAL))
-        .unwrap_or(SUCCESS);
+    let status = if partial {
+        crate::error::PARTIAL
+    } else {
+        SUCCESS
+    };
     Ok(status)
 }
 
@@ -1066,7 +1161,10 @@ fn meta_root(args: &[String]) -> Result<i32> {
         }
         return Ok(SUCCESS);
     }
-    Err(Error::msg(format!("Unknown meta subcommand: {}", args[0])))
+    Err(Error::validation(format!(
+        "Unknown meta subcommand: {}",
+        args[0]
+    )))
 }
 
 fn meta_set(args: &[String]) -> Result<i32> {
@@ -1419,8 +1517,8 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
     if !parsed.flag("yes") {
         if json || !trust::prompts() {
             return fail_with(
-                &Error::msg(
-                    "mabo will not ask for trust in this environment. Re-run with --yes to trust this project.",
+                &Error::Untrusted(
+                    "mabo will not ask for trust in this environment. Re-run with --yes to trust this project.".into(),
                 ),
                 GENERAL,
                 json,
@@ -1432,7 +1530,7 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
         };
         if !accepted {
             return fail_with(
-                &Error::msg(format!("Did not trust {}", project.project)),
+                &Error::Untrusted(format!("Did not trust {}", project.project)),
                 GENERAL,
                 json,
             );
@@ -1614,39 +1712,38 @@ fn report_delete_refusals(failures: Vec<worktree::DeleteError>, json: bool) -> R
 }
 
 fn delete_status(error: &Error) -> i32 {
-    match error {
-        Error::WorktreeNotFound(_) => NOT_FOUND,
-        Error::Uncommitted { .. } => VALIDATION,
-        other => other.exit_code(),
-    }
+    error.exit_code()
 }
 
 fn fail(error: &Error, code: i32) -> Result<i32> {
     fail_with(error, code, false)
 }
 
-fn fail_with(error: &Error, code: i32, json: bool) -> Result<i32> {
-    if json {
-        match serde_json::to_string_pretty(&error.to_json(code)) {
-            Ok(text) => println!("{text}"),
-            Err(render) => eprintln!("{error}\n{render}"),
+fn fail_with(error: &Error, requested: i32, json: bool) -> Result<i32> {
+    let code = if matches!(error, Error::CommandFailed { .. } | Error::Signaled(_))
+        && !json
+        && !crate::output::json()
+    {
+        // Child status transparency belongs only to standalone exec.
+        if crate::output::command_is_exec() {
+            error.child_exit_code()
+        } else {
+            error.exit_code()
         }
-        return Ok(code);
-    }
-    let message = error.to_string();
-    if message.is_empty() {
-        eprintln!();
     } else {
-        eprintln!("{message}");
+        crate::error::exit_for_code(error.json_code(requested))
+    };
+    if json {
+        crate::output::set_json(true);
+        crate::output::failure(error.to_json(requested).error);
+    } else {
+        eprintln!("{error}");
     }
     Ok(code)
 }
 
 fn emit_json(value: &impl serde::Serialize) -> Result<i32> {
-    let text =
-        serde_json::to_string_pretty(value).map_err(|error| Error::msg(error.to_string()))?;
-    println!("{text}");
-    Ok(SUCCESS)
+    crate::output::data(value)
 }
 
 fn finish_mutation(
@@ -1655,24 +1752,40 @@ fn finish_mutation(
     exec: Option<&worktree::ExecOutcome>,
     exit_code: Option<i32>,
 ) -> Result<i32> {
+    let partial = exit_code.is_some_and(|code| code != 0) || !document.copy_files.ok;
+    let status = if partial {
+        crate::error::PARTIAL
+    } else {
+        SUCCESS
+    };
     if json {
         emit_json(document)?;
-        return Ok(exit_code.unwrap_or(SUCCESS));
     }
-    if let Some(exec) = exec.filter(|exec| !exec.ok) {
-        let error = if let Some(signal) = &exec.signal {
-            Error::Signaled(signal.clone())
-        } else if let Some(message) = &exec.error {
-            Error::msg(message.clone())
-        } else {
-            Error::CommandFailed {
-                command: exec.shell.clone(),
-                code: exec.exit_code,
+    if partial {
+        let mut error = Error::status(status, "Worktree created but setup did not complete")
+            .to_json(status)
+            .error;
+        if let Some(exec) = exec.filter(|exec| !exec.ok) {
+            error.details =
+                Some(serde_json::json!({"exitCode": exec.exit_code, "signal": exec.signal}));
+            if !json {
+                let message = if let Some(signal) = &exec.signal {
+                    Error::Signaled(signal.clone()).to_string()
+                } else if let Some(error) = &exec.error {
+                    error.clone()
+                } else {
+                    Error::CommandFailed {
+                        command: exec.shell.clone(),
+                        code: exec.exit_code,
+                    }
+                    .to_string()
+                };
+                eprintln!("{message}");
             }
-        };
-        return fail(&error, exec.exit_code);
+        }
+        crate::output::failure(error);
     }
-    Ok(exit_code.unwrap_or(SUCCESS))
+    Ok(status)
 }
 
 fn bubble(error: Error, json: bool) -> Result<i32> {
@@ -1704,20 +1817,10 @@ fn logger_for(json: bool) -> Logger {
 }
 
 fn create_code(error: &Error) -> i32 {
-    match error {
-        Error::WorktreeAlreadyExists(_) => VALIDATION,
-        Error::CommandFailed { code, .. } => *code,
-        other => other.exit_code(),
-    }
+    error.exit_code()
 }
-
 fn attach_code(error: &Error) -> i32 {
-    match error {
-        Error::WorktreeAlreadyExists(_) => VALIDATION,
-        Error::BranchNotFound(_) => NOT_FOUND,
-        Error::CommandFailed { code, .. } => *code,
-        other => other.exit_code(),
-    }
+    error.exit_code()
 }
 
 static META_COMMANDS: &[Command] = &[Command {

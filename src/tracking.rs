@@ -25,8 +25,14 @@ pub(crate) fn reject_remote_create(git_root: &Path, name: &str) -> Result<()> {
     let catalog = Catalog::read(git_root)?;
     match catalog.exact(name) {
         Hits::None => Ok(()),
-        Hits::One(hit) => Err(Error::Validation(remote_taken(name, &[hit.remote]))),
-        Hits::Many(remotes) => Err(Error::Validation(remote_taken(name, &remotes))),
+        Hits::One(hit) => Err(Error::Status {
+            code: "exists_remote",
+            message: remote_taken(name, &[hit.remote]),
+        }),
+        Hits::Many(remotes) => Err(Error::Status {
+            code: "exists_remote",
+            message: remote_taken(name, &remotes),
+        }),
     }
 }
 

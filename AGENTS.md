@@ -6,7 +6,7 @@
 - Development happens on `next`. `main` stays the previous TypeScript version.
 - Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `github`, `help`.
 - Command help text is generated from `help-data.json`.
-- Project hooks live in `.mabo.toml` in the source checkout, the checkout where the command runs (`[hooks] post-create` and `pre-delete`). `MABO_ROOT_PATH` is that checkout. Hooks run only after that git common directory is trusted (`mabo trust --yes` or `MABO_TRUST_ALL=1`). mabo does not ask when `CI` or `MABO_AGENT_ID` is set, or when stdin or stderr is not a terminal. `--no-hooks` skips them. `mabo gc` skips an untrusted repository that has pre-delete hooks and does not ask. Trust is the common-dir path, so a re-clone at the same path stays trusted until `mabo untrust`.
+- Project hooks live in `.mabo.toml` in the source checkout, the checkout where the command runs (`[hooks] post-create` and `pre-delete`). `MABO_ROOT_PATH` is that checkout. Hooks run only after that git common directory is trusted (`mabo trust --yes` or `MABO_TRUST_ALL=1`). mabo does not ask with nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or when stdin or stderr is not a terminal. `MABO_AGENT_ID` sets the default owner but does not suppress prompts. `--no-hooks` skips them. `mabo gc` skips an untrusted repository that has pre-delete hooks and does not ask. Trust is the common-dir path, so a re-clone at the same path stays trusted until `mabo untrust`.
 - Principles: single responsibility, a centralized git executor, and `Result` for every fallible path.
 
 ## Build, Test, and Development Commands

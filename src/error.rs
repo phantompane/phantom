@@ -1,17 +1,22 @@
 pub const SUCCESS: i32 = 0;
 pub const GENERAL: i32 = 1;
-pub const NOT_FOUND: i32 = 2;
-pub const VALIDATION: i32 = 3;
-pub const NOT_REPOSITORY: i32 = 4;
+pub const VALIDATION: i32 = 2;
+pub const NOT_FOUND: i32 = 3;
+pub const NOT_REPOSITORY: i32 = NOT_FOUND;
+pub const REFUSED: i32 = 4;
+pub const CONFLICT: i32 = 5;
+pub const PARTIAL: i32 = 6;
+pub const LOCK_TIMEOUT: i32 = 7;
 
-/// Schema version for machine-readable `--json` output.
-///
-/// Worktree commands and `--json` errors use this version. `project list --json`
-/// keeps its own catalog version. Parsers must ignore unknown fields.
-pub const JSON_VERSION: u32 = 1;
+/// Version of the common machine-readable envelope.
+pub const JSON_VERSION: u32 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("{message}")]
+    Status { code: &'static str, message: String },
+    #[error("Timed out waiting for lock {0}; another mabo is running")]
+    LockTimeout(std::path::PathBuf),
     #[error("{0}")]
     Message(String),
     #[error("{0}")]
@@ -55,8 +60,7 @@ impl Error {
         Self::Message(message.into())
     }
 
-    /// Invalid command-line arguments. Every parser failure uses this so the
-    /// exit code and JSON `code` stay `validation` / 3 for every subcommand.
+    /// Invalid command-line arguments use the shared usage status.
     pub fn validation(message: impl Into<String>) -> Self {
         Self::Validation(message.into())
     }
@@ -79,67 +83,109 @@ impl Error {
         }
     }
 
+    pub fn status(exit: i32, message: impl Into<String>) -> Self {
+        Self::Status {
+            code: status_code(exit),
+            message: message.into(),
+        }
+    }
+
     pub fn exit_code(&self) -> i32 {
+        exit_for_code(self.json_code(GENERAL))
+    }
+
+    /// Only standalone exec passes child statuses through.
+    pub fn child_exit_code(&self) -> i32 {
         match self {
             Self::CommandFailed { code, .. } => *code,
             Self::Signaled(name) => 128 + signal_number(name),
-            Self::NotARepository => NOT_REPOSITORY,
-            Self::ProjectNotFound(_) | Self::PathNotFound(_) => NOT_FOUND,
-            Self::Validation(_) | Self::Unpushed { .. } => VALIDATION,
-            _ => GENERAL,
+            _ => self.exit_code(),
         }
     }
 
-    pub fn to_json(&self, exit_code: i32) -> JsonError {
+    pub fn to_json(&self, requested: i32) -> JsonError {
         JsonError {
-            version: JSON_VERSION,
             error: JsonErrorBody {
                 message: self.to_string(),
-                code: self.json_code(exit_code).to_string(),
-                exit_code,
+                code: self.json_code(requested).into(),
+                details: None,
             },
         }
     }
 
-    pub fn json_code(&self, exit_code: i32) -> &'static str {
+    /// Aggregate operations can fail after a guard was rechecked, or after changes.
+    /// Preserve the cause when its ordinary status differs from the aggregate status.
+    pub fn aggregate_json(&self, exit: i32) -> JsonErrorBody {
+        let mut error = self.to_json(exit).error;
+        if exit_for_code(&error.code) != exit {
+            error.details = Some(serde_json::json!({"cause": error.code}));
+            error.code = status_code(exit).into();
+        }
+        error
+    }
+
+    pub fn json_code(&self, requested: i32) -> &'static str {
         match self {
+            Self::Status { code, .. } => code,
+            Self::LockTimeout(_) => "lock_timeout",
             Self::WorktreeNotFound(_) | Self::ProjectNotFound(_) | Self::PathNotFound(_) => {
                 "not_found"
             }
-            Self::WorktreeAlreadyExists(_) => "already_exists",
+            Self::WorktreeAlreadyExists(_) => "exists",
             Self::BranchNotFound(_) => "branch_not_found",
             Self::NotARepository => "not_repository",
-            Self::Uncommitted { .. } => "uncommitted",
-            Self::Unpushed { .. } => "unpushed",
+            Self::Uncommitted { .. } => "dirty",
+            Self::Unpushed { .. } => "unpreserved",
             Self::CommandFailed { .. } => "command_failed",
             Self::Signaled(_) => "signaled",
             Self::Spawn { .. } => "spawn",
-            Self::Projects(_) => "projects",
-            Self::Validation(_) => "validation",
+            Self::Validation(_) => "usage",
             Self::Untrusted(_) => "untrusted",
-            Self::Message(_) => match exit_code {
-                NOT_FOUND => "not_found",
-                VALIDATION => "validation",
-                NOT_REPOSITORY => "not_repository",
-                _ => "error",
-            },
+            Self::Projects(_) => "failed",
+            Self::Message(_) => status_code(requested),
         }
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+/// The single exit-code table used by commands and aggregate reports.
+pub fn exit_for_code(code: &str) -> i32 {
+    match code {
+        "usage" | "ambiguous" => VALIDATION,
+        "not_found" | "branch_not_found" | "not_repository" => NOT_FOUND,
+        "dirty" | "unpreserved" | "published" | "exists" | "exists_remote" | "untrusted"
+        | "refused" => REFUSED,
+        "conflict" => CONFLICT,
+        "partial" => PARTIAL,
+        "lock_timeout" => LOCK_TIMEOUT,
+        _ => GENERAL,
+    }
+}
+
+pub fn status_code(exit: i32) -> &'static str {
+    match exit {
+        VALIDATION => "usage",
+        NOT_FOUND => "not_found",
+        REFUSED => "dirty",
+        CONFLICT => "conflict",
+        PARTIAL => "partial",
+        LOCK_TIMEOUT => "lock_timeout",
+        _ => "failed",
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JsonError {
-    pub version: u32,
     pub error: JsonErrorBody,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JsonErrorBody {
     pub message: String,
     pub code: String,
-    pub exit_code: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -165,73 +211,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn json_error_codes_follow_the_error_kind() {
-        let missing = Error::WorktreeNotFound("topic".to_string());
-        let document = missing.to_json(NOT_FOUND);
-        assert_eq!(document.version, JSON_VERSION);
-        assert_eq!(document.error.code, "not_found");
-        assert_eq!(document.error.exit_code, NOT_FOUND);
-        assert!(document.error.message.contains("topic"));
-
-        assert_eq!(
-            Error::WorktreeAlreadyExists("topic".to_string()).json_code(VALIDATION),
-            "already_exists"
-        );
-        assert_eq!(
-            Error::BranchNotFound("topic".to_string()).json_code(NOT_FOUND),
-            "branch_not_found"
-        );
-        let project = Error::ProjectNotFound("widget".to_string());
-        assert_eq!(project.exit_code(), NOT_FOUND);
-        assert_eq!(project.json_code(NOT_FOUND), "not_found");
-        assert_eq!(project.to_string(), "Project 'widget' not found");
-        let missing_path = Error::PathNotFound("/no/such".to_string());
-        assert_eq!(missing_path.exit_code(), NOT_FOUND);
-        assert_eq!(missing_path.json_code(NOT_FOUND), "not_found");
-        assert_eq!(missing_path.to_string(), "Path '/no/such' does not exist");
-        assert_eq!(
-            Error::NotARepository.json_code(NOT_REPOSITORY),
-            "not_repository"
-        );
-        assert_eq!(
-            Error::Uncommitted {
-                name: "topic".to_string(),
-                files: 1,
+    fn every_machine_error_uses_the_shared_exit_table() {
+        for (codes, exit) in [
+            (
+                "failed git_failed io command_failed spawn signaled",
+                GENERAL,
+            ),
+            ("usage ambiguous", VALIDATION),
+            ("not_found branch_not_found not_repository", NOT_FOUND),
+            (
+                "dirty unpreserved published exists exists_remote untrusted",
+                REFUSED,
+            ),
+            ("conflict", CONFLICT),
+            ("partial", PARTIAL),
+            ("lock_timeout", LOCK_TIMEOUT),
+        ] {
+            for code in codes.split_whitespace() {
+                assert_eq!(exit_for_code(code), exit, "{code}");
             }
-            .json_code(VALIDATION),
-            "uncommitted"
-        );
-        let unpushed = Error::Unpushed {
-            name: "topic".to_string(),
-            detail: "has unpushed commits",
-            hint: "Use --keep-branch to keep the branch, or --force to delete it.",
-        };
-        assert_eq!(unpushed.exit_code(), VALIDATION);
-        assert_eq!(unpushed.json_code(VALIDATION), "unpushed");
+        }
+        for error in [
+            Error::WorktreeNotFound("topic".into()),
+            Error::BranchNotFound("topic".into()),
+            Error::NotARepository,
+        ] {
+            assert_eq!(error.exit_code(), NOT_FOUND);
+        }
+        assert_eq!(Error::Untrusted("hooks".into()).exit_code(), REFUSED);
         assert_eq!(
-            unpushed.to_string(),
-            "Worktree 'topic' has unpushed commits. Use --keep-branch to keep the branch, or --force to delete it."
+            Error::WorktreeAlreadyExists("topic".into()).exit_code(),
+            REFUSED
         );
+        assert_eq!(Error::Signaled("SIGTERM".into()).exit_code(), GENERAL);
+        assert_eq!(Error::Signaled("SIGTERM".into()).child_exit_code(), 143);
         assert_eq!(
-            Error::msg("Usage: mabo where <worktree-name>").json_code(VALIDATION),
-            "validation"
+            Error::CommandFailed {
+                command: "child".into(),
+                code: 42
+            }
+            .child_exit_code(),
+            42
         );
-        assert_eq!(Error::msg("boom").json_code(GENERAL), "error");
-        let untrusted = Error::Untrusted("run mabo trust".to_string());
-        assert_eq!(untrusted.exit_code(), GENERAL);
-        assert_eq!(untrusted.json_code(GENERAL), "untrusted");
-        assert_eq!(untrusted.to_json(GENERAL).error.code, "untrusted");
-        assert_eq!(Error::Signaled("SIGTERM".to_string()).exit_code(), 143);
-        assert_eq!(Error::Signaled("SIGINT".to_string()).exit_code(), 130);
-        assert_eq!(Error::Signaled("SIGKILL".to_string()).exit_code(), 137);
-        assert_eq!(Error::Signaled("SIGHUP".to_string()).exit_code(), 129);
-        assert_eq!(Error::Signaled("SIG13".to_string()).exit_code(), 141);
-        let signaled = Error::Signaled("SIGINT".to_string());
-        let signaled_json = signaled.to_json(signaled.exit_code());
-        assert_eq!(signaled_json.error.code, "signaled");
-        assert_eq!(signaled_json.error.exit_code, 130);
-        let value = serde_json::to_value(document).expect("json");
-        assert_eq!(value["error"]["exitCode"], NOT_FOUND);
-        assert!(value["error"].get("exit_code").is_none());
     }
 }

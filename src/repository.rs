@@ -78,7 +78,7 @@ pub fn human_clone_message(result: &CloneResult) -> String {
 pub fn resolve_repository_root() -> Result<PathBuf> {
     let (root, warnings) = resolve_repository_root_quiet()?;
     for warning in warnings {
-        eprintln!("Warning: {warning}");
+        crate::output::warning("project_discovery", format!("Warning: {warning}"));
     }
     Ok(root)
 }
@@ -1723,7 +1723,7 @@ mod tests {
             .join("widget");
         let error = create_missing_parents(&destination).expect_err("mkdir");
         assert!(matches!(error, Error::Validation(_)), "{error}");
-        assert_eq!(error.exit_code(), 3, "{error}");
+        assert_eq!(error.exit_code(), crate::error::VALIDATION, "{error}");
         assert!(error.to_string().contains("example.com"), "{error}");
         assert!(
             !root.join("example.com").exists(),
@@ -1812,7 +1812,7 @@ mod tests {
         let reserved = format!("example.com/acme/.maboroshi-clone-9-{}", uuid::Uuid::nil());
         let error = parse_clone_source(&reserved).expect_err("reserved");
         assert!(matches!(error, Error::Validation(_)), "{error}");
-        assert_eq!(error.exit_code(), 3, "{error}");
+        assert_eq!(error.exit_code(), crate::error::VALIDATION, "{error}");
         assert!(error.to_string().contains("reserved"), "{error}");
         let kept = spec("example.com/acme/.maboroshi-clone-notes");
         assert_eq!(kept.repo, ".maboroshi-clone-notes");

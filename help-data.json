@@ -134,7 +134,22 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook and --exec output go to stderr"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        },
+        {
+          "name": "lock-timeout",
+          "type": "string",
+          "description": "Maximum wait per lock acquisition; overrides MABO_LOCK_TIMEOUT (default 30s). Accepts 500ms, 30s, 2m, or integer seconds. 0 fails immediately if held; timeout exits 7 (lock_timeout)"
         }
       ],
       "examples": [
@@ -172,11 +187,12 @@
         "Files that already exist in the new worktree are left unchanged",
         "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
         ".mabo.toml is read from the source checkout, the checkout where the command runs. [hooks] post-create commands run in the new worktree, in order, and stop at the first failure",
-        "post-create hooks run only after the repository is trusted. On a terminal, mabo shows the project path and the hook commands and asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, CI or MABO_AGENT_ID being set, or --json fails before creating the worktree. An empty value counts as unset. Run mabo trust --yes or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
+        "post-create hooks run only after the repository is trusted. On a terminal, mabo shows the project path and the hook commands and asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, nonempty CI, --no-input or MABO_NO_INPUT being enabled, or --json fails before creating the worktree. An empty value counts as unset. Run mabo trust --yes or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "--exec receives MABO=1, MABO_NAME (the worktree name), and MABO_PATH (the absolute worktree path). Post-create hooks also receive MABO_ROOT_PATH (the source checkout path)",
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
         "New worktrees are created under $XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash> (default ~/.local/share/maboroshi/worktrees/...). <checkout> is the canonical main checkout directory name, so a symlink uses the same directory. <hash> is the first 8 hex digits of the SHA-256 of the canonical Git common directory. A relative XDG_DATA_HOME is ignored. worktrees-directory overrides this and is joined to the repository root",
-        "Owner, purpose, and links are stored in maboroshi/worktrees.json under the Git common directory. --owner overrides MABO_AGENT_ID. Omit both to leave the owner empty. where and exec refresh lastUsedAt"
+        "Owner, purpose, and links are stored in maboroshi/worktrees.json under the Git common directory. --owner overrides MABO_AGENT_ID. Omit both to leave the owner empty. where and exec refresh lastUsedAt",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "attach": {
@@ -237,7 +253,22 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook and --exec output go to stderr"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        },
+        {
+          "name": "lock-timeout",
+          "type": "string",
+          "description": "Maximum wait per lock acquisition; overrides MABO_LOCK_TIMEOUT (default 30s). Accepts 500ms, 30s, 2m, or integer seconds. 0 fails immediately if held; timeout exits 7 (lock_timeout)"
         }
       ],
       "examples": [
@@ -274,7 +305,8 @@
         "--exec receives MABO=1, MABO_NAME (the worktree name), and MABO_PATH (the absolute worktree path). Post-create hooks also receive MABO_ROOT_PATH (the source checkout path)",
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
         "post-create hooks run only after the repository is trusted. The prompt, refusal, mabo trust, --no-hooks, and MABO_TRUST_ALL=1 behave the same as mabo create",
-        "Owner, purpose, and links are stored in maboroshi/worktrees.json under the Git common directory. --owner overrides MABO_AGENT_ID. Omit both to leave the owner empty"
+        "Owner, purpose, and links are stored in maboroshi/worktrees.json under the Git common directory. --owner overrides MABO_AGENT_ID. Omit both to leave the owner empty",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "list": {
@@ -308,7 +340,17 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
         }
       ],
       "examples": [
@@ -332,7 +374,8 @@
         "The main worktree is marked as '(bare)' if using a bare repository",
         "Use --names for scripts and automation",
         "--json cannot be combined with --names. The JSON schema is documented in the README",
-        "--owner filters by the recorded owner. Worktrees with no owner are omitted. The human list prints [owner] and the purpose when they are set"
+        "--owner filters by the recorded owner. Worktrees with no owner are omitted. The human list prints [owner] and the purpose when they are set",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "where": {
@@ -350,7 +393,22 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print a versioned JSON object for the worktree to stdout. Errors are JSON on stdout"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        },
+        {
+          "name": "lock-timeout",
+          "type": "string",
+          "description": "Maximum wait per lock acquisition; overrides MABO_LOCK_TIMEOUT (default 30s). Accepts 500ms, 30s, 2m, or integer seconds. 0 fails immediately if held; timeout exits 7 (lock_timeout)"
         }
       ],
       "examples": [
@@ -368,7 +426,8 @@
         "Exits with an error code if the worktree doesn't exist",
         "--json prints the worktree object instead of the bare path. The schema is documented in the README",
         "Orphaned names are refused because the worktree directory is gone",
-        "where updates lastUsedAt when the worktree already has a metadata record"
+        "where updates lastUsedAt when the worktree already has a metadata record",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "delete": {
@@ -407,7 +466,22 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook output goes to stderr"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        },
+        {
+          "name": "lock-timeout",
+          "type": "string",
+          "description": "Maximum wait per lock acquisition; overrides MABO_LOCK_TIMEOUT (default 30s). Accepts 500ms, 30s, 2m, or integer seconds. 0 fails immediately if held; timeout exits 7 (lock_timeout)"
         }
       ],
       "examples": [
@@ -442,9 +516,10 @@
         "Use --keep-branch to delete only the worktree and preserve the branch",
         ".mabo.toml is read from the source checkout, the checkout where the command runs. [hooks] pre-delete commands run in the worktree before it is removed, in order, and stop at the first failure",
         "Pre-delete hooks receive MABO=1, MABO_NAME (the worktree name), MABO_PATH (the absolute worktree path), and MABO_ROOT_PATH (the source checkout path)",
-        "pre-delete hooks run only after the repository is trusted. On a terminal, mabo asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, CI or MABO_AGENT_ID being set, or --json fails before deleting. An empty value counts as unset. Run mabo trust --yes or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
+        "pre-delete hooks run only after the repository is trusted. On a terminal, mabo asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, nonempty CI, --no-input or MABO_NO_INPUT being enabled, or --json fails before deleting. An empty value counts as unset. Run mabo trust --yes or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "delete removes a linked worktree inside the resolved worktrees directory, or one recorded in maboroshi/worktrees.json. An unrecorded worktree outside that directory is refused. Parent directories are removed only when the worktree is inside the resolved directory",
-        "--json reports each deleted worktree, whether its branch was deleted, and per-item errors. The schema is documented in the README"
+        "--json reports each deleted worktree, whether its branch was deleted, and per-item errors. The schema is documented in the README",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "gc": {
@@ -510,7 +585,22 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout. Hook output goes to stderr"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        },
+        {
+          "name": "lock-timeout",
+          "type": "string",
+          "description": "Maximum wait per lock acquisition; overrides MABO_LOCK_TIMEOUT (default 30s). Accepts 500ms, 30s, 2m, or integer seconds. 0 fails immediately if held; timeout exits 7 (lock_timeout)"
         }
       ],
       "examples": [
@@ -541,7 +631,8 @@
         "Dirty worktrees and worktrees with commits that are not on the default branch or a remote are skipped unless --force",
         "Live removals run [hooks] pre-delete from .mabo.toml and then the same deletion as mabo delete. A hook failure skips that worktree and continues",
         "gc never asks for trust. An untrusted repository with pre-delete hooks is skipped, and the detail is 'untrusted hooks'. --no-hooks removes those worktrees without running hooks. MABO_TRUST_ALL=1 trusts every repository for that process",
-        "--json lists each candidate, why it matched, and the action taken. The schema is documented in the README"
+        "--json lists each candidate, why it matched, and the action taken. The schema is documented in the README",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "trust": {
@@ -563,7 +654,22 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        },
+        {
+          "name": "lock-timeout",
+          "type": "string",
+          "description": "Maximum wait per lock acquisition; overrides MABO_LOCK_TIMEOUT (default 30s). Accepts 500ms, 30s, 2m, or integer seconds. 0 fails immediately if held; timeout exits 7 (lock_timeout)"
         }
       ],
       "examples": [
@@ -583,8 +689,9 @@
       "notes": [
         "The trust record is keyed by the path of the canonical git common directory (git rev-parse --git-common-dir). The main checkout and its linked worktrees share one record. Deleting the checkout and cloning it again at the same path keeps the record. mabo untrust clears it. Changing hook commands does not ask again",
         "The file is $XDG_STATE_HOME/maboroshi/trust.toml when XDG_STATE_HOME is an absolute path, otherwise ~/.local/state/maboroshi/trust.toml. Each entry has path and trustedAt",
-        "mabo trust shows the post-create and pre-delete commands from the checkout you name, then asks 'Trust this project? [y/N]'. It does not ask when CI or MABO_AGENT_ID is set, or when stdin or stderr is not a terminal. Use --yes then. A repository with no hooks can still be trusted",
-        "MABO_TRUST_ALL=1 treats every repository as trusted for that process and does not write trust.toml. Set it to the single character 1. This is for CI and containers"
+        "mabo trust shows the post-create and pre-delete commands from the checkout you name, then asks 'Trust this project? [y/N]'. It does not ask when CI is nonempty, --no-input or MABO_NO_INPUT is enabled, or when stdin or stderr is not a terminal. Use --yes then. A repository with no hooks can still be trusted",
+        "MABO_TRUST_ALL=1 treats every repository as trusted for that process and does not write trust.toml. Set it to the single character 1. This is for CI and containers",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "untrust": {
@@ -595,7 +702,22 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print a versioned JSON object to stdout. Errors are JSON on stdout"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        },
+        {
+          "name": "lock-timeout",
+          "type": "string",
+          "description": "Maximum wait per lock acquisition; overrides MABO_LOCK_TIMEOUT (default 30s). Accepts 500ms, 30s, 2m, or integer seconds. 0 fails immediately if held; timeout exits 7 (lock_timeout)"
         }
       ],
       "examples": [
@@ -610,7 +732,8 @@
       ],
       "notes": [
         "Removes the git common directory from trust.toml. A repository that is not trusted is left unchanged and the command exits 0",
-        "MABO_TRUST_ALL=1 is not stored, so untrust does not turn that environment variable off"
+        "MABO_TRUST_ALL=1 is not stored, so untrust does not turn that environment variable off",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "exec": {
@@ -624,6 +747,16 @@
           "type": "string",
           "description": "Repository to operate on instead of the current directory. Put this before the worktree name. Everything after the worktree name is passed to the command, including options such as --project. A value starting with /, ., or ~ is a directory inside the repository, including a linked worktree, and resolves to the main checkout. Any other value matches a known project's canonical host/owner/repo name, the directory name from project list, or an unambiguous suffix such as owner/repo or repo",
           "example": "--project owner/repo"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        },
+        {
+          "name": "lock-timeout",
+          "type": "string",
+          "description": "Maximum wait per lock acquisition; overrides MABO_LOCK_TIMEOUT (default 30s). Accepts 500ms, 30s, 2m, or integer seconds. 0 fails immediately if held; timeout exits 7 (lock_timeout)"
         }
       ],
       "examples": [
@@ -672,6 +805,13 @@
         "  set <name>   Set owner, purpose, or links on a worktree",
         "",
         "Records live in maboroshi/worktrees.json under the Git common directory inside the repository. delete removes the record for the worktree."
+      ],
+      "options": [
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        }
       ]
     },
     "meta set": {
@@ -713,13 +853,28 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print the updated worktree object to stdout. Errors are JSON on stdout"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
         },
         {
           "name": "base",
           "type": "string",
           "description": "Set and validate the base ref used by sync; stored as a full ref name",
           "example": "--base origin/main"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        },
+        {
+          "name": "lock-timeout",
+          "type": "string",
+          "description": "Maximum wait per lock acquisition; overrides MABO_LOCK_TIMEOUT (default 30s). Accepts 500ms, 30s, 2m, or integer seconds. 0 fails immediately if held; timeout exits 7 (lock_timeout)"
         }
       ],
       "examples": [
@@ -735,7 +890,8 @@
       "notes": [
         "At least one of --owner, --purpose, --pr, or --issue is required",
         "Omitted fields keep their current values. A worktree with no record yet gets createdAt and lastUsedAt",
-        "The worktree must already exist. A missing name exits 2"
+        "The worktree must already exist. A missing name exits 2",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "preferences": {
@@ -778,6 +934,13 @@
         "  keep-branch - keeps the branch when deleting a worktree (defaults to false)",
         "  ghq-discovery - discovers ghq-managed repositories as projects (defaults to true)",
         "  root - absolute path, or ~/path, where mabo clone places repositories (defaults to the first git config ghq.root, then $GHQ_ROOT, then ~/ghq)"
+      ],
+      "options": [
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        }
       ]
     },
     "preferences get": {
@@ -804,6 +967,13 @@
       ],
       "notes": [
         "Supported keys: worktrees-directory, directory-name-separator, keep-branch, ghq-discovery, root"
+      ],
+      "options": [
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        }
       ]
     },
     "preferences set": {
@@ -836,6 +1006,13 @@
         "For ghq-discovery, use false to list only projects registered directly with mabo",
         "For root, provide an absolute path or a path starting with ~/. mabo clone uses it as the repository root",
         "keep-branch and ghq-discovery are stored as TOML booleans. The other keys are strings."
+      ],
+      "options": [
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        }
       ]
     },
     "preferences remove": {
@@ -862,6 +1039,13 @@
       ],
       "notes": [
         "Supported keys: worktrees-directory, directory-name-separator, keep-branch, ghq-discovery, root"
+      ],
+      "options": [
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        }
       ]
     },
     "clone": {
@@ -887,7 +1071,17 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print a versioned JSON object to stdout. Git progress goes to stderr. Errors use the version 1 error object"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
         }
       ],
       "examples": [
@@ -919,7 +1113,8 @@
         "If the path exists but is not that repository, the command exits with a validation error.",
         "The project is always registered. New worktrees for that repository are created under $XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash> unless worktrees-directory is set.",
         "Authentication is left to Git. mabo does not call gh.",
-        "Git progress is written to stderr. With --json, stdout is only the version 1 result: path, host, owner, repo, remoteUrl, cloned, and updated."
+        "Git progress is written to stderr. With --json, stdout is the schema 2 envelope; data contains: path, host, owner, repo, remoteUrl, cloned, and updated.",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "version": {
@@ -934,6 +1129,13 @@
       ],
       "notes": [
         "Also accessible via 'mabo --version' or 'mabo -v'"
+      ],
+      "options": [
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        }
       ]
     },
     "project": {
@@ -958,6 +1160,13 @@
         "Available subcommands: add, list, remove",
         "The project registry is stored in $XDG_STATE_HOME/maboroshi (default ~/.local/state/maboroshi).",
         "Removing a project only updates mabo's registry; it never deletes the Git repository."
+      ],
+      "options": [
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        }
       ]
     },
     "project add": {
@@ -968,12 +1177,23 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Output the result as JSON"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
         }
       ],
       "notes": [
         "When path is omitted, the current directory is used.",
-        "Adding an already registered repository succeeds without creating a duplicate."
+        "Adding an already registered repository succeeds without creating a duplicate.",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "project list": {
@@ -984,7 +1204,7 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Output a versioned JSON object for automation"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
         },
         {
           "name": "names",
@@ -995,6 +1215,16 @@
           "name": "paths",
           "type": "boolean",
           "description": "Output only project root paths"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
         }
       ],
       "notes": [
@@ -1002,7 +1232,8 @@
         "Repositories under the clone root are discovered automatically, and ghq list is consulted when ghq is installed, unless the ghq-discovery preference is false.",
         "--json includes canonicalName: host/owner/repo from the origin URL, or from a checkout at <root>/<host>/<owner>/<repo>, or the directory name when neither is available.",
         "The clone root is the root preference, then the first git config ghq.root value, then $GHQ_ROOT, then ~/ghq.",
-        "ghq is optional. Checkouts under the clone root are still discovered when it is not installed."
+        "ghq is optional. Checkouts under the clone root are still discovered when it is not installed.",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "project remove": {
@@ -1013,14 +1244,25 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Output the result as JSON"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
         }
       ],
       "notes": [
         "The project can be specified by id, name, or root path.",
         "If a name matches multiple projects, use an id or path instead.",
         "This command never deletes the Git repository or its worktrees.",
-        "A repository discovered through ghq remains visible after its registry record is removed."
+        "A repository discovered through ghq remains visible after its registry record is removed.",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "github": {
@@ -1046,6 +1288,13 @@
         "Requirements:",
         "  - GitHub CLI (gh) must be installed",
         "  - Must be authenticated with 'gh auth login'"
+      ],
+      "options": [
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        }
       ]
     },
     "github checkout": {
@@ -1085,7 +1334,22 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print a versioned JSON object to stdout, including the worktree and PR or issue info. Errors are JSON on stdout. Hook output goes to stderr"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        },
+        {
+          "name": "lock-timeout",
+          "type": "string",
+          "description": "Maximum wait per lock acquisition; overrides MABO_LOCK_TIMEOUT (default 30s). Accepts 500ms, 30s, 2m, or integer seconds. 0 fails immediately if held; timeout exits 7 (lock_timeout)"
         }
       ],
       "examples": [
@@ -1111,7 +1375,8 @@
         "Requirements:",
         "  - GitHub CLI (gh) must be installed",
         "  - Must be authenticated with 'gh auth login'",
-        "--json includes github.kind, github.number, and github.headRef. The schema is documented in the README"
+        "--json includes github.kind, github.number, and github.headRef. The schema is documented in the README",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "gh": {
@@ -1137,6 +1402,13 @@
         "Requirements:",
         "  - GitHub CLI (gh) must be installed",
         "  - Must be authenticated with 'gh auth login'"
+      ],
+      "options": [
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        }
       ]
     },
     "gh checkout": {
@@ -1176,7 +1448,22 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print a versioned JSON object to stdout, including the worktree and PR or issue info. Errors are JSON on stdout. Hook output goes to stderr"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        },
+        {
+          "name": "lock-timeout",
+          "type": "string",
+          "description": "Maximum wait per lock acquisition; overrides MABO_LOCK_TIMEOUT (default 30s). Accepts 500ms, 30s, 2m, or integer seconds. 0 fails immediately if held; timeout exits 7 (lock_timeout)"
         }
       ],
       "examples": [
@@ -1202,7 +1489,8 @@
         "Requirements:",
         "  - GitHub CLI (gh) must be installed",
         "  - Must be authenticated with 'gh auth login'",
-        "--json includes github.kind, github.number, and github.headRef. The schema is documented in the README"
+        "--json includes github.kind, github.number, and github.headRef. The schema is documented in the README",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     },
     "sync": {
@@ -1254,7 +1542,22 @@
         {
           "name": "json",
           "type": "boolean",
-          "description": "Print the versioned schema 1 report"
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY. MABO_AGENT_ID does not suppress prompts"
+        },
+        {
+          "name": "lock-timeout",
+          "type": "string",
+          "description": "Maximum wait per lock acquisition; overrides MABO_LOCK_TIMEOUT (default 30s). Accepts 500ms, 30s, 2m, or integer seconds. 0 fails immediately if held; timeout exits 7 (lock_timeout)"
         }
       ],
       "examples": [
@@ -1270,7 +1573,32 @@
           "command": "mabo sync feature/auth --merge --keep-conflicts",
           "description": "Merge and resolve conflicts manually for a single worktree"
         }
+      ],
+      "notes": [
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes, 7 lock timeout. Standalone exec preserves child statuses"
       ]
     }
-  }
+  },
+  "globalOptions": [
+    {
+      "name": "output",
+      "type": "string",
+      "description": "Select text or json on JSON-capable commands; overrides MABO_OUTPUT"
+    },
+    {
+      "name": "json",
+      "type": "boolean",
+      "description": "Alias for --output json on JSON-capable commands"
+    },
+    {
+      "name": "no-input",
+      "type": "boolean",
+      "description": "Never prompt; also enabled by CI, JSON, MABO_NO_INPUT, or no stdin/stderr TTY"
+    },
+    {
+      "name": "lock-timeout",
+      "type": "string",
+      "description": "Wait per lock acquisition (lock-taking commands): default 30s; MABO_LOCK_TIMEOUT or 500ms/30s/2m/0"
+    }
+  ]
 }

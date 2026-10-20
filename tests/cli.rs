@@ -53,6 +53,9 @@ impl Repo {
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_DATA_HOME", self.root.join("xdg"))
             .env_remove("GHQ_ROOT")
+            .env_remove("MABO_OUTPUT")
+            .env_remove("MABO_NO_INPUT")
+            .env_remove("MABO_LOCK_TIMEOUT")
             .env_remove("MABO_AGENT_ID")
             .env_remove("MABO_NAME_CANDIDATES")
             .env_remove("PHANTOM_AGENT_ID")
@@ -183,7 +186,7 @@ fn outside_a_git_repository_is_a_phantom_error() {
             stderr.contains("Not a git repository. Run mabo from inside a Git repository."),
             "{args:?} stderr: {stderr}"
         );
-        assert_eq!(output.status.code(), Some(4), "{args:?} stderr: {stderr}");
+        assert_eq!(output.status.code(), Some(3), "{args:?} stderr: {stderr}");
     }
     let help = repo
         .command(env!("CARGO_BIN_EXE_mabo"), &["--help"])
@@ -235,11 +238,11 @@ fn version_help_and_unknown_command() {
     assert!(!where_text.contains("phantom where"));
 
     let missing_where = repo.mabo(&["where"]);
-    assert_eq!(missing_where.status.code(), Some(3));
+    assert_eq!(missing_where.status.code(), Some(2));
     assert!(text(&missing_where.stderr).contains("Usage: mabo where <worktree-name>"));
 
     let unknown = repo.mabo(&["nope"]);
-    assert_eq!(unknown.status.code(), Some(1));
+    assert_eq!(unknown.status.code(), Some(2));
     assert!(text(&unknown.stderr).contains("Unknown command 'nope'"));
 }
 
@@ -328,7 +331,7 @@ fn linked_worktree_git_file_and_insteadof_canonical_name() {
     let catalog = repo.mabo(&["project", "list", "--json"]);
     assert!(catalog.status.success(), "{}", text(&catalog.stderr));
     let catalog = json_value(&catalog);
-    let entry = catalog["projects"]
+    let entry = catalog["data"]["projects"]
         .as_array()
         .expect("projects")
         .iter()
@@ -343,7 +346,7 @@ fn linked_worktree_git_file_and_insteadof_canonical_name() {
 }
 
 fn default_worktree_path(value: &serde_json::Value) -> String {
-    value["worktrees"]
+    value["data"]["worktrees"]
         .as_array()
         .expect("worktrees")
         .iter()
@@ -369,7 +372,7 @@ fn removed_tmux_options_are_unknown() {
         let output = repo.mabo(&args);
         assert_eq!(
             output.status.code(),
-            Some(3),
+            Some(2),
             "{args:?} {}",
             text(&output.stderr)
         );
@@ -394,7 +397,7 @@ fn create_list_where_delete_and_attach() {
     assert!(repo.repo.join(".git/maboroshi/worktrees.json").is_file());
 
     let duplicate = repo.mabo(&["create", "feature/add-tests"]);
-    assert_eq!(duplicate.status.code(), Some(3));
+    assert_eq!(duplicate.status.code(), Some(4));
     assert!(text(&duplicate.stderr).contains("already exists"));
 
     let names = repo.mabo(&["list", "--names", "--no-default"]);
@@ -408,7 +411,7 @@ fn create_list_where_delete_and_attach() {
     assert_eq!(text(&where_path.stdout), worktree.to_string_lossy());
 
     let missing = repo.mabo(&["where", "missing-worktree"]);
-    assert_eq!(missing.status.code(), Some(2));
+    assert_eq!(missing.status.code(), Some(3));
     assert!(text(&missing.stderr).contains("not found"));
 
     repo.git(&["branch", "existing-feature"]);
@@ -416,7 +419,7 @@ fn create_list_where_delete_and_attach() {
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     assert!(text(&attached.stdout).contains("Attached worktree: existing-feature"));
     let missing_branch = repo.mabo(&["attach", "missing-branch"]);
-    assert_eq!(missing_branch.status.code(), Some(2));
+    assert_eq!(missing_branch.status.code(), Some(3));
 
     let kept = repo.mabo(&["delete", "existing-feature", "--keep-branch"]);
     assert!(kept.status.success(), "{}", text(&kept.stderr));
@@ -432,7 +435,7 @@ fn create_list_where_delete_and_attach() {
     assert!(text(&deleted.stdout).contains("and its branch 'feature/add-tests'"));
     assert!(!worktree.exists());
     let missing_delete = repo.mabo(&["delete", "missing-worktree"]);
-    assert_eq!(missing_delete.status.code(), Some(2));
+    assert_eq!(missing_delete.status.code(), Some(3));
 }
 
 #[test]
@@ -563,7 +566,7 @@ fn post_create_failure_reports_the_created_worktree() {
         "{stderr}"
     );
     assert!(stderr.contains("127"), "{stderr}");
-    assert_eq!(created.status.code(), Some(127), "{stderr}");
+    assert_eq!(created.status.code(), Some(6), "{stderr}");
 
     repo.git(&["branch", "existing-hook"]);
     let attached = repo.mabo(&["attach", "existing-hook"]);
@@ -579,7 +582,7 @@ fn post_create_failure_reports_the_created_worktree() {
         "{}",
         text(&attached.stderr)
     );
-    assert_eq!(attached.status.code(), Some(127));
+    assert_eq!(attached.status.code(), Some(6));
 }
 
 #[test]
@@ -643,7 +646,7 @@ pre-delete = [
 
     let created = repo.mabo(&["create", "feature/hooks-order"]);
     let worktree = managed(&repo, "feature/hooks-order");
-    assert_eq!(created.status.code(), Some(1), "{}", text(&created.stderr));
+    assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
     assert_eq!(
         fs::read_to_string(worktree.join("root-path.txt")).expect("root path"),
         repo.repo.display().to_string()
@@ -812,10 +815,10 @@ fn preferences_and_project_registry() {
     let added = repo.mabo(&["project", "add", "--json"]);
     assert!(added.status.success(), "{}", text(&added.stderr));
     let value: serde_json::Value = serde_json::from_str(&text(&added.stdout)).expect("json");
-    assert_eq!(value["status"], "added");
-    assert_eq!(value["project"]["name"], "repo");
+    assert_eq!(value["data"]["status"], "added");
+    assert_eq!(value["data"]["project"]["name"], "repo");
     assert_eq!(
-        value["project"]["rootPath"],
+        value["data"]["project"]["rootPath"],
         repo.repo.to_string_lossy().as_ref()
     );
 
@@ -823,23 +826,29 @@ fn preferences_and_project_registry() {
     let listed = repo.mabo(&["project", "list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let catalog: serde_json::Value = serde_json::from_str(&text(&listed.stdout)).expect("catalog");
-    assert_eq!(catalog["version"], 2);
-    assert_eq!(catalog["projects"][0]["source"], "registry");
-    assert_eq!(catalog["projects"][0]["id"], value["project"]["id"]);
-    assert_eq!(catalog["projects"][0]["name"], "repo");
-    assert_eq!(catalog["projects"][0]["canonicalName"], "repo");
+    assert_eq!(catalog["schema"], 2);
+    assert_eq!(catalog["data"]["projects"][0]["source"], "registry");
+    assert_eq!(
+        catalog["data"]["projects"][0]["id"],
+        value["data"]["project"]["id"]
+    );
+    assert_eq!(catalog["data"]["projects"][0]["name"], "repo");
+    assert_eq!(catalog["data"]["projects"][0]["canonicalName"], "repo");
 
     let removed = repo.mabo(&[
         "project",
         "remove",
-        value["project"]["id"].as_str().expect("id"),
+        value["data"]["project"]["id"].as_str().expect("id"),
         "--json",
     ]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
     let empty = repo.mabo(&["project", "list", "--json"]);
     let empty_catalog: serde_json::Value =
         serde_json::from_str(&text(&empty.stdout)).expect("empty");
-    assert_eq!(empty_catalog["projects"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        empty_catalog["data"]["projects"].as_array().map(Vec::len),
+        Some(0)
+    );
 }
 
 #[test]
@@ -872,9 +881,12 @@ fn project_registry_is_stored_under_xdg_state_home_maboroshi() {
     let listed = repo.mabo(&["project", "list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let catalog: serde_json::Value = serde_json::from_str(&text(&listed.stdout)).expect("catalog");
-    assert_eq!(catalog["projects"].as_array().map(Vec::len), Some(1));
-    assert_eq!(catalog["projects"][0]["name"], "repo");
-    assert_eq!(catalog["projects"][0]["source"], "registry");
+    assert_eq!(
+        catalog["data"]["projects"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(catalog["data"]["projects"][0]["name"], "repo");
+    assert_eq!(catalog["data"]["projects"][0]["source"], "registry");
 
     let help = repo.mabo(&["project", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
@@ -965,7 +977,7 @@ fn preferences_file_uses_xdg_config_home() {
     assert!(!path.exists());
 
     let invalid_bool = repo.mabo(&["preferences", "set", "keep-branch", "yes"]);
-    assert_eq!(invalid_bool.status.code(), Some(3));
+    assert_eq!(invalid_bool.status.code(), Some(2));
     assert!(
         text(&invalid_bool.stderr).contains("true"),
         "{}",
@@ -1061,11 +1073,11 @@ fn keep_branch_preference_applies_to_delete() {
 fn removed_ai_command_and_preference_are_unknown() {
     let repo = Repo::new();
     let command = repo.mabo(&["ai", "feature"]);
-    assert_eq!(command.status.code(), Some(1));
+    assert_eq!(command.status.code(), Some(2));
     assert!(text(&command.stderr).contains("Unknown command 'ai feature'"));
 
     let preference = repo.mabo(&["preferences", "set", "ai", "claude"]);
-    assert_eq!(preference.status.code(), Some(3));
+    assert_eq!(preference.status.code(), Some(2));
     let stderr = text(&preference.stderr);
     assert!(stderr.contains("Unknown preference 'ai'"), "{stderr}");
     assert!(stderr.contains("worktrees-directory"), "{stderr}");
@@ -1075,11 +1087,11 @@ fn removed_ai_command_and_preference_are_unknown() {
 fn removed_edit_command_and_editor_preference_are_unknown() {
     let repo = Repo::new();
     let command = repo.mabo(&["edit", "feature"]);
-    assert_eq!(command.status.code(), Some(1));
+    assert_eq!(command.status.code(), Some(2));
     assert!(text(&command.stderr).contains("Unknown command 'edit feature'"));
 
     let preference = repo.mabo(&["preferences", "get", "editor"]);
-    assert_eq!(preference.status.code(), Some(3));
+    assert_eq!(preference.status.code(), Some(2));
     let stderr = text(&preference.stderr);
     assert!(stderr.contains("Unknown preference 'editor'"), "{stderr}");
     assert!(stderr.contains("worktrees-directory"), "{stderr}");
@@ -1089,7 +1101,7 @@ fn removed_edit_command_and_editor_preference_are_unknown() {
 fn removed_shell_command_and_flag_are_unknown() {
     let repo = Repo::new();
     let command = repo.mabo(&["shell", "feature"]);
-    assert_eq!(command.status.code(), Some(1));
+    assert_eq!(command.status.code(), Some(2));
     assert!(text(&command.stderr).contains("Unknown command 'shell feature'"));
 
     for args in [
@@ -1099,7 +1111,7 @@ fn removed_shell_command_and_flag_are_unknown() {
         let output = repo.mabo(&args);
         assert_eq!(
             output.status.code(),
-            Some(3),
+            Some(2),
             "{args:?} {}",
             text(&output.stderr)
         );
@@ -1124,7 +1136,7 @@ fn removed_fzf_option_is_unknown() {
         let output = repo.mabo(&args);
         assert_eq!(
             output.status.code(),
-            Some(3),
+            Some(2),
             "{args:?} {}",
             text(&output.stderr)
         );
@@ -1168,8 +1180,8 @@ fn project_add_from_a_linked_worktree_is_idempotent() {
         .expect("add");
     assert!(again.status.success(), "{}", text(&again.stderr));
     let again_value: serde_json::Value = serde_json::from_str(&text(&again.stdout)).expect("json");
-    assert_eq!(again_value["status"], "existing");
-    assert_eq!(again_value["project"], value["project"]);
+    assert_eq!(again_value["data"]["status"], "existing");
+    assert_eq!(again_value["data"]["project"], value["data"]["project"]);
 }
 
 #[test]
@@ -1200,10 +1212,10 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
         .expect("list");
     assert!(discovered.status.success(), "{}", text(&discovered.stderr));
     let catalog: serde_json::Value = serde_json::from_str(&text(&discovered.stdout)).expect("json");
-    assert_eq!(catalog["version"], 2);
-    assert_eq!(catalog["projects"][0]["source"], "ghq");
+    assert_eq!(catalog["schema"], 2);
+    assert_eq!(catalog["data"]["projects"][0]["source"], "ghq");
     assert_eq!(
-        catalog["projects"][0]["rootPath"],
+        catalog["data"]["projects"][0]["rootPath"],
         repo.repo.to_string_lossy().as_ref()
     );
 
@@ -1226,7 +1238,9 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
         .expect("warn");
     assert!(warned.status.success(), "{}", text(&warned.stderr));
     assert!(text(&warned.stdout).contains("\"source\": \"registry\""));
-    assert!(!text(&warned.stdout).contains("Warning:"));
+    assert!(json_value(&warned)["warnings"]
+        .as_array()
+        .is_some_and(|warnings| !warnings.is_empty()));
     assert!(text(&warned.stderr).contains("Warning: Failed to discover ghq repositories:"));
     assert!(text(&warned.stderr).contains("simulated ghq failure"));
 }
@@ -1528,7 +1542,7 @@ fn removed_mcp_command_is_unknown() {
         let output = repo.mabo(&args);
         assert_eq!(
             output.status.code(),
-            Some(1),
+            Some(2),
             "{args:?}\n{}\n{}",
             text(&output.stdout),
             text(&output.stderr)
@@ -1848,13 +1862,16 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
 }
 
 fn json_value(output: &std::process::Output) -> serde_json::Value {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(stdout.trim()).unwrap_or_else(|error| {
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(
-            "stdout is not JSON ({error})\nstdout:\n{stdout}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stderr)
+            "stdout is not JSON ({error})\n{}\n{}",
+            text(&output.stdout),
+            text(&output.stderr)
         )
-    })
+    });
+    let command = value["command"].as_str().expect("command");
+    assert!(!command.is_empty());
+    assert_envelope(output, command)
 }
 
 fn paths_match(json_path: &str, expected: &std::path::Path) -> bool {
@@ -1892,38 +1909,41 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     let empty = repo.mabo(&["list", "--json", "--no-default"]);
     assert!(empty.status.success(), "{}", text(&empty.stderr));
     let empty_json = json_value(&empty);
-    assert_eq!(empty_json["version"], 1);
-    assert_eq!(empty_json["worktrees"].as_array().map(Vec::len), Some(0));
+    assert_eq!(empty_json["schema"], 2);
+    assert_eq!(
+        empty_json["data"]["worktrees"].as_array().map(Vec::len),
+        Some(0)
+    );
     assert!(text(&empty.stderr).is_empty(), "{}", text(&empty.stderr));
 
     let created = repo.mabo(&["create", "feature/json", "--json", "--base", "HEAD"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let created_json = json_value(&created);
-    assert_eq!(created_json["version"], 1);
+    assert_eq!(created_json["schema"], 2);
     assert_worktree_object(
-        &created_json["worktree"],
+        &created_json["data"]["worktree"],
         "feature/json",
         &managed(&repo, "feature/json"),
     );
-    assert_eq!(created_json["worktree"]["branch"], "feature/json");
-    assert_eq!(created_json["worktree"]["head"], head);
-    assert_eq!(created_json["worktree"]["base"], "HEAD");
-    assert_eq!(created_json["worktree"]["dirty"], false);
-    assert_eq!(created_json["worktree"]["detached"], false);
-    assert_eq!(created_json["copyFiles"]["ok"], true);
-    assert!(created_json["copyFiles"]["error"].is_null());
-    assert_eq!(created_json["postCreate"]["ran"], false);
-    assert_eq!(created_json["postCreate"]["ok"], true);
-    assert!(created_json["postCreate"]["command"].is_null());
-    assert!(created_json["postCreate"]["exitCode"].is_null());
-    assert!(created_json["exec"].is_null());
+    assert_eq!(created_json["data"]["worktree"]["branch"], "feature/json");
+    assert_eq!(created_json["data"]["worktree"]["head"], head);
+    assert_eq!(created_json["data"]["worktree"]["base"], "HEAD");
+    assert_eq!(created_json["data"]["worktree"]["dirty"], false);
+    assert_eq!(created_json["data"]["worktree"]["detached"], false);
+    assert_eq!(created_json["data"]["copyFiles"]["ok"], true);
+    assert!(created_json["data"]["copyFiles"]["error"].is_null());
+    assert_eq!(created_json["data"]["postCreate"]["ran"], false);
+    assert_eq!(created_json["data"]["postCreate"]["ok"], true);
+    assert!(created_json["data"]["postCreate"]["command"].is_null());
+    assert!(created_json["data"]["postCreate"]["exitCode"].is_null());
+    assert!(created_json["data"]["exec"].is_null());
     assert!(!text(&created.stdout).contains("Created worktree"));
 
     let duplicate = repo.mabo(&["create", "feature/json", "--json"]);
-    assert_eq!(duplicate.status.code(), Some(3));
+    assert_eq!(duplicate.status.code(), Some(4));
     let duplicate_json = json_value(&duplicate);
-    assert_eq!(duplicate_json["error"]["code"], "already_exists");
-    assert_eq!(duplicate_json["error"]["exitCode"], 3);
+    assert_eq!(duplicate_json["error"]["code"], "exists");
+    assert!(duplicate_json["error"].get("exitCode").is_none());
     assert!(
         text(&duplicate.stderr).is_empty(),
         "{}",
@@ -1931,13 +1951,15 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     );
 
     let both = repo.mabo(&["list", "--json", "--names"]);
-    assert_eq!(both.status.code(), Some(3));
-    assert_eq!(json_value(&both)["error"]["code"], "validation");
+    assert_eq!(both.status.code(), Some(2));
+    assert_eq!(json_value(&both)["error"]["code"], "usage");
 
     let listed = repo.mabo(&["list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
-    let worktrees = listed_json["worktrees"].as_array().expect("worktrees");
+    let worktrees = listed_json["data"]["worktrees"]
+        .as_array()
+        .expect("worktrees");
     assert!(worktrees
         .iter()
         .any(|entry| entry["default"] == true && entry["branch"] == "main"));
@@ -1953,22 +1975,25 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     fs::write(worktree.join("README.md"), "dirty\n").expect("dirty");
     let dirty = repo.mabo(&["list", "--json", "--no-default"]);
     let dirty_json = json_value(&dirty);
-    assert_eq!(dirty_json["worktrees"][0]["dirty"], true);
-    assert_eq!(dirty_json["worktrees"].as_array().map(Vec::len), Some(1));
+    assert_eq!(dirty_json["data"]["worktrees"][0]["dirty"], true);
+    assert_eq!(
+        dirty_json["data"]["worktrees"].as_array().map(Vec::len),
+        Some(1)
+    );
 
     let located = repo.mabo(&["where", "feature/json", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
     let located_json = json_value(&located);
-    assert_eq!(located_json["version"], 1);
-    assert_worktree_object(&located_json["worktree"], "feature/json", &worktree);
+    assert_eq!(located_json["schema"], 2);
+    assert_worktree_object(&located_json["data"]["worktree"], "feature/json", &worktree);
     assert!(!text(&located.stdout).contains("feature/json ("));
 
     let missing = repo.mabo(&["where", "missing-worktree", "--json"]);
-    assert_eq!(missing.status.code(), Some(2));
+    assert_eq!(missing.status.code(), Some(3));
     let missing_json = json_value(&missing);
-    assert_eq!(missing_json["version"], 1);
+    assert_eq!(missing_json["schema"], 2);
     assert_eq!(missing_json["error"]["code"], "not_found");
-    assert_eq!(missing_json["error"]["exitCode"], 2);
+    assert!(missing_json["error"].get("exitCode").is_none());
     assert!(missing_json["error"]["message"]
         .as_str()
         .unwrap_or("")
@@ -1984,23 +2009,26 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     let attached_json = json_value(&attached);
     assert_worktree_object(
-        &attached_json["worktree"],
+        &attached_json["data"]["worktree"],
         "existing-json",
         &managed(&repo, "existing-json"),
     );
-    assert!(attached_json["worktree"]["base"].is_null());
-    assert_eq!(attached_json["worktree"]["branch"], "existing-json");
-    assert_eq!(attached_json["copyFiles"]["ok"], true);
-    assert!(attached_json["exec"].is_null());
+    assert!(attached_json["data"]["worktree"]["base"].is_null());
+    assert_eq!(attached_json["data"]["worktree"]["branch"], "existing-json");
+    assert_eq!(attached_json["data"]["copyFiles"]["ok"], true);
+    assert!(attached_json["data"]["exec"].is_null());
 
     let kept = repo.mabo(&["delete", "existing-json", "--keep-branch", "--json"]);
     assert!(kept.status.success(), "{}", text(&kept.stderr));
     let kept_json = json_value(&kept);
     assert!(kept_json["error"].is_null());
-    assert_eq!(kept_json["deleted"][0]["branchDeleted"], false);
-    assert!(kept_json["deleted"][0]["branchError"].is_null());
-    assert!(kept_json["deleted"][0]["error"].is_null());
-    assert_eq!(kept_json["deleted"][0]["worktree"]["name"], "existing-json");
+    assert_eq!(kept_json["data"]["deleted"][0]["branchDeleted"], false);
+    assert!(kept_json["data"]["deleted"][0]["branchError"].is_null());
+    assert!(kept_json["data"]["deleted"][0]["error"].is_null());
+    assert_eq!(
+        kept_json["data"]["deleted"][0]["worktree"]["name"],
+        "existing-json"
+    );
     let branch = repo
         .command("git", &["branch", "--list", "existing-json"])
         .output()
@@ -2011,16 +2039,19 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     repo.git(&["branch", "second-json"]);
     assert!(repo.mabo(&["attach", "second-json"]).status.success());
     let partial = repo.mabo(&["delete", "feature/json", "missing-json", "--json"]);
-    assert_eq!(partial.status.code(), Some(2), "{}", text(&partial.stderr));
+    assert_eq!(partial.status.code(), Some(3), "{}", text(&partial.stderr));
     let partial_json = json_value(&partial);
-    assert_eq!(partial_json["deleted"].as_array().map(Vec::len), Some(1));
-    assert!(partial_json["deleted"][0]["worktree"].is_null());
-    assert!(partial_json["deleted"][0]["error"]
+    assert_eq!(
+        partial_json["data"]["deleted"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert!(partial_json["data"]["deleted"][0]["worktree"].is_null());
+    assert!(partial_json["data"]["deleted"][0]["error"]
         .as_str()
         .unwrap_or("")
         .contains("missing-json"));
     assert_eq!(partial_json["error"]["code"], "not_found");
-    assert_eq!(partial_json["error"]["exitCode"], 2);
+    assert!(partial_json["error"].get("exitCode").is_none());
     assert!(worktree.is_dir(), "a later refusal deletes nothing");
     assert!(branch_listed(&repo, "feature/json"));
 
@@ -2031,10 +2062,10 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
         .current_dir(&outside)
         .output()
         .expect("list");
-    assert_eq!(not_repo.status.code(), Some(4));
+    assert_eq!(not_repo.status.code(), Some(3));
     let not_repo_json = json_value(&not_repo);
     assert_eq!(not_repo_json["error"]["code"], "not_repository");
-    assert_eq!(not_repo_json["error"]["exitCode"], 4);
+    assert!(not_repo_json["error"].get("exitCode").is_none());
     assert!(
         text(&not_repo.stderr).is_empty(),
         "{}",
@@ -2042,9 +2073,9 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     );
 
     let project_modes = repo.mabo(&["project", "list", "--json", "--names"]);
-    assert_eq!(project_modes.status.code(), Some(3));
-    assert_eq!(json_value(&project_modes)["error"]["code"], "validation");
-    assert_eq!(json_value(&project_modes)["version"], 1);
+    assert_eq!(project_modes.status.code(), Some(2));
+    assert_eq!(json_value(&project_modes)["error"]["code"], "usage");
+    assert_eq!(json_value(&project_modes)["schema"], 2);
 }
 
 #[test]
@@ -2076,18 +2107,21 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     assert!(text(&created.stderr)
         .lines()
         .any(|line| line == "EXEC_MARKER"));
-    assert_eq!(created_json["postCreate"]["ran"], true);
-    assert_eq!(created_json["postCreate"]["ok"], true);
-    assert_eq!(created_json["postCreate"]["exitCode"], 0);
-    assert_eq!(created_json["exec"]["ok"], true);
-    assert_eq!(created_json["exec"]["exitCode"], 0);
-    assert_eq!(created_json["exec"]["command"], "echo EXEC_MARKER");
+    assert_eq!(created_json["data"]["postCreate"]["ran"], true);
+    assert_eq!(created_json["data"]["postCreate"]["ok"], true);
+    assert_eq!(created_json["data"]["postCreate"]["exitCode"], 0);
+    assert_eq!(created_json["data"]["exec"]["ok"], true);
+    assert_eq!(created_json["data"]["exec"]["exitCode"], 0);
+    assert_eq!(created_json["data"]["exec"]["command"], "echo EXEC_MARKER");
 
     let deleted = repo.mabo(&["delete", "--force", "feature/hooks-json", "--json"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     assert!(!text(&deleted.stdout).contains("PRE_DELETE_MARKER"));
     assert!(text(&deleted.stderr).contains("PRE_DELETE_MARKER"));
-    assert_eq!(json_value(&deleted)["deleted"][0]["branchDeleted"], true);
+    assert_eq!(
+        json_value(&deleted)["data"]["deleted"][0]["branchDeleted"],
+        true
+    );
 
     fs::write(
         repo.repo.join(".mabo.toml"),
@@ -2095,12 +2129,12 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     )
     .expect("failing hook");
     let failed = repo.mabo(&["create", "feature/hook-fail", "--json"]);
-    assert_eq!(failed.status.code(), Some(7), "{}", text(&failed.stderr));
+    assert_eq!(failed.status.code(), Some(6), "{}", text(&failed.stderr));
     let failed_json = json_value(&failed);
-    assert_eq!(failed_json["postCreate"]["ok"], false);
-    assert_eq!(failed_json["postCreate"]["exitCode"], 7);
-    assert_eq!(failed_json["postCreate"]["command"], "exit 7");
-    assert_eq!(failed_json["worktree"]["name"], "feature/hook-fail");
+    assert_eq!(failed_json["data"]["postCreate"]["ok"], false);
+    assert_eq!(failed_json["data"]["postCreate"]["exitCode"], 7);
+    assert_eq!(failed_json["data"]["postCreate"]["command"], "exit 7");
+    assert_eq!(failed_json["data"]["worktree"]["name"], "feature/hook-fail");
     assert!(!text(&failed.stdout).contains("HOOK_FAIL_MARKER"));
     assert!(text(&failed.stderr).contains("HOOK_FAIL_MARKER"));
     assert!(managed(&repo, "feature/hook-fail/README.md").is_file());
@@ -2113,11 +2147,11 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
         "--exec",
         "echo EXEC_FAIL; exit 3",
     ]);
-    assert_eq!(exec_failed.status.code(), Some(3));
+    assert_eq!(exec_failed.status.code(), Some(6));
     let exec_json = json_value(&exec_failed);
-    assert_eq!(exec_json["exec"]["ok"], false);
-    assert_eq!(exec_json["exec"]["exitCode"], 3);
-    assert_eq!(exec_json["worktree"]["branch"], "feature/exec-fail");
+    assert_eq!(exec_json["data"]["exec"]["ok"], false);
+    assert_eq!(exec_json["data"]["exec"]["exitCode"], 3);
+    assert_eq!(exec_json["data"]["worktree"]["branch"], "feature/exec-fail");
     assert!(text(&exec_failed.stderr)
         .lines()
         .any(|line| line == "EXEC_FAIL"));
@@ -2138,7 +2172,7 @@ fn json_reports_detached_head_and_copy_errors() {
     ]);
     let listed = repo.mabo(&["list", "--json", "--no-default"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
-    let entry = &json_value(&listed)["worktrees"][0];
+    let entry = &json_value(&listed)["data"]["worktrees"][0];
     assert_eq!(entry["name"], "next");
     assert!(entry["branch"].is_null());
     assert_eq!(entry["detached"], true);
@@ -2147,14 +2181,14 @@ fn json_reports_detached_head_and_copy_errors() {
 
     std::os::unix::fs::symlink("elsewhere", repo.repo.join(".worktreeinclude")).expect("symlink");
     let created = repo.mabo(&["create", "feature/copy", "--json"]);
-    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
     let created_json = json_value(&created);
-    assert_eq!(created_json["copyFiles"]["ok"], false);
-    assert!(created_json["copyFiles"]["error"]
+    assert_eq!(created_json["data"]["copyFiles"]["ok"], false);
+    assert!(created_json["data"]["copyFiles"]["error"]
         .as_str()
         .unwrap_or("")
         .contains("symlink"));
-    assert_eq!(created_json["worktree"]["name"], "feature/copy");
+    assert_eq!(created_json["data"]["worktree"]["name"], "feature/copy");
 }
 
 #[test]
@@ -2172,16 +2206,16 @@ fn project_parse_errors_keep_the_validation_exit_code() {
         let output = repo.mabo(args);
         assert_eq!(
             output.status.code(),
-            Some(3),
+            Some(2),
             "{args:?}\nstdout:\n{}\nstderr:\n{}",
             text(&output.stdout),
             text(&output.stderr)
         );
         if args.contains(&"--json") {
             let value = json_value(&output);
-            assert_eq!(value["version"], 1, "{args:?} {value}");
-            assert_eq!(value["error"]["code"], "validation", "{args:?} {value}");
-            assert_eq!(value["error"]["exitCode"], 3, "{args:?} {value}");
+            assert_eq!(value["schema"], 2, "{args:?} {value}");
+            assert_eq!(value["error"]["code"], "usage", "{args:?} {value}");
+            assert!(value["error"].get("exitCode").is_none(), "{args:?} {value}");
             assert!(
                 text(&output.stderr).is_empty(),
                 "{args:?} stderr: {}",
@@ -2204,7 +2238,9 @@ fn json_unborn_head_is_null() {
     let listed = repo.mabo(&["list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
-    let worktrees = listed_json["worktrees"].as_array().expect("worktrees");
+    let worktrees = listed_json["data"]["worktrees"]
+        .as_array()
+        .expect("worktrees");
     assert_eq!(worktrees.len(), 1, "{listed_json}");
     assert_eq!(worktrees[0]["name"], "main");
     assert_eq!(worktrees[0]["branch"], "main");
@@ -2218,8 +2254,11 @@ fn json_unborn_head_is_null() {
     let located = repo.mabo(&["where", "main", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
     let located_json = json_value(&located);
-    assert!(located_json["worktree"]["head"].is_null(), "{located_json}");
-    assert_eq!(located_json["worktree"]["branch"], "main");
+    assert!(
+        located_json["data"]["worktree"]["head"].is_null(),
+        "{located_json}"
+    );
+    assert_eq!(located_json["data"]["worktree"]["branch"], "main");
 }
 
 #[test]
@@ -2248,7 +2287,7 @@ fn argument_errors_are_validation_for_every_command() {
         let output = repo.mabo(args);
         assert_eq!(
             output.status.code(),
-            Some(3),
+            Some(2),
             "{args:?}\nstdout:\n{}\nstderr:\n{}",
             text(&output.stdout),
             text(&output.stderr)
@@ -2262,8 +2301,8 @@ fn argument_errors_are_validation_for_every_command() {
         );
         if args.contains(&"--json") {
             let value = json_value(&output);
-            assert_eq!(value["error"]["code"], "validation", "{args:?} {value}");
-            assert_eq!(value["error"]["exitCode"], 3, "{args:?} {value}");
+            assert_eq!(value["error"]["code"], "usage", "{args:?} {value}");
+            assert!(value["error"].get("exitCode").is_none(), "{args:?} {value}");
             assert!(
                 text(&output.stderr).is_empty(),
                 "{args:?} stderr: {}",
@@ -2285,15 +2324,15 @@ fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
         let output = repo.mabo(args);
         assert_eq!(
             output.status.code(),
-            Some(3),
+            Some(2),
             "{args:?}\n{}\n{}",
             text(&output.stdout),
             text(&output.stderr)
         );
         if args.contains(&"--json") {
             let value = json_value(&output);
-            assert_eq!(value["error"]["code"], "validation", "{args:?} {value}");
-            assert_eq!(value["error"]["exitCode"], 3, "{args:?} {value}");
+            assert_eq!(value["error"]["code"], "usage", "{args:?} {value}");
+            assert!(value["error"].get("exitCode").is_none(), "{args:?} {value}");
             assert!(value.get("worktree").is_none(), "{args:?} {value}");
             assert!(text(&output.stderr).is_empty(), "{args:?}");
         } else {
@@ -2307,14 +2346,14 @@ fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
     assert!(!managed(&repo, "a/../x").exists());
 
     let missing_delete = repo.mabo(&["delete", "nope"]);
-    assert_eq!(missing_delete.status.code(), Some(2));
+    assert_eq!(missing_delete.status.code(), Some(3));
     let missing_json = repo.mabo(&["delete", "nope", "--json"]);
-    assert_eq!(missing_json.status.code(), Some(2));
+    assert_eq!(missing_json.status.code(), Some(3));
     let missing_value = json_value(&missing_json);
     assert_eq!(missing_value["error"]["code"], "not_found");
-    assert_eq!(missing_value["error"]["exitCode"], 2);
-    assert_eq!(repo.mabo(&["where", "nope"]).status.code(), Some(2));
-    assert_eq!(repo.mabo(&["exec", "nope", "true"]).status.code(), Some(2));
+    assert!(missing_value["error"].get("exitCode").is_none());
+    assert_eq!(repo.mabo(&["where", "nope"]).status.code(), Some(3));
+    assert_eq!(repo.mabo(&["exec", "nope", "true"]).status.code(), Some(3));
 }
 
 #[test]
@@ -2323,37 +2362,43 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
     let signaled = repo.mabo(&["create", "sig", "--json", "--exec", "kill -TERM $$"]);
     assert_eq!(
         signaled.status.code(),
-        Some(143),
+        Some(6),
         "{}\n{}",
         text(&signaled.stdout),
         text(&signaled.stderr)
     );
     let signaled_json = json_value(&signaled);
-    assert!(signaled_json.get("error").is_none(), "{signaled_json}");
-    assert_eq!(signaled_json["worktree"]["name"], "sig");
-    assert_eq!(signaled_json["exec"]["ok"], false);
-    assert_eq!(signaled_json["exec"]["command"], "kill -TERM $$");
-    assert_eq!(signaled_json["exec"]["exitCode"], 143);
-    assert_eq!(signaled_json["exec"]["signal"], "SIGTERM");
-    assert!(signaled_json["exec"]["error"].is_null());
+    assert!(
+        signaled_json["error"]["code"] == "partial",
+        "{signaled_json}"
+    );
+    assert_eq!(signaled_json["data"]["worktree"]["name"], "sig");
+    assert_eq!(signaled_json["data"]["exec"]["ok"], false);
+    assert_eq!(signaled_json["data"]["exec"]["command"], "kill -TERM $$");
+    assert_eq!(signaled_json["data"]["exec"]["exitCode"], 143);
+    assert_eq!(signaled_json["data"]["exec"]["signal"], "SIGTERM");
+    assert!(signaled_json["data"]["exec"]["error"].is_null());
     assert!(managed(&repo, "sig/README.md").is_file());
 
     repo.git(&["branch", "attach-sig"]);
     let attached = repo.mabo(&["attach", "attach-sig", "--json", "--exec", "kill -TERM $$"]);
     assert_eq!(
         attached.status.code(),
-        Some(143),
+        Some(6),
         "{}",
         text(&attached.stderr)
     );
     let attached_json = json_value(&attached);
-    assert_eq!(attached_json["worktree"]["name"], "attach-sig");
-    assert_eq!(attached_json["exec"]["ok"], false);
-    assert_eq!(attached_json["exec"]["signal"], "SIGTERM");
-    assert!(attached_json.get("error").is_none(), "{attached_json}");
+    assert_eq!(attached_json["data"]["worktree"]["name"], "attach-sig");
+    assert_eq!(attached_json["data"]["exec"]["ok"], false);
+    assert_eq!(attached_json["data"]["exec"]["signal"], "SIGTERM");
+    assert!(
+        attached_json["error"]["code"] == "partial",
+        "{attached_json}"
+    );
 
     let human = repo.mabo(&["create", "sig-human", "--exec", "kill -TERM $$"]);
-    assert_eq!(human.status.code(), Some(143));
+    assert_eq!(human.status.code(), Some(6));
     assert!(text(&human.stdout).contains("Created worktree 'sig-human'"));
     assert!(text(&human.stderr).contains("SIGTERM"));
 
@@ -2367,18 +2412,18 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
         .expect("spawn");
     assert_eq!(
         spawned.status.code(),
-        Some(1),
+        Some(6),
         "{}\n{}",
         text(&spawned.stdout),
         text(&spawned.stderr)
     );
     let spawned_json = json_value(&spawned);
-    assert!(spawned_json.get("error").is_none(), "{spawned_json}");
-    assert_eq!(spawned_json["worktree"]["name"], "spawn");
-    assert_eq!(spawned_json["exec"]["ok"], false);
-    assert_eq!(spawned_json["exec"]["exitCode"], 1);
-    assert!(spawned_json["exec"]["signal"].is_null());
-    let spawn_error = spawned_json["exec"]["error"].as_str().unwrap_or("");
+    assert!(spawned_json["error"]["code"] == "partial", "{spawned_json}");
+    assert_eq!(spawned_json["data"]["worktree"]["name"], "spawn");
+    assert_eq!(spawned_json["data"]["exec"]["ok"], false);
+    assert_eq!(spawned_json["data"]["exec"]["exitCode"], 1);
+    assert!(spawned_json["data"]["exec"]["signal"].is_null());
+    let spawn_error = spawned_json["data"]["exec"]["error"].as_str().unwrap_or("");
     assert!(
         spawn_error.contains("ENOENT") && spawn_error.contains("/no/such/maboroshi-shell"),
         "{spawn_error}"
@@ -2394,29 +2439,29 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
         .env("SHELL", "/no/such/maboroshi-shell")
         .output()
         .expect("attach spawn");
-    assert_eq!(attach_spawn.status.code(), Some(1));
+    assert_eq!(attach_spawn.status.code(), Some(6));
     let attach_json = json_value(&attach_spawn);
-    assert_eq!(attach_json["worktree"]["name"], "attach-spawn");
-    assert_eq!(attach_json["exec"]["ok"], false);
-    assert!(attach_json["exec"]["error"]
+    assert_eq!(attach_json["data"]["worktree"]["name"], "attach-spawn");
+    assert_eq!(attach_json["data"]["exec"]["ok"], false);
+    assert!(attach_json["data"]["exec"]["error"]
         .as_str()
         .unwrap_or("")
         .contains("ENOENT"));
-    assert!(attach_json.get("error").is_none(), "{attach_json}");
+    assert!(attach_json["error"]["code"] == "partial", "{attach_json}");
 
     let interrupted = repo.mabo(&["create", "sigint", "--json", "--exec", "kill -INT $$"]);
     assert_eq!(
         interrupted.status.code(),
-        Some(130),
+        Some(6),
         "{}\n{}",
         text(&interrupted.stdout),
         text(&interrupted.stderr)
     );
     let interrupted_json = json_value(&interrupted);
-    assert_eq!(interrupted_json["exec"]["signal"], "SIGINT");
-    assert_eq!(interrupted_json["exec"]["exitCode"], 130);
+    assert_eq!(interrupted_json["data"]["exec"]["signal"], "SIGINT");
+    assert_eq!(interrupted_json["data"]["exec"]["exitCode"], 130);
     assert!(
-        interrupted_json.get("error").is_none(),
+        interrupted_json["error"]["code"] == "partial",
         "{interrupted_json}"
     );
 }
@@ -2432,35 +2477,41 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     let created = repo.mabo(&["create", "h", "--json"]);
     assert_eq!(
         created.status.code(),
-        Some(143),
+        Some(6),
         "{}\n{}",
         text(&created.stdout),
         text(&created.stderr)
     );
     let created_json = json_value(&created);
-    assert!(created_json.get("error").is_none(), "{created_json}");
-    assert_eq!(created_json["worktree"]["name"], "h");
-    assert_eq!(created_json["postCreate"]["ok"], false);
-    assert_eq!(created_json["postCreate"]["command"], "kill -TERM $$");
-    assert_eq!(created_json["postCreate"]["exitCode"], 143);
-    assert_eq!(created_json["postCreate"]["signal"], "SIGTERM");
-    assert!(created_json["postCreate"]["error"].is_null());
+    assert!(created_json["error"]["code"] == "partial", "{created_json}");
+    assert_eq!(created_json["data"]["worktree"]["name"], "h");
+    assert_eq!(created_json["data"]["postCreate"]["ok"], false);
+    assert_eq!(
+        created_json["data"]["postCreate"]["command"],
+        "kill -TERM $$"
+    );
+    assert_eq!(created_json["data"]["postCreate"]["exitCode"], 143);
+    assert_eq!(created_json["data"]["postCreate"]["signal"], "SIGTERM");
+    assert!(created_json["data"]["postCreate"]["error"].is_null());
     assert!(managed(&repo, "h/README.md").is_file());
 
     repo.git(&["branch", "attach-hook"]);
     let attached = repo.mabo(&["attach", "attach-hook", "--json"]);
     assert_eq!(
         attached.status.code(),
-        Some(143),
+        Some(6),
         "{}",
         text(&attached.stderr)
     );
     let attached_json = json_value(&attached);
-    assert!(attached_json.get("error").is_none(), "{attached_json}");
-    assert_eq!(attached_json["worktree"]["name"], "attach-hook");
-    assert_eq!(attached_json["postCreate"]["ok"], false);
-    assert_eq!(attached_json["postCreate"]["signal"], "SIGTERM");
-    assert_eq!(attached_json["postCreate"]["exitCode"], 143);
+    assert!(
+        attached_json["error"]["code"] == "partial",
+        "{attached_json}"
+    );
+    assert_eq!(attached_json["data"]["worktree"]["name"], "attach-hook");
+    assert_eq!(attached_json["data"]["postCreate"]["ok"], false);
+    assert_eq!(attached_json["data"]["postCreate"]["signal"], "SIGTERM");
+    assert_eq!(attached_json["data"]["postCreate"]["exitCode"], 143);
 
     fs::write(
         repo.repo.join(".mabo.toml"),
@@ -2477,18 +2528,20 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
         .expect("hook spawn");
     assert_eq!(
         spawned.status.code(),
-        Some(1),
+        Some(6),
         "{}\n{}",
         text(&spawned.stdout),
         text(&spawned.stderr)
     );
     let spawned_json = json_value(&spawned);
-    assert!(spawned_json.get("error").is_none(), "{spawned_json}");
-    assert_eq!(spawned_json["worktree"]["name"], "hook-spawn");
-    assert_eq!(spawned_json["postCreate"]["ok"], false);
-    assert_eq!(spawned_json["postCreate"]["exitCode"], 1);
-    assert!(spawned_json["postCreate"]["signal"].is_null());
-    let spawn_error = spawned_json["postCreate"]["error"].as_str().unwrap_or("");
+    assert!(spawned_json["error"]["code"] == "partial", "{spawned_json}");
+    assert_eq!(spawned_json["data"]["worktree"]["name"], "hook-spawn");
+    assert_eq!(spawned_json["data"]["postCreate"]["ok"], false);
+    assert_eq!(spawned_json["data"]["postCreate"]["exitCode"], 1);
+    assert!(spawned_json["data"]["postCreate"]["signal"].is_null());
+    let spawn_error = spawned_json["data"]["postCreate"]["error"]
+        .as_str()
+        .unwrap_or("");
     assert!(
         spawn_error.contains("ENOENT") && spawn_error.contains("/nonexistent"),
         "{spawn_error}"
@@ -2504,14 +2557,14 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
         .env("SHELL", "/nonexistent")
         .output()
         .expect("attach hook spawn");
-    assert_eq!(attach_spawn.status.code(), Some(1));
+    assert_eq!(attach_spawn.status.code(), Some(6));
     let attach_json = json_value(&attach_spawn);
-    assert_eq!(attach_json["postCreate"]["ok"], false);
-    assert!(attach_json["postCreate"]["error"]
+    assert_eq!(attach_json["data"]["postCreate"]["ok"], false);
+    assert!(attach_json["data"]["postCreate"]["error"]
         .as_str()
         .unwrap_or("")
         .contains("ENOENT"));
-    assert!(attach_json.get("error").is_none(), "{attach_json}");
+    assert!(attach_json["error"]["code"] == "partial", "{attach_json}");
     assert!(managed(&repo, "attach-hook-spawn/README.md").is_file());
 
     fs::write(
@@ -2522,17 +2575,17 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     let deleted = repo.mabo(&["delete", "--force", "h", "--json"]);
     assert_eq!(
         deleted.status.code(),
-        Some(143),
+        Some(1),
         "{}\n{}",
         text(&deleted.stdout),
         text(&deleted.stderr)
     );
     let deleted_json = json_value(&deleted);
     assert_eq!(deleted_json["error"]["code"], "signaled");
-    assert_eq!(deleted_json["error"]["exitCode"], 143);
-    assert_eq!(deleted_json["deleted"][0]["worktree"]["name"], "h");
+    assert!(deleted_json["error"].get("exitCode").is_none());
+    assert_eq!(deleted_json["data"]["deleted"][0]["worktree"]["name"], "h");
     assert!(paths_match(
-        deleted_json["deleted"][0]["worktree"]["path"]
+        deleted_json["data"]["deleted"][0]["worktree"]["path"]
             .as_str()
             .unwrap_or(""),
         &managed(&repo, "h")
@@ -2555,10 +2608,13 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     assert_eq!(pre_spawn.status.code(), Some(1));
     let pre_json = json_value(&pre_spawn);
     assert_eq!(pre_json["error"]["code"], "spawn");
-    assert_eq!(pre_json["error"]["exitCode"], 1);
-    assert_eq!(pre_json["deleted"][0]["worktree"]["name"], "attach-hook");
+    assert!(pre_json["error"].get("exitCode").is_none());
+    assert_eq!(
+        pre_json["data"]["deleted"][0]["worktree"]["name"],
+        "attach-hook"
+    );
     assert!(paths_match(
-        pre_json["deleted"][0]["worktree"]["path"]
+        pre_json["data"]["deleted"][0]["worktree"]["path"]
             .as_str()
             .unwrap_or(""),
         &managed(&repo, "attach-hook")
@@ -2610,15 +2666,18 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
     );
     let json_value_created = json_value(&json_created);
     assert!(
-        json_value_created.get("error").is_none(),
+        json_value_created["error"].is_null(),
         "{json_value_created}"
     );
-    assert_eq!(json_value_created["exec"]["ok"], true);
-    assert_eq!(json_value_created["worktree"]["name"], "feature-json-topic");
-    assert_eq!(json_value_created["worktree"]["detached"], true);
-    assert!(json_value_created["worktree"]["branch"].is_null());
+    assert_eq!(json_value_created["data"]["exec"]["ok"], true);
+    assert_eq!(
+        json_value_created["data"]["worktree"]["name"],
+        "feature-json-topic"
+    );
+    assert_eq!(json_value_created["data"]["worktree"]["detached"], true);
+    assert!(json_value_created["data"]["worktree"]["branch"].is_null());
     assert!(paths_match(
-        json_value_created["worktree"]["path"]
+        json_value_created["data"]["worktree"]["path"]
             .as_str()
             .unwrap_or(""),
         &managed(&repo, "feature-json-topic")
@@ -2639,11 +2698,16 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
         text(&attached.stderr)
     );
     let attached_json = json_value(&attached);
-    assert!(attached_json.get("error").is_none(), "{attached_json}");
-    assert_eq!(attached_json["worktree"]["name"], "feature-attached");
-    assert_eq!(attached_json["worktree"]["detached"], true);
+    assert!(attached_json["error"].is_null(), "{attached_json}");
+    assert_eq!(
+        attached_json["data"]["worktree"]["name"],
+        "feature-attached"
+    );
+    assert_eq!(attached_json["data"]["worktree"]["detached"], true);
     assert!(paths_match(
-        attached_json["worktree"]["path"].as_str().unwrap_or(""),
+        attached_json["data"]["worktree"]["path"]
+            .as_str()
+            .unwrap_or(""),
         &managed(&repo, "feature-attached")
     ));
 
@@ -2684,12 +2748,14 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
         text(&checkout.stderr)
     );
     let checkout_json = json_value(&checkout);
-    assert!(checkout_json.get("error").is_none(), "{checkout_json}");
-    assert_eq!(checkout_json["worktree"]["name"], "issues-7");
-    assert_eq!(checkout_json["worktree"]["detached"], true);
-    assert_eq!(checkout_json["postCreate"]["ok"], true);
+    assert!(checkout_json["error"].is_null(), "{checkout_json}");
+    assert_eq!(checkout_json["data"]["worktree"]["name"], "issues-7");
+    assert_eq!(checkout_json["data"]["worktree"]["detached"], true);
+    assert_eq!(checkout_json["data"]["postCreate"]["ok"], true);
     assert!(paths_match(
-        checkout_json["worktree"]["path"].as_str().unwrap_or(""),
+        checkout_json["data"]["worktree"]["path"]
+            .as_str()
+            .unwrap_or(""),
         &managed(&repo, "issues-7")
     ));
 }
@@ -2729,25 +2795,28 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
         text(&checkout.stderr)
     );
     let checkout_json = json_value(&checkout);
-    assert_eq!(checkout_json["version"], 1);
-    assert_eq!(checkout_json["github"]["kind"], "issue");
-    assert_eq!(checkout_json["github"]["number"], 7);
-    assert!(checkout_json["github"]["headRef"].is_null());
-    assert_eq!(checkout_json["github"]["alreadyExists"], false);
+    assert_eq!(checkout_json["schema"], 2);
+    assert_eq!(checkout_json["data"]["github"]["kind"], "issue");
+    assert_eq!(checkout_json["data"]["github"]["number"], 7);
+    assert!(checkout_json["data"]["github"]["headRef"].is_null());
+    assert_eq!(checkout_json["data"]["github"]["alreadyExists"], false);
     assert_worktree_object(
-        &checkout_json["worktree"],
+        &checkout_json["data"]["worktree"],
         "issues/7",
         &managed(&repo, "issues/7"),
     );
-    assert_eq!(checkout_json["worktree"]["branch"], "issues/7");
-    assert_eq!(checkout_json["worktree"]["base"], "HEAD");
-    assert_eq!(checkout_json["worktree"]["links"]["issue"]["number"], 7);
+    assert_eq!(checkout_json["data"]["worktree"]["branch"], "issues/7");
+    assert_eq!(checkout_json["data"]["worktree"]["base"], "HEAD");
     assert_eq!(
-        checkout_json["worktree"]["links"]["issue"]["url"],
+        checkout_json["data"]["worktree"]["links"]["issue"]["number"],
+        7
+    );
+    assert_eq!(
+        checkout_json["data"]["worktree"]["links"]["issue"]["url"],
         "https://github.com/acme/demo/issues/7"
     );
-    assert!(checkout_json["worktree"]["links"]["pr"].is_null());
-    assert!(checkout_json["worktree"]["createdAt"].is_string());
+    assert!(checkout_json["data"]["worktree"]["links"]["pr"].is_null());
+    assert!(checkout_json["data"]["worktree"]["createdAt"].is_string());
     assert!(!text(&checkout.stdout).contains("Created worktree"));
 
     let missing = repo
@@ -2758,8 +2827,8 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
         .env("PATH", &path)
         .output()
         .expect("missing");
-    assert_eq!(missing.status.code(), Some(3));
-    assert_eq!(json_value(&missing)["error"]["code"], "validation");
+    assert_eq!(missing.status.code(), Some(2));
+    assert_eq!(json_value(&missing)["error"]["code"], "usage");
 
     let matching = Repo::new();
     let matching_path = fake_gh_for_topic_pr(&matching);
@@ -2787,19 +2856,19 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
         text(&again.stderr)
     );
     let again_json = json_value(&again);
-    assert_eq!(again_json["github"]["kind"], "pullRequest");
-    assert_eq!(again_json["github"]["number"], 7);
-    assert_eq!(again_json["github"]["headRef"], "topic");
-    assert_eq!(again_json["github"]["alreadyExists"], true);
-    assert!(again_json["worktree"]["base"].is_null());
-    assert_eq!(again_json["postCreate"]["ran"], false);
-    assert_worktree_object(&again_json["worktree"], "topic", &checked_out);
-    assert_eq!(again_json["worktree"]["links"]["pr"]["number"], 7);
+    assert_eq!(again_json["data"]["github"]["kind"], "pullRequest");
+    assert_eq!(again_json["data"]["github"]["number"], 7);
+    assert_eq!(again_json["data"]["github"]["headRef"], "topic");
+    assert_eq!(again_json["data"]["github"]["alreadyExists"], true);
+    assert!(again_json["data"]["worktree"]["base"].is_null());
+    assert_eq!(again_json["data"]["postCreate"]["ran"], false);
+    assert_worktree_object(&again_json["data"]["worktree"], "topic", &checked_out);
+    assert_eq!(again_json["data"]["worktree"]["links"]["pr"]["number"], 7);
     assert_eq!(
-        again_json["worktree"]["links"]["pr"]["url"],
+        again_json["data"]["worktree"]["links"]["pr"]["url"],
         "https://github.com/acme/demo/pull/7"
     );
-    assert!(again_json["worktree"]["links"]["issue"].is_null());
+    assert!(again_json["data"]["worktree"]["links"]["issue"].is_null());
     assert!(!text(&again.stdout).contains("already checked out"));
 }
 
@@ -2866,7 +2935,7 @@ fn exec_passes_command_options_through() {
         .contains("mabo exec [--project <ref>] <worktree-name> <command> [args...]"));
 
     let early = repo.mabo(&["exec", "--show-current", "feature/exec-flags", "true"]);
-    assert_eq!(early.status.code(), Some(3));
+    assert_eq!(early.status.code(), Some(2));
     assert!(text(&early.stderr).contains("Unknown option '--show-current'"));
 }
 
@@ -2940,7 +3009,7 @@ fn create_and_attach_exec_pass_command_options_through() {
     assert!(text(&short.stdout).contains("git status --short"));
 
     let missing = repo.mabo(&["create", "feature/missing-exec", "--exec"]);
-    assert_eq!(missing.status.code(), Some(3));
+    assert_eq!(missing.status.code(), Some(2));
     assert!(text(&missing.stderr).contains("Option '--exec <value>' argument missing"));
 
     repo.git(&["branch", "attached-exec-flags"]);
@@ -3017,7 +3086,7 @@ fn repeated_exec_options_are_rejected() {
     let message = "The --exec option can only be specified once";
 
     let created = repo.mabo(&["create", "a", "--exec=echo", "--exec=true"]);
-    assert_eq!(created.status.code(), Some(3), "{}", text(&created.stderr));
+    assert_eq!(created.status.code(), Some(2), "{}", text(&created.stderr));
     assert!(
         text(&created.stderr).contains(message),
         "{}",
@@ -3027,7 +3096,7 @@ fn repeated_exec_options_are_rejected() {
     assert!(!managed(&repo, "a").exists());
 
     let quoted = repo.mabo(&["create", "b", "--exec=echo one", "--exec=echo two"]);
-    assert_eq!(quoted.status.code(), Some(3), "{}", text(&quoted.stderr));
+    assert_eq!(quoted.status.code(), Some(2), "{}", text(&quoted.stderr));
     assert!(
         text(&quoted.stderr).contains(message),
         "{}",
@@ -3036,14 +3105,14 @@ fn repeated_exec_options_are_rejected() {
     assert!(!managed(&repo, "b").exists());
 
     let mixed = repo.mabo(&["create", "c", "-xecho", "--exec=true"]);
-    assert_eq!(mixed.status.code(), Some(3), "{}", text(&mixed.stderr));
+    assert_eq!(mixed.status.code(), Some(2), "{}", text(&mixed.stderr));
     assert!(text(&mixed.stderr).contains(message));
 
     repo.git(&["branch", "attached-repeat"]);
     let attached = repo.mabo(&["attach", "attached-repeat", "--exec=echo", "--exec=true"]);
     assert_eq!(
         attached.status.code(),
-        Some(3),
+        Some(2),
         "{}",
         text(&attached.stderr)
     );
@@ -3058,7 +3127,7 @@ fn repeated_exec_options_are_rejected() {
     let attached_short = repo.mabo(&["attach", "attached-repeat", "-xecho", "-xtrue"]);
     assert_eq!(
         attached_short.status.code(),
-        Some(3),
+        Some(2),
         "{}",
         text(&attached_short.stderr)
     );
@@ -3129,29 +3198,29 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     assert!(help_text.contains("~/ghq"));
 
     let missing = repo.mabo(&["clone", "--json"]);
-    assert_eq!(missing.status.code(), Some(3));
+    assert_eq!(missing.status.code(), Some(2));
     let missing_json: serde_json::Value =
         serde_json::from_str(&text(&missing.stdout)).expect("usage json");
-    assert_eq!(missing_json["version"], 1);
-    assert_eq!(missing_json["error"]["code"], "validation");
-    assert_eq!(missing_json["error"]["exitCode"], 3);
+    assert_eq!(missing_json["schema"], 2);
+    assert_eq!(missing_json["error"]["code"], "usage");
+    assert!(missing_json["error"].get("exitCode").is_none());
 
     let bad_depth = repo.mabo(&["clone", "example/widget", "--depth", "0", "--json"]);
     assert_eq!(
         bad_depth.status.code(),
-        Some(3),
+        Some(2),
         "{}",
         text(&bad_depth.stdout)
     );
     let bad_depth_json: serde_json::Value =
         serde_json::from_str(&text(&bad_depth.stdout)).expect("depth json");
-    assert_eq!(bad_depth_json["error"]["code"], "validation");
+    assert_eq!(bad_depth_json["error"]["code"], "usage");
 
     let bad_url = repo.mabo(&["clone", "not a repo", "--json"]);
-    assert_eq!(bad_url.status.code(), Some(3));
+    assert_eq!(bad_url.status.code(), Some(2));
     let bad_url_json: serde_json::Value =
         serde_json::from_str(&text(&bad_url.stdout)).expect("url json");
-    assert_eq!(bad_url_json["error"]["code"], "validation");
+    assert_eq!(bad_url_json["error"]["code"], "usage");
     assert!(bad_url_json["error"]["message"]
         .as_str()
         .unwrap_or_default()
@@ -3180,14 +3249,20 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     assert!(!text(&cloned.stdout).contains("Cloning into"));
     let value: serde_json::Value = serde_json::from_str(&text(&cloned.stdout)).expect("clone json");
     let destination = canonical(&root.join("github.com/example/widget"));
-    assert_eq!(value["version"], 1);
-    assert_eq!(value["path"], destination.to_string_lossy().as_ref());
-    assert_eq!(value["host"], "github.com");
-    assert_eq!(value["owner"], "example");
-    assert_eq!(value["repo"], "widget");
-    assert_eq!(value["remoteUrl"], "https://github.com/example/widget.git");
-    assert_eq!(value["cloned"], true);
-    assert_eq!(value["updated"], false);
+    assert_eq!(value["schema"], 2);
+    assert_eq!(
+        value["data"]["path"],
+        destination.to_string_lossy().as_ref()
+    );
+    assert_eq!(value["data"]["host"], "github.com");
+    assert_eq!(value["data"]["owner"], "example");
+    assert_eq!(value["data"]["repo"], "widget");
+    assert_eq!(
+        value["data"]["remoteUrl"],
+        "https://github.com/example/widget.git"
+    );
+    assert_eq!(value["data"]["cloned"], true);
+    assert_eq!(value["data"]["updated"], false);
     assert!(value.get("project").is_none());
     let branch = repo
         .command("git", &["branch", "--show-current"])
@@ -3218,11 +3293,11 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     let listed = repo.mabo(&["project", "list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let catalog: serde_json::Value = serde_json::from_str(&text(&listed.stdout)).expect("catalog");
-    let registered = catalog["projects"]
+    let registered = catalog["data"]["projects"]
         .as_array()
         .expect("projects")
         .iter()
-        .find(|project| project["rootPath"] == value["path"])
+        .find(|project| project["rootPath"] == value["data"]["path"])
         .expect("registered project");
     assert_eq!(registered["source"], "registry");
     assert_eq!(registered["name"], "widget");
@@ -3242,9 +3317,9 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     );
     let updated_json: serde_json::Value =
         serde_json::from_str(&text(&updated.stdout)).expect("update json");
-    assert_eq!(updated_json["cloned"], false);
-    assert_eq!(updated_json["updated"], true);
-    assert_eq!(updated_json["path"], value["path"]);
+    assert_eq!(updated_json["data"]["cloned"], false);
+    assert_eq!(updated_json["data"]["updated"], true);
+    assert_eq!(updated_json["data"]["path"], value["data"]["path"]);
     assert_eq!(
         fs::read_to_string(destination.join("local.txt")).expect("marker"),
         "keep\n"
@@ -3290,16 +3365,16 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     let mismatch = repo.mabo(&["clone", "example/other", "--json"]);
     assert_eq!(
         mismatch.status.code(),
-        Some(3),
+        Some(2),
         "{}\n{}",
         text(&mismatch.stdout),
         text(&mismatch.stderr)
     );
     let mismatch_json: serde_json::Value =
         serde_json::from_str(&text(&mismatch.stdout)).expect("mismatch json");
-    assert_eq!(mismatch_json["version"], 1);
-    assert_eq!(mismatch_json["error"]["code"], "validation");
-    assert_eq!(mismatch_json["error"]["exitCode"], 3);
+    assert_eq!(mismatch_json["schema"], 2);
+    assert_eq!(mismatch_json["error"]["code"], "usage");
+    assert!(mismatch_json["error"].get("exitCode").is_none());
     let message = mismatch_json["error"]["message"]
         .as_str()
         .unwrap_or_default();
@@ -3311,7 +3386,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     let not_repo = repo.mabo(&["clone", "example/empty"]);
     assert_eq!(
         not_repo.status.code(),
-        Some(3),
+        Some(2),
         "{}",
         text(&not_repo.stderr)
     );
@@ -3323,11 +3398,11 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     assert!(discovered.status.success(), "{}", text(&discovered.stderr));
     let discovered_json: serde_json::Value =
         serde_json::from_str(&text(&discovered.stdout)).expect("discovered");
-    let found = discovered_json["projects"]
+    let found = discovered_json["data"]["projects"]
         .as_array()
         .expect("projects")
         .iter()
-        .find(|project| project["rootPath"] == value["path"])
+        .find(|project| project["rootPath"] == value["data"]["path"])
         .expect("scanned project");
     assert_eq!(found["source"], "ghq");
 }
@@ -3350,7 +3425,7 @@ fn clone_root_resolution_order() {
     let env_root = repo.root.join("from-env");
     let default_root = repo.home.join("ghq");
     let invalid = repo.mabo(&["preferences", "set", "root", "relative/path"]);
-    assert_eq!(invalid.status.code(), Some(3), "{}", text(&invalid.stderr));
+    assert_eq!(invalid.status.code(), Some(2), "{}", text(&invalid.stderr));
     assert!(text(&invalid.stderr).contains("absolute"));
     let set = repo.mabo(&[
         "preferences",
@@ -3429,9 +3504,12 @@ fn clone_names_the_remote_origin_when_default_remote_name_is_upstream() {
         text(&again.stderr)
     );
     let again_json: serde_json::Value = serde_json::from_str(&text(&again.stdout)).expect("json");
-    assert_eq!(again_json["cloned"], false);
-    assert_eq!(again_json["updated"], true);
-    assert_eq!(again_json["path"], destination.to_string_lossy().as_ref());
+    assert_eq!(again_json["data"]["cloned"], false);
+    assert_eq!(again_json["data"]["updated"], true);
+    assert_eq!(
+        again_json["data"]["path"],
+        destination.to_string_lossy().as_ref()
+    );
 }
 
 #[test]
@@ -3458,10 +3536,13 @@ fn clone_lowercases_remote_url_host() {
         text(&cloned.stderr)
     );
     let value: serde_json::Value = serde_json::from_str(&text(&cloned.stdout)).expect("json");
-    assert_eq!(value["host"], "github.com");
-    assert_eq!(value["remoteUrl"], "https://github.com/example/widget.git");
+    assert_eq!(value["data"]["host"], "github.com");
     assert_eq!(
-        value["path"],
+        value["data"]["remoteUrl"],
+        "https://github.com/example/widget.git"
+    );
+    assert_eq!(
+        value["data"]["path"],
         canonical(&root.join("github.com/example/widget"))
             .to_string_lossy()
             .as_ref()
@@ -3479,15 +3560,15 @@ fn clone_overlong_owner_is_validation() {
     let output = repo.mabo(&["clone", &source, "--json"]);
     assert_eq!(
         output.status.code(),
-        Some(3),
+        Some(2),
         "{}\n{}",
         text(&output.stdout),
         text(&output.stderr)
     );
     let value: serde_json::Value = serde_json::from_str(&text(&output.stdout)).expect("json");
-    assert_eq!(value["version"], 1);
-    assert_eq!(value["error"]["code"], "validation");
-    assert_eq!(value["error"]["exitCode"], 3);
+    assert_eq!(value["schema"], 2);
+    assert_eq!(value["error"]["code"], "usage");
+    assert!(value["error"].get("exitCode").is_none());
     let message = value["error"]["message"].as_str().unwrap_or_default();
     assert!(message.contains("Failed to create"), "{message}");
     assert!(text(&output.stderr).is_empty(), "{}", text(&output.stderr));
@@ -3520,15 +3601,15 @@ fn assert_clone_validation(repo: &Repo, source: &str) {
     let output = repo.mabo(&["clone", source, "--json"]);
     assert_eq!(
         output.status.code(),
-        Some(3),
+        Some(2),
         "{source}\n{}\n{}",
         text(&output.stdout),
         text(&output.stderr)
     );
     let value: serde_json::Value = serde_json::from_str(&text(&output.stdout)).expect("json");
-    assert_eq!(value["version"], 1);
-    assert_eq!(value["error"]["code"], "validation");
-    assert_eq!(value["error"]["exitCode"], 3);
+    assert_eq!(value["schema"], 2);
+    assert_eq!(value["error"]["code"], "usage");
+    assert!(value["error"].get("exitCode").is_none());
     let message = value["error"]["message"].as_str().unwrap_or_default();
     assert!(
         message.contains("File name too long"),
@@ -3577,9 +3658,9 @@ fn clone_surfaces_unreadable_git_config_for_an_existing_checkout() {
         text(&again.stderr)
     );
     let value: serde_json::Value = serde_json::from_str(&text(&again.stdout)).expect("json");
-    assert_eq!(value["version"], 1);
-    assert_eq!(value["error"]["code"], "error");
-    assert_eq!(value["error"]["exitCode"], 1);
+    assert_eq!(value["schema"], 2);
+    assert_eq!(value["error"]["code"], "failed");
+    assert!(value["error"].get("exitCode").is_none());
     let message = value["error"]["message"].as_str().unwrap_or_default();
     assert!(
         message.contains("bad config line"),
@@ -3639,10 +3720,10 @@ fn clone_removes_stale_staging_directories() {
 fn clone_rejects_file_urls() {
     let repo = Repo::new();
     let output = repo.mabo(&["clone", "file:///tmp/repo.git", "--json"]);
-    assert_eq!(output.status.code(), Some(3), "{}", text(&output.stdout));
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output.stdout));
     let value: serde_json::Value = serde_json::from_str(&text(&output.stdout)).expect("json");
-    assert_eq!(value["error"]["code"], "validation");
-    assert_eq!(value["error"]["exitCode"], 3);
+    assert_eq!(value["error"]["code"], "usage");
+    assert!(value["error"].get("exitCode").is_none());
     let message = value["error"]["message"].as_str().unwrap_or_default();
     assert!(message.contains("file"), "{message}");
     assert!(message.contains("https"), "{message}");
@@ -3710,11 +3791,11 @@ fn assert_clone_landed(output: &std::process::Output, root: &std::path::Path) {
     );
     let value: serde_json::Value = serde_json::from_str(&text(&output.stdout)).expect("json");
     let expected = canonical(&root.join("github.com/example/widget"));
-    assert_eq!(value["path"], expected.to_string_lossy().as_ref());
-    assert_eq!(value["cloned"], true);
-    assert_eq!(value["host"], "github.com");
-    assert_eq!(value["owner"], "example");
-    assert_eq!(value["repo"], "widget");
+    assert_eq!(value["data"]["path"], expected.to_string_lossy().as_ref());
+    assert_eq!(value["data"]["cloned"], true);
+    assert_eq!(value["data"]["host"], "github.com");
+    assert_eq!(value["data"]["owner"], "example");
+    assert_eq!(value["data"]["repo"], "widget");
 }
 
 fn canonical(path: &std::path::Path) -> PathBuf {
@@ -3810,7 +3891,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
     let catalog = run(&["project", "list", "--json"], &repo.home);
     assert!(catalog.status.success(), "{}", text(&catalog.stderr));
     let catalog_json = json_value(&catalog);
-    let only_entry = catalog_json["projects"]
+    let only_entry = catalog_json["data"]["projects"]
         .as_array()
         .expect("projects")
         .iter()
@@ -3818,7 +3899,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         .expect("only project");
     assert_eq!(only_entry["name"], "ptm805only");
     assert_eq!(only_entry["canonicalName"], "github.com/acme/ptm805only");
-    let placed_entry = catalog_json["projects"]
+    let placed_entry = catalog_json["data"]["projects"]
         .as_array()
         .expect("projects")
         .iter()
@@ -3858,14 +3939,14 @@ fn project_option_resolves_paths_suffixes_and_errors() {
     let ambiguous = run(&["list", "--project", "ptm805widget", "--json"], &repo.home);
     assert_eq!(
         ambiguous.status.code(),
-        Some(3),
+        Some(2),
         "{}",
         text(&ambiguous.stdout)
     );
     let ambiguous_json = json_value(&ambiguous);
-    assert_eq!(ambiguous_json["version"], 1);
-    assert_eq!(ambiguous_json["error"]["code"], "validation");
-    assert_eq!(ambiguous_json["error"]["exitCode"], 3);
+    assert_eq!(ambiguous_json["schema"], 2);
+    assert_eq!(ambiguous_json["error"]["code"], "ambiguous");
+    assert!(ambiguous_json["error"].get("exitCode").is_none());
     let message = ambiguous_json["error"]["message"].as_str().unwrap_or("");
     assert!(
         message.contains("github.com/acme/ptm805widget"),
@@ -3896,10 +3977,10 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         &["list", "--project", "no-such-ptm805", "--json"],
         &repo.home,
     );
-    assert_eq!(missing.status.code(), Some(2), "{}", text(&missing.stdout));
+    assert_eq!(missing.status.code(), Some(3), "{}", text(&missing.stdout));
     let missing_json = json_value(&missing);
     assert_eq!(missing_json["error"]["code"], "not_found");
-    assert_eq!(missing_json["error"]["exitCode"], 2);
+    assert!(missing_json["error"].get("exitCode").is_none());
     assert_eq!(
         missing_json["error"]["message"],
         "Project 'no-such-ptm805' not found"
@@ -3908,7 +3989,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         &["where", "--project", "github.com/acme", "main", "--json"],
         &repo.home,
     );
-    assert_eq!(prefix.status.code(), Some(2), "{}", text(&prefix.stdout));
+    assert_eq!(prefix.status.code(), Some(3), "{}", text(&prefix.stdout));
     assert_eq!(json_value(&prefix)["error"]["code"], "not_found");
 
     let created = repo.mabo(&["create", "feature"]);
@@ -3960,7 +4041,9 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         text(&inside.stderr)
     );
     let inside_json = json_value(&inside);
-    let worktrees = inside_json["worktrees"].as_array().expect("worktrees");
+    let worktrees = inside_json["data"]["worktrees"]
+        .as_array()
+        .expect("worktrees");
     let default_tree = worktrees
         .iter()
         .find(|worktree| worktree["default"].as_bool() == Some(true))
@@ -4004,9 +4087,9 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         ],
         &repo.home,
     );
-    assert_eq!(file.status.code(), Some(3), "{}", text(&file.stdout));
+    assert_eq!(file.status.code(), Some(2), "{}", text(&file.stdout));
     let file_json = json_value(&file);
-    assert_eq!(file_json["error"]["code"], "validation");
+    assert_eq!(file_json["error"]["code"], "usage");
     assert!(file_json["error"]["message"]
         .as_str()
         .unwrap_or("")
@@ -4020,7 +4103,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         ],
         &repo.home,
     );
-    assert_eq!(outside.status.code(), Some(4), "{}", text(&outside.stdout));
+    assert_eq!(outside.status.code(), Some(3), "{}", text(&outside.stdout));
     assert_eq!(json_value(&outside)["error"]["code"], "not_repository");
     let absent = run(
         &[
@@ -4032,10 +4115,10 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         ],
         &repo.home,
     );
-    assert_eq!(absent.status.code(), Some(2), "{}", text(&absent.stdout));
+    assert_eq!(absent.status.code(), Some(3), "{}", text(&absent.stdout));
     let absent_json = json_value(&absent);
     assert_eq!(absent_json["error"]["code"], "not_found");
-    assert_eq!(absent_json["error"]["exitCode"], 2);
+    assert!(absent_json["error"].get("exitCode").is_none());
     assert_eq!(
         absent_json["error"]["message"],
         "Path '/no/such/ptm805-path' does not exist"
@@ -4054,7 +4137,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
     );
     assert_eq!(
         repeated.status.code(),
-        Some(3),
+        Some(2),
         "{}",
         text(&repeated.stdout)
     );
@@ -4102,7 +4185,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         ],
         &repo.home,
     );
-    assert_eq!(missing_checkout.status.code(), Some(2));
+    assert_eq!(missing_checkout.status.code(), Some(3));
     assert_eq!(json_value(&missing_checkout)["error"]["code"], "not_found");
 }
 
@@ -4181,7 +4264,7 @@ fn exec_project_option_passes_later_options_to_the_command() {
         "--project",
         "y",
     ]);
-    assert_eq!(missing.status.code(), Some(2), "{}", text(&missing.stderr));
+    assert_eq!(missing.status.code(), Some(3), "{}", text(&missing.stderr));
     assert!(text(&missing.stderr).contains("Project 'no-such-ptm805' not found"));
     assert!(!text(&missing.stderr).contains("unrecognized option"));
 }
@@ -4292,24 +4375,24 @@ fn project_option_ignores_the_callers_config_and_matches_directory_names() {
     let option_json = run(&["list", "-p", "--json"]);
     assert_eq!(
         option_json.status.code(),
-        Some(3),
+        Some(2),
         "{}",
         text(&option_json.stdout)
     );
     let option_body = json_value(&option_json);
-    assert_eq!(option_body["error"]["code"], "validation");
-    assert_eq!(option_body["error"]["exitCode"], 3);
+    assert_eq!(option_body["error"]["code"], "usage");
+    assert!(option_body["error"].get("exitCode").is_none());
     assert!(option_body["error"]["message"]
         .as_str()
         .unwrap_or("")
         .contains("looks like an option"));
     let option_later = run(&["where", "--json", "-p", "--bogus", "main"]);
-    assert_eq!(option_later.status.code(), Some(3));
-    assert_eq!(json_value(&option_later)["error"]["code"], "validation");
+    assert_eq!(option_later.status.code(), Some(2));
+    assert_eq!(json_value(&option_later)["error"]["code"], "usage");
     let option_human = run(&["where", "-p", "--nope", "main"]);
     assert_eq!(
         option_human.status.code(),
-        Some(3),
+        Some(2),
         "{}",
         text(&option_human.stderr)
     );
@@ -4509,7 +4592,7 @@ fn relative_origin_is_not_a_github_project_name() {
         .expect("list");
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let catalog = json_value(&listed);
-    let entry = catalog["projects"]
+    let entry = catalog["data"]["projects"]
         .as_array()
         .expect("projects")
         .iter()
@@ -4528,7 +4611,7 @@ fn relative_origin_is_not_a_github_project_name() {
         .env("PATH", &path_env)
         .output()
         .expect("where");
-    assert_eq!(matched.status.code(), Some(2), "{}", text(&matched.stdout));
+    assert_eq!(matched.status.code(), Some(3), "{}", text(&matched.stdout));
     assert_eq!(json_value(&matched)["error"]["code"], "not_found");
     let by_name = repo
         .command(
@@ -4575,14 +4658,14 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     let plain = repo.mabo(&["create", "plain", "--json"]);
     assert!(plain.status.success(), "{}", text(&plain.stderr));
     let plain_json = json_value(&plain);
-    assert!(plain_json["worktree"]["owner"].is_null());
-    assert!(plain_json["worktree"]["purpose"].is_null());
-    assert!(plain_json["worktree"]["createdAt"].is_string());
+    assert!(plain_json["data"]["worktree"]["owner"].is_null());
+    assert!(plain_json["data"]["worktree"]["purpose"].is_null());
+    assert!(plain_json["data"]["worktree"]["createdAt"].is_string());
     assert_eq!(
-        plain_json["worktree"]["createdAt"],
-        plain_json["worktree"]["lastUsedAt"]
+        plain_json["data"]["worktree"]["createdAt"],
+        plain_json["data"]["worktree"]["lastUsedAt"]
     );
-    assert!(plain_json["worktree"]["links"]["pr"].is_null());
+    assert!(plain_json["data"]["worktree"]["links"]["pr"].is_null());
 
     let ignored = repo
         .command(env!("CARGO_BIN_EXE_mabo"), &["create", "legacy", "--json"])
@@ -4591,7 +4674,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
         .output()
         .expect("legacy env");
     assert!(ignored.status.success(), "{}", text(&ignored.stderr));
-    assert!(json_value(&ignored)["worktree"]["owner"].is_null());
+    assert!(json_value(&ignored)["data"]["worktree"]["owner"].is_null());
 
     let created = repo
         .command(
@@ -4613,23 +4696,28 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
         .expect("create");
     assert!(created.status.success(), "{}", text(&created.stderr));
     let created_json = json_value(&created);
-    assert_eq!(created_json["version"], 1);
-    assert_eq!(created_json["worktree"]["owner"], "from-flag");
-    assert_eq!(created_json["worktree"]["purpose"], "fix the flake");
-    assert_eq!(created_json["worktree"]["links"]["pr"]["number"], 774);
-    assert!(created_json["worktree"]["links"]["pr"]["url"].is_null());
-    assert!(created_json["worktree"]["createdAt"].is_string());
-    let created_at = created_json["worktree"]["createdAt"]
+    assert_eq!(created_json["schema"], 2);
+    assert_eq!(created_json["data"]["worktree"]["owner"], "from-flag");
+    assert_eq!(created_json["data"]["worktree"]["purpose"], "fix the flake");
+    assert_eq!(
+        created_json["data"]["worktree"]["links"]["pr"]["number"],
+        774
+    );
+    assert!(created_json["data"]["worktree"]["links"]["pr"]["url"].is_null());
+    assert!(created_json["data"]["worktree"]["createdAt"].is_string());
+    let created_at = created_json["data"]["worktree"]["createdAt"]
         .as_str()
         .expect("created")
         .to_string();
-    let created_from = created_json["worktree"]["createdFrom"]
+    let created_from = created_json["data"]["worktree"]["createdFrom"]
         .as_str()
         .expect("createdFrom")
         .to_string();
     assert_eq!(
         created_from,
-        created_json["worktree"]["head"].as_str().expect("head")
+        created_json["data"]["worktree"]["head"]
+            .as_str()
+            .expect("head")
     );
 
     let from_env = repo
@@ -4641,7 +4729,10 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
         .output()
         .expect("env");
     assert!(from_env.status.success(), "{}", text(&from_env.stderr));
-    assert_eq!(json_value(&from_env)["worktree"]["owner"], "from-env");
+    assert_eq!(
+        json_value(&from_env)["data"]["worktree"]["owner"],
+        "from-env"
+    );
 
     let listed = repo.mabo(&["list", "--owner", "from-flag"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
@@ -4653,8 +4744,11 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     assert!(!listed_text.contains("env-owned"));
 
     let listed_json = json_value(&repo.mabo(&["list", "--json", "--owner", "from-env"]));
-    assert_eq!(listed_json["worktrees"].as_array().map(Vec::len), Some(1));
-    assert_eq!(listed_json["worktrees"][0]["name"], "env-owned");
+    assert_eq!(
+        listed_json["data"]["worktrees"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(listed_json["data"]["worktrees"][0]["name"], "env-owned");
 
     let none = repo.mabo(&["list", "--names", "--owner", "nobody"]);
     assert!(none.status.success(), "{}", text(&none.stderr));
@@ -4663,18 +4757,18 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     assert!(text(&none_human.stdout).contains("No worktrees found for owner 'nobody'"));
 
     let invalid = repo.mabo(&["create", "nope", "--owner", " "]);
-    assert_eq!(invalid.status.code(), Some(3));
+    assert_eq!(invalid.status.code(), Some(2));
     let invalid_json = repo.mabo(&["meta", "set", "feature", "--pr", "not-a-link", "--json"]);
-    assert_eq!(invalid_json.status.code(), Some(3));
-    assert_eq!(json_value(&invalid_json)["error"]["code"], "validation");
-    assert_eq!(json_value(&invalid_json)["error"]["exitCode"], 3);
+    assert_eq!(invalid_json.status.code(), Some(2));
+    assert_eq!(json_value(&invalid_json)["error"]["code"], "usage");
+    assert!(json_value(&invalid_json)["error"].get("exitCode").is_none());
 
     let missing = repo.mabo(&["meta", "set", "missing", "--owner", "grok", "--json"]);
-    assert_eq!(missing.status.code(), Some(2));
+    assert_eq!(missing.status.code(), Some(3));
     assert_eq!(json_value(&missing)["error"]["code"], "not_found");
 
     let unset = repo.mabo(&["meta", "set", "feature", "--json"]);
-    assert_eq!(unset.status.code(), Some(3));
+    assert_eq!(unset.status.code(), Some(2));
 
     let updated = repo.mabo(&[
         "meta",
@@ -4688,12 +4782,21 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     ]);
     assert!(updated.status.success(), "{}", text(&updated.stderr));
     let updated_json = json_value(&updated);
-    assert_eq!(updated_json["worktree"]["owner"], "from-flag");
-    assert_eq!(updated_json["worktree"]["purpose"], "land the fix");
-    assert_eq!(updated_json["worktree"]["links"]["pr"]["number"], 774);
-    assert_eq!(updated_json["worktree"]["links"]["issue"]["number"], 12);
-    assert_eq!(updated_json["worktree"]["createdAt"], created_at);
-    assert_eq!(updated_json["worktree"]["createdFrom"], created_from);
+    assert_eq!(updated_json["data"]["worktree"]["owner"], "from-flag");
+    assert_eq!(updated_json["data"]["worktree"]["purpose"], "land the fix");
+    assert_eq!(
+        updated_json["data"]["worktree"]["links"]["pr"]["number"],
+        774
+    );
+    assert_eq!(
+        updated_json["data"]["worktree"]["links"]["issue"]["number"],
+        12
+    );
+    assert_eq!(updated_json["data"]["worktree"]["createdAt"], created_at);
+    assert_eq!(
+        updated_json["data"]["worktree"]["createdFrom"],
+        created_from
+    );
 
     let file = repo.repo.join(".git/maboroshi/worktrees.json");
     let mut document: serde_json::Value =
@@ -4716,9 +4819,9 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     let located = repo.mabo(&["where", "feature", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
     let located_json = json_value(&located);
-    assert_eq!(located_json["worktree"]["createdAt"], created_at);
+    assert_eq!(located_json["data"]["worktree"]["createdAt"], created_at);
     assert_ne!(
-        located_json["worktree"]["lastUsedAt"],
+        located_json["data"]["worktree"]["lastUsedAt"],
         "2000-01-01T00:00:00.000Z"
     );
     let human_where = repo.mabo(&["where", "feature"]);
@@ -4748,7 +4851,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     assert!(ran.status.success(), "{}", text(&ran.stderr));
     let after_exec = json_value(&repo.mabo(&["list", "--json", "--owner", "from-flag"]));
     assert_ne!(
-        after_exec["worktrees"][0]["lastUsedAt"],
+        after_exec["data"]["worktrees"][0]["lastUsedAt"],
         "2000-01-01T00:00:00.000Z"
     );
 
@@ -4764,17 +4867,23 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     ]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     let attached_json = json_value(&attached);
-    assert_eq!(attached_json["worktree"]["owner"], "reviewer");
-    assert_eq!(attached_json["worktree"]["links"]["pr"]["number"], 12);
-    assert!(attached_json["worktree"]["base"].is_null());
+    assert_eq!(attached_json["data"]["worktree"]["owner"], "reviewer");
+    assert_eq!(
+        attached_json["data"]["worktree"]["links"]["pr"]["number"],
+        12
+    );
+    assert!(attached_json["data"]["worktree"]["base"].is_null());
 
     let deleted = repo.mabo(&["delete", "feature", "--keep-branch", "--json"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     let deleted_json = json_value(&deleted);
-    assert_eq!(deleted_json["deleted"][0]["worktree"]["owner"], "from-flag");
+    assert_eq!(
+        deleted_json["data"]["deleted"][0]["worktree"]["owner"],
+        "from-flag"
+    );
     let after_delete = repo.mabo(&["list", "--json", "--owner", "from-flag"]);
     assert_eq!(
-        json_value(&after_delete)["worktrees"]
+        json_value(&after_delete)["data"]["worktrees"]
             .as_array()
             .map(Vec::len),
         Some(0)
@@ -4791,15 +4900,22 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     let broken = repo.mabo(&["list", "--json"]);
     assert!(broken.status.success(), "{}", text(&broken.stderr));
     let broken_json = json_value(&broken);
-    assert_eq!(broken_json["version"], 1);
-    assert!(broken_json.get("error").is_none());
+    assert_eq!(broken_json["schema"], 2);
+    assert!(broken_json["error"].is_null());
     assert!(text(&broken.stderr).contains("invalid JSON"));
     assert!(text(&broken.stderr).contains("worktrees.json"));
-    assert!(!text(&broken.stdout).contains("invalid JSON"));
+    assert!(broken_json["warnings"]
+        .as_array()
+        .expect("warnings")
+        .iter()
+        .any(|warning| warning["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("invalid JSON")));
     assert_eq!(fs::read_to_string(&file).expect("kept"), "{not json");
     let refused = repo.mabo(&["create", "after-corrupt", "--json"]);
     assert_eq!(refused.status.code(), Some(1));
-    assert_eq!(json_value(&refused)["error"]["code"], "error");
+    assert_eq!(json_value(&refused)["error"]["code"], "failed");
     assert!(json_value(&refused)["error"]["message"]
         .as_str()
         .unwrap_or("")
@@ -4827,7 +4943,7 @@ fn github_recheckout_keeps_the_original_owner() {
         .output()
         .expect("create");
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let created_at = json_value(&created)["worktree"]["createdAt"]
+    let created_at = json_value(&created)["data"]["worktree"]["createdAt"]
         .as_str()
         .expect("created")
         .to_string();
@@ -4865,18 +4981,20 @@ fn github_recheckout_keeps_the_original_owner() {
         .expect("checkout");
     assert!(again.status.success(), "{}", text(&again.stderr));
     let again_json = json_value(&again);
-    assert_eq!(again_json["github"]["alreadyExists"], true);
-    assert_eq!(again_json["worktree"]["owner"], "creator");
-    assert_eq!(again_json["worktree"]["purpose"], "original task");
-    assert_eq!(again_json["worktree"]["createdAt"], created_at);
+    assert_eq!(again_json["data"]["github"]["alreadyExists"], true);
+    assert_eq!(again_json["data"]["worktree"]["owner"], "creator");
+    assert_eq!(again_json["data"]["worktree"]["purpose"], "original task");
+    assert_eq!(again_json["data"]["worktree"]["createdAt"], created_at);
     assert_ne!(
-        again_json["worktree"]["lastUsedAt"],
+        again_json["data"]["worktree"]["lastUsedAt"],
         "2000-01-01T00:00:00.000Z"
     );
-    assert_eq!(again_json["worktree"]["links"]["pr"]["number"], 7);
+    assert_eq!(again_json["data"]["worktree"]["links"]["pr"]["number"], 7);
     let listed = repo.mabo(&["list", "--json", "--owner", "creator"]);
     assert_eq!(
-        json_value(&listed)["worktrees"].as_array().map(Vec::len),
+        json_value(&listed)["data"]["worktrees"]
+            .as_array()
+            .map(Vec::len),
         Some(1)
     );
 }
@@ -4938,8 +5056,8 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
         text(&unwritable.stdout)
     );
     let unwritable_json = json_value(&unwritable);
-    assert_eq!(unwritable_json["error"]["code"], "error");
-    assert_eq!(unwritable_json["error"]["exitCode"], 1);
+    assert_eq!(unwritable_json["error"]["code"], "failed");
+    assert!(unwritable_json["error"].get("exitCode").is_none());
     assert!(unwritable_json["error"]["message"]
         .as_str()
         .unwrap_or("")
@@ -4979,14 +5097,11 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
         text(&checked_out.stderr)
     );
     let checked_out_json = json_value(&checked_out);
-    assert!(
-        checked_out_json.get("error").is_none(),
-        "{checked_out_json}"
-    );
-    assert_eq!(checked_out_json["github"]["kind"], "pullRequest");
-    assert_eq!(checked_out_json["github"]["headRef"], "topic");
-    assert_eq!(checked_out_json["github"]["alreadyExists"], false);
-    assert_eq!(checked_out_json["metadata"]["ok"], true);
+    assert!(checked_out_json["error"].is_null(), "{checked_out_json}");
+    assert_eq!(checked_out_json["data"]["github"]["kind"], "pullRequest");
+    assert_eq!(checked_out_json["data"]["github"]["headRef"], "topic");
+    assert_eq!(checked_out_json["data"]["github"]["alreadyExists"], false);
+    assert_eq!(checked_out_json["data"]["metadata"]["ok"], true);
     assert!(managed(&ready, "topic").is_dir());
     assert!(
         local_branch(&ready, "topic").contains("topic"),
@@ -5020,7 +5135,7 @@ fn delete_refuses_when_metadata_is_not_writable() {
         .as_str()
         .unwrap_or("")
         .contains("worktrees.json"));
-    assert_eq!(deleted_json["error"]["exitCode"], 1);
+    assert!(deleted_json["error"].get("exitCode").is_none());
     assert!(managed(&repo, "doomed").is_dir());
     drop(_restore);
     assert_eq!(
@@ -5042,7 +5157,7 @@ fn create_replaces_a_record_left_by_git_worktree_remove() {
         "--json",
     ]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let created_at = json_value(&created)["worktree"]["createdAt"]
+    let created_at = json_value(&created)["data"]["worktree"]["createdAt"]
         .as_str()
         .expect("created")
         .to_string();
@@ -5060,14 +5175,14 @@ fn create_replaces_a_record_left_by_git_worktree_remove() {
     ]);
     assert!(again.status.success(), "{}", text(&again.stderr));
     let again_json = json_value(&again);
-    assert_eq!(again_json["worktree"]["owner"], "second");
-    assert_eq!(again_json["worktree"]["purpose"], "new task");
-    assert_ne!(again_json["worktree"]["createdAt"], created_at);
-    assert_eq!(again_json["metadata"]["ok"], true);
+    assert_eq!(again_json["data"]["worktree"]["owner"], "second");
+    assert_eq!(again_json["data"]["worktree"]["purpose"], "new task");
+    assert_ne!(again_json["data"]["worktree"]["createdAt"], created_at);
+    assert_eq!(again_json["data"]["metadata"]["ok"], true);
     let listed = repo.mabo(&["list", "--names", "--owner", "first"]);
     assert!(text(&listed.stdout).is_empty(), "{}", text(&listed.stdout));
     assert_eq!(
-        json_value(&repo.mabo(&["list", "--json", "--owner", "second"]))["worktrees"]
+        json_value(&repo.mabo(&["list", "--json", "--owner", "second"]))["data"]["worktrees"]
             .as_array()
             .map(Vec::len),
         Some(1)
@@ -5092,22 +5207,25 @@ fn metadata_save_failure_after_create_still_runs_hooks() {
         .env("MABO_TEST_FAIL_METADATA_SAVE", "1")
         .output()
         .expect("create");
-    assert_eq!(created.status.code(), Some(1), "{}", text(&created.stdout));
+    assert_eq!(created.status.code(), Some(6), "{}", text(&created.stdout));
     let created_json = json_value(&created);
-    assert!(created_json.get("error").is_none(), "{created_json}");
-    assert_eq!(created_json["worktree"]["name"], "feature");
-    assert!(created_json["worktree"]["owner"].is_null());
-    assert_eq!(created_json["metadata"]["ok"], false);
-    assert!(created_json["metadata"]["error"]
+    assert!(created_json["error"]["code"] == "partial", "{created_json}");
+    assert_eq!(created_json["data"]["worktree"]["name"], "feature");
+    assert!(created_json["data"]["worktree"]["owner"].is_null());
+    assert_eq!(created_json["data"]["metadata"]["ok"], false);
+    assert!(created_json["data"]["metadata"]["error"]
         .as_str()
         .unwrap_or("")
         .contains("injected"));
-    assert_eq!(created_json["postCreate"]["ok"], true);
-    assert_eq!(created_json["copyFiles"]["ok"], true);
+    assert_eq!(created_json["data"]["postCreate"]["ok"], true);
+    assert_eq!(created_json["data"]["copyFiles"]["ok"], true);
     assert!(managed(&repo, "feature/hook-ran").is_file());
     assert!(text(&created.stderr).contains("Warning"));
     assert!(text(&created.stderr).contains("injected"));
-    assert!(!text(&created.stdout).contains("Warning"));
+    assert!(!created_json["warnings"]
+        .as_array()
+        .expect("warnings")
+        .is_empty());
 }
 
 #[test]
@@ -5121,14 +5239,17 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
     let listed = repo.mabo(&["list", "--json", "--no-default"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
-    assert_eq!(listed_json["worktrees"][0]["name"], "feature");
-    assert!(listed_json["worktrees"][0]["owner"].is_null());
+    assert_eq!(listed_json["data"]["worktrees"][0]["name"], "feature");
+    assert!(listed_json["data"]["worktrees"][0]["owner"].is_null());
     assert!(text(&listed.stderr).contains("worktrees.json"));
-    assert!(!text(&listed.stdout).contains("Warning"));
+    assert!(!listed_json["warnings"]
+        .as_array()
+        .expect("warnings")
+        .is_empty());
 
     let located = repo.mabo(&["where", "feature", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
-    assert!(json_value(&located)["worktree"]["owner"].is_null());
+    assert!(json_value(&located)["data"]["worktree"]["owner"].is_null());
     assert!(text(&located.stderr).contains("invalid JSON"));
     let human = repo.mabo(&["where", "feature"]);
     assert!(human.status.success());
@@ -5145,10 +5266,10 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
 fn owner_flag_rejects_a_value_that_looks_like_an_option() {
     let repo = Repo::new();
     let listed = repo.mabo(&["list", "--owner", "--json"]);
-    assert_eq!(listed.status.code(), Some(3), "{}", text(&listed.stdout));
+    assert_eq!(listed.status.code(), Some(2), "{}", text(&listed.stdout));
     let listed_json = json_value(&listed);
-    assert_eq!(listed_json["error"]["code"], "validation");
-    assert_eq!(listed_json["error"]["exitCode"], 3);
+    assert_eq!(listed_json["error"]["code"], "usage");
+    assert!(listed_json["error"].get("exitCode").is_none());
     assert!(listed_json["error"]["message"]
         .as_str()
         .unwrap_or("")
@@ -5160,8 +5281,8 @@ fn owner_flag_rejects_a_value_that_looks_like_an_option() {
     assert!(text(&listed.stderr).is_empty(), "{}", text(&listed.stderr));
 
     let created = repo.mabo(&["create", "feature", "--purpose", "--json"]);
-    assert_eq!(created.status.code(), Some(3));
-    assert_eq!(json_value(&created)["error"]["code"], "validation");
+    assert_eq!(created.status.code(), Some(2));
+    assert_eq!(json_value(&created)["error"]["code"], "usage");
     assert!(!managed(&repo, "feature").exists());
 }
 
@@ -5249,6 +5370,9 @@ fn separate_git_dir_creates_the_default_worktree_under_xdg() {
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_DATA_HOME", root.join("xdg"))
+        .env_remove("MABO_OUTPUT")
+        .env_remove("MABO_NO_INPUT")
+        .env_remove("MABO_LOCK_TIMEOUT")
         .env_remove("MABO_AGENT_ID")
         .output()
         .expect("mabo");
@@ -5259,9 +5383,9 @@ fn separate_git_dir_creates_the_default_worktree_under_xdg() {
         text(&created.stderr)
     );
     let created_json = json_value(&created);
-    assert_eq!(created_json["version"], 1);
+    assert_eq!(created_json["schema"], 2);
     let worktree = managed_directory(&checkout, &root.join("xdg")).join("feature");
-    assert_worktree_object(&created_json["worktree"], "feature", &worktree);
+    assert_worktree_object(&created_json["data"]["worktree"], "feature", &worktree);
     assert!(worktree.is_dir());
     assert!(!sep
         .join("maboroshi")
@@ -5333,6 +5457,9 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
+            .env_remove("MABO_OUTPUT")
+            .env_remove("MABO_NO_INPUT")
+            .env_remove("MABO_LOCK_TIMEOUT")
             .env_remove("MABO_AGENT_ID")
             .output()
             .expect("mabo")
@@ -5436,6 +5563,9 @@ impl SeparateCheckout {
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_DATA_HOME", self.root.join("xdg"))
             .env_remove("GHQ_ROOT")
+            .env_remove("MABO_OUTPUT")
+            .env_remove("MABO_NO_INPUT")
+            .env_remove("MABO_LOCK_TIMEOUT")
             .env_remove("MABO_AGENT_ID")
             .env_remove("PHANTOM_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
@@ -5645,6 +5775,9 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
+            .env_remove("MABO_OUTPUT")
+            .env_remove("MABO_NO_INPUT")
+            .env_remove("MABO_LOCK_TIMEOUT")
             .env_remove("MABO_AGENT_ID")
             .output()
             .expect("mabo")
@@ -5758,6 +5891,9 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
+            .env_remove("MABO_OUTPUT")
+            .env_remove("MABO_NO_INPUT")
+            .env_remove("MABO_LOCK_TIMEOUT")
             .env_remove("MABO_AGENT_ID")
             .output()
             .expect("mabo")
@@ -5811,9 +5947,9 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
         text(&json_error.stderr)
     );
     let error = json_value(&json_error);
-    assert_eq!(error["version"], 1);
-    assert_eq!(error["error"]["code"], "error");
-    assert_eq!(error["error"]["exitCode"], 1);
+    assert_eq!(error["schema"], 2);
+    assert_eq!(error["error"]["code"], "failed");
+    assert!(error["error"].get("exitCode").is_none());
     let message = error["error"]["message"].as_str().unwrap_or("");
     assert!(message.contains(real.to_str().expect("real")), "{message}");
     assert!(message.contains(copy.to_str().expect("copy")), "{message}");
@@ -5894,6 +6030,9 @@ fn missing_separate_checkout_names_the_git_dir() {
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_DATA_HOME", root.join("xdg"))
+        .env_remove("MABO_OUTPUT")
+        .env_remove("MABO_NO_INPUT")
+        .env_remove("MABO_LOCK_TIMEOUT")
         .env_remove("MABO_AGENT_ID")
         .output()
         .expect("mabo");
@@ -5916,8 +6055,8 @@ fn missing_separate_checkout_names_the_git_dir() {
         !message.to_ascii_lowercase().contains("fatal:"),
         "{message}"
     );
-    assert_eq!(error["error"]["code"], "error");
-    assert_eq!(error["error"]["exitCode"], 1);
+    assert_eq!(error["error"]["code"], "failed");
+    assert!(error["error"].get("exitCode").is_none());
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -5936,6 +6075,9 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
+            .env_remove("MABO_OUTPUT")
+            .env_remove("MABO_NO_INPUT")
+            .env_remove("MABO_LOCK_TIMEOUT")
             .env_remove("MABO_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
@@ -6161,6 +6303,9 @@ fn submodule_lists_and_execs_the_main_checkout() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
+            .env_remove("MABO_OUTPUT")
+            .env_remove("MABO_NO_INPUT")
+            .env_remove("MABO_LOCK_TIMEOUT")
             .env_remove("MABO_AGENT_ID")
             .output()
             .expect("mabo")
@@ -6206,7 +6351,7 @@ fn submodule_lists_and_execs_the_main_checkout() {
     assert_eq!(main["default"], true);
     let hidden = mabo(&linked, &["list", "--no-default", "--json"]);
     assert!(hidden.status.success(), "{}", text(&hidden.stderr));
-    let hidden_rows = json_value(&hidden)["worktrees"]
+    let hidden_rows = json_value(&hidden)["data"]["worktrees"]
         .as_array()
         .cloned()
         .unwrap_or_default();
@@ -6264,16 +6409,16 @@ fn running_inside_dot_git_returns_a_mabo_error() {
         assert_eq!(json.status.code(), Some(1), "{}", cwd.display());
         assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
         let error = json_value(&json);
-        assert_eq!(error["version"], 1);
-        assert_eq!(error["error"]["code"], "error");
-        assert_eq!(error["error"]["exitCode"], 1);
+        assert_eq!(error["schema"], 2);
+        assert_eq!(error["error"]["code"], "failed");
+        assert!(error["error"].get("exitCode").is_none());
         let message = error["error"]["message"].as_str().unwrap_or("");
         assert!(message.contains("work tree"), "{message}");
         assert!(
             !message.to_ascii_lowercase().contains("fatal:"),
             "{message}"
         );
-        assert!(error["worktrees"].is_null());
+        assert!(error["data"]["worktrees"].is_null());
     }
 }
 
@@ -6298,8 +6443,8 @@ fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path,
     assert!(json.status.success(), "{}", text(&json.stderr));
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let document = json_value(&json);
-    assert_eq!(document["version"], 1);
-    let rows = document["worktrees"].as_array().expect("worktrees");
+    assert_eq!(document["schema"], 2);
+    let rows = document["data"]["worktrees"].as_array().expect("worktrees");
     assert!(
         rows.iter()
             .all(|row| !paths_match(row["path"].as_str().unwrap_or(""), git_dir)),
@@ -6335,7 +6480,7 @@ fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path,
 }
 
 fn default_worktree(document: &serde_json::Value) -> serde_json::Value {
-    document["worktrees"]
+    document["data"]["worktrees"]
         .as_array()
         .and_then(|rows| rows.iter().find(|row| row["default"] == true))
         .cloned()
@@ -6547,29 +6692,29 @@ fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     assert!(text(&plan.stderr).is_empty(), "{}", text(&plan.stderr));
     let document = json_value(&plan);
-    assert_eq!(document["version"], 1);
-    assert_eq!(document["applied"], false);
+    assert_eq!(document["schema"], 2);
+    assert_eq!(document["data"]["applied"], false);
     assert!(document["error"].is_null());
-    assert_eq!(document["candidates"][0]["name"], "feature");
-    assert_eq!(document["candidates"][0]["owner"], "grok");
+    assert_eq!(document["data"]["candidates"][0]["name"], "feature");
+    assert_eq!(document["data"]["candidates"][0]["owner"], "grok");
     assert_eq!(
-        document["candidates"][0]["reasons"],
+        document["data"]["candidates"][0]["reasons"],
         serde_json::json!(["merged"])
     );
-    assert_eq!(document["candidates"][0]["action"], "wouldRemove");
-    assert!(document["candidates"][0]["detail"].is_null());
-    assert!(document["candidates"][0]["branchDeleted"].is_null());
-    assert!(document["candidates"][0]["path"]
+    assert_eq!(document["data"]["candidates"][0]["action"], "wouldRemove");
+    assert!(document["data"]["candidates"][0]["detail"].is_null());
+    assert!(document["data"]["candidates"][0]["branchDeleted"].is_null());
+    assert!(document["data"]["candidates"][0]["path"]
         .as_str()
         .unwrap()
         .ends_with("/feature"));
 
     let bad = repo.mabo(&["gc", "--older-than", "14", "--json"]);
-    assert_eq!(bad.status.code(), Some(3));
+    assert_eq!(bad.status.code(), Some(2));
     assert!(text(&bad.stderr).is_empty(), "{}", text(&bad.stderr));
     let error = json_value(&bad);
-    assert_eq!(error["error"]["code"], "validation");
-    assert_eq!(error["error"]["exitCode"], 3);
+    assert_eq!(error["error"]["code"], "usage");
+    assert!(error["error"].get("exitCode").is_none());
     assert!(worktree_dir(&repo, "feature").is_dir());
 }
 
@@ -6706,7 +6851,7 @@ fn gc_skips_missing_registration_with_changed_branch_or_head() {
         let doc = json_value(&out);
         assert!(branch_listed(&repo, "z-local"), "{change}: {doc}");
         assert!(worktree_registered(&repo, "z-local"), "{change}: {doc}");
-        let item = doc["candidates"]
+        let item = doc["data"]["candidates"]
             .as_array()
             .unwrap()
             .iter()
@@ -6784,7 +6929,7 @@ printf '%s\n' '{{"state":"MERGED"}}'
             text(&out.stderr)
         );
         let doc = json_value(&out);
-        let candidates = doc["candidates"].as_array().unwrap();
+        let candidates = doc["data"]["candidates"].as_array().unwrap();
         assert_eq!(candidates.len(), count);
         assert!(candidates.iter().all(|item| item["action"] == "removed"));
         let calls = fs::read_to_string(calls).unwrap();
@@ -6847,8 +6992,8 @@ pre-delete = ["echo '{{\"state\":\"OPEN\"}}' > '{}' "]
         text(&out.stderr)
     );
     let doc = json_value(&out);
-    assert_eq!(doc["candidates"][0]["action"], "failed");
-    assert!(doc["candidates"][0]["detail"]
+    assert_eq!(doc["data"]["candidates"][0]["action"], "failed");
+    assert!(doc["data"]["candidates"][0]["detail"]
         .as_str()
         .unwrap()
         .contains("no longer qualifies"));
@@ -6891,11 +7036,11 @@ fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let document = json_value(&plan);
     assert_eq!(
-        document["candidates"][0]["reasons"],
+        document["data"]["candidates"][0]["reasons"],
         serde_json::json!(["pullRequest"])
     );
-    assert_eq!(document["candidates"][0]["action"], "skipped");
-    assert_eq!(document["candidates"][0]["detail"], "unpushed");
+    assert_eq!(document["data"]["candidates"][0]["action"], "skipped");
+    assert_eq!(document["data"]["candidates"][0]["detail"], "unpushed");
     assert!(worktree_dir(&repo, "topic").is_dir());
 
     fs::create_dir_all(repo.home.join(".config/maboroshi")).expect("config dir");
@@ -6914,9 +7059,9 @@ fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
         .expect("force");
     assert!(forced.status.success(), "{}", text(&forced.stderr));
     let removed = json_value(&forced);
-    assert_eq!(removed["applied"], true);
-    assert_eq!(removed["candidates"][0]["action"], "removed");
-    assert_eq!(removed["candidates"][0]["branchDeleted"], false);
+    assert_eq!(removed["data"]["applied"], true);
+    assert_eq!(removed["data"]["candidates"][0]["action"], "removed");
+    assert_eq!(removed["data"]["candidates"][0]["branchDeleted"], false);
     assert!(!worktree_dir(&repo, "topic").is_dir());
     assert!(branch_listed(&repo, "topic"));
 }
@@ -6940,23 +7085,23 @@ fn gc_runs_pre_delete_hooks_only_when_applying() {
     assert!(worktree_dir(&repo, "feature").is_dir());
 
     let applied = repo.mabo(&["gc", "--apply", "--json"]);
-    assert_eq!(applied.status.code(), Some(1), "{}", text(&applied.stdout));
+    assert_eq!(applied.status.code(), Some(6), "{}", text(&applied.stdout));
     assert!(
         text(&applied.stderr).is_empty()
             || text(&applied.stderr).contains("pre-delete")
             || text(&applied.stderr).contains("Running")
     );
     let document = json_value(&applied);
-    assert_eq!(document["error"]["code"], "error");
-    assert_eq!(document["error"]["exitCode"], 1);
-    let failed = document["candidates"]
+    assert_eq!(document["error"]["code"], "partial");
+    assert!(document["error"].get("exitCode").is_none());
+    let failed = document["data"]["candidates"]
         .as_array()
         .expect("candidates")
         .iter()
         .find(|entry| entry["name"] == "feature")
         .expect("feature");
     assert_eq!(failed["action"], "failed");
-    let removed = document["candidates"]
+    let removed = document["data"]["candidates"]
         .as_array()
         .expect("candidates")
         .iter()
@@ -7049,7 +7194,7 @@ fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
     repo.git(&["config", "core.logAllRefUpdates", "false"]);
     let created = repo.mabo(&["create", "fresh", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let head = json_value(&created)["worktree"]["head"]
+    let head = json_value(&created)["data"]["worktree"]["head"]
         .as_str()
         .expect("head")
         .to_string();
@@ -7066,7 +7211,7 @@ fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
     assert!(worktree_dir(&repo, "fresh").is_dir());
     assert!(branch_listed(&repo, "fresh"));
     assert_eq!(
-        json_value(&created)["worktree"]["createdFrom"],
+        json_value(&created)["data"]["worktree"]["createdFrom"],
         head,
         "create records the base commit"
     );
@@ -7232,7 +7377,9 @@ fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
         .expect("gc");
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let document = json_value(&applied);
-    let candidates = document["candidates"].as_array().expect("candidates");
+    let candidates = document["data"]["candidates"]
+        .as_array()
+        .expect("candidates");
     let alpha = candidates
         .iter()
         .find(|entry| entry["name"] == "alpha")
@@ -7278,7 +7425,7 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
     let path = managed(&repo, "feature");
     assert!(path.join("README.md").is_file());
     assert!(paths_match(
-        json_value(&created)["worktree"]["path"]
+        json_value(&created)["data"]["worktree"]["path"]
             .as_str()
             .unwrap_or(""),
         &path
@@ -7767,7 +7914,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
     .expect("rewrite");
     let planned = repo.mabo(&["gc", "--older-than", "1d", "--json"]);
     assert!(planned.status.success(), "{}", text(&planned.stderr));
-    let candidates = json_value(&planned)["candidates"]
+    let candidates = json_value(&planned)["data"]["candidates"]
         .as_array()
         .expect("candidates")
         .clone();
@@ -7783,7 +7930,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         text(&applied.stdout),
         text(&applied.stderr)
     );
-    let removed = json_value(&applied)["candidates"]
+    let removed = json_value(&applied)["data"]["candidates"]
         .as_array()
         .expect("candidates")
         .iter()
@@ -7909,12 +8056,16 @@ fn symlink_spelling_keeps_metadata_and_cleans_the_project_directory() {
         text(&created.stderr)
     );
     let created_json = json_value(&created);
-    let real = PathBuf::from(created_json["worktree"]["path"].as_str().expect("path"));
-    let created_from = created_json["worktree"]["createdFrom"]
+    let real = PathBuf::from(
+        created_json["data"]["worktree"]["path"]
+            .as_str()
+            .expect("path"),
+    );
+    let created_from = created_json["data"]["worktree"]["createdFrom"]
         .as_str()
         .expect("createdFrom")
         .to_string();
-    let created_at = created_json["worktree"]["createdAt"]
+    let created_at = created_json["data"]["worktree"]["createdAt"]
         .as_str()
         .expect("createdAt")
         .to_string();
@@ -7937,13 +8088,13 @@ fn symlink_spelling_keeps_metadata_and_cleans_the_project_directory() {
 
     let listed = repo.mabo(&["list", "--json", "--no-default"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
-    let entry = &json_value(&listed)["worktrees"][0];
+    let entry = &json_value(&listed)["data"]["worktrees"][0];
     assert_eq!(entry["owner"], "alice");
     assert_eq!(entry["createdFrom"], created_from);
     assert_eq!(entry["createdAt"], created_at);
     let plan = repo.mabo(&["gc", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
-    let candidate = &json_value(&plan)["candidates"][0];
+    let candidate = &json_value(&plan)["data"]["candidates"][0];
     assert_eq!(candidate["owner"], "alice");
     assert_eq!(candidate["name"], "feature");
     let deleted = repo.mabo(&["delete", "feature", "--json"]);
@@ -7953,7 +8104,7 @@ fn symlink_spelling_keeps_metadata_and_cleans_the_project_directory() {
         text(&deleted.stdout),
         text(&deleted.stderr)
     );
-    let removed = &json_value(&deleted)["deleted"][0]["worktree"];
+    let removed = &json_value(&deleted)["data"]["deleted"][0]["worktree"];
     assert_eq!(removed["owner"], "alice");
     assert_eq!(removed["createdFrom"], created_from);
     assert_eq!(removed["createdAt"], created_at);
@@ -7988,10 +8139,14 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
         text(&created.stderr)
     );
     let created_json = json_value(&created);
-    assert!(created_json.get("error").is_none(), "{created_json}");
-    assert_eq!(created_json["worktree"]["name"], "a");
-    assert!(created_json["metadata"]["ok"].as_bool().unwrap_or(false));
-    let json_path = created_json["worktree"]["path"].as_str().expect("path");
+    assert!(created_json["error"].is_null(), "{created_json}");
+    assert_eq!(created_json["data"]["worktree"]["name"], "a");
+    assert!(created_json["data"]["metadata"]["ok"]
+        .as_bool()
+        .unwrap_or(false));
+    let json_path = created_json["data"]["worktree"]["path"]
+        .as_str()
+        .expect("path");
     let canonical = fs::canonicalize(Path::new(json_path)).expect("canonical");
     assert_eq!(Path::new(json_path), canonical);
     let message = text(&created.stderr);
@@ -8010,8 +8165,8 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
         text(&attached.stderr)
     );
     let attached_json = json_value(&attached);
-    assert!(attached_json.get("error").is_none(), "{attached_json}");
-    assert_eq!(attached_json["worktree"]["name"], "attached");
+    assert!(attached_json["error"].is_null(), "{attached_json}");
+    assert_eq!(attached_json["data"]["worktree"]["name"], "attached");
 
     let executed = run(&["create", "b", "--json", "--exec", "true"]);
     assert!(
@@ -8021,9 +8176,9 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
         text(&executed.stderr)
     );
     let executed_json = json_value(&executed);
-    assert!(executed_json.get("error").is_none(), "{executed_json}");
-    assert_eq!(executed_json["exec"]["ok"], true);
-    assert_eq!(executed_json["worktree"]["name"], "b");
+    assert!(executed_json["error"].is_null(), "{executed_json}");
+    assert_eq!(executed_json["data"]["exec"]["ok"], true);
+    assert_eq!(executed_json["data"]["worktree"]["name"], "b");
 }
 
 #[test]
@@ -8093,7 +8248,7 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
     let refused = with_logical_top(&["delete", "feature"]);
     assert_eq!(
         refused.status.code(),
-        Some(3),
+        Some(4),
         "{}\n{}",
         text(&refused.stdout),
         text(&refused.stderr)
@@ -8138,16 +8293,20 @@ fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
         text(&created.stderr)
     );
     let created_json = json_value(&created);
-    let real = PathBuf::from(created_json["worktree"]["path"].as_str().expect("path"));
-    let created_at = created_json["worktree"]["createdAt"]
+    let real = PathBuf::from(
+        created_json["data"]["worktree"]["path"]
+            .as_str()
+            .expect("path"),
+    );
+    let created_at = created_json["data"]["worktree"]["createdAt"]
         .as_str()
         .expect("createdAt")
         .to_string();
-    let created_from = created_json["worktree"]["createdFrom"]
+    let created_from = created_json["data"]["worktree"]["createdFrom"]
         .as_str()
         .expect("createdFrom")
         .to_string();
-    let last_used = created_json["worktree"]["lastUsedAt"]
+    let last_used = created_json["data"]["worktree"]["lastUsedAt"]
         .as_str()
         .expect("lastUsedAt")
         .to_string();
@@ -8213,9 +8372,9 @@ fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
         text(&again.stderr)
     );
     let again_json = json_value(&again);
-    assert!(again_json.get("error").is_none(), "{again_json}");
-    assert_eq!(again_json["github"]["alreadyExists"], true);
-    let worktree = &again_json["worktree"];
+    assert!(again_json["error"].is_null(), "{again_json}");
+    assert_eq!(again_json["data"]["github"]["alreadyExists"], true);
+    let worktree = &again_json["data"]["worktree"];
     assert_eq!(worktree["owner"], "alice");
     assert_eq!(worktree["purpose"], "keep me");
     assert_eq!(worktree["createdAt"], created_at);
@@ -8250,7 +8409,7 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     let worktree = managed(&repo, "u");
     empty_commit(&repo, &worktree, "x");
     let refused = repo.mabo(&["delete", "u"]);
-    assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    assert_eq!(refused.status.code(), Some(4), "{}", text(&refused.stdout));
     let refused_text = text(&refused.stderr);
     assert!(refused_text.contains("unpushed"), "{refused_text}");
     assert!(
@@ -8261,17 +8420,17 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     assert!(branch_listed(&repo, "u"));
 
     let json = repo.mabo(&["delete", "u", "--json"]);
-    assert_eq!(json.status.code(), Some(3));
+    assert_eq!(json.status.code(), Some(4));
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let document = json_value(&json);
-    assert_eq!(document["error"]["code"], "unpushed");
-    assert_eq!(document["error"]["exitCode"], 3);
+    assert_eq!(document["error"]["code"], "unpreserved");
+    assert!(document["error"].get("exitCode").is_none());
     assert!(document["error"]["message"]
         .as_str()
         .unwrap_or("")
         .contains("unpushed"));
-    assert_eq!(document["deleted"][0]["branchDeleted"], false);
-    assert_eq!(document["deleted"][0]["worktree"]["name"], "u");
+    assert_eq!(document["data"]["deleted"][0]["branchDeleted"], false);
+    assert_eq!(document["data"]["deleted"][0]["worktree"]["name"], "u");
     assert!(worktree.is_dir());
     assert!(branch_listed(&repo, "u"));
 
@@ -8325,7 +8484,7 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     repo.git(&["push", "-u", "origin", "behind"]);
     empty_commit(&repo, &behind, "second");
     let behind_refused = repo.mabo(&["delete", "behind"]);
-    assert_eq!(behind_refused.status.code(), Some(3));
+    assert_eq!(behind_refused.status.code(), Some(4));
     assert!(
         text(&behind_refused.stderr).contains("unpushed"),
         "{}",
@@ -8355,7 +8514,7 @@ fn delete_refuses_when_unpushed_commits_cannot_be_checked() {
     repo.git(&["branch", "-m", "main", "trunk"]);
     let mystery = managed(&repo, "mystery");
     let unknown = repo.mabo(&["delete", "mystery"]);
-    assert_eq!(unknown.status.code(), Some(3), "{}", text(&unknown.stdout));
+    assert_eq!(unknown.status.code(), Some(4), "{}", text(&unknown.stdout));
     assert!(
         text(&unknown.stderr).contains("could not be checked"),
         "{}",
@@ -8418,7 +8577,7 @@ fn delete_refuses_a_squash_merged_branch_with_a_later_commit() {
     commit_file(&repo, "feature", "later.txt", "later\n");
 
     let refused = repo.mabo(&["delete", "feature"]);
-    assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    assert_eq!(refused.status.code(), Some(4), "{}", text(&refused.stdout));
     assert!(
         text(&refused.stderr).contains("unpushed"),
         "{}",
@@ -8476,7 +8635,7 @@ fn gc_applies_a_squash_merged_branch_with_no_remote_and_keeps_a_local_one() {
     squash_onto_main(&repo, "squashed");
 
     let refused = repo.mabo(&["delete", "local"]);
-    assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    assert_eq!(refused.status.code(), Some(4), "{}", text(&refused.stdout));
     assert!(
         text(&refused.stderr).contains("unpushed"),
         "{}",
@@ -8509,7 +8668,7 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
         .current_dir(&inside)
         .output()
         .expect("delete");
-    assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    assert_eq!(refused.status.code(), Some(4), "{}", text(&refused.stdout));
     assert!(
         text(&refused.stderr).contains("current directory"),
         "{}",
@@ -8523,12 +8682,12 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
         .current_dir(&inside)
         .output()
         .expect("json");
-    assert_eq!(json.status.code(), Some(3));
+    assert_eq!(json.status.code(), Some(4));
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let document = json_value(&json);
-    assert_eq!(document["error"]["code"], "validation");
-    assert_eq!(document["error"]["exitCode"], 3);
-    assert_eq!(document["deleted"][0]["worktree"]["name"], "inside");
+    assert_eq!(document["error"]["code"], "refused");
+    assert!(document["error"].get("exitCode").is_none());
+    assert_eq!(document["data"]["deleted"][0]["worktree"]["name"], "inside");
     assert!(inside.is_dir());
 
     let neighbor = repo
@@ -8566,7 +8725,7 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
         .current_dir(&both)
         .output()
         .expect("named");
-    assert_eq!(named.status.code(), Some(3));
+    assert_eq!(named.status.code(), Some(4));
     assert!(
         text(&named.stderr).contains("current directory"),
         "{}",
@@ -8578,7 +8737,7 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
         .current_dir(&both)
         .output()
         .expect("current unpushed");
-    assert_eq!(via_current.status.code(), Some(3));
+    assert_eq!(via_current.status.code(), Some(4));
     assert!(
         text(&via_current.stderr).contains("unpushed"),
         "{}",
@@ -8625,7 +8784,7 @@ fn delete_and_gc_keep_a_branch_shadowed_by_a_tag() {
     repo.git(&["tag", "v1", "main"]);
 
     let refused = repo.mabo(&["delete", "v1"]);
-    assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    assert_eq!(refused.status.code(), Some(4), "{}", text(&refused.stdout));
     assert!(
         text(&refused.stderr).contains("unpushed"),
         "{}",
@@ -8668,7 +8827,7 @@ fn delete_refuses_a_detached_worktree_until_force() {
     let commit = rev_parse(&repo, &worktree, "HEAD");
 
     let refused = repo.mabo(&["delete", "dt"]);
-    assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    assert_eq!(refused.status.code(), Some(4), "{}", text(&refused.stdout));
     let refused_text = text(&refused.stderr);
     assert!(refused_text.contains("unpushed"), "{refused_text}");
     assert!(
@@ -8677,7 +8836,7 @@ fn delete_refuses_a_detached_worktree_until_force() {
     );
     assert!(!refused_text.contains("--keep-branch"), "{refused_text}");
     let kept = repo.mabo(&["delete", "dt", "--keep-branch"]);
-    assert_eq!(kept.status.code(), Some(3), "{}", text(&kept.stdout));
+    assert_eq!(kept.status.code(), Some(4), "{}", text(&kept.stdout));
     assert!(worktree.is_dir());
     assert_eq!(rev_parse(&repo, &worktree, "HEAD"), commit);
 
@@ -8738,7 +8897,7 @@ fn delete_checks_every_name_before_removing_any() {
     empty_commit(&repo, &b, "local");
 
     let refused = repo.mabo(&["delete", "a", "b", "missing"]);
-    assert_eq!(refused.status.code(), Some(3), "{}", text(&refused.stdout));
+    assert_eq!(refused.status.code(), Some(4), "{}", text(&refused.stdout));
     let stderr = text(&refused.stderr);
     assert!(stderr.contains("unpushed"), "{stderr}");
     assert!(stderr.contains("missing"), "{stderr}");
@@ -8750,10 +8909,10 @@ fn delete_checks_every_name_before_removing_any() {
     assert!(branch_listed(&repo, "b"));
 
     let json = repo.mabo(&["delete", "a", "b", "missing", "--json"]);
-    assert_eq!(json.status.code(), Some(3));
+    assert_eq!(json.status.code(), Some(4));
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let document = json_value(&json);
-    let entries = document["deleted"].as_array().expect("deleted");
+    let entries = document["data"]["deleted"].as_array().expect("deleted");
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0]["worktree"]["name"], "b");
     assert!(entries[0]["error"]
@@ -8765,8 +8924,8 @@ fn delete_checks_every_name_before_removing_any() {
         .as_str()
         .unwrap_or("")
         .contains("missing"));
-    assert_eq!(document["error"]["code"], "unpushed");
-    assert_eq!(document["error"]["exitCode"], 3);
+    assert_eq!(document["error"]["code"], "unpreserved");
+    assert!(document["error"].get("exitCode").is_none());
     assert!(a.is_dir());
     assert!(b.is_dir());
 
@@ -8989,7 +9148,7 @@ fn meta_set_records_outside_worktrees_despite_orphaned_names() {
         let listed = repo.mabo(&["list", "--json", "--no-default"]);
         assert!(listed.status.success(), "{}", text(&listed.stderr));
         let document: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("json");
-        let worktrees = document["worktrees"].as_array().expect("worktrees");
+        let worktrees = document["data"]["worktrees"].as_array().expect("worktrees");
         assert_eq!(worktrees.len(), 2);
         assert!(worktrees
             .iter()
@@ -9178,7 +9337,7 @@ fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
     ]);
 
     let created = repo.mabo(&["create", "feature/teammate"]);
-    assert_eq!(created.status.code(), Some(3), "{}", text(&created.stderr));
+    assert_eq!(created.status.code(), Some(4), "{}", text(&created.stderr));
     assert_eq!(
         text(&created.stderr),
         "Branch 'feature/teammate' already exists as a remote-tracking branch (origin). Run `mabo attach feature/teammate`."
@@ -9197,13 +9356,13 @@ fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
         .is_file());
 
     let again = repo.mabo(&["attach", "feature/teammate"]);
-    assert_eq!(again.status.code(), Some(3));
+    assert_eq!(again.status.code(), Some(4));
     assert_eq!(
         text(&again.stderr),
         "Worktree 'feature/teammate' already exists"
     );
     let shadowed = repo.mabo(&["create", "feature/teammate"]);
-    assert_eq!(shadowed.status.code(), Some(3));
+    assert_eq!(shadowed.status.code(), Some(4));
     assert_eq!(
         text(&shadowed.stderr),
         "Worktree 'feature/teammate' already exists"
@@ -9219,7 +9378,7 @@ fn create_with_multiple_remotes_suggests_working_qualified_attach_commands() {
         publish_tracking_branch(&repo, "upstream", "feature/teammate");
 
         let created = repo.mabo(&["create", "feature/teammate"]);
-        assert_eq!(created.status.code(), Some(3), "{}", text(&created.stderr));
+        assert_eq!(created.status.code(), Some(4), "{}", text(&created.stderr));
         let message = text(&created.stderr);
         assert_eq!(
             message,
@@ -9268,7 +9427,7 @@ fn attach_qualified_remote_allows_special_characters_in_the_remote_name() {
     publish_tracking_branch(&repo, "user@host", "feature");
 
     let ambiguous = repo.mabo(&["attach", "feature"]);
-    assert_eq!(ambiguous.status.code(), Some(3));
+    assert_eq!(ambiguous.status.code(), Some(2));
     assert!(text(&ambiguous.stderr).contains("origin, user@host"));
 
     let attached = repo.mabo(&["attach", "user@host/feature"]);
@@ -9279,7 +9438,7 @@ fn attach_qualified_remote_allows_special_characters_in_the_remote_name() {
     assert!(local_branch(&repo, "user@host/feature").is_empty());
 
     let invalid = repo.mabo(&["attach", "invalid@name"]);
-    assert_eq!(invalid.status.code(), Some(3), "{}", text(&invalid.stderr));
+    assert_eq!(invalid.status.code(), Some(2), "{}", text(&invalid.stderr));
     assert!(text(&invalid.stderr).contains("Worktree name can only contain"));
 }
 
@@ -9292,7 +9451,7 @@ fn attach_lists_every_remote_that_has_the_name() {
     let attached = repo.mabo(&["attach", "solo"]);
     assert_eq!(
         attached.status.code(),
-        Some(3),
+        Some(2),
         "{}",
         text(&attached.stderr)
     );
@@ -9492,7 +9651,7 @@ fn orphaned_records_are_listed_and_deleted_without_hooks_or_branch_changes() {
     let listed = repo.mabo(&["list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let document = json_value(&listed);
-    let entries = document["worktrees"].as_array().expect("worktrees");
+    let entries = document["data"]["worktrees"].as_array().expect("worktrees");
     assert_eq!(
         entries
             .iter()
@@ -9528,15 +9687,15 @@ fn orphaned_records_are_listed_and_deleted_without_hooks_or_branch_changes() {
     let deleted = repo.mabo(&["delete", "json-gone", "--json"]);
     assert_eq!(deleted.status.code(), Some(0), "{}", text(&deleted.stderr));
     let document = json_value(&deleted);
-    assert_eq!(document["deleted"][0]["worktree"]["orphaned"], true);
-    assert_eq!(document["deleted"][0]["branchDeleted"], false);
+    assert_eq!(document["data"]["deleted"][0]["worktree"]["orphaned"], true);
+    assert_eq!(document["data"]["deleted"][0]["branchDeleted"], false);
     assert!(branch_listed(&repo, "json-gone"));
     let records: serde_json::Value = serde_json::from_slice(
         &fs::read(repo.repo.join(".git/maboroshi/worktrees.json")).expect("records"),
     )
     .expect("json");
     assert_eq!(records["worktrees"], serde_json::json!([]));
-    assert_eq!(repo.mabo(&["delete", "gone"]).status.code(), Some(2));
+    assert_eq!(repo.mabo(&["delete", "gone"]).status.code(), Some(3));
 }
 
 #[test]
@@ -9582,4 +9741,387 @@ fn ambiguous_orphaned_names_leave_all_records_untouched() {
     assert!(!deleted.status.success());
     assert!(text(&deleted.stderr).contains("More than one worktree is named"));
     assert_eq!(fs::read(records_path).expect("records"), original);
+}
+
+fn assert_envelope(output: &std::process::Output, command: &str) -> serde_json::Value {
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let keys = value
+        .as_object()
+        .expect("envelope")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        keys,
+        ["command", "data", "error", "ok", "schema", "warnings"]
+    );
+    assert_eq!(value["schema"], 2);
+    assert_eq!(value["command"], command);
+    assert_eq!(value["ok"], output.status.success());
+    assert!(value["data"].is_object() || value["data"].is_null());
+    assert!(value["data"].get("version").is_none());
+    assert!(value["data"].get("schema").is_none());
+    for warning in value["warnings"].as_array().expect("warnings") {
+        assert!(warning["code"].is_string());
+        assert!(warning["message"].is_string());
+    }
+    if output.status.success() {
+        assert!(value["error"].is_null());
+    } else {
+        assert!(value["error"]["code"].is_string());
+        assert!(value["error"]["message"].is_string());
+    }
+    value
+}
+
+#[test]
+fn every_json_command_uses_the_same_error_envelope() {
+    let repo = Repo::new();
+    for command in [
+        "create",
+        "attach",
+        "list",
+        "where",
+        "delete",
+        "sync",
+        "gc",
+        "trust",
+        "untrust",
+        "meta set",
+        "clone",
+        "project add",
+        "project list",
+        "project remove",
+        "github checkout",
+    ] {
+        let mut args = command.split_whitespace().collect::<Vec<_>>();
+        args.extend(["--json", "--unknown-option"]);
+        let out = repo.mabo(&args);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{command}: {}",
+            text(&out.stdout)
+        );
+        let value = assert_envelope(&out, command);
+        assert_eq!(value["error"]["code"], "usage");
+        assert!(value["data"].is_null());
+    }
+}
+
+#[test]
+fn output_environment_and_explicit_modes_have_deterministic_precedence() {
+    let repo = Repo::new();
+    let run = |args: &[&str], mode: &str| {
+        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+            .env("MABO_OUTPUT", mode)
+            .output()
+            .expect("mabo")
+    };
+    assert_envelope(&run(&["list"], "json"), "list");
+    let out = run(&["list", "--output", "text"], "json");
+    assert!(out.status.success());
+    assert!(text(&out.stdout).contains("main ("));
+    let out = run(&["list", "--names"], "json");
+    assert!(out.status.success());
+    assert_eq!(text(&out.stdout), "main");
+    assert_envelope(&run(&["list", "--output=json"], "text"), "list");
+    for args in [&["list"][..], &["list", "--output", "text"][..]] {
+        assert_eq!(run(args, "invalid").status.code(), Some(2));
+    }
+    assert!(run(&["version"], "invalid").status.success());
+    assert!(run(&["list", "--help"], "invalid").status.success());
+    for flag in [vec!["--json"], vec!["--output", "json"]] {
+        let mut args = vec!["exec"];
+        args.extend(flag);
+        args.extend(["main", "true"]);
+        assert_eq!(run(&args, "json").status.code(), Some(2));
+    }
+    let out = run(&["exec", "main", "printf", "%s", "--json"], "invalid");
+    assert!(out.status.success());
+    assert_eq!(text(&out.stdout), "--json");
+}
+
+#[test]
+fn operation_lock_timeout_and_release_are_coordinated_by_pipes() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::Stdio;
+    let repo = Repo::new();
+    let lock = repo.repo.join(".git/maboroshi/operation.lock");
+    fs::create_dir_all(lock.parent().expect("parent")).expect("lock dir");
+    let mut holder = Command::new("python3").args(["-c", "import fcntl,sys; f=open(sys.argv[1],'w'); fcntl.flock(f,fcntl.LOCK_EX); print('ready',flush=True); sys.stdin.readline()"])
+        .arg(&lock).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().expect("holder");
+    let mut ready = String::new();
+    BufReader::new(holder.stdout.take().expect("stdout"))
+        .read_line(&mut ready)
+        .expect("ready");
+    assert_eq!(ready.trim(), "ready");
+    for timeout in ["200ms", "0"] {
+        let out = repo.mabo(&["create", "locked", "--json", "--lock-timeout", timeout]);
+        assert_eq!(out.status.code(), Some(7), "{}", text(&out.stdout));
+        let value = assert_envelope(&out, "create");
+        assert_eq!(value["error"]["code"], "lock_timeout");
+        assert!(value["error"]["message"]
+            .as_str()
+            .expect("message")
+            .contains(lock.to_str().expect("path")));
+        assert!(!managed(&repo, "locked").exists());
+    }
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["create", "env-locked", "--json"],
+        )
+        .env("MABO_LOCK_TIMEOUT", "0")
+        .output()
+        .expect("env timeout");
+    assert_eq!(out.status.code(), Some(7));
+    assert_envelope(&out, "create");
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["create", "override", "--json", "--lock-timeout", "0"],
+        )
+        .env("MABO_LOCK_TIMEOUT", "invalid")
+        .output()
+        .expect("explicit timeout");
+    assert_eq!(out.status.code(), Some(7));
+    let mut waiter = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["create", "released", "--json", "--lock-timeout", "10s"],
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("waiter");
+    let mut waiting = String::new();
+    let mut stderr = BufReader::new(waiter.stderr.take().expect("stderr"));
+    stderr.read_line(&mut waiting).expect("waiting");
+    assert!(waiting.contains("Waiting for another mabo"), "{waiting}");
+    holder
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"release\n")
+        .expect("release");
+    assert!(holder.wait().expect("holder exit").success());
+    let out = waiter.wait_with_output().expect("waiter exit");
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert_envelope(&out, "create");
+}
+
+#[test]
+fn non_interactive_git_gets_prompt_control_and_hooks_preserve_user_stdin() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Stdio;
+    let repo = Repo::new();
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let wrapper = bin.join("git");
+    let marker = repo.root.join("git-network-env");
+    fs::write(&wrapper, "#!/bin/sh\nfor arg do case \"$arg\" in fetch|clone|ls-remote|pull|push) printf '%s' \"$GIT_TERMINAL_PROMPT\" > \"$PROMPT_MARKER\"; test \"$GIT_TERMINAL_PROMPT\" = 0 || exit 93;; esac; done\nexec /usr/bin/git \"$@\"\n").expect("wrapper");
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let remote = repo.repo.to_str().expect("repo");
+    repo.git(&["remote", "add", "origin", remote]);
+    repo.git(&["fetch", "origin"]);
+    repo.git(&[
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+    ]);
+    let out = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &["sync", "--json"])
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("PROMPT_MARKER", &marker)
+        .output()
+        .expect("sync");
+    assert!(
+        out.status.success(),
+        "{} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(fs::read_to_string(&marker).expect("network git ran"), "0");
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        "[hooks]\npost-create = [\"if read ignored; then exit 94; fi; echo HOOK_EOF\"]\n",
+    )
+    .expect("hook");
+    let mut child = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &[
+                "create",
+                "stdin",
+                "--json",
+                "--exec",
+                "read line; test \"$line\" = sentinel",
+            ],
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("mabo");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"sentinel\n")
+        .expect("input");
+    let out = child.wait_with_output().expect("result");
+    assert!(
+        out.status.success(),
+        "{} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert!(text(&out.stderr).contains("HOOK_EOF"));
+    assert_envelope(&out, "create");
+}
+
+#[test]
+fn successful_json_commands_share_the_envelope_and_preserve_payload_keys() {
+    let repo = Repo::new();
+    repo.git(&["branch", "existing"]);
+    let cases: &[(&[&str], &str, &str)] = &[
+        (&["create", "topic", "--json"], "create", "worktree"),
+        (&["attach", "existing", "--json"], "attach", "worktree"),
+        (&["list", "--json"], "list", "worktrees"),
+        (&["where", "topic", "--json"], "where", "worktree"),
+        (
+            &[
+                "meta",
+                "set",
+                "topic",
+                "--purpose",
+                "contract test",
+                "--json",
+            ],
+            "meta set",
+            "worktree",
+        ),
+        (&["sync", "--json"], "sync", "default"),
+        (&["gc", "--json"], "gc", "candidates"),
+        (&["trust", "--yes", "--json"], "trust", "trustedAt"),
+        (&["untrust", "--json"], "untrust", "removed"),
+        (&["project", "add", "--json"], "project add", "project"),
+        (&["project", "list", "--json"], "project list", "projects"),
+        (
+            &["project", "remove", "repo", "--json"],
+            "project remove",
+            "project",
+        ),
+        (&["delete", "topic", "--json"], "delete", "deleted"),
+    ];
+    for (args, command, key) in cases {
+        let out = repo.mabo(args);
+        assert!(
+            out.status.success(),
+            "{command}: {} {}",
+            text(&out.stdout),
+            text(&out.stderr)
+        );
+        let value = assert_envelope(&out, command);
+        assert!(value["data"].get(key).is_some(), "{command}: {value}");
+        if *command == "gc" {
+            assert_eq!(value["data"]["plan"], true);
+        }
+    }
+    publish_pr_topic(&repo);
+    let gh_path = fake_gh_for_topic_pr(&repo);
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["github", "checkout", "7", "--json"],
+        )
+        .env("PATH", gh_path)
+        .output()
+        .expect("checkout");
+    let value = assert_envelope(&out, "github checkout");
+    assert!(out.status.success(), "{value}");
+    assert!(value["data"]["worktree"].is_object());
+    let bare = repo.root.join("origin.git");
+    append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
+    let out = clone_widget(&repo, Some(&repo.root.join("clones")));
+    let value = assert_envelope(&out, "clone");
+    assert!(out.status.success(), "{value}");
+    assert_eq!(value["data"]["cloned"], true);
+}
+
+#[test]
+fn standalone_exec_preserves_stdin_for_gh_and_signal_statuses() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let repo = Repo::new();
+    let path = gh_path(&repo, "#!/bin/sh\nread line; printf '%s' \"$line\"");
+    let mut child = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &["exec", "main", "gh"])
+        .env("PATH", path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("exec");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"sentinel\n")
+        .expect("input");
+    let out = child.wait_with_output().expect("exec result");
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "sentinel");
+    let out = repo.mabo(&["exec", "main", "sh", "-c", "kill -TERM $$"]);
+    assert_eq!(out.status.code(), Some(143));
+}
+
+#[test]
+fn delete_partial_results_and_late_common_option_errors_keep_the_contract() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "first"]).status.success());
+    assert!(repo.mabo(&["create", "second"]).status.success());
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        "[hooks]\npre-delete = [\"if [ \\\"$MABO_NAME\\\" = second ]; then exit 42; fi\"]\n",
+    )
+    .expect("hook");
+    let out = repo.mabo(&["delete", "first", "second", "--json"]);
+    assert_eq!(out.status.code(), Some(6));
+    let value = assert_envelope(&out, "delete");
+    assert_eq!(value["error"]["code"], "partial");
+    assert_eq!(value["data"]["deleted"].as_array().expect("items").len(), 2);
+    assert!(!managed(&repo, "first").exists());
+    assert!(managed(&repo, "second").exists());
+    let out = repo.mabo(&["delete", "second", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(assert_envelope(&out, "delete")["error"]["code"], "failed");
+    for args in [
+        &["create", "late", "--lock-timeout", "bad", "--json"][..],
+        &["create", "late", "--output", "bad", "--json"][..],
+    ] {
+        let out = repo.mabo(args);
+        assert_eq!(out.status.code(), Some(2));
+        assert_eq!(assert_envelope(&out, "create")["error"]["code"], "usage");
+    }
+}
+
+#[test]
+fn common_options_can_precede_the_command_path() {
+    let repo = Repo::new();
+    assert_envelope(&repo.mabo(&["--output", "json", "list"]), "list");
+    assert_envelope(&repo.mabo(&["--json", "project", "list"]), "project list");
+    let out = repo.mabo(&["--no-input", "exec", "main", "printf", "%s", "--json"]);
+    assert!(out.status.success());
+    assert_eq!(text(&out.stdout), "--json");
 }

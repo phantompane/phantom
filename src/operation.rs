@@ -129,8 +129,7 @@ pub fn lock(root: &Path) -> Result<OperationLock> {
             )))
         }
     }
-    file.lock()
-        .map_err(|error| Error::msg(format!("Cannot acquire mabo operation lock: {error}")))?;
+    wait_for_lock(&file, &dir.join("operation.lock"))?;
     own(file)
 }
 
@@ -141,4 +140,28 @@ fn own(mut file: File) -> Result<OperationLock> {
         .and_then(|_| file.write_all(token.as_bytes()))
         .map_err(|error| Error::msg(format!("Cannot write mabo operation lock: {error}")))?;
     Ok(OperationLock::register(Some(file), token))
+}
+
+/// Shared bounded polling for repository, metadata and trust file locks.
+pub(crate) fn wait_for_lock(file: &File, path: &Path) -> Result<()> {
+    let timeout = crate::runtime::timeout()?;
+    let start = std::time::Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                let remaining = timeout.saturating_sub(start.elapsed());
+                if remaining.is_zero() {
+                    return Err(Error::LockTimeout(path.to_path_buf()));
+                }
+                std::thread::sleep(remaining.min(std::time::Duration::from_millis(20)));
+            }
+            Err(error) => {
+                return Err(Error::msg(format!(
+                    "Cannot acquire lock {}: {error}",
+                    path.display()
+                )))
+            }
+        }
+    }
 }

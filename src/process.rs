@@ -37,6 +37,14 @@ fn command(program: &str) -> Command {
             "core.fsmonitor=false",
         ]);
     }
+    if crate::runtime::non_interactive() {
+        if program == "git" {
+            cmd.env("GIT_TERMINAL_PROMPT", "0");
+        }
+        if program == "gh" || crate::runtime::is_hook() {
+            cmd.stdin(Stdio::null());
+        }
+    }
     cmd
 }
 
@@ -124,7 +132,13 @@ pub fn inherit(
 ) -> Result<i32> {
     let mut cmd = self::command(command);
     cmd.args(args)
-        .stdin(Stdio::inherit())
+        .stdin(
+            if crate::runtime::non_interactive() && crate::runtime::is_hook() {
+                Stdio::null()
+            } else {
+                Stdio::inherit()
+            },
+        )
         .stderr(Stdio::inherit());
     if redirect_stdout_to_stderr {
         cmd.stdout(Stdio::from(std::io::stderr()));

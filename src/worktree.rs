@@ -71,10 +71,10 @@ impl Logger {
         }
     }
 
-    fn warn(&self, message: &str) {
+    fn warn(&self, code: &str, message: &str) {
         if self.enabled {
             let _ = std::io::stdout().flush();
-            eprintln!("{message}");
+            crate::output::warning(code, message);
         }
     }
 }
@@ -550,22 +550,28 @@ pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
         paths::canonical_location(&created.path).display()
     ));
     if let Some(error) = &created.metadata_error {
-        request.logger.warn(&format!("Warning: {error}"));
-    }
-    if let Some(error) = &created.copy_error {
         request
             .logger
-            .warn(&format!("\nWarning: Failed to copy some files: {error}"));
+            .warn("metadata_save", &format!("Warning: {error}"));
+    }
+    if let Some(error) = &created.copy_error {
+        request.logger.warn(
+            "copy_files",
+            &format!("\nWarning: Failed to copy some files: {error}"),
+        );
     }
     if let Some(failure) = &created.hook_failure {
-        request.logger.warn(&failure.warning(&created.path));
+        request
+            .logger
+            .warn("post_create", &failure.warning(&created.path));
     }
     let exec = run_action(&name, &created.path, action, &request.logger)?;
     if exec.is_some() {
         if let Err(error) = touch_after_action(&context, &created.path) {
-            request
-                .logger
-                .warn(&format!("Warning: Failed to update lastUsedAt: {error}"));
+            request.logger.warn(
+                "last_used_update",
+                &format!("Warning: Failed to update lastUsedAt: {error}"),
+            );
         }
     }
     let hook_code = created.hook_failure.as_ref().map(|failure| failure.code);
@@ -761,17 +767,22 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
         .logger
         .log(&format!("Attached worktree: {}", attached.name));
     if let Some(error) = &attached.metadata_error {
-        request.logger.warn(&format!("Warning: {error}"));
+        request
+            .logger
+            .warn("metadata_save", &format!("Warning: {error}"));
     }
     if let Some(failure) = &attached.hook_failure {
-        request.logger.warn(&failure.warning(&attached.path));
+        request
+            .logger
+            .warn("post_create", &failure.warning(&attached.path));
     }
     let exec = run_action(&attached.name, &attached.path, action, &request.logger)?;
     if exec.is_some() {
         if let Err(error) = touch_after_action(&context, &attached.path) {
-            request
-                .logger
-                .warn(&format!("Warning: Failed to update lastUsedAt: {error}"));
+            request.logger.warn(
+                "last_used_update",
+                &format!("Warning: Failed to update lastUsedAt: {error}"),
+            );
         }
     }
     let hook_code = attached.hook_failure.as_ref().map(|failure| failure.code);
@@ -868,7 +879,10 @@ pub(crate) fn attach_worktree_locked(
     let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
         .err()
         .map(|error| {
-            logger.warn(&format!("Warning: Failed to copy some files: {error}"));
+            logger.warn(
+                "copy_files",
+                &format!("Warning: Failed to copy some files: {error}"),
+            );
             error.to_string()
         });
     drop(operation);
@@ -1002,9 +1016,12 @@ pub fn preflight_delete(
     }
     if !force && !options.allow_current && command_is_inside(&path) {
         return Err(DeleteError::kept(
-            Error::validation(format!(
+            Error::Status {
+                code: "refused",
+                message: format!(
                 "Worktree '{name}' is the current directory. Use --current or --force to delete it."
-            )),
+            ),
+            },
             &worktree,
         ));
     }
@@ -1307,7 +1324,7 @@ pub fn exec_in_worktree(
     let worktree = find_worktree(context, name, false, None)?;
     let path = PathBuf::from(&worktree.path);
     if let Err(error) = metadata::touch(&context.git_root, &path) {
-        eprintln!("Warning: {error}");
+        crate::output::warning("last_used_update", format!("Warning: {error}"));
     }
     let owned = mabo_env(&worktree.name, &path);
     let mut pairs = owned
@@ -1385,7 +1402,7 @@ fn run_action(
                 Err(error @ (Error::Signaled(_) | Error::Spawn { .. })) => Ok(Some(ExecOutcome {
                     ok: false,
                     command: shown,
-                    exit_code: error.exit_code(),
+                    exit_code: error.child_exit_code(),
                     signal: match &error {
                         Error::Signaled(signal) => Some(signal.clone()),
                         _ => None,
@@ -1413,7 +1430,7 @@ pub fn mabo_env(name: &str, path: &Path) -> Vec<(String, String)> {
 fn hook_failure_from_start(command: &str, error: &Error) -> HookFailure {
     HookFailure {
         command: command.to_string(),
-        code: error.exit_code(),
+        code: error.child_exit_code(),
         signal: match error {
             Error::Signaled(signal) => Some(signal.clone()),
             _ => None,
@@ -1441,6 +1458,7 @@ fn run_hook_commands(
     logger: &Logger,
 ) -> Result<Option<HookFailure>> {
     let root_path = context.source_checkout.display().to_string();
+    let _hook_scope = crate::runtime::hook_scope();
     for command in commands {
         if post {
             logger.log(&format!("Executing: {command}"));

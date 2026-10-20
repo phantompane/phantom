@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
@@ -82,20 +82,12 @@ pub fn answer_is_yes(line: &str) -> bool {
 /// A prompt is only safe for a person at a terminal. Agents and CI get a pty
 /// often enough that asking would hang the process.
 pub fn prompts() -> bool {
-    may_prompt(
-        env_present("CI"),
-        env_present("MABO_AGENT_ID"),
-        std::io::stdin().is_terminal(),
-        std::io::stderr().is_terminal(),
-    )
+    !crate::runtime::non_interactive()
 }
 
-fn may_prompt(ci: bool, agent_id: bool, stdin_tty: bool, stderr_tty: bool) -> bool {
-    !ci && !agent_id && stdin_tty && stderr_tty
-}
-
-fn env_present(name: &str) -> bool {
-    std::env::var_os(name).is_some_and(|value| !value.to_string_lossy().trim().is_empty())
+#[cfg(test)]
+fn may_prompt(ci: bool, no_input: bool, stdin_tty: bool, stderr_tty: bool) -> bool {
+    !ci && !no_input && stdin_tty && stderr_tty
 }
 
 /// Commands the caller should execute. Empty means run nothing and continue.
@@ -228,7 +220,7 @@ pub fn format_hooks(post_create: &[String], pre_delete: &[String]) -> String {
 
 pub fn refusal_message(project: &str, post_create: &[String], pre_delete: &[String]) -> String {
     format!(
-        "Untrusted project: {}\n{}\nRefusing to run project hooks. Run `mabo trust` or pass `--no-hooks`.",
+        "Untrusted project: {}\n{}\nRefusing to run project hooks. Run `mabo trust --yes` or pass `--no-hooks`.",
         visible_text(project),
         format_hooks(post_create, pre_delete)
     )
@@ -284,8 +276,7 @@ fn update(body: impl FnOnce(&mut BTreeMap<String, String>) -> bool) -> Result<bo
         .mode(0o600)
         .open(dir.join("trust.lock"))
         .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))?;
-    lock.lock()
-        .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))?;
+    crate::operation::wait_for_lock(&lock, &dir.join("trust.lock"))?;
     let mut records = load_at(&path)?;
     let dirty = body(&mut records);
     if dirty {
