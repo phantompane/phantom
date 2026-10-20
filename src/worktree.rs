@@ -109,9 +109,11 @@ pub fn list_worktrees(
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let stored = metadata::load(&context.git_root).unwrap_or_default();
     let mut infos = Vec::new();
+    let common_dir = git::git_common_dir(&context.git_root)?;
     let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
-    for worktree in listed {
+    for mut worktree in listed {
+        worktree.path = main_checkout_path(&worktree.path, &context.git_root, &common_dir);
         if !include_prunable && worktree.prunable {
             continue;
         }
@@ -125,6 +127,18 @@ pub fn list_worktrees(
         infos.push(info_from_git(&worktree, &cwd, context, record));
     }
     Ok(infos)
+}
+
+/// `git worktree list` reports the git dir as the main worktree for a separate
+/// git dir and for a submodule. The main checkout is `git_root`.
+fn main_checkout_path(path: &str, git_root: &Path, common_dir: &Path) -> String {
+    let listed = paths::normalize(Path::new(path));
+    let root = paths::normalize(git_root);
+    if listed == paths::normalize(common_dir) && listed != root {
+        root.to_string_lossy().into_owned()
+    } else {
+        path.to_string()
+    }
 }
 
 fn info_from_git(
