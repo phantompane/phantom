@@ -1379,3 +1379,138 @@ fn unmatched_default_remote_fails_without_creating_a_branch() {
         .contains("No configured remote matches"));
     assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), before);
 }
+
+fn pause_root_rebase(r: &Repo, path: &Path, update_refs: bool) {
+    let editor = r.root.join("sequence-editor");
+    fs::write(&editor, "#!/bin/sh\nsed -i '1s/^pick /edit /' \"$1\"\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&editor, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut cmd = r.command("git", path, &["rebase", "-i", "--root"]);
+    cmd.env("GIT_SEQUENCE_EDITOR", &editor);
+    if update_refs {
+        cmd.arg("--update-refs");
+    }
+    let out = cmd.output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn default_reserved_by_rebase_in_main_or_linked_checkout() {
+    for linked in [false, true] {
+        let r = Repo::new();
+        let path = if linked {
+            r.git(&r.main, &["switch", "-c", "other"]);
+            let path = r.root.join("default-tree");
+            r.git(
+                &r.main,
+                &["worktree", "add", path.to_str().unwrap(), "main"],
+            );
+            path
+        } else {
+            r.main.clone()
+        };
+        let before = r.git(&r.main, &["rev-parse", "main"]);
+        pause_root_rebase(&r, &path, false);
+        r.advance();
+        let doc = r.sync(&r.main, &[], 1);
+        assert_eq!(doc["default"]["status"], "dirty");
+        assert!(doc["default"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("being rebased"));
+        assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
+        let topic = r.create("topic");
+        let doc = r.sync(&r.main, &["topic"], 0);
+        assert_eq!(doc["default"]["status"], "dirty");
+        assert_eq!(doc["worktrees"][0]["status"], "updated");
+        assert!(topic.exists());
+        r.git(&path, &["rebase", "--continue"]);
+        assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
+    }
+}
+
+#[test]
+fn default_reserved_by_update_refs_and_bisect() {
+    for operation in ["update-refs", "bisect"] {
+        let r = Repo::new();
+        r.git(&r.main, &["switch", "-c", "other"]);
+        if operation == "update-refs" {
+            // main points at an intermediate commit, so --update-refs reserves it.
+            r.write_commit(&r.main, "other-file", "other\n");
+            pause_root_rebase(&r, &r.main, true);
+        } else {
+            r.write_commit(&r.main, "other-file", "other\n");
+            r.git(&r.main, &["switch", "main"]);
+            r.git(&r.main, &["bisect", "start", "other", "main"]);
+        }
+        let before = r.git(&r.main, &["rev-parse", "main"]);
+        r.advance();
+        let doc = r.sync(&r.main, &[], 1);
+        assert_eq!(doc["default"]["status"], "dirty", "{doc}");
+        assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
+        if operation == "update-refs" {
+            r.git(&r.main, &["rebase", "--continue"]);
+        } else {
+            r.git(&r.main, &["bisect", "reset"]);
+        }
+    }
+}
+
+#[test]
+fn target_operations_are_never_integrated() {
+    for operation in ["rebase", "merge", "cherry-pick", "revert", "bisect"] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        if operation == "rebase" {
+            pause_root_rebase(&r, &tree, false);
+        } else {
+            // Resolved operations can have a clean index while their state remains.
+            let state = match operation {
+                "merge" => "MERGE_HEAD",
+                "cherry-pick" => "CHERRY_PICK_HEAD",
+                "revert" => "REVERT_HEAD",
+                _ => "BISECT_START",
+            };
+            let file = r.git(&tree, &["rev-parse", "--git-path", state]);
+            fs::write(tree.join(file), r.git(&tree, &["rev-parse", "HEAD"])).unwrap();
+        }
+        r.advance();
+        let before = r.snapshot(&tree);
+        let doc = r.sync(&r.main, &["topic", "--no-default"], 0);
+        assert_eq!(
+            doc["worktrees"][0]["status"],
+            if operation == "rebase" {
+                "detached"
+            } else {
+                "dirty"
+            }
+        );
+        assert!(doc["worktrees"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("{operation} in progress")));
+        assert_eq!(r.snapshot(&tree), before);
+    }
+}
+
+#[test]
+fn target_reserved_by_another_worktrees_update_refs_is_dirty() {
+    let r = Repo::new();
+    let tree = r.create("topic");
+    r.git(&tree, &["switch", "--detach"]);
+    r.git(&r.main, &["switch", "-c", "other"]);
+    r.write_commit(&r.main, "other-file", "other\n");
+    pause_root_rebase(&r, &r.main, true);
+    // Reattaching after the reservation makes the target eligible by HEAD alone.
+    r.git(&tree, &["switch", "topic"]);
+    r.advance();
+    let before = r.snapshot(&tree);
+    let doc = r.sync(&r.main, &["topic", "--no-default"], 0);
+    assert_eq!(doc["worktrees"][0]["status"], "dirty");
+    assert_eq!(r.snapshot(&tree), before);
+    r.git(&r.main, &["rebase", "--continue"]);
+}

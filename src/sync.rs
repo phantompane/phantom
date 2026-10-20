@@ -453,6 +453,64 @@ fn tree_item(tree: &worktree::WorktreeInfo, base: &str) -> Item {
     }
 }
 
+// Resolve state through Git: linked worktrees have private operation state.
+fn operation_state(path: &Path, state: &str) -> Result<Option<String>> {
+    let file = git::output(&["rev-parse", "--git-path", state], Some(path), true)?;
+    match std::fs::read_to_string(path.join(file)) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(Error::msg(format!(
+            "Cannot inspect Git state {state}: {error}"
+        ))),
+    }
+}
+
+fn active_operation(path: &Path) -> Result<Option<&'static str>> {
+    for (state, operation) in [
+        ("rebase-merge", "rebase"),
+        ("rebase-apply", "rebase"),
+        ("MERGE_HEAD", "merge"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("REVERT_HEAD", "revert"),
+        ("BISECT_START", "bisect"),
+        ("sequencer", "sequencer"),
+    ] {
+        let file = git::output(&["rev-parse", "--git-path", state], Some(path), true)?;
+        if path
+            .join(file)
+            .try_exists()
+            .map_err(|error| Error::msg(error.to_string()))?
+        {
+            return Ok(Some(operation));
+        }
+    }
+    Ok(None)
+}
+
+fn branch_reservation(
+    trees: &[worktree::WorktreeInfo],
+    local: &str,
+) -> Result<Option<(String, &'static str)>> {
+    for tree in trees {
+        let path = Path::new(&tree.path);
+        for (state, operation) in [
+            ("rebase-merge/head-name", "rebased"),
+            ("rebase-apply/head-name", "rebased"),
+            ("rebase-merge/update-refs", "rebased"),
+            ("BISECT_START", "bisected"),
+        ] {
+            if let Some(value) = operation_state(path, state)? {
+                if value.lines().any(|line| {
+                    line == local || line == local.strip_prefix("refs/heads/").unwrap_or(local)
+                }) {
+                    return Ok(Some((tree.path.clone(), operation)));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn sync_default(context: &Context, base: &str, remotes: &[String]) -> Result<Item> {
     let local_name = if let Some(rest) = base.strip_prefix("refs/remotes/") {
         crate::tracking::split_remote(rest, remotes)
@@ -483,11 +541,29 @@ fn sync_default(context: &Context, base: &str, remotes: &[String]) -> Result<Ite
         code: None,
     };
     let target = commit(root, base)?.ok_or_else(|| Error::msg("Default base no longer exists"))?;
-    let checked = worktree::list_worktrees(context, false, false)?
+    let trees = worktree::list_worktrees(context, false, true)?;
+    if let Some((path, operation)) = branch_reservation(&trees, &local)? {
+        item.path = Some(path.clone());
+        item.status(
+            "dirty",
+            Some(format!("{local_name} is being {operation} in {path}")),
+        );
+        return Ok(item);
+    }
+    let checked = trees
         .into_iter()
         .find(|tree| !tree.detached && tree.branch == local_name);
     if let Some(tree) = &checked {
         item.path = Some(tree.path.clone());
+    }
+    if let Some(tree) = &checked {
+        if let Some(operation) = active_operation(Path::new(&tree.path))? {
+            item.status(
+                "dirty",
+                Some(format!("{operation} in progress in {}", tree.path)),
+            );
+            return Ok(item);
+        }
     }
     if before.as_deref() == Some(&target) {
         return Ok(item);
@@ -554,30 +630,31 @@ fn sync_tree(
 ) -> Result<Item> {
     let mut item = tree_item(tree, base);
     let path = Path::new(&tree.path);
+    let operation = active_operation(path)?;
     if tree.detached {
-        item.status("detached", None);
+        item.status("detached", operation.map(|op| format!("{op} in progress")));
+        return Ok(item);
+    }
+    if let Some(operation) = operation {
+        item.status("dirty", Some(format!("{operation} in progress")));
+        return Ok(item);
+    }
+    let trees = worktree::list_worktrees(context, false, true)?;
+    if let Some((reserved_path, operation)) =
+        branch_reservation(&trees, &format!("refs/heads/{}", tree.branch))?
+    {
+        item.status(
+            "dirty",
+            Some(format!(
+                "{} is being {operation} in {reserved_path}",
+                tree.branch
+            )),
+        );
         return Ok(item);
     }
     if dirty(path)? {
         item.status("dirty", None);
         return Ok(item);
-    }
-    // Do not start a second operation even if a conflicted operation has been resolved.
-    for state in [
-        "rebase-merge",
-        "rebase-apply",
-        "MERGE_HEAD",
-        "CHERRY_PICK_HEAD",
-        "REVERT_HEAD",
-    ] {
-        let state_path = git::output(&["rev-parse", "--git-path", state], Some(path), true)?;
-        if path.join(state_path).exists() {
-            item.status(
-                "failed",
-                Some("A Git operation is already in progress".into()),
-            );
-            return Ok(item);
-        }
     }
     let base_exists = commit(path, base)?.is_some();
     let other_owner = request.all
