@@ -26,6 +26,7 @@ pub mod preferences;
 pub mod process;
 pub mod projects;
 pub mod repository;
+mod tracking;
 pub mod trust;
 pub mod worktree;
 

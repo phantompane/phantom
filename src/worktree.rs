@@ -522,6 +522,7 @@ pub struct CreatedWorktree {
 }
 
 pub struct AttachedWorktree {
+    pub name: String,
     pub path: PathBuf,
     pub copy_error: Option<String>,
     pub hook_failure: Option<HookFailure>,
@@ -586,7 +587,12 @@ pub fn create_worktree(
         context.project_common_dir.as_deref(),
         || {
             ensure_absent(context, name)?;
-            git::add_worktree(&context.git_root, &path, name, base, true)?;
+            crate::tracking::reject_remote_create(&context.git_root, name)?;
+            git::add_worktree(
+                &context.git_root,
+                &path,
+                git::WorktreeAdd::New { branch: name, base },
+            )?;
             Ok(())
         },
     )?;
@@ -643,14 +649,14 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     )?;
     request
         .logger
-        .log(&format!("Attached worktree: {}", request.name));
+        .log(&format!("Attached worktree: {}", attached.name));
     if let Some(error) = &attached.metadata_error {
         request.logger.warn(&format!("Warning: {error}"));
     }
     if let Some(failure) = &attached.hook_failure {
         request.logger.warn(&failure.warning(&attached.path));
     }
-    let exec = run_action(request.name, &attached.path, action, &request.logger)?;
+    let exec = run_action(&attached.name, &attached.path, action, &request.logger)?;
     if exec.is_some() {
         if let Err(error) = metadata::touch(&context.git_root, &attached.path) {
             request
@@ -686,22 +692,37 @@ pub fn attach_worktree(
 ) -> Result<AttachedWorktree> {
     validate_worktree_name(name)?;
     metadata::prepare(&context.git_root)?;
+    let lookup = crate::tracking::lookup_attach(&context.git_root, name)?;
     let path = paths::worktree_path(
         &context.worktrees_directory,
-        name,
+        &lookup.directory,
         &context.directory_name_separator,
     );
     if path.exists() {
-        return Err(Error::WorktreeAlreadyExists(name.to_string()));
+        return Err(Error::WorktreeAlreadyExists(lookup.directory));
     }
-    if !git::branch_exists(&context.git_root, name)? {
-        return Err(Error::BranchNotFound(name.to_string()));
-    }
+    let plan = lookup.outcome?;
+    let branch = match &plan {
+        crate::tracking::AttachPlan::Existing { branch }
+        | crate::tracking::AttachPlan::Track { branch, .. } => branch.clone(),
+    };
     paths::with_worktrees_directory(
         &context.worktrees_directory,
         context.project_common_dir.as_deref(),
         || {
-            git::add_worktree(&context.git_root, &path, name, "HEAD", false).map_err(|error| {
+            let add = match &plan {
+                crate::tracking::AttachPlan::Existing { branch } => git::WorktreeAdd::Existing {
+                    branch: branch.as_str(),
+                },
+                crate::tracking::AttachPlan::Track {
+                    branch,
+                    start_point,
+                } => git::WorktreeAdd::Track {
+                    branch: branch.as_str(),
+                    start_point: start_point.as_str(),
+                },
+            };
+            git::add_worktree(&context.git_root, &path, add).map_err(|error| {
                 let message = error.to_string();
                 if let Some(stripped) = message.strip_prefix("worktree add failed: ") {
                     Error::msg(stripped.to_string())
@@ -725,11 +746,12 @@ pub fn attach_worktree(
     let hooks_ran = !commands.is_empty();
     let hook_failure = if hooks_ran {
         logger.log("\nRunning post-create commands...");
-        run_hook_commands(context, name, commands, true, logger)?
+        run_hook_commands(context, &branch, commands, true, logger)?
     } else {
         None
     };
     Ok(AttachedWorktree {
+        name: branch,
         path,
         copy_error,
         hook_failure,

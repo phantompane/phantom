@@ -8731,3 +8731,193 @@ fn a_record_without_a_stored_name_keeps_the_ptm_folder_name() {
     );
     assert!(!next.exists());
 }
+
+fn publish_tracking_branch(repo: &Repo, remote: &str, branch: &str) {
+    let bare = repo.root.join(format!("{remote}.git"));
+    if !bare.exists() {
+        let path = bare.to_str().expect("bare");
+        let init = repo
+            .command("git", &["init", "--bare", "-b", "main", path])
+            .output()
+            .expect("bare");
+        assert!(init.status.success(), "{}", text(&init.stderr));
+        repo.git(&["remote", "add", remote, path]);
+        repo.git(&["push", remote, "main"]);
+    }
+    repo.git(&["checkout", "main"]);
+    if local_branch(repo, branch).is_empty() {
+        repo.git(&["branch", branch, "main"]);
+    }
+    repo.git(&["push", remote, branch]);
+    repo.git(&["checkout", "main"]);
+    if !local_branch(repo, branch).is_empty() {
+        repo.git(&["branch", "-D", branch]);
+    }
+}
+
+fn upstream_name(repo: &Repo, branch: &str) -> String {
+    let output = repo
+        .command(
+            "git",
+            &[
+                "rev-parse",
+                "--abbrev-ref",
+                &format!("{branch}@{{upstream}}"),
+            ],
+        )
+        .output()
+        .expect("upstream");
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    text(&output.stdout)
+}
+
+#[test]
+fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
+    let repo = Repo::new();
+    repo.git(&["config", "branch.autoSetupMerge", "false"]);
+    publish_tracking_branch(&repo, "origin", "feature/teammate");
+    repo.git(&[
+        "remote",
+        "set-url",
+        "origin",
+        repo.root.join("missing.git").to_str().expect("missing"),
+    ]);
+
+    let created = repo.mabo(&["create", "feature/teammate"]);
+    assert_eq!(created.status.code(), Some(3), "{}", text(&created.stderr));
+    assert_eq!(
+        text(&created.stderr),
+        "Branch 'feature/teammate' already exists as a remote-tracking branch (origin). Run `mabo attach feature/teammate`."
+    );
+    assert!(local_branch(&repo, "feature/teammate").is_empty());
+
+    let attached = repo.mabo(&["attach", "feature/teammate"]);
+    assert!(attached.status.success(), "{}", text(&attached.stderr));
+    assert!(text(&attached.stdout).contains("Attached worktree: feature/teammate"));
+    assert_eq!(
+        upstream_name(&repo, "feature/teammate"),
+        "origin/feature/teammate"
+    );
+    assert!(managed(&repo, "feature/teammate")
+        .join("README.md")
+        .is_file());
+
+    let again = repo.mabo(&["attach", "feature/teammate"]);
+    assert_eq!(again.status.code(), Some(3));
+    assert_eq!(
+        text(&again.stderr),
+        "Worktree 'feature/teammate' already exists"
+    );
+    let shadowed = repo.mabo(&["create", "feature/teammate"]);
+    assert_eq!(shadowed.status.code(), Some(3));
+    assert_eq!(
+        text(&shadowed.stderr),
+        "Worktree 'feature/teammate' already exists"
+    );
+}
+
+#[test]
+fn attach_qualified_remote_drops_the_remote_prefix() {
+    let repo = Repo::new();
+    repo.git(&["config", "branch.autoSetupMerge", "false"]);
+    publish_tracking_branch(&repo, "origin", "feature/teammate");
+    let attached = repo.mabo(&["attach", "origin/feature/teammate"]);
+    assert!(attached.status.success(), "{}", text(&attached.stderr));
+    assert!(text(&attached.stdout).contains("Attached worktree: feature/teammate"));
+    assert_eq!(
+        upstream_name(&repo, "feature/teammate"),
+        "origin/feature/teammate"
+    );
+    assert!(managed(&repo, "feature/teammate").is_dir());
+    assert!(local_branch(&repo, "origin/feature/teammate").is_empty());
+}
+
+#[test]
+fn attach_lists_every_remote_that_has_the_name() {
+    let repo = Repo::new();
+    repo.git(&["config", "branch.autoSetupMerge", "false"]);
+    publish_tracking_branch(&repo, "origin", "solo");
+    publish_tracking_branch(&repo, "upstream", "solo");
+    let attached = repo.mabo(&["attach", "solo"]);
+    assert_eq!(
+        attached.status.code(),
+        Some(3),
+        "{}",
+        text(&attached.stderr)
+    );
+    assert_eq!(
+        text(&attached.stderr),
+        "Branch 'solo' exists on more than one remote (origin, upstream). Run `mabo attach <remote>/solo`."
+    );
+    assert!(local_branch(&repo, "solo").is_empty());
+    assert!(!managed(&repo, "solo").exists());
+
+    let chosen = repo.mabo(&["attach", "upstream/solo"]);
+    assert!(chosen.status.success(), "{}", text(&chosen.stderr));
+    assert_eq!(upstream_name(&repo, "solo"), "upstream/solo");
+    assert!(managed(&repo, "solo").is_dir());
+}
+
+#[test]
+fn attach_uses_the_local_branch_when_it_already_exists() {
+    let repo = Repo::new();
+    publish_tracking_branch(&repo, "origin", "feature/teammate");
+    repo.git(&[
+        "branch",
+        "--no-track",
+        "feature/teammate",
+        "origin/feature/teammate",
+    ]);
+    let attached = repo.mabo(&["attach", "feature/teammate"]);
+    assert!(attached.status.success(), "{}", text(&attached.stderr));
+    let upstream = repo
+        .command(
+            "git",
+            &["rev-parse", "--abbrev-ref", "feature/teammate@{upstream}"],
+        )
+        .output()
+        .expect("upstream");
+    assert!(
+        !upstream.status.success(),
+        "local branch should keep no upstream"
+    );
+}
+
+#[test]
+fn create_still_fails_for_a_local_branch_that_is_not_on_a_remote() {
+    let repo = Repo::new();
+    repo.git(&["branch", "lonely"]);
+    let created = repo.mabo(&["create", "lonely"]);
+    assert_eq!(created.status.code(), Some(1), "{}", text(&created.stderr));
+    assert!(text(&created.stderr).contains("a branch named 'lonely' already exists"));
+    assert!(!text(&created.stderr).contains("mabo attach"));
+}
+
+#[test]
+fn help_describes_remote_aware_attach_and_create() {
+    let repo = Repo::new();
+    let attach_help = repo.mabo(&["attach", "--help"]);
+    assert!(
+        attach_help.status.success(),
+        "{}",
+        text(&attach_help.stderr)
+    );
+    let attach = text(&attach_help.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(attach.contains("mabo does not fetch"));
+    assert!(!attach.contains("must already exist locally"));
+    assert!(!attach.contains("first checkout the branch with git"));
+    let create_help = repo.mabo(&["create", "--help"]);
+    assert!(
+        create_help.status.success(),
+        "{}",
+        text(&create_help.stderr)
+    );
+    let create = text(&create_help.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(create.contains("mabo attach <name>"));
+}
