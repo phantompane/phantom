@@ -1,0 +1,661 @@
+//! Fetch and integrate bases without changing published history or upstreams.
+use std::collections::BTreeSet;
+use std::path::Path;
+
+use serde::Serialize;
+
+use crate::context::Context;
+use crate::error::{Error, Result};
+use crate::{git, metadata, paths, worktree};
+
+#[derive(Default)]
+pub struct Request {
+    pub names: Vec<String>,
+    pub all: bool,
+    pub mine: bool,
+    pub no_default: bool,
+    pub rebase: bool,
+    pub merge: bool,
+    pub force: bool,
+    pub keep_conflicts: bool,
+    pub agent: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct Item {
+    pub name: String,
+    pub path: Option<String>,
+    pub branch: Option<String>,
+    pub base: Option<String>,
+    pub status: String,
+    pub strategy: Option<String>,
+    pub before: Option<String>,
+    pub after: Option<String>,
+    pub conflicts: Vec<String>,
+    pub detail: Option<String>,
+    pub code: Option<String>,
+}
+
+impl Item {
+    fn status(&mut self, status: &str, detail: Option<String>) {
+        self.status = status.to_string();
+        self.detail = detail;
+    }
+}
+
+#[derive(Serialize)]
+pub struct Report {
+    pub schema: u32,
+    pub default: Option<Item>,
+    pub worktrees: Vec<Item>,
+    #[serde(skip)]
+    pub exit: i32,
+}
+
+pub fn normalize_base(root: &Path, reference: &str) -> Result<String> {
+    if reference.starts_with('-') || reference.is_empty() {
+        return Err(Error::validation("Base must be an existing ref"));
+    }
+    let full = git::output(
+        &["rev-parse", "--symbolic-full-name", "--verify", reference],
+        Some(root),
+        true,
+    )?;
+    if full.is_empty() || full == "HEAD" {
+        return git::output(
+            &["rev-parse", "--verify", &format!("{reference}^{{commit}}")],
+            Some(root),
+            true,
+        );
+    }
+    if !full.starts_with("refs/") || full.lines().count() != 1 {
+        return Err(Error::validation(format!(
+            "Base '{reference}' must name an existing ref"
+        )));
+    }
+    git::output(
+        &["rev-parse", "--verify", &format!("{full}^{{commit}}")],
+        Some(root),
+        true,
+    )?;
+    Ok(full)
+}
+
+pub fn fallback_base(root: &Path) -> Result<String> {
+    let detected = git::default_branch(root)?;
+    if let Some(default) = detected
+        .as_deref()
+        .filter(|name| name.starts_with("origin/"))
+    {
+        return normalize_base(root, default);
+    }
+    let remotes = git::output(&["remote"], Some(root), true)?;
+    for remote in remotes.lines() {
+        let head = git::raw_git(
+            root,
+            &[
+                "symbolic-ref",
+                "--quiet",
+                &format!("refs/remotes/{remote}/HEAD"),
+            ],
+        )?;
+        if head.code == 0 && commit(root, head.stdout.trim())?.is_some() {
+            return Ok(head.stdout.trim().to_string());
+        }
+    }
+    let default = match detected {
+        Some(default) => default,
+        None => {
+            for name in ["main", "master"] {
+                let remote = format!("refs/remotes/origin/{name}");
+                if commit(root, &remote)?.is_some() {
+                    return Ok(remote);
+                }
+            }
+            return Err(Error::msg("Cannot determine the default branch"));
+        }
+    };
+    let configured = git::raw_git(
+        root,
+        &["config", "--get", &format!("branch.{default}.remote")],
+    )?;
+    let remote_name = if configured.code == 0 && configured.stdout.trim() != "." {
+        configured.stdout.trim()
+    } else {
+        "origin"
+    };
+    let remote = format!("refs/remotes/{remote_name}/{default}");
+    if commit(root, &remote)?.is_some() {
+        Ok(remote)
+    } else {
+        normalize_base(root, &format!("refs/heads/{default}"))
+    }
+}
+
+fn commit(root: &Path, reference: &str) -> Result<Option<String>> {
+    let result = git::raw_git(
+        root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{reference}^{{commit}}"),
+        ],
+    )?;
+    match result.code {
+        0 => Ok(Some(result.stdout.trim().to_string())),
+        1 => Ok(None),
+        _ => Err(Error::msg(result.stderr)),
+    }
+}
+
+fn ancestor(root: &Path, a: &str, b: &str) -> Result<bool> {
+    let result = git::raw_git(root, &["merge-base", "--is-ancestor", a, b])?;
+    match result.code {
+        0 => Ok(true),
+        1 => Ok(false),
+        _ => Err(Error::msg(result.stderr)),
+    }
+}
+
+fn dirty(path: &Path) -> Result<bool> {
+    Ok(!git::output(
+        &["status", "--porcelain=v2", "--untracked-files=all"],
+        Some(path),
+        false,
+    )?
+    .is_empty())
+}
+
+// Checkout during rebase may overwrite ignored files. Preserve those contents too.
+fn ignored_would_be_overwritten(path: &Path, base: &str) -> Result<bool> {
+    let ignored = git::output(
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+        ],
+        Some(path),
+        false,
+    )?;
+    if ignored.is_empty() {
+        return Ok(false);
+    }
+    let tracked = git::output(
+        &["ls-tree", "-r", "--name-only", "-z", base],
+        Some(path),
+        false,
+    )?;
+    Ok(ignored
+        .split('\0')
+        .filter(|file| !file.is_empty())
+        .any(|file| {
+            tracked
+                .split('\0')
+                .filter(|target| !target.is_empty())
+                .any(|target| {
+                    file == target
+                        || file.starts_with(&format!("{target}/"))
+                        || target.starts_with(&format!("{file}/"))
+                })
+        }))
+}
+
+fn remote_for(base: &str, remotes: &[String]) -> Option<String> {
+    let name = base.strip_prefix("refs/remotes/")?;
+    remotes
+        .iter()
+        .filter(|remote| name.starts_with(&format!("{remote}/")))
+        .max_by_key(|remote| remote.len())
+        .cloned()
+}
+
+pub fn run(context: &Context, request: &Request) -> Result<Report> {
+    let _operation = crate::operation::lock(&context.git_root)?;
+    if (request.all && request.mine)
+        || ((request.all || request.mine) && !request.names.is_empty())
+        || (request.rebase && request.merge)
+    {
+        return Err(Error::validation(
+            "Conflicting sync selectors or strategies",
+        ));
+    }
+    if request.mine && request.agent.is_none() {
+        return Err(Error::validation("--mine requires MABO_AGENT_ID"));
+    }
+    let stored = metadata::load(&context.git_root)?;
+    let listed = worktree::list_worktrees(context, true, true)?;
+    let mut targets = Vec::new();
+    if request.all || request.mine {
+        for tree in listed {
+            if metadata::find_in(&stored, Path::new(&tree.path)).is_some()
+                && (!request.mine || tree.metadata.owner == request.agent)
+            {
+                targets.push(tree);
+            }
+        }
+    } else if !request.names.is_empty() {
+        for name in &request.names {
+            worktree::validate_worktree_name(name)?;
+            let tree = worktree::find_worktree(context, name, false, None)?;
+            if paths::same_location(Path::new(&tree.path), &context.git_root) {
+                return Err(Error::validation("Sync targets must be linked worktrees"));
+            }
+            if !targets
+                .iter()
+                .any(|item: &worktree::WorktreeInfo| item.path == tree.path)
+            {
+                targets.push(tree);
+            }
+        }
+    } else {
+        if let Some(name) = worktree::current_worktree_name(context)? {
+            targets.push(worktree::find_worktree(context, &name, false, None)?);
+        }
+    }
+    if request.keep_conflicts && targets.len() != 1 {
+        return Err(Error::validation(
+            "--keep-conflicts requires exactly one worktree target",
+        ));
+    }
+    let fallback = if !request.no_default || targets.iter().any(|tree| tree.metadata.base.is_none())
+    {
+        fallback_base(&context.git_root)?
+    } else {
+        String::new()
+    };
+    let bases: Vec<String> = targets
+        .iter()
+        .map(|tree| {
+            tree.metadata
+                .base
+                .clone()
+                .unwrap_or_else(|| fallback.clone())
+        })
+        .collect();
+    let remotes: Vec<String> = git::output(&["remote"], Some(&context.git_root), true)?
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let mut involved = BTreeSet::new();
+    for base in bases
+        .iter()
+        .chain((!request.no_default).then_some(&fallback))
+    {
+        if let Some(remote) = remote_for(base, &remotes) {
+            involved.insert(remote);
+        }
+    }
+    let mut fetch_errors = Vec::new();
+    for remote in involved {
+        let fetched = git::raw_git(
+            &context.git_root,
+            &[
+                "-c",
+                "core.hooksPath=/dev/null",
+                "fetch",
+                "--prune",
+                "--",
+                &remote,
+            ],
+        )?;
+        if fetched.code != 0 {
+            fetch_errors.push(format!("Fetch {remote} failed: {}", fetched.stderr.trim()));
+        }
+    }
+    let mut report = Report {
+        schema: 1,
+        default: None,
+        worktrees: Vec::new(),
+        exit: 0,
+    };
+    if !request.no_default && fetch_errors.is_empty() {
+        let item = sync_default(context, &fallback);
+        let item = match item {
+            Ok(item) => item,
+            Err(error) => failed_item("default", error),
+        };
+        if item.status == "failed"
+            || (targets.is_empty() && matches!(item.status.as_str(), "dirty" | "diverged"))
+        {
+            report.exit = 1;
+        }
+        report.default = Some(item);
+    }
+    // A failed fetch must never silently integrate stale remote information.
+    if !fetch_errors.is_empty() {
+        let detail = fetch_errors.join("; ");
+        if !request.no_default && report.default.is_none() {
+            report.default = Some(failed_item("default", Error::msg(detail.clone())));
+        }
+        if let Some(item) = &mut report.default {
+            item.status("failed", Some(detail.clone()));
+        }
+        for (tree, base) in targets.iter().zip(&bases) {
+            let mut item = tree_item(tree, base);
+            item.status("failed", Some(detail.clone()));
+            report.worktrees.push(item);
+        }
+        report.exit = 1;
+        return Ok(report);
+    }
+    for (tree, base) in targets.iter().zip(&bases) {
+        let item = match sync_tree(tree, base, request) {
+            Ok(item) => item,
+            Err(error) => {
+                let mut item = tree_item(tree, base);
+                item.status("failed", Some(error.to_string()));
+                item
+            }
+        };
+        if item.code.as_deref() == Some("pushed") {
+            report.exit = 3;
+        } else if matches!(item.status.as_str(), "failed" | "conflict") && report.exit != 3 {
+            report.exit = 1;
+        }
+        report.worktrees.push(item);
+    }
+    Ok(report)
+}
+
+fn failed_item(name: &str, error: Error) -> Item {
+    Item {
+        name: name.to_string(),
+        path: None,
+        branch: None,
+        base: None,
+        status: "failed".into(),
+        strategy: None,
+        before: None,
+        after: None,
+        conflicts: Vec::new(),
+        detail: Some(error.to_string()),
+        code: None,
+    }
+}
+
+fn tree_item(tree: &worktree::WorktreeInfo, base: &str) -> Item {
+    Item {
+        name: tree.name.clone(),
+        path: Some(tree.path.clone()),
+        branch: (!tree.detached).then(|| tree.branch.clone()),
+        base: Some(base.to_string()),
+        status: "up-to-date".into(),
+        strategy: None,
+        before: tree.head.clone(),
+        after: tree.head.clone(),
+        conflicts: Vec::new(),
+        detail: None,
+        code: None,
+    }
+}
+
+fn sync_default(context: &Context, base: &str) -> Result<Item> {
+    let local_name = base
+        .strip_prefix("refs/remotes/")
+        .and_then(|value| value.split_once('/').map(|(_, branch)| branch))
+        .or_else(|| base.strip_prefix("refs/heads/"))
+        .ok_or_else(|| Error::msg("Default branch must name a branch"))?;
+    let local = format!("refs/heads/{local_name}");
+    let root = &context.git_root;
+    let before = commit(root, &local)?;
+    let mut item = Item {
+        name: local_name.to_string(),
+        path: None,
+        branch: Some(local.clone()),
+        base: Some(base.to_string()),
+        status: "up-to-date".into(),
+        strategy: Some("ff-only".into()),
+        before: before.clone(),
+        after: before.clone(),
+        conflicts: Vec::new(),
+        detail: None,
+        code: None,
+    };
+    let target = commit(root, base)?.ok_or_else(|| Error::msg("Default base no longer exists"))?;
+    let checked = worktree::list_worktrees(context, false, false)?
+        .into_iter()
+        .find(|tree| !tree.detached && tree.branch == local_name);
+    if let Some(tree) = &checked {
+        item.path = Some(tree.path.clone());
+    }
+    if before.as_deref() == Some(&target) {
+        return Ok(item);
+    }
+    if let Some(before) = &before {
+        if !ancestor(root, before, &target)? {
+            item.status("diverged", None);
+            return Ok(item);
+        }
+    }
+    if let Some(tree) = checked {
+        let path = Path::new(&tree.path);
+        if ignored_would_be_overwritten(path, base)? {
+            item.status("dirty", Some("Ignored files would be overwritten".into()));
+            return Ok(item);
+        }
+        let result = git::raw_git(
+            path,
+            &[
+                "-c",
+                "core.hooksPath=/dev/null",
+                "merge",
+                "--ff-only",
+                "--no-edit",
+                base,
+            ],
+        )?;
+        if result.code != 0 {
+            item.status(
+                if dirty(path)? { "dirty" } else { "failed" },
+                Some(result.stderr.trim().into()),
+            );
+            return Ok(item);
+        }
+    } else {
+        git::output(
+            &[
+                "-c",
+                "core.hooksPath=/dev/null",
+                "update-ref",
+                &local,
+                &target,
+                before.as_deref().unwrap_or(""),
+            ],
+            Some(root),
+            true,
+        )?;
+    }
+    item.after = Some(target);
+    item.status("updated", None);
+    Ok(item)
+}
+
+fn sync_tree(tree: &worktree::WorktreeInfo, base: &str, request: &Request) -> Result<Item> {
+    let mut item = tree_item(tree, base);
+    let path = Path::new(&tree.path);
+    if tree.detached {
+        item.status("detached", None);
+        return Ok(item);
+    }
+    if dirty(path)? {
+        item.status("dirty", None);
+        return Ok(item);
+    }
+    // Do not start a second operation even if a conflicted operation has been resolved.
+    for state in [
+        "rebase-merge",
+        "rebase-apply",
+        "MERGE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+    ] {
+        let state_path = git::output(&["rev-parse", "--git-path", state], Some(path), true)?;
+        if path.join(state_path).exists() {
+            item.status(
+                "failed",
+                Some("A Git operation is already in progress".into()),
+            );
+            return Ok(item);
+        }
+    }
+    let base_exists = commit(path, base)?.is_some();
+    let other_owner = request.all
+        && request.agent.is_some()
+        && tree.metadata.owner.is_some()
+        && tree.metadata.owner != request.agent;
+    if !base_exists && other_owner {
+        item.status("owned", None);
+        return Ok(item);
+    }
+    if !base_exists {
+        item.status(
+            "base-gone",
+            Some(format!(
+                "Set a new base: mabo meta set {} --base <ref>",
+                tree.name
+            )),
+        );
+        return Ok(item);
+    }
+    let reachability = git::tip_reachability(
+        path,
+        Some(&tree.branch),
+        tree.head.as_deref(),
+        &Some(base.to_string()),
+    );
+    if ancestor(path, "HEAD", base)?
+        || reachability.landed
+        || git::changes_landed(path, "HEAD", base)
+    {
+        item.status(
+            "merged",
+            Some("Use mabo gc to remove landed worktrees".into()),
+        );
+        return Ok(item);
+    }
+    if request.all
+        && request.agent.is_some()
+        && tree.metadata.owner.is_some()
+        && tree.metadata.owner != request.agent
+    {
+        item.status("owned", None);
+        return Ok(item);
+    }
+    let own = git::output(
+        &["rev-list", &format!("{base}..HEAD"), "--"],
+        Some(path),
+        true,
+    )?;
+    let unpublished = git::output(
+        &["rev-list", "HEAD", "--not", base, "--remotes", "--"],
+        Some(path),
+        true,
+    )?;
+    let unpublished: BTreeSet<&str> = unpublished.lines().collect();
+    let pushed = own.lines().any(|sha| !unpublished.contains(sha));
+    let strategy = if request.merge || (!request.rebase && pushed) {
+        "merge"
+    } else {
+        "rebase"
+    };
+    item.strategy = Some(strategy.into());
+    if request.rebase && pushed && !request.force {
+        item.status(
+            "failed",
+            Some("Published commits require --force with --rebase".into()),
+        );
+        item.code = Some("pushed".into());
+        return Ok(item);
+    }
+    if ancestor(path, base, "HEAD")? {
+        return Ok(item);
+    }
+    if ignored_would_be_overwritten(path, base)? {
+        item.status("dirty", Some("Ignored files would be overwritten".into()));
+        return Ok(item);
+    }
+    let args = if strategy == "merge" {
+        vec![
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "merge.autoStash=false",
+            "merge",
+            "--no-edit",
+            "--no-verify",
+            base,
+        ]
+    } else {
+        vec![
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "rebase.autoStash=false",
+            "rebase",
+            "--no-autostash",
+            "--no-update-refs",
+            base,
+        ]
+    };
+    let result = git::raw_git(path, &args)?;
+    if result.code != 0 {
+        let files = git::output(
+            &["diff", "--name-only", "--diff-filter=U", "-z"],
+            Some(path),
+            false,
+        )?;
+        item.conflicts = files
+            .split('\0')
+            .filter(|file| !file.is_empty())
+            .map(str::to_string)
+            .collect();
+        let in_progress = if strategy == "merge" {
+            "MERGE_HEAD"
+        } else {
+            "rebase-merge"
+        };
+        let state = git::output(&["rev-parse", "--git-path", in_progress], Some(path), true)?;
+        let rebase_apply = git::output(
+            &["rev-parse", "--git-path", "rebase-apply"],
+            Some(path),
+            true,
+        )?;
+        let started =
+            path.join(state).exists() || (strategy == "rebase" && path.join(rebase_apply).exists());
+        if started && !request.keep_conflicts {
+            let abort = git::raw_git(
+                path,
+                &["-c", "core.hooksPath=/dev/null", strategy, "--abort"],
+            )?;
+            if abort.code != 0 {
+                return Err(Error::msg(format!(
+                    "Cannot abort {strategy}: {}",
+                    abort.stderr
+                )));
+            }
+        }
+        item.after = git::head_commit(path);
+        item.status(
+            if item.conflicts.is_empty() {
+                "failed"
+            } else {
+                "conflict"
+            },
+            Some(result.stderr.trim().into()),
+        );
+        return Ok(item);
+    }
+    item.after = git::head_commit(path);
+    item.status(
+        if item.after == item.before {
+            "up-to-date"
+        } else {
+            "updated"
+        },
+        None,
+    );
+    Ok(item)
+}

@@ -160,6 +160,7 @@ pub fn selection_from_flags(
 }
 
 pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Report> {
+    let _operation = crate::operation::lock(&context.git_root)?;
     let facts = gather(context, &request.policy)?;
     warn_unavailable_pull_requests(&facts, &request.policy);
     let verdicts = classify(&facts, &request.policy);

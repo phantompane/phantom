@@ -556,7 +556,7 @@ fn upstream_missing(git_root: &Path, branch: &str) -> bool {
     }
 }
 
-fn changes_landed(git_root: &Path, tip: &str, base: &str) -> bool {
+pub(crate) fn changes_landed(git_root: &Path, tip: &str, base: &str) -> bool {
     let Ok(merge_base) = raw_git(git_root, &["merge-base", base, tip]) else {
         return false;
     };
@@ -603,7 +603,7 @@ fn verify_commit(git_root: &Path, name: &str) -> Result<bool> {
     Ok(captured.code == 0)
 }
 
-fn raw_git(git_root: &Path, args: &[&str]) -> Result<process::Captured> {
+pub(crate) fn raw_git(git_root: &Path, args: &[&str]) -> Result<process::Captured> {
     process::raw("git", args, Some(git_root))
 }
 

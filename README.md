@@ -132,7 +132,7 @@ A command that does not produce a result writes this object to stdout:
 
 ### Worktree object
 
-`list`, `where`, `create`, `attach`, `delete`, and `github checkout` share this object. `path` is absolute. `head` is the full HEAD SHA, or null when Git has no HEAD. `branch` is null when HEAD is detached (`detached` is true). `base` is the commit-ish this command started from, when it knows one, and null otherwise. `dirty` is true when `git status --porcelain` reports any change. `default` is true for the repository's primary checkout.
+`list`, `where`, `create`, `attach`, `delete`, and `github checkout` share this object. `path` is absolute. `head` is the full HEAD SHA, or null when Git has no HEAD. `branch` is null when HEAD is detached (`detached` is true). `base` is the commit-ish this command started from when it knows one; otherwise it is the recorded sync base (a full ref such as `refs/remotes/origin/main`), or null for legacy/unrecorded worktrees. `list --json` exposes that recorded base. `dirty` is true when `git status --porcelain` reports any change. `default` is true for the repository's primary checkout.
 
 ```json
 {
@@ -156,7 +156,62 @@ A command that does not produce a result writes this object to stdout:
 }
 ```
 
-`owner`, `purpose`, `createdAt`, `createdFrom`, `lastUsedAt`, and `links` come from `maboroshi/worktrees.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `mabo create`, `mabo attach`, and `mabo github checkout` write a record. `owner` is `--owner` or `MABO_AGENT_ID`, and null when neither is set. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `github checkout` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `where` and `exec` refresh `lastUsedAt` when a record already exists. A failure to update it is a warning on stderr and does not change the exit code. `delete` removes the record after Git removes the worktree. `create` and `attach` replace any record already stored at that path. `meta set` and a second `github checkout` of a worktree that already exists patch the record. `create --json` and `attach --json` include `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the worktree exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 1. The stdout document is the result object, not the error envelope. A corrupt `worktrees.json` makes `list`, `where`, and `exec` continue with null metadata fields and a stderr warning. `create`, `attach`, `delete`, `meta set`, and `github checkout` refuse and leave the file unchanged. `createdFrom` is the full commit the branch was created from. `create` stores the new branch's HEAD. A record for a branch that already existed stores the oldest `refs/heads` reflog entry, or null when that reflog is missing. `meta set` and a later checkout leave it unchanged. A record written before this field existed has `createdFrom` null. `mabo meta set` patches the fields you pass and leaves the others. A worktree Git created outside `mabo`, including the default checkout, has null metadata fields until `meta set` or `github checkout` records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
+`owner`, `purpose`, `base`, `createdAt`, `createdFrom`, `lastUsedAt`, and `links` come from `maboroshi/worktrees.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `mabo create`, `mabo attach`, and `mabo github checkout` write a record. `owner` is `--owner` or `MABO_AGENT_ID`, and null when neither is set. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `github checkout` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `where` and `exec` refresh `lastUsedAt` when a record already exists. A failure to update it is a warning on stderr and does not change the exit code. `delete` removes the record after Git removes the worktree. `create` and `attach` replace any record already stored at that path. `meta set` and a second `github checkout` of a worktree that already exists patch the record. `create --json` and `attach --json` include `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the worktree exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 1. The stdout document is the result object, not the error envelope. A corrupt `worktrees.json` makes `list`, `where`, and `exec` continue with null metadata fields and a stderr warning. `create`, `attach`, `delete`, `meta set`, and `github checkout` refuse and leave the file unchanged. `createdFrom` is the full commit the branch was created from. `create` stores the new branch's HEAD. A record for a branch that already existed stores the oldest `refs/heads` reflog entry, or null when that reflog is missing. `meta set` and a later checkout leave it unchanged. A record written before this field existed has `createdFrom` null. `mabo meta set` patches the fields you pass and leaves the others. A worktree Git created outside `mabo`, including the default checkout, has null metadata fields until `meta set` or `github checkout` records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
+
+### Sync
+
+`mabo sync` fetches each involved remote once, fast-forwards the default branch, and integrates worktree bases. It never pushes, changes upstream configuration, or runs hooks. A repository operation lock serializes sync with create, attach, delete, gc, and GitHub checkout.
+
+```sh
+# Human: from the main checkout, update only the default branch.
+mabo sync
+# From a linked worktree or any subdirectory, also sync that worktree.
+cd "$(mabo where feature/auth)"
+mabo sync
+# Select worktrees and choose a strategy explicitly.
+mabo sync feature/auth feature/tests --merge
+mabo sync feature/auth --rebase --force
+# Agent: select only your recorded worktrees.
+export MABO_AGENT_ID=worker-1
+mabo create feature/task --purpose 'implement task'
+mabo sync --mine --json
+# Skip the default branch, or process all recorded worktrees.
+mabo sync --all --no-default
+mabo sync -p owner/repo --all
+# Keep a single conflicted operation for manual resolution.
+mabo sync feature/auth --keep-conflicts
+mabo meta set feature/auth --base origin/main
+```
+
+`create` records a sync `base`: an explicit `--base` is normalized to a full ref, otherwise the remote-tracking default branch when available, then the local default branch. Commit bases remain supported. When a clone has no discoverable default branch, creation retains its existing HEAD-based behavior and records that ref. Older metadata without `base` uses the same default-branch fallback at sync time. `meta set --base <ref>` validates and replaces the base; a removed base is skipped as `base-gone` with a repair hint.
+
+Auto strategy rebases when none of the worktree's own commits (`base..branch`) is reachable from any remote-tracking ref; otherwise it merges. `--rebase` refuses published commits with code `pushed` and exit 3 unless `--force` is given. `--merge` always selects merge. `--force` only permits local history rewriting. Dirty worktrees (including untracked, non-ignored files), detached worktrees, and already landed branches are skipped. Landed branches suggest `mabo gc`. With `--all` and `MABO_AGENT_ID`, worktrees owned by another agent are skipped as `owned`; explicitly naming one is allowed. `--mine` requires that environment variable.
+
+A conflict reports the conflicting files and aborts the operation, restoring HEAD, the index tree, and file contents. `--keep-conflicts` leaves the operation in progress and requires exactly one target; several targets produce usage exit 2. Default-branch updates are fast-forward only, including when it is checked out in a linked worktree. Local commits cause `diverged`; blocking local changes cause `dirty`. With worktree targets, those default-branch skips are best effort and do not block worktree updates.
+
+Human output has one `<name>  <status>  [detail]` line per item and a summary. `--json` uses a separate versioned schema:
+
+```json
+{
+  "schema": 1,
+  "default": {
+    "name": "main", "path": "/checkout", "branch": "refs/heads/main",
+    "base": "refs/remotes/origin/main", "status": "updated", "strategy": "ff-only",
+    "before": "<old-sha>", "after": "<new-sha>", "conflicts": [],
+    "detail": null, "code": null
+  },
+  "worktrees": [{
+    "name": "feature/task", "path": "/worktrees/feature/task", "branch": "feature/task",
+    "base": "refs/remotes/origin/main", "status": "updated", "strategy": "rebase",
+    "before": "<old-sha>", "after": "<new-sha>", "conflicts": [],
+    "detail": null, "code": null
+  }]
+}
+```
+
+`default` is null with `--no-default`. Otherwise `name` is the default branch name, `branch` its full local ref, `base` the fetched target ref, and `path` its checkout path or null if not checked out. `strategy` is `ff-only`. Worktree `branch` is the branch name or null for detached HEAD, `base` is the normalized base, and `strategy` is `rebase`, `merge`, or null when skipped before strategy selection. Both item types report full `before`/`after` commit IDs, conflicting file paths in `conflicts`, optional human `detail`, and optional refusal `code` (`pushed`). Fields unavailable after an error are null.
+
+Statuses are `updated`, `up-to-date`, `dirty`, `diverged`, `merged`, `detached`, `owned`, `base-gone`, `conflict`, and `failed`. Exit 0 means successful updates or skips; exit 1 means any conflict/failure, or a default-only `dirty`/`diverged` result; exit 2 means invalid usage; exit 3 means a refusal to rewrite published history.
 
 ### Commands
 

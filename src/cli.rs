@@ -55,6 +55,85 @@ fn find<'a>(args: &'a [String], commands: &'a [Command]) -> Option<(&'a Command,
     Some((command, rest))
 }
 
+fn sync(args: &[String]) -> Result<i32> {
+    let json = wants_json(args);
+    let parsed = match args::parse(
+        args,
+        &[
+            project_flag(),
+            flag("all", None),
+            flag("mine", None),
+            flag("no-default", None),
+            flag("rebase", None),
+            flag("merge", None),
+            flag("force", Some('f')),
+            flag("keep-conflicts", None),
+            flag("json", None),
+        ],
+        true,
+    ) {
+        Ok(parsed) => parsed,
+        Err(error) => return fail_with(&error, 2, json),
+    };
+    let context = match command_context(&parsed) {
+        Ok(context) => context,
+        Err(error) => return fail_with(&error, 1, json),
+    };
+    let request = crate::sync::Request {
+        names: parsed.positionals.clone(),
+        all: parsed.flag("all"),
+        mine: parsed.flag("mine"),
+        no_default: parsed.flag("no-default"),
+        rebase: parsed.flag("rebase"),
+        merge: parsed.flag("merge"),
+        force: parsed.flag("force"),
+        keep_conflicts: parsed.flag("keep-conflicts"),
+        agent: std::env::var("MABO_AGENT_ID")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+    };
+    let report = match crate::sync::run(&context, &request) {
+        Ok(report) => report,
+        Err(error) => {
+            return fail_with(
+                &error,
+                if matches!(error, Error::Validation(_) | Error::WorktreeNotFound(_)) {
+                    2
+                } else {
+                    1
+                },
+                json,
+            )
+        }
+    };
+    if json {
+        emit_json(&report)?;
+    } else {
+        for item in report.default.iter().chain(&report.worktrees) {
+            // Git diagnostics can contain newlines; human output stays one line per item.
+            let mut detail = item
+                .detail
+                .as_deref()
+                .unwrap_or("")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !item.conflicts.is_empty() {
+                let files = item.conflicts.join(", ").replace(['\n', '\r'], " ");
+                detail = format!("conflicts: {files}; {detail}");
+            }
+            println!("{}  {}  {}", item.name, item.status, detail);
+        }
+        println!(
+            "Sync complete: {} items, exit {}",
+            report.worktrees.len() + usize::from(report.default.is_some()),
+            report.exit
+        );
+    }
+    Ok(report.exit)
+}
+
 fn create(args: &[String]) -> Result<i32> {
     let json = wants_json(args);
     let mut options = vec![
@@ -353,6 +432,7 @@ fn delete(args: &[String]) -> Result<i32> {
         Ok(context) => context,
         Err(error) => return fail_project(&error, args, &parsed, json),
     };
+    let _operation = crate::operation::lock(&context.git_root)?;
     let keep_branch =
         parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false);
     let names = if delete_current {
@@ -977,7 +1057,7 @@ fn meta_root(args: &[String]) -> Result<i32> {
 
 fn meta_set(args: &[String]) -> Result<i32> {
     let json = wants_json(args);
-    let mut options = vec![project_flag(), flag("json", None)];
+    let mut options = vec![project_flag(), flag("json", None), value_flag("base", None)];
     options.extend(metadata_options());
     let parsed = match args::parse(args, &options, true) {
         Ok(parsed) => parsed,
@@ -991,17 +1071,18 @@ fn meta_set(args: &[String]) -> Result<i32> {
             json,
         );
     }
-    let input = match metadata_input(&parsed, false) {
+    let mut input = match metadata_input(&parsed, false) {
         Ok(input) => input,
         Err(error) => return fail_with(&error, error.exit_code(), json),
     };
-    if input.owner.is_none()
+    if parsed.value("base").is_none()
+        && input.owner.is_none()
         && input.purpose.is_none()
         && input.pr.is_none()
         && input.issue.is_none()
     {
         return fail_with(
-            &Error::msg("Specify at least one of --owner, --purpose, --pr, or --issue"),
+            &Error::msg("Specify at least one of --owner, --purpose, --pr, --issue, or --base"),
             VALIDATION,
             json,
         );
@@ -1010,6 +1091,16 @@ fn meta_set(args: &[String]) -> Result<i32> {
         Ok(context) => context,
         Err(error) => return fail_project(&error, args, &parsed, json),
     };
+    let base = match single_value(&parsed, "base") {
+        Ok(base) => base,
+        Err(error) => return fail_with(&error, VALIDATION, json),
+    };
+    if let Some(base) = base {
+        input.base = match crate::sync::normalize_base(&context.git_root, base) {
+            Ok(base) => Some(base),
+            Err(error) => return fail_with(&error, VALIDATION, json),
+        };
+    }
     let name = &parsed.positionals[0];
     let worktree = match worktree::find_worktree(&context, name, false, None) {
         Ok(worktree) => worktree,
@@ -1133,6 +1224,7 @@ fn metadata_input(parsed: &Parsed, use_env: bool) -> Result<MetadataInput> {
             .map(metadata::parse_link)
             .transpose()?,
         name: None,
+        base: None,
     })
 }
 
@@ -1671,6 +1763,12 @@ static GITHUB_COMMANDS: &[Command] = &[Command {
 }];
 
 static COMMANDS: &[Command] = &[
+    Command {
+        name: "sync",
+        help_key: "sync",
+        run: sync,
+        children: &[],
+    },
     Command {
         name: "create",
         help_key: "create",

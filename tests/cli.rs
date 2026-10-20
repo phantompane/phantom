@@ -1947,7 +1947,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
         .expect("feature");
     assert_eq!(feature["head"], head);
     assert_eq!(feature["dirty"], false);
-    assert!(feature["base"].is_null());
+    assert_eq!(feature["base"], "refs/heads/main");
 
     let worktree = managed(&repo, "feature/json");
     fs::write(worktree.join("README.md"), "dirty\n").expect("dirty");

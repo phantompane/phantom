@@ -23,6 +23,8 @@ const PURPOSE_MAX: usize = 1024;
 pub struct WorktreeMetadata {
     #[serde(default)]
     pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
     #[serde(default)]
     pub purpose: Option<String>,
     #[serde(default)]
@@ -74,6 +76,7 @@ pub enum BranchOrigin {
 #[derive(Debug, Clone, Default)]
 pub struct MetadataInput {
     pub owner: Option<String>,
+    pub base: Option<String>,
     pub purpose: Option<String>,
     pub pr: Option<WorktreeLink>,
     pub issue: Option<WorktreeLink>,
@@ -404,6 +407,9 @@ fn stored_worktree(path: String, metadata: WorktreeMetadata) -> StoredWorktree {
 }
 
 fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
+    if input.base.is_some() {
+        metadata.base = input.base.clone();
+    }
     if input.owner.is_some() {
         metadata.owner = input.owner.clone();
     }

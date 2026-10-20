@@ -117,6 +117,7 @@ pub fn checkout(
         Some(path) => path.to_path_buf(),
         None => std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?,
     };
+    let _operation = crate::operation::lock(&cwd)?;
     let repo = repo_info(&cwd)?;
     let issue = fetch_issue(&cwd, &repo.host, &repo.owner, &repo.name, number)?;
     let Some(issue) = issue else {

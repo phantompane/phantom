@@ -444,9 +444,10 @@ pub struct CreateOutcome {
     pub exec: Option<ExecOutcome>,
 }
 
-pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
+pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
     let action = resolve_action(&request.action)?;
     let context = context::open(request.repository)?;
+    let _operation = crate::operation::lock(&context.git_root)?;
     let name = match request.name {
         Some(name) => name.to_string(),
         None => {
@@ -459,6 +460,11 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
             )?
         }
     };
+    request.metadata.base = Some(match request.base {
+        Some(base) => crate::sync::normalize_base(&context.git_root, base)?,
+        None => crate::sync::fallback_base(&context.git_root)
+            .or_else(|_| crate::sync::normalize_base(&context.git_root, "HEAD"))?,
+    });
     let base = request.base.unwrap_or("HEAD");
     let commands = trust::authorize(
         &context.git_root,
@@ -636,6 +642,7 @@ pub struct AttachRequest<'a> {
 pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action = resolve_action(&request.action)?;
     let context = context::open(request.repository)?;
+    let _operation = crate::operation::lock(&context.git_root)?;
     let commands = trust::authorize(
         &context.git_root,
         config::post_create_commands(context.config.as_ref()),
@@ -1593,11 +1600,14 @@ impl WorktreeInfo {
                 Some(self.branch.clone())
             },
             head: self.head.clone(),
-            base,
+            base: base.or_else(|| self.metadata.base.clone()),
             dirty: !self.is_clean,
             is_default: self.is_default,
             detached: self.detached,
-            metadata: self.metadata.clone(),
+            metadata: metadata::WorktreeMetadata {
+                base: None,
+                ..self.metadata.clone()
+            },
         }
     }
 }
