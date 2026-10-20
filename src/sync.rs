@@ -717,6 +717,8 @@ fn sync_tree(
         path,
         &tree.branch,
         tree.metadata.created_from.as_deref(),
+        base,
+        !metadata::records_path(&context.git_root, path)?,
     );
     if moved
         && (ancestor(path, "HEAD", base)?
@@ -775,7 +777,21 @@ fn sync_tree(
         .or_else(|| base.strip_prefix("refs/heads/"))
         .unwrap_or(base);
     let message = format!("Merge {short_base} into {}", tree.branch);
-    let args = if strategy == "merge" {
+    let args = if own.is_empty() {
+        vec![
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "merge.autoStash=false",
+            "merge",
+            "--no-squash",
+            "--commit",
+            "--ff-only",
+            "--no-gpg-sign",
+            "--no-verify-signatures",
+            base,
+        ]
+    } else if strategy == "merge" {
         vec![
             "-c",
             "core.hooksPath=/dev/null",
@@ -814,7 +830,12 @@ fn sync_tree(
             base,
         ]
     };
-    let result = git::raw_git(path, &args)?;
+    let action = format!("mabo sync: fast-forward to {base}");
+    let result = if own.is_empty() {
+        git::raw_git_with_env(path, &args, &[("GIT_REFLOG_ACTION", &action)])?
+    } else {
+        git::raw_git(path, &args)?
+    };
     // A successful exit alone does not prove integration finished (e.g. --no-commit).
     let mut pending = None;
     for state in ["MERGE_HEAD", "rebase-merge", "rebase-apply"] {

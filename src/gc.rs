@@ -582,7 +582,13 @@ fn observe_listed(
     );
     let merged = match (&branch, base) {
         (Some(name), Some(base_name)) => {
-            let moved = !still_at_creation_point(&context.git_root, name, created_from);
+            let moved = !still_at_creation_point(
+                &context.git_root,
+                name,
+                created_from,
+                base_name,
+                record.is_none(),
+            );
             let ancestor = is_ancestor(&context.git_root, name, base_name);
             moved && (ancestor || reachability.landed)
         }
@@ -813,6 +819,8 @@ pub(crate) fn still_at_creation_point(
     git_root: &Path,
     branch: &str,
     created_from: Option<&str>,
+    base: &str,
+    unrecorded: bool,
 ) -> bool {
     let Some(tip_sha) = branch_tip(git_root, branch) else {
         return false;
@@ -824,22 +832,33 @@ pub(crate) fn still_at_creation_point(
         return created.eq_ignore_ascii_case(&tip_sha);
     }
     let spec = format!("refs/heads/{branch}");
-    let Ok(reflog) = git(git_root, &["reflog", "show", "--format=%H", &spec]) else {
-        return false;
+    let Ok(reflog) = git(git_root, &["reflog", "show", "--format=%H%x09%gs", &spec]) else {
+        return unrecorded;
     };
     if reflog.code != 0 {
-        return false;
+        return unrecorded;
     }
-    let Some(oldest) = reflog
-        .stdout
-        .lines()
-        .next_back()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-    else {
-        return false;
+    let mut entries: Vec<_> = reflog.stdout.lines().collect();
+    let Some(oldest) = entries.pop() else {
+        return unrecorded;
     };
-    oldest.eq_ignore_ascii_case(&tip_sha)
+    let Some((creation, subject)) = oldest.split_once('\t') else {
+        return unrecorded;
+    };
+    if creation.eq_ignore_ascii_case(&tip_sha) {
+        return true;
+    }
+    // An expired creation entry cannot establish whether this branch had work.
+    // Keep it rather than infer a landing from incomplete history.
+    if !subject.starts_with("branch: Created from ") {
+        return true;
+    }
+    entries.iter().all(|entry| {
+        entry.split_once('\t').is_some_and(|(_, subject)| {
+            subject.starts_with("mabo sync: fast-forward to ")
+                && subject.ends_with(": Fast-forward")
+        })
+    }) && is_ancestor(git_root, branch, base)
 }
 
 fn branch_tip(git_root: &Path, branch: &str) -> Option<String> {

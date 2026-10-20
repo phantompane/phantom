@@ -607,6 +607,14 @@ pub(crate) fn raw_git(git_root: &Path, args: &[&str]) -> Result<process::Capture
     process::raw("git", args, Some(git_root))
 }
 
+pub(crate) fn raw_git_with_env(
+    git_root: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Result<process::Captured> {
+    process::raw_with_env("git", args, Some(git_root), env)
+}
+
 pub fn status_count(cwd: &Path) -> Result<usize> {
     let stdout = output(&["status", "--porcelain"], Some(cwd), false)?;
     Ok(stdout.lines().filter(|line| !line.is_empty()).count())

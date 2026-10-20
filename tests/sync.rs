@@ -795,6 +795,64 @@ fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
 }
 
 #[test]
+fn unrecorded_fresh_syncs_keep_null_metadata_and_gc_keeps_them() {
+    for no_reflog in [false, true] {
+        let r = Repo::new();
+        // Use the managed directory so gc's directory boundary cannot hide a failure.
+        let template = r.create("template");
+        let tree = template.parent().unwrap().join("topic");
+        if no_reflog {
+            r.git(&r.main, &["config", "core.logAllRefUpdates", "false"]);
+        }
+        r.git(
+            &r.main,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "topic",
+                tree.to_str().unwrap(),
+                "origin/main",
+            ],
+        );
+        let store = r.main.join(".git/maboroshi/worktrees.json");
+        let before = fs::read(&store).unwrap();
+        r.advance();
+        assert_eq!(
+            r.sync(&r.main, &["topic"], 0)["worktrees"][0]["status"],
+            "updated"
+        );
+        r.write_commit(&r.upstream, "second", "second\n");
+        r.git(&r.upstream, &["push", "origin", "main"]);
+        assert_eq!(
+            r.sync(&r.main, &["topic"], 0)["worktrees"][0]["status"],
+            "updated"
+        );
+        assert_eq!(
+            r.sync(&r.main, &["topic"], 0)["worktrees"][0]["status"],
+            "up-to-date"
+        );
+        let gc = r.mabo(&r.main, &["gc", "--json"]);
+        assert!(gc.status.success());
+        let doc: Value = serde_json::from_slice(&gc.stdout).unwrap();
+        assert!(!doc.to_string().contains("topic"), "{doc}");
+        assert_eq!(fs::read(store).unwrap(), before);
+        if !no_reflog {
+            r.write_commit(&r.upstream, "third", "third\n");
+            r.git(&r.upstream, &["push", "origin", "main"]);
+            r.git(&r.main, &["fetch", "origin"]);
+            r.git(&tree, &["reset", "--hard", "origin/main"]);
+            assert_eq!(
+                r.sync(&r.main, &["topic"], 0)["worktrees"][0]["status"],
+                "merged"
+            );
+            let gc = r.mabo(&r.main, &["gc", "--json"]);
+            assert!(String::from_utf8_lossy(&gc.stdout).contains("topic"));
+        }
+    }
+}
+
+#[test]
 fn ignored_directories_collapse_and_only_incoming_paths_block_sync() {
     for collision in [false, true] {
         let r = Repo::new();
