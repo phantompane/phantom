@@ -463,7 +463,7 @@ fn gather(context: &Context, policy: &Policy) -> Result<Vec<WorktreeFacts>> {
     let stored = metadata::load(&context.git_root)?;
     let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
-    let base = default_branch(&context.git_root)?;
+    let base = git::default_branch(&context.git_root)?;
     let current = current_worktree_path(context);
     let mut pull_requests = BTreeMap::new();
     let mut rows = BTreeMap::new();
@@ -550,7 +550,7 @@ fn observe_listed(
         (Some(branch), Some(base)) => branch == local_default_name(base),
         _ => false,
     };
-    let unpushed = unpushed_tip(
+    let unpushed = git::unpushed_tip(
         &context.git_root,
         branch.as_deref(),
         worktree.head.as_deref(),
@@ -735,37 +735,6 @@ fn parse_time(value: &str) -> Option<SystemTime> {
     Some(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
 }
 
-fn default_branch(git_root: &Path) -> Result<Option<String>> {
-    let symbolic = git(
-        git_root,
-        &[
-            "symbolic-ref",
-            "--quiet",
-            "--short",
-            "refs/remotes/origin/HEAD",
-        ],
-    )?;
-    if symbolic.code == 0 {
-        let name = symbolic.stdout.trim();
-        if !name.is_empty() && verify_commit(git_root, name)? {
-            return Ok(Some(name.to_string()));
-        }
-    }
-    if verify_commit(git_root, "main")? {
-        return Ok(Some("main".to_string()));
-    }
-    if verify_commit(git_root, "master")? {
-        return Ok(Some("master".to_string()));
-    }
-    Ok(None)
-}
-
-fn verify_commit(git_root: &Path, name: &str) -> Result<bool> {
-    let spec = format!("{name}^{{commit}}");
-    let captured = git(git_root, &["rev-parse", "--verify", "--quiet", &spec])?;
-    Ok(captured.code == 0)
-}
-
 fn local_default_name(base: &str) -> &str {
     base.strip_prefix("origin/").unwrap_or(base)
 }
@@ -820,30 +789,6 @@ fn is_ancestor(git_root: &Path, tip: &str, base: &str) -> bool {
         return false;
     };
     captured.code == 0
-}
-
-fn unpushed_tip(
-    git_root: &Path,
-    branch: Option<&str>,
-    head: Option<&str>,
-    base: &Option<String>,
-) -> Option<bool> {
-    let base = base.as_deref()?;
-    let tip = branch.or_else(|| head.filter(|sha| sha.bytes().any(|byte| byte != b'0')))?;
-    // `--not` stays in effect for `--remotes`, so those commits are excluded.
-    // A second `--not` would include them again. The trailing `--` keeps a
-    // branch name that matches a worktree directory from being read as a path.
-    let Ok(captured) = git(
-        git_root,
-        &["rev-list", "--count", tip, "--not", base, "--remotes", "--"],
-    ) else {
-        return None;
-    };
-    if captured.code != 0 {
-        return None;
-    }
-    let count = captured.stdout.trim().parse::<u64>().ok()?;
-    Some(count > 0)
 }
 
 fn git(git_root: &Path, args: &[&str]) -> Result<process::Captured> {
@@ -939,8 +884,11 @@ fn apply_delete(
     match worktree::delete_worktree(
         context,
         &info.name,
-        request.policy.force,
-        request.keep_branch,
+        &worktree::DeleteOptions {
+            force: request.policy.force,
+            keep_branch: request.keep_branch,
+            allow_current: false,
+        },
         Some(&subject.path),
         logger,
         crate::trust::HookControl {
