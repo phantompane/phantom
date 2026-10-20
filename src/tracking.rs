@@ -30,6 +30,13 @@ pub(crate) fn reject_remote_create(git_root: &Path, name: &str) -> Result<()> {
     }
 }
 
+/// Branch names that already exist on a configured remote.
+///
+/// Nameless create consults this once, then skips those candidates.
+pub(crate) fn remote_tracking_branch_names(git_root: &Path) -> Result<BTreeSet<String>> {
+    Ok(Catalog::read(git_root)?.tracked_branches())
+}
+
 struct Catalog {
     /// Longest configured remote first, so a slash inside a remote name wins
     /// over a shorter remote plus a branch prefix.
@@ -137,6 +144,27 @@ impl Catalog {
             });
         }
         None
+    }
+
+    fn tracked_branches(&self) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for reference in &self.tracking {
+            let Some(rest) = reference.strip_prefix("refs/remotes/") else {
+                continue;
+            };
+            for remote in &self.remotes {
+                let Some(after) = rest.strip_prefix(remote.as_str()) else {
+                    continue;
+                };
+                let Some(branch) = after.strip_prefix('/') else {
+                    continue;
+                };
+                if !branch.is_empty() {
+                    names.insert(branch.to_string());
+                }
+            }
+        }
+        names
     }
 
     fn exact(&self, name: &str) -> Hits {
@@ -360,5 +388,14 @@ refs/remotes/stale/solo\0
             catalog.exact("origin/feature/teammate"),
             Hits::None
         ));
+    }
+
+    #[test]
+    fn tracked_branch_names_skip_symbolic_head_and_removed_remotes() {
+        let names = catalog().tracked_branches();
+        assert!(names.contains("feature/teammate"));
+        assert!(names.contains("solo"));
+        assert!(!names.contains("HEAD"));
+        assert!(!names.contains("main"));
     }
 }

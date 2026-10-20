@@ -449,11 +449,15 @@ pub fn run_create(request: CreateRequest<'_>) -> Result<CreateOutcome> {
     let context = context::open(request.repository)?;
     let name = match request.name {
         Some(name) => name.to_string(),
-        None => names::generate_unique_name(
-            &context.git_root,
-            &context.worktrees_directory,
-            &context.directory_name_separator,
-        )?,
+        None => {
+            let remote_branches = crate::tracking::remote_tracking_branch_names(&context.git_root)?;
+            names::generate_unique_name(
+                &context.git_root,
+                &context.worktrees_directory,
+                &context.directory_name_separator,
+                &remote_branches,
+            )?
+        }
     };
     let base = request.base.unwrap_or("HEAD");
     let commands = trust::authorize(

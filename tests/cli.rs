@@ -54,6 +54,7 @@ impl Repo {
             .env("XDG_DATA_HOME", self.root.join("xdg"))
             .env_remove("GHQ_ROOT")
             .env_remove("MABO_AGENT_ID")
+            .env_remove("MABO_NAME_CANDIDATES")
             .env_remove("PHANTOM_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
@@ -8920,4 +8921,25 @@ fn help_describes_remote_aware_attach_and_create() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(create.contains("mabo attach <name>"));
+}
+
+#[test]
+fn nameless_create_skips_a_remote_tracking_candidate() {
+    let repo = Repo::new();
+    publish_tracking_branch(&repo, "origin", "bold-badger");
+    let created = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create"])
+        .env("MABO_NAME_CANDIDATES", "bold-badger,calm-comet")
+        .output()
+        .expect("mabo");
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    assert!(text(&created.stdout).contains("Created worktree 'calm-comet'"));
+    assert!(local_branch(&repo, "bold-badger").is_empty());
+    assert!(local_branch(&repo, "calm-comet").contains("calm-comet"));
+    assert!(managed(&repo, "calm-comet").is_dir());
 }
