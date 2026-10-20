@@ -1700,6 +1700,12 @@ fn rebase_does_not_preserve_merges_from_user_config() {
         r.sync(&tree, &["--no-default"], 0)["worktrees"][0]["status"],
         "updated"
     );
+    for file in ["own", "side", "other"] {
+        assert_eq!(
+            fs::read_to_string(tree.join(file)).unwrap(),
+            format!("{file}\n")
+        );
+    }
     assert_eq!(
         r.git(&tree, &["rev-list", "--merges", "origin/main..HEAD"]),
         ""
@@ -2733,5 +2739,58 @@ fn rebase_preserves_intentionally_empty_and_newly_empty_commits() {
         assert!(r
             .git(&tree, &["log", "--format=%s", "origin/main..HEAD"])
             .contains("intentional-empty"));
+    }
+}
+
+#[test]
+fn merge_own_changes_refuse_rebase_and_survive_explicit_merge() {
+    for resolution in [false, true] {
+        for strategy in ["auto", "--rebase", "--merge"] {
+            let r = Repo::new();
+            let tree = r.create("topic");
+            r.write_commit(&tree, "own", "own\n");
+            r.git(&tree, &["checkout", "-b", "side"]);
+            r.write_commit(&tree, if resolution { "file" } else { "side" }, "side\n");
+            r.git(&tree, &["checkout", "topic"]);
+            r.write_commit(&tree, if resolution { "file" } else { "other" }, "other\n");
+            let out = r
+                .command("git", &tree, &["merge", "--no-commit", "--no-ff", "side"])
+                .output()
+                .unwrap();
+            assert_eq!(out.status.success(), !resolution);
+            r.write_commit(
+                &tree,
+                if resolution { "file" } else { "merge-only" },
+                "merge owns this\n",
+            );
+            let merge = r.git(&tree, &["rev-parse", "--short", "HEAD"]);
+            r.advance();
+            let before = r.snapshot(&tree);
+            let mut args = vec!["--no-default"];
+            if strategy != "auto" {
+                args.push(strategy);
+            }
+            let doc = r.sync(&tree, &args, if strategy == "--merge" { 0 } else { 1 });
+            let item = &doc["worktrees"][0];
+            if strategy == "--merge" {
+                assert_eq!(item["status"], "updated");
+                assert_eq!(item["strategy"], "merge");
+                assert_eq!(
+                    fs::read_to_string(tree.join(if resolution { "file" } else { "merge-only" }))
+                        .unwrap(),
+                    "merge owns this\n"
+                );
+            } else {
+                assert_eq!(item["status"], "failed");
+                assert_eq!(item["strategy"], "rebase");
+                let detail = item["detail"].as_str().unwrap();
+                assert!(
+                    detail.contains(&merge)
+                        && detail.contains("has changes of its own; use --merge"),
+                    "{doc}"
+                );
+                assert_eq!(r.snapshot(&tree), before);
+            }
+        }
     }
 }

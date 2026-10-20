@@ -388,6 +388,45 @@ fn remote_for(base: &str, specs: &[FetchRefspec]) -> Option<String> {
     source_for(base, specs).map(|(remote, _)| remote)
 }
 
+// Flattening a merge drops its resolution and any changes made only in that
+// commit. Compare trees without checking out either parent or touching the index.
+fn unsafe_merge(path: &Path, base: &str) -> Result<Option<String>> {
+    let merges = git::output(
+        &[
+            "log",
+            "--no-show-signature",
+            "--merges",
+            "--format=%H %T %P",
+            &format!("{base}..HEAD"),
+            "--",
+        ],
+        Some(path),
+        true,
+    )?;
+    for merge in merges.lines() {
+        let fields: Vec<_> = merge.split_whitespace().collect();
+        let [sha, tree, p1, p2] = fields.as_slice() else {
+            return Ok(Some(format!(
+                "Cannot verify merge commit {}; use --merge",
+                fields.first().copied().unwrap_or("unknown")
+            )));
+        };
+        let automatic = git::raw_git(path, &["merge-tree", "--write-tree", p1, p2])?;
+        if automatic.code != 0 && automatic.code != 1 {
+            return Err(Error::msg(format!(
+                "Cannot verify merge commit {sha}; use --merge (requires Git 2.38 or later)"
+            )));
+        }
+        if automatic.code == 1 || automatic.stdout.lines().next() != Some(*tree) {
+            let short = git::output(&["rev-parse", "--short", sha], Some(path), true)?;
+            return Ok(Some(format!(
+                "merge commit {short} has changes of its own; use --merge"
+            )));
+        }
+    }
+    Ok(None)
+}
+
 pub fn run(context: &Context, request: &Request) -> Result<Report> {
     let _operation = crate::operation::lock(&context.git_root)?;
     if (request.all && request.mine)
@@ -959,6 +998,12 @@ fn sync_tree(
         );
         item.code = Some("pushed".into());
         return Ok(item);
+    }
+    if strategy == "rebase" {
+        if let Some(detail) = unsafe_merge(path, base)? {
+            item.status("failed", Some(detail));
+            return Ok(item);
+        }
     }
     if ignored_would_be_overwritten(path, base, strategy == "rebase")? {
         item.status("dirty", Some("Ignored files would be overwritten".into()));
