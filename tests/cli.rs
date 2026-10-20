@@ -178,10 +178,10 @@ fn version_help_and_unknown_command() {
     assert!(version.status.success());
     let version_line = text(&version.stdout);
     assert!(
-        version_line.starts_with("ptm v7.0.0-alpha.2+rust"),
+        version_line.starts_with("ptm v7.0.0-alpha.3+rust"),
         "{version_line}"
     );
-    assert_ne!(version_line, "ptm v7.0.0-alpha.2");
+    assert_ne!(version_line, "ptm v7.0.0-alpha.3");
     let subcommand = repo.phantom(&["version"]);
     assert_eq!(text(&subcommand.stdout), version_line);
 
