@@ -267,21 +267,36 @@ fn ignored_would_be_overwritten(path: &Path, base: &str, rebase: bool) -> Result
             false,
         )?
     };
-    let targets: HashSet<&str> = changed
+    let config = git::raw_git(path, &["config", "--bool", "--get", "core.ignorecase"])?;
+    let ignorecase = match config.code {
+        0 => config.stdout.trim() == "true",
+        1 => false, // Unset, as on a case-sensitive filesystem.
+        _ => return Err(Error::msg(config.stderr)),
+    };
+    let comparison_path = |value: &str| {
+        if ignorecase {
+            value.to_lowercase()
+        } else {
+            value.to_string()
+        }
+    };
+    let targets: HashSet<String> = changed
         .split('\0')
         .chain(checkout.split('\0'))
         .filter(|p| !p.is_empty())
+        .map(comparison_path)
         .collect();
     let mut prefixes = HashSet::new();
     for target in &targets {
-        let mut parent = *target;
+        let mut parent = target.as_str();
         while let Some((prefix, _)) = parent.rsplit_once('/') {
             prefixes.insert(prefix);
             parent = prefix;
         }
     }
     for entry in ignored.split('\0').filter(|p| !p.is_empty()) {
-        let mut entry = entry.trim_end_matches('/');
+        let normalized = comparison_path(entry.trim_end_matches('/'));
+        let mut entry = normalized.as_str();
         if prefixes.contains(entry) || targets.contains(entry) {
             return Ok(true);
         }

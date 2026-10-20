@@ -792,6 +792,56 @@ fn sync_runs_no_git_hooks_and_does_not_update_other_refs() {
 }
 
 #[test]
+fn ignored_collisions_follow_core_ignorecase() {
+    for ignorecase in [true, false] {
+        for strategy in ["--rebase", "--merge"] {
+            for (ignored, incoming) in [
+                ("Secret.txt", "secret.txt"),
+                ("Build/x", "build"),
+                ("Build", "build/x"),
+                ("Build/x", "build/y"),
+            ] {
+                let r = Repo::new();
+                let tree = r.create("topic");
+                r.write_commit(&tree, "own", "own\n");
+                r.git(
+                    &tree,
+                    &[
+                        "config",
+                        "core.ignorecase",
+                        if ignorecase { "true" } else { "false" },
+                    ],
+                );
+                let ignore = r.root.join("ignore");
+                fs::write(&ignore, format!("{}\n", ignored.split('/').next().unwrap())).unwrap();
+                r.git(
+                    &tree,
+                    &["config", "core.excludesFile", ignore.to_str().unwrap()],
+                );
+                let valuable = tree.join(ignored);
+                fs::create_dir_all(valuable.parent().unwrap()).unwrap();
+                fs::write(&valuable, "precious ignored data\n").unwrap();
+                fs::create_dir_all(r.upstream.join(incoming).parent().unwrap()).unwrap();
+                r.write_commit(&r.upstream, incoming, "remote tracked data\n");
+                r.git(&r.upstream, &["push", "origin", "main"]);
+                let before = r.snapshot(&tree);
+                let doc = r.sync(&tree, &[strategy, "--no-default"], 0);
+                let collision = ignorecase;
+                assert_eq!(
+                    doc["worktrees"][0]["status"],
+                    if collision { "dirty" } else { "updated" },
+                    "ignorecase={ignorecase}, {strategy}, {ignored}, {incoming}"
+                );
+                if collision {
+                    assert_eq!(r.snapshot(&tree), before);
+                }
+                assert_eq!(fs::read(&valuable).unwrap(), b"precious ignored data\n");
+            }
+        }
+    }
+}
+
+#[test]
 fn ignored_files_are_preserved_when_base_would_overwrite_them() {
     let r = Repo::new();
     let tree = r.create("topic");
