@@ -691,6 +691,7 @@ fn sync_default(context: &Context, base: &str, remotes: &[String]) -> Result<Ite
                 "-c",
                 "merge.autoStash=false",
                 "merge",
+                "--no-autostash",
                 "--no-squash",
                 "--commit",
                 "--no-verify-signatures",

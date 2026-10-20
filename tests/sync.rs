@@ -2104,3 +2104,24 @@ exec "$REAL_GIT" "$@"
         }
     }
 }
+
+#[test]
+fn default_branch_merge_options_cannot_autostash_local_edits() {
+    let r = Repo::new();
+    r.git(
+        &r.main,
+        &["config", "branch.main.mergeOptions", "--autostash"],
+    );
+    r.write_commit(&r.upstream, "file", "incoming edit\n");
+    r.git(&r.upstream, &["push", "origin", "main"]);
+    fs::write(r.main.join("file"), "local edit\n").unwrap();
+    let before = r.snapshot(&r.main);
+    let stash = r.git(&r.main, &["stash", "list"]);
+    let out = r.mabo(&r.main, &["sync", "--json"]);
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(doc["default"]["status"], "dirty", "{doc}");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(r.snapshot(&r.main), before);
+    assert_eq!(r.git(&r.main, &["stash", "list"]), stash);
+    assert!(!r.main.join(".git/MERGE_AUTOSTASH").exists());
+}
