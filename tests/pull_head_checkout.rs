@@ -374,6 +374,43 @@ fn narrow_fetch_refspec_checkout_sets_tracking_and_creates_worktree() {
 }
 
 #[test]
+fn same_named_tag_cannot_hide_unique_local_branch_commits() {
+    for deleted in [false, true] {
+        let tree = TempTree::new();
+        let (clone, _) = if deleted {
+            deleted_pr_remote(&tree.path)
+        } else {
+            live_branch(&tree.path, "deleted-feature")
+        };
+        git(
+            &clone,
+            &["checkout", "-b", "deleted-feature", "refs/heads/main"],
+        );
+        git(
+            &clone,
+            &["commit", "--allow-empty", "-m", "unique local commit"],
+        );
+        let unique = git_text(&clone, &["rev-parse", "refs/heads/deleted-feature"]);
+        git(&clone, &["checkout", "main"]);
+        git(&clone, &["tag", "deleted-feature", "refs/heads/main"]);
+        let bin = tree.path.join("bin");
+        fake_gh(&bin);
+        let output = mabo(&clone, &bin, &["gh", "checkout", "843", "--no-hooks"]);
+        assert_eq!(
+            git_text(&clone, &["rev-parse", "refs/heads/deleted-feature"]),
+            unique,
+            "checkout moved the local branch (deleted remote head: {deleted})"
+        );
+        assert!(
+            !output.status.success(),
+            "checkout should refuse unique local commits: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn failed_worktree_attachment_only_removes_a_new_branch() {
     for preexisting in [false, true] {
         let tree = TempTree::new();

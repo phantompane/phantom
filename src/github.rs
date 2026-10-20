@@ -159,7 +159,7 @@ struct PullRequest {
 
 /// `refs/pull/<n>/head` still exists after GitHub deletes the head branch.
 fn pull_head_refspec(number: u64, local_branch: &str) -> String {
-    format!("refs/pull/{number}/head:{local_branch}")
+    format!("refs/pull/{number}/head:refs/heads/{local_branch}")
 }
 
 enum PullFetch {
@@ -198,7 +198,7 @@ fn fetch_head_branch(git_root: &Path, head_ref: &str, local_branch: &str) -> Res
     let tracking = format!("+refs/heads/{head_ref}:refs/remotes/origin/{head_ref}");
     git::fetch(git_root, "origin", &tracking)?;
     let upstream = format!("origin/{head_ref}");
-    git::ensure_branch(git_root, local_branch, &upstream)?;
+    git::ensure_branch(git_root, local_branch, &format!("refs/remotes/{upstream}"))?;
     git::set_branch_tracking(git_root, local_branch, "origin", head_ref)?;
     Ok(upstream)
 }

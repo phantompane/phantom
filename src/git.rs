@@ -547,13 +547,17 @@ pub fn ensure_branch(git_root: &Path, name: &str, start: &str) -> Result<()> {
         return run(&["branch", name, start], Some(git_root))
             .map_err(|error| Error::msg(format!("Failed to create branch {name}: {error}")));
     }
-    let ancestor = raw_git(git_root, &["merge-base", "--is-ancestor", name, start])?;
+    let branch_ref = format!("refs/heads/{name}");
+    let ancestor = raw_git(
+        git_root,
+        &["merge-base", "--is-ancestor", &branch_ref, start],
+    )?;
     if ancestor.code != 0 {
         return Err(Error::msg(format!(
             "Local branch {name} has commits that are not in {start}"
         )));
     }
-    let current = raw_git(git_root, &["rev-parse", name])?;
+    let current = raw_git(git_root, &["rev-parse", &branch_ref])?;
     let target = raw_git(git_root, &["rev-parse", start])?;
     if current.code != 0 || target.code != 0 {
         return Err(Error::msg(format!(
