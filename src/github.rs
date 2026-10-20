@@ -289,6 +289,9 @@ fn record_existing_checkout(
     metadata: &MetadataInput,
 ) -> Result<worktree::WorktreeInfo> {
     let known = metadata::records_path(&context.git_root, path)?;
+    if !known {
+        worktree::ensure_outside_record(context, path)?;
+    }
     if known {
         metadata::write(
             &context.git_root,

@@ -1015,6 +1015,9 @@ fn meta_set(args: &[String]) -> Result<i32> {
         Err(error @ Error::WorktreeNotFound(_)) => return fail_with(&error, NOT_FOUND, json),
         Err(error) => return fail_with(&error, error.exit_code(), json),
     };
+    if let Err(error) = worktree::ensure_outside_record(&context, Path::new(&worktree.path)) {
+        return fail_with(&error, error.exit_code(), json);
+    }
     if let Err(error) = metadata::write(&context.git_root, Path::new(&worktree.path), &input) {
         return fail_with(&error, GENERAL, json);
     }
