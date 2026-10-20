@@ -1772,6 +1772,7 @@ fn publish_pr_topic(repo: &Repo) {
     repo.git(&["add", "topic.txt"]);
     repo.git(&["commit", "-m", "topic"]);
     repo.git(&["push", "origin", "main", "topic"]);
+    repo.git(&["push", "origin", "topic:refs/pull/7/head"]);
     repo.git(&["checkout", "main"]);
     repo.git(&["branch", "-D", "topic"]);
 }
@@ -8878,4 +8879,75 @@ fn a_record_without_a_stored_name_keeps_the_ptm_folder_name() {
         text(&deleted.stdout)
     );
     assert!(!next.exists());
+}
+
+fn assert_no_upstream(repo: &Repo, branch: &str) {
+    let spec = format!("{branch}@{{upstream}}");
+    let output = repo
+        .command("git", &["rev-parse", "--abbrev-ref", &spec])
+        .output()
+        .expect("upstream");
+    let stderr = text(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "{branch} tracks {}",
+        text(&output.stdout)
+    );
+    assert!(
+        stderr.contains("no upstream configured"),
+        "{branch} upstream check: {stderr}"
+    );
+    assert!(managed(repo, branch).is_dir(), "{branch} worktree missing");
+}
+
+#[test]
+fn create_sets_no_upstream_from_the_base() {
+    let repo = Repo::new();
+    let origin = repo.root.join("origin.git");
+    repo.git(&[
+        "init",
+        "--bare",
+        "-b",
+        "next",
+        origin.to_str().expect("origin path"),
+    ]);
+    repo.git(&["branch", "next"]);
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        origin.to_str().expect("origin path"),
+    ]);
+    repo.git(&["push", "origin", "next"]);
+    repo.git(&["branch", "local-base"]);
+    // `always` makes a local base and HEAD track too. Default git already
+    // tracks a remote-tracking base. Create must refuse both.
+    repo.git(&["config", "branch.autoSetupMerge", "always"]);
+
+    let remote = repo.mabo(&["create", "x", "--base", "origin/next"]);
+    assert!(
+        remote.status.success(),
+        "{}\n{}",
+        text(&remote.stdout),
+        text(&remote.stderr)
+    );
+    assert_no_upstream(&repo, "x");
+
+    let local = repo.mabo(&["create", "from-local", "--base", "local-base"]);
+    assert!(
+        local.status.success(),
+        "{}\n{}",
+        text(&local.stdout),
+        text(&local.stderr)
+    );
+    assert_no_upstream(&repo, "from-local");
+
+    let default_base = repo.mabo(&["create", "from-head"]);
+    assert!(
+        default_base.status.success(),
+        "{}\n{}",
+        text(&default_base.stdout),
+        text(&default_base.stderr)
+    );
+    assert_no_upstream(&repo, "from-head");
 }

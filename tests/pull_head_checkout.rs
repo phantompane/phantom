@@ -1,0 +1,787 @@
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+struct TempTree {
+    path: PathBuf,
+}
+
+impl TempTree {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "mabo-pull-head-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).expect("temp");
+        Self { path }
+    }
+}
+
+impl Drop for TempTree {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn git(cwd: &Path, args: &[&str]) -> std::process::Output {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_NAME", "Mabo")
+        .env("GIT_AUTHOR_EMAIL", "mabo@example.com")
+        .env("GIT_COMMITTER_NAME", "Mabo")
+        .env("GIT_COMMITTER_EMAIL", "mabo@example.com")
+        .output()
+        .expect("git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+fn git_text(cwd: &Path, args: &[&str]) -> String {
+    String::from_utf8(git(cwd, args).stdout)
+        .expect("utf8")
+        .trim()
+        .to_string()
+}
+
+fn git_output(cwd: &Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("git")
+}
+
+fn branch_config(cwd: &Path, branch: &str, key: &str) -> Option<String> {
+    let name = format!("branch.{branch}.{key}");
+    let output = git_output(cwd, &["config", "--get", &name]);
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8(output.stdout).expect("utf8");
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn upstream(cwd: &Path, branch: &str) -> Option<String> {
+    let spec = format!("{branch}@{{upstream}}");
+    let output = git_output(cwd, &["rev-parse", "--abbrev-ref", &spec]);
+    if !output.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8(output.stdout)
+            .expect("utf8")
+            .trim()
+            .to_string(),
+    )
+}
+
+/// Remote has `refs/pull/843/head` and no `deleted-feature` branch.
+fn deleted_pr_remote(root: &Path) -> (PathBuf, String) {
+    let origin = root.join("origin.git");
+    let seed = root.join("seed");
+    let clone = root.join("clone");
+    git(
+        root,
+        &[
+            "init",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().expect("origin"),
+        ],
+    );
+    git(root, &["init", "-b", "main", seed.to_str().expect("seed")]);
+    git(&seed, &["commit", "--allow-empty", "-m", "main"]);
+    git(
+        &seed,
+        &[
+            "remote",
+            "add",
+            "origin",
+            origin.to_str().expect("origin url"),
+        ],
+    );
+    git(&seed, &["push", "origin", "main"]);
+    git(&seed, &["checkout", "-b", "deleted-feature"]);
+    fs::write(seed.join("pr.txt"), "pull 843\n").expect("file");
+    git(&seed, &["add", "pr.txt"]);
+    git(&seed, &["commit", "-m", "pr head"]);
+    let commit = git_text(&seed, &["rev-parse", "HEAD"]);
+    git(&seed, &["push", "origin", "deleted-feature"]);
+    git(&origin, &["update-ref", "refs/pull/843/head", &commit]);
+    git(&seed, &["push", "origin", ":deleted-feature"]);
+    git(
+        root,
+        &[
+            "clone",
+            origin.to_str().expect("origin url"),
+            clone.to_str().expect("clone"),
+        ],
+    );
+    let heads = git_text(
+        &clone,
+        &["ls-remote", "origin", "refs/heads/deleted-feature"],
+    );
+    assert!(
+        heads.is_empty(),
+        "the PR branch must stay deleted, got {heads}"
+    );
+    let pull = git_text(&clone, &["ls-remote", "origin", "refs/pull/843/head"]);
+    assert!(
+        pull.starts_with(&commit),
+        "origin must advertise refs/pull/843/head, got {pull}"
+    );
+    (clone, commit)
+}
+
+fn fake_gh(bin: &Path) {
+    fs::create_dir_all(bin).expect("bin");
+    let script = bin.join("gh");
+    fs::write(
+        &script,
+        r#"#!/bin/sh
+set -eu
+if [ "$1" = "repo" ]; then
+  printf '%s\n' '{"url":"https://github.com/acme/tool","owner":{"login":"acme"},"name":"tool"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/843)
+      printf '%s\n' '{"number":843,"pull_request":{}}'
+      exit 0
+      ;;
+    */pulls/843)
+      printf '%s\n' '{"number":843,"head":{"ref":"deleted-feature","repo":{"full_name":"acme/tool"}},"base":{"repo":{"full_name":"acme/tool"}}}'
+      exit 0
+      ;;
+  esac
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+"#,
+    )
+    .expect("gh script");
+    let mut permissions = fs::metadata(&script).expect("meta").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script, permissions).expect("chmod");
+}
+
+#[test]
+fn gh_checkout_uses_pull_head_when_the_branch_is_deleted() {
+    let tree = TempTree::new();
+    let (clone, commit) = deleted_pr_remote(&tree.path);
+    let bin = tree.path.join("bin");
+    fake_gh(&bin);
+    let data = tree.path.join("data");
+    let config = tree.path.join("config");
+    let home = tree.path.join("home");
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
+    let output = Command::new(env!("CARGO_BIN_EXE_mabo"))
+        .args(["gh", "checkout", "843", "--no-hooks", "--json"])
+        .current_dir(&clone)
+        .env("PATH", path)
+        .env("HOME", &home)
+        .env("XDG_DATA_HOME", &data)
+        .env("XDG_CONFIG_HOME", &config)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("mabo");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "mabo gh checkout 843 failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.to_ascii_lowercase().contains("warning"),
+        "deleted branch checkout warned\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("upstream"),
+        "deleted branch checkout mentioned upstream\n{stderr}"
+    );
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    assert_eq!(document["github"]["kind"], "pullRequest");
+    assert_eq!(document["github"]["number"], 843);
+    assert_eq!(document["github"]["headRef"], "deleted-feature");
+    assert_eq!(document["github"]["source"], "pullHead");
+    assert_eq!(document["worktree"]["branch"], "deleted-feature");
+    assert_eq!(document["worktree"]["detached"], false);
+    assert_eq!(document["worktree"]["head"], commit);
+    assert!(document["worktree"]["base"].is_null());
+    let worktree = document["worktree"]["path"].as_str().expect("path");
+    let checked_out = git_text(Path::new(worktree), &["rev-parse", "HEAD"]);
+    assert_eq!(checked_out, commit);
+    let branch = git_text(Path::new(worktree), &["branch", "--show-current"]);
+    assert_eq!(branch, "deleted-feature");
+    assert!(branch_config(&clone, "deleted-feature", "merge").is_none());
+    assert!(branch_config(&clone, "deleted-feature", "remote").is_none());
+}
+
+#[test]
+fn gh_checkout_names_a_deleted_head_branch() {
+    let tree = TempTree::new();
+    let (clone, _) = deleted_pr_remote(&tree.path);
+    let bin = tree.path.join("bin");
+    fake_gh(&bin);
+    let output = mabo(&clone, &bin, &["gh", "checkout", "843", "--no-hooks"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert_eq!(
+        stdout.trim(),
+        "Checked out PR #843 from pull/843/head (head branch deleted; no upstream)"
+    );
+    assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
+}
+
+#[test]
+fn stale_remote_ref_does_not_become_upstream() {
+    let tree = TempTree::new();
+    let (clone, commit) = cloned_before_branch_delete(&tree.path);
+    git(
+        &clone,
+        &["branch", "deleted-feature", "origin/deleted-feature"],
+    );
+    git(
+        &clone,
+        &[
+            "branch",
+            "--set-upstream-to",
+            "origin/deleted-feature",
+            "deleted-feature",
+        ],
+    );
+    assert_eq!(
+        upstream(&clone, "deleted-feature").as_deref(),
+        Some("origin/deleted-feature")
+    );
+    let bin = tree.path.join("bin");
+    fake_gh(&bin);
+    let output = mabo(
+        &clone,
+        &bin,
+        &["gh", "checkout", "843", "--no-hooks", "--json"],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    assert_eq!(document["github"]["source"], "pullHead");
+    assert_eq!(document["worktree"]["head"], commit);
+    assert!(branch_config(&clone, "deleted-feature", "merge").is_none());
+    assert!(branch_config(&clone, "deleted-feature", "remote").is_none());
+    assert!(upstream(&clone, "deleted-feature").is_none());
+}
+
+#[test]
+fn unfetched_branch_gets_an_upstream() {
+    let tree = TempTree::new();
+    let (clone, _) = live_branch(&tree.path, "live-feature");
+    git(
+        &clone,
+        &["update-ref", "-d", "refs/remotes/origin/live-feature"],
+    );
+    let bin = tree.path.join("bin");
+    install_gh(&bin, &same_repo_pull("754", "live-feature"));
+    let output = mabo(
+        &clone,
+        &bin,
+        &["gh", "checkout", "754", "--no-hooks", "--json"],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    assert_eq!(document["github"]["source"], "branch");
+    assert_eq!(document["github"]["headRef"], "live-feature");
+    assert_eq!(
+        upstream(&clone, "live-feature").as_deref(),
+        Some("origin/live-feature")
+    );
+    assert!(git_output(
+        &clone,
+        &["rev-parse", "--verify", "refs/remotes/origin/live-feature"]
+    )
+    .status
+    .success());
+}
+
+#[test]
+fn narrow_fetch_refspec_checkout_sets_tracking_and_creates_worktree() {
+    let tree = TempTree::new();
+    let (clone, commit) = live_branch(&tree.path, "live-feature");
+    git(
+        &clone,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/main:refs/remotes/origin/main",
+        ],
+    );
+    git(
+        &clone,
+        &["update-ref", "-d", "refs/remotes/origin/live-feature"],
+    );
+    let bin = tree.path.join("bin");
+    install_gh(&bin, &same_repo_pull("754", "live-feature"));
+    let output = mabo(
+        &clone,
+        &bin,
+        &["gh", "checkout", "754", "--no-hooks", "--json"],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    assert_eq!(document["github"]["source"], "branch");
+    let worktree = Path::new(document["worktree"]["path"].as_str().expect("path"));
+    assert!(worktree.is_dir());
+    assert_eq!(git_text(worktree, &["rev-parse", "HEAD"]), commit);
+    assert_eq!(
+        git_text(worktree, &["branch", "--show-current"]),
+        "live-feature"
+    );
+    assert_eq!(
+        branch_config(&clone, "live-feature", "remote").as_deref(),
+        Some("origin")
+    );
+    assert_eq!(
+        branch_config(&clone, "live-feature", "merge").as_deref(),
+        Some("refs/heads/live-feature")
+    );
+}
+
+#[test]
+fn same_named_tag_cannot_hide_unique_local_branch_commits() {
+    for deleted in [false, true] {
+        let tree = TempTree::new();
+        let (clone, _) = if deleted {
+            deleted_pr_remote(&tree.path)
+        } else {
+            live_branch(&tree.path, "deleted-feature")
+        };
+        git(
+            &clone,
+            &["checkout", "-b", "deleted-feature", "refs/heads/main"],
+        );
+        git(
+            &clone,
+            &["commit", "--allow-empty", "-m", "unique local commit"],
+        );
+        let unique = git_text(&clone, &["rev-parse", "refs/heads/deleted-feature"]);
+        git(&clone, &["checkout", "main"]);
+        git(&clone, &["tag", "deleted-feature", "refs/heads/main"]);
+        let bin = tree.path.join("bin");
+        fake_gh(&bin);
+        let output = mabo(&clone, &bin, &["gh", "checkout", "843", "--no-hooks"]);
+        assert_eq!(
+            git_text(&clone, &["rev-parse", "refs/heads/deleted-feature"]),
+            unique,
+            "checkout moved the local branch (deleted remote head: {deleted})"
+        );
+        assert!(
+            !output.status.success(),
+            "checkout should refuse unique local commits: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn failed_worktree_attachment_only_removes_a_new_branch() {
+    for preexisting in [false, true] {
+        let tree = TempTree::new();
+        let (clone, commit) = live_branch(&tree.path, "live-feature");
+        if preexisting {
+            git(&clone, &["branch", "live-feature", &commit]);
+        }
+        let bin = tree.path.join("bin");
+        install_gh(&bin, &same_repo_pull("754", "live-feature"));
+        let preference = mabo(
+            &clone,
+            &bin,
+            &["preferences", "set", "worktrees-directory", "../blocked"],
+        );
+        assert!(
+            preference.status.success(),
+            "{}",
+            String::from_utf8_lossy(&preference.stderr)
+        );
+        let blocked = tree.path.join("blocked/live-feature");
+        fs::create_dir_all(&blocked).expect("block worktree path");
+        let output = mabo(&clone, &bin, &["gh", "checkout", "754", "--no-hooks"]);
+        assert!(!output.status.success());
+        assert_eq!(
+            git_output(&clone, &["show-ref", "--verify", "refs/heads/live-feature"])
+                .status
+                .success(),
+            preexisting
+        );
+        if !preexisting {
+            assert!(branch_config(&clone, "live-feature", "remote").is_none());
+            assert!(branch_config(&clone, "live-feature", "merge").is_none());
+        }
+        fs::remove_dir(&blocked).expect("unblock worktree path");
+        let retry = mabo(&clone, &bin, &["gh", "checkout", "754", "--no-hooks"]);
+        assert!(
+            retry.status.success(),
+            "{}",
+            String::from_utf8_lossy(&retry.stderr)
+        );
+        assert!(blocked.is_dir());
+    }
+}
+
+#[test]
+fn already_fetched_branch_keeps_its_remote_tip() {
+    let tree = TempTree::new();
+    let (clone, _) = live_branch(&tree.path, "live-feature");
+    let before = git_text(&clone, &["rev-parse", "refs/remotes/origin/live-feature"]);
+    let bin = tree.path.join("bin");
+    install_gh(&bin, &same_repo_pull("754", "live-feature"));
+    let output = mabo(
+        &clone,
+        &bin,
+        &["gh", "checkout", "754", "--no-hooks", "--json"],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    assert_eq!(document["github"]["source"], "branch");
+    assert_eq!(
+        git_text(&clone, &["rev-parse", "refs/remotes/origin/live-feature"]),
+        before
+    );
+    assert_eq!(
+        upstream(&clone, "live-feature").as_deref(),
+        Some("origin/live-feature")
+    );
+}
+
+#[test]
+fn fork_checkout_does_not_set_an_upstream() {
+    let tree = TempTree::new();
+    let (clone, commit) = pull_ref_only(&tree.path, 9);
+    let bin = tree.path.join("bin");
+    install_gh(
+        &bin,
+        r#"#!/bin/sh
+set -eu
+if [ "$1" = "repo" ]; then
+  printf '%s\n' '{"url":"https://github.com/acme/tool","owner":{"login":"acme"},"name":"tool"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/9)
+      printf '%s\n' '{"number":9,"pull_request":{}}'
+      exit 0
+      ;;
+    */pulls/9)
+      printf '%s\n' '{"number":9,"head":{"ref":"feature","repo":{"full_name":"other/tool"}},"base":{"repo":{"full_name":"acme/tool"}}}'
+      exit 0
+      ;;
+  esac
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+"#,
+    );
+    let output = mabo(&clone, &bin, &["gh", "checkout", "9", "--no-hooks"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert_eq!(stdout.trim(), "Checked out PR #9 from fork other/tool");
+    assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
+    assert!(branch_config(&clone, "other/feature", "merge").is_none());
+    assert!(branch_config(&clone, "other/feature", "remote").is_none());
+    assert!(upstream(&clone, "other/feature").is_none());
+    let head = git_text(&clone, &["rev-parse", "other/feature"]);
+    assert_eq!(head, commit);
+}
+
+#[test]
+fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
+    let tree = TempTree::new();
+    let (clone, _) = deleted_pr_remote(&tree.path);
+    let bin = tree.path.join("bin");
+    install_gh(&bin, &merged_pull_gh());
+    let checked_out = mabo(
+        &clone,
+        &bin,
+        &["gh", "checkout", "843", "--no-hooks", "--json"],
+    );
+    let stdout = String::from_utf8_lossy(&checked_out.stdout);
+    assert!(checked_out.status.success(), "{stdout}");
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    let worktree = document["worktree"]["path"]
+        .as_str()
+        .expect("path")
+        .to_string();
+
+    let extra = TempTree::new();
+    let (extra_clone, _) = deleted_pr_remote(&extra.path);
+    let extra_bin = extra.path.join("bin");
+    install_gh(&extra_bin, &merged_pull_gh());
+    let extra_out = mabo(
+        &extra_clone,
+        &extra_bin,
+        &["gh", "checkout", "843", "--no-hooks", "--json"],
+    );
+    let extra_stdout = String::from_utf8_lossy(&extra_out.stdout);
+    assert!(extra_out.status.success(), "{extra_stdout}");
+    let extra_doc: serde_json::Value = serde_json::from_str(&extra_stdout).expect("json");
+    let extra_worktree = extra_doc["worktree"]["path"].as_str().expect("path");
+    fs::write(Path::new(extra_worktree).join("local.txt"), "local\n").expect("local");
+    git(Path::new(extra_worktree), &["add", "local.txt"]);
+    git(Path::new(extra_worktree), &["commit", "-m", "local"]);
+    let skipped = mabo(&extra_clone, &extra_bin, &["gc", "--pr", "--json"]);
+    let skipped_stdout = String::from_utf8_lossy(&skipped.stdout);
+    let skipped_stderr = String::from_utf8_lossy(&skipped.stderr);
+    assert!(
+        skipped.status.success(),
+        "{skipped_stdout}\n{skipped_stderr}"
+    );
+    let skipped_doc: serde_json::Value = serde_json::from_str(&skipped_stdout).expect("json");
+    assert_eq!(skipped_doc["candidates"][0]["action"], "skipped");
+    assert_eq!(skipped_doc["candidates"][0]["detail"], "unpushed");
+    assert!(Path::new(extra_worktree).is_dir());
+
+    let collected = mabo(&clone, &bin, &["gc", "--pr", "--apply", "--json"]);
+    let collected_stdout = String::from_utf8_lossy(&collected.stdout);
+    let collected_stderr = String::from_utf8_lossy(&collected.stderr);
+    assert!(
+        collected.status.success(),
+        "{collected_stdout}\n{collected_stderr}"
+    );
+    let collected_doc: serde_json::Value = serde_json::from_str(&collected_stdout).expect("json");
+    assert_eq!(
+        collected_doc["candidates"][0]["reasons"],
+        serde_json::json!(["pullRequest"])
+    );
+    assert_eq!(collected_doc["candidates"][0]["action"], "removed");
+    assert!(!Path::new(&worktree).exists());
+}
+
+fn mabo(clone: &Path, bin: &Path, args: &[&str]) -> std::process::Output {
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
+    let tree = clone.parent().expect("parent");
+    Command::new(env!("CARGO_BIN_EXE_mabo"))
+        .args(args)
+        .current_dir(clone)
+        .env("PATH", path)
+        .env("HOME", tree.join("home"))
+        .env("XDG_DATA_HOME", tree.join("data"))
+        .env("XDG_CONFIG_HOME", tree.join("config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("mabo")
+}
+
+fn install_gh(bin: &Path, script: &str) {
+    fs::create_dir_all(bin).expect("bin");
+    let path = bin.join("gh");
+    fs::write(&path, script).expect("gh script");
+    let mut permissions = fs::metadata(&path).expect("meta").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("chmod");
+}
+
+fn same_repo_pull(number: &str, head_ref: &str) -> String {
+    format!(
+        r#"#!/bin/sh
+set -eu
+if [ "$1" = "repo" ]; then
+  printf '%s\n' '{{"url":"https://github.com/acme/tool","owner":{{"login":"acme"}},"name":"tool"}}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/{number})
+      printf '%s\n' '{{"number":{number},"pull_request":{{}}}}'
+      exit 0
+      ;;
+    */pulls/{number})
+      printf '%s\n' '{{"number":{number},"head":{{"ref":"{head_ref}","repo":{{"full_name":"acme/tool"}}}},"base":{{"repo":{{"full_name":"acme/tool"}}}}}}'
+      exit 0
+      ;;
+  esac
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+"#
+    )
+}
+
+fn merged_pull_gh() -> String {
+    r#"#!/bin/sh
+set -eu
+if [ "$1" = "pr" ]; then
+  printf '%s\n' '{"state":"MERGED"}'
+  exit 0
+fi
+if [ "$1" = "repo" ]; then
+  printf '%s\n' '{"url":"https://github.com/acme/tool","owner":{"login":"acme"},"name":"tool"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/843)
+      printf '%s\n' '{"number":843,"pull_request":{}}'
+      exit 0
+      ;;
+    */pulls/843)
+      printf '%s\n' '{"number":843,"head":{"ref":"deleted-feature","repo":{"full_name":"acme/tool"}},"base":{"repo":{"full_name":"acme/tool"}}}'
+      exit 0
+      ;;
+  esac
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+"#
+    .to_string()
+}
+
+fn live_branch(root: &Path, branch: &str) -> (PathBuf, String) {
+    let origin = root.join("origin.git");
+    let seed = root.join("seed");
+    let clone = root.join("clone");
+    git(
+        root,
+        &[
+            "init",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().expect("origin"),
+        ],
+    );
+    git(root, &["init", "-b", "main", seed.to_str().expect("seed")]);
+    git(&seed, &["commit", "--allow-empty", "-m", "main"]);
+    git(
+        &seed,
+        &["remote", "add", "origin", origin.to_str().expect("origin")],
+    );
+    git(&seed, &["checkout", "-b", branch]);
+    fs::write(seed.join("live.txt"), "live\n").expect("live");
+    git(&seed, &["add", "live.txt"]);
+    git(&seed, &["commit", "-m", "live"]);
+    let commit = git_text(&seed, &["rev-parse", "HEAD"]);
+    git(&seed, &["push", "origin", "main", branch]);
+    git(
+        root,
+        &[
+            "clone",
+            origin.to_str().expect("origin"),
+            clone.to_str().expect("clone"),
+        ],
+    );
+    (clone, commit)
+}
+
+fn pull_ref_only(root: &Path, number: u64) -> (PathBuf, String) {
+    let origin = root.join("origin.git");
+    let seed = root.join("seed");
+    let clone = root.join("clone");
+    git(
+        root,
+        &[
+            "init",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().expect("origin"),
+        ],
+    );
+    git(root, &["init", "-b", "main", seed.to_str().expect("seed")]);
+    git(&seed, &["commit", "--allow-empty", "-m", "main"]);
+    git(
+        &seed,
+        &["remote", "add", "origin", origin.to_str().expect("origin")],
+    );
+    git(&seed, &["push", "origin", "main"]);
+    git(&seed, &["checkout", "-b", "feature"]);
+    fs::write(seed.join("fork.txt"), "fork\n").expect("fork");
+    git(&seed, &["add", "fork.txt"]);
+    git(&seed, &["commit", "-m", "fork"]);
+    let commit = git_text(&seed, &["rev-parse", "HEAD"]);
+    git(
+        &seed,
+        &["push", "origin", &format!("HEAD:refs/pull/{number}/head")],
+    );
+    git(
+        root,
+        &[
+            "clone",
+            origin.to_str().expect("origin"),
+            clone.to_str().expect("clone"),
+        ],
+    );
+    (clone, commit)
+}
+
+/// Clone while the branch exists, then delete it on the remote only.
+fn cloned_before_branch_delete(root: &Path) -> (PathBuf, String) {
+    let origin = root.join("origin.git");
+    let seed = root.join("seed");
+    let clone = root.join("clone");
+    git(
+        root,
+        &[
+            "init",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().expect("origin"),
+        ],
+    );
+    git(root, &["init", "-b", "main", seed.to_str().expect("seed")]);
+    git(&seed, &["commit", "--allow-empty", "-m", "main"]);
+    git(
+        &seed,
+        &["remote", "add", "origin", origin.to_str().expect("origin")],
+    );
+    git(&seed, &["push", "origin", "main"]);
+    git(&seed, &["checkout", "-b", "deleted-feature"]);
+    fs::write(seed.join("pr.txt"), "pull 843\n").expect("file");
+    git(&seed, &["add", "pr.txt"]);
+    git(&seed, &["commit", "-m", "pr head"]);
+    let commit = git_text(&seed, &["rev-parse", "HEAD"]);
+    git(&seed, &["push", "origin", "deleted-feature"]);
+    git(&origin, &["update-ref", "refs/pull/843/head", &commit]);
+    git(
+        root,
+        &[
+            "clone",
+            origin.to_str().expect("origin"),
+            clone.to_str().expect("clone"),
+        ],
+    );
+    git(&seed, &["push", "origin", ":deleted-feature"]);
+    (clone, commit)
+}

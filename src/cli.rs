@@ -377,6 +377,7 @@ fn delete(args: &[String]) -> Result<i32> {
         force: parsed.flag("force"),
         keep_branch,
         allow_current: delete_current,
+        published_tip: None,
     };
     let plans = match worktree::preflight_deletes(&context, &names, &options) {
         Ok(plans) => plans,
