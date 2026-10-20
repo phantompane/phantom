@@ -417,6 +417,80 @@ pub fn delete_branch(git_root: &Path, branch: &str) -> Result<()> {
         .map_err(|error| Error::msg(format!("branch delete failed: {error}")))
 }
 
+pub(crate) fn default_branch(git_root: &Path) -> Result<Option<String>> {
+    let symbolic = raw_git(
+        git_root,
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+    )?;
+    if symbolic.code == 0 {
+        let name = symbolic.stdout.trim();
+        if !name.is_empty() && verify_commit(git_root, name)? {
+            return Ok(Some(name.to_string()));
+        }
+    }
+    if verify_commit(git_root, "main")? {
+        return Ok(Some("main".to_string()));
+    }
+    if verify_commit(git_root, "master")? {
+        return Ok(Some("master".to_string()));
+    }
+    Ok(None)
+}
+
+pub(crate) fn unpushed_tip(
+    git_root: &Path,
+    branch: Option<&str>,
+    head: Option<&str>,
+    base: &Option<String>,
+) -> Option<bool> {
+    let base = base.as_deref()?;
+    // A bare name prefers `refs/tags` over `refs/heads`, so a tag with the
+    // branch's name hides the branch tip and those commits look pushed.
+    let tip = match branch {
+        Some(name) => format!("refs/heads/{name}"),
+        None => head
+            .filter(|sha| sha.bytes().any(|byte| byte != b'0'))?
+            .to_string(),
+    };
+    // `--not` stays in effect for `--remotes`, so those commits are excluded.
+    // A second `--not` would include them again. The trailing `--` keeps a
+    // branch name that matches a worktree directory from being read as a path.
+    let Ok(captured) = raw_git(
+        git_root,
+        &[
+            "rev-list",
+            "--count",
+            &tip,
+            "--not",
+            base,
+            "--remotes",
+            "--",
+        ],
+    ) else {
+        return None;
+    };
+    if captured.code != 0 {
+        return None;
+    }
+    let count = captured.stdout.trim().parse::<u64>().ok()?;
+    Some(count > 0)
+}
+
+fn verify_commit(git_root: &Path, name: &str) -> Result<bool> {
+    let spec = format!("{name}^{{commit}}");
+    let captured = raw_git(git_root, &["rev-parse", "--verify", "--quiet", &spec])?;
+    Ok(captured.code == 0)
+}
+
+fn raw_git(git_root: &Path, args: &[&str]) -> Result<process::Captured> {
+    process::raw("git", args, Some(git_root))
+}
+
 pub fn status_count(cwd: &Path) -> Result<usize> {
     let stdout = output(&["status", "--porcelain"], Some(cwd), false)?;
     Ok(stdout.lines().filter(|line| !line.is_empty()).count())

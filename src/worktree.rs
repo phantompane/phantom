@@ -589,6 +589,12 @@ pub fn attach_worktree(
     })
 }
 
+pub struct DeleteOptions {
+    pub force: bool,
+    pub keep_branch: bool,
+    pub allow_current: bool,
+}
+
 pub struct DeleteOutcome {
     pub message: String,
     pub worktree: WorktreeInfo,
@@ -619,15 +625,22 @@ impl DeleteError {
     }
 }
 
-pub fn delete_worktree(
+pub struct DeletePlan {
+    name: String,
+    worktree: WorktreeInfo,
+    path: PathBuf,
+    inside: bool,
+    changed: usize,
+}
+
+pub fn preflight_delete(
     context: &Context,
     name: &str,
-    force: bool,
-    keep_branch: bool,
+    options: &DeleteOptions,
     expected_path: Option<&Path>,
-    logger: &Logger,
-    hooks: HookControl,
-) -> std::result::Result<DeleteOutcome, DeleteError> {
+) -> std::result::Result<DeletePlan, DeleteError> {
+    let force = options.force;
+    let keep_branch = options.keep_branch;
     let worktree = find_worktree(context, name, true, expected_path).map_err(DeleteError::bare)?;
     let path = PathBuf::from(&worktree.path);
     let inside = paths::is_strictly_inside(&path, &context.worktrees_directory);
@@ -651,6 +664,68 @@ pub fn delete_worktree(
             &worktree,
         ));
     }
+    if !force && !options.allow_current && command_is_inside(&path) {
+        return Err(DeleteError::kept(
+            Error::validation(format!(
+                "Worktree '{name}' is the current directory. Use --current or --force to delete it."
+            )),
+            &worktree,
+        ));
+    }
+    if !force && (worktree.detached || !keep_branch) {
+        let base = git::default_branch(&context.git_root)
+            .map_err(|error| DeleteError::kept(error, &worktree))?;
+        let branch = (!worktree.detached).then_some(worktree.branch.as_str());
+        let refusal =
+            match git::unpushed_tip(&context.git_root, branch, worktree.head.as_deref(), &base) {
+                Some(false) => None,
+                Some(true) => Some(false),
+                None => Some(true),
+            };
+        if let Some(unknown) = refusal {
+            return Err(DeleteError::kept(
+                Error::unpushed_delete(name, worktree.detached, unknown),
+                &worktree,
+            ));
+        }
+    }
+    Ok(DeletePlan {
+        name: name.to_string(),
+        worktree,
+        path,
+        inside,
+        changed,
+    })
+}
+
+pub fn delete_worktree(
+    context: &Context,
+    name: &str,
+    options: &DeleteOptions,
+    expected_path: Option<&Path>,
+    logger: &Logger,
+    hooks: HookControl,
+) -> std::result::Result<DeleteOutcome, DeleteError> {
+    let plan = preflight_delete(context, name, options, expected_path)?;
+    commit_delete(context, plan, options, logger, hooks)
+}
+
+pub fn commit_delete(
+    context: &Context,
+    plan: DeletePlan,
+    options: &DeleteOptions,
+    logger: &Logger,
+    hooks: HookControl,
+) -> std::result::Result<DeleteOutcome, DeleteError> {
+    let DeletePlan {
+        name,
+        worktree,
+        path,
+        inside,
+        changed,
+    } = plan;
+    let force = options.force;
+    let keep_branch = options.keep_branch;
     let commands = trust::authorize(
         &context.git_root,
         config::post_create_commands(context.config.as_ref()),
@@ -662,7 +737,7 @@ pub fn delete_worktree(
     metadata::prepare(&context.git_root).map_err(|error| DeleteError::kept(error, &worktree))?;
     if !commands.is_empty() {
         logger.log("\nRunning pre-delete commands...");
-        if let Err(error) = run_hook_commands(context, name, &commands, false, logger) {
+        if let Err(error) = run_hook_commands(context, &name, &commands, false, logger) {
             return Err(DeleteError::kept(error, &worktree));
         }
     }
@@ -740,6 +815,16 @@ pub fn delete_worktree(
         branch_error,
         metadata_error,
     })
+}
+
+fn command_is_inside(path: &Path) -> bool {
+    let Ok(cwd) = std::env::current_dir() else {
+        return false;
+    };
+    let Ok(top) = git::top_level(&cwd) else {
+        return false;
+    };
+    paths::normalize(&top) == paths::normalize(path)
 }
 
 pub fn current_worktree_name(context: &Context) -> Result<Option<String>> {

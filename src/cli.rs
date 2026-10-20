@@ -373,14 +373,28 @@ fn delete(args: &[String]) -> Result<i32> {
         parsed.positionals.clone()
     };
     let logger = logger_for(json);
+    let options = worktree::DeleteOptions {
+        force: parsed.flag("force"),
+        keep_branch,
+        allow_current: delete_current,
+    };
+    let mut plans = Vec::new();
+    let mut refusals = Vec::new();
+    for name in &names {
+        match worktree::preflight_delete(&context, name, &options, None) {
+            Ok(plan) => plans.push(plan),
+            Err(failure) => refusals.push(failure),
+        }
+    }
+    if !refusals.is_empty() {
+        return report_delete_refusals(refusals, json);
+    }
     let mut deleted = Vec::new();
-    for name in names {
-        match worktree::delete_worktree(
+    for plan in plans {
+        match worktree::commit_delete(
             &context,
-            &name,
-            parsed.flag("force"),
-            keep_branch,
-            None,
+            plan,
+            &options,
             &logger,
             hook_control(&parsed, json, true),
         ) {
@@ -1457,6 +1471,48 @@ fn remainder_flag(name: &'static str, short: Option<char>) -> Opt {
         value: true,
         multiple: false,
         remainder: true,
+    }
+}
+
+fn report_delete_refusals(failures: Vec<worktree::DeleteError>, json: bool) -> Result<i32> {
+    let first = failures
+        .first()
+        .map(|failure| delete_status(&failure.error))
+        .unwrap_or(GENERAL);
+    if json {
+        let deleted = failures
+            .iter()
+            .map(|failure| worktree::DeletedEntry {
+                worktree: failure
+                    .worktree
+                    .as_ref()
+                    .map(|worktree| worktree.to_json(None)),
+                branch_deleted: false,
+                branch_error: None,
+                error: Some(failure.error.to_string()),
+            })
+            .collect();
+        let error = failures
+            .first()
+            .map(|failure| failure.error.to_json(first).error);
+        emit_json(&worktree::DeleteOutput {
+            version: crate::error::JSON_VERSION,
+            deleted,
+            error,
+        })?;
+        return Ok(first);
+    }
+    for failure in &failures {
+        eprintln!("{}", failure.error);
+    }
+    Ok(first)
+}
+
+fn delete_status(error: &Error) -> i32 {
+    match error {
+        Error::WorktreeNotFound(_) => NOT_FOUND,
+        Error::Uncommitted { .. } => VALIDATION,
+        other => other.exit_code(),
     }
 }
 

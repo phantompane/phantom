@@ -32,6 +32,12 @@ pub enum Error {
         "Worktree '{name}' has uncommitted changes ({files} files). Use --force to delete anyway."
     )]
     Uncommitted { name: String, files: usize },
+    #[error("Worktree '{name}' {detail}. {hint}")]
+    Unpushed {
+        name: String,
+        detail: &'static str,
+        hint: &'static str,
+    },
     #[error("Command '{command}' failed with exit code {code}")]
     CommandFailed { command: String, code: i32 },
     #[error("Command terminated by signal: {0}")]
@@ -55,13 +61,31 @@ impl Error {
         Self::Validation(message.into())
     }
 
+    pub(crate) fn unpushed_delete(name: &str, detached: bool, unknown: bool) -> Self {
+        let detail = if unknown {
+            "has commits that could not be checked"
+        } else {
+            "has unpushed commits"
+        };
+        let hint = if detached {
+            "Use --force to delete anyway."
+        } else {
+            "Use --keep-branch to keep the branch, or --force to delete it."
+        };
+        Self::Unpushed {
+            name: name.to_string(),
+            detail,
+            hint,
+        }
+    }
+
     pub fn exit_code(&self) -> i32 {
         match self {
             Self::CommandFailed { code, .. } => *code,
             Self::Signaled(name) => 128 + signal_number(name),
             Self::NotARepository => NOT_REPOSITORY,
             Self::ProjectNotFound(_) | Self::PathNotFound(_) => NOT_FOUND,
-            Self::Validation(_) => VALIDATION,
+            Self::Validation(_) | Self::Unpushed { .. } => VALIDATION,
             _ => GENERAL,
         }
     }
@@ -86,6 +110,7 @@ impl Error {
             Self::BranchNotFound(_) => "branch_not_found",
             Self::NotARepository => "not_repository",
             Self::Uncommitted { .. } => "uncommitted",
+            Self::Unpushed { .. } => "unpushed",
             Self::CommandFailed { .. } => "command_failed",
             Self::Signaled(_) => "signaled",
             Self::Spawn { .. } => "spawn",
@@ -175,6 +200,17 @@ mod tests {
             }
             .json_code(VALIDATION),
             "uncommitted"
+        );
+        let unpushed = Error::Unpushed {
+            name: "topic".to_string(),
+            detail: "has unpushed commits",
+            hint: "Use --keep-branch to keep the branch, or --force to delete it.",
+        };
+        assert_eq!(unpushed.exit_code(), VALIDATION);
+        assert_eq!(unpushed.json_code(VALIDATION), "unpushed");
+        assert_eq!(
+            unpushed.to_string(),
+            "Worktree 'topic' has unpushed commits. Use --keep-branch to keep the branch, or --force to delete it."
         );
         assert_eq!(
             Error::msg("Usage: ptm where <worktree-name>").json_code(VALIDATION),
