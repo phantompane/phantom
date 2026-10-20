@@ -228,6 +228,57 @@ pub fn source_checkout(fallback: &Path) -> PathBuf {
     top_level(&cwd).unwrap_or_else(|_| fallback.to_path_buf())
 }
 
+/// HEAD of `worktree`, when it is a real commit.
+pub fn head_commit(worktree: &Path) -> Option<String> {
+    verified_commit(worktree, "HEAD")
+}
+
+/// Oldest `refs/heads` reflog entry for the branch checked out at `worktree`.
+///
+/// `None` when that reflog is missing or empty. HEAD is not a substitute.
+/// An existing branch can already have moved, and storing its tip would hide
+/// a merged branch from gc.
+pub fn reflog_creation_commit(worktree: &Path) -> Option<String> {
+    let branch = output(
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        Some(worktree),
+        true,
+    )
+    .ok()?;
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return None;
+    }
+    let spec = format!("refs/heads/{branch}");
+    let reflog = output(
+        &["reflog", "show", "--format=%H", &spec],
+        Some(worktree),
+        true,
+    )
+    .ok()?;
+    reflog
+        .lines()
+        .next_back()
+        .map(str::trim)
+        .filter(|sha| is_commit_sha(sha))
+        .map(ToOwned::to_owned)
+}
+
+fn verified_commit(cwd: &Path, spec: &str) -> Option<String> {
+    let text = output(&["rev-parse", "--verify", "--quiet", spec], Some(cwd), true).ok()?;
+    let sha = text.trim();
+    if !is_commit_sha(sha) {
+        return None;
+    }
+    Some(sha.to_string())
+}
+
+fn is_commit_sha(sha: &str) -> bool {
+    sha.len() >= 4
+        && sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && sha.bytes().any(|byte| byte != b'0')
+}
+
 pub fn branch_exists(git_root: &Path, name: &str) -> Result<bool> {
     let stdout = output(&["branch", "--list", name], Some(git_root), true)
         .map_err(|error| Error::msg(format!("Failed to check branch existence: {error}")))?;

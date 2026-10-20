@@ -520,10 +520,11 @@ fn observe_listed(
         Some(name) => git::branch_exists(&context.git_root, name).ok() == Some(false),
         None => false,
     };
+    let created_from = record.and_then(|item| item.created_from.as_deref());
     let merged = match (&branch, base) {
         (Some(branch), Some(base)) => {
             is_ancestor(&context.git_root, branch, base)
-                && !still_at_creation_point(&context.git_root, branch)
+                && !still_at_creation_point(&context.git_root, branch, created_from)
         }
         _ => false,
     };
@@ -751,19 +752,18 @@ fn local_default_name(base: &str) -> &str {
     base.strip_prefix("origin/").unwrap_or(base)
 }
 
-fn still_at_creation_point(git_root: &Path, branch: &str) -> bool {
-    let spec = format!("{branch}^{{commit}}");
-    let Ok(tip) = git(git_root, &["rev-parse", "--verify", "--quiet", &spec]) else {
+fn still_at_creation_point(git_root: &Path, branch: &str, created_from: Option<&str>) -> bool {
+    let Some(tip_sha) = branch_tip(git_root, branch) else {
         return false;
     };
-    if tip.code != 0 {
-        return false;
+    if let Some(created) = created_from
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return created.eq_ignore_ascii_case(&tip_sha);
     }
-    let tip_sha = tip.stdout.trim();
-    if tip_sha.is_empty() {
-        return false;
-    }
-    let Ok(reflog) = git(git_root, &["reflog", "show", "--format=%H", branch]) else {
+    let spec = format!("refs/heads/{branch}");
+    let Ok(reflog) = git(git_root, &["reflog", "show", "--format=%H", &spec]) else {
         return false;
     };
     if reflog.code != 0 {
@@ -778,7 +778,23 @@ fn still_at_creation_point(git_root: &Path, branch: &str) -> bool {
     else {
         return false;
     };
-    oldest == tip_sha
+    oldest.eq_ignore_ascii_case(&tip_sha)
+}
+
+fn branch_tip(git_root: &Path, branch: &str) -> Option<String> {
+    let spec = format!("{branch}^{{commit}}");
+    let Ok(tip) = git(git_root, &["rev-parse", "--verify", "--quiet", &spec]) else {
+        return None;
+    };
+    if tip.code != 0 {
+        return None;
+    }
+    let tip_sha = tip.stdout.trim();
+    if tip_sha.is_empty() {
+        None
+    } else {
+        Some(tip_sha.to_string())
+    }
 }
 
 fn is_ancestor(git_root: &Path, tip: &str, base: &str) -> bool {
