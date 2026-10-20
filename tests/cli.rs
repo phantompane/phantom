@@ -5488,6 +5488,121 @@ fn separate_git_dir_relative_worktrees_directory_joins_the_main_checkout() {
 }
 
 #[test]
+fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() {
+    let root = std::env::temp_dir().join(format!("ptm-sub-root-{}", uuid()));
+    let home = root.join("home");
+    let remote = root.join("remote");
+    let superproject = root.join("super");
+    let checkout = superproject.join("sub");
+    fs::create_dir_all(home.join(".config/git")).expect("home");
+    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    fs::create_dir_all(&remote).expect("remote");
+    fs::create_dir_all(&superproject).expect("super");
+    let git = |cwd: &Path, args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &home)
+            .env_remove("GIT_CONFIG_GLOBAL")
+            .env_remove("GIT_CONFIG_SYSTEM")
+            .output()
+            .expect("git");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&remote, &["init", "-b", "main"]);
+    git(&remote, &["config", "user.name", "Phantom Rust"]);
+    git(
+        &remote,
+        &["config", "user.email", "phantom-rust@example.com"],
+    );
+    fs::write(remote.join("f"), "hi\n").expect("file");
+    git(&remote, &["add", "f"]);
+    git(&remote, &["commit", "-m", "initial"]);
+    git(&superproject, &["init", "-b", "main"]);
+    git(&superproject, &["config", "user.name", "Phantom Rust"]);
+    git(
+        &superproject,
+        &["config", "user.email", "phantom-rust@example.com"],
+    );
+    let added = Command::new("git")
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            remote.to_str().expect("remote"),
+            "sub",
+        ])
+        .current_dir(&superproject)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", &home)
+        .env_remove("GIT_CONFIG_GLOBAL")
+        .output()
+        .expect("submodule add");
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    git(&superproject, &["commit", "-m", "add submodule"]);
+    let ptm = |cwd: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_ptm"))
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env_remove("PTM_AGENT_ID")
+            .output()
+            .expect("ptm")
+    };
+    let created = ptm(&checkout, &["create", "linked"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let linked = superproject.join(".git/modules/sub/ptm/worktrees/linked");
+    assert!(linked.is_dir());
+    let deleted = ptm(&linked, &["delete", "--current"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(!linked.exists());
+    assert!(checkout.join(".git").is_file(), "submodule checkout stays");
+    let pref = ptm(
+        &checkout,
+        &["preferences", "set", "worktrees-directory", "../wt"],
+    );
+    assert!(pref.status.success(), "{}", text(&pref.stderr));
+    let first = ptm(&checkout, &["create", "r1"]);
+    assert!(first.status.success(), "{}", text(&first.stderr));
+    let first_path = superproject.join("wt").join("r1");
+    assert!(first_path.is_dir());
+    let second = ptm(&first_path, &["create", "r2"]);
+    assert!(
+        second.status.success(),
+        "{}\n{}",
+        text(&second.stdout),
+        text(&second.stderr)
+    );
+    assert!(superproject.join("wt").join("r2").is_dir());
+    assert!(!superproject.join("wt").join("wt").join("r2").exists());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn duplicate_metadata_paths_block_mutations() {
     let repo = Repo::new();
     let created = repo.phantom(&["create", "kept", "--owner", "creator"]);
