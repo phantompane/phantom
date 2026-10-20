@@ -7759,6 +7759,99 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
 }
 
 #[test]
+fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
+    let repo = Repo::new();
+    let real = repo.root.join("real-xdg");
+    let link = repo.root.join("link-xdg");
+    fs::create_dir_all(&real).expect("real xdg");
+    std::os::unix::fs::symlink(&real, &link).expect("xdg link");
+    let created = repo
+        .command(env!("CARGO_BIN_EXE_ptm"), &["create", "feature"])
+        .env("XDG_DATA_HOME", &link)
+        .output()
+        .expect("create");
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let project = managed_directory(&repo.repo, &real);
+    let via_link = link
+        .join("ptm")
+        .join("worktrees")
+        .join(project.file_name().expect("project name"))
+        .join("feature");
+    let via_real = project.join("feature");
+    assert!(via_link.is_dir());
+    let canonical = via_link.canonicalize().expect("real");
+    assert_ne!(canonical, via_link, "enter through the symlink spelling");
+    let git_bin = text(
+        &repo
+            .command("sh", &["-c", "command -v git"])
+            .output()
+            .expect("locate git")
+            .stdout,
+    );
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let wrapper = bin.join("git");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"--show-toplevel\" ]; then\n  real=$({git_bin} rev-parse --show-toplevel) || exit $?\n  if [ \"$real\" = \"$REAL_TOP\" ]; then\n    printf '%s\\n' \"$LOGICAL_TOP\"\n    exit 0\n  fi\n  printf '%s\\n' \"$real\"\n  exit 0\nfi\nexec {git_bin} \"$@\"\n"
+        ),
+    )
+    .expect("wrapper");
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(&wrapper).expect("meta").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&wrapper, perms).expect("chmod");
+    let path_env = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let with_logical_top = |args: &[&str]| {
+        repo.command(env!("CARGO_BIN_EXE_ptm"), args)
+            .env("XDG_DATA_HOME", &link)
+            .env("PATH", &path_env)
+            .env("REAL_TOP", &canonical)
+            .env("LOGICAL_TOP", &via_link)
+            .current_dir(&via_link)
+            .output()
+            .expect("ptm")
+    };
+    let refused = with_logical_top(&["delete", "feature"]);
+    assert_eq!(
+        refused.status.code(),
+        Some(3),
+        "{}\n{}",
+        text(&refused.stdout),
+        text(&refused.stderr)
+    );
+    assert!(
+        text(&refused.stderr).contains("current directory"),
+        "{}",
+        text(&refused.stderr)
+    );
+    assert!(via_real.is_dir());
+    let deleted = with_logical_top(&["delete", "--current"]);
+    assert!(
+        deleted.status.success(),
+        "{}\n{}",
+        text(&deleted.stdout),
+        text(&deleted.stderr)
+    );
+    assert!(
+        text(&deleted.stdout).contains("Deleted worktree 'feature'"),
+        "{}",
+        text(&deleted.stdout)
+    );
+    assert!(!via_real.exists());
+}
+
+#[test]
 fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
     let repo = Repo::new();
     let created = repo.phantom(&[

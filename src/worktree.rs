@@ -942,7 +942,7 @@ fn command_is_inside(path: &Path) -> bool {
     let Ok(top) = git::top_level(&cwd) else {
         return false;
     };
-    paths::normalize(&top) == paths::normalize(path)
+    paths::same_location(&top, path)
 }
 
 pub fn current_worktree_name(context: &Context) -> Result<Option<String>> {
@@ -951,14 +951,13 @@ pub fn current_worktree_name(context: &Context) -> Result<Option<String>> {
         Ok(top) => top,
         Err(_) => return Ok(None),
     };
-    if paths::normalize(&top) == paths::normalize(&context.git_root) {
+    if paths::same_location(&top, &context.git_root) {
         return Ok(None);
     }
-    let top = paths::normalize(&top);
     Ok(list_worktrees(context, true, true)?
         .into_iter()
         .find_map(|worktree| {
-            (paths::normalize(Path::new(&worktree.path)) == top).then_some(worktree.name)
+            paths::same_location(Path::new(&worktree.path), &top).then_some(worktree.name)
         }))
 }
 
