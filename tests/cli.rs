@@ -6673,6 +6673,59 @@ fn gc_drops_a_missing_directory_and_keeps_an_unpushed_branch() {
 }
 
 #[test]
+fn gc_skips_missing_registration_with_changed_branch_or_head() {
+    for change in ["branch", "head"] {
+        let repo = Repo::new();
+        assert!(repo.mabo(&["create", "a-trigger"]).status.success());
+        land_branch(&repo, "a-trigger");
+        assert!(repo.mabo(&["create", "z-local"]).status.success());
+        commit_in_worktree(&repo, "z-local");
+        repo.git(&["branch", "replacement", "main"]);
+        let original = text(
+            &repo
+                .command("git", &["rev-parse", "z-local"])
+                .output()
+                .unwrap()
+                .stdout,
+        );
+        fs::remove_dir_all(managed(&repo, "z-local")).unwrap();
+        let command = if change == "branch" {
+            format!(
+                "printf 'ref: refs/heads/replacement\\n' > '{}'",
+                repo.repo.join(".git/worktrees/z-local/HEAD").display()
+            )
+        } else {
+            "git update-ref refs/heads/z-local main".to_string()
+        };
+        fs::write(
+            repo.repo.join(".mabo.toml"),
+            format!("[hooks]\npre-delete = [\"{command}\"]\n"),
+        )
+        .unwrap();
+        let out = repo.mabo(&["gc", "--apply", "--json"]);
+        let doc = json_value(&out);
+        assert!(branch_listed(&repo, "z-local"), "{change}: {doc}");
+        assert!(worktree_registered(&repo, "z-local"), "{change}: {doc}");
+        let item = doc["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"] == "z-local")
+            .unwrap();
+        assert_eq!(item["action"], "skipped", "{change}: {doc}");
+        assert!(item["detail"].as_str().unwrap().contains("changed"));
+        assert!(out.status.success(), "{doc}");
+        if change == "branch" {
+            let after = repo
+                .command("git", &["rev-parse", "z-local"])
+                .output()
+                .unwrap();
+            assert_eq!(text(&after.stdout), original);
+        }
+    }
+}
+
+#[test]
 fn gc_apply_rechecks_only_each_target_pull_request() {
     use std::os::unix::fs::PermissionsExt;
     for kind in ["live", "missing", "orphan"] {

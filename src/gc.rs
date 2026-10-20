@@ -196,6 +196,7 @@ struct Subject {
     path: PathBuf,
     name: String,
     branch: Option<String>,
+    head: Option<String>,
     owner: Option<String>,
 }
 
@@ -637,6 +638,7 @@ fn observe_listed(
             name: String::new(),
             path,
             branch,
+            head: worktree.head.clone(),
             owner: metadata.owner.clone(),
         },
         registered: true,
@@ -669,6 +671,7 @@ fn observe_record(
             name: String::new(),
             path: path.to_path_buf(),
             branch: None,
+            head: None,
             owner: record.owner.clone(),
         },
         registered: false,
@@ -1047,10 +1050,28 @@ fn apply_drop(
         Ok(lock) => lock,
         Err(error) => return failed(subject, reasons, error.to_string()),
     };
-    let fresh = match gather(context, &request.policy, Some(&subject.path)) {
-        Ok(facts) => classify(&facts, &request.policy),
+    let facts = match gather(context, &request.policy, Some(&subject.path)) {
+        Ok(facts) => facts,
         Err(error) => return failed(subject, reasons, error.to_string()),
     };
+    // The path can be reused while earlier targets run unlocked project hooks.
+    // Never apply another branch's safety verdict to the planned branch.
+    if facts.iter().any(|facts| {
+        facts.subject.path == subject.path
+            && (facts.subject.branch != subject.branch || facts.subject.head != subject.head)
+    }) {
+        return CandidateEntry {
+            name: subject.name,
+            path: subject.path.display().to_string(),
+            branch: subject.branch,
+            owner: subject.owner,
+            reasons,
+            action: Action::Skipped,
+            detail: Some("Worktree branch or HEAD changed since gc planning".into()),
+            branch_deleted: None,
+        };
+    }
+    let fresh = classify(&facts, &request.policy);
     let Some((git_listed, unpushed, branch_missing)) =
         fresh.iter().find_map(|verdict| match verdict {
             Verdict::Remove(Removal::DropRegistration {
@@ -1264,6 +1285,7 @@ mod tests {
                 path: PathBuf::from("/repo/.git/maboroshi/worktrees/feature"),
                 name: "feature".to_string(),
                 branch: Some("feature".to_string()),
+                head: None,
                 owner: None,
             },
             registered: true,
