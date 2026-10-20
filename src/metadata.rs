@@ -205,6 +205,21 @@ fn recorded_creation(path: &Path, origin: BranchOrigin) -> Option<String> {
     }
 }
 
+/// Record the tip sync integrated while the branch had no commits of its own.
+pub fn record_sync_tip(git_root: &Path, path: &Path, tip: &str) -> Result<()> {
+    with_store(git_root, |store| {
+        let Some(record) = store
+            .worktrees
+            .iter_mut()
+            .find(|record| paths::same_location(Path::new(&record.path), path))
+        else {
+            return Ok(((), false));
+        };
+        record.metadata.created_from = Some(tip.to_string());
+        Ok(((), true))
+    })
+}
+
 /// Bump `lastUsedAt` when a record exists. A worktree with no record is left alone.
 pub fn touch(git_root: &Path, path: &Path) -> Result<Option<WorktreeMetadata>> {
     if !metadata_file(git_root)?.exists() {

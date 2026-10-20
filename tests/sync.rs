@@ -743,6 +743,14 @@ fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
         r.git(&tree, &["rev-parse", "HEAD"]),
         r.git(&r.main, &["rev-parse", "origin/main"])
     );
+    assert_eq!(
+        r.sync(&tree, &[], 0)["worktrees"][0]["status"],
+        "up-to-date"
+    );
+    let gc = r.mabo(&r.main, &["gc", "--json"]);
+    assert!(gc.status.success());
+    let doc: Value = serde_json::from_slice(&gc.stdout).unwrap();
+    assert!(!doc.to_string().contains("fresh"), "{doc}");
     let landed = r.create("landed");
     r.write_commit(&landed, "work", "work\n");
     r.git(&r.main, &["merge", "--ff-only", "landed"]);

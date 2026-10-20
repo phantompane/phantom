@@ -398,7 +398,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         return Ok(report);
     }
     for (tree, base) in targets.iter().zip(&bases) {
-        let item = match sync_tree(tree, base, request) {
+        let item = match sync_tree(context, tree, base, request) {
             Ok(item) => item,
             Err(error) => {
                 let mut item = tree_item(tree, base);
@@ -538,7 +538,12 @@ fn sync_default(context: &Context, base: &str) -> Result<Item> {
     Ok(item)
 }
 
-fn sync_tree(tree: &worktree::WorktreeInfo, base: &str, request: &Request) -> Result<Item> {
+fn sync_tree(
+    context: &Context,
+    tree: &worktree::WorktreeInfo,
+    base: &str,
+    request: &Request,
+) -> Result<Item> {
     let mut item = tree_item(tree, base);
     let path = Path::new(&tree.path);
     if tree.detached {
@@ -733,6 +738,11 @@ fn sync_tree(tree: &worktree::WorktreeInfo, base: &str, request: &Request) -> Re
         return Ok(item);
     }
     item.after = git::head_commit(path);
+    if own.is_empty() {
+        if let Some(tip) = item.after.as_deref() {
+            metadata::record_sync_tip(&context.git_root, path, tip)?;
+        }
+    }
     item.status(
         if item.after == item.before {
             "up-to-date"
