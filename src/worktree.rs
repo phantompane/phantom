@@ -233,13 +233,9 @@ fn select_worktree(worktrees: Vec<WorktreeInfo>, name: &str) -> Result<WorktreeI
 
 /// The worktree Git has registered at `path`, independent of its branch or directory name.
 pub fn worktree_at_path(context: &Context, path: &Path) -> Result<WorktreeInfo> {
-    let wanted = paths::normalize(path);
     list_worktrees(context, false, true)?
         .into_iter()
-        .find(|worktree| {
-            let listed = Path::new(&worktree.path);
-            listed == path || paths::normalize(listed) == wanted
-        })
+        .find(|worktree| paths::same_location(Path::new(&worktree.path), path))
         .ok_or_else(|| {
             Error::msg(format!(
                 "Worktree at {} is no longer registered",
@@ -256,7 +252,9 @@ pub fn find_worktree(
 ) -> Result<WorktreeInfo> {
     let worktrees = list_worktrees(context, exclude_default, true)?
         .into_iter()
-        .filter(|worktree| expected_path.is_none_or(|path| Path::new(&worktree.path) == path))
+        .filter(|worktree| {
+            expected_path.is_none_or(|path| paths::same_location(Path::new(&worktree.path), path))
+        })
         .collect();
     select_worktree(worktrees, name)
 }

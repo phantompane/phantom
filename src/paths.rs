@@ -339,12 +339,12 @@ fn reconcile_project_directory(directory: &Path, common_dir: &Path) -> Result<()
             ))
         })?;
     }
-    let identity = common_dir_identity(common_dir);
     match read_marker(directory)? {
-        Some(existing) if existing == identity => Ok(()),
+        Some(existing) if marker_matches(&existing, common_dir) => Ok(()),
         Some(existing) => Err(Error::msg(format!(
-            "Worktree directory {} belongs to {existing}, not {identity}. Refusing to reuse another repository's worktree directory.",
-            directory.display()
+            "Worktree directory {} belongs to {existing}, not {}. Refusing to reuse another repository's worktree directory.",
+            directory.display(),
+            common_dir_identity(common_dir)
         ))),
         None => {
             let names = directory_entries(directory)?;
@@ -360,7 +360,7 @@ fn reconcile_project_directory(directory: &Path, common_dir: &Path) -> Result<()
                     directory.display()
                 )));
             };
-            write_marker(parent, directory, &identity)
+            write_marker(parent, directory, &common_dir_identity(common_dir))
         }
     }
 }
@@ -380,39 +380,33 @@ fn read_marker(directory: &Path) -> Result<Option<String>> {
 fn write_marker(parent: &Path, directory: &Path, identity: &str) -> Result<()> {
     let temp = parent.join(".ptm-common-dir.tmp");
     let target = directory.join(PROJECT_MARKER);
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o644)
-            .open(&temp)
-            .map_err(|error| {
-                Error::msg(format!(
-                    "Failed to record repository for worktree directory {}: {error}",
-                    directory.display()
-                ))
-            })?;
-        writeln!(file, "{identity}").map_err(|error| {
-            Error::msg(format!(
-                "Failed to record repository for worktree directory {}: {error}",
-                directory.display()
-            ))
-        })?;
-        file.sync_all().map_err(|error| {
-            Error::msg(format!(
-                "Failed to record repository for worktree directory {}: {error}",
-                directory.display()
-            ))
-        })?;
+    let written = write_marker_file(&temp, &target, directory, identity);
+    if written.is_err() {
+        let _ = fs::remove_file(&temp);
     }
-    fs::rename(&temp, &target).map_err(|error| {
-        Error::msg(format!(
-            "Failed to record repository for worktree directory {}: {error}",
-            directory.display()
-        ))
-    })
+    written
+}
+
+fn write_marker_file(temp: &Path, target: &Path, directory: &Path, identity: &str) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o644)
+        .open(temp)
+        .map_err(|error| marker_error(directory, &error))?;
+    writeln!(file, "{identity}").map_err(|error| marker_error(directory, &error))?;
+    file.sync_all()
+        .map_err(|error| marker_error(directory, &error))?;
+    fs::rename(temp, target).map_err(|error| marker_error(directory, &error))
+}
+
+fn marker_error(directory: &Path, error: &std::io::Error) -> Error {
+    Error::msg(format!(
+        "Failed to record repository for worktree directory {}: {error}",
+        directory.display()
+    ))
 }
 
 fn directory_entries(directory: &Path) -> Result<Vec<std::ffi::OsString>> {
@@ -792,6 +786,51 @@ mod tests {
                 .trim_end(),
             "/repos/one/.git"
         );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn claim_accepts_a_marker_for_the_same_canonical_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "ptm-marker-link-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let real = root.join("real.git");
+        fs::create_dir_all(&real).expect("real");
+        let link = root.join("link.git");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        let directory = root.join("ptm/worktrees/repo");
+        fs::create_dir_all(&directory).expect("project");
+        fs::write(
+            directory.join(PROJECT_MARKER),
+            format!("{}\n", link.display()),
+        )
+        .expect("marker");
+        ensure_worktrees_directory(&directory, Some(&real)).expect("same directory");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn failed_marker_rename_removes_the_temp_file() {
+        let root = std::env::temp_dir().join(format!(
+            "ptm-marker-tmp-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let parent = root.join("parent");
+        let directory = parent.join("project");
+        fs::create_dir_all(&directory).expect("project");
+        fs::create_dir(directory.join(PROJECT_MARKER)).expect("block rename");
+        let error = write_marker(&parent, &directory, "/repos/one/.git").expect_err("rename");
+        assert!(error.to_string().contains("Failed to record"), "{error}");
+        assert!(!parent.join(".ptm-common-dir.tmp").exists());
         let _ = fs::remove_dir_all(&root);
     }
 

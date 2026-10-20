@@ -7423,3 +7423,158 @@ fn symlink_spelling_keeps_metadata_and_cleans_the_project_directory() {
     let store = fs::read_to_string(repo.repo.join(".git/ptm/worktrees.json")).unwrap_or_default();
     assert!(!store.contains("alice"), "{store}");
 }
+
+#[test]
+fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
+    let repo = Repo::new();
+    let real = repo.root.join("real-xdg");
+    let link = repo.root.join("link-xdg");
+    fs::create_dir_all(&real).expect("real xdg");
+    std::os::unix::fs::symlink(&real, &link).expect("xdg link");
+    let run = |args: &[&str]| {
+        repo.command(env!("CARGO_BIN_EXE_ptm"), args)
+            .env("XDG_DATA_HOME", &link)
+            .output()
+            .expect("ptm")
+    };
+    let created = run(&["create", "a", "--json"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let created_json = json_value(&created);
+    assert!(created_json.get("error").is_none(), "{created_json}");
+    assert_eq!(created_json["worktree"]["name"], "a");
+    assert!(created_json["metadata"]["ok"].as_bool().unwrap_or(false));
+
+    repo.git(&["branch", "attached"]);
+    let attached = run(&["attach", "attached", "--json"]);
+    assert!(
+        attached.status.success(),
+        "{}\n{}",
+        text(&attached.stdout),
+        text(&attached.stderr)
+    );
+    let attached_json = json_value(&attached);
+    assert!(attached_json.get("error").is_none(), "{attached_json}");
+    assert_eq!(attached_json["worktree"]["name"], "attached");
+
+    let executed = run(&["create", "b", "--json", "--exec", "true"]);
+    assert!(
+        executed.status.success(),
+        "{}\n{}",
+        text(&executed.stdout),
+        text(&executed.stderr)
+    );
+    let executed_json = json_value(&executed);
+    assert!(executed_json.get("error").is_none(), "{executed_json}");
+    assert_eq!(executed_json["exec"]["ok"], true);
+    assert_eq!(executed_json["worktree"]["name"], "b");
+}
+
+#[test]
+fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
+    let repo = Repo::new();
+    let created = repo.phantom(&[
+        "create",
+        "issues/7",
+        "--owner",
+        "alice",
+        "--purpose",
+        "keep me",
+        "--json",
+    ]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let created_json = json_value(&created);
+    let real = PathBuf::from(created_json["worktree"]["path"].as_str().expect("path"));
+    let created_at = created_json["worktree"]["createdAt"]
+        .as_str()
+        .expect("createdAt")
+        .to_string();
+    let created_from = created_json["worktree"]["createdFrom"]
+        .as_str()
+        .expect("createdFrom")
+        .to_string();
+    let last_used = created_json["worktree"]["lastUsedAt"]
+        .as_str()
+        .expect("lastUsedAt")
+        .to_string();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let via = repo.root.join("via-project");
+    std::os::unix::fs::symlink(real.parent().expect("project"), &via).expect("symlink");
+    let git_dir = repo
+        .command("git", &["rev-parse", "--git-dir"])
+        .current_dir(&real)
+        .output()
+        .expect("git dir");
+    assert!(git_dir.status.success(), "{}", text(&git_dir.stderr));
+    let printed = PathBuf::from(text(&git_dir.stdout).trim());
+    let git_admin = if printed.is_absolute() {
+        printed
+    } else {
+        real.join(printed)
+    };
+    let gitdir = git_admin.join("gitdir");
+    fs::write(
+        &gitdir,
+        format!("{}\n", via.join("7").join(".git").display()),
+    )
+    .expect("gitdir");
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let gh = bin.join("gh");
+    fs::write(
+        &gh,
+        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"url\":\"https://github.com/acme/demo\",\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":7}'\nexit 0\n",
+    )
+    .expect("gh");
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(&gh).expect("meta").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&gh, perms).expect("chmod");
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let again = repo
+        .command(
+            env!("CARGO_BIN_EXE_ptm"),
+            &[
+                "github",
+                "checkout",
+                "7",
+                "--owner",
+                "bob",
+                "--purpose",
+                "replace",
+                "--json",
+            ],
+        )
+        .env("PATH", &path)
+        .output()
+        .expect("checkout");
+    assert!(
+        again.status.success(),
+        "{}\n{}",
+        text(&again.stdout),
+        text(&again.stderr)
+    );
+    let again_json = json_value(&again);
+    assert!(again_json.get("error").is_none(), "{again_json}");
+    assert_eq!(again_json["github"]["alreadyExists"], true);
+    let worktree = &again_json["worktree"];
+    assert_eq!(worktree["owner"], "alice");
+    assert_eq!(worktree["purpose"], "keep me");
+    assert_eq!(worktree["createdAt"], created_at);
+    assert_eq!(worktree["createdFrom"], created_from);
+    assert_ne!(worktree["lastUsedAt"], last_used);
+    assert_eq!(worktree["links"]["issue"]["number"], 7);
+}
