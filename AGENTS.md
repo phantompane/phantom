@@ -49,5 +49,5 @@
 ## Releases
 
 - The version lives in `Cargo.toml` and the `phantom` entry in `Cargo.lock`. Change it by hand in a dedicated pull request against `next`. Do not bump the version in other pull requests.
-- Title that pull request `chore(version): vX.Y.Z` (a prerelease such as `v7.0.0-alpha.2` is fine). Merging it into `next` creates the git tag. `.github/workflows/tag-on-merge.yml` reads the version from the title. It does not edit `Cargo.toml`.
+- Title that pull request `chore(version): vX.Y.Z` (a prerelease such as `v7.0.0-alpha.3` is fine). Merging it into `next` creates the git tag. `.github/workflows/tag-on-merge.yml` reads the version from the title. It does not edit `Cargo.toml`.
 - Publishing a GitHub release builds linux/darwin x64/arm64 binaries and uploads `ptm-v<version>-<os>-<arch>.tar.gz`. Each archive contains the `ptm` binary. `.github/workflows/release-compile.yml` runs when that release is published and packages the version already in `Cargo.toml`. npm is not published.
