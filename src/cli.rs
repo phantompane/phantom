@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::Path;
 
 use crate::args::{self, Opt, Parsed};
@@ -8,6 +9,7 @@ use crate::metadata::{self, MetadataInput};
 use crate::preferences;
 use crate::projects::{self, ProjectListEntry, ProjectRecord, ProjectRegistryStore};
 use crate::repository;
+use crate::trust::{self, HookControl};
 use crate::worktree::{self, ActionRequest, Logger};
 
 struct Command {
@@ -67,6 +69,7 @@ fn create(args: &[String]) -> Result<i32> {
             remainder: false,
         },
         value_flag("base", None),
+        flag("no-hooks", None),
         flag("json", None),
     ];
     options.extend(metadata_options());
@@ -95,6 +98,7 @@ fn create(args: &[String]) -> Result<i32> {
         logger: logger_for(json),
         repository: repository.as_deref(),
         metadata,
+        hooks: hook_control(&parsed, json, true),
     }) {
         Ok(outcome) => finish_change(json, &outcome),
         Err(error) => fail_with(&error, create_code(&error), json),
@@ -130,6 +134,7 @@ fn attach(args: &[String]) -> Result<i32> {
             multiple: true,
             remainder: false,
         },
+        flag("no-hooks", None),
         flag("json", None),
     ];
     options.extend(metadata_options());
@@ -164,6 +169,7 @@ fn attach(args: &[String]) -> Result<i32> {
         logger: logger_for(json),
         repository: repository.as_deref(),
         metadata,
+        hooks: hook_control(&parsed, json, true),
     }) {
         Ok(outcome) => finish_mutation(
             json,
@@ -318,6 +324,7 @@ fn delete(args: &[String]) -> Result<i32> {
             flag("force", Some('f')),
             flag("keep-branch", None),
             flag("current", None),
+            flag("no-hooks", None),
             flag("json", None),
         ],
         true,
@@ -376,6 +383,7 @@ fn delete(args: &[String]) -> Result<i32> {
             keep_branch,
             None,
             &logger,
+            hook_control(&parsed, json, true),
         ) {
             Ok(outcome) => {
                 if let Some(metadata_error) = outcome.metadata_error {
@@ -875,6 +883,7 @@ fn github_checkout(args: &[String]) -> Result<i32> {
     let options = vec![
         project_flag(),
         value_flag("base", None),
+        flag("no-hooks", None),
         flag("json", None),
         value_flag("owner", None),
         value_flag("purpose", None),
@@ -905,6 +914,7 @@ fn github_checkout(args: &[String]) -> Result<i32> {
         &logger_for(json),
         repository.as_deref(),
         metadata,
+        hook_control(&parsed, json, true),
     ) {
         Ok(checkout) => checkout,
         Err(error) => return fail_with(&error, error.exit_code(), json),
@@ -1160,6 +1170,7 @@ fn gc(args: &[String]) -> Result<i32> {
             value_flag("older-than", None),
             value_flag("owner", None),
             flag("keep-branch", None),
+            flag("no-hooks", None),
             flag("json", None),
         ],
         false,
@@ -1206,6 +1217,7 @@ fn gc(args: &[String]) -> Result<i32> {
         },
         apply: parsed.flag("apply") || force,
         keep_branch: parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false),
+        no_hooks: parsed.flag("no-hooks"),
     };
     let report = match crate::gc::run(&context, &request, &logger_for(json)) {
         Ok(report) => report,
@@ -1236,6 +1248,187 @@ fn fail_project(error: &Error, args: &[String], parsed: &Parsed, json: bool) -> 
         error.exit_code(),
         json || (option_like && wants_json(args)),
     )
+}
+
+fn hook_control(parsed: &Parsed, json: bool, prompt: bool) -> HookControl {
+    HookControl {
+        no_hooks: parsed.flag("no-hooks"),
+        json,
+        prompt,
+    }
+}
+
+fn trust_cmd(args: &[String]) -> Result<i32> {
+    let json = wants_json(args);
+    let parsed = match args::parse(
+        args,
+        &[
+            flag("yes", Some('y')),
+            flag("list", None),
+            flag("json", None),
+        ],
+        true,
+    ) {
+        Ok(parsed) => parsed,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let json = parsed.flag("json") || wants_json(args);
+    if parsed.flag("list") {
+        if parsed.flag("yes") || !parsed.positionals.is_empty() {
+            return fail_with(
+                &Error::validation("ptm trust --list does not take a path or --yes"),
+                VALIDATION,
+                json,
+            );
+        }
+        return print_trust_list(json);
+    }
+    if parsed.positionals.len() > 1 {
+        return fail_with(
+            &Error::validation("Usage: ptm trust [path]"),
+            VALIDATION,
+            json,
+        );
+    }
+    let start = match trust_start(parsed.positionals.first().map(String::as_str)) {
+        Ok(start) => start,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let project = match trust::load_hooks(&start) {
+        Ok(project) => project,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    if !parsed.flag("yes") {
+        if json || !std::io::stdin().is_terminal() {
+            return fail_with(
+                &Error::msg(
+                    "No terminal is available to confirm trust. Re-run with --yes to trust this project.",
+                ),
+                GENERAL,
+                json,
+            );
+        }
+        let accepted = match trust::ask(&project, trust::TRUST_PROMPT) {
+            Ok(accepted) => accepted,
+            Err(error) => return fail_with(&error, error.exit_code(), json),
+        };
+        if !accepted {
+            return fail_with(
+                &Error::msg(format!("Did not trust {}", project.project)),
+                GENERAL,
+                json,
+            );
+        }
+    }
+    match trust::trust_root(Path::new(&project.git_root)) {
+        Ok(record) => {
+            if json {
+                emit_json(&serde_json::json!({
+                    "version": crate::error::JSON_VERSION,
+                    "path": record.path,
+                    "trustedAt": record.trusted_at,
+                }))
+            } else {
+                println!("Trusted {}", record.path);
+                Ok(SUCCESS)
+            }
+        }
+        Err(error) => fail_with(&error, error.exit_code(), json),
+    }
+}
+
+fn untrust_cmd(args: &[String]) -> Result<i32> {
+    let json = wants_json(args);
+    let parsed = match args::parse(args, &[flag("json", None)], true) {
+        Ok(parsed) => parsed,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let json = parsed.flag("json") || wants_json(args);
+    if parsed.positionals.len() > 1 {
+        return fail_with(
+            &Error::validation("Usage: ptm untrust [path]"),
+            VALIDATION,
+            json,
+        );
+    }
+    let start = match trust_start(parsed.positionals.first().map(String::as_str)) {
+        Ok(start) => start,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let git_root = match crate::git::git_root(&start) {
+        Ok(git_root) => git_root,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    let key = match trust::common_dir_key(&git_root) {
+        Ok(key) => key.to_string_lossy().to_string(),
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    match trust::untrust_root(&git_root) {
+        Ok(removed) => {
+            if json {
+                emit_json(&serde_json::json!({
+                    "version": crate::error::JSON_VERSION,
+                    "path": key,
+                    "removed": removed,
+                }))
+            } else if removed {
+                println!("Removed trust for {key}");
+                Ok(SUCCESS)
+            } else {
+                println!("Not trusted: {key}");
+                Ok(SUCCESS)
+            }
+        }
+        Err(error) => fail_with(&error, error.exit_code(), json),
+    }
+}
+
+fn print_trust_list(json: bool) -> Result<i32> {
+    let projects = match trust::list_trusted() {
+        Ok(projects) => projects,
+        Err(error) => return fail_with(&error, error.exit_code(), json),
+    };
+    if json {
+        let projects = projects
+            .iter()
+            .map(|project| {
+                serde_json::json!({
+                    "path": project.path,
+                    "trustedAt": project.trusted_at,
+                })
+            })
+            .collect::<Vec<_>>();
+        return emit_json(&serde_json::json!({
+            "version": crate::error::JSON_VERSION,
+            "projects": projects,
+        }));
+    }
+    if projects.is_empty() {
+        println!("No trusted projects");
+        return Ok(SUCCESS);
+    }
+    for project in projects {
+        println!("{}\t{}", project.path, project.trusted_at);
+    }
+    Ok(SUCCESS)
+}
+
+fn trust_start(path: Option<&str>) -> Result<std::path::PathBuf> {
+    match path {
+        None => std::env::current_dir().map_err(|error| Error::msg(error.to_string())),
+        Some(value) => {
+            let path = std::path::PathBuf::from(value);
+            if !path.exists() {
+                return Err(Error::PathNotFound(value.to_string()));
+            }
+            if !path.is_dir() {
+                return Err(Error::validation(format!(
+                    "Path '{value}' is not a directory"
+                )));
+            }
+            Ok(path)
+        }
+    }
 }
 
 fn flag(name: &'static str, short: Option<char>) -> Opt {
@@ -1458,6 +1651,18 @@ static COMMANDS: &[Command] = &[
         name: "gc",
         help_key: "gc",
         run: gc,
+        children: &[],
+    },
+    Command {
+        name: "trust",
+        help_key: "trust",
+        run: trust_cmd,
+        children: &[],
+    },
+    Command {
+        name: "untrust",
+        help_key: "untrust",
+        run: untrust_cmd,
         children: &[],
     },
     Command {
