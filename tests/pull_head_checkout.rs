@@ -787,7 +787,7 @@ fn cloned_before_branch_delete(root: &Path) -> (PathBuf, String) {
 }
 
 #[test]
-fn checkout_records_issue_pr_and_attach_sync_bases() {
+fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
     for present in [false, true] {
         let tree = TempTree::new();
         let (clone, _) = deleted_pr_remote(&tree.path);
@@ -885,6 +885,6 @@ fn checkout_records_issue_pr_and_attach_sync_bases() {
             String::from_utf8_lossy(&out.stderr)
         );
         let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(doc["worktree"]["base"], fallback);
+        assert!(doc["worktree"]["base"].is_null());
     }
 }

@@ -726,11 +726,10 @@ pub struct AttachRequest<'a> {
     pub hooks: HookControl,
 }
 
-pub fn run_attach(mut request: AttachRequest<'_>) -> Result<AttachOutcome> {
+pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action = resolve_action(&request.action)?;
     let context = context::open(request.repository)?;
     let operation = crate::operation::lock(&context.git_root)?;
-    request.metadata.base = Some(crate::sync::creation_base(&context.git_root, None)?);
     let commands = trust::authorize(
         &context.git_root,
         config::post_create_commands(context.config.as_ref()),
