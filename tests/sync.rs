@@ -1514,3 +1514,95 @@ fn target_reserved_by_another_worktrees_update_refs_is_dirty() {
     assert_eq!(r.snapshot(&tree), before);
     r.git(&r.main, &["rebase", "--continue"]);
 }
+
+#[test]
+fn prunable_worktree_is_skipped_without_blocking_live_sync() {
+    let r = Repo::new();
+    let gone = r.create("gone");
+    let before = r.git(&gone, &["rev-parse", "HEAD"]);
+    let admin = PathBuf::from(r.git(&gone, &["rev-parse", "--absolute-git-dir"]));
+    let registration = file_contents(&admin);
+    fs::remove_dir_all(&gone).unwrap();
+    let live = r.create("live");
+    r.advance();
+    let doc = r.sync(&r.main, &["--all"], 0);
+    assert_eq!(doc["default"]["status"], "updated");
+    let items = doc["worktrees"].as_array().unwrap();
+    assert_eq!(
+        items.iter().find(|v| v["name"] == "gone").unwrap()["status"],
+        "dirty"
+    );
+    assert_eq!(
+        items.iter().find(|v| v["name"] == "live").unwrap()["status"],
+        "updated"
+    );
+    assert_eq!(
+        r.git(&live, &["rev-parse", "HEAD"]),
+        r.git(&r.upstream, &["rev-parse", "HEAD"])
+    );
+    assert_eq!(r.git(&r.main, &["rev-parse", "gone"]), before);
+    assert_eq!(file_contents(&admin), registration);
+    assert!(!gone.exists());
+}
+
+#[test]
+fn missing_linked_checkout_still_reserves_default_during_rebase() {
+    let r = Repo::new();
+    r.git(&r.main, &["switch", "-c", "other"]);
+    let gone = r.root.join("reserved-main");
+    r.git(
+        &r.main,
+        &["worktree", "add", gone.to_str().unwrap(), "main"],
+    );
+    pause_root_rebase(&r, &gone, false);
+    let admin = PathBuf::from(r.git(&gone, &["rev-parse", "--absolute-git-dir"]));
+    let state = file_contents(&admin);
+    let before = r.git(&r.main, &["rev-parse", "main"]);
+    fs::remove_dir_all(&gone).unwrap();
+    let live = r.create("live");
+    r.advance();
+    let doc = r.sync(&r.main, &["live"], 0);
+    assert_eq!(doc["default"]["status"], "dirty");
+    assert!(doc["default"]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("being rebased"));
+    assert_eq!(doc["worktrees"][0]["status"], "updated");
+    assert!(live.is_dir());
+    assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
+    assert_eq!(file_contents(&admin), state);
+}
+
+#[test]
+fn missing_default_checkout_and_broken_target_do_not_block_live_target() {
+    let r = Repo::new();
+    let bad = r.create("bad");
+    let live = r.create("live");
+    // Keep a directory but break its Git registration: only this item fails.
+    fs::write(bad.join(".git"), "gitdir: /nonexistent/mabo-test\n").unwrap();
+    r.git(&r.main, &["switch", "-c", "other"]);
+    let missing = r.root.join("missing-main");
+    r.git(
+        &r.main,
+        &["worktree", "add", missing.to_str().unwrap(), "main"],
+    );
+    fs::remove_dir_all(&missing).unwrap();
+    let before = r.git(&r.main, &["rev-parse", "main"]);
+    r.advance();
+    let doc = r.sync(&r.main, &["--all"], 1);
+    assert_eq!(doc["default"]["status"], "dirty");
+    let items = doc["worktrees"].as_array().unwrap();
+    assert_eq!(
+        items.iter().find(|v| v["name"] == "bad").unwrap()["status"],
+        "failed"
+    );
+    assert_eq!(
+        items.iter().find(|v| v["name"] == "live").unwrap()["status"],
+        "updated"
+    );
+    assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
+    assert_eq!(
+        r.git(&live, &["rev-parse", "HEAD"]),
+        r.git(&r.upstream, &["rev-parse", "HEAD"])
+    );
+}

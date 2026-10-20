@@ -209,7 +209,7 @@ fn info_from_git(
         path: path.to_string_lossy().into_owned(),
         path_to_display: paths::list_path(&path),
         branch,
-        is_clean: git::is_clean(&path),
+        is_clean: path.is_dir() && git::is_clean(&path),
         head: recorded_head(worktree.head.as_deref()),
         is_default: paths::same_location(&original, &context.git_root),
         detached,
