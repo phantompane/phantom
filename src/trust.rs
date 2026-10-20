@@ -79,6 +79,25 @@ pub fn answer_is_yes(line: &str) -> bool {
     answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes")
 }
 
+/// A prompt is only safe for a person at a terminal. Agents and CI get a pty
+/// often enough that asking would hang the process.
+pub fn prompts() -> bool {
+    may_prompt(
+        env_present("CI"),
+        env_present("PTM_AGENT_ID"),
+        std::io::stdin().is_terminal(),
+        std::io::stderr().is_terminal(),
+    )
+}
+
+fn may_prompt(ci: bool, agent_id: bool, stdin_tty: bool, stderr_tty: bool) -> bool {
+    !ci && !agent_id && stdin_tty && stderr_tty
+}
+
+fn env_present(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|value| !value.to_string_lossy().trim().is_empty())
+}
+
 /// Commands the caller should execute. Empty means run nothing and continue.
 pub fn authorize(
     git_root: &Path,
@@ -104,7 +123,7 @@ pub fn authorize(
         trust_all: trust_all(),
         no_hooks: control.no_hooks,
         json: control.json,
-        tty: std::io::stdin().is_terminal(),
+        tty: prompts(),
         prompt: control.prompt,
     };
     match decide(facts) {
@@ -525,6 +544,15 @@ mod tests {
         gc.no_hooks = false;
         gc.has_hooks = false;
         assert_eq!(decide(gc), Decision::SkipHooks);
+    }
+
+    #[test]
+    fn ci_agent_and_a_closed_stream_do_not_prompt() {
+        assert!(may_prompt(false, false, true, true));
+        assert!(!may_prompt(true, false, true, true));
+        assert!(!may_prompt(false, true, true, true));
+        assert!(!may_prompt(false, false, false, true));
+        assert!(!may_prompt(false, false, true, false));
     }
 
     #[test]
