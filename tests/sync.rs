@@ -2794,3 +2794,56 @@ fn merge_own_changes_refuse_rebase_and_survive_explicit_merge() {
         }
     }
 }
+
+#[test]
+fn published_commits_in_fetch_destinations_outside_remotes_are_protected() {
+    for refspec in [
+        "+refs/heads/*:refs/cache/*",
+        "+refs/heads/topic:refs/cache/topic",
+        "+refs/heads/to*ic:refs/cache/to*ic",
+    ] {
+        for explicit in [false, true] {
+            let r = Repo::new();
+            let tree = r.create("topic");
+            r.write_commit(&tree, "published", "published\n");
+            r.git(&tree, &["push", "origin", "topic"]);
+            // Keep standard main tracking for the recorded base, but store the
+            // published topic only in the configured cache destination.
+            r.git(
+                &r.main,
+                &[
+                    "config",
+                    "remote.origin.fetch",
+                    "+refs/heads/main:refs/remotes/origin/main",
+                ],
+            );
+            r.git(
+                &r.main,
+                &["config", "--add", "remote.origin.fetch", refspec],
+            );
+            r.git(&r.main, &["update-ref", "-d", "refs/remotes/origin/topic"]);
+            r.git(&r.main, &["fetch", "origin"]);
+            r.advance();
+            let before = r.snapshot(&tree);
+            let doc = r.sync(
+                &tree,
+                if explicit {
+                    &["--no-default", "--rebase"]
+                } else {
+                    &["--no-default"]
+                },
+                if explicit { 3 } else { 0 },
+            );
+            let item = &doc["worktrees"][0];
+            if explicit {
+                assert_eq!(item["code"], "pushed");
+                assert_eq!(r.snapshot(&tree), before);
+            } else {
+                assert_eq!(item["strategy"], "merge", "{doc}");
+                assert_eq!(item["status"], "updated");
+                let published = before["head"].as_str().unwrap();
+                r.git(&tree, &["merge-base", "--is-ancestor", published, "HEAD"]);
+            }
+        }
+    }
+}

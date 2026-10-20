@@ -975,11 +975,15 @@ fn sync_tree(
         Some(path),
         true,
     )?;
-    let unpublished = git::output(
-        &["rev-list", "HEAD", "--not", base, "--remotes", "--"],
-        Some(path),
-        true,
-    )?;
+    let specs = fetch_refspecs(path)?;
+    let refs = git::output(&["for-each-ref", "--format=%(refname)"], Some(path), true)?;
+    let mut unpublished_args = vec!["rev-list", "HEAD", "--not", base, "--remotes"];
+    unpublished_args.extend(
+        refs.lines()
+            .filter(|reference| source_for(reference, &specs).is_some()),
+    );
+    unpublished_args.push("--");
+    let unpublished = git::output(&unpublished_args, Some(path), true)?;
     let unpublished: BTreeSet<&str> = unpublished.lines().collect();
     let pushed = own.lines().any(|sha| !unpublished.contains(sha));
     let strategy = if request.merge || (!request.rebase && pushed) {
