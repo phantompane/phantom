@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 struct Repo {
@@ -5294,6 +5294,197 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
         .any(|record| record["owner"] == "sep"));
     assert!(!checkout.join(".git").join("ptm").exists());
     let _ = fs::remove_dir_all(&root);
+}
+
+struct SeparateCheckout {
+    root: PathBuf,
+    checkout: PathBuf,
+    git_dir: PathBuf,
+    home: PathBuf,
+}
+
+impl SeparateCheckout {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!("ptm-sep-root-{}", uuid()));
+        let home = root.join("home");
+        let checkout = root.join("deep").join("checkout");
+        let git_dir = root.join("var").join("sep.git");
+        fs::create_dir_all(home.join(".config/git")).expect("home");
+        fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+        fs::create_dir_all(&checkout).expect("checkout");
+        fs::create_dir_all(git_dir.parent().expect("git dir parent")).expect("git dir parent");
+        let repo = Self {
+            root,
+            checkout,
+            git_dir,
+            home,
+        };
+        repo.git(&[
+            "init",
+            "--separate-git-dir",
+            repo.git_dir.to_str().expect("git dir"),
+            "-b",
+            "main",
+        ]);
+        repo.git(&["config", "user.name", "Phantom Rust"]);
+        repo.git(&["config", "user.email", "phantom-rust@example.com"]);
+        fs::write(repo.checkout.join("README.md"), "# sep\n").expect("readme");
+        repo.git(&["add", "README.md"]);
+        repo.git(&["commit", "-m", "initial"]);
+        assert!(
+            repo.checkout.join(".git").is_file(),
+            ".git is a gitdir file"
+        );
+        repo
+    }
+
+    fn git(&self, args: &[&str]) {
+        let output = self
+            .command("git", args, &self.checkout)
+            .output()
+            .expect("git");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn ptm(&self, cwd: &Path, args: &[&str]) -> std::process::Output {
+        self.command(env!("CARGO_BIN_EXE_ptm"), args, cwd)
+            .output()
+            .expect("ptm")
+    }
+
+    fn command(&self, program: &str, args: &[&str], cwd: &Path) -> Command {
+        let mut command = Command::new(program);
+        command
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &self.home)
+            .env("XDG_CONFIG_HOME", self.home.join(".config"))
+            .env("XDG_STATE_HOME", self.root.join("state"))
+            .env_remove("GHQ_ROOT")
+            .env_remove("PTM_AGENT_ID")
+            .env_remove("PHANTOM_AGENT_ID")
+            .env_remove("GIT_CONFIG_GLOBAL")
+            .env_remove("GIT_CONFIG_SYSTEM")
+            .env_remove("GIT_CONFIG_COUNT")
+            .env_remove("GIT_CONFIG_PARAMETERS");
+        if program.ends_with("git") && args.first() == Some(&"init") {
+            let template = self.root.join("git-template");
+            fs::create_dir_all(&template).expect("git template");
+            command.env("GIT_TEMPLATE_DIR", &template);
+        }
+        command
+    }
+}
+
+impl Drop for SeparateCheckout {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+fn separate_git_dir_delete_current_removes_the_linked_worktree() {
+    let repo = SeparateCheckout::new();
+    let created = repo.ptm(&repo.checkout, &["create", "linked"]);
+    assert!(
+        created.status.success(),
+        "{}\n{}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let linked = repo.git_dir.join("ptm").join("worktrees").join("linked");
+    assert!(linked.is_dir(), "default worktree lives in the common dir");
+    let deleted = repo.ptm(&linked, &["delete", "--current"]);
+    let stdout = text(&deleted.stdout);
+    let stderr = text(&deleted.stderr);
+    assert!(
+        deleted.status.success(),
+        "delete --current from the linked worktree should remove it\n{stdout}\n{stderr}"
+    );
+    assert!(
+        stdout.contains("Deleted worktree 'linked'"),
+        "{stdout}\n{stderr}"
+    );
+    assert!(!linked.exists(), "linked worktree should be removed");
+    assert!(
+        repo.checkout.join("README.md").is_file(),
+        "main checkout stays"
+    );
+    assert!(
+        repo.checkout.join(".git").is_file(),
+        "main checkout stays a gitfile, not the deleted worktree"
+    );
+    let branch = repo
+        .command("git", &["branch", "--list", "linked"], &repo.checkout)
+        .output()
+        .expect("branch");
+    assert!(branch.status.success(), "{}", text(&branch.stderr));
+    assert!(
+        text(&branch.stdout).is_empty(),
+        "delete --current removes the worktree branch: {}",
+        text(&branch.stdout)
+    );
+    let main = repo
+        .command("git", &["branch", "--list", "main"], &repo.checkout)
+        .output()
+        .expect("main");
+    assert!(
+        text(&main.stdout).contains("main"),
+        "{}",
+        text(&main.stdout)
+    );
+}
+
+#[test]
+fn separate_git_dir_relative_worktrees_directory_joins_the_main_checkout() {
+    let repo = SeparateCheckout::new();
+    let pref = repo.ptm(
+        &repo.checkout,
+        &["preferences", "set", "worktrees-directory", "../wt"],
+    );
+    assert!(pref.status.success(), "{}", text(&pref.stderr));
+    let first = repo.ptm(&repo.checkout, &["create", "r1"]);
+    assert!(
+        first.status.success(),
+        "{}\n{}",
+        text(&first.stdout),
+        text(&first.stderr)
+    );
+    let first_path = repo.root.join("deep").join("wt").join("r1");
+    assert!(
+        first_path.is_dir(),
+        "from the main checkout, ../wt is deep/wt"
+    );
+    let second = repo.ptm(&first_path, &["create", "r2"]);
+    let stdout = text(&second.stdout);
+    let stderr = text(&second.stderr);
+    assert!(second.status.success(), "{stdout}\n{stderr}");
+    let expected = repo.root.join("deep").join("wt").join("r2");
+    assert!(
+        expected.is_dir(),
+        "relative worktrees-directory stays joined to the main checkout\n{stdout}\n{stderr}"
+    );
+    assert!(
+        !repo
+            .root
+            .join("deep")
+            .join("wt")
+            .join("wt")
+            .join("r2")
+            .exists(),
+        "must not nest under the linked worktree"
+    );
+    assert!(
+        !repo.root.join("var").join("wt").join("r2").exists(),
+        "must not join the relative directory to the separate git dir"
+    );
+    assert!(repo.checkout.join("README.md").is_file());
 }
 
 #[test]
