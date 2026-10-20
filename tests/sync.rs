@@ -1664,3 +1664,16 @@ fn missing_default_checkout_and_broken_target_do_not_block_live_target() {
         r.git(&r.upstream, &["rev-parse", "HEAD"])
     );
 }
+
+
+#[test]
+fn context_errors_use_shared_exit_codes() {
+    let r = Repo::new();
+    for args in [
+        vec!["sync", "--project", "missing-project", "--json"],
+        vec!["list", "--project", "missing-project", "--json"],
+    ] {
+        assert_eq!(r.mabo(&r.main, &args).status.code(), Some(2));
+    }
+    assert_eq!(r.mabo(&r.root, &["sync", "--json"]).status.code(), Some(4));
+}

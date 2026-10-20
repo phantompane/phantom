@@ -77,7 +77,7 @@ fn sync(args: &[String]) -> Result<i32> {
     };
     let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_with(&error, 1, json),
+        Err(error) => return fail_project(&error, args, &parsed, json),
     };
     let request = crate::sync::Request {
         names: parsed.positionals.clone(),
