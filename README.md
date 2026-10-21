@@ -37,7 +37,7 @@ Pass installer options with `sh -s -- [options]`; flags override environment var
 | `--install-dir <DIR>` | `MABO_INSTALL_DIR` | Install directory (default `~/.local/bin`) |
 | `--verify-attestation` | `MABO_VERIFY_ATTESTATION=1` | Also verify GitHub artifact provenance; requires `gh` and aborts if verification fails |
 
-`GITHUB_TOKEN` is optional, only for GitHub API rate limits on unpinned installs; it is not sent to asset downloads. The installer never prompts, uses no sudo, and does not edit shell profiles; it prints a PATH hint if needed. It always verifies SHA-256 and replaces the binary atomically. It refuses to replace a symlinked `mabo` managed by another tool; update with that tool or choose another install directory.
+`GITHUB_TOKEN` is optional, only for GitHub API rate limits on unpinned installs; it is not sent to asset downloads. The installer needs `curl` (or GNU Wget) and `tar`; on Alpine, where BusyBox `wget` is not enough, run `apk add curl` first. It never prompts, uses no sudo, and does not edit shell profiles; it prints a PATH hint if needed. It always verifies SHA-256 and replaces the binary atomically. It refuses to replace a symlinked `mabo` managed by another tool; update with that tool or choose another install directory.
 
 Release binaries support Linux x64/arm64 (static musl builds for any distribution, including Alpine) and macOS x64/arm64. Windows is not supported; use WSL with the Linux binaries.
 
@@ -59,10 +59,10 @@ For a manual install, download `maboroshi-v<VERSION>-<os>-<arch>.tar.gz` from Re
 
 ```sh
 gh attestation verify maboroshi-v<VERSION>-linux-x64.tar.gz --repo phantompane/phantom
-sha256sum -c SHA256SUMS --ignore-missing
+grep " maboroshi-v<VERSION>-linux-x64.tar.gz$" SHA256SUMS | sha256sum -c -
 ```
 
-`SHA256SUMS` covers all four archives and `install.sh`; `--ignore-missing` checks only files you downloaded. On macOS, use `shasum -a 256` to compare the archive's hash with its entry in `SHA256SUMS`. Older releases have no `SHA256SUMS` or artifact attestations.
+`SHA256SUMS` covers all four archives and `install.sh`; the `grep` selects the line for the archive you downloaded, which works with GNU and BusyBox `sha256sum`. On macOS, use `shasum -a 256 -c -` instead of `sha256sum -c -`. v7.0.0-alpha.7 and older releases have no `SHA256SUMS` or artifact attestations.
 
 npm `@phantompane/cli` and Homebrew `phantom` remain the previous TypeScript `phantom` v6, not v7.
 

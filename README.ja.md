@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/next/install.sh
 | `--install-dir <DIR>` | `MABO_INSTALL_DIR` | インストール先（既定は `~/.local/bin`） |
 | `--verify-attestation` | `MABO_VERIFY_ATTESTATION=1` | GitHub の成果物の来歴も検証。`gh` が必要で、検証失敗時は中止 |
 
-`GITHUB_TOKEN` は任意で、バージョン未固定時の GitHub API のレート制限対策にだけ使い、アセットのダウンロードには送信しません。インストーラーは入力を求めず、sudo を使わず、シェルの起動ファイルを編集しません。必要なら PATH 設定のヒントを表示します。必ず SHA-256 を検証し、バイナリをアトミックに置き換えます。別のツールが管理するシンボリックリンクの `mabo` は置き換えを拒否するため、そのツールで更新するか、別のインストール先を指定してください。
+`GITHUB_TOKEN` は任意で、バージョン未固定時の GitHub API のレート制限対策にだけ使い、アセットのダウンロードには送信しません。インストーラーには `curl`（または GNU Wget）と `tar` が必要です。BusyBox の `wget` では足りないため、Alpine では先に `apk add curl` を実行してください。インストーラーは入力を求めず、sudo を使わず、シェルの起動ファイルを編集しません。必要なら PATH 設定のヒントを表示します。必ず SHA-256 を検証し、バイナリをアトミックに置き換えます。別のツールが管理するシンボリックリンクの `mabo` は置き換えを拒否するため、そのツールで更新するか、別のインストール先を指定してください。
 
 配布バイナリは Linux x64/arm64（static musl ビルドで Alpine を含む各ディストリビューションに対応）と macOS x64/arm64 に対応します。Windows は未対応です。WSL では Linux バイナリを使ってください。
 
@@ -59,10 +59,10 @@ cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked 
 
 ```sh
 gh attestation verify maboroshi-v<VERSION>-linux-x64.tar.gz --repo phantompane/phantom
-sha256sum -c SHA256SUMS --ignore-missing
+grep " maboroshi-v<VERSION>-linux-x64.tar.gz$" SHA256SUMS | sha256sum -c -
 ```
 
-`SHA256SUMS` は4つのアーカイブと `install.sh` を対象とし、`--ignore-missing` はダウンロード済みのファイルだけを確認します。macOS では `shasum -a 256` でアーカイブのハッシュを求め、`SHA256SUMS` の該当行と比較してください。それ以前のリリースには `SHA256SUMS` と成果物のアテステーションはありません。
+`SHA256SUMS` は4つのアーカイブと `install.sh` を対象とします。`grep` でダウンロードしたアーカイブの行だけを取り出すので、GNU と BusyBox のどちらの `sha256sum` でも使えます。macOS では `sha256sum -c -` の代わりに `shasum -a 256 -c -` を使ってください。v7.0.0-alpha.7 以前のリリースには `SHA256SUMS` と成果物のアテステーションはありません。
 
 npm の `@phantompane/cli` と Homebrew の `phantom` は、従来の TypeScript 版 `phantom` v6 のままで、v7 ではありません。
 
