@@ -784,6 +784,13 @@ fn remove(args: &[String]) -> Result<i32> {
     let mut first_error = None;
     let mut retry_cleanup = Vec::new();
     let mut retry_metadata = std::collections::HashSet::new();
+    if remove_uses_source_hooks(&context, &parsed) {
+        // Keep the hook configuration available until every other target is
+        // done, including across retries. Item reporting retains input order.
+        plans.sort_by_key(|(_, plan)| {
+            crate::paths::same_location(Path::new(&plan.worktree.path), &context.source_checkout)
+        });
+    }
     for (index, plan) in plans {
         match worktree::commit_remove(
             &context,
@@ -888,6 +895,12 @@ fn remove(args: &[String]) -> Result<i32> {
     Ok(SUCCESS)
 }
 
+fn remove_uses_source_hooks(context: &crate::context::Context, parsed: &Parsed) -> bool {
+    !parsed.flag("no-hooks")
+        && context.source_checkout != context.git_root
+        && !crate::config::pre_remove_commands(context.config.as_ref()).is_empty()
+}
+
 fn remove_retry_command(
     context: &crate::context::Context,
     parsed: &Parsed,
@@ -895,7 +908,7 @@ fn remove_retry_command(
     targets: &[String],
 ) -> String {
     let mut command =
-        if parsed.value("repo").is_none() && context.source_checkout != context.git_root {
+        if remove_uses_source_hooks(context, parsed) && context.source_checkout.is_dir() {
             format!(
                 "cd {} && mabo remove",
                 crate::allocation::shell_quote(&context.source_checkout)

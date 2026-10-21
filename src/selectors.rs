@@ -66,12 +66,22 @@ impl Selector {
                 .filter(|tree| tree.name == *name)
                 .collect(),
             Self::Path(path) => {
-                let path = std::env::current_dir()
-                    .map_err(|error| Error::msg(error.to_string()))?
-                    .join(path);
+                let path = absolute_path(path)?;
                 candidates
                     .into_iter()
                     .filter(|tree| paths::same_location(Path::new(&tree.path), &path))
+                    .collect()
+            }
+            Self::Special(input) if input == "." => {
+                // A stale gitfile cannot tell Git which checkout contains cwd.
+                // The explicitly selected repository's records still can.
+                let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
+                candidates
+                    .into_iter()
+                    .filter(|tree| {
+                        let path = Path::new(&tree.path);
+                        paths::same_location(path, &cwd) || paths::is_strictly_inside(&cwd, path)
+                    })
                     .collect()
             }
             Self::Special(input) => matches(context, &candidates, input)?,
@@ -106,9 +116,7 @@ impl Selector {
         let input = self.as_str();
         let listed = crate::worktree::list_worktrees(context, false, true)?;
         let mut found = if let Self::Path(path) = self {
-            let path = std::env::current_dir()
-                .map_err(|error| Error::msg(error.to_string()))?
-                .join(path);
+            let path = absolute_path(path)?;
             listed
                 .into_iter()
                 .filter(|tree| paths::same_location(Path::new(&tree.path), &path))
@@ -133,6 +141,18 @@ impl Selector {
                 ),
             }),
         }
+    }
+}
+
+// Absolute selectors remain usable after an earlier removal deletes cwd.
+fn absolute_path(path: &str) -> Result<std::path::PathBuf> {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()
+            .map_err(|error| Error::msg(error.to_string()))?
+            .join(path))
     }
 }
 
