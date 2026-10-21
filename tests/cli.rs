@@ -6680,6 +6680,100 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 #[test]
+fn blocked_project_import_exits_failure_and_preserves_legacy_for_retry() {
+    for json in [false, true] {
+        let repo = Repo::new();
+        let state = repo.root.join("state/maboroshi");
+        fs::create_dir_all(&state).unwrap();
+        let legacy = state.join("projects.json");
+        let fixture = include_str!("fixtures/alpha6/projects.json");
+        fs::write(&legacy, fixture).unwrap();
+        let target = state.join("repos");
+        fs::write(&target, "blocker").unwrap();
+        let mut args = vec!["project", "add"];
+        if json {
+            args.push("--json");
+        }
+        let failed = repo.mabo(&args);
+        assert_eq!(failed.status.code(), Some(1), "{}", text(&failed.stdout));
+        if json {
+            assert_eq!(json_value(&failed)["ok"], false);
+            assert!(failed.stderr.is_empty());
+        } else {
+            assert!(!failed.stderr.is_empty());
+        }
+        assert_eq!(fs::read_to_string(&legacy).unwrap(), fixture);
+        assert!(!legacy.with_extension("json.imported").exists());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "blocker");
+        fs::remove_file(&target).unwrap();
+        let retried = repo.mabo(&args);
+        assert!(retried.status.success(), "{}", text(&retried.stderr));
+        let store = maboroshi::projects::ProjectRegistryStore::new(state);
+        let records = store.list().unwrap();
+        assert_eq!(records.len(), 3);
+        let original: serde_json::Value = serde_json::from_str(fixture).unwrap();
+        for project in original["projects"].as_array().unwrap() {
+            assert!(records
+                .iter()
+                .any(|record| serde_json::to_value(record).unwrap() == *project));
+        }
+        assert!(!legacy.exists());
+        assert_eq!(
+            fs::read_to_string(legacy.with_extension("json.imported")).unwrap(),
+            fixture
+        );
+    }
+}
+
+#[test]
+fn blocked_workspace_import_exits_failure_and_preserves_legacy_for_retry() {
+    for json in [false, true] {
+        let repo = Repo::new();
+        let legacy = repo.repo.join(".git/maboroshi/worktrees.json");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        let fixture = include_str!("fixtures/alpha6/worktrees.json");
+        fs::write(&legacy, fixture).unwrap();
+        let before = maboroshi::metadata::load_strict(&repo.repo).unwrap();
+        let target = legacy.parent().unwrap().join("workspaces");
+        fs::write(&target, "blocker").unwrap();
+        let mut args = vec!["meta", "set", "main", "--owner", "new-owner"];
+        if json {
+            args.push("--json");
+        }
+        let failed = repo.mabo(&args);
+        assert_eq!(failed.status.code(), Some(1), "{}", text(&failed.stdout));
+        if json {
+            assert_eq!(json_value(&failed)["ok"], false);
+            assert!(failed.stderr.is_empty());
+        } else {
+            assert!(!failed.stderr.is_empty());
+        }
+        assert_eq!(fs::read_to_string(&legacy).unwrap(), fixture);
+        assert!(!legacy.with_extension("json.imported").exists());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "blocker");
+        fs::remove_file(&target).unwrap();
+        assert_eq!(
+            maboroshi::metadata::load_strict(&repo.repo).unwrap(),
+            before
+        );
+        let retried = repo.mabo(&args);
+        assert!(retried.status.success(), "{}", text(&retried.stderr));
+        let after = maboroshi::metadata::load_strict(&repo.repo).unwrap();
+        assert_eq!(after.len(), before.len() + 1);
+        for (path, old) in before {
+            let mut imported = after[&path].clone();
+            imported.id = None;
+            assert_eq!(imported, old);
+        }
+        assert!(!legacy.exists());
+        assert_eq!(
+            fs::read_to_string(legacy.with_extension("json.imported")).unwrap(),
+            fixture
+        );
+    }
+}
+
+#[test]
 fn duplicate_legacy_metadata_paths_block_mutations() {
     let repo = Repo::new();
     let created = repo.mabo(&["create", "kept", "--owner", "creator"]);

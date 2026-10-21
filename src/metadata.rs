@@ -510,9 +510,25 @@ fn deduplicate(store: &mut Store) {
 }
 
 fn read_all_records(git_root: &Path, strict: bool) -> Result<(Store, Vec<String>)> {
+    read_all_records_with(git_root, strict, || {})
+}
+
+fn read_all_records_with(
+    git_root: &Path,
+    strict: bool,
+    before_legacy: impl FnOnce(),
+) -> Result<(Store, Vec<String>)> {
     let dir = records_dir(git_root)?;
     if !dir.exists() {
-        return Ok((validated_store(&metadata_file(git_root)?)?, Vec::new()));
+        before_legacy();
+        if let Some(store) = validated_store(&metadata_file(git_root)?)? {
+            return Ok((store, Vec::new()));
+        }
+        // An importer may have published the directory and archived the old
+        // file since our first check. Only report an empty store after retrying.
+        if !dir.exists() {
+            return Ok((empty_store(), Vec::new()));
+        }
     }
     let mut store = empty_store();
     let mut problems = Vec::new();
@@ -576,7 +592,7 @@ fn ensure_records(git_root: &Path) -> Result<()> {
     let legacy = metadata_file(git_root)?;
     if legacy.exists() {
         crate::atomic::import_directory(&dir, &legacy, |staging| {
-            let mut store = validated_store(&legacy)?;
+            let mut store = validated_store(&legacy)?.unwrap_or_else(empty_store);
             for record in &mut store.worktrees {
                 record.schema = Some(2);
                 record.metadata.id = Some(format!("ws_{}", uuid::Uuid::new_v4()));
@@ -639,8 +655,10 @@ fn with_store<T>(git_root: &Path, body: impl FnOnce(&mut Store) -> Result<(T, bo
     Ok(value)
 }
 
-fn validated_store(path: &Path) -> Result<Store> {
-    let store = read_store(path)?;
+fn validated_store(path: &Path) -> Result<Option<Store>> {
+    let Some(store) = read_store(path)? else {
+        return Ok(None);
+    };
     let mut seen = std::collections::BTreeSet::new();
     for record in &store.worktrees {
         let key = path_key(Path::new(&record.path));
@@ -657,14 +675,14 @@ fn validated_store(path: &Path) -> Result<Store> {
             )));
         }
     }
-    Ok(store)
+    Ok(Some(store))
 }
 
-fn read_store(path: &Path) -> Result<Store> {
+fn read_store(path: &Path) -> Result<Option<Store>> {
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(empty_store());
+            return Ok(None);
         }
         Err(error) => {
             return Err(Error::msg(format!(
@@ -695,7 +713,7 @@ fn read_store(path: &Path) -> Result<Store> {
             path.display()
         )));
     }
-    serde_json::from_value(value).map_err(|error| {
+    serde_json::from_value(value).map(Some).map_err(|error| {
         Error::msg(format!(
             "Worktree metadata file {} has an invalid shape: {error}",
             path.display()
@@ -975,6 +993,73 @@ mod tests {
                 .and_then(|item| item.owner.as_deref()),
             Some("two")
         );
+    }
+
+    #[test]
+    fn reader_rechecks_records_after_a_concurrent_legacy_import() {
+        for strict in [false, true] {
+            let root = root();
+            let legacy = metadata_file(&root).unwrap();
+            fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+            let fixture = include_str!("../tests/fixtures/alpha6/worktrees.json");
+            fs::write(&legacy, fixture).unwrap();
+            let before = load(&root).unwrap();
+            let (store, problems) = read_all_records_with(&root, strict, || {
+                // Finish another thread's import after the reader sees no new
+                // directory, but before it attempts to open the legacy file.
+                assert!(!records_dir(&root).unwrap().exists());
+                thread::scope(|scope| {
+                    scope
+                        .spawn(|| ensure_records(&root).unwrap())
+                        .join()
+                        .unwrap();
+                });
+                assert!(!legacy.exists());
+                assert!(legacy.with_extension("json.imported").is_file());
+            })
+            .unwrap();
+            assert!(problems.is_empty());
+            assert_eq!(store.worktrees.len(), before.len());
+            for record in store.worktrees {
+                assert!(record.metadata.id.is_some());
+                let mut imported = record.metadata;
+                imported.id = None;
+                assert_eq!(imported, before[&record.path]);
+            }
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn blocked_import_destination_keeps_all_metadata_for_retry() {
+        let root = root();
+        let legacy = metadata_file(&root).unwrap();
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        let fixture = include_str!("../tests/fixtures/alpha6/worktrees.json");
+        fs::write(&legacy, fixture).unwrap();
+        let before = load(&root).unwrap();
+        let target = records_dir(&root).unwrap();
+        fs::write(&target, "blocker").unwrap();
+        assert!(write(&root, &root.join("new"), &MetadataInput::default()).is_err());
+        assert_eq!(fs::read_to_string(&legacy).unwrap(), fixture);
+        assert!(!legacy.with_extension("json.imported").exists());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "blocker");
+        fs::remove_file(&target).unwrap();
+        assert_eq!(load(&root).unwrap(), before);
+        write(&root, &root.join("new"), &MetadataInput::default()).unwrap();
+        let after = load_strict(&root).unwrap();
+        assert_eq!(after.len(), before.len() + 1);
+        for (path, old) in before {
+            let mut imported = after[&path].clone();
+            imported.id = None;
+            assert_eq!(imported, old);
+        }
+        assert!(!legacy.exists());
+        assert_eq!(
+            fs::read_to_string(legacy.with_extension("json.imported")).unwrap(),
+            fixture
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

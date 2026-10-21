@@ -58,6 +58,14 @@ pub(crate) fn import_directory(
         let _ = fs::remove_dir_all(&staging);
         result?;
     }
+    // Existence alone does not prove a complete import is available: a file or
+    // another invalid destination must never cause the legacy source to move.
+    fs::read_dir(target).map_err(|error| {
+        Error::msg(format!(
+            "Failed to read imported record directory {}: {error}",
+            target.display()
+        ))
+    })?;
     match fs::rename(legacy, legacy.with_extension("json.imported")) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -94,6 +102,44 @@ mod tests {
         })
         .unwrap();
         assert_eq!(fs::read(target.join("first.json")).unwrap(), b"first");
+        assert_eq!(
+            fs::read_to_string(legacy.with_extension("json.imported")).unwrap(),
+            "original"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn blocked_import_destination_keeps_legacy_for_retry() {
+        let dir =
+            std::env::temp_dir().join(format!("mabo-import-blocked-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let legacy = dir.join("legacy.json");
+        fs::write(&legacy, "original").unwrap();
+        let target = dir.join("records");
+        fs::write(&target, "blocker").unwrap();
+        let result = import_directory(&target, &legacy, |_| {
+            panic!("a blocked destination must not import records");
+        });
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(&legacy).unwrap(), "original");
+        assert!(!legacy.with_extension("json.imported").exists());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "blocker");
+        fs::remove_file(&target).unwrap();
+        import_directory(&target, &legacy, |staging| {
+            for name in ["first", "second"] {
+                write(&staging.join(format!("{name}.json")), name.as_bytes())
+                    .map_err(|error| crate::error::Error::msg(error.to_string()))?;
+                assert!(
+                    legacy.is_file(),
+                    "archive only after all records are written"
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 2);
+        assert!(!legacy.exists());
         assert_eq!(
             fs::read_to_string(legacy.with_extension("json.imported")).unwrap(),
             "original"

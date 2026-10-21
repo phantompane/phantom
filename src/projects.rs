@@ -97,7 +97,7 @@ impl ProjectRegistryStore {
         let legacy = self.data_dir.join(REGISTRY_FILE);
         if legacy.exists() {
             crate::atomic::import_directory(&dir, &legacy, |staging| {
-                for project in self.load_legacy()?.projects {
+                for project in self.load_legacy()?.unwrap_or_else(empty_registry).projects {
                     save_project(staging, &project)?;
                 }
                 Ok(())
@@ -139,8 +139,20 @@ impl ProjectRegistryStore {
     }
 
     fn load(&self) -> Result<RegistryState> {
+        self.load_with(|| {})
+    }
+
+    fn load_with(&self, before_legacy: impl FnOnce()) -> Result<RegistryState> {
         if !self.data_dir.join("repos").exists() {
-            return self.load_legacy();
+            before_legacy();
+            if let Some(state) = self.load_legacy()? {
+                return Ok(state);
+            }
+            // A concurrent importer publishes repos before archiving the
+            // legacy file. Recheck it before treating NotFound as empty.
+            if !self.data_dir.join("repos").exists() {
+                return Ok(empty_registry());
+            }
         }
         let mut records = self.read_individual()?;
         records.sort_by(|a, b| (&a.created_at, &a.id).cmp(&(&b.created_at, &b.id)));
@@ -152,12 +164,12 @@ impl ProjectRegistryStore {
         })
     }
 
-    fn load_legacy(&self) -> Result<RegistryState> {
+    fn load_legacy(&self) -> Result<Option<RegistryState>> {
         let path = self.data_dir.join(REGISTRY_FILE);
         let content = match fs::read_to_string(&path) {
             Ok(content) => content,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(empty_registry());
+                return Ok(None);
             }
             Err(error) => return Err(Error::Projects(error.to_string())),
         };
@@ -182,7 +194,7 @@ impl ProjectRegistryStore {
             Error::Projects(format!("Projects registry has an invalid shape: {error}"))
         })?;
         validate_state(&state)?;
-        Ok(state)
+        Ok(Some(state))
     }
 }
 
@@ -886,6 +898,35 @@ mod tests {
         assert_eq!(listed.len(), 8);
         assert_eq!(fs::read_dir(dir.join("state/repos")).unwrap().count(), 8);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reader_rechecks_records_after_a_concurrent_legacy_import() {
+        let dir =
+            std::env::temp_dir().join(format!("mabo-project-read-import-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(REGISTRY_FILE),
+            include_str!("../tests/fixtures/alpha6/projects.json"),
+        )
+        .unwrap();
+        let store = ProjectRegistryStore::new(dir.clone());
+        let before = store.list().unwrap();
+        let read = store
+            .load_with(|| {
+                assert!(!dir.join("repos").exists());
+                std::thread::scope(|scope| {
+                    scope
+                        .spawn(|| store.ensure_records().unwrap())
+                        .join()
+                        .unwrap();
+                });
+                assert!(!dir.join(REGISTRY_FILE).exists());
+                assert!(dir.join("projects.json.imported").is_file());
+            })
+            .unwrap();
+        assert_eq!(read.projects, before);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
