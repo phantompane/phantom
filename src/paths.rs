@@ -54,11 +54,11 @@ pub fn relative(from: &Path, to: &Path) -> String {
     }
 }
 
-/// Where new worktrees for one repository are created.
+/// Where new workspaces for one repository are created.
 ///
 /// `project_common_dir` is set only for the default XDG layout. It is the
 /// canonical git common dir used to claim the directory with a marker.
-/// The directory and marker stay in place after the last worktree is deleted.
+/// The directory and marker stay in place after the last workspace is deleted.
 /// A `worktrees-directory` preference leaves it unset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreesLocation {
@@ -78,8 +78,8 @@ pub fn configured_worktrees_directory(git_root: &Path, configured: &str) -> Work
     }
 }
 
-/// `$XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash>`, or
-/// `~/.local/share/maboroshi/worktrees/...` when the caller already applied the fallback.
+/// `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash>`, or
+/// `~/.local/share/maboroshi/workspaces/...` when the caller already applied the fallback.
 pub fn default_worktrees_directory(
     git_root: &Path,
     common_dir_key: &Path,
@@ -87,7 +87,7 @@ pub fn default_worktrees_directory(
 ) -> WorktreesLocation {
     let name = project_directory_name(&checkout_component(git_root), common_dir_key);
     WorktreesLocation {
-        path: normalize(&data_home.join("maboroshi").join("worktrees").join(name)),
+        path: normalize(&data_home.join("maboroshi").join("workspaces").join(name)),
         project_common_dir: Some(common_dir_key.to_path_buf()),
     }
 }
@@ -100,7 +100,7 @@ pub fn project_directory_name(checkout_name: &str, common_dir_key: &Path) -> Str
     )
 }
 
-/// True when `name` is the `<checkout>-<hash>` directory under `maboroshi/worktrees`.
+/// True when `name` has the `<checkout>-<hash>` shape in either workspace layout.
 pub fn is_project_directory(name: &std::ffi::OsStr, common_dir: &Path) -> bool {
     let Some(name) = name.to_str() else {
         return false;
@@ -164,10 +164,10 @@ pub fn with_worktrees_directory<T>(
         Some(common_dir) => {
             let parent = directory
                 .parent()
-                .ok_or_else(|| Error::msg("Worktree directory has no parent"))?;
+                .ok_or_else(|| Error::msg("Workspace directory has no parent"))?;
             fs::create_dir_all(parent).map_err(|error| {
                 Error::msg(format!(
-                    "Failed to create worktree directory {}: {error}",
+                    "Failed to create workspace directory {}: {error}",
                     parent.display()
                 ))
             })?;
@@ -177,7 +177,7 @@ pub fn with_worktrees_directory<T>(
         None => {
             fs::create_dir_all(directory).map_err(|error| {
                 Error::msg(format!(
-                    "Failed to create worktree directory {}: {error}",
+                    "Failed to create workspace directory {}: {error}",
                     directory.display()
                 ))
             })?;
@@ -249,13 +249,13 @@ fn reconcile_project_directory(directory: &Path, common_dir: &Path) -> Result<()
     if let Ok(metadata) = fs::symlink_metadata(directory) {
         if metadata.file_type().is_symlink() {
             return Err(Error::msg(format!(
-                "Worktree directory {} is a symlink. Refusing to reuse it.",
+                "Workspace directory {} is a symlink. Refusing to reuse it.",
                 directory.display()
             )));
         }
         if !metadata.is_dir() {
             return Err(Error::msg(format!(
-                "Worktree directory {} is not a directory",
+                "Workspace directory {} is not a directory",
                 directory.display()
             )));
         }
@@ -270,7 +270,7 @@ fn reconcile_project_directory(directory: &Path, common_dir: &Path) -> Result<()
             })
             .map_err(|error| {
                 Error::msg(format!(
-                    "Failed to create worktree directory {}: {error}",
+                    "Failed to create workspace directory {}: {error}",
                     directory.display()
                 ))
             })?;
@@ -278,7 +278,7 @@ fn reconcile_project_directory(directory: &Path, common_dir: &Path) -> Result<()
     match read_marker(directory)? {
         Some(existing) if marker_matches(&existing, common_dir) => Ok(()),
         Some(existing) => Err(Error::msg(format!(
-            "Worktree directory {} belongs to {existing}, not {}. Refusing to reuse another repository's worktree directory.",
+            "Workspace directory {} belongs to {existing}, not {}. Refusing to reuse another repository's workspace directory.",
             directory.display(),
             common_dir_identity(common_dir)
         ))),
@@ -291,13 +291,13 @@ fn reconcile_project_directory(directory: &Path, common_dir: &Path) -> Result<()
                     return Ok(());
                 }
                 return Err(Error::msg(format!(
-                    "Worktree directory {} exists without a repository marker and is not empty. Refusing to reuse it.",
+                    "Workspace directory {} exists without a repository marker and is not empty. Refusing to reuse it.",
                     directory.display()
                 )));
             }
             let Some(parent) = directory.parent() else {
                 return Err(Error::msg(format!(
-                    "Worktree directory {} has no parent",
+                    "Workspace directory {} has no parent",
                     directory.display()
                 )));
             };
@@ -312,7 +312,7 @@ fn read_marker(directory: &Path) -> Result<Option<String>> {
         Ok(content) => Ok(Some(content.trim_end_matches(['\n', '\r']).to_string())),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => Err(Error::msg(format!(
-            "Failed to read worktree directory marker {}: {error}",
+            "Failed to read workspace directory marker {}: {error}",
             path.display()
         ))),
     }
@@ -359,7 +359,7 @@ fn write_marker_file(temp: &Path, target: &Path, directory: &Path, identity: &st
 
 fn marker_error(directory: &Path, error: &std::io::Error) -> Error {
     Error::msg(format!(
-        "Failed to record repository for worktree directory {}: {error}",
+        "Failed to record repository for workspace directory {}: {error}",
         directory.display()
     ))
 }
@@ -367,7 +367,7 @@ fn marker_error(directory: &Path, error: &std::io::Error) -> Error {
 fn directory_entries(directory: &Path) -> Result<Vec<std::ffi::OsString>> {
     let entries = fs::read_dir(directory).map_err(|error| {
         Error::msg(format!(
-            "Failed to read worktree directory {}: {error}",
+            "Failed to read workspace directory {}: {error}",
             directory.display()
         ))
     })?;
@@ -375,7 +375,7 @@ fn directory_entries(directory: &Path) -> Result<Vec<std::ffi::OsString>> {
     for entry in entries {
         let entry = entry.map_err(|error| {
             Error::msg(format!(
-                "Failed to read worktree directory {}: {error}",
+                "Failed to read workspace directory {}: {error}",
                 directory.display()
             ))
         })?;
@@ -483,13 +483,13 @@ mod tests {
         let location = default_worktrees_directory(root, git_dir, data);
         assert_eq!(
             location.path,
-            PathBuf::from("/home/u/.local/share/maboroshi/worktrees/repo-6b4ca2db")
+            PathBuf::from("/home/u/.local/share/maboroshi/workspaces/repo-6b4ca2db")
         );
         assert_eq!(location.project_common_dir.as_deref(), Some(git_dir));
         let separate_location = default_worktrees_directory(root, separate, data);
         assert_eq!(
             separate_location.path,
-            PathBuf::from("/home/u/.local/share/maboroshi/worktrees/repo-0d78ac9a")
+            PathBuf::from("/home/u/.local/share/maboroshi/workspaces/repo-0d78ac9a")
         );
         assert_ne!(location.path, separate_location.path);
         assert_eq!(
@@ -538,7 +538,7 @@ mod tests {
         assert_eq!(from_real.path, from_indirect.path);
         assert_eq!(
             from_real.path,
-            PathBuf::from("/home/u/.local/share/maboroshi/worktrees/real-name-0d78ac9a")
+            PathBuf::from("/home/u/.local/share/maboroshi/workspaces/real-name-0d78ac9a")
         );
         let _ = fs::remove_dir_all(&root);
     }

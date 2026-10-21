@@ -45,7 +45,7 @@ pub fn generate_unique_name(
         return Ok(name);
     }
     Err(Error::msg(
-        "Failed to generate a unique worktree name after maximum retries",
+        "Failed to generate a unique workspace name after maximum retries",
     ))
 }
 

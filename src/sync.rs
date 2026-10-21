@@ -46,6 +46,7 @@ impl Item {
 #[derive(Serialize)]
 pub struct Report {
     pub default: Option<Item>,
+    #[serde(rename = "workspaces")]
     pub worktrees: Vec<Item>,
     #[serde(skip)]
     pub exit: i32,
@@ -502,7 +503,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             worktree::validate_worktree_name(name)?;
             let tree = worktree::find_worktree(context, name, false, None)?;
             if paths::same_location(Path::new(&tree.path), &context.git_root) {
-                return Err(Error::validation("Sync targets must be linked worktrees"));
+                return Err(Error::validation("Sync targets must be linked workspaces"));
             }
             if !targets
                 .iter()
@@ -518,7 +519,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
     }
     if request.keep_conflicts && targets.len() != 1 {
         return Err(Error::validation(
-            "--keep-conflicts requires exactly one worktree target",
+            "--keep-conflicts requires exactly one workspace target",
         ));
     }
     // Resolve the default identity independently of a worktree's recorded base.
@@ -856,7 +857,7 @@ fn sync_default(context: &Context, base: &str, remotes: &[FetchRefspec]) -> Resu
     }
     if let Some(tree) = &checked {
         if !Path::new(&tree.path).is_dir() {
-            item.status("dirty", Some("Worktree directory is missing".into()));
+            item.status("dirty", Some("Workspace directory is missing".into()));
             return Ok(item);
         }
         if let Some(operation) = active_operation(Path::new(&tree.path))? {
@@ -946,7 +947,7 @@ fn sync_tree(
     if !path.is_dir() || tree.orphaned {
         item.status(
             "dirty",
-            Some("Worktree directory is missing or registration is orphaned".into()),
+            Some("Workspace directory is missing or registration is orphaned".into()),
         );
         return Ok(item);
     }
@@ -1014,7 +1015,7 @@ fn sync_tree(
     {
         item.status(
             "merged",
-            Some("Use mabo gc to remove landed worktrees".into()),
+            Some("Use mabo gc to remove landed workspaces".into()),
         );
         return Ok(item);
     }
@@ -1184,7 +1185,7 @@ fn sync_tree(
             item.after = commit(path, "HEAD")?;
             item.status(
                 "failed",
-                Some(format!("{strategy} incomplete; worktree restored")),
+                Some(format!("{strategy} incomplete; workspace restored")),
             );
             return Ok(item);
         }
@@ -1200,7 +1201,7 @@ fn sync_tree(
             } else if request.keep_conflicts {
                 format!("{strategy} left in progress")
             } else {
-                format!("{strategy} aborted; worktree unchanged")
+                format!("{strategy} aborted; workspace unchanged")
             }),
         );
         return Ok(item);
@@ -1220,7 +1221,7 @@ fn sync_tree(
                 };
                 item.after = commit(path, "HEAD")?;
                 let detail = match rollback {
-                    Ok(()) => format!("metadata update failed: {error}; worktree restored"),
+                    Ok(()) => format!("metadata update failed: {error}; workspace restored"),
                     Err(rollback) => {
                         format!("metadata update failed: {error}; rollback failed: {rollback}")
                     }

@@ -287,13 +287,13 @@ mod tests {
         assert!(list.contains("--no-default"));
         assert!(list.contains("--json"));
         assert!(list.contains("-p, --project <value>"));
-        assert!(!list.contains("Put this before the worktree name"));
+        assert!(!list.contains("Put this before the workspace name"));
         let exec = command_help("exec").expect("help").expect("exec");
         assert!(exec.contains("--project <value>"));
-        assert!(exec.contains("Put this before the worktree name"));
+        assert!(exec.contains("Put this before the workspace name"));
         assert!(exec.contains("pwd --project y"));
         let where_help = command_help("where").expect("help").expect("where");
-        assert!(!where_help.contains("Put this before the worktree name"));
+        assert!(!where_help.contains("Put this before the workspace name"));
         assert!(where_help.contains("may appear with the other options"));
         let checkout = command_help("github checkout")
             .expect("help")
@@ -333,27 +333,27 @@ mod tests {
     }
 
     #[test]
-    fn help_names_worktrees_and_mabo_env() {
+    fn help_names_workspaces_and_mabo_env() {
         let main = main_help().expect("main help");
-        assert!(main.contains("Create a new Git worktree"));
-        assert!(main.contains("List all Git worktrees"));
-        assert!(main.contains("Delete a Git worktree"));
-        assert!(main.contains("GitHub-specific commands for worktrees"));
-        assert!(!main.contains("(phantom)"));
-        assert!(!main.contains("(phantoms)"));
+        assert!(main.contains("Create a new workspace"));
+        assert!(main.contains("List all workspaces"));
+        assert!(main.contains("Delete a workspace"));
+        assert!(main.contains("GitHub-specific commands for workspaces"));
         for key in ["create", "attach", "delete", "exec"] {
             let help = command_help(key).expect("render").expect(key);
-            assert!(help.contains("MABO_NAME"), "{key}:\n{help}");
-            assert!(help.contains("MABO_PATH"), "{key}:\n{help}");
-            assert!(!help.contains("PHANTOM"), "{key}:\n{help}");
-            assert!(!help.contains("PTM"), "{key}:\n{help}");
+            for variable in [
+                "MABO=1",
+                "MABO_WORKSPACE",
+                "MABO_WORKSPACE_ID",
+                "MABO_WORKSPACE_PATH",
+                "MABO_REPO_PATH",
+            ] {
+                assert!(help.contains(variable), "{key}: {variable}: {help}");
+            }
+            for old in ["MABO_NAME", "MABO_PATH", "MABO_ROOT_PATH", "PHANTOM", "PTM"] {
+                assert!(!help.contains(old), "{key}: {old}: {help}");
+            }
         }
-        for key in ["create", "attach", "delete"] {
-            let help = command_help(key).expect("render").expect(key);
-            assert!(help.contains("MABO_ROOT_PATH"), "{key}:\n{help}");
-        }
-        let exec = command_help("exec").expect("render").expect("exec");
-        assert!(!exec.contains("MABO_ROOT_PATH"), "{exec}");
     }
 
     fn mentions_phantom_command(help: &str) -> bool {

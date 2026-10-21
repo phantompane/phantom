@@ -82,7 +82,7 @@ impl Logger {
 pub fn validate_worktree_name(name: &str) -> Result<()> {
     if name.trim().is_empty() {
         return Err(Error::Validation(
-            "Worktree name cannot be empty".to_string(),
+            "Workspace name cannot be empty".to_string(),
         ));
     }
     if !name
@@ -90,13 +90,13 @@ pub fn validate_worktree_name(name: &str) -> Result<()> {
         .all(|char| char.is_ascii_alphanumeric() || matches!(char, '-' | '_' | '.' | '/'))
     {
         return Err(Error::Validation(
-            "Worktree name can only contain letters, numbers, hyphens, underscores, dots, and slashes"
+            "Workspace name can only contain letters, numbers, hyphens, underscores, dots, and slashes"
                 .to_string(),
         ));
     }
     if name.contains("..") {
         return Err(Error::Validation(
-            "Worktree name cannot contain consecutive dots".to_string(),
+            "Workspace name cannot contain consecutive dots".to_string(),
         ));
     }
     Ok(())
@@ -113,7 +113,7 @@ pub fn list_worktrees(
     let common_dir = git::git_common_dir(&context.git_root)?;
     let canonical_common = git::canonical_common_dir(&context.git_root)?;
     let listed = git::list_worktrees(&context.git_root)
-        .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
+        .map_err(|error| Error::msg(format!("Failed to list workspaces: {error}")))?;
     for mut worktree in listed.iter().cloned() {
         worktree.path = main_checkout_path(&worktree.path, &context.git_root, &common_dir);
         if !include_prunable && worktree.prunable {
@@ -266,17 +266,17 @@ pub(crate) fn outside_record_name(
     }
     if preferred != basename && name_taken(basename) {
         return Err(Error::msg(format!(
-            "Worktree name '{preferred}' is already used, and the directory name '{basename}' is also already used. Refusing to record this outside worktree."
+            "Workspace name '{preferred}' is already used, and the directory name '{basename}' is also already used. Refusing to record this outside workspace."
         )));
     }
     Err(Error::msg(format!(
-        "Worktree name '{preferred}' is already used. Refusing to record this outside worktree."
+        "Workspace name '{preferred}' is already used. Refusing to record this outside workspace."
     )))
 }
 
-/// Name recorded under `maboroshi/worktrees`.
+/// Name recorded under the current or legacy Maboroshi directory layout.
 ///
-/// The default directory is `maboroshi/worktrees/<checkout>-<hash>/<name>`.
+/// The default directory is `maboroshi/workspaces/<checkout>-<hash>/<name>`.
 /// A configured directory, including `.git/maboroshi/worktrees/<name>`, has no hash segment.
 fn name_from_recorded_path(path: &Path, common_dir: &Path) -> String {
     maboroshi_layout_name(path, common_dir).unwrap_or_else(|| basename_of(path))
@@ -288,9 +288,9 @@ fn maboroshi_layout_name(path: &Path, common_dir: &Path) -> Option<String> {
         .components()
         .map(|component| component.as_os_str().to_os_string())
         .collect::<Vec<_>>();
-    let index = components
-        .windows(2)
-        .rposition(|pair| pair[0] == "maboroshi" && pair[1] == "worktrees")?;
+    let index = components.windows(2).rposition(|pair| {
+        pair[0] == "maboroshi" && (pair[1] == "workspaces" || pair[1] == "worktrees")
+    })?;
     let rest = &components[index + 2..];
     let (project, name) = rest.split_first()?;
     if !name.is_empty() && paths::is_project_directory(project, common_dir) {
@@ -312,7 +312,7 @@ fn basename_of(path: &Path) -> String {
         .unwrap_or_else(|| normalized.display().to_string())
 }
 
-/// Name to save on a first record outside `maboroshi/worktrees`.
+/// Name to save on a first record outside the configured workspace directory.
 ///
 /// `Ok(None)` leaves the name unset. A layout path keeps its folder name.
 /// `Err` refuses the write.
@@ -347,7 +347,7 @@ pub(crate) fn outside_name_to_store(context: &Context, path: &Path) -> Result<Op
     if let Some(layout) = maboroshi_layout_name(path, &common_dir) {
         if taken(&layout) {
             return Err(Error::msg(format!(
-                "Worktree name '{layout}' is already used. Refusing to record this outside worktree."
+                "Workspace name '{layout}' is already used. Refusing to record this outside workspace."
             )));
         }
         return Ok(None);
@@ -401,7 +401,7 @@ fn select_worktree(mut worktrees: Vec<WorktreeInfo>, name: &str) -> Result<Workt
         [] => {}
         _ => {
             return Err(Error::msg(format!(
-                "More than one worktree is named '{name}'."
+                "More than one workspace is named '{name}'."
             )));
         }
     }
@@ -413,7 +413,7 @@ fn select_worktree(mut worktrees: Vec<WorktreeInfo>, name: &str) -> Result<Workt
         [found] => Ok(found.clone()),
         [] => Err(Error::WorktreeNotFound(name.to_string())),
         _ => Err(Error::msg(format!(
-            "Branch '{name}' matches more than one worktree. Use the worktree directory name."
+            "Branch '{name}' matches more than one workspace. Use the workspace directory name."
         ))),
     }
 }
@@ -427,7 +427,7 @@ pub fn worktree_at_path(context: &Context, path: &Path) -> Result<WorktreeInfo> 
         })
         .ok_or_else(|| {
             Error::msg(format!(
-                "Worktree at {} is no longer registered",
+                "Workspace at {} is no longer registered",
                 path.display()
             ))
         })
@@ -442,7 +442,7 @@ pub fn find_worktree(
     let found = find_including_orphaned(context, name, exclude_default, expected_path)?;
     if found.orphaned {
         return Err(Error::msg(format!(
-            "Worktree '{name}' is orphaned: its directory is gone. Use mabo delete to remove the stale record."
+            "Workspace '{name}' is orphaned: its directory is gone. Use mabo delete to remove the stale record."
         )));
     }
     Ok(found)
@@ -539,7 +539,7 @@ pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
         &request.metadata,
     )?;
     request.logger.log(&format!(
-        "Created worktree '{name}' at {}",
+        "Created workspace '{name}' at {}",
         paths::canonical_location(&created.path).display()
     ));
     if let Some(error) = &created.metadata_error {
@@ -558,7 +558,7 @@ pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
             .logger
             .warn("post_create", &failure.warning(&created.path));
     }
-    let exec = run_action(&name, &created.path, action, &request.logger)?;
+    let exec = run_action(&context, &name, &created.path, action, &request.logger)?;
     if exec.is_some() {
         if let Err(error) = touch_after_action(&context, &created.path) {
             request.logger.warn(
@@ -631,7 +631,7 @@ impl HookFailure {
             format!("failed with exit code {}", self.code)
         };
         format!(
-            "Warning: Post-create command {reason}: {}\nThe worktree was created at {}",
+            "Warning: Post-create command {reason}: {}\nThe workspace was created at {}",
             self.command,
             paths::canonical_location(path).display()
         )
@@ -744,7 +744,7 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     )?;
     request
         .logger
-        .log(&format!("Attached worktree: {}", attached.name));
+        .log(&format!("Attached workspace: {}", attached.name));
     if let Some(error) = &attached.metadata_error {
         request
             .logger
@@ -755,7 +755,13 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
             .logger
             .warn("post_create", &failure.warning(&attached.path));
     }
-    let exec = run_action(&attached.name, &attached.path, action, &request.logger)?;
+    let exec = run_action(
+        &context,
+        &attached.name,
+        &attached.path,
+        action,
+        &request.logger,
+    )?;
     if exec.is_some() {
         if let Err(error) = touch_after_action(&context, &attached.path) {
             request.logger.warn(
@@ -837,7 +843,7 @@ pub(crate) fn attach_worktree_inner(
             };
             git::add_worktree(&context.git_root, &path, add).map_err(|error| {
                 let message = error.to_string();
-                if let Some(stripped) = message.strip_prefix("worktree add failed: ") {
+                if let Some(stripped) = message.strip_prefix("workspace add failed: ") {
                     Error::msg(stripped.to_string())
                 } else {
                     error
@@ -960,7 +966,7 @@ pub fn preflight_delete(
     if !inside && !recorded {
         return Err(DeleteError::kept(
             Error::msg(format!(
-                "Worktree '{name}' was not created by mabo (for example, it was made by plain git or an older tool). Remove it with `git worktree remove {}`.",
+                "Workspace '{name}' was not created by mabo (for example, it was made by plain git or an older tool). Remove it with `git worktree remove {}`.",
                 path.display()
             )),
             &worktree,
@@ -992,7 +998,7 @@ pub fn preflight_delete(
             Error::Status {
                 code: "refused",
                 message: format!(
-                "Worktree '{name}' is the current directory. Use --current or --force to delete it."
+                "Workspace '{name}' is the current directory. Use --current or --force to delete it."
             ),
             },
             &worktree,
@@ -1145,7 +1151,7 @@ pub(crate) fn commit_delete_checked(
         if !crate::gc::orphaned_record(&path, &listed) {
             return Err(DeleteError::kept(
                 Error::msg(format!(
-                    "Worktree '{name}' is no longer orphaned; refusing to remove its record."
+                    "Workspace '{name}' is no longer orphaned; refusing to remove its record."
                 )),
                 &worktree,
             ));
@@ -1153,7 +1159,7 @@ pub(crate) fn commit_delete_checked(
         metadata::remove(&context.git_root, &path)
             .map_err(|error| DeleteError::kept(error, &worktree))?;
         return Ok(DeleteOutcome {
-            message: format!("Worktree '{name}' was already gone; removed only the stale record."),
+            message: format!("Workspace '{name}' was already gone; removed only the stale record."),
             worktree,
             branch_deleted: false,
             branch_error: None,
@@ -1163,7 +1169,7 @@ pub(crate) fn commit_delete_checked(
     let fresh = preflight_delete(context, &name, options, Some(&path))?;
     if fresh.worktree.head != worktree.head || fresh.worktree.branch != worktree.branch {
         return Err(DeleteError::kept(
-            Error::msg("Worktree changed while running pre-delete commands"),
+            Error::msg("Workspace changed while running pre-delete commands"),
             &fresh.worktree,
         ));
     }
@@ -1194,11 +1200,11 @@ pub(crate) fn commit_delete_checked(
         None
     };
     let (message, branch_deleted, branch_error) = if worktree.branch == "(detached HEAD)" {
-        (format!("Deleted worktree '{name}'"), false, None)
+        (format!("Deleted workspace '{name}'"), false, None)
     } else if keep_branch {
         (
             format!(
-                "Deleted worktree '{name}' and kept its branch '{}'",
+                "Deleted workspace '{name}' and kept its branch '{}'",
                 worktree.branch
             ),
             false,
@@ -1208,7 +1214,7 @@ pub(crate) fn commit_delete_checked(
         match git::delete_branch(&context.git_root, &worktree.branch) {
             Ok(()) => (
                 format!(
-                    "Deleted worktree '{name}' and its branch '{}'",
+                    "Deleted workspace '{name}' and its branch '{}'",
                     worktree.branch
                 ),
                 true,
@@ -1218,7 +1224,7 @@ pub(crate) fn commit_delete_checked(
                 let branch_error = error.to_string();
                 (
                     format!(
-                        "Deleted worktree '{name}'\nNote: Branch '{}' could not be deleted: {branch_error}",
+                        "Deleted workspace '{name}'\nNote: Branch '{}' could not be deleted: {branch_error}",
                         worktree.branch
                     ),
                     false,
@@ -1228,7 +1234,7 @@ pub(crate) fn commit_delete_checked(
         }
     };
     let message = if changed > 0 {
-        format!("Warning: Worktree '{name}' had uncommitted changes ({changed} files)\n{message}")
+        format!("Warning: Workspace '{name}' had uncommitted changes ({changed} files)\n{message}")
     } else {
         message
     };
@@ -1285,7 +1291,7 @@ pub fn exec_in_worktree(
     if let Err(error) = metadata::touch(&context.git_root, &path) {
         crate::output::warning("last_used_update", format!("Warning: {error}"));
     }
-    let owned = mabo_env(&worktree.name, &path);
+    let owned = workspace_env(context, &worktree.name, &path);
     let mut pairs = owned
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -1317,6 +1323,7 @@ pub fn resolve_action(request: &ActionRequest) -> Result<Option<ActionKind>> {
 }
 
 fn run_action(
+    context: &Context,
     name: &str,
     path: &Path,
     action: Option<ActionKind>,
@@ -1332,9 +1339,9 @@ fn run_action(
             }
             let shown = command.join(" ");
             logger.log(&format!(
-                "\nExecuting command in worktree '{name}': {shown}"
+                "\nExecuting command in workspace '{name}': {shown}"
             ));
-            let env = mabo_env(name, path);
+            let env = workspace_env(context, name, path);
             let pairs = env
                 .iter()
                 .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -1378,11 +1385,26 @@ fn run_action(
     }
 }
 
-pub fn mabo_env(name: &str, path: &Path) -> Vec<(String, String)> {
+fn workspace_env(context: &Context, name: &str, path: &Path) -> Vec<(String, String)> {
+    // A preceding touch may have imported legacy metadata and allocated an ID.
+    let stored = metadata::load(&context.git_root).unwrap_or_default();
+    let id = metadata::find_in(&stored, path).and_then(|(_, record)| record.id.as_deref());
+    mabo_env(name, path, id, &context.git_root)
+}
+
+pub fn mabo_env(name: &str, path: &Path, id: Option<&str>, repo: &Path) -> Vec<(String, String)> {
     vec![
         ("MABO".to_string(), "1".to_string()),
-        ("MABO_NAME".to_string(), name.to_string()),
-        ("MABO_PATH".to_string(), path.display().to_string()),
+        ("MABO_WORKSPACE".to_string(), name.to_string()),
+        (
+            "MABO_WORKSPACE_ID".to_string(),
+            id.unwrap_or_default().to_string(),
+        ),
+        (
+            "MABO_WORKSPACE_PATH".to_string(),
+            path.display().to_string(),
+        ),
+        ("MABO_REPO_PATH".to_string(), repo.display().to_string()),
     ]
 }
 
@@ -1416,7 +1438,6 @@ fn run_hook_commands(
     post: bool,
     logger: &Logger,
 ) -> Result<Option<HookFailure>> {
-    let root_path = context.source_checkout.display().to_string();
     let _hook_scope = crate::runtime::hook_scope();
     for command in commands {
         if post {
@@ -1425,14 +1446,8 @@ fn run_hook_commands(
             logger.log(&format!("Executing pre-delete command: {command}"));
         }
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        let code = match exec_in_worktree(
-            context,
-            name,
-            &shell,
-            &["-c", command],
-            &[("MABO_ROOT_PATH", root_path.as_str())],
-            logger.json,
-        ) {
+        let code = match exec_in_worktree(context, name, &shell, &["-c", command], &[], logger.json)
+        {
             Ok(code) => code,
             Err(error) => {
                 if post {
@@ -1643,7 +1658,7 @@ fn copy_error(relative: &Path, error: impl std::fmt::Display) -> Error {
     Error::msg(format!("Failed to copy {}: {error}", relative.display()))
 }
 
-/// Machine-readable worktree. Field names are camelCase, matching `project list --json`.
+/// Machine-readable workspace. Field names are camelCase, matching `project list --json`.
 ///
 /// `base` is set when the command that produced the object knows the starting
 /// commit-ish (create, and GitHub issue/PR checkout). List, where, attach, and
@@ -1662,8 +1677,7 @@ pub struct WorktreeJson {
     pub head: Option<String>,
     pub base: Option<String>,
     pub dirty: bool,
-    #[serde(rename = "default")]
-    pub is_default: bool,
+    pub kind: &'static str,
     pub detached: bool,
     pub orphaned: bool,
     #[serde(flatten)]
@@ -1713,6 +1727,7 @@ pub struct ExecOutcome {
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeListOutput {
     pub version: u32,
+    #[serde(rename = "workspaces")]
     pub worktrees: Vec<WorktreeJson>,
 }
 
@@ -1720,6 +1735,7 @@ pub struct WorktreeListOutput {
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeRefOutput {
     pub version: u32,
+    #[serde(rename = "workspace")]
     pub worktree: WorktreeJson,
 }
 
@@ -1727,6 +1743,7 @@ pub struct WorktreeRefOutput {
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeChangeOutput {
     pub version: u32,
+    #[serde(rename = "workspace")]
     pub worktree: WorktreeJson,
     pub copy_files: CopyFilesOutcome,
     pub post_create: PostCreateOutcome,
@@ -1737,6 +1754,7 @@ pub struct WorktreeChangeOutput {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeletedEntry {
+    #[serde(rename = "workspace")]
     pub worktree: Option<WorktreeJson>,
     pub branch_deleted: bool,
     pub branch_error: Option<String>,
@@ -1764,7 +1782,11 @@ impl WorktreeInfo {
             head: self.head.clone(),
             base: base.or_else(|| self.metadata.base.clone()),
             dirty: !self.is_clean,
-            is_default: self.is_default,
+            kind: if self.is_default {
+                "primary"
+            } else {
+                "workspace"
+            },
             detached: self.detached,
             orphaned: self.orphaned,
             metadata: metadata::WorktreeMetadata {
@@ -1896,7 +1918,8 @@ mod tests {
         assert_eq!(value["head"], "0123456789abcdef");
         assert!(value["base"].is_null());
         assert_eq!(value["dirty"], true);
-        assert_eq!(value["default"], false);
+        assert_eq!(value["kind"], "workspace");
+        assert!(value.get("default").is_none());
         assert_eq!(value["detached"], true);
         assert!(value.get("isDefault").is_none());
         assert!(value.get("is_clean").is_none());
@@ -2063,40 +2086,49 @@ mod tests {
     fn rejects_invalid_names() {
         assert_eq!(
             validate_worktree_name("").expect_err("empty").to_string(),
-            "Worktree name cannot be empty"
+            "Workspace name cannot be empty"
         );
         assert!(validate_worktree_name("feature/test").is_ok());
         assert_eq!(
             validate_worktree_name("has space")
                 .expect_err("space")
                 .to_string(),
-            "Worktree name can only contain letters, numbers, hyphens, underscores, dots, and slashes"
+            "Workspace name can only contain letters, numbers, hyphens, underscores, dots, and slashes"
         );
         assert_eq!(
             validate_worktree_name("bad..name")
                 .expect_err("dots")
                 .to_string(),
-            "Worktree name cannot contain consecutive dots"
+            "Workspace name cannot contain consecutive dots"
         );
     }
 
     #[test]
     fn mabo_env_exports_mabo_variables() {
-        let env = mabo_env("feature/env", Path::new("/worktrees/feature/env"));
-        assert_eq!(
-            env,
-            vec![
-                ("MABO".to_string(), "1".to_string()),
-                ("MABO_NAME".to_string(), "feature/env".to_string()),
-                (
-                    "MABO_PATH".to_string(),
-                    "/worktrees/feature/env".to_string()
-                ),
-            ]
-        );
-        assert!(env
-            .iter()
-            .all(|(key, _)| !key.starts_with("PHANTOM") && !key.starts_with("PTM")));
+        for id in [Some("ws_test"), None] {
+            let env = mabo_env(
+                "feature/env",
+                Path::new("/workspaces/feature/env"),
+                id,
+                Path::new("/repo"),
+            );
+            assert_eq!(
+                env,
+                vec![
+                    ("MABO".to_string(), "1".to_string()),
+                    ("MABO_WORKSPACE".to_string(), "feature/env".to_string()),
+                    (
+                        "MABO_WORKSPACE_ID".to_string(),
+                        id.unwrap_or_default().to_string()
+                    ),
+                    (
+                        "MABO_WORKSPACE_PATH".to_string(),
+                        "/workspaces/feature/env".to_string()
+                    ),
+                    ("MABO_REPO_PATH".to_string(), "/repo".to_string()),
+                ]
+            );
+        }
     }
 
     #[test]

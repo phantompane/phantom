@@ -359,11 +359,11 @@ fn list(args: &[String]) -> Result<i32> {
         if !parsed.flag("names") {
             let available = worktree::list_worktrees(&context, false, false).unwrap_or_default();
             let message = if let Some(owner) = &owner {
-                format!("No worktrees found for owner '{owner}'")
+                format!("No workspaces found for owner '{owner}'")
             } else if exclude_default && !available.is_empty() {
-                "No sub worktrees found".to_string()
+                "No linked workspaces found".to_string()
             } else {
-                "No worktrees found".to_string()
+                "No workspaces found".to_string()
             };
             println!("{message}");
         }
@@ -392,7 +392,10 @@ fn where_cmd(args: &[String]) -> Result<i32> {
         Err(error) => return fail_with(&error, error.exit_code()),
     };
     if parsed.positionals.is_empty() {
-        return fail_with(&Error::msg("Usage: mabo where <worktree-name>"), VALIDATION);
+        return fail_with(
+            &Error::msg("Usage: mabo where <workspace-name>"),
+            VALIDATION,
+        );
     }
     let context = match command_context(&parsed) {
         Ok(context) => context,
@@ -433,14 +436,14 @@ fn delete(args: &[String]) -> Result<i32> {
     if parsed.positionals.is_empty() && !delete_current {
         return fail_with(
             &Error::msg(
-                "Please provide at least one worktree name to delete, or use --current to delete the current worktree",
+                "Please provide at least one workspace name to delete, or use --current to delete the current workspace",
             ),
             VALIDATION,
         );
     }
     if !parsed.positionals.is_empty() && delete_current {
         return fail_with(
-            &Error::msg("Cannot specify --current with a worktree name"),
+            &Error::msg("Cannot specify --current with a workspace name"),
             VALIDATION,
         );
     }
@@ -456,7 +459,7 @@ fn delete(args: &[String]) -> Result<i32> {
             Ok(None) => {
                 return fail_with(
                     &Error::msg(
-                        "Not in a worktree directory. The --current option can only be used from within a worktree.",
+                        "Not in a workspace directory. The --current option can only be used from within a workspace.",
                     ),
                     VALIDATION,
                 );
@@ -566,7 +569,7 @@ fn exec(args: &[String]) -> Result<i32> {
     let parsed = args::parse_with(args, &command_options("exec"), true, Some(1))?;
     if parsed.positionals.len() < 2 {
         return fail(
-            &Error::msg("Usage: mabo exec <worktree-name> <command> [args...]"),
+            &Error::msg("Usage: mabo exec <workspace-name> <command> [args...]"),
             VALIDATION,
         );
     }
@@ -1058,7 +1061,7 @@ fn meta_set(args: &[String]) -> Result<i32> {
     };
     if parsed.positionals.len() != 1 {
         return fail_with(
-            &Error::msg("Usage: mabo meta set <worktree-name> [options]"),
+            &Error::msg("Usage: mabo meta set <workspace-name> [options]"),
             VALIDATION,
         );
     }
@@ -1625,7 +1628,7 @@ fn finish_mutation(
         emit_json(document)?;
     }
     if partial {
-        let mut error = Error::status(status, "Worktree created but setup did not complete")
+        let mut error = Error::status(status, "Workspace created but setup did not complete")
             .to_json(status)
             .error;
         if let Some(exec) = exec.filter(|exec| !exec.ok) {

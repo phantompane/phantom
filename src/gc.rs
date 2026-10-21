@@ -269,7 +269,7 @@ enum Hold {
 impl Hold {
     fn detail(self) -> &'static str {
         match self {
-            Self::Protected => "current worktree",
+            Self::Protected => "current workspace",
             Self::DefaultBranch => "default branch",
             Self::Locked => "locked",
             Self::PrUnavailable => "pr status unavailable",
@@ -483,7 +483,7 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
     let stored = metadata::load_strict(&context.git_root)?;
     let common_dir = git::canonical_common_dir(&context.git_root)?;
     let listed = git::list_worktrees(&context.git_root)
-        .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
+        .map_err(|error| Error::msg(format!("Failed to list workspaces: {error}")))?;
     let base = crate::sync::fallback_base(&context.git_root).ok();
     let name = base
         .as_deref()
@@ -491,7 +491,7 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
     if name.is_none() {
         crate::output::warning(
             "default_branch_unavailable",
-            "Warning: cannot resolve the default branch; keeping all branch worktrees",
+            "Warning: cannot resolve the default branch; keeping all branch workspaces",
         );
     }
     let default = DefaultBranch { base, name };
@@ -1030,7 +1030,7 @@ fn apply_delete(
                 Verdict::Remove(Removal::Delete { subject: current, .. }) if current.path == subject.path)) {
                 Ok(())
             } else {
-                Err(Error::msg("Worktree no longer qualifies for gc after pre-delete commands"))
+                Err(Error::msg("Workspace no longer qualifies for gc after pre-delete commands"))
             }
         },
     ) {
@@ -1090,7 +1090,7 @@ fn apply_drop(
             owner: subject.owner,
             reasons,
             action: Action::Skipped,
-            detail: Some("Worktree branch or HEAD changed since gc planning".into()),
+            detail: Some("Workspace branch or HEAD changed since gc planning".into()),
             branch_deleted: None,
             changed: false,
         };
@@ -1111,7 +1111,7 @@ fn apply_drop(
         return failed(
             subject,
             reasons,
-            "Worktree no longer qualifies for gc".into(),
+            "Workspace no longer qualifies for gc".into(),
         );
     };
     if git_listed {

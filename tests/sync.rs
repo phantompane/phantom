@@ -114,8 +114,8 @@ impl Repo {
             String::from_utf8_lossy(&out.stderr)
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(doc["data"]["worktree"]["base"], "HEAD");
-        PathBuf::from(doc["data"]["worktree"]["path"].as_str().unwrap())
+        assert_eq!(doc["data"]["workspace"]["base"], "HEAD");
+        PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap())
     }
     fn write_commit(&self, path: &Path, file: &str, text: &str) {
         fs::write(path.join(file), text).unwrap();
@@ -356,7 +356,7 @@ fn default_without_remote_head_uses_differently_named_upstream() {
             // Neither a missing nor a stale origin/main may override the upstream.
             let tree = r.create("topic");
             let doc = r.sync(&tree, &["--no-default"], 0);
-            assert_eq!(doc["data"]["worktrees"][0]["base"], tracking);
+            assert_eq!(doc["data"]["workspaces"][0]["base"], tracking);
             if !checked_out {
                 r.git(&r.main, &["checkout", "-b", "other"]);
             }
@@ -388,19 +388,19 @@ fn default_only_and_linked_implicit_including_subdirectory_and_detached() {
     r.advance();
     let doc = r.sync(&r.main, &[], 0);
     assert_eq!(doc["data"]["default"]["status"], "updated");
-    assert_eq!(doc["data"]["worktrees"], json!([]));
+    assert_eq!(doc["data"]["workspaces"], json!([]));
     assert_eq!(r.git(&tree, &["rev-parse", "HEAD"]), before);
     fs::create_dir(tree.join("sub")).unwrap();
     let doc = r.sync(&tree.join("sub"), &[], 0);
-    assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
-    assert_eq!(doc["data"]["worktrees"][0]["strategy"], "rebase");
+    assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
+    assert_eq!(doc["data"]["workspaces"][0]["strategy"], "rebase");
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
         "up-to-date"
     );
     r.git(&tree, &["checkout", "--detach"]);
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
         "detached"
     );
 }
@@ -435,7 +435,7 @@ fn linked_default_is_only_integrated_fast_forward_once() {
         for args in [vec!["--no-default"], vec!["--no-default", "--all"]] {
             let doc = r.sync(&tree, &args, 0);
             assert!(doc["data"]["default"].is_null());
-            assert_eq!(doc["data"]["worktrees"], json!([]));
+            assert_eq!(doc["data"]["workspaces"], json!([]));
             assert_eq!(r.snapshot(&tree), before);
         }
         let mut cmd = r.command(
@@ -446,14 +446,14 @@ fn linked_default_is_only_integrated_fast_forward_once() {
         let out = cmd.env("MABO_AGENT_ID", "tester").output().unwrap();
         assert!(out.status.success());
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(doc["data"]["worktrees"], json!([]));
+        assert_eq!(doc["data"]["workspaces"], json!([]));
         assert_eq!(r.snapshot(&tree), before);
         let status = if diverged { "diverged" } else { "updated" };
         let doc = r.sync(&tree, &["main", "--no-default", "--rebase", "--force"], 0);
         assert!(doc["data"]["default"].is_null());
-        assert_eq!(doc["data"]["worktrees"].as_array().unwrap().len(), 1);
-        assert_eq!(doc["data"]["worktrees"][0]["status"], status);
-        assert_eq!(doc["data"]["worktrees"][0]["strategy"], "ff-only");
+        assert_eq!(doc["data"]["workspaces"].as_array().unwrap().len(), 1);
+        assert_eq!(doc["data"]["workspaces"][0]["status"], status);
+        assert_eq!(doc["data"]["workspaces"][0]["strategy"], "ff-only");
         if diverged {
             assert_eq!(r.snapshot(&tree), before);
         } else {
@@ -465,7 +465,7 @@ fn linked_default_is_only_integrated_fast_forward_once() {
             .enumerate()
         {
             let doc = r.sync(&tree, args, if diverged { 1 } else { 0 });
-            assert_eq!(doc["data"]["worktrees"], json!([]));
+            assert_eq!(doc["data"]["workspaces"], json!([]));
             assert_eq!(
                 doc["data"]["default"]["status"],
                 if diverged {
@@ -492,7 +492,7 @@ fn linked_default_is_only_integrated_fast_forward_once() {
             .unwrap();
         assert_eq!(out.status.code(), Some(if diverged { 1 } else { 0 }));
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(doc["data"]["worktrees"], json!([]));
+        assert_eq!(doc["data"]["workspaces"], json!([]));
         assert_eq!(r.git(&r.main, &["rev-parse", "HEAD"]), other);
     }
 }
@@ -559,7 +559,7 @@ fn pushed_branch_containing_base_is_up_to_date_without_force() {
         (vec!["topic", "--merge"], "merge"),
     ] {
         let doc = r.sync(&r.main, &args, 0);
-        let item = &doc["data"]["worktrees"][0];
+        let item = &doc["data"]["workspaces"][0];
         assert_eq!(item["status"], "up-to-date");
         assert_eq!(item["strategy"], strategy);
         assert_eq!(item["before"], head);
@@ -613,7 +613,7 @@ fn corrupt_custom_base_metadata_refuses_sync_before_fetch_or_updates() {
     assert!(listed.status.success());
     let doc: Value = serde_json::from_slice(&listed.stdout).unwrap();
     assert!(!doc["warnings"].as_array().unwrap().is_empty());
-    assert!(doc["data"]["worktrees"]
+    assert!(doc["data"]["workspaces"]
         .as_array()
         .unwrap()
         .iter()
@@ -674,7 +674,7 @@ fn updates_with_failures_conflicts_or_published_refusals_exit_partial() {
             }
             let doc = r.sync(&r.main, &args, 6);
             assert_eq!(doc["error"]["code"], "partial");
-            let topic = doc["data"]["worktrees"]
+            let topic = doc["data"]["workspaces"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -695,7 +695,7 @@ fn updates_with_failures_conflicts_or_published_refusals_exit_partial() {
             let updated = if update_default {
                 &doc["data"]["default"]
             } else {
-                &doc["data"]["worktrees"][0]
+                &doc["data"]["workspaces"][0]
             };
             assert_eq!(updated["status"], "updated");
             assert_ne!(updated["before"], updated["after"]);
@@ -713,10 +713,10 @@ fn pushed_auto_merge_and_rebase_refusal_force_preserve_upstream() {
     r.advance();
     let refused = r.sync(&r.main, &["topic", "--rebase", "--no-default"], 4);
     assert_eq!(refused["error"]["code"], "published");
-    assert_eq!(refused["data"]["worktrees"][0]["code"], "published");
+    assert_eq!(refused["data"]["workspaces"][0]["code"], "published");
     assert_eq!(r.git(&tree, &["rev-parse", "HEAD"]), before);
     let forced = r.sync(&r.main, &["topic", "--rebase", "--force"], 0);
-    assert_eq!(forced["data"]["worktrees"][0]["strategy"], "rebase");
+    assert_eq!(forced["data"]["workspaces"][0]["strategy"], "rebase");
     assert_ne!(r.git(&tree, &["rev-parse", "HEAD"]), before);
     assert_eq!(
         r.git(&tree, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
@@ -728,7 +728,7 @@ fn pushed_auto_merge_and_rebase_refusal_force_preserve_upstream() {
     s.git(&tree, &["push", "origin", "pushed"]);
     s.advance();
     let doc = s.sync(&s.main, &["pushed"], 0);
-    assert_eq!(doc["data"]["worktrees"][0]["strategy"], "merge");
+    assert_eq!(doc["data"]["workspaces"][0]["strategy"], "merge");
     assert_eq!(
         s.git(&tree, &["log", "-1", "--format=%s"]),
         "Merge origin/main into pushed"
@@ -761,15 +761,15 @@ fn conflicts_restore_everything_and_keep_conflicts_is_single_target_only() {
         fs::write(r.root.join("ignore"), "ignored\n").unwrap();
         let before = r.snapshot(&tree);
         let doc = r.sync(&tree, &[strategy, "--no-default"], 5);
-        assert_eq!(doc["data"]["worktrees"][0]["status"], "conflict");
-        assert_eq!(doc["data"]["worktrees"][0]["conflicts"], json!(["file"]));
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "conflict");
+        assert_eq!(doc["data"]["workspaces"][0]["conflicts"], json!(["file"]));
         assert_eq!(r.snapshot(&tree), before);
         assert_eq!(
             fs::read(tree.join("ignored")).unwrap(),
             b"ignored contents\n"
         );
         let doc = r.sync(&tree, &[strategy, "--keep-conflicts", "--no-default"], 5);
-        assert_eq!(doc["data"]["worktrees"][0]["status"], "conflict");
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "conflict");
         assert!(r.git(&tree, &["status", "--porcelain=v2"]).contains("u "));
         r.git(
             &tree,
@@ -794,7 +794,7 @@ fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
     r.write_commit(&tree, "topic-file", "topic\n");
     fs::write(tree.join("untracked"), "untracked\n").unwrap();
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
         "dirty"
     );
     fs::remove_file(tree.join("untracked")).unwrap();
@@ -802,7 +802,7 @@ fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
     r.git(&r.main, &["commit", "-m", "squash"]);
     r.git(&r.main, &["push", "origin", "main"]);
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
         "merged"
     );
     r.git(&r.main, &["branch", "stack"]);
@@ -812,12 +812,12 @@ fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
     );
     assert!(out.status.success());
     let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(doc["data"]["worktree"]["base"], "refs/heads/stack");
+    assert_eq!(doc["data"]["workspace"]["base"], "refs/heads/stack");
     let invalid = r.mabo(&r.main, &["meta", "set", "topic", "--base", "nonexistent"]);
     assert!(!invalid.status.success());
     r.git(&r.main, &["branch", "-D", "stack"]);
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
         "base-gone"
     );
     let file = r.main.join(".git/maboroshi/workspaces");
@@ -828,7 +828,7 @@ fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
         .remove("base");
     records::write(&file, serde_json::to_vec(&stored).unwrap()).unwrap();
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["base"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["base"],
         "refs/remotes/origin/main"
     );
 }
@@ -861,7 +861,7 @@ fn all_mine_ownership_no_default_explicit_and_forced_merge() {
     let doc = run(&["sync", "--all", "--no-default", "--json"]);
     assert!(doc["default"].is_null());
     assert_eq!(
-        doc["worktrees"]
+        doc["workspaces"]
             .as_array()
             .unwrap()
             .iter()
@@ -870,14 +870,14 @@ fn all_mine_ownership_no_default_explicit_and_forced_merge() {
         "owned"
     );
     let doc = run(&["sync", "--mine", "--json"]);
-    assert_eq!(doc["worktrees"].as_array().unwrap().len(), 1);
-    assert_eq!(doc["worktrees"][0]["name"], "mine");
+    assert_eq!(doc["workspaces"].as_array().unwrap().len(), 1);
+    assert_eq!(doc["workspaces"][0]["name"], "mine");
     assert_eq!(
-        run(&["sync", "other", "--merge", "--json"])["worktrees"][0]["strategy"],
+        run(&["sync", "other", "--merge", "--json"])["workspaces"][0]["strategy"],
         "merge"
     );
     let doc = r.sync(&r.main, &["--all"], 0);
-    assert_eq!(doc["data"]["worktrees"].as_array().unwrap().len(), 2);
+    assert_eq!(doc["data"]["workspaces"].as_array().unwrap().len(), 2);
     r.sync(&r.main, &["--mine"], 2);
 }
 
@@ -890,12 +890,12 @@ fn json_schema_snapshot_and_project_selection() {
     doc["data"]["default"]["after"] = json!("<sha>");
     assert_eq!(
         doc,
-        json!({"schema":2,"command":"sync","ok":true,"warnings":[],"error":null,"data":{"default":{"name":"main","path":"<path>","branch":"refs/heads/main","base":"refs/remotes/origin/main","status":"up-to-date","strategy":"ff-only","before":"<sha>","after":"<sha>","conflicts":[],"detail":null,"code":null},"worktrees":[]}})
+        json!({"schema":2,"command":"sync","ok":true,"warnings":[],"error":null,"data":{"default":{"name":"main","path":"<path>","branch":"refs/heads/main","base":"refs/remotes/origin/main","status":"up-to-date","strategy":"ff-only","before":"<sha>","after":"<sha>","conflicts":[],"detail":null,"code":null},"workspaces":[]}})
     );
     let tree = r.create("topic");
     r.write_commit(&tree, "own", "own\n");
     assert_eq!(
-        r.sync(&r.main, &["topic", "-p", r.main.to_str().unwrap()], 0)["data"]["worktrees"][0]
+        r.sync(&r.main, &["topic", "-p", r.main.to_str().unwrap()], 0)["data"]["workspaces"][0]
             ["name"],
         "topic"
     );
@@ -934,7 +934,7 @@ fn fetch_only_involved_remotes_once_and_failed_fetch_cannot_update_stale_base() 
     r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
     let before = r.snapshot(&tree);
     let doc = r.sync(&tree, &[], 1);
-    assert_eq!(doc["data"]["worktrees"][0]["status"], "failed");
+    assert_eq!(doc["data"]["workspaces"][0]["status"], "failed");
     assert_eq!(r.snapshot(&tree), before);
 }
 
@@ -967,7 +967,7 @@ fn sync_runs_no_git_hooks_and_does_not_update_other_refs() {
     r.git(&r.main, &["config", "rebase.updateRefs", "true"]);
     r.advance();
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
         "updated"
     );
     assert!(!marker.exists());
@@ -1017,7 +1017,7 @@ fn ignored_collisions_follow_core_ignorecase() {
                 let doc = r.sync(&tree, &[strategy, "--no-default"], 0);
                 let collision = ignorecase;
                 assert_eq!(
-                    doc["data"]["worktrees"][0]["status"],
+                    doc["data"]["workspaces"][0]["status"],
                     if collision { "dirty" } else { "updated" },
                     "ignorecase={ignorecase}, {strategy}, {ignored}, {incoming}"
                 );
@@ -1046,7 +1046,7 @@ fn ignored_files_are_preserved_when_base_would_overwrite_them() {
     r.git(&r.upstream, &["push", "origin", "main"]);
     let before = r.snapshot(&tree);
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
         "dirty"
     );
     assert_eq!(r.snapshot(&tree), before);
@@ -1108,7 +1108,7 @@ fn multiple_bases_fetch_each_involved_remote_and_respect_no_default() {
     r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
     let doc = r.sync(&tree, &["--no-default"], 0);
     assert_eq!(
-        doc["data"]["worktrees"][0]["base"],
+        doc["data"]["workspaces"][0]["base"],
         "refs/remotes/stack/main"
     );
     r.git(
@@ -1159,7 +1159,7 @@ fn dirty_staged_and_unstaged_worktrees_are_untouched() {
         }
         let before = r.snapshot(&tree);
         assert_eq!(
-            r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+            r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
             "dirty"
         );
         assert_eq!(r.snapshot(&tree), before);
@@ -1177,7 +1177,7 @@ fn separate_git_directory_default_checkout_and_published_squash_are_supported() 
     r.git(&r.upstream, &["commit", "-m", "squash"]);
     r.git(&r.upstream, &["push", "origin", "main"]);
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
         "merged"
     );
     // Use a fresh repository: Git does not relocate linked-worktree gitfiles on re-init.
@@ -1223,12 +1223,12 @@ fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
     let r = Repo::new();
     let tree = r.create("fresh");
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
         "up-to-date"
     );
     r.advance();
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
         "updated"
     );
     assert_eq!(
@@ -1236,7 +1236,7 @@ fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
         r.git(&r.main, &["rev-parse", "origin/main"])
     );
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
         "up-to-date"
     );
     let gc = r.mabo(&r.main, &["gc", "--json"]);
@@ -1248,7 +1248,7 @@ fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
     r.git(&r.main, &["merge", "--ff-only", "landed"]);
     r.git(&r.main, &["push", "origin", "main"]);
     assert_eq!(
-        r.sync(&landed, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&landed, &[], 0)["data"]["workspaces"][0]["status"],
         "merged"
     );
     // Legacy metadata uses the very same reflog fallback as gc.
@@ -1263,7 +1263,7 @@ fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
     r.git(&r.upstream, &["pull", "--no-rebase", "origin", "main"]);
     r.git(&r.upstream, &["push", "origin", "main"]);
     assert_eq!(
-        r.sync(&legacy, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&legacy, &[], 0)["data"]["workspaces"][0]["status"],
         "updated"
     );
 }
@@ -1293,17 +1293,17 @@ fn unrecorded_fresh_syncs_keep_null_metadata_and_gc_keeps_them() {
         let before = records::read(&store).unwrap();
         r.advance();
         assert_eq!(
-            r.sync(&r.main, &["topic"], 0)["data"]["worktrees"][0]["status"],
+            r.sync(&r.main, &["topic"], 0)["data"]["workspaces"][0]["status"],
             "updated"
         );
         r.write_commit(&r.upstream, "second", "second\n");
         r.git(&r.upstream, &["push", "origin", "main"]);
         assert_eq!(
-            r.sync(&r.main, &["topic"], 0)["data"]["worktrees"][0]["status"],
+            r.sync(&r.main, &["topic"], 0)["data"]["workspaces"][0]["status"],
             "updated"
         );
         assert_eq!(
-            r.sync(&r.main, &["topic"], 0)["data"]["worktrees"][0]["status"],
+            r.sync(&r.main, &["topic"], 0)["data"]["workspaces"][0]["status"],
             "up-to-date"
         );
         let gc = r.mabo(&r.main, &["gc", "--json"]);
@@ -1317,7 +1317,7 @@ fn unrecorded_fresh_syncs_keep_null_metadata_and_gc_keeps_them() {
             r.git(&r.main, &["fetch", "origin"]);
             r.git(&tree, &["reset", "--hard", "origin/main"]);
             assert_eq!(
-                r.sync(&r.main, &["topic"], 0)["data"]["worktrees"][0]["status"],
+                r.sync(&r.main, &["topic"], 0)["data"]["workspaces"][0]["status"],
                 "merged"
             );
             let gc = r.mabo(&r.main, &["gc", "--json"]);
@@ -1350,7 +1350,7 @@ fn ignored_directories_collapse_and_only_incoming_paths_block_sync() {
         r.git(&r.upstream, &["push", "origin", "main"]);
         let doc = r.sync(&tree, &[], 0);
         assert_eq!(
-            doc["data"]["worktrees"][0]["status"],
+            doc["data"]["workspaces"][0]["status"],
             if collision { "dirty" } else { "updated" }
         );
         assert_eq!(
@@ -1371,12 +1371,12 @@ fn conflict_output_is_short_in_human_and_json_formats() {
         let flag = format!("--{strategy}");
         let doc = r.sync(&tree, &[&flag, "--no-default"], 5);
         assert_eq!(
-            doc["data"]["worktrees"][0]["detail"],
-            format!("{strategy} aborted; worktree unchanged")
+            doc["data"]["workspaces"][0]["detail"],
+            format!("{strategy} aborted; workspace unchanged")
         );
         let out = r.mabo(&tree, &["sync", &flag, "--no-default"]);
         assert_eq!(out.status.code(), Some(5));
-        assert_eq!(String::from_utf8(out.stdout).unwrap(), format!("topic  conflict  file ({strategy} aborted; worktree unchanged)\nSync complete: 1 conflict\n"));
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), format!("topic  conflict  file ({strategy} aborted; workspace unchanged)\nSync complete: 1 conflict\n"));
         let out = r.mabo(&tree, &["sync", &flag, "--no-default", "--keep-conflicts"]);
         assert_eq!(out.status.code(), Some(5));
         assert_eq!(
@@ -1691,7 +1691,7 @@ fn attach_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
         .unwrap();
     let out = finish_child(child);
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("Worktree changed"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("Workspace changed"));
     assert!(r.mabo(&r.main, &["where", "from-attach"]).status.success());
 }
 
@@ -1710,7 +1710,7 @@ fn rebase_checkout_preserves_ignored_paths_deleted_by_local_commits() {
     fs::write(tree.join("file"), "precious\n").unwrap();
     r.advance();
     assert_eq!(
-        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["workspaces"][0]["status"],
         "dirty"
     );
     assert_eq!(fs::read_to_string(tree.join("file")).unwrap(), "precious\n");
@@ -1797,7 +1797,7 @@ fn silent_git_failures_are_checked_before_sync_mutations() {
         let item = if default_only {
             &doc["data"]["default"]
         } else {
-            &doc["data"]["worktrees"][0]
+            &doc["data"]["workspaces"][0]
         };
         assert_eq!(item["status"], "failed", "{command}: {doc}");
         assert!(item["detail"].as_str().unwrap().contains("exit 2"), "{doc}");
@@ -1837,7 +1837,7 @@ fn unrelated_histories_fail_without_touching_worktree_or_ignored_files() {
             let mut args = vec!["--no-default"];
             args.extend(strategy);
             let doc = r.sync(&tree, &args, 1);
-            let item = &doc["data"]["worktrees"][0];
+            let item = &doc["data"]["workspaces"][0];
             assert_eq!(item["status"], "failed", "{doc}");
             assert!(
                 item["detail"]
@@ -1908,7 +1908,7 @@ fn ignored_paths_touched_by_intermediate_commits_are_preserved() {
                 let before = r.git(&tree, &["rev-parse", "HEAD"]);
                 let flag = format!("--{strategy}");
                 assert_eq!(
-                    r.sync(&tree, &[&flag], 0)["data"]["worktrees"][0]["status"],
+                    r.sync(&tree, &[&flag], 0)["data"]["workspaces"][0]["status"],
                     "dirty",
                     "{side} {shape} {strategy}"
                 );
@@ -1944,10 +1944,10 @@ fn merge_ignores_user_options_and_signing_configuration() {
         r.git(&tree, &["config", "gpg.program", "/does/not/exist"]);
         let doc = r.sync(&tree, &["--no-default"], 0);
         assert_eq!(
-            doc["data"]["worktrees"][0]["status"], "updated",
+            doc["data"]["workspaces"][0]["status"], "updated",
             "{options}"
         );
-        assert_eq!(doc["data"]["worktrees"][0]["strategy"], "merge");
+        assert_eq!(doc["data"]["workspaces"][0]["strategy"], "merge");
         assert_eq!(r.git(&tree, &["rev-parse", "HEAD^1"]), before);
         assert_eq!(
             r.git(&tree, &["rev-parse", "HEAD^2"]),
@@ -1984,7 +1984,7 @@ fn rebase_preserves_fixup_commits_and_disables_user_rebase_configuration() {
     r.git(&tree, &["config", "gpg.program", "/does/not/exist"]);
     r.advance();
     let doc = r.sync(&tree, &["--no-default"], 0);
-    assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
+    assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
     assert_eq!(
         r.git(&tree, &["log", "--format=%s", "origin/main..HEAD"]),
         subjects
@@ -2070,7 +2070,7 @@ exec "$REAL_GIT" "$@"
             String::from_utf8_lossy(&out.stderr)
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(doc["data"]["worktrees"][0]["status"], "failed");
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "failed");
         assert!(
             !fsmonitor.exists(),
             "fsmonitor ran during incomplete integration rollback"
@@ -2098,7 +2098,7 @@ fn rebase_does_not_preserve_merges_from_user_config() {
     r.git(&tree, &["config", "rebase.rebaseMerges", "true"]);
     r.advance();
     assert_eq!(
-        r.sync(&tree, &["--no-default"], 0)["data"]["worktrees"][0]["status"],
+        r.sync(&tree, &["--no-default"], 0)["data"]["workspaces"][0]["status"],
         "updated"
     );
     for file in ["own", "side", "other"] {
@@ -2143,7 +2143,7 @@ fn slash_remote_default_and_explicit_bases_fetch_and_integrate_main() {
                 String::from_utf8_lossy(&out.stderr)
             );
             let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-            let tree = PathBuf::from(doc["data"]["worktree"]["path"].as_str().unwrap());
+            let tree = PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap());
             let out = r.mabo(
                 &r.main,
                 &["meta", "set", &name, "--base", "team/origin/main"],
@@ -2166,10 +2166,10 @@ fn slash_remote_default_and_explicit_bases_fetch_and_integrate_main() {
             let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
             let doc = r.sync(&tree, &["--no-default"], 0);
             assert_eq!(
-                doc["data"]["worktrees"][0]["base"],
+                doc["data"]["workspaces"][0]["base"],
                 "refs/remotes/team/origin/main"
             );
-            assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
+            assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
             assert_eq!(r.git(&tree, &["rev-parse", "HEAD"]), expected);
         }
     }
@@ -2200,7 +2200,7 @@ fn unmatched_default_remote_fails_without_creating_a_branch() {
     r.advance();
     let doc = r.sync(&r.main, &["topic"], 6);
     assert_eq!(doc["data"]["default"]["status"], "failed");
-    assert_eq!(doc["data"]["worktrees"][0]["status"], "updated", "{doc}");
+    assert_eq!(doc["data"]["workspaces"][0]["status"], "updated", "{doc}");
     assert!(tree.join("remote-file").exists());
 }
 
@@ -2250,7 +2250,7 @@ fn default_reserved_by_rebase_in_main_or_linked_checkout() {
         let topic = r.create("topic");
         let doc = r.sync(&r.main, &["topic"], 0);
         assert_eq!(doc["data"]["default"]["status"], "dirty");
-        assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
         assert!(topic.exists());
         r.git(&path, &["rebase", "--continue"]);
         assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
@@ -2306,14 +2306,14 @@ fn target_operations_are_never_integrated() {
         let before = r.snapshot(&tree);
         let doc = r.sync(&r.main, &["topic", "--no-default"], 0);
         assert_eq!(
-            doc["data"]["worktrees"][0]["status"],
+            doc["data"]["workspaces"][0]["status"],
             if operation == "rebase" {
                 "detached"
             } else {
                 "dirty"
             }
         );
-        assert!(doc["data"]["worktrees"][0]["detail"]
+        assert!(doc["data"]["workspaces"][0]["detail"]
             .as_str()
             .unwrap()
             .contains(&format!("{operation} in progress")));
@@ -2334,7 +2334,7 @@ fn target_reserved_by_another_worktrees_update_refs_is_dirty() {
     r.advance();
     let before = r.snapshot(&tree);
     let doc = r.sync(&r.main, &["topic", "--no-default"], 0);
-    assert_eq!(doc["data"]["worktrees"][0]["status"], "dirty");
+    assert_eq!(doc["data"]["workspaces"][0]["status"], "dirty");
     assert_eq!(r.snapshot(&tree), before);
     r.git(&r.main, &["rebase", "--continue"]);
 }
@@ -2351,7 +2351,7 @@ fn prunable_worktree_is_skipped_without_blocking_live_sync() {
     r.advance();
     let doc = r.sync(&r.main, &["--all"], 0);
     assert_eq!(doc["data"]["default"]["status"], "updated");
-    let items = doc["data"]["worktrees"].as_array().unwrap();
+    let items = doc["data"]["workspaces"].as_array().unwrap();
     assert_eq!(
         items.iter().find(|v| v["name"] == "gone").unwrap()["status"],
         "dirty"
@@ -2391,7 +2391,7 @@ fn missing_linked_checkout_still_reserves_default_during_rebase() {
         .as_str()
         .unwrap()
         .contains("being rebased"));
-    assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
+    assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
     assert!(live.is_dir());
     assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
     assert_eq!(file_contents(&admin), state);
@@ -2415,7 +2415,7 @@ fn missing_default_checkout_and_broken_target_do_not_block_live_target() {
     r.advance();
     let doc = r.sync(&r.main, &["--all"], 6);
     assert_eq!(doc["data"]["default"]["status"], "dirty");
-    let items = doc["data"]["worktrees"].as_array().unwrap();
+    let items = doc["data"]["workspaces"].as_array().unwrap();
     assert_eq!(
         items.iter().find(|v| v["name"] == "bad").unwrap()["status"],
         "failed"
@@ -2505,7 +2505,7 @@ exec "$REAL_GIT" "$@"
             "{out:?}"
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        let item = &doc["data"]["worktrees"][0];
+        let item = &doc["data"]["workspaces"][0];
         assert_eq!(item["status"], "failed");
         assert!(
             !fsmonitor.exists(),
@@ -2517,16 +2517,16 @@ exec "$REAL_GIT" "$@"
         if fail_rollback != "0" {
             assert!(detail.contains("rollback failed"), "{detail}");
         } else {
-            assert!(detail.contains("worktree restored"), "{detail}");
+            assert!(detail.contains("workspace restored"), "{detail}");
             assert_eq!(item["before"], item["after"]);
             assert_eq!(r.snapshot(&tree), before);
             records::write(&store, &original_store).unwrap();
             assert_eq!(
-                r.sync(&tree, &["--no-default"], 0)["data"]["worktrees"][0]["status"],
+                r.sync(&tree, &["--no-default"], 0)["data"]["workspaces"][0]["status"],
                 "updated"
             );
             assert_eq!(
-                r.sync(&tree, &["--no-default"], 0)["data"]["worktrees"][0]["status"],
+                r.sync(&tree, &["--no-default"], 0)["data"]["workspaces"][0]["status"],
                 "up-to-date"
             );
             let out = r.mabo(&r.main, &["gc", "--json"]);
@@ -2603,9 +2603,9 @@ fn failed_default_remote_does_not_block_a_healthy_base_remote() {
     let stale_before = r.snapshot(&stale);
     let doc = r.sync(&r.main, &["healthy", "stale"], 6);
     assert_eq!(doc["data"]["default"]["status"], "failed");
-    assert_eq!(doc["data"]["worktrees"][0]["status"], "updated", "{doc}");
-    assert_eq!(doc["data"]["worktrees"][1]["status"], "failed");
-    for item in [&doc["data"]["default"], &doc["data"]["worktrees"][1]] {
+    assert_eq!(doc["data"]["workspaces"][0]["status"], "updated", "{doc}");
+    assert_eq!(doc["data"]["workspaces"][1]["status"], "failed");
+    for item in [&doc["data"]["default"], &doc["data"]["workspaces"][1]] {
         assert!(item["detail"]
             .as_str()
             .unwrap()
@@ -2649,7 +2649,7 @@ fn fetch_failures_exit_one_even_with_a_published_rebase_refusal() {
         vec!["--no-default", "stale", "published", "--rebase"],
     ] {
         let doc = r.sync(&r.main, &args, 1);
-        assert!(doc["data"]["worktrees"]
+        assert!(doc["data"]["workspaces"]
             .as_array()
             .unwrap()
             .iter()
@@ -2770,7 +2770,7 @@ fn gc_protects_linked_default_with_a_remapped_tracking_namespace() {
             String::from_utf8_lossy(&out.stderr)
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert!(tree.exists(), "default worktree removed: {doc}");
+        assert!(tree.exists(), "primary checkout removed: {doc}");
         assert_eq!(r.snapshot(&tree), before);
         assert!(
             !doc["data"]["candidates"]
@@ -2826,7 +2826,7 @@ fn gc_local_branch_named_like_a_remapped_default_is_not_the_default() {
         let out = r.mabo(&r.main, &["attach", "main", "--json"]);
         assert!(out.status.success());
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        let default_path = PathBuf::from(doc["data"]["worktree"]["path"].as_str().unwrap());
+        let default_path = PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap());
         let before = r.snapshot(&default_path);
         let out = r.mabo(&r.main, &["gc", "--merged", "--json"]);
         assert!(out.status.success());
@@ -2907,7 +2907,7 @@ fn fetch_refspec_namespace_determines_remote_and_default_local_name() {
         let doc = r.sync(&r.main, &["topic"], 0);
         assert_eq!(doc["data"]["default"]["status"], "updated", "{doc}");
         assert_eq!(doc["data"]["default"]["branch"], "refs/heads/main");
-        assert_eq!(doc["data"]["worktrees"][0]["status"], "updated", "{doc}");
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "updated", "{doc}");
         assert_eq!(r.git(&r.main, &["rev-parse", "main"]), tip);
         assert_eq!(
             r.git(&r.main, &["rev-parse", "refs/remotes/cache/main"]),
@@ -2948,7 +2948,7 @@ fn unresolved_default_does_not_block_recorded_bases() {
         String::from_utf8_lossy(&out.stderr)
     );
     let created: Value = serde_json::from_slice(&out.stdout).unwrap();
-    let tree = PathBuf::from(created["data"]["worktree"]["path"].as_str().unwrap());
+    let tree = PathBuf::from(created["data"]["workspace"]["path"].as_str().unwrap());
     r.write_commit(&tree, "own", "own\n");
     // attach deliberately leaves the recorded base null, exercising fallback errors.
     r.git(&clone, &["branch", "legacy"]);
@@ -2957,8 +2957,8 @@ fn unresolved_default_does_not_block_recorded_bases() {
     r.git(&r.upstream, &["push", "origin", "develop"]);
     let doc = r.sync(&clone, &["legacy", "topic"], 6);
     assert_eq!(doc["data"]["default"]["status"], "failed", "{doc}");
-    assert_eq!(doc["data"]["worktrees"][0]["status"], "failed", "{doc}");
-    for item in [&doc["data"]["default"], &doc["data"]["worktrees"][0]] {
+    assert_eq!(doc["data"]["workspaces"][0]["status"], "failed", "{doc}");
+    for item in [&doc["data"]["default"], &doc["data"]["workspaces"][0]] {
         assert!(
             item["detail"]
                 .as_str()
@@ -2967,15 +2967,15 @@ fn unresolved_default_does_not_block_recorded_bases() {
             "{doc}"
         );
     }
-    assert_eq!(doc["data"]["worktrees"][1]["status"], "updated", "{doc}");
+    assert_eq!(doc["data"]["workspaces"][1]["status"], "updated", "{doc}");
     assert!(tree.join("incoming-develop").exists());
     let doc = r.sync(&clone, &["topic", "--no-default"], 0);
     assert!(doc["data"]["default"].is_null());
-    assert_eq!(doc["data"]["worktrees"][0]["status"], "up-to-date");
+    assert_eq!(doc["data"]["workspaces"][0]["status"], "up-to-date");
     let doc = r.sync(&clone, &["legacy", "topic", "--no-default"], 1);
     assert!(doc["data"]["default"].is_null());
-    assert_eq!(doc["data"]["worktrees"][0]["status"], "failed");
-    assert_eq!(doc["data"]["worktrees"][1]["status"], "up-to-date");
+    assert_eq!(doc["data"]["workspaces"][0]["status"], "failed");
+    assert_eq!(doc["data"]["workspaces"][1]["status"], "up-to-date");
 }
 
 #[test]
@@ -2995,7 +2995,7 @@ fn ordinary_failures_take_precedence_over_pushed_refusals() {
             &[names[0], names[1], "--no-default", "--rebase"],
             5,
         );
-        let items = doc["data"]["worktrees"].as_array().unwrap();
+        let items = doc["data"]["workspaces"].as_array().unwrap();
         assert!(
             items.iter().any(|item| item["status"] == "conflict"),
             "{doc}"
@@ -3007,7 +3007,7 @@ fn ordinary_failures_take_precedence_over_pushed_refusals() {
         assert_eq!(r.snapshot(&conflict), before);
     }
     let doc = r.sync(&r.main, &["published", "--no-default", "--rebase"], 4);
-    assert_eq!(doc["data"]["worktrees"][0]["code"], "published");
+    assert_eq!(doc["data"]["workspaces"][0]["code"], "published");
 
     // A default failure is ordinary too, even alongside a sole refusal.
     r.git(&r.main, &["update-ref", "refs/remotes/stale/main", "HEAD"]);
@@ -3021,7 +3021,7 @@ fn ordinary_failures_take_precedence_over_pushed_refusals() {
     );
     let doc = r.sync(&r.main, &["published", "--rebase"], 1);
     assert_eq!(doc["data"]["default"]["status"], "failed");
-    assert_eq!(doc["data"]["worktrees"][0]["code"], "published");
+    assert_eq!(doc["data"]["workspaces"][0]["code"], "published");
 
     // A target inspection failure must also survive either ordering.
     fs::write(conflict.join(".git"), "gitdir: /does/not/exist\n").unwrap();
@@ -3031,7 +3031,7 @@ fn ordinary_failures_take_precedence_over_pushed_refusals() {
             &[names[0], names[1], "--no-default", "--rebase"],
             1,
         );
-        let items = doc["data"]["worktrees"].as_array().unwrap();
+        let items = doc["data"]["workspaces"].as_array().unwrap();
         assert!(
             items
                 .iter()
@@ -3063,8 +3063,8 @@ fn rebase_reapplies_upstream_cherry_pick_that_was_reverted() {
             vec!["--no-default"]
         };
         let doc = r.sync(&tree, &args, 0);
-        assert_eq!(doc["data"]["worktrees"][0]["strategy"], "rebase");
-        assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
+        assert_eq!(doc["data"]["workspaces"][0]["strategy"], "rebase");
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
         assert_eq!(
             fs::read_to_string(tree.join("local-change")).unwrap(),
             "must survive\n"
@@ -3093,7 +3093,7 @@ fn rebase_preserves_intentionally_empty_and_newly_empty_commits() {
             vec!["--no-default"]
         };
         let doc = r.sync(&tree, &args, 0);
-        assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
         assert_eq!(
             r.git(&tree, &["rev-list", "--count", "origin/main..HEAD"]),
             "3"
@@ -3133,7 +3133,7 @@ fn merge_own_changes_refuse_rebase_and_survive_explicit_merge() {
                 args.push(strategy);
             }
             let doc = r.sync(&tree, &args, if strategy == "--merge" { 0 } else { 1 });
-            let item = &doc["data"]["worktrees"][0];
+            let item = &doc["data"]["workspaces"][0];
             if strategy == "--merge" {
                 assert_eq!(item["status"], "updated");
                 assert_eq!(item["strategy"], "merge");
@@ -3196,7 +3196,7 @@ fn published_commits_in_fetch_destinations_outside_remotes_are_protected() {
                 },
                 if explicit { 4 } else { 0 },
             );
-            let item = &doc["data"]["worktrees"][0];
+            let item = &doc["data"]["workspaces"][0];
             if explicit {
                 assert_eq!(item["code"], "published");
                 assert_eq!(r.snapshot(&tree), before);
@@ -3349,7 +3349,7 @@ fn gc_unresolved_default_keeps_branch_worktrees_even_with_force() {
         );
         assert!(
             String::from_utf8_lossy(&out.stderr)
-                .contains("cannot resolve the default branch; keeping all branch worktrees"),
+                .contains("cannot resolve the default branch; keeping all branch workspaces"),
             "{}",
             String::from_utf8_lossy(&out.stderr)
         );
@@ -3400,7 +3400,7 @@ fn sync_never_runs_fsmonitor_for_noop_update_or_conflict_abort() {
         }
         let doc = r.sync(&r.main, &args, if conflict { 6 } else { 0 });
         assert_eq!(
-            doc["data"]["worktrees"][0]["status"],
+            doc["data"]["workspaces"][0]["status"],
             if conflict {
                 "conflict"
             } else if mode == "noop" {
@@ -3440,7 +3440,7 @@ fn rebase_keeps_own_commits_after_upstream_rewind_with_forkpoint_config() {
             vec!["--no-default"]
         };
         let doc = r.sync(&tree, &args, 0);
-        assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
         assert_eq!(
             fs::read_to_string(tree.join("old-upstream")).unwrap(),
             "must survive rewind\n"
