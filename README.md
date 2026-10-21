@@ -244,7 +244,7 @@ mabo create feature/task --purpose 'implement task'
 mabo sync --mine --json
 # Skip the default branch, or process all recorded workspaces.
 mabo sync --all --no-default
-mabo sync -p owner/repo --all
+mabo sync -R owner/repo --all
 # Keep a single conflicted operation for manual resolution.
 mabo sync feature/auth --keep-conflicts
 mabo meta set feature/auth --base origin/main

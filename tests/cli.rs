@@ -11821,6 +11821,91 @@ fn outer_global_repo_selection_works_before_commands_and_preserves_child_argumen
 }
 
 #[test]
+fn outer_parent_commands_require_subcommands_in_json_and_show_text_help() {
+    let repo = Repo::new();
+    for (command, key) in [
+        ("trust", "trust"),
+        ("repo", "repo"),
+        ("config", "config"),
+        ("meta", "meta"),
+        ("github", "github"),
+        ("gh", "github"),
+    ] {
+        let help = repo.mabo(&[command, "--help"]);
+        assert_eq!(help.status.code(), Some(0));
+        assert!(help.stderr.is_empty());
+        assert!(text(&help.stdout).contains("USAGE"));
+        for args in [vec![command], vec![command, "--output", "text"]] {
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .env("MABO_OUTPUT", if args.len() == 1 { "text" } else { "json" })
+                .output()
+                .expect("mabo");
+            assert_eq!(out.status.code(), Some(0), "{args:?}");
+            assert_eq!(out.stdout, help.stdout, "{args:?}");
+            assert!(out.stderr.is_empty(), "{args:?}");
+        }
+        for (args, mode) in [
+            (vec![command, "--json"], "text"),
+            (vec!["--json", command], "text"),
+            (vec![command, "--output", "json"], "text"),
+            (vec![command], "json"),
+            (vec![command, "--no-input"], "json"),
+        ] {
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .env("MABO_OUTPUT", mode)
+                .output()
+                .expect("mabo");
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "{args:?}: {}",
+                text(&out.stdout)
+            );
+            let value = assert_envelope(&out, key);
+            assert_eq!(value["error"]["code"], "usage");
+            assert!(value["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("subcommand"));
+            assert!(value["data"].is_null());
+            assert!(out.stderr.is_empty(), "{args:?}");
+        }
+    }
+}
+
+#[test]
+fn outer_help_flags_ignore_output_environment() {
+    let repo = Repo::new();
+    let expected = repo.mabo(&["help", "help"]);
+    assert_eq!(expected.status.code(), Some(0));
+    assert!(text(&expected.stdout).contains("USAGE"));
+    for mode in ["json", "invalid"] {
+        for args in [
+            vec!["help", "--help"],
+            vec!["help", "-h"],
+            vec!["help", "--help", "--json"],
+            vec!["--json", "help", "--help"],
+        ] {
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .env("MABO_OUTPUT", mode)
+                .output()
+                .expect("mabo");
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{args:?}, {mode}: {}",
+                text(&out.stderr)
+            );
+            assert!(out.stdout == expected.stdout, "{args:?}, {mode}");
+            assert!(out.stderr.is_empty(), "{args:?}, {mode}");
+        }
+    }
+}
+
+#[test]
 fn outer_help_and_version_contracts_text_json_and_exit_codes() {
     let repo = Repo::new();
     let expected: serde_json::Value =

@@ -72,10 +72,10 @@ pub fn run(args: &[String]) -> Result<i32> {
                 supports_json || (!command.children.is_empty() && !remaining.is_empty()),
                 key,
                 &command_options(key),
-                key != "help",
+                true,
             );
-            if prepared.error.is_none()
-                && (prepared.help || (!command.children.is_empty() && prepared.args.is_empty()))
+            let missing_subcommand = !command.children.is_empty() && prepared.args.is_empty();
+            if prepared.error.is_none() && (prepared.help || (missing_subcommand && !prepared.json))
             {
                 match help::command_help(key)? {
                     Some(text) => println!("{text}"),
@@ -86,6 +86,9 @@ pub fn run(args: &[String]) -> Result<i32> {
             crate::output::begin(key, prepared.json);
             let result = match prepared.error {
                 Some(error) => Err(error),
+                None if missing_subcommand => Err(Error::validation(format!(
+                    "A subcommand is required for '{key}'"
+                ))),
                 None => (command.run)(&prepared.args),
             };
             let exit = match result {
@@ -762,9 +765,7 @@ fn help_cmd(args: &[String]) -> Result<i32> {
     } else {
         println!(
             "{}",
-            if key.is_empty() && parsed.flag("help") {
-                help::command_help("help")?.unwrap_or_default()
-            } else if key.is_empty() {
+            if key.is_empty() {
                 help::main_help()?
             } else {
                 help::command_help(&key)?.unwrap_or_default()
