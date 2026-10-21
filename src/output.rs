@@ -71,11 +71,16 @@ pub(crate) fn check_io() -> Result<()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .check("stdout");
-    let stderr = STDERR
+    let stderr = check_stderr();
+    stdout.and(stderr)
+}
+
+/// Check prompt output before reading input, leaving stdout errors deferred.
+pub(crate) fn check_stderr() -> Result<()> {
+    STDERR
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .check("stderr");
-    stdout.and(stderr)
+        .check("stderr")
 }
 
 macro_rules! outln {
@@ -388,6 +393,21 @@ mod tests {
             assert!(error.to_string().starts_with("Failed to write stderr:"));
             assert_eq!(error.exit_code(), GENERAL);
         }
+    }
+
+    #[test]
+    fn stderr_check_leaves_stdout_errors_for_command_completion() {
+        // Inject only the pending error so concurrent tests can still write.
+        STDOUT.lock().unwrap().error = Some(io::ErrorKind::PermissionDenied.into());
+
+        let prompt_result = check_stderr();
+        let completion_result = check_io();
+
+        assert!(prompt_result.is_ok());
+        let error = completion_result.unwrap_err();
+        assert!(error.to_string().starts_with("Failed to write stdout:"));
+        assert_eq!(error.exit_code(), GENERAL);
+        assert!(check_io().is_ok());
     }
 
     #[test]

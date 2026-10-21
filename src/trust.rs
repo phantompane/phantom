@@ -233,7 +233,7 @@ fn confirm(project: &str, setup: &[String], pre_remove: &[String], question: &st
     crate::output::errln!("Project: {}", visible_text(project));
     crate::output::errln!("{}", format_hooks(setup, pre_remove));
     crate::output::stderr(format_args!("{question} "));
-    crate::output::check_io()?;
+    crate::output::check_stderr()?;
     let mut line = String::new();
     std::io::stdin().read_line(&mut line).map_err(prompt_io)?;
     Ok(answer_is_yes(&line))
