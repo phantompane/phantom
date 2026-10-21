@@ -65,6 +65,31 @@ pub fn raw_with_env(
     cwd: Option<&Path>,
     env: &[(&str, &str)],
 ) -> Result<Captured> {
+    raw_with_stdin(command, args, cwd, env, None)
+}
+
+pub(crate) fn raw_with_stdin(
+    command: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[(&str, &str)],
+    input: Option<&Path>,
+) -> Result<Captured> {
+    let output = raw_bytes(command, args, cwd, env, input)?;
+    Ok(Captured {
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        code: output.status.code().unwrap_or(1),
+    })
+}
+
+pub(crate) fn raw_bytes(
+    command: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[(&str, &str)],
+    input: Option<&Path>,
+) -> Result<std::process::Output> {
     let mut cmd = self::command(command);
     cmd.args(args);
     for (key, value) in env {
@@ -73,12 +98,10 @@ pub fn raw_with_env(
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
-    let output = cmd.output().map_err(|error| spawn_error(command, &error))?;
-    Ok(Captured {
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        code: output.status.code().unwrap_or(1),
-    })
+    if let Some(input) = input {
+        cmd.stdin(std::fs::File::open(input).map_err(|error| Error::msg(error.to_string()))?);
+    }
+    cmd.output().map_err(|error| spawn_error(command, &error))
 }
 
 pub fn capture(

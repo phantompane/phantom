@@ -549,10 +549,6 @@ pub(crate) fn default_branch(git_root: &Path) -> Result<Option<String>> {
 }
 
 pub(crate) struct TipReachability {
-    /// `Some(true)` means commits on the tip are outside the default branch and
-    /// outside every remote-tracking ref. `Some(false)` means those commits are
-    /// safe to drop. `None` means the reachability query did not run.
-    pub unpushed: Option<bool>,
     /// The upstream ref is gone, the tip differs from the merge base, and a
     /// clean merge into the default branch leaves that branch's tree unchanged.
     pub landed: bool,
@@ -565,38 +561,201 @@ pub(crate) fn tip_reachability(
     base: &Option<String>,
 ) -> TipReachability {
     let Some(base) = base.as_deref() else {
-        return TipReachability {
-            unpushed: None,
-            landed: false,
-        };
+        return TipReachability { landed: false };
     };
     // A bare name prefers `refs/tags` over `refs/heads`, so a tag with the
     // branch's name hides the branch tip and those commits look pushed.
     let Some(tip) = branch_tip_spec(branch, head) else {
-        return TipReachability {
-            unpushed: None,
-            landed: false,
-        };
+        return TipReachability { landed: false };
     };
     let Some(unpushed) = commits_outside_base_and_remotes(git_root, &tip, base) else {
-        return TipReachability {
-            unpushed: None,
-            landed: false,
-        };
+        return TipReachability { landed: false };
     };
     if !unpushed {
-        return TipReachability {
-            unpushed: Some(false),
-            landed: false,
-        };
+        return TipReachability { landed: false };
     }
     let landed = branch.is_some_and(|name| {
         upstream_missing(git_root, name) && changes_landed(git_root, &tip, base)
     });
-    TipReachability {
-        unpushed: Some(!landed),
-        landed,
+    TipReachability { landed }
+}
+
+/// Retirement uses the selected base and the branch's own upstream only.
+/// Unlike sync's publication check, an unrelated remote is not preservation.
+pub(crate) fn retirement_integrated(root: &Path, tip: &str, base: &str) -> bool {
+    if raw_git(root, &["merge-base", "--is-ancestor", tip, base])
+        .is_ok_and(|result| result.code == 0)
+    {
+        return true;
     }
+    if retirement_changes_landed(root, tip, base) {
+        return true;
+    }
+    // Rebased commits can have different IDs while retaining every patch.
+    raw_git(root, &["cherry", base, tip]).is_ok_and(|result| {
+        result.code == 0
+            && !result.stdout.trim().is_empty()
+            && result.stdout.lines().all(|line| line.starts_with("- "))
+    })
+}
+
+pub(crate) fn retirement_preserved(
+    root: &Path,
+    branch: Option<&str>,
+    head: Option<&str>,
+    base: Option<&str>,
+) -> bool {
+    let Some(tip) = branch_tip_spec(branch, head) else {
+        return false;
+    };
+    if base.is_some_and(|base| retirement_integrated(root, &tip, base)) {
+        return true;
+    }
+    let Some(branch) = branch else {
+        return false;
+    };
+    let reference = format!("refs/heads/{branch}");
+    let Ok(refs) = raw_git(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname)%00%(upstream)",
+            &reference,
+        ],
+    ) else {
+        return false;
+    };
+    let Some(upstream) = refs
+        .stdout
+        .lines()
+        .filter_map(|line| line.split_once('\0'))
+        .find_map(|(name, upstream)| {
+            (name == reference && !upstream.is_empty()).then_some(upstream)
+        })
+    else {
+        return false;
+    };
+    let resolve = |spec: &str| {
+        raw_git(root, &["rev-parse", "--verify", "--quiet", spec])
+            .ok()
+            .filter(|result| result.code == 0)
+            .map(|result| result.stdout.trim().to_string())
+    };
+    match (resolve(&tip), resolve(upstream)) {
+        (Some(tip), Some(upstream)) => tip == upstream,
+        _ => false,
+    }
+}
+
+// A squash is one base commit whose complete patch matches the branch diff.
+// Compare patch IDs using read-only commands: merge-tree --write-tree can also
+// refresh timestamps of existing objects even with an alternate object store.
+fn retirement_changes_landed(root: &Path, tip: &str, base: &str) -> bool {
+    let Ok(ancestor) = raw_git(root, &["merge-base", base, tip]) else {
+        return false;
+    };
+    if ancestor.code != 0 {
+        return false;
+    }
+    let ancestor = ancestor.stdout.trim();
+    let Ok(diff) = raw_git_bytes(
+        root,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--no-renames",
+            "--binary",
+            "--full-index",
+            ancestor,
+            tip,
+            "--",
+        ],
+    ) else {
+        return false;
+    };
+    if !diff.status.success() || diff.stdout.is_empty() {
+        return false;
+    }
+    let Some(patch) = patch_ids(root, &diff.stdout).and_then(|ids| ids.into_iter().next()) else {
+        return false;
+    };
+    let range = format!("{ancestor}..{base}");
+    let Ok(history) = raw_git_bytes(
+        root,
+        &[
+            "log",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--no-renames",
+            "--no-merges",
+            "--pretty=medium",
+            "-p",
+            "--binary",
+            "--full-index",
+            &range,
+            "--",
+        ],
+    ) else {
+        return false;
+    };
+    history.status.success()
+        && patch_ids(root, &history.stdout).is_some_and(|ids| ids.contains(&patch))
+}
+
+fn patch_ids(root: &Path, diff: &[u8]) -> Option<Vec<String>> {
+    struct Input(std::path::PathBuf);
+    impl Drop for Input {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let input = Input(std::env::temp_dir().join(format!("mabo-patch-{}", uuid::Uuid::new_v4())));
+    // Private input files can contain uncommitted content in other callers.
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&input.0)
+        .ok()?;
+    file.write_all(diff).ok()?;
+    drop(file);
+    let result = process::raw_with_stdin(
+        "git",
+        &["patch-id", "--stable"],
+        Some(root),
+        &[],
+        Some(&input.0),
+    )
+    .ok()?;
+    (result.code == 0).then(|| {
+        result
+            .stdout
+            .lines()
+            .filter_map(|line| line.split_whitespace().next().map(str::to_owned))
+            .collect()
+    })
+}
+
+/// Count all content a checkout removal would lose, including ignored files.
+pub(crate) fn retirement_status_count(cwd: &Path) -> Result<usize> {
+    let stdout = output(
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain",
+            "-z",
+            "--ignored",
+            "--untracked-files=all",
+        ],
+        Some(cwd),
+        false,
+    )?;
+    Ok(stdout.split('\0').filter(|entry| !entry.is_empty()).count())
 }
 
 fn branch_tip_spec(branch: Option<&str>, head: Option<&str>) -> Option<String> {
@@ -679,6 +838,10 @@ fn verify_commit(git_root: &Path, name: &str) -> Result<bool> {
     Ok(captured.code == 0)
 }
 
+fn raw_git_bytes(root: &Path, args: &[&str]) -> Result<std::process::Output> {
+    process::raw_bytes("git", args, Some(root), &[], None)
+}
+
 pub(crate) fn raw_git(git_root: &Path, args: &[&str]) -> Result<process::Captured> {
     process::raw("git", args, Some(git_root))
 }
@@ -692,7 +855,11 @@ pub(crate) fn raw_git_with_env(
 }
 
 pub fn status_count(cwd: &Path) -> Result<usize> {
-    let stdout = output(&["status", "--porcelain"], Some(cwd), false)?;
+    let stdout = output(
+        &["--no-optional-locks", "status", "--porcelain"],
+        Some(cwd),
+        false,
+    )?;
     Ok(stdout.lines().filter(|line| !line.is_empty()).count())
 }
 
@@ -728,21 +895,6 @@ pub fn remote_has_branch(git_root: &Path, remote: &str, branch: &str) -> Result<
             .nth(1)
             .is_some_and(|name| name == wanted)
     }))
-}
-
-/// SHA advertised as `refs/pull/<number>/head`, when the remote answers.
-pub(crate) fn remote_pull_head(git_root: &Path, number: u64) -> Option<String> {
-    let spec = format!("refs/pull/{number}/head");
-    let captured = raw_git(git_root, &["ls-remote", "origin", &spec]).ok()?;
-    if captured.code != 0 {
-        return None;
-    }
-    captured.stdout.lines().find_map(|line| {
-        let mut parts = line.split_whitespace();
-        let sha = parts.next()?;
-        let name = parts.next()?;
-        (name == spec).then(|| sha.to_string())
-    })
 }
 
 /// Create `name` at `start`, or fast-forward it there.

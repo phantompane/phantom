@@ -651,7 +651,7 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
     fs::write(Path::new(extra_worktree).join("local.txt"), "local\n").expect("local");
     git(Path::new(extra_worktree), &["add", "local.txt"]);
     git(Path::new(extra_worktree), &["commit", "-m", "local"]);
-    let skipped = mabo(&extra_clone, &extra_bin, &["gc", "--pr", "--json"]);
+    let skipped = mabo(&extra_clone, &extra_bin, &["gc", "--closed-pr", "--json"]);
     let skipped_stdout = String::from_utf8_lossy(&skipped.stdout);
     let skipped_stderr = String::from_utf8_lossy(&skipped.stderr);
     assert!(
@@ -659,11 +659,20 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
         "{skipped_stdout}\n{skipped_stderr}"
     );
     let skipped_doc: serde_json::Value = serde_json::from_str(&skipped_stdout).expect("json");
-    assert_eq!(skipped_doc["data"]["candidates"][0]["action"], "skipped");
-    assert_eq!(skipped_doc["data"]["candidates"][0]["detail"], "unpushed");
+    assert_eq!(skipped_doc["data"]["items"][0]["action"], "skipped");
+    assert!(skipped_doc["data"]["items"][0]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("--delete-unpreserved-branch"));
     assert!(Path::new(extra_worktree).is_dir());
 
-    let collected = mabo(&clone, &bin, &["gc", "--pr", "--apply", "--json"]);
+    // The PR state is evidence; commits must also be preserved in the base.
+    git(
+        &clone,
+        &["merge", "--ff-only", "refs/heads/deleted-feature"],
+    );
+    git(&clone, &["push", "origin", "main"]);
+    let collected = mabo(&clone, &bin, &["gc", "--closed-pr", "--apply", "--json"]);
     let collected_stdout = String::from_utf8_lossy(&collected.stdout);
     let collected_stderr = String::from_utf8_lossy(&collected.stderr);
     assert!(
@@ -672,10 +681,10 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
     );
     let collected_doc: serde_json::Value = serde_json::from_str(&collected_stdout).expect("json");
     assert_eq!(
-        collected_doc["data"]["candidates"][0]["reasons"],
+        collected_doc["data"]["items"][0]["reasons"],
         serde_json::json!(["pullRequest"])
     );
-    assert_eq!(collected_doc["data"]["candidates"][0]["action"], "removed");
+    assert_eq!(collected_doc["data"]["items"][0]["action"], "removed");
     assert!(!Path::new(&worktree).exists());
 }
 

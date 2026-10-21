@@ -24,7 +24,6 @@ pub struct Request {
 pub struct Policy {
     pub selection: Selection,
     pub now: SystemTime,
-    pub force: bool,
 }
 
 #[derive(Clone)]
@@ -41,7 +40,6 @@ pub enum Reason {
     Merged,
     PullRequest,
     Orphaned,
-    OlderThan,
 }
 
 impl Reason {
@@ -50,7 +48,6 @@ impl Reason {
             Self::Merged => "merged",
             Self::PullRequest => "pullRequest",
             Self::Orphaned => "orphaned",
-            Self::OlderThan => "olderThan",
         }
     }
 }
@@ -77,6 +74,7 @@ pub struct CandidateEntry {
     pub action: Action,
     pub detail: Option<String>,
     pub branch_deleted: Option<bool>,
+    pub workspace: serde_json::Value,
     /// A checkout, registration, or metadata record was removed, even if a
     /// later step failed. This is independent of the candidate's action.
     #[serde(skip)]
@@ -89,6 +87,7 @@ pub struct Report {
     pub version: u32,
     pub applied: bool,
     pub plan: bool,
+    #[serde(rename = "items")]
     pub candidates: Vec<CandidateEntry>,
     #[serde(skip)]
     pub lines: Vec<String>,
@@ -148,12 +147,12 @@ pub fn selection_from_flags(
     orphaned: bool,
     older_than: Option<Duration>,
 ) -> Selection {
-    if !merged && !pull_request && !orphaned && older_than.is_none() {
+    if !merged && !pull_request && !orphaned {
         return Selection {
             merged: true,
             pull_request: true,
             orphaned: true,
-            older_than: None,
+            older_than,
         };
     }
     Selection {
@@ -166,6 +165,18 @@ pub fn selection_from_flags(
 
 pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Report> {
     let facts = gather(context, &request.policy, None)?;
+    let mut workspaces = worktree::list_worktrees(context, false, true)?;
+    let common = git::canonical_common_dir(&context.git_root)?;
+    for (key, record) in metadata::load_strict(&context.git_root)? {
+        let path = Path::new(&key);
+        if !paths::same_location(path, &context.git_root)
+            && !workspaces
+                .iter()
+                .any(|tree| paths::same_location(path, Path::new(&tree.path)))
+        {
+            workspaces.push(worktree::orphaned_info(context, path, &record, &common));
+        }
+    }
     warn_unavailable_pull_requests(&facts, &request.policy);
     let verdicts = classify(&facts, &request.policy);
     let skip_untrusted = crate::trust::blocks_gc(
@@ -181,11 +192,18 @@ pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Repo
         } else {
             verdict
         };
-        let entry = if request.apply {
+        let mut entry = if request.apply {
             apply_verdict(context, request, logger, verdict)
         } else {
             preview(verdict)
         };
+        entry.workspace = workspaces
+            .iter()
+            .find(|tree| paths::same_location(Path::new(&tree.path), Path::new(&entry.path)))
+            .map(|tree| serde_json::to_value(tree.to_json(None)))
+            .transpose()
+            .map_err(|error| Error::msg(error.to_string()))?
+            .unwrap_or_else(|| serde_json::json!({"name": entry.name, "path": entry.path}));
         if entry.action == Action::Failed && first_failure.is_none() {
             first_failure = entry.detail.clone();
         }
@@ -236,12 +254,9 @@ struct WorktreeFacts {
     is_current: bool,
     locked: bool,
     dirty: Dirty,
-    /// `Some(true)` means commits on the tip are outside the default branch and
-    /// outside every remote-tracking ref, and they are not already landed there.
-    /// `None` means the query did not run.
+    /// `Some(true)` means the tip is not integrated into its base and does not
+    /// exactly match its own upstream. Unknown state is protected too.
     unpushed: Option<bool>,
-    /// Set when this tip is exactly a merged `refs/pull/<n>/head`.
-    published_tip: Option<String>,
     merged: bool,
     pr: PullRequestState,
     created_at: Option<SystemTime>,
@@ -287,7 +302,6 @@ enum Removal {
     Delete {
         subject: Subject,
         reasons: Vec<Reason>,
-        published_tip: Option<String>,
     },
     DropRegistration {
         subject: Subject,
@@ -316,10 +330,6 @@ static CRITERIA: &[Criterion] = &[
         reason: Reason::Orphaned,
         matches: |facts, _| orphaned(facts),
     },
-    Criterion {
-        reason: Reason::OlderThan,
-        matches: |facts, policy| age_hit(facts, policy),
-    },
 ];
 
 fn orphaned(facts: &WorktreeFacts) -> bool {
@@ -346,6 +356,9 @@ fn age_hit(facts: &WorktreeFacts, policy: &Policy) -> bool {
 fn classify(facts: &[WorktreeFacts], policy: &Policy) -> Vec<Verdict> {
     let mut verdicts = Vec::new();
     for facts in facts {
+        if policy.selection.older_than.is_some() && !age_hit(facts, policy) {
+            continue;
+        }
         let reasons = CRITERIA
             .iter()
             .filter(|row| policy.selection.selects(row.reason) && (row.matches)(facts, policy))
@@ -380,12 +393,11 @@ impl Selection {
             Reason::Merged => self.merged,
             Reason::PullRequest => self.pull_request,
             Reason::Orphaned => self.orphaned,
-            Reason::OlderThan => self.older_than.is_some(),
         }
     }
 }
 
-fn hold(facts: &WorktreeFacts, policy: &Policy) -> Option<Hold> {
+fn hold(facts: &WorktreeFacts, _policy: &Policy) -> Option<Hold> {
     if facts.is_default {
         return Some(Hold::DefaultBranch);
     }
@@ -395,20 +407,16 @@ fn hold(facts: &WorktreeFacts, policy: &Policy) -> Option<Hold> {
     if facts.locked {
         return Some(Hold::Locked);
     }
-    if facts.directory == DirState::Unknown && !(policy.force && facts.registered) {
+    if facts.directory == DirState::Unknown {
         return Some(Hold::StatusUnknown);
     }
-    if facts.dirty == Dirty::Unknown && !policy.force {
+    if facts.dirty == Dirty::Unknown {
         return Some(Hold::StatusUnknown);
     }
-    if facts.dirty == Dirty::Changed && !policy.force {
+    if facts.dirty == Dirty::Changed {
         return Some(Hold::Dirty);
     }
-    if facts.unpushed != Some(false)
-        && facts.registered
-        && facts.directory == DirState::Present
-        && !policy.force
-    {
+    if facts.unpushed != Some(false) && facts.registered && facts.directory == DirState::Present {
         return Some(Hold::Unpushed);
     }
     None
@@ -417,11 +425,7 @@ fn hold(facts: &WorktreeFacts, policy: &Policy) -> Option<Hold> {
 fn removal_kind(facts: &WorktreeFacts, reasons: Vec<Reason>) -> Removal {
     let subject = facts.subject.clone();
     if facts.registered && facts.directory == DirState::Present {
-        return Removal::Delete {
-            subject,
-            reasons,
-            published_tip: facts.published_tip.clone(),
-        };
+        return Removal::Delete { subject, reasons };
     }
     Removal::DropRegistration {
         subject,
@@ -512,7 +516,10 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
         if paths::normalize(&path) == paths::normalize(&context.git_root) {
             continue;
         }
-        if !orphaned_record(&path, &listed) {
+        if listed
+            .iter()
+            .any(|tree| paths::same_location(&path, Path::new(&tree.path)))
+        {
             continue;
         }
         let mut facts = observe_record(context, policy, &path, record, &mut pull_requests);
@@ -544,7 +551,9 @@ fn observe_listed(
     record: Option<&WorktreeMetadata>,
     pull_requests: &mut BTreeMap<String, PullRequestStatus>,
 ) -> WorktreeFacts {
-    let base = &default.base;
+    let base = record
+        .and_then(|record| record.base.clone())
+        .or_else(|| default.base.clone());
     let path = PathBuf::from(&worktree.path);
     let directory = directory_state(&path);
     let detached = worktree.branch.as_deref() == Some("(detached HEAD)");
@@ -558,51 +567,43 @@ fn observe_listed(
         None => false,
     };
     let created_from = record.and_then(|item| item.created_from.as_deref());
-    let reachability = git::tip_reachability(
+    let tip = branch
+        .as_ref()
+        .map(|branch| format!("refs/heads/{branch}"))
+        .or_else(|| worktree.head.clone());
+    let integrated = tip
+        .as_deref()
+        .zip(base.as_deref())
+        .is_some_and(|(tip, base)| git::retirement_integrated(&context.git_root, tip, base));
+    let moved = match (&branch, &base) {
+        (Some(name), Some(base)) => !still_at_creation_point(
+            &context.git_root,
+            name,
+            created_from,
+            base,
+            record.is_none(),
+        ),
+        _ => true,
+    };
+    let merged = moved && integrated;
+    let preserved = git::retirement_preserved(
         &context.git_root,
         branch.as_deref(),
         worktree.head.as_deref(),
-        base,
+        base.as_deref(),
     );
-    let merged = match (&branch, base) {
-        (Some(name), Some(base_name)) => {
-            let moved = !still_at_creation_point(
-                &context.git_root,
-                name,
-                created_from,
-                base_name,
-                record.is_none(),
-            );
-            let ancestor = is_ancestor(&context.git_root, name, base_name);
-            moved && (ancestor || reachability.landed)
-        }
-        _ => false,
-    };
     // An unresolved remote mapping must not prevent orphan-record cleanup or
     // accidentally allow deletion of the checkout holding the default branch.
     let is_default = branch
         .as_deref()
         .is_some_and(|branch| default.name.as_deref() == Some(branch) || default.name.is_none());
-    let unpushed = reachability.unpushed;
+    let unpushed = Some(!preserved);
     let pr_link = record.and_then(|item| item.links.pr.as_ref());
     let pr = pull_state(policy, &context.git_root, pr_link, pull_requests);
-    let published_tip = merged_pull_head(
-        policy,
-        &context.git_root,
-        pr_link,
-        worktree.head.as_deref(),
-        unpushed,
-        pull_requests,
-    );
-    let unpushed = if published_tip.is_some() {
-        Some(false)
-    } else {
-        unpushed
-    };
     let dirty = match directory {
         DirState::Absent => Dirty::Absent,
         DirState::Unknown => Dirty::Unknown,
-        DirState::Present => match git::status_count(&path) {
+        DirState::Present => match git::retirement_status_count(&path) {
             Ok(0) => Dirty::Clean,
             Ok(_) => Dirty::Changed,
             Err(_) => Dirty::Unknown,
@@ -626,7 +627,6 @@ fn observe_listed(
         locked: worktree.locked,
         dirty,
         unpushed,
-        published_tip,
         merged,
         pr,
 
@@ -657,7 +657,6 @@ fn observe_record(
         locked: false,
         dirty: Dirty::Absent,
         unpushed: None,
-        published_tip: None,
         merged: false,
         pr: pull_state(
             policy,
@@ -668,33 +667,6 @@ fn observe_record(
 
         created_at: record.created_at.as_deref().and_then(parse_time),
     }
-}
-
-/// A merged pull request whose worktree is still exactly `refs/pull/<n>/head`.
-/// Local commits on top stay unpushed.
-fn merged_pull_head(
-    policy: &Policy,
-    git_root: &Path,
-    link: Option<&WorktreeLink>,
-    head: Option<&str>,
-    unpushed: Option<bool>,
-    pull_requests: &BTreeMap<String, PullRequestStatus>,
-) -> Option<String> {
-    if unpushed != Some(true) || !policy.selection.pull_request {
-        return None;
-    }
-    let link = link?;
-    let number = link.number?;
-    let query = pull_request_query(git_root, link)?;
-    if pull_requests.get(&query.key).copied() != Some(PullRequestStatus::Merged) {
-        return None;
-    }
-    let pull_head = git::remote_pull_head(git_root, number)?;
-    let head = head?.trim();
-    if !head.eq_ignore_ascii_case(pull_head.trim()) {
-        return None;
-    }
-    Some(pull_head)
 }
 
 fn warn_unavailable_pull_requests(facts: &[WorktreeFacts], policy: &Policy) {
@@ -862,10 +834,8 @@ fn branch_tip(git_root: &Path, branch: &str) -> Option<String> {
 }
 
 fn is_ancestor(git_root: &Path, tip: &str, base: &str) -> bool {
-    let Ok(captured) = git(git_root, &["merge-base", "--is-ancestor", tip, base]) else {
-        return false;
-    };
-    captured.code == 0
+    git(git_root, &["merge-base", "--is-ancestor", tip, base])
+        .is_ok_and(|captured| captured.code == 0)
 }
 
 fn git(git_root: &Path, args: &[&str]) -> Result<process::Captured> {
@@ -885,6 +855,17 @@ fn hold_untrusted(verdict: Verdict) -> Verdict {
     }
 }
 
+fn hold_detail(hold: Hold, name: &str) -> String {
+    let quoted = crate::allocation::shell_quote(std::ffi::OsStr::new(name));
+    match hold {
+        Hold::Dirty => format!("dirty; use mabo remove {quoted} --discard-changes"),
+        Hold::Unpushed => {
+            format!("unpreserved; use mabo remove {quoted} --delete-unpreserved-branch")
+        }
+        _ => hold.detail().to_string(),
+    }
+}
+
 fn preview(verdict: Verdict) -> CandidateEntry {
     match verdict {
         Verdict::Remove(removal) => entry_from_removal(&removal, Action::WouldRemove, None, None),
@@ -893,13 +874,14 @@ fn preview(verdict: Verdict) -> CandidateEntry {
             reasons,
             hold,
         } => CandidateEntry {
-            name: subject.name,
+            name: subject.name.clone(),
             path: subject.path.display().to_string(),
             branch: subject.branch,
             reasons,
             action: Action::Skipped,
-            detail: Some(hold.detail().to_string()),
+            detail: Some(hold_detail(hold, &subject.name)),
             branch_deleted: None,
+            workspace: serde_json::Value::Null,
             changed: false,
         },
     }
@@ -917,20 +899,19 @@ fn apply_verdict(
             reasons,
             hold,
         } => CandidateEntry {
-            name: subject.name,
+            name: subject.name.clone(),
             path: subject.path.display().to_string(),
             branch: subject.branch,
             reasons,
             action: Action::Skipped,
-            detail: Some(hold.detail().to_string()),
+            detail: Some(hold_detail(hold, &subject.name)),
             branch_deleted: None,
+            workspace: serde_json::Value::Null,
             changed: false,
         },
-        Verdict::Remove(Removal::Delete {
-            subject,
-            reasons,
-            published_tip,
-        }) => apply_delete(context, request, logger, subject, reasons, published_tip),
+        Verdict::Remove(Removal::Delete { subject, reasons }) => {
+            apply_delete(context, request, logger, subject, reasons)
+        }
         Verdict::Remove(Removal::DropRegistration {
             subject, reasons, ..
         }) => apply_drop(context, request, subject, reasons),
@@ -943,7 +924,6 @@ fn apply_delete(
     logger: &Logger,
     subject: Subject,
     reasons: Vec<Reason>,
-    published_tip: Option<String>,
 ) -> CandidateEntry {
     let info = match worktree::worktree_at_path(context, &subject.path) {
         Ok(info) => info,
@@ -951,22 +931,21 @@ fn apply_delete(
             return failed(subject, reasons, error.to_string());
         }
     };
-    let options = worktree::DeleteOptions {
-        force: request.policy.force,
+    let options = worktree::RemoveOptions {
+        discard_changes: false,
         keep_branch: request.keep_branch,
-        allow_current: false,
-        published_tip,
+        delete_unpreserved_branch: false,
     };
-    let plan = match worktree::preflight_delete_named(
+    let plan = match worktree::preflight_remove_named(
         context,
         &info.name,
         &options,
         Some(&subject.path),
     ) {
         Ok(plan) => plan,
-        Err(error) => return failed(subject, reasons, error.error.to_string()),
+        Err(error) => return removal_failure(subject, reasons, error.error),
     };
-    match worktree::commit_delete_checked(
+    match worktree::commit_remove_checked(
         context,
         plan,
         &options,
@@ -978,18 +957,40 @@ fn apply_delete(
         },
         || {
             let facts = gather(context, &request.policy, Some(&subject.path))?;
-            if classify(&facts, &request.policy).iter().any(|verdict| matches!(verdict,
-                Verdict::Remove(Removal::Delete { subject: current, .. }) if current.path == subject.path)) {
-                Ok(())
-            } else {
-                Err(Error::msg("Workspace no longer qualifies for gc after pre-remove commands"))
+            for verdict in classify(&facts, &request.policy) {
+                match verdict {
+                    Verdict::Remove(Removal::Delete {
+                        subject: current, ..
+                    }) if current.path == subject.path => return Ok(()),
+                    Verdict::Skip {
+                        subject: current,
+                        hold,
+                        ..
+                    } if current.path == subject.path => {
+                        let code = match hold {
+                            Hold::Dirty => "dirty",
+                            Hold::Unpushed => "unpreserved",
+                            Hold::Untrusted => "untrusted",
+                            _ => "refused",
+                        };
+                        return Err(Error::Status {
+                            code,
+                            message: hold_detail(hold, &subject.name),
+                        });
+                    }
+                    _ => {}
+                }
             }
+            Err(Error::msg(
+                "Workspace no longer qualifies for gc after pre-remove commands",
+            ))
         },
     ) {
         Ok(outcome) => {
-            let failed_metadata = outcome.metadata_error.is_some();
+            let failed_metadata =
+                outcome.metadata_error.is_some() || outcome.branch_error.is_some();
             CandidateEntry {
-                name: subject.name,
+                name: subject.name.clone(),
                 path: subject.path.display().to_string(),
                 branch: subject.branch,
                 reasons,
@@ -1000,21 +1001,29 @@ fn apply_delete(
                 },
                 detail: outcome.metadata_error.or(outcome.branch_error),
                 branch_deleted: Some(outcome.branch_deleted),
+                workspace: serde_json::Value::Null,
                 changed: true,
             }
         }
-        Err(error) if matches!(error.error, Error::Untrusted(_)) => CandidateEntry {
-            name: subject.name,
-            path: subject.path.display().to_string(),
-            branch: subject.branch,
-            reasons,
-            action: Action::Skipped,
-            detail: Some(Hold::Untrusted.detail().to_string()),
-            branch_deleted: None,
-            changed: false,
-        },
-        Err(error) => failed(subject, reasons, error.error.to_string()),
+        Err(error) => removal_failure(subject, reasons, error.error),
     }
+}
+
+fn removal_failure(subject: Subject, reasons: Vec<Reason>, error: Error) -> CandidateEntry {
+    let hold = match error.json_code(error.exit_code()) {
+        "dirty" => Some(Hold::Dirty),
+        "unpreserved" => Some(Hold::Unpushed),
+        "untrusted" => Some(Hold::Untrusted),
+        _ => None,
+    };
+    if let Some(hold) = hold {
+        return preview(Verdict::Skip {
+            subject,
+            reasons,
+            hold,
+        });
+    }
+    failed(subject, reasons, error.to_string())
 }
 
 fn apply_drop(
@@ -1034,18 +1043,19 @@ fn apply_drop(
             && (facts.subject.branch != subject.branch || facts.subject.head != subject.head)
     }) {
         return CandidateEntry {
-            name: subject.name,
+            name: subject.name.clone(),
             path: subject.path.display().to_string(),
             branch: subject.branch,
             reasons,
             action: Action::Skipped,
             detail: Some("Workspace branch or HEAD changed since gc planning".into()),
             branch_deleted: None,
+            workspace: serde_json::Value::Null,
             changed: false,
         };
     }
     let fresh = classify(&facts, &request.policy);
-    let Some((git_listed, unpushed, branch_missing)) =
+    let Some((git_listed, _unpushed, _branch_missing)) =
         fresh.iter().find_map(|verdict| match verdict {
             Verdict::Remove(Removal::DropRegistration {
                 subject: current,
@@ -1070,54 +1080,28 @@ fn apply_drop(
     }
     if let Err(error) = metadata::remove(&context.git_root, &subject.path) {
         return CandidateEntry {
-            name: subject.name,
+            name: subject.name.clone(),
             path: subject.path.display().to_string(),
             branch: subject.branch,
             reasons,
             action: Action::Failed,
             detail: Some(error.to_string()),
             branch_deleted: Some(false),
+            workspace: serde_json::Value::Null,
             changed: git_listed,
         };
     }
-    let (branch_deleted, detail) =
-        drop_branch(context, request, &subject, unpushed, branch_missing);
+    let (branch_deleted, detail) = (false, None);
     CandidateEntry {
-        name: subject.name,
+        name: subject.name.clone(),
         path: subject.path.display().to_string(),
         branch: subject.branch,
         reasons,
         action: Action::Removed,
         detail,
         branch_deleted: Some(branch_deleted),
+        workspace: serde_json::Value::Null,
         changed: true,
-    }
-}
-
-fn drop_branch(
-    context: &Context,
-    request: &Request,
-    subject: &Subject,
-    unpushed: Option<bool>,
-    branch_missing: bool,
-) -> (bool, Option<String>) {
-    let Some(branch) = subject.branch.as_deref() else {
-        return (false, None);
-    };
-    if branch_missing || request.keep_branch {
-        return (false, None);
-    }
-    if unpushed != Some(false) && !request.policy.force {
-        let detail = if unpushed == Some(true) {
-            "kept the branch because it has unpushed commits"
-        } else {
-            "kept the branch because its commits could not be checked"
-        };
-        return (false, Some(detail.to_string()));
-    }
-    match git::delete_branch(&context.git_root, branch) {
-        Ok(()) => (true, None),
-        Err(error) => (false, Some(error.to_string())),
     }
 }
 
@@ -1131,13 +1115,14 @@ fn unregister(git_root: &Path, path: &Path) -> Result<()> {
 
 fn failed(subject: Subject, reasons: Vec<Reason>, detail: String) -> CandidateEntry {
     CandidateEntry {
-        name: subject.name,
+        name: subject.name.clone(),
         path: subject.path.display().to_string(),
         branch: subject.branch,
         reasons,
         action: Action::Failed,
         detail: Some(detail),
         branch_deleted: None,
+        workspace: serde_json::Value::Null,
         changed: false,
     }
 }
@@ -1164,6 +1149,7 @@ fn entry_from_removal(
         action,
         detail,
         branch_deleted,
+        workspace: serde_json::Value::Null,
         changed: false,
     }
 }
@@ -1247,7 +1233,6 @@ mod tests {
         Policy {
             selection: selection_from_flags(false, false, false, None),
             now: SystemTime::UNIX_EPOCH,
-            force: false,
         }
     }
 
@@ -1270,19 +1255,7 @@ mod tests {
             unpushed: Some(false),
             merged: true,
             pr: PullRequestState::Unlinked,
-            published_tip: None,
             created_at: None,
-        }
-    }
-
-    fn removal_name(verdicts: &[Verdict]) -> Option<&str> {
-        match verdicts {
-            [Verdict::Remove(removal)] => Some(match removal {
-                Removal::Delete { subject, .. } | Removal::DropRegistration { subject, .. } => {
-                    subject.name.as_str()
-                }
-            }),
-            _ => None,
         }
     }
 
@@ -1319,7 +1292,7 @@ mod tests {
         assert!(defaults.merged && defaults.pull_request && defaults.orphaned);
         assert!(defaults.older_than.is_none());
         let age_only = selection_from_flags(false, false, false, Some(Duration::from_secs(60)));
-        assert!(!age_only.merged && !age_only.pull_request && !age_only.orphaned);
+        assert!(age_only.merged && age_only.pull_request && age_only.orphaned);
         assert!(age_only.older_than.is_some());
     }
 
@@ -1339,14 +1312,6 @@ mod tests {
                 hold: Hold::Dirty,
                 ..
             }]
-        ));
-        let mut forced = policy();
-        forced.force = true;
-        let mut dirty = feature();
-        dirty.dirty = Dirty::Changed;
-        assert!(matches!(
-            classify(&[dirty], &forced).as_slice(),
-            [Verdict::Remove(Removal::Delete { .. })]
         ));
     }
 
@@ -1375,22 +1340,21 @@ mod tests {
     }
 
     #[test]
-    fn age_alone_can_select_a_workspace() {
+    fn age_alone_cannot_select_a_workspace() {
         let mut old = feature();
         old.merged = false;
         old.created_at = Some(SystemTime::UNIX_EPOCH);
         let mut aged = policy();
         aged.selection = selection_from_flags(false, false, false, Some(Duration::from_secs(60)));
         aged.now = SystemTime::UNIX_EPOCH + Duration::from_secs(120);
-        assert_eq!(removal_name(&classify(&[old], &aged)), Some("feature"));
+        assert!(classify(&[old], &aged).is_empty());
     }
 
     #[test]
     fn current_and_locked_worktrees_stay() {
         let mut current = feature();
         current.is_current = true;
-        let mut forced = policy();
-        forced.force = true;
+        let forced = policy();
         assert!(matches!(
             classify(&[current], &forced).as_slice(),
             [Verdict::Skip {

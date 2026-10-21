@@ -303,7 +303,7 @@ fn delete_without_a_terminal_keeps_the_worktree() {
     let repo = Repo::new();
     assert!(repo.mabo(&["create", "topic"]).status.success());
     hooks(&repo, "\"true\"", "\"touch pre-remove.txt\"");
-    let deleted = repo.mabo(&["delete", "topic"]);
+    let deleted = repo.mabo(&["remove", "topic"]);
     assert_eq!(deleted.status.code(), Some(4));
     assert!(
         text(&deleted.stderr).contains("--no-hooks"),
@@ -312,7 +312,7 @@ fn delete_without_a_terminal_keeps_the_worktree() {
     );
     assert!(worktree(&repo, "topic").is_dir());
     assert!(!repo.repo.join("pre-remove.txt").exists());
-    let skipped = repo.mabo(&["delete", "topic", "--no-hooks"]);
+    let skipped = repo.mabo(&["remove", "topic", "--no-hooks"]);
     assert!(skipped.status.success(), "{}", text(&skipped.stderr));
     assert!(!worktree(&repo, "topic").exists());
     assert!(!repo.repo.join("pre-remove.txt").exists());
@@ -338,11 +338,8 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
     let plan = repo.mabo(&["gc", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let document: serde_json::Value = serde_json::from_slice(&plan.stdout).expect("json");
-    assert_eq!(document["data"]["candidates"][0]["action"], "skipped");
-    assert_eq!(
-        document["data"]["candidates"][0]["detail"],
-        "untrusted hooks"
-    );
+    assert_eq!(document["data"]["items"][0]["action"], "skipped");
+    assert_eq!(document["data"]["items"][0]["detail"], "untrusted hooks");
     assert!(
         !text(&plan.stdout).contains("Trust this project and run its hooks?"),
         "{}",
@@ -357,11 +354,8 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
     let applied = repo.mabo(&["gc", "--apply", "--json"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let applied_doc: serde_json::Value = serde_json::from_slice(&applied.stdout).expect("json");
-    assert_eq!(applied_doc["data"]["candidates"][0]["action"], "skipped");
-    assert_eq!(
-        applied_doc["data"]["candidates"][0]["detail"],
-        "untrusted hooks"
-    );
+    assert_eq!(applied_doc["data"]["items"][0]["action"], "skipped");
+    assert_eq!(applied_doc["data"]["items"][0]["detail"], "untrusted hooks");
     assert!(dir.is_dir());
     assert!(!repo.repo.join("pre-remove.txt").exists());
     assert!(!dir.join("pre-remove.txt").exists());

@@ -225,7 +225,20 @@ fn push_positional(parsed: &mut Parsed, arg: &str, allow_positionals: bool) -> R
     Ok(())
 }
 
+pub(crate) fn retirement_option_hint(option: &str) -> Option<String> {
+    let hint = match option.split('=').next()? {
+        "--force" | "-f" => "Use remove --discard-changes and/or --delete-unpreserved-branch for a specific workspace; gc only accepts --apply and skips unsafe candidates.",
+        "--current" => "Use `mabo remove .`.",
+        "--pr" => "Use `mabo gc --closed-pr`.",
+        _ => return None,
+    };
+    Some(format!("Option '{option}' was removed. {hint}"))
+}
+
 fn unknown_option(option: &str) -> String {
+    if let Some(hint) = retirement_option_hint(option) {
+        return hint;
+    }
     if let Some(hint) = removed_option_hint(option) {
         return hint;
     }

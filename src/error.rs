@@ -31,7 +31,7 @@ pub enum Error {
     #[error("Not a git repository. Run mabo from inside a Git repository.")]
     NotARepository,
     #[error(
-        "Workspace '{name}' has uncommitted changes ({files} files). Use --force to delete anyway."
+        "Workspace '{name}' has uncommitted changes ({files} files). Use --discard-changes to remove anyway."
     )]
     Uncommitted { name: String, files: usize },
     #[error("Workspace '{name}' {detail}. {hint}")]
@@ -60,24 +60,6 @@ impl Error {
     /// Invalid command-line arguments use the shared usage status.
     pub fn validation(message: impl Into<String>) -> Self {
         Self::Validation(message.into())
-    }
-
-    pub(crate) fn unpushed_delete(name: &str, detached: bool, unknown: bool) -> Self {
-        let detail = if unknown {
-            "has commits that could not be checked"
-        } else {
-            "has unpushed commits"
-        };
-        let hint = if detached {
-            "Use --force to delete anyway."
-        } else {
-            "Use --keep-branch to keep the branch, or --force to delete it."
-        };
-        Self::Unpushed {
-            name: name.to_string(),
-            detail,
-            hint,
-        }
     }
 
     pub fn status(exit: i32, message: impl Into<String>) -> Self {
