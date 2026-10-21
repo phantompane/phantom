@@ -174,4 +174,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" ./*.tar.gz install.sh SHA256SUMS --clobber
+        # gh uploads files in parallel and never rolls back, so publish
+        # SHA256SUMS last and on its own. A rerun first drops any stale
+        # SHA256SUMS, so old checksums never pair with rebuilt archives. The
+        # installer refuses a release without SHA256SUMS (fails closed).
+        run: |
+          if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -qx SHA256SUMS; then
+            gh release delete-asset "$RELEASE_TAG" SHA256SUMS --yes
+          fi
+          gh release upload "$RELEASE_TAG" ./*.tar.gz install.sh --clobber
+          gh release upload "$RELEASE_TAG" SHA256SUMS --clobber
