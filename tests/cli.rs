@@ -16887,7 +16887,7 @@ fn retirement_removed_interfaces_have_migration_hints() {
 }
 
 #[test]
-fn retirement_patch_ids_preserve_rebased_work_after_later_base_edits() {
+fn retirement_tree_entries_preserve_rebased_work_after_later_base_edits() {
     let repo = Repo::new();
     assert!(repo
         .mabo(&["create", "rebased", "--no-setup"])
@@ -16901,10 +16901,12 @@ fn retirement_patch_ids_preserve_rebased_work_after_later_base_edits() {
             .unwrap()
             .stdout,
     );
+    commit_file(&repo, "rebased", "second.txt", "second commit\n");
     fs::write(repo.repo.join("other.txt"), "base divergence\n").unwrap();
     repo.git(&["add", "."]);
     repo.git(&["commit", "-m", "base divergence"]);
     repo.git(&["cherry-pick", &patch]);
+    repo.git(&["cherry-pick", "refs/heads/rebased"]);
     fs::write(repo.repo.join("patch.txt"), "later base edit\n").unwrap();
     repo.git(&["add", "."]);
     repo.git(&["commit", "-m", "later edit"]);
@@ -17168,7 +17170,7 @@ fn retirement_gc_drops_a_record_with_missing_registration_preserving_files() {
 }
 
 #[test]
-fn retirement_patch_id_comparison_keeps_distinct_non_utf8_changes() {
+fn retirement_tree_comparison_keeps_distinct_non_utf8_changes() {
     let repo = Repo::new();
     assert!(repo
         .mabo(&["create", "bytes", "--no-setup"])
@@ -17316,6 +17318,231 @@ fn retirement_review_keeps_unique_merge_conflict_resolution() {
         "unpreserved"
     );
     assert!(branch_listed(&repo, "merge"));
+}
+
+#[test]
+fn retirement_review3_keeps_other_block_in_squash() {
+    assert_retirement_keeps_other_block(false, false);
+}
+
+#[test]
+fn retirement_review3_keeps_other_block_in_rebased_history() {
+    assert_retirement_keeps_other_block(true, false);
+}
+
+#[test]
+fn retirement_review3_keeps_detached_other_block_in_squash() {
+    assert_retirement_keeps_other_block(false, true);
+}
+
+#[test]
+fn retirement_review3_keeps_detached_other_block_in_rebased_history() {
+    assert_retirement_keeps_other_block(true, true);
+}
+
+fn assert_retirement_keeps_other_block(rebased: bool, detached: bool) {
+    let repo = Repo::new();
+    let block: String = (0..16).map(|line| format!("line {line}\n")).collect();
+    let original = block.repeat(3);
+    fs::write(repo.repo.join("blocks.txt"), &original).unwrap();
+    repo.git(&["add", "."]);
+    repo.git(&["commit", "-m", "repeated contexts"]);
+    let mut args = vec!["create", "blocks", "--no-setup"];
+    if detached {
+        args.push("--detach");
+    }
+    assert!(repo.mabo(&args).status.success());
+    let changed_block = block.replace("line 8\n", "changed\n");
+    commit_file(
+        &repo,
+        "blocks",
+        "blocks.txt",
+        &format!("{block}{changed_block}{block}"),
+    );
+    fs::write(
+        repo.repo.join("blocks.txt"),
+        format!("{block}{block}{changed_block}"),
+    )
+    .unwrap();
+    repo.git(&["commit", "-am", "different occurrence"]);
+    if rebased {
+        // Prevent complete-squash matching, so the per-commit fallback is tested too.
+        commit_file(&repo, "blocks", "extra.txt", "shared extra change\n");
+        let tip = retirement_head_at(&repo, &managed(&repo, "blocks"));
+        repo.git(&["cherry-pick", tip.trim()]);
+    }
+    assert_retirement_review3_keeps_workspace(&repo, "blocks", detached);
+}
+
+#[test]
+fn retirement_review3_keeps_gitlink_with_ignore_submodules_all() {
+    assert_retirement_keeps_gitlink("diff.ignoreSubmodules", "all");
+}
+
+#[test]
+fn retirement_review3_keeps_gitlink_with_submodule_log() {
+    assert_retirement_keeps_gitlink("diff.submodule", "log");
+}
+
+#[test]
+fn retirement_review3_accepts_exact_trees_despite_diff_settings() {
+    let repo = Repo::new();
+    let marker = repo.root.join("unexpected-diff-command");
+    let command = format!("touch '{}'", marker.display());
+    for (key, value) in [
+        ("diff.external", command.as_str()),
+        ("diff.check.textconv", command.as_str()),
+        ("diff.relative", "true"),
+        ("diff.renames", "copies"),
+        ("diff.ignoreSubmodules", "all"),
+        ("diff.submodule", "log"),
+        ("color.ui", "always"),
+        ("core.abbrev", "4"),
+    ] {
+        repo.git(&["config", key, value]);
+    }
+    fs::create_dir_all(repo.repo.join(".git/info")).unwrap();
+    fs::write(repo.repo.join(".git/info/attributes"), "* diff=check\n").unwrap();
+    let order = repo.root.join("diff-order");
+    fs::write(&order, "z*\na*\n").unwrap();
+    repo.git(&["config", "diff.orderFile", order.to_str().unwrap()]);
+    assert!(repo
+        .mabo(&["create", "exact", "--no-setup"])
+        .status
+        .success());
+    let old = full_head(&repo);
+    // An uninitialized gitlink still records a real commit ID in the tree.
+    fs::create_dir(managed(&repo, "exact/module")).unwrap();
+    git_at(
+        &repo,
+        &managed(&repo, "exact"),
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            &old,
+            "module",
+        ],
+    );
+    commit_file(&repo, "exact", "z-file.txt", "first\n");
+    commit_file(&repo, "exact", "a-file.txt", "second\n");
+    squash_onto_main(&repo, "exact");
+    // A subsequent base merge must not hide the earlier squash evidence.
+    repo.git(&["branch", "side", &old]);
+    repo.git(&["checkout", "side"]);
+    empty_commit(&repo, &repo.repo, "side divergence");
+    repo.git(&["checkout", "main"]);
+    repo.git(&["merge", "--no-ff", "side", "-m", "base merge"]);
+    let plan = repo.mabo(&["gc", "--merged", "--json"]);
+    assert!(plan.status.success(), "{}", text(&plan.stdout));
+    assert_eq!(
+        json_value(&plan)["data"]["items"][0]["action"],
+        "wouldRemove"
+    );
+    let removed = repo.mabo(&["remove", "exact", "--json"]);
+    assert!(removed.status.success(), "{}", text(&removed.stdout));
+    assert_eq!(
+        json_value(&removed)["data"]["items"][0]["branchDeleted"],
+        true
+    );
+    assert!(!marker.exists(), "external diff or textconv executed");
+}
+
+fn assert_retirement_keeps_gitlink(key: &str, value: &str) {
+    for rebased in [false, true] {
+        for detached in [false, true] {
+            let repo = Repo::new();
+            let old = retirement_head_at(&repo, &repo.repo);
+            empty_commit(&repo, &repo.repo, "new gitlink target");
+            let new = retirement_head_at(&repo, &repo.repo);
+            fs::create_dir(repo.repo.join("module")).unwrap();
+            repo.git(&[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "160000",
+                old.trim(),
+                "module",
+            ]);
+            repo.git(&["commit", "-m", "initial gitlink"]);
+            let mut args = vec!["create", "gitlink", "--no-setup"];
+            if detached {
+                args.push("--detach");
+            }
+            assert!(repo.mabo(&args).status.success());
+            let path = managed(&repo, "gitlink");
+            git_at(
+                &repo,
+                &path,
+                &[
+                    "update-index",
+                    "--cacheinfo",
+                    "160000",
+                    new.trim(),
+                    "module",
+                ],
+            );
+            commit_file(&repo, "gitlink", "ordinary.txt", "saved regular file\n");
+            fs::write(repo.repo.join("ordinary.txt"), "saved regular file\n").unwrap();
+            repo.git(&["add", "ordinary.txt"]);
+            repo.git(&["commit", "-m", "regular file only"]);
+            if rebased {
+                commit_file(&repo, "gitlink", "extra.txt", "shared extra change\n");
+                let tip = retirement_head_at(&repo, &path);
+                repo.git(&["cherry-pick", tip.trim()]);
+            }
+            repo.git(&["config", key, value]);
+            assert_retirement_review3_keeps_workspace(&repo, "gitlink", detached);
+        }
+    }
+}
+
+fn retirement_head_at(repo: &Repo, path: &Path) -> String {
+    let output = repo
+        .command("git", &["rev-parse", "HEAD"])
+        .current_dir(path)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    text(&output.stdout)
+}
+
+fn assert_retirement_review3_keeps_workspace(repo: &Repo, name: &str, detached: bool) {
+    let path = managed(repo, name);
+    let head = retirement_head_at(repo, &path);
+    let dry_run = repo.mabo(&["remove", name, "--dry-run", "--json"]);
+    if detached {
+        assert_eq!(dry_run.status.code(), Some(4), "{}", text(&dry_run.stdout));
+        assert_eq!(json_value(&dry_run)["error"]["code"], "unpreserved");
+    } else {
+        assert!(dry_run.status.success(), "{}", text(&dry_run.stdout));
+        assert_eq!(
+            json_value(&dry_run)["data"]["items"][0]["branchKeptReason"],
+            "unpreserved"
+        );
+    }
+    let gc = repo.mabo(&["gc", "--merged", "--apply", "--json"]);
+    assert!(gc.status.success(), "{}", text(&gc.stdout));
+    assert!(path.is_dir(), "{}", text(&gc.stdout));
+    assert_eq!(retirement_head_at(repo, &path), head);
+    let removed = repo.mabo(&["remove", name, "--json"]);
+    if detached {
+        assert_eq!(removed.status.code(), Some(4), "{}", text(&removed.stdout));
+        assert_eq!(json_value(&removed)["error"]["code"], "unpreserved");
+        assert_eq!(retirement_head_at(repo, &path), head);
+    } else {
+        assert!(removed.status.success(), "{}", text(&removed.stdout));
+        assert_eq!(
+            json_value(&removed)["data"]["items"][0]["branchDeleted"],
+            false
+        );
+        assert_eq!(
+            json_value(&removed)["data"]["items"][0]["branchKeptReason"],
+            "unpreserved"
+        );
+        assert!(branch_listed(repo, name));
+    }
 }
 
 #[test]

@@ -588,30 +588,7 @@ pub(crate) fn retirement_integrated(root: &Path, tip: &str, base: &str) -> bool 
     {
         return true;
     }
-    if retirement_changes_landed(root, tip, base) {
-        return true;
-    }
-    // Cherry omits merge commits, including their unique conflict resolutions.
-    // A complete squash above can prove those changes landed; otherwise keep
-    // any history with merges outside the base.
-    let range = format!("{base}..{tip}");
-    if !raw_git(root, &["rev-list", "--merges", &range])
-        .is_ok_and(|result| result.code == 0 && result.stdout.trim().is_empty())
-    {
-        return false;
-    }
-    // Rebased commits can have different IDs while retaining every patch.
-    // Cherry ignores whitespace, so also require whitespace-preserving IDs.
-    raw_git(root, &["cherry", base, tip]).is_ok_and(|result| {
-        result.code == 0
-            && !result.stdout.trim().is_empty()
-            && result.stdout.lines().all(|line| line.starts_with("- "))
-            && retirement_history_patches(root, &range).is_some_and(|patches| {
-                !patches.is_empty()
-                    && retirement_history_patches(root, &format!("{tip}..{base}"))
-                        .is_some_and(|landed| patches.iter().all(|patch| landed.contains(patch)))
-            })
-    })
+    retirement_changes_landed(root, tip, base)
 }
 
 pub(crate) fn retirement_preserved(
@@ -662,104 +639,97 @@ pub(crate) fn retirement_preserved(
     }
 }
 
-// A squash is one base commit whose complete patch matches the branch diff.
-// Compare whitespace-preserving IDs using read-only commands: merge-tree --write-tree can also
-// refresh timestamps of existing objects even with an alternate object store.
+// Prove preservation through exact tree-entry transitions, never textual patches.
+// Each transition includes the path, modes and full before/after object IDs, so
+// repeated contexts, whitespace, binary data and gitlinks cannot compare equal
+// unless the complete entries match. Checking base history also recognizes work
+// that landed before later base edits. All commands are read-only: merge-tree
+// --write-tree can refresh existing object mtimes, even with an alternate store.
 fn retirement_changes_landed(root: &Path, tip: &str, base: &str) -> bool {
-    let Ok(ancestor) = raw_git(root, &["merge-base", base, tip]) else {
+    let Ok(ancestor) = raw_git(root, &["merge-base", "--all", base, tip]) else {
         return false;
     };
-    if ancestor.code != 0 {
+    if ancestor.code != 0 || ancestor.stdout.split_whitespace().count() != 1 {
         return false;
     }
     let ancestor = ancestor.stdout.trim();
-    let Ok(diff) = raw_git_bytes(
-        root,
-        &[
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-color",
-            "--no-renames",
-            "--binary",
-            "--full-index",
-            ancestor,
-            tip,
-            "--",
-        ],
-    ) else {
+    let Some(delta) = retirement_tree_delta(root, ancestor, tip) else {
         return false;
     };
-    if !diff.status.success() || diff.stdout.is_empty() {
+    if delta.is_empty() {
         return false;
     }
-    let Some(patch) = patch_ids(root, &diff.stdout).and_then(|ids| ids.into_iter().next()) else {
+    let Some(landed) = retirement_history_trees(root, &format!("{ancestor}..{base}"), false) else {
         return false;
     };
-    let range = format!("{ancestor}..{base}");
-    retirement_history_patches(root, &range).is_some_and(|ids| ids.contains(&patch))
+    // A complete squash must preserve every changed entry in one base commit.
+    if landed.contains(&delta) {
+        return true;
+    }
+    // Rebased history must preserve every commit's complete tree transition.
+    // Merges outside the base require the complete-squash proof above: checking
+    // just their non-merge ancestors would omit unique conflict resolutions.
+    retirement_history_trees(root, &format!("{base}..{tip}"), true).is_some_and(|commits| {
+        !commits.is_empty()
+            && commits
+                .iter()
+                .all(|delta| !delta.is_empty() && landed.contains(delta))
+    })
 }
 
-fn retirement_history_patches(root: &Path, range: &str) -> Option<Vec<String>> {
-    let history = raw_git_bytes(
-        root,
-        &[
-            "log",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-color",
-            "--no-renames",
-            "--no-merges",
-            "--pretty=format:commit %H",
-            "--no-show-signature",
-            "-p",
-            "--binary",
-            "--full-index",
-            range,
-            "--",
-        ],
-    )
-    .ok()?;
-    if !history.status.success() {
+fn retirement_history_trees(
+    root: &Path,
+    range: &str,
+    require_linear: bool,
+) -> Option<Vec<Vec<u8>>> {
+    let history = raw_git(root, &["rev-list", "--parents", range]).ok()?;
+    if history.code != 0 {
         return None;
     }
-    patch_ids(root, &history.stdout)
+    let mut deltas = Vec::new();
+    for line in history.stdout.lines() {
+        let mut ids = line.split_whitespace();
+        let commit = ids.next()?;
+        let parent = ids.next()?;
+        if ids.next().is_some() {
+            if require_linear {
+                // Do not omit any workspace merge's conflict resolution.
+                return None;
+            }
+            // A base merge need not be a candidate; its ordinary ancestors
+            // can still independently prove preservation.
+            continue;
+        }
+        deltas.push(retirement_tree_delta(root, parent, commit)?);
+    }
+    Some(deltas)
 }
 
-fn patch_ids(root: &Path, diff: &[u8]) -> Option<Vec<String>> {
-    struct Input(std::path::PathBuf);
-    impl Drop for Input {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-        }
-    }
-    let input = Input(std::env::temp_dir().join(format!("mabo-patch-{}", uuid::Uuid::new_v4())));
-    // Private input files can contain uncommitted content in other callers.
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&input.0)
-        .ok()?;
-    file.write_all(diff).ok()?;
-    drop(file);
-    let result = process::raw_with_stdin(
-        "git",
-        &["patch-id", "--verbatim"],
-        Some(root),
-        &[],
-        Some(&input.0),
+fn retirement_tree_delta(root: &Path, before: &str, after: &str) -> Option<Vec<u8>> {
+    let diff = raw_git_bytes(
+        root,
+        &[
+            "diff-tree",
+            "-r",
+            "--raw",
+            "-z",
+            "--no-commit-id",
+            "--no-abbrev",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--no-renames",
+            "--no-relative",
+            "--ignore-submodules=none",
+            "--submodule=short",
+            "-O/dev/null",
+            before,
+            after,
+            "--",
+        ],
     )
     .ok()?;
-    (result.code == 0).then(|| {
-        result
-            .stdout
-            .lines()
-            .filter_map(|line| line.split_whitespace().next().map(str::to_owned))
-            .collect()
-    })
+    diff.status.success().then_some(diff.stdout)
 }
 
 /// Count all content a checkout removal would lose, including ignored files.

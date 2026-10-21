@@ -192,7 +192,7 @@ mabo remove .
 mabo gc [--merged] [--closed-pr] [--orphaned] [--older-than D] [--apply] [--keep-branch] [--no-hooks]
 ```
 
-`remove` は全セレクタと安全条件を確認し、信頼済みの `pre-remove` を実行してからチェックアウトを消します。ブランチは base への merge・squash・patch-id の取り込み、または自身の upstream との完全一致を確認できれば削除します。base が未記録ならリポジトリの既定 base を確認します。未保存のブランチは `branch_kept_unpreserved` 警告と `branchKeptReason: "unpreserved"` を付けて保持します。`--keep-branch` は常に保持し、`--delete-unpreserved-branch` は未保存でも削除を許可します。
+`remove` は全セレクタと安全条件を確認し、信頼済みの `pre-remove` を実行してからチェックアウトを消します。ブランチは base への merge・squash・rebase (exact tree-entry matching) の取り込み、または自身の upstream との完全一致を確認できれば削除します。base が未記録ならリポジトリの既定 base を確認します。未保存のブランチは `branch_kept_unpreserved` 警告と `branchKeptReason: "unpreserved"` を付けて保持します。`--keep-branch` は常に保持し、`--delete-unpreserved-branch` は未保存でも削除を許可します。
 
 変更済み・未追跡・ignored ファイルは `--discard-changes` がなければ終了コード 4（`dirty`）で保護します。未保存の detached コミットは `--delete-unpreserved-branch` がなければ 4（`unpreserved`）、primary は常に 4（`primary`）です。2つの許可は独立しています。`--dry-run` はフックを実行せず、ファイル・参照・レコードを変更せずに `plan:true` と `removed:false`、`wouldRemove`、`wouldDeleteBranch` を返します。
 
