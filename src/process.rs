@@ -30,6 +30,8 @@ impl Drop for GitHookSuppression {
 fn command(program: &str) -> Command {
     let mut cmd = Command::new(program);
     if program == "git" && GIT_HOOK_SUPPRESSION.with(|depth| depth.get() > 0) {
+        // Status queries during sync and read-only plans must not refresh the index.
+        cmd.env("GIT_OPTIONAL_LOCKS", "0");
         cmd.args([
             "-c",
             "core.hooksPath=/dev/null",

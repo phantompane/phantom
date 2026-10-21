@@ -26,7 +26,7 @@ Maboroshi はワークスペースを作成し、既存の作業を引き継い�
 ## デフォルトは安全、違うことをしたいときは明示する
 
 - **安全な片付け。** `gc` は `--apply` まで計画だけを表示し、dirty や未保存の候補をスキップします。primary、デフォルトブランチ、カレントワークスペース、Git のロックがあるチェックアウトも保護します。
-- **一括操作はすべてのワークスペースが対象です。** `sync --all` はリポジトリ内の全ワークスペースを選び、`--no-default` がなければデフォルトブランチも更新します。対象を絞るには名前を明示してください。`gc` は根拠と経過時間で候補を選び、未コミットの変更や保存されていないコミットの保護は維持します。
+- **一括操作はすべてのワークスペースが対象です。** `sync --all` はリポジトリ内の全ワークスペースを選びます。primary も進めるには `--main` を付けます。対象を絞るには名前を明示してください。`gc` は根拠と経過時間で候補を選び、未コミットの変更や保存されていないコミットの保護は維持します。
 - **push 済みの履歴は既定で保ちます。** 変更の取り込みが必要な場合、`sync` は公開済みの作業にベースをマージします。ベースに含まれないコミットがひとつでも、既知のリモート追跡参照または fetch 先として設定された参照から到達可能なら、公開済みとして扱います。
 - **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust add` で信頼を記録するか、create では `--no-setup`、setup/remove/gc では `--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。単体 `exec` は標準入力を引き継ぎます。
 
@@ -106,7 +106,7 @@ mabo --version --json
 
 `repo forget` は登録情報だけを削除します。`repo show` は primary checkout、既定ブランチ、`.mabo.toml` の有無、信頼状態、ワークスペースの保存先を表示します。登録済みリポジトリは検出結果より優先され、`--discovered` は検出した未登録のルートだけを一覧表示します。`trust add` はフックを表示し、確認を求めずに信頼を記録します。作成時に人間向けの端末で信頼を確認する挙動は変わりません。非対話モードで未信頼のフックを実行しようとすると、終了コード 4 を返します。
 
-ユーザー設定のキーは `workspace-root`（絶対パス、`~/`、またはリポジトリルートからの相対パス）、`clone-root`、`discover-ghq` です。旧キーの `worktrees-directory`、`root`、`ghq-discovery` は `config_key_renamed` の警告を出して読み込みます。新しい名前の値が優先され、次に設定の書き込みが成功した際に旧キーを新しい名前へ書き換えます。`directory-name-separator` と `keep-branch` は `config_key_removed` の警告を出して無視し、書き込み時に削除します。`--sources` は各設定の有効な値、取得元、詳細を含みます。`clone-root` の既定値は従来どおり ghq.root → GHQ_ROOT → ~/ghq の順で決まります。
+ユーザー設定のキーは `workspace-root`（絶対パス、`~/`、またはリポジトリルートからの相対パス）、`clone-root`、`discover-ghq`、`sync.strategy`（auto/rebase/merge）、`sync.rewrite-published`（既定 false）です。旧キーの `worktrees-directory`、`root`、`ghq-discovery` は `config_key_renamed` の警告を出して読み込みます。新しい名前の値が優先され、次に設定の書き込みが成功した際に旧キーを新しい名前へ書き換えます。`directory-name-separator` と `keep-branch` は `config_key_removed` の警告を出して無視し、書き込み時に削除します。`--sources` は各設定の有効な値、取得元、詳細を含みます。`clone-root` の既定値は従来どおり ghq.root → GHQ_ROOT → ~/ghq の順で決まります。
 
 JSON は schema 2 の envelope を使います。リポジトリの結果キーは `repo` / `repos` で、clone は `data: {repo: {root, name, remoteUrl}, cloned, updated}` を返します。`help --json` は help-data.json の仕様全体を含み、すべてのコマンドとフラグ、終了コードとエラーコード、`schemaVersion: 2` を返します。`--version --json` はアプリケーションのバージョンを `data.version` に入れます。詳しい例は英語の README を参照してください。
 
@@ -116,7 +116,7 @@ JSON は schema 2 の envelope を使います。リポジトリの結果キー�
 
 `SEL` には名前、`.`（現在のディレクトリを含むチェックアウト）、`pr:N`、`issue:N`、PR/issue の URL を指定できます。PR/issue は記録済みのリンクだけを検索し、新規作成しません。該当なしは終了コード 3（`not_found`）、複数一致は 2（`ambiguous`）です。`.` と別リポジトリの `-R` の併用は 2、リポジトリ外での現在位置の選択は 3 になります。
 
-`show [SEL]`・`path [SEL]`・`set [SEL]`・`setup [SEL]`・`exec [SEL] -- COMMAND [ARG...]` は SEL 省略時に `.` を選びます。primary 内では primary checkout が対象です。`show` は primary や管理外の未記録チェックアウトを `managed:false` として表示します。`sync` と `remove` の位置引数にも同じセレクタを使えます。引数なしの `sync` の対象は従来どおりです。`remove` は明示的なセレクタを必要とします。
+`show [SEL]`・`path [SEL]`・`set [SEL]`・`setup [SEL]`・`exec [SEL] -- COMMAND [ARG...]` は SEL 省略時に `.` を選びます。primary 内では primary checkout が対象です。`show` は primary や管理外の未記録チェックアウトを `managed:false` として表示します。`sync` と `remove` の位置引数にも同じセレクタを使えます。引数なしの `sync` は現在のワークスペースだけを対象にします。primary 内では `--main` と同じです。`remove` は明示的なセレクタを必要とします。
 
 ```sh
 mabo show pr:774 --json
@@ -207,3 +207,32 @@ A failure after persistent removal exits 6 and retains every item result. Comple
 `gc` は指定なしなら `--merged`・`--closed-pr`・`--orphaned` の3条件を使います。`--older-than D` は `createdAt` で絞り込み、日時不明のレコードを除外します。年齢だけでは候補にしません。`--apply` がなければ `plan:true`、終了コード 0。適用時は dirty・未保存の候補をスキップし、対象を絞った `mabo remove 'NAME' --discard-changes` または `mabo remove 'NAME' --delete-unpreserved-branch` のヒントを返します。許可フラグはまとめません。孤立レコード・登録の整理ではブランチと残存ファイルを保持します。gh が無い場合は PR 状態を `unavailable` と報告します。JSON は `{plan, items:[{workspace, reasons, action, detail}]}`、action は `wouldRemove`・`removed`・`skipped`・`failed` です。
 
 旧 `delete` は終了コード 2 で `remove SEL...` を案内し、`--current` は `remove .` に移行します。旧 `-f/--force` は remove の独立した許可か gc の `--apply` を案内します。`gc --pr` は `gc --closed-pr` です。旧 config の `keep-branch` は型にかかわらず警告して無視し、次の設定書き込みで消します。必要なら `--keep-branch` を明示してください。sync の挙動は P8 まで変更しません。
+
+## Sync redesign
+
+```sh
+mabo sync [SEL... | --all | --main] [--auto | --rebase | --merge] [--rewrite-published] [--keep-conflicts] [--dry-run]
+mabo sync . --main --dry-run --json
+mabo sync feature/auth --rebase --rewrite-published
+mabo config set sync.strategy rebase
+mabo config set sync.rewrite-published true
+mabo config list --sources
+```
+
+引数なしでは、サブディレクトリを含め現在のワークスペースだけを同期し、primary のブランチは進めません。primary 内では `--main` と同じです。`--main` 単独は primary だけを選び、primary がデフォルトブランチにいる場合だけ fast-forward します。それ以外は `not-default-branch` でスキップします。`sync . --main` は現在のワークスペースと primary を選びます。`--all` は全ワークスペースで、SEL との併用は終了コード 2。primary も含めるには `--main` を追加します。
+
+関係する remote はそれぞれ一度だけ fetch します。`--dry-run` も fetch しますが checkout、index、ローカルブランチ、ワークスペース記録は変更せず `plan:true` を返します。将来の merge/rebase コミット ID は不明なので `after:null` です。push、upstream の変更、hooks の実行はしません。
+
+Both execution and dry runs use ordinary `git fetch` in the invoking repository. Before any fetch or integration, sync checks every configured fetch refspec of every involved remote and refuses with exit 4 `refused` if a positive refspec has a destination outside `refs/remotes/` (including explicit `refs/tags/` destinations and mirror mappings). Negative exclusions do not relax this conservative check; a missing or empty destination only writes `FETCH_HEAD` and is allowed. Use a tracking destination under `refs/remotes/` for custom namespaces. Sync also refuses any existing symbolic ref visible to `git for-each-ref` under `refs/remotes/` or `refs/tags/` that points outside `refs/remotes/`; repair or remove the alias before retrying. Dangling symbolic refs are omitted by Git's enumeration and are not detected: this is a known limit shared with plain `git fetch`. Git retains its configured pruning, automatic tag following, negative exclusions and `followRemoteHEAD` behavior; automatic tag following is not an explicit fetch refspec. Combined dry runs evaluate local bases against tips planned for primary and earlier workspaces, in selection order. Planned branch tips are keyed by full refs: the short branch name `refs/heads/a` maps to `refs/heads/refs/heads/a`, independently of branch `a` at `refs/heads/a`. When an earlier planned tip is unknown, dependent items report `updated`, `after:null`, `strategy:null` and a dependency explanation in `detail`, without deciding against the old base.
+
+戦略はフラグ `--auto`/`--rebase`/`--merge`、ユーザー設定 `sync.strategy`、既定の auto の順です。auto は未公開コミットを rebase、公開済みコミットを merge します。公開済みコミットを rebase する場合は終了コード 4 `published` で拒否し、`--rewrite-published` を案内します。フラグかユーザー設定 `sync.rewrite-published=true` で許可できます。許可は戦略を変更しないため、auto は引き続き公開済み履歴を merge します。設定値は auto|rebase|merge と true|false、不正値は終了コード 2。個人の方針はユーザー config.toml の `[sync]` に置き、リポジトリの `.mabo.toml` には置けません。
+
+Publication evidence includes observed remote-tracking refs, configured fetch destinations and the workspace upstream, even independent local branch refs or destinations of remotes not fetched by this sync. Only the current branch itself is excluded.
+
+各 item は `strategySource`（flag/config/default）、`rewriteAllowed`、`rewriteSource`（flag/config/null）を別々に返します。実際に書き換えると `rewrotePublished:true` と対象名付きの `published_rewritten` warning（“updating the existing remote branch may require a force push”）を返します。dry-run では実際の書き換えは報告しません。
+
+競合は復元して終了コード 5。`--keep-conflicts` はワークスペース単一対象のみで、進行中のまま残します。primary の更新は引き続き ff-only で、競合を残すワークスペースはひとつに限ります。何か更新した後の失敗・競合・拒否は 6 が優先します。更新なしなら運用エラーは 1、競合は 5、公開履歴の拒否は 4。スキップは既存どおり 0（primary 単独の dirty/diverged は既存どおり 1）。所有者、内部ロック、使用中検出はありません。
+
+JSON envelope は schema 2 を維持し、`data: {plan, items:[{workspace,status,strategy,strategySource,rewriteAllowed,rewriteSource,rewrotePublished,before,after,conflicts,detail,code}], main:item|null}` です。workspace は統合前の共通観測オブジェクトです。診断用の name/path/branch/base も返します。状態は updated/up-to-date/dirty/diverged/integrated/detached/base-gone/base-unknown/conflict/refused/failed、primary には not-default-branch もあります。旧 merged は integrated に変わりました。
+
+移行: sync の `-f`/`--force` は終了コード 2 で `--rewrite-published` を案内します。`--no-default` は現在のワークスペースだけが既定になったため終了コード 2、primary を進める `--main` を案内します。`--mine` も終了コード 2。JSON の default/workspaces は main/items に変わりました。

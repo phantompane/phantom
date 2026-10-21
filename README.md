@@ -18,7 +18,7 @@ Maboroshi creates, takes over, and prepares workspaces, keeps them current with 
 
 - **Allocate and prepare.** `clone` places a repository in the ghq layout. `create` give each piece of work its own workspace, copy ignored files matched by `.worktreeinclude`, and run repository hooks in repositories you trust.
 - **Identify.** `set` records the purpose, linked pull request or issue, and base. `list` and `show` show what exists and where.
-- **Update.** `sync` fetches, fast-forwards the default branch when possible, and brings selected workspaces up to date with their base.
+- **Update.** `sync` fetches and brings selected workspaces up to date with their base; `--main` explicitly advances primary.
 - **Retire.** `gc` selects workspaces on evidence: merged branches, closed pull requests, and orphaned records; `--older-than` only narrows those candidates.
 
 Every command can run non-interactively. Every JSON command returns a schema 2 envelope containing `command`, `ok`, `data`, `warnings`, and `error`. Errors are structured, with stable, documented exit codes (see [Machine-readable JSON](#machine-readable-json)). `exec` passes through the child command's output and exit code instead. Humans use the same commands with plain-text output.
@@ -26,7 +26,7 @@ Every command can run non-interactively. Every JSON command returns a schema 2 e
 ## Safe by default, explicit when you want otherwise
 
 - **Retirement is safe by default.** `gc` prints a plan until `--apply`. It skips dirty and unpreserved work, giving targeted `remove` hints with separate permissions. The primary checkout, default branch, current workspace, and Git-locked checkouts remain protected during gc.
-- **Bulk operations address every workspace.** `sync --all` selects every workspace in the repository (and updates the default branch unless `--no-default` is set). Use explicit names to narrow the selection. `gc` selects by evidence and age, with the same checks for dirty work and unpreserved commits.
+- **Bulk operations address every workspace.** `sync --all` selects every workspace in the repository; add `--main` to advance primary. Use explicit names to narrow the selection. `gc` selects by evidence and age, with the same checks for dirty work and unpreserved commits.
 - **Pushed history is kept by default.** When integration is needed, `sync` merges the base into published work. A workspace counts as published when at least one commit beyond its base is reachable from a known remote-tracking ref or configured fetch destination.
 - **Non-interactive runs never wait at a prompt.** With nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or when stdin or stderr is not a terminal, `mabo` itself does not ask questions. If an operation would run untrusted hooks, it refuses before changing the repository and exits 4 (`untrusted` in JSON); `gc` instead skips removals requiring those hooks, without treating the skip as an error. Record trust in advance with `mabo trust add`, or use `create --no-setup` / `setup --no-hooks` / `remove --no-hooks` / `gc --no-hooks`. Network Git operations receive `GIT_TERMINAL_PROMPT=0`; repository hooks and gh read stdin from `/dev/null`.
 
@@ -63,7 +63,7 @@ When `workspace-root` is unset, `mabo create` place the new workspace at `$XDG_D
 
 `clone-root` is where `mabo clone` places repositories. It is an absolute path or a path starting with `~/`. When `clone-root` is unset, `mabo clone` uses the first `git config ghq.root` value, then `$GHQ_ROOT`, then `~/ghq`. A configured `clone-root` is used without reading git config. If reading `ghq.root` fails, `mabo` warns and continues with `$GHQ_ROOT` or `~/ghq`. `repo list` scans that same directory.
 
-`config get KEY` and `config list` return effective values, including defaults. Add `--sources` to see `value`, `source` (`config`, `env`, or `default`), and `detail`. JSON stores those values under `data.config[KEY]`; without `--sources`, each entry is the value itself. `workspace-root` defaults to null (the XDG layout), `discover-ghq` to true. The clone-root default chain stays `ghq.root` → `$GHQ_ROOT` → `~/ghq`, below user config. Future command policy keys follow flag → environment → user config → default precedence; these keys have no additional flag or environment override.
+`config get KEY` and `config list` return effective values, including defaults. Add `--sources` to see `value`, `source` (`config`, `env`, or `default`), and `detail`. JSON stores those values under `data.config[KEY]`; without `--sources`, each entry is the value itself. `workspace-root` defaults to null (the XDG layout), `discover-ghq` to true. The clone-root default chain stays `ghq.root` → `$GHQ_ROOT` → `~/ghq`, below user config. `sync.strategy` accepts `auto` (default), `rebase`, or `merge`; `sync.rewrite-published` is a boolean (default false). Sync flags override these user settings. Invalid policy values exit 2. Store them under `[sync]` in user config.toml; `.mabo.toml` rejects personal sync policy.
 
 Old config.toml keys `worktrees-directory`, `root`, and `ghq-discovery` still take effect as `workspace-root`, `clone-root`, and `discover-ghq`, with `config_key_renamed` warnings and migration hints. If both names exist, the new name wins. Reading does not change the file. The next successful `config set` or `config unset` rewrites old names. `directory-name-separator` is ignored with `config_key_removed` and removed on that write. `keep-branch` also warns and is ignored, then removed on the next config write.
 
@@ -117,7 +117,7 @@ Any other ref is matched against registered repos and discovered checkouts (the 
 
 `SEL` accepts a workspace name, `.` (the checkout containing cwd), `pr:N`, `issue:N`, or a PR/issue URL. Linked selectors only find existing records; they never create workspaces. A missing match exits 3 (`not_found`), and multiple matches exit 2 (`ambiguous`). A URL matches its recorded repository and link; a bare number is scoped to the selected repository. Using `.` with a different `-R` exits 2. Outside a repository, current selection exits 3.
 
-`show [SEL]`, `path [SEL]`, `set [SEL]`, and `exec [SEL] -- COMMAND [ARG...]` default to `.`. In the primary checkout, `.` refers to that checkout. `show` reports its context with `managed:false`; unrecorded checkouts outside mabo's workspace directory also report `managed:false`. Positional arguments of `sync` and `remove` accept the same selectors. Sync without arguments keeps its default-branch and current-workspace behavior; remove keeps its existing flags and safety checks.
+`show [SEL]`, `path [SEL]`, `set [SEL]`, and `exec [SEL] -- COMMAND [ARG...]` default to `.`. In the primary checkout, `.` refers to that checkout. `show` reports its context with `managed:false`; unrecorded checkouts outside mabo's workspace directory also report `managed:false`. Positional arguments of `sync` and `remove` accept the same selectors. Sync without arguments selects only the current workspace; in primary it behaves as `--main`. Remove requires explicit selectors and retains its safety checks.
 
 ```sh
 mabo show --json
@@ -128,7 +128,7 @@ mabo set --purpose 'fix checkout' --pr 774 --base origin/main
 mabo set feature/auth --unset purpose --unset base --unset pr --unset issue
 mabo exec -- git status
 mabo exec feature/auth -- npm test
-mabo sync pr:774 --no-default
+mabo sync pr:774
 ```
 
 `path` prints only an absolute path and newline in text mode; JSON is `data: {path}`. `show` and `set` return `data.workspace`. `show`, `path`, `list`, and `exec` never change record contents or mtimes, or import legacy state. `set` atomically replaces the supplied purpose, base, PR and issue fields; omitted fields are kept. `--unset FIELD` clears one of purpose/base/pr/issue per occurrence; repeat the flag to clear several fields. It rejects unknown fields or a field that is also being set. `--base` validates and normalizes a ref; commit bases remain supported. `--unset base` records an unknown base without choosing a default. Sync skips it with `base-unknown` until `mabo set <name> --base REF` restores a base. Older records with no base field still use the default base.
@@ -238,7 +238,7 @@ Mabo never prompts in non-interactive mode: nonempty `CI`, JSON output, `--no-in
 
 `current` identifies the checkout containing cwd. `repo` contains the primary root and repository name. `managed` is false for the primary checkout and unrecorded checkouts outside the workspace directory. `upstream` is null when no upstream is configured, otherwise `{ref,ahead,behind,gone}`; ref is fully qualified, and counts are null when the upstream is gone or unavailable. Unknown metadata and observed state are null. For an orphaned record, branch, head, dirty and detached are null. Reads never invent timestamps.
 
-`list`, `show`, `create`, `adopt`, `set`, `remove` share this object. Their data uses `workspace` or `workspaces` keys (including each `items` entry); sync reports its results under `default` and `workspaces`. `path` is absolute. `head` is the full HEAD SHA, or null when Git has no HEAD. `branch` is null when HEAD is detached (`detached` is true). `base` is the commit-ish this command started from when it knows one; otherwise it is the recorded sync base (a full ref such as `refs/remotes/origin/main`), or null for legacy/unrecorded workspaces. `list --json` exposes that recorded base. `dirty` is true when `git status --porcelain` reports any change. `kind` is `primary` for the repository's primary checkout and `workspace` for other workspaces.
+`list`, `show`, `create`, `adopt`, `set`, `remove` share this object. Their data uses `workspace` or `workspaces` keys (including each `items` entry); sync reports its results under `main` and `items`. `path` is absolute. `head` is the full HEAD SHA, or null when Git has no HEAD. `branch` is null when HEAD is detached (`detached` is true). `base` is the commit-ish this command started from when it knows one; otherwise it is the recorded sync base (a full ref such as `refs/remotes/origin/main`), or null for legacy/unrecorded workspaces. `list --json` exposes that recorded base. `dirty` is true when `git status --porcelain` reports any change. `kind` is `primary` for the repository's primary checkout and `workspace` for other workspaces.
 
 ```json
 {
@@ -275,78 +275,48 @@ Repo registrations live in `$XDG_STATE_HOME/maboroshi/repos/<id>.json`, falling 
 
 ### Sync
 
-`mabo sync` maps bases to remotes through their configured fetch refspecs, fetches each involved remote once, fast-forwards the default branch, and integrates workspace bases. It never pushes, changes upstream configuration, or runs hooks; every Git call during sync, including status checks and rollback, disables Git hooks and fsmonitor.
+```sh
+mabo sync [SEL... | --all | --main] [--auto | --rebase | --merge] [--rewrite-published] [--keep-conflicts] [--dry-run]
+```
+
+No arguments sync only the current workspace (including from a subdirectory). In primary, no arguments behave as `--main`: fast-forward primary only when it is on the default branch, otherwise skip with `not-default-branch`. A workspace sync never advances primary implicitly. `--main` alone selects primary; `sync . --main` selects the current workspace and primary. `--all` selects every workspace in the selected repository and cannot combine with SELs (exit 2); add `--main` to include primary.
 
 ```sh
-# Human: from the primary checkout, update only the default branch.
 mabo sync
-# From a linked workspace or any subdirectory, also sync that workspace.
-cd "$(mabo path feature/auth)"
-mabo sync
-# Select workspaces and choose a strategy explicitly.
 mabo sync feature/auth feature/tests --merge
-# Select a workspace by name.
-mabo create feature/task --purpose 'implement task'
-mabo sync feature/task --json
-# Skip the default branch, or process all workspaces.
-mabo sync --all --no-default
-mabo sync -R owner/repo --all
-# Keep a single conflicted operation for manual resolution.
+mabo sync . --main --dry-run --json
+mabo -R owner/repo sync --all
+mabo sync feature/auth --rebase --rewrite-published
 mabo sync feature/auth --keep-conflicts
 mabo set feature/auth --base origin/main
 ```
 
-`create` and new GitHub issue checkouts record a sync `base`: an explicit `--base` is normalized to a full ref, otherwise the remote-tracking default branch when available, then the local default branch. Commit bases remain supported. When a clone has no discoverable default branch, creation retains its existing HEAD-based behavior and records that ref. PR checkout records the PR target as a full `origin` remote-tracking ref when present locally, otherwise the same fallback. A second GitHub checkout preserves an existing base, including one set by the user. Older metadata without `base` uses the same default-branch fallback at sync time. `set --base <ref>` validates and replaces the base; a removed base is skipped as `base-gone` with a repair hint.
+Sync maps bases to remotes through configured fetch refspecs and fetches each involved remote once. It never pushes, changes upstream configuration, or runs hooks; every Git call, including status and rollback, disables Git hooks and fsmonitor. `--dry-run` also fetches, then returns `plan:true` without changing checkout contents, the index, local branches, or workspace records. Plans show the expected action in `status`/`detail`; a future merge/rebase commit ID is unknown (`after:null`). Plans never claim a published rewrite happened.
 
-Auto strategy rebases when none of the workspace's own commits (`base..branch`) is reachable from any remote-tracking ref, including destinations outside `refs/remotes` in configured fetch refspecs; otherwise it merges. `--rebase` protects published commits with code `published` and exit 4. `--merge` always selects merge. Rebasing requires Git 2.29 or later, reapplies upstream cherry-picks (including reverted ones), and keeps intentionally empty commits and commits that become empty. Before flattening merges, sync requires Git 2.38 or later to verify their automatic merge trees; merges with their own changes or conflict resolutions (and merges it cannot verify) fail untouched with a `--merge` hint. Dirty workspaces (including untracked, non-ignored files), detached workspaces, and already landed branches are skipped. Ignored paths that integration could overwrite also cause a dirty skip, with case-insensitive comparisons when `core.ignorecase` is true. Landed branches suggest `mabo gc`. `--all` selects every workspace in the repository.
+Both execution and dry runs use ordinary `git fetch` in the invoking repository. Before any fetch or integration, sync checks every configured fetch refspec of every involved remote and refuses with exit 4 `refused` if a positive refspec has a destination outside `refs/remotes/` (including explicit `refs/tags/` destinations and mirror mappings). Negative exclusions do not relax this conservative check; a missing or empty destination only writes `FETCH_HEAD` and is allowed. Use a tracking destination under `refs/remotes/` for custom namespaces. Sync also refuses any existing symbolic ref visible to `git for-each-ref` under `refs/remotes/` or `refs/tags/` that points outside `refs/remotes/`; repair or remove the alias before retrying. Dangling symbolic refs are omitted by Git's enumeration and are not detected: this is a known limit shared with plain `git fetch`. Git retains its configured pruning, automatic tag following, negative exclusions and `followRemoteHEAD` behavior; automatic tag following is not an explicit fetch refspec. Combined dry runs evaluate local bases against tips planned for primary and earlier workspaces, in selection order. Planned branch tips are keyed by full refs: the short branch name `refs/heads/a` maps to `refs/heads/refs/heads/a`, independently of branch `a` at `refs/heads/a`. When an earlier planned tip is unknown, dependent items report `updated`, `after:null`, `strategy:null` and a dependency explanation in `detail`, without deciding against the old base.
 
-A conflict reports the conflicting files and aborts the operation, restoring HEAD, the index tree, and file contents. `--keep-conflicts` leaves the operation in progress and requires exactly one target; several targets produce usage exit 2. Default-branch updates are fast-forward only, including in a linked workspace, which is reported once by the default item; with `--no-default`, that workspace is excluded unless explicitly named, when it still uses `ff-only`. Local commits cause `diverged`; blocking local changes cause `dirty`, even when branch merge options request autostash. With workspace targets, those default-branch skips are best effort and do not block workspace updates; fetch failures mark only items using that remote as `failed`, while other bases proceed. If the default cannot be resolved, its item and targets needing its fallback base report `failed`, while targets with recorded bases continue.
+`create` records the normalized base; absent legacy bases fall back to the repository default. `set --unset base` and adoption without a base report `base-unknown` until `set --base REF` supplies one. A removed base reports `base-gone` with a repair hint. Explicitly cleared bases do not cause a fetch by themselves.
 
-Human output has one `<name>  <status>  [detail]` line per item, followed by status counts such as `Sync complete: 2 updated, 1 conflict, 1 dirty`. Conflicts use `topic  conflict  file.rs (rebase aborted; workspace unchanged)` (or `merge`); with `--keep-conflicts`, the ending is `(rebase left in progress)`. Other failures show the first meaningful diagnostic line. Fresh branches with no work of their own are integrated, rather than reported as merged. `--json` uses the shared envelope:
+Strategy precedence is `--auto`/`--rebase`/`--merge`, user `sync.strategy`, then `auto`. Auto rebases when none of the workspace's own commits (`base..branch`) is reachable from an observed remote-tracking ref, configured fetch destination, or upstream; otherwise it merges. Independent local branch destinations count too, including those of remotes not fetched by this sync; only the current branch itself is excluded from publication evidence. An explicit rebase refuses published commits with exit 4 `published` and a `--rewrite-published` hint, unless `--rewrite-published` or user `sync.rewrite-published=true` allows it. Permission does not select a strategy: auto still merges published work. Items report `strategySource` (`flag`, `config`, `default`) separately from `rewriteAllowed` and `rewriteSource` (`flag`, `config`, or null). Explicit config false has source `config`.
 
-```json
-{
-  "schema": 2,
-  "command": "sync",
-  "ok": true,
-  "data": {
-    "default": {
-      "name": "main",
-      "path": "/checkout",
-      "branch": "refs/heads/main",
-      "base": "refs/remotes/origin/main",
-      "status": "updated",
-      "strategy": "ff-only",
-      "before": "<old-sha>",
-      "after": "<new-sha>",
-      "conflicts": [],
-      "detail": null,
-      "code": null
-    },
-    "workspaces": [
-      {
-        "name": "feature/task",
-        "path": "/workspaces/feature/task",
-        "branch": "feature/task",
-        "base": "refs/remotes/origin/main",
-        "status": "updated",
-        "strategy": "rebase",
-        "before": "<old-sha>",
-        "after": "<new-sha>",
-        "conflicts": [],
-        "detail": null,
-        "code": null
-      }
-    ]
-  },
-  "warnings": [],
-  "error": null
-}
+When published history is actually rebased, `rewrotePublished:true` and a `published_rewritten` warning identify the workspace: “updating the existing remote branch may require a force push”. Sync leaves the remote branch and upstream settings untouched. Personal policy belongs in user config, never in repository `.mabo.toml`:
+
+```sh
+mabo config set sync.strategy rebase
+mabo config set sync.rewrite-published true
+mabo config list --sources
+mabo config unset sync.rewrite-published
 ```
 
-`default` is null with `--no-default`. Otherwise `name` is the default branch name, `branch` its full local ref, `base` the fetched target ref, and `path` its checkout path or null if not checked out. `strategy` is `ff-only`. Workspace `branch` is the branch name or null for detached HEAD, `base` is the normalized base, and `strategy` is `rebase`, `merge`, or null when skipped before strategy selection. Both item types report full `before`/`after` commit IDs, conflicting file paths in `conflicts`, optional human `detail`, and optional refusal `code` (`published`). Fields unavailable after an error are null.
+Rebase preserves upstream cherry-picks (including reverted ones), intentionally empty commits, and commits that become empty. It requires Git 2.29 or later; verifying that merge commits can be flattened requires Git 2.38 or later. Merges with their own changes or conflict resolutions, or whose automatic merge trees cannot be verified, fail untouched with a `--merge` hint. Dirty workspaces (including untracked non-ignored files), detached workspaces, and already integrated branches are skipped. Ignored paths that integration could overwrite cause a dirty skip, respecting `core.ignorecase`. Selected linked workspaces on the default branch retain the ff-only guard, regardless of strategy or rewrite permission. Local divergence is retained. Fetch failures affect items using that remote; other bases can proceed.
 
-Statuses are `updated`, `up-to-date`, `dirty`, `diverged`, `merged`, `detached`, `base-gone`, `conflict`, and `failed`. Exit 6 takes precedence when any item changes and a failure, conflict, or published refusal occurs. Without changes, failures exit 1, conflicts exit 5, and published refusals exit 4; other outcomes exit 0. A default-only `dirty`/`diverged` result remains an operational failure (1). Usage errors exit 2.
+Conflicts list the files and roll back HEAD, index and contents (exit 5). `--keep-conflicts` leaves one workspace's operation in progress and requires exactly one workspace integration target; the optional primary update remains ff-only. Exit 6 takes precedence if another item changed before a failure, conflict or published refusal. Without changes, operational failures exit 1, conflicts 5, published refusals 4; skipped workspace outcomes exit 0. Primary-only dirty/diverged retains exit 1. Usage errors exit 2. There are no owners, internal locks, or in-use detection.
+
+Human output has one `<name>  <status>  [detail]` line per item and a status count. JSON uses envelope schema 2 with `data: {plan, items:[…], main:item|null}`. Each item contains `workspace` (the shared observed workspace object), `status`, `strategy`, `strategySource`, `rewriteAllowed`, `rewriteSource`, `rewrotePublished`, `before`, `after`, `conflicts`, `detail`, and `code` (e.g. `published`). The observed workspace describes the checkout before integration; `before`/`after` report full HEAD IDs. Diagnostic aliases `name`, `path`, `branch`, and `base` are also included. `strategy` is `rebase`, `merge`, `ff-only`, or null when skipped before selection. Unavailable fields are null.
+
+Statuses: `updated`, `up-to-date`, `dirty`, `diverged`, `integrated` (formerly `merged`), `detached`, `base-gone`, `base-unknown`, `conflict`, `refused`, `failed`, plus primary's `not-default-branch`.
+
+Migration: `-f`/`--force` exits 2 with guidance to `--rewrite-published`. `--no-default` exits 2 because current-only is now the default; add `--main` to advance primary. `--mine` exits 2 with guidance to a workspace selector or `--all`. JSON `default`/`workspaces` results moved to `main`/`items`.
 
 Orphaned records have neither a Git worktree registration nor an existing directory. `list` includes them with a trailing `[orphaned]`; the shared JSON workspace object has `orphaned: true` (false for existing entries), with null `branch` and `head`. `path` and `exec` refuse orphaned names; `show` can inspect their records. `remove <name>` removes only the stale record, exits 0, and reports that the workspace was already gone; it runs no hooks and leaves branches alone. Its existing JSON result uses `workspace.orphaned: true` and `branchDeleted: false`. A live workspace matching the same name takes precedence; multiple orphaned records with the same resolved name are refused as ambiguous. Orphaned records do not reserve names for live workspaces. When a live workspace takes the same name, the orphan remains visible in `list`; use `gc --apply` to remove it, since `remove <name>` resolves to the live workspace.
 
