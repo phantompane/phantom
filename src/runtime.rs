@@ -37,7 +37,7 @@ pub(crate) fn prepare(args: &[String], supports_json: bool, key: &str) -> Result
     NO_INPUT.set(false);
     let mut remaining = Vec::new();
     let mut explicit = None;
-    let mut names = false;
+    let mut text_listing = false;
     let mut error = None;
     let mut index = 0;
     while index < args.len() {
@@ -82,8 +82,13 @@ pub(crate) fn prepare(args: &[String], supports_json: bool, key: &str) -> Result
             }
 
             _ => {
-                if name == "--names" || name == "--paths" {
-                    names = true;
+                if inline.is_none()
+                    && matches!(
+                        (key, name),
+                        ("list", "--names") | ("project list", "--names" | "--paths")
+                    )
+                {
+                    text_listing = true;
                 }
                 remaining.push(arg.clone());
                 if takes_value(name) && !(key == "gc" && name == "--pr") && inline.is_none() {
@@ -119,7 +124,7 @@ pub(crate) fn prepare(args: &[String], supports_json: bool, key: &str) -> Result
     } else {
         false
     };
-    let json = supports_json && explicit.unwrap_or(env_json && !names);
+    let json = supports_json && explicit.unwrap_or(env_json && !text_listing);
     crate::output::set_json(json);
     if let Some(error) = error {
         return Err(error);

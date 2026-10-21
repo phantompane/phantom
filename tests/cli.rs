@@ -2955,6 +2955,45 @@ fn exec_passes_command_options_through() {
 }
 
 #[test]
+fn exec_help_skips_output_values_and_preserves_child_help() {
+    let repo = Repo::new();
+    for args in [
+        vec!["--output", "text", "exec", "--help"],
+        vec!["exec", "--output", "text", "--help"],
+        vec!["--output=text", "exec", "--help"],
+        vec!["exec", "--output=text", "--help"],
+    ] {
+        let out = repo.mabo(&args);
+        assert!(out.status.success(), "{args:?}: {}", text(&out.stderr));
+        assert!(text(&out.stdout)
+            .contains("mabo exec [--project <ref>] <worktree-name> <command> [args...]"));
+        assert!(out.stderr.is_empty());
+    }
+    let value = repo.mabo(&["exec", "--output", "--help"]);
+    assert_eq!(value.status.code(), Some(2));
+    assert!(text(&value.stderr).contains("Invalid output mode"));
+
+    for prefix in [
+        vec!["exec"],
+        vec!["--output", "text", "exec"],
+        vec!["exec", "--output", "text"],
+    ] {
+        for separator in [false, true] {
+            let mut args = prefix.clone();
+            args.push("main");
+            if separator {
+                args.push("--");
+            }
+            args.extend(["printf", "%s", "--help"]);
+            let out = repo.mabo(&args);
+            assert!(out.status.success(), "{args:?}: {}", text(&out.stderr));
+            assert_eq!(text(&out.stdout), "--help", "{args:?}");
+            assert!(out.stderr.is_empty());
+        }
+    }
+}
+
+#[test]
 fn create_and_attach_exec_pass_command_options_through() {
     let repo = Repo::new();
     let created = repo.mabo(&[
@@ -9964,6 +10003,72 @@ fn unresolved_usage_errors_honor_json_output_and_explicit_text() {
             .expect("mabo");
         assert!(out.status.success());
         assert!(serde_json::from_slice::<serde_json::Value>(&out.stdout).is_err());
+    }
+}
+
+#[test]
+fn unsupported_listing_modes_preserve_usage_output() {
+    let repo = Repo::new();
+    for (command, flag) in [
+        ("create", "--names"),
+        ("create", "--paths"),
+        ("list", "--paths"),
+        ("project add", "--names"),
+        ("project add", "--paths"),
+        ("frobnicate", "--names"),
+        ("frobnicate", "--paths"),
+        ("list", "--names=value"),
+        ("project list", "--paths=value"),
+    ] {
+        for output_args in [vec![], vec!["--json"], vec!["--output", "json"]] {
+            let mut args = command.split_whitespace().collect::<Vec<_>>();
+            args.push(flag);
+            args.extend(output_args);
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .env("MABO_OUTPUT", "json")
+                .output()
+                .expect("mabo");
+            assert_eq!(out.status.code(), Some(2), "{args:?}");
+            let value = assert_envelope(&out, command);
+            assert_eq!(value["error"]["code"], "usage");
+            assert!(value["data"].is_null());
+            assert!(value["error"]["message"]
+                .as_str()
+                .expect("message")
+                .contains(if command == "frobnicate" {
+                    "Unknown command"
+                } else {
+                    "Unknown option"
+                }));
+        }
+        let args = command
+            .split_whitespace()
+            .chain([flag, "--output", "text"])
+            .collect::<Vec<_>>();
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("MABO_OUTPUT", "json")
+            .output()
+            .expect("mabo");
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert!(serde_json::from_slice::<serde_json::Value>(&out.stdout).is_err());
+        assert!(!out.stderr.is_empty());
+    }
+
+    assert!(repo.mabo(&["project", "add"]).status.success());
+    for flag in ["--names", "--paths"] {
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &["project", "list", flag])
+            .env("MABO_OUTPUT", "json")
+            .output()
+            .expect("mabo");
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        if flag == "--names" {
+            assert_eq!(text(&out.stdout), "repo");
+        } else {
+            assert!(same_dir(&text(&out.stdout), &repo.repo));
+        }
     }
 }
 

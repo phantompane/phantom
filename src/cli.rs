@@ -1258,14 +1258,14 @@ fn help_before_positionals(args: &[String], limit: usize) -> bool {
             return false;
         }
         if skip_value {
-            // The project value is not the worktree name, even when it is `--help`.
+            // Option values are not worktree names, even when they are `--help`.
             skip_value = false;
             continue;
         }
         if is_help_flag(arg) {
             return true;
         }
-        if arg == "--project" || arg == "-p" {
+        if matches!(arg.as_str(), "--project" | "-p" | "--output") {
             skip_value = true;
             continue;
         }
