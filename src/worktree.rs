@@ -1,5 +1,4 @@
 use std::fs;
-use std::io::Write;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
@@ -11,6 +10,7 @@ use crate::context::Context;
 use crate::error::{Error, JsonErrorBody, Result};
 use crate::git::{self, GitWorktree};
 use crate::metadata;
+use crate::output::{errln, outln};
 use crate::paths;
 use crate::process;
 use crate::trust::{self, HookControl};
@@ -59,16 +59,15 @@ impl Logger {
     pub(crate) fn log(&self, message: &str) {
         if self.enabled {
             if self.json {
-                eprintln!("{message}");
+                errln!("{message}");
             } else {
-                println!("{message}");
+                outln!("{message}");
             }
         }
     }
 
     pub(crate) fn warn(&self, code: &str, message: &str) {
         if self.enabled {
-            let _ = std::io::stdout().flush();
             crate::output::warning(code, message);
         }
     }

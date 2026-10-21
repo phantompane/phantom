@@ -1,10 +1,96 @@
 //! Shared diagnostics and one JSON document per invocation.
 use std::cell::RefCell;
+use std::fmt;
+use std::io::{self, Write};
+use std::sync::Mutex;
 
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::error::{Error, JsonErrorBody, Result};
+
+// Keep stream state separate from the JSON envelope: diagnostics can be emitted
+// while OUTPUT is borrowed, and begin() must never reopen a broken stream.
+static STDOUT: Mutex<Stream> = Mutex::new(Stream::new());
+static STDERR: Mutex<Stream> = Mutex::new(Stream::new());
+
+struct Stream {
+    closed: bool,
+    error: Option<io::Error>,
+}
+
+impl Stream {
+    const fn new() -> Self {
+        Self {
+            closed: false,
+            error: None,
+        }
+    }
+
+    fn write(&mut self, writer: &mut impl Write, args: fmt::Arguments<'_>) {
+        if self.closed {
+            return;
+        }
+        // Flush here as well: even output without a newline must observe EPIPE
+        // now, rather than leaving a buffered write for process shutdown.
+        if let Err(error) = writer.write_fmt(args).and_then(|()| writer.flush()) {
+            self.closed = true;
+            if error.kind() != io::ErrorKind::BrokenPipe {
+                self.error = Some(error);
+            }
+        }
+    }
+
+    fn check(&mut self, name: &str) -> Result<()> {
+        match self.error.take() {
+            Some(error) => Err(Error::msg(format!("Failed to write {name}: {error}"))),
+            None => Ok(()),
+        }
+    }
+}
+
+pub(crate) fn stdout(args: fmt::Arguments<'_>) {
+    STDOUT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .write(&mut io::stdout().lock(), args);
+}
+
+/// Write a diagnostic, ignoring a closed reader and deferring other IO errors.
+pub fn stderr(args: fmt::Arguments<'_>) {
+    STDERR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .write(&mut io::stderr().lock(), args);
+}
+
+/// Called after command processing, so an output failure cannot interrupt a
+/// mutation. Broken pipes leave the command's original exit status unchanged.
+pub(crate) fn check_io() -> Result<()> {
+    let stdout = STDOUT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .check("stdout");
+    let stderr = STDERR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .check("stderr");
+    stdout.and(stderr)
+}
+
+macro_rules! outln {
+    ($($arg:tt)*) => {
+        $crate::output::stdout(format_args!("{}\n", format_args!($($arg)*)))
+    };
+}
+
+macro_rules! errln {
+    ($($arg:tt)*) => {
+        $crate::output::stderr(format_args!("{}\n", format_args!($($arg)*)))
+    };
+}
+
+pub(crate) use {errln, outln};
 
 #[derive(Default)]
 struct Output {
@@ -73,7 +159,7 @@ pub(crate) fn app_version(version: String) -> Result<i32> {
 }
 
 pub(crate) fn failure(error: JsonErrorBody) {
-    failure_with(error, |message| eprintln!("{message}"));
+    failure_with(error, |message| errln!("{message}"));
 }
 
 fn diagnostic_message(message: &str) -> &str {
@@ -120,9 +206,9 @@ fn failure_with(error: JsonErrorBody, report: impl FnOnce(&str)) {
 pub(crate) fn warning(code: &str, message: impl Into<String>) {
     let message = message.into();
     if code == "repo_discovery" {
-        eprintln!("{}", visible_text(&message));
+        errln!("{}", visible_text(&message));
     } else {
-        eprintln!("{message}");
+        errln!("{message}");
     }
     OUTPUT.with_borrow_mut(|out| {
         out.warnings.push(Warning {
@@ -168,7 +254,7 @@ pub(crate) fn finish(exit: i32) -> Result<()> {
         });
         let text = serde_json::to_string_pretty(&document)
             .map_err(|error| Error::msg(error.to_string()))?;
-        println!("{text}");
+        outln!("{text}");
         Ok(())
     })
 }
@@ -224,6 +310,94 @@ fn hides_the_prompt(ch: char) -> bool {
 mod tests {
     use super::*;
     use crate::error::{GENERAL, PARTIAL, REFUSED};
+
+    #[derive(Default)]
+    struct Probe {
+        bytes: Vec<u8>,
+        writes: usize,
+        flushes: usize,
+        error: Option<io::ErrorKind>,
+        fail_on_flush: bool,
+    }
+
+    impl Write for Probe {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            if !self.fail_on_flush {
+                if let Some(kind) = self.error {
+                    return Err(kind.into());
+                }
+            }
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            if self.fail_on_flush {
+                if let Some(kind) = self.error {
+                    return Err(kind.into());
+                }
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn broken_stream_is_never_written_or_flushed_again() {
+        for fail_on_flush in [false, true] {
+            let mut stream = Stream::new();
+            let mut writer = Probe {
+                error: Some(io::ErrorKind::BrokenPipe),
+                fail_on_flush,
+                ..Default::default()
+            };
+            stream.write(&mut writer, format_args!("first"));
+            assert!(stream.check("stdout").is_ok());
+            let calls = (writer.writes, writer.flushes);
+            writer.error = None;
+            stream.write(&mut writer, format_args!("second"));
+            assert_eq!((writer.writes, writer.flushes), calls);
+            assert!(stream.check("stdout").is_ok());
+        }
+    }
+
+    #[test]
+    fn other_write_and_flush_errors_are_reported_after_processing() {
+        for fail_on_flush in [false, true] {
+            let mut stream = Stream::new();
+            let mut writer = Probe {
+                error: Some(io::ErrorKind::PermissionDenied),
+                fail_on_flush,
+                ..Default::default()
+            };
+            stream.write(&mut writer, format_args!("first"));
+            let calls = (writer.writes, writer.flushes);
+            stream.write(&mut writer, format_args!("second"));
+            assert_eq!((writer.writes, writer.flushes), calls);
+            let error = stream.check("stderr").unwrap_err();
+            assert!(error.to_string().starts_with("Failed to write stderr:"));
+            assert_eq!(error.exit_code(), GENERAL);
+        }
+    }
+
+    #[test]
+    fn closing_one_stream_preserves_the_other_streams_bytes_and_flushes() {
+        let mut stdout = Stream::new();
+        let mut stderr = Stream::new();
+        let mut broken = Probe {
+            error: Some(io::ErrorKind::BrokenPipe),
+            ..Default::default()
+        };
+        let mut writer = Probe::default();
+        stdout.write(&mut broken, format_args!("ignored"));
+        stderr.write(&mut writer, format_args!("line {}\n", 1));
+        stderr.write(&mut writer, format_args!("prompt: "));
+        assert_eq!(writer.bytes, b"line 1\nprompt: ");
+        assert_eq!(writer.flushes, 2);
+        assert!(stdout.check("stdout").is_ok());
+        assert!(stderr.check("stderr").is_ok());
+    }
 
     #[test]
     fn warning_once_distinguishes_diagnostics_and_resets_per_invocation() {

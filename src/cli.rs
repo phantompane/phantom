@@ -4,7 +4,7 @@ use crate::args::{self, Opt, Parsed};
 use crate::error::{Error, Result, GENERAL, NOT_FOUND, PARTIAL, SUCCESS, VALIDATION};
 use crate::help;
 use crate::metadata::{self, MetadataInput};
-use crate::output::visible_text;
+use crate::output::{errln, outln, visible_text};
 use crate::preferences;
 use crate::projects::{self, ProjectListEntry, ProjectRecord, ProjectRegistryStore};
 use crate::repository;
@@ -19,6 +19,12 @@ struct Command {
 }
 
 pub fn run(args: &[String]) -> Result<i32> {
+    let result = run_inner(args);
+    crate::output::check_io()?;
+    result
+}
+
+fn run_inner(args: &[String]) -> Result<i32> {
     // Common options may precede the command as well as follow it. Keep the
     // command path in front so exec/remainder boundaries retain their meaning.
     let mut prefix = 0;
@@ -53,14 +59,14 @@ pub fn run(args: &[String]) -> Result<i32> {
         let mut reordered = rest[..consumed].to_vec();
         reordered.extend_from_slice(&args[..prefix]);
         reordered.extend_from_slice(&rest[consumed..]);
-        return run(&reordered);
+        return run_inner(&reordered);
     }
     if args.is_empty() || args[0] == "-h" || args[0] == "--help" {
         let prepared = crate::runtime::prepare(args, true, "", &command_options(""), true);
         if let Some(error) = prepared.error {
             return unresolved_usage(args, "", &error.to_string());
         }
-        println!("{}", help::main_help()?);
+        outln!("{}", help::main_help()?);
         return Ok(SUCCESS);
     }
     match find(args, COMMANDS) {
@@ -78,8 +84,8 @@ pub fn run(args: &[String]) -> Result<i32> {
             if prepared.error.is_none() && (prepared.help || (missing_subcommand && !prepared.json))
             {
                 match help::command_help(key)? {
-                    Some(text) => println!("{text}"),
-                    None => println!("Help not available for command '{}'", command.name),
+                    Some(text) => outln!("{text}"),
+                    None => outln!("Help not available for command '{}'", command.name),
                 }
                 return Ok(SUCCESS);
             }
@@ -122,7 +128,7 @@ fn unresolved_usage(args: &[String], command: &str, message: &str) -> Result<i32
             crate::runtime::is_removed_repo_option(arg) || args::removed_option_hint(arg).is_some()
         });
     if !crate::output::json() && !removed_interface {
-        eprintln!("{}", help::main_help()?);
+        errln!("{}", help::main_help()?);
     }
     crate::output::finish(exit)?;
     Ok(exit)
@@ -193,13 +199,13 @@ fn sync(args: &[String]) -> Result<i32> {
                 let files = item.conflicts.join(", ").replace(['\n', '\r'], " ");
                 detail = format!("{files} ({detail})");
             }
-            println!("{}  {}  {}", item.name, item.status, detail);
+            outln!("{}  {}  {}", item.name, item.status, detail);
         }
         let mut counts = std::collections::BTreeMap::new();
         for item in report.default.iter().chain(&report.worktrees) {
             *counts.entry(item.status.as_str()).or_insert(0usize) += 1;
         }
-        println!(
+        outln!(
             "Sync complete: {}",
             counts
                 .into_iter()
@@ -283,7 +289,7 @@ fn adopt(args: &[String]) -> Result<i32> {
     }
     let tree = crate::allocation::adopt(&context, path, input)?;
     if !crate::output::json() {
-        println!(
+        outln!(
             "Adopted workspace '{}' at {}",
             visible_text(&tree.name),
             visible_text(&tree.path)
@@ -343,7 +349,7 @@ fn forget_resolved(
             refresh(context, Path::new(&tree.path))
         };
         if !crate::output::json() {
-            println!("Forgot workspace '{}'", visible_text(&tree.name));
+            outln!("Forgot workspace '{}'", visible_text(&tree.name));
         }
         match forgotten {
             Ok(forgotten) => {
@@ -411,7 +417,7 @@ fn list(args: &[String]) -> Result<i32> {
         }
         let repo = crate::selectors::repo_json(&context.git_root);
         if !json && !parsed.flag("names") && !parsed.flag("paths") {
-            println!(
+            outln!(
                 "{}  (primary: {})",
                 visible_text(&repo.name),
                 visible_text(&repo.root)
@@ -427,9 +433,9 @@ fn list(args: &[String]) -> Result<i32> {
             let workspace = tree.to_json(None);
             if !json {
                 if parsed.flag("names") {
-                    println!("{}", tree.name);
+                    outln!("{}", tree.name);
                 } else if parsed.flag("paths") {
-                    println!("{}", tree.path);
+                    outln!("{}", tree.path);
                 } else {
                     let upstream = workspace
                         .upstream
@@ -470,7 +476,7 @@ fn list(args: &[String]) -> Result<i32> {
                     .flatten()
                     .collect::<Vec<_>>()
                     .join(" ");
-                    println!(
+                    outln!(
                         "{} {}  {}  {}  {}  {}  {}  {}{}",
                         if workspace.current { "*" } else { " " },
                         visible_text(&tree.name),
@@ -493,7 +499,7 @@ fn list(args: &[String]) -> Result<i32> {
             workspaces.push(workspace);
         }
         if count == 0 && !json && !parsed.flag("names") && !parsed.flag("paths") {
-            println!("No linked workspaces found");
+            outln!("No linked workspaces found");
         }
     }
     if json {
@@ -542,29 +548,29 @@ fn inspect(args: &[String], path_only: bool) -> Result<i32> {
         }
     } else {
         if path_only {
-            println!("{}", tree.path);
+            outln!("{}", tree.path);
         } else {
             let object = tree.to_json(None);
-            println!("{} ({})", visible_text(&tree.name), object.kind);
-            println!("Path: {}", visible_text(&tree.path));
-            println!("Repository: {}", visible_text(&object.repo.name));
-            println!("Repository path: {}", visible_text(&object.repo.root));
-            println!(
+            outln!("{} ({})", visible_text(&tree.name), object.kind);
+            outln!("Path: {}", visible_text(&tree.path));
+            outln!("Repository: {}", visible_text(&object.repo.name));
+            outln!("Repository path: {}", visible_text(&object.repo.root));
+            outln!(
                 "ID: {}",
                 visible_text(object.metadata.id.as_deref().unwrap_or("unknown"))
             );
-            println!(
+            outln!(
                 "HEAD: {}",
                 visible_text(object.head.as_deref().unwrap_or("unknown"))
             );
-            println!("Managed: {}", object.managed);
+            outln!("Managed: {}", object.managed);
             if let Some(setup) = &object.metadata.setup {
-                println!("Setup: {}", setup.state.as_str());
+                outln!("Setup: {}", setup.state.as_str());
                 if let Some(error) = &setup.error {
-                    println!("Setup error: {}", visible_text(error));
+                    outln!("Setup error: {}", visible_text(error));
                 }
             }
-            println!(
+            outln!(
                 "Detached: {}",
                 object
                     .detached
@@ -576,34 +582,34 @@ fn inspect(args: &[String], path_only: bool) -> Result<i32> {
                 ("Created at", &object.metadata.created_at),
                 ("Updated at", &object.metadata.updated_at),
             ] {
-                println!(
+                outln!(
                     "{label}: {}",
                     visible_text(value.as_deref().unwrap_or("unknown"))
                 );
             }
-            println!(
+            outln!(
                 "Branch: {}",
                 visible_text(object.branch.as_deref().unwrap_or("(detached)"))
             );
-            println!(
+            outln!(
                 "Base: {}",
                 visible_text(object.base.as_deref().unwrap_or("unknown"))
             );
-            println!(
+            outln!(
                 "Purpose: {}",
                 visible_text(tree.metadata.purpose.as_deref().unwrap_or(""))
             );
-            println!(
+            outln!(
                 "Dirty: {}",
                 object
                     .dirty
                     .map(|dirty| dirty.to_string())
                     .unwrap_or_else(|| "unknown".into())
             );
-            println!("Current: {}", object.current);
-            println!("Orphaned: {}", object.orphaned);
+            outln!("Current: {}", object.current);
+            outln!("Orphaned: {}", object.orphaned);
             if let Some(upstream) = object.upstream {
-                println!(
+                outln!(
                     "Upstream: {}{}",
                     visible_text(&upstream.r#ref),
                     if upstream.gone {
@@ -628,7 +634,7 @@ fn inspect(args: &[String], path_only: bool) -> Result<i32> {
                 ("Issue", tree.metadata.links.issue),
             ] {
                 if let Some(link) = link {
-                    println!(
+                    outln!(
                         "{kind}: {}",
                         visible_text(&link.url.unwrap_or_else(|| {
                             link.number.map(|n| n.to_string()).unwrap_or_default()
@@ -714,7 +720,7 @@ fn delete(args: &[String]) -> Result<i32> {
                 if let Some(metadata_error) = outcome.metadata_error {
                     let error = Error::msg(metadata_error);
                     if !json {
-                        println!("{}", outcome.message);
+                        outln!("{}", outcome.message);
                     }
                     deleted.push(worktree::DeletedEntry {
                         worktree: Some(outcome.worktree.to_json(None)),
@@ -736,7 +742,7 @@ fn delete(args: &[String]) -> Result<i32> {
                     );
                 }
                 if !json {
-                    println!("{}", outcome.message);
+                    outln!("{}", outcome.message);
                 }
                 deleted.push(worktree::DeletedEntry {
                     worktree: Some(outcome.worktree.to_json(None)),
@@ -881,14 +887,14 @@ fn config_read(args: &[String], list: bool) -> Result<i32> {
                 String::new()
             };
             if parsed.flag("sources") {
-                println!(
+                outln!(
                     "{label}{}\t{} ({})",
                     visible_text(&value),
                     effective.source,
                     visible_text(&effective.detail)
                 );
             } else {
-                println!("{label}{}", visible_text(&value));
+                outln!("{label}{}", visible_text(&value));
             }
         }
     }
@@ -925,7 +931,7 @@ fn config_set(args: &[String]) -> Result<i32> {
         };
         emit_json(&serde_json::json!({"key": key, "value": value}))
     } else {
-        println!(
+        outln!(
             "Set {key} to '{}' in {}",
             visible_text(value),
             visible_text(&path.to_string_lossy())
@@ -946,7 +952,7 @@ fn config_unset(args: &[String]) -> Result<i32> {
     if crate::output::json() {
         emit_json(&serde_json::json!({"key": key, "unset": true}))
     } else {
-        println!("Unset {key} in {}", visible_text(&path.to_string_lossy()));
+        outln!("Unset {key} in {}", visible_text(&path.to_string_lossy()));
         Ok(SUCCESS)
     }
 }
@@ -958,7 +964,7 @@ fn version(args: &[String]) -> Result<i32> {
         // `version` is application data here, distinct from the envelope schema.
         crate::output::app_version(crate::version_line())
     } else {
-        println!("{}", crate::version_line());
+        outln!("{}", crate::version_line());
         Ok(SUCCESS)
     }
 }
@@ -975,7 +981,7 @@ fn help_cmd(args: &[String]) -> Result<i32> {
     if crate::output::json() {
         emit_json(&help::json_help(&key)?)
     } else {
-        println!(
+        outln!(
             "{}",
             if key.is_empty() {
                 help::main_help()?
@@ -1030,7 +1036,7 @@ fn clone_cmd(args: &[String]) -> Result<i32> {
                     "cloned": result.cloned, "updated": result.updated,
                 }))?;
             } else {
-                println!("{}", repository::human_clone_message(&result));
+                outln!("{}", repository::human_clone_message(&result));
             }
             if let Some(error) = outcome.registration_error {
                 let status = if result.cloned || result.updated {
@@ -1049,7 +1055,7 @@ fn clone_cmd(args: &[String]) -> Result<i32> {
 fn project_root(args: &[String]) -> Result<i32> {
     if args.is_empty() {
         if let Some(text) = help::command_help("repo")? {
-            println!("{text}");
+            outln!("{text}");
         }
         return Ok(SUCCESS);
     }
@@ -1096,13 +1102,13 @@ fn project_add(args: &[String]) -> Result<i32> {
     if json {
         return emit_json(&project_add_json(added, &project));
     } else if added {
-        println!(
+        outln!(
             "Added repo '{}' ({})",
             visible_text(&project.name),
             visible_text(&project.root_path)
         );
     } else {
-        println!(
+        outln!(
             "Repository '{}' is already registered ({})",
             visible_text(&project.name),
             visible_text(&project.root_path)
@@ -1156,7 +1162,7 @@ fn project_list(args: &[String]) -> Result<i32> {
     }
     if catalog.projects.is_empty() {
         if !parsed.flag("names") && !parsed.flag("paths") {
-            println!("No repos found.");
+            outln!("No repos found.");
         }
         return Ok(SUCCESS);
     }
@@ -1167,27 +1173,27 @@ fn project_list(args: &[String]) -> Result<i32> {
                 name,
                 root_path,
                 ..
-            } if parsed.flag("names") => println!("{}", visible_text(name)),
+            } if parsed.flag("names") => outln!("{}", visible_text(name)),
             ProjectListEntry::Ghq { name, .. } if parsed.flag("names") => {
-                println!("{}", visible_text(name))
+                outln!("{}", visible_text(name))
             }
             ProjectListEntry::Registry { root_path, .. }
             | ProjectListEntry::Ghq { root_path, .. }
                 if parsed.flag("paths") =>
             {
-                println!("{}", visible_text(root_path));
+                outln!("{}", visible_text(root_path));
             }
             ProjectListEntry::Ghq {
                 name, root_path, ..
             } => {
-                println!("{} ({}) [ghq]", visible_text(name), visible_text(root_path))
+                outln!("{} ({}) [ghq]", visible_text(name), visible_text(root_path))
             }
             ProjectListEntry::Registry {
                 id,
                 name,
                 root_path,
                 ..
-            } => println!(
+            } => outln!(
                 "{} ({}) [{}]",
                 visible_text(name),
                 visible_text(root_path),
@@ -1246,7 +1252,7 @@ fn project_remove(args: &[String]) -> Result<i32> {
             "repo": removed,
         }));
     } else {
-        println!(
+        outln!(
             "Removed repo '{}' ({})",
             visible_text(&removed.name),
             visible_text(&removed.root_path)
@@ -1282,7 +1288,7 @@ fn repo_show(args: &[String]) -> Result<i32> {
     if crate::output::json() {
         emit_json(&value)
     } else {
-        println!("{}\nPrimary checkout: {}\nDefault branch: {}\n.mabo.toml: {}\nTrusted: {trusted}\nWorkspace root: {}", visible_text(&name), visible_text(&root.to_string_lossy()), visible_text(default_branch.as_deref().unwrap_or("unknown")), root.join(".mabo.toml").is_file(), visible_text(&context.worktrees_directory.to_string_lossy()));
+        outln!("{}\nPrimary checkout: {}\nDefault branch: {}\n.mabo.toml: {}\nTrusted: {trusted}\nWorkspace root: {}", visible_text(&name), visible_text(&root.to_string_lossy()), visible_text(default_branch.as_deref().unwrap_or("unknown")), root.join(".mabo.toml").is_file(), visible_text(&context.worktrees_directory.to_string_lossy()));
         Ok(SUCCESS)
     }
 }
@@ -1420,7 +1426,7 @@ fn set(args: &[String]) -> Result<i32> {
             worktree: worktree.to_json(None),
         });
     }
-    println!("Updated metadata for '{}'", worktree.name);
+    outln!("Updated metadata for '{}'", worktree.name);
     Ok(SUCCESS)
 }
 
@@ -1638,7 +1644,7 @@ fn gc(args: &[String]) -> Result<i32> {
         return Ok(report.exit_code());
     }
     for line in &report.lines {
-        println!("{line}");
+        outln!("{line}");
     }
     Ok(report.exit_code())
 }
@@ -1676,7 +1682,7 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
         Ok(project) => project,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
-    eprintln!(
+    errln!(
         "{}\n{}",
         visible_text(&project.project),
         trust::format_hooks(&project.setup, &project.pre_remove)
@@ -1690,7 +1696,7 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
                     "trustedAt": record.trusted_at,
                 }))
             } else {
-                println!("Trusted {}", visible_text(&record.path));
+                outln!("Trusted {}", visible_text(&record.path));
                 Ok(SUCCESS)
             }
         }
@@ -1731,10 +1737,10 @@ fn untrust_cmd(args: &[String]) -> Result<i32> {
                     "removed": removed,
                 }))
             } else if removed {
-                println!("Removed trust for {}", visible_text(&key));
+                outln!("Removed trust for {}", visible_text(&key));
                 Ok(SUCCESS)
             } else {
-                println!("Not trusted: {}", visible_text(&key));
+                outln!("Not trusted: {}", visible_text(&key));
                 Ok(SUCCESS)
             }
         }
@@ -1763,11 +1769,11 @@ fn print_trust_list(json: bool) -> Result<i32> {
         }));
     }
     if projects.is_empty() {
-        println!("No trusted repos");
+        outln!("No trusted repos");
         return Ok(SUCCESS);
     }
     for project in projects {
-        println!(
+        outln!(
             "{}\t{}",
             visible_text(&project.path),
             visible_text(&project.trusted_at)
@@ -1853,7 +1859,7 @@ fn report_delete_refusals(failures: Vec<worktree::DeleteError>, json: bool) -> R
         return Ok(first);
     }
     for failure in &failures {
-        eprintln!("{}", failure.error);
+        errln!("{}", failure.error);
     }
     Ok(first)
 }
