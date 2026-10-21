@@ -3706,8 +3706,10 @@ fn assert_clone_validation(repo: &Repo, source: &str) {
     assert_eq!(value["error"]["code"], "usage");
     assert!(value["error"].get("exitCode").is_none());
     let message = value["error"]["message"].as_str().unwrap_or_default();
+    // The OS error text comes from the C library: glibc and macOS say
+    // "File name too long", musl says "Filename too long".
     assert!(
-        message.contains("File name too long"),
+        message.contains("File name too long") || message.contains("Filename too long"),
         "{source}: {message}"
     );
     assert!(text(&output.stderr).is_empty(), "{}", text(&output.stderr));
