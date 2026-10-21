@@ -2,7 +2,7 @@
 # Official mabo installer. Re-run to update; pin with MABO_VERSION for reproducibility.
 # MABO_RELEASE_BASE_URL and MABO_API_URL are overrides for testing/mirrors;
 # they accept https:// URLs and local file:// URLs (copied without HTTP).
-# Requires curl or GNU wget; BusyBox wget is unsupported (Alpine: apk add curl).
+# Requires curl (Alpine: apk add curl).
 set -eu
 
 usage() {
@@ -14,7 +14,7 @@ Usage: sh install.sh [options]
   --verify-attestation   Require gh attestation verification (MABO_VERIFY_ATTESTATION=1)
   -h, --help             Show this help
 Re-run to update. Never prompts, uses sudo, or changes shell profiles.
-Requires curl or GNU wget (Alpine: apk add curl).
+Requires curl (Alpine: apk add curl).
 USAGE
 }
 
@@ -36,53 +36,23 @@ refuseManagedTarget() {
 }
 
 # Only this function sends authentication, and only when its third argument is api.
-# Disable user curl/wget config so it cannot enable tracing or add asset credentials.
+# Disable user curl config so it cannot enable tracing or add asset credentials.
 download() {
     case $1 in
         file://*) cp "${1#file://}" "$2" ;;
         https://*)
-            if [ "$downloader" = curl ]; then
-                if [ "${3-}" = api ] && [ -n "${GITHUB_TOKEN-}" ]; then
-                    curl --disable -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
-                        --connect-timeout 30 --speed-limit 1 --speed-time 60 --max-time 600 \
-                        -H "Authorization: Bearer $GITHUB_TOKEN" -o "$2" "$1"
-                else
-                    curl --disable -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
-                        --connect-timeout 30 --speed-limit 1 --speed-time 60 --max-time 600 \
-                        -o "$2" "$1"
-                fi
+            if [ "${3-}" = api ] && [ -n "${GITHUB_TOKEN-}" ]; then
+                curl --disable -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+                    --connect-timeout 30 --speed-limit 1 --speed-time 60 --max-time 600 \
+                    -H "Authorization: Bearer $GITHUB_TOKEN" -o "$2" "$1"
             else
-                downloadWget "$@"
+                curl --disable -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+                    --connect-timeout 30 --speed-limit 1 --speed-time 60 --max-time 600 \
+                    -o "$2" "$1"
             fi ;;
         *) fail 'Download URLs must use https:// (or file:// for testing/mirrors).' ;;
     esac
 }
-
-# wget HTTPS-only mode alone does not constrain redirects on all versions.
-# Follow redirects explicitly, validating every destination before requesting it.
-downloadWget() (
-    url=$1 destination=$2 requestKind=${3-} redirects=0
-    while [ "$redirects" -le 10 ]; do
-        case $url in https://*) ;; *) exit 1 ;; esac
-        if [ "$requestKind" = api ] && [ -n "${GITHUB_TOKEN-}" ]; then
-            if wget --no-config --no-hsts --quiet --https-only --max-redirect=0 --server-response \
-                --timeout=60 --tries=1 \
-                --header="Authorization: Bearer $GITHUB_TOKEN" -O "$destination" "$url" 2> "$tmp/headers"; then return; fi
-        else
-            if wget --no-config --no-hsts --quiet --https-only --max-redirect=0 --server-response \
-                --timeout=60 --tries=1 \
-                -O "$destination" "$url" 2> "$tmp/headers"; then return; fi
-        fi
-        url=$(awk '
-            tolower($1)=="location:" { location=$2; sub(/\r$/, "", location) }
-            END { print location }
-        ' "$tmp/headers")
-        # Authentication belongs exclusively to the original API request.
-        requestKind=
-        redirects=$((redirects+1))
-    done
-    exit 1
-)
 
 # Tokenize before awk: BWK awk substr/length scan long strings, so walking the
 # whole JSON response character by character is quadratic. grep consumes complete
@@ -225,13 +195,8 @@ main() {
     if [ "$os" = unsupported ] || [ "$arch" = unsupported ]; then
         fail "Unsupported platform. See https://github.com/phantompane/phantom/releases or use: cargo install --git https://github.com/phantompane/phantom --tag ${version:-<tag>} --locked maboroshi"
     fi
-    if command -v curl >/dev/null 2>&1; then downloader=curl
-    elif command -v wget >/dev/null 2>&1; then
-        if ! wget --version 2>&1 | grep -q 'GNU Wget'; then
-            fail 'curl or GNU wget is required; this wget is unsupported. On Alpine, run: apk add curl.'
-        fi
-        downloader=wget
-    else fail 'curl or GNU wget is required. On Alpine, run: apk add curl.'; fi
+    command -v curl >/dev/null 2>&1 ||
+        fail 'curl is required. Install it with your package manager (Alpine: apk add curl).'
     if command -v sha256sum >/dev/null 2>&1; then hasher=sha256sum
     elif command -v shasum >/dev/null 2>&1; then hasher=shasum
     else fail 'sha256sum or shasum is required for checksum verification.'; fi

@@ -280,34 +280,30 @@ contains "$root/gh-args" '/maboroshi-v7.0.0-linux-x64.tar.gz'
 [ "$(wc -l < "$root/gh-args" | tr -d ' ')" = 5 ] || fail 'Unexpected gh arguments'
 unset MABO_VERIFY_ATTESTATION
 rm "$root/tools/curl"
-if command -v wget >/dev/null 2>&1 && wget --version 2>&1 | grep -q 'GNU Wget'; then
-    ln -s "$(command -v wget)" "$root/tools/wget"
-    run 0 --version 7.0.0
-    assertVersion 7.0.0 "$HOME/.local/bin"
-    rm "$root/tools/wget"
-fi
-# Non-GNU wget must fail before any request, even if --version exits nonzero
-# (as BusyBox does). Keep both failure and successful version probes covered.
+# Missing curl must fail without invoking wget, regardless of its implementation.
 cp "$HOME/.local/bin/mabo" "$root/before"
 cat > "$root/tools/wget" <<'SH'
 #!/bin/sh
 printf '%s\n' "$@" >> "$TEST_WGET_ARGS"
-printf 'BusyBox wget: unrecognized option --version\n' >&2
-exit "$TEST_WGET_VERSION_STATUS"
+case $TEST_WGET_KIND in
+    GNU) printf 'GNU Wget 1.21 (mock)\n' ;;
+    BusyBox) printf 'BusyBox wget: unrecognized option --version\n' >&2; exit 1 ;;
+esac
 SH
 chmod +x "$root/tools/wget"
 export TEST_WGET_ARGS="$root/wget-args"
-for TEST_WGET_VERSION_STATUS in 0 1; do
-    export TEST_WGET_VERSION_STATUS
+curlRequired='curl is required. Install it with your package manager (Alpine: apk add curl).'
+for TEST_WGET_KIND in GNU BusyBox; do
+    export TEST_WGET_KIND
     : > "$TEST_WGET_ARGS"
-    runFail 1 'curl or GNU wget is required' --version 7.0.0
-    contains "$root/stderr" 'apk add curl'
-    [ "$(cat "$TEST_WGET_ARGS")" = --version ] || fail 'Requested download with non-GNU wget'
+    runFail 1 "$curlRequired" --version 7.0.0
+    [ ! -s "$TEST_WGET_ARGS" ] || fail 'Invoked wget without curl'
     unchanged
 done
-unset TEST_WGET_ARGS TEST_WGET_VERSION_STATUS
+unset TEST_WGET_ARGS TEST_WGET_KIND
 rm "$root/tools/wget"
-runFail 1 'curl or GNU wget' --version 7.0.0
+runFail 1 "$curlRequired" --version 7.0.0
+unchanged
 ln -s "$curlPath" "$root/tools/curl"
 rm "$root/tools/$shaName"
 runFail 1 'sha256sum or shasum' --version 7.0.0
@@ -337,6 +333,8 @@ runFail 2 '--version requires a value' --version
 runFail 2 '--install-dir requires a value' --install-dir
 run 0 --help
 contains "$root/stdout" 'Usage:'
+contains "$root/stdout" 'Requires curl (Alpine: apk add curl).'
+notContains "$root/stdout" 'wget'
 run 0 -h
 export MABO_API_URL="file://$root/nonexistent"
 runFail 1 'GitHub API request failed. Pin MABO_VERSION'
@@ -374,39 +372,27 @@ rm "$HOME/.profile"
 rm -rf "$HOME/managed"
 [ "$(find "$HOME" -type f | wc -l | tr -d ' ')" = 1 ] || fail 'Unexpected files in HOME'
 [ -z "$(find "$HOME" -type f ! -path "$HOME/.local/bin/mabo" -print)" ] || fail 'Created files outside install dir'
-# Exercise both HTTPS transports without network access. The fake clients check
-# the actual security flags and require credentials only on the one API request.
+# Exercise HTTPS without network access. The fake curl client checks
+# the actual security flags and requires credentials only on the one API request.
 mkdir "$root/http-tools"
 cat > "$root/http-tools/curl" <<'SH'
 #!/bin/sh
 set -eu
-client=${0##*/}
-if [ "$client" = wget ] && [ "${1-}" = --version ]; then
-    printf 'GNU Wget 1.21 (mock)\n'
-    exit 0
-fi
 auth=no
 secure=no
 redirectSafe=no
 tls=no
 config=no
 silent=no
-headers=no
-maxRedirect=no
-hstsDisabled=no
 connectTimeout=no
 speedLimit=no
 speedTime=no
 maxTime=no
-timeout=no
-tries=no
-if [ "$client" = curl ]; then
-    [ "$1" = --disable ] || exit 90
-fi
+[ "$1" = --disable ] || exit 90
 while [ "$#" -gt 0 ]; do
     case $1 in
-        --disable|--no-config) config=yes; shift ;;
-        -fsSL|--quiet) silent=yes; shift ;;
+        --disable) config=yes; shift ;;
+        -fsSL) silent=yes; shift ;;
         --proto) [ "$2" = '=https' ] || exit 91; secure=yes; shift 2 ;;
         --proto-redir) [ "$2" = '=https' ] || exit 91; redirectSafe=yes; shift 2 ;;
         --tlsv1.2) tls=yes; shift ;;
@@ -414,27 +400,15 @@ while [ "$#" -gt 0 ]; do
         --speed-limit) [ "$2" = 1 ] || exit 97; speedLimit=yes; shift 2 ;;
         --speed-time) [ "$2" = 60 ] || exit 97; speedTime=yes; shift 2 ;;
         --max-time) [ "$2" = 600 ] || exit 97; maxTime=yes; shift 2 ;;
-        --timeout=60) timeout=yes; shift ;;
-        --tries=1) tries=yes; shift ;;
-        --no-hsts) hstsDisabled=yes; shift ;;
-        --https-only) secure=yes; shift ;;
-        --max-redirect=0) maxRedirect=yes; shift ;;
-        --server-response) headers=yes; shift ;;
         -H) [ "$2" = "Authorization: Bearer $GITHUB_TOKEN" ] || exit 92; auth=yes; shift 2 ;;
-        --header=*) [ "${1#--header=}" = "Authorization: Bearer $GITHUB_TOKEN" ] || exit 92; auth=yes; shift ;;
-        -o|-O) output=$2; shift 2 ;;
+        -o) output=$2; shift 2 ;;
         https://*) url=$1; shift ;;
         *) exit 93 ;;
     esac
 done
 [ "$config:$secure:$silent" = yes:yes:yes ] || exit 94
-if [ "$client" = curl ]; then
-    [ "$redirectSafe:$tls" = yes:yes ] || exit 94
-    [ "$connectTimeout:$speedLimit:$speedTime:$maxTime" = yes:yes:yes:yes ] || exit 97
-else
-    [ "$headers:$maxRedirect:$hstsDisabled" = yes:yes:yes ] || exit 94
-    [ "$timeout:$tries" = yes:yes ] || exit 97
-fi
+[ "$redirectSafe:$tls" = yes:yes ] || exit 94
+[ "$connectTimeout:$speedLimit:$speedTime:$maxTime" = yes:yes:yes:yes ] || exit 97
 case $url in
     'https://mirror.invalid/api/releases?per_page=100')
         kind=api
@@ -446,52 +420,37 @@ case $url in
         source=$TEST_ROOT/releases/${url#https://mirror.invalid/download/} ;;
     *) exit 96 ;;
 esac
-printf '%s %s auth=%s\n' "$client" "$kind" "$auth" >> "$TEST_ROOT/http-log"
+printf 'curl %s auth=%s\n' "$kind" "$auth" >> "$TEST_ROOT/http-log"
 if [ "${TEST_HTTP_FAILURE:-0}" = 1 ]; then
     printf 'Failure containing %s\n' "$GITHUB_TOKEN" >&2
     exit 22
 fi
-if [ "${TEST_HTTP_REDIRECT:-0}" = 1 ]; then
-    printf '  HTTP/1.1 302 Found\n  Location: http://insecure.invalid/archive\n' >&2
-    exit 8
-fi
 cp "$source" "$output"
 SH
 chmod +x "$root/http-tools/curl"
-cp "$root/http-tools/curl" "$root/http-tools/wget"
 export TEST_ROOT="$root"
 writeApi compact yes
 export MABO_RELEASE_BASE_URL=https://mirror.invalid/download MABO_API_URL=https://mirror.invalid/api
 cp "$HOME/.local/bin/mabo" "$root/before"
-for client in curl wget; do
-    rm -f "$root/tools/curl" "$root/tools/wget"
-    ln -s "$root/http-tools/$client" "$root/tools/$client"
-    runner=isolated-shell
-    : > "$root/http-log"
-    run 0
-    assertVersion 7.1.0 "$HOME/.local/bin"
-    [ "$(cat "$root/http-log")" = "$client api auth=yes
-$client asset auth=no
-$client asset auth=no" ] || fail 'Incorrect HTTP requests or credential scope'
-    : > "$root/http-log"
-    run 0 --version 7.0.0
-    [ "$(cat "$root/http-log")" = "$client asset auth=no
-$client asset auth=no" ] || fail 'Pinned install called API'
-    cp "$HOME/.local/bin/mabo" "$root/before"
-    export TEST_HTTP_FAILURE=1
-    runFail 1 'GitHub API request failed. Pin MABO_VERSION'
-    contains "$root/stderr" 'GITHUB_TOKEN'
-    unchanged
-    unset TEST_HTTP_FAILURE
-    if [ "$client" = wget ]; then
-        export TEST_HTTP_REDIRECT=1
-        : > "$root/http-log"
-        runFail 1 'Cannot download maboroshi-v7.0.0-linux-x64.tar.gz' --version 7.0.0
-        [ "$(wc -l < "$root/http-log" | tr -d ' ')" = 1 ] || fail 'Followed insecure redirect'
-        unchanged
-        unset TEST_HTTP_REDIRECT
-    fi
-done
+rm -f "$root/tools/curl"
+ln -s "$root/http-tools/curl" "$root/tools/curl"
+runner=isolated-shell
+: > "$root/http-log"
+run 0
+assertVersion 7.1.0 "$HOME/.local/bin"
+[ "$(cat "$root/http-log")" = "curl api auth=yes
+curl asset auth=no
+curl asset auth=no" ] || fail 'Incorrect HTTP requests or credential scope'
+: > "$root/http-log"
+run 0 --version 7.0.0
+[ "$(cat "$root/http-log")" = "curl asset auth=no
+curl asset auth=no" ] || fail 'Pinned install called API'
+cp "$HOME/.local/bin/mabo" "$root/before"
+export TEST_HTTP_FAILURE=1
+runFail 1 'GitHub API request failed. Pin MABO_VERSION'
+contains "$root/stderr" 'GITHUB_TOKEN'
+unchanged
+unset TEST_HTTP_FAILURE
 runner=$savedRunner
 export MABO_RELEASE_BASE_URL="file://$root/releases" MABO_API_URL="file://$root/api"
 
