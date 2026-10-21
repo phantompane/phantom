@@ -71,7 +71,7 @@ fn run_inner(args: &[String]) -> Result<i32> {
         outln!("{}", help::main_help()?);
         return Ok(SUCCESS);
     }
-    match find(args, COMMANDS) {
+    match find(args, COMMANDS).or_else(|| find(args, INTERNAL_COMMANDS)) {
         Some((command, remaining)) => {
             let key = command.help_key;
             let supports_json = key != "exec";
@@ -810,19 +810,23 @@ fn remove(args: &[String]) -> Result<i32> {
                 }
                 if outcome.branch_error.is_some() {
                     // The checkout and possibly its record are already gone.
-                    // A workspace selector cannot finish branch cleanup. Check
-                    // its original tip before retrying Git's branch deletion;
-                    // branch -D still refuses a newly checked-out branch.
+                    // Snapshot the original tip and recorded base so cleanup
+                    // can recheck preservation without a workspace selector.
                     if let Some(head) = &outcome.worktree.head {
                         let root = crate::allocation::shell_quote(&context.git_root);
-                        let reference = crate::allocation::shell_quote(format!(
-                            "refs/heads/{}",
-                            outcome.worktree.branch
-                        ));
                         retry_cleanup.push(format!(
-                            "test \"$(git -C {root} show-ref --verify --hash {reference})\" = {} && git -C {root} branch -D -- {}",
+                            "cd {root} && mabo -R {root} __remove-branch-retry{}{} -- {} {} {}",
+                            if json { " --json" } else { "" },
+                            if options.delete_unpreserved_branch {
+                                " --delete-unpreserved-branch"
+                            } else {
+                                ""
+                            },
+                            crate::allocation::shell_quote(&outcome.worktree.branch),
                             crate::allocation::shell_quote(head),
-                            crate::allocation::shell_quote(&outcome.worktree.branch)
+                            crate::allocation::shell_quote(
+                                outcome.worktree.metadata.base.as_deref().unwrap_or("")
+                            )
                         ));
                     }
                 }
@@ -899,6 +903,62 @@ fn remove(args: &[String]) -> Result<i32> {
     Ok(SUCCESS)
 }
 
+// Internal continuation emitted only after checkout removal. Workspace records
+// can already be gone, so carry the original branch, tip and base in the hint.
+fn remove_branch_retry(args: &[String]) -> Result<i32> {
+    let parsed = args::parse(args, &command_options("__remove-branch-retry"), true)?;
+    let [branch, head, base] = parsed.positionals.as_slice() else {
+        return Err(Error::validation(
+            "Branch cleanup requires branch, original tip and base",
+        ));
+    };
+    let context = command_context(&parsed)?;
+    let reference = format!("refs/heads/{branch}");
+    let check_tip = || -> Result<()> {
+        let tip = crate::git::output(
+            &["show-ref", "--verify", "--hash", &reference],
+            Some(&context.git_root),
+            true,
+        )?;
+        if tip != *head {
+            return Err(Error::msg(
+                "Branch changed after partial removal; refusing branch cleanup",
+            ));
+        }
+        Ok(())
+    };
+    check_tip()?;
+    let fallback = crate::sync::fallback_base(&context.git_root).ok();
+    let preserved = crate::git::retirement_preserved(
+        &context.git_root,
+        Some(branch),
+        Some(head),
+        (!base.is_empty())
+            .then_some(base.as_str())
+            .or(fallback.as_deref()),
+    );
+    let kept = !parsed.flag("delete-unpreserved-branch") && !preserved;
+    if kept {
+        crate::output::warning(
+            "branch_kept_unpreserved",
+            format!(
+                "Warning: kept branch '{}' because its commits are unpreserved.",
+                visible_text(branch)
+            ),
+        );
+    } else {
+        // Preservation inspections must not authorize deleting a different tip.
+        // Git also refuses deletion if another checkout now uses the branch.
+        check_tip()?;
+        crate::git::delete_branch(&context.git_root, branch)?;
+    }
+    emit_json(&serde_json::json!({
+        "branch": branch, "branchDeleted": !kept,
+        "branchKeptReason": if kept { Some("unpreserved") } else { None },
+    }))?;
+    Ok(SUCCESS)
+}
+
 fn remove_uses_source_hooks(context: &crate::context::Context, parsed: &Parsed) -> bool {
     !parsed.flag("no-hooks")
         && context.source_checkout != context.git_root
@@ -919,7 +979,8 @@ fn remove_retry_command(
             )
         } else {
             format!(
-                "mabo -R {} remove",
+                "cd {} && mabo -R {} remove",
+                crate::allocation::shell_quote(&context.git_root),
                 crate::allocation::shell_quote(&context.git_root)
             )
         };
@@ -1661,6 +1722,7 @@ fn command_options(key: &str) -> Vec<Opt> {
             flag("no-hooks", None),
             flag("dry-run", None),
         ],
+        "__remove-branch-retry" => vec![repo_flag(), flag("delete-unpreserved-branch", None)],
         "exec" => vec![repo_flag()],
         "clone" => vec![
             value_flag("branch", None),
@@ -2105,6 +2167,15 @@ static TRUST_COMMANDS: &[Command] = &[
         children: &[],
     },
 ];
+
+// Implementation detail of emitted retry commands, outside the public help
+// contract. It shares normal parsing, JSON diagnostics and error handling.
+static INTERNAL_COMMANDS: &[Command] = &[Command {
+    name: "__remove-branch-retry",
+    help_key: "__remove-branch-retry",
+    run: remove_branch_retry,
+    children: &[],
+}];
 
 static COMMANDS: &[Command] = &[
     Command {
