@@ -91,6 +91,35 @@ impl Repo {
         );
         String::from_utf8(out.stdout).unwrap().trim().to_string()
     }
+    fn keep_remote_head_absent(&self, remote: &str) {
+        // Git >= 2.48 otherwise creates this symref again on fetch. Older Git
+        // ignores the setting, so both versions exercise the headless fallback.
+        self.git(
+            &self.main,
+            &[
+                "config",
+                &format!("remote.{remote}.followRemoteHEAD"),
+                "never",
+            ],
+        );
+        self.git(&self.main, &["remote", "set-head", remote, "--delete"]);
+        self.assert_no_remote_head(remote);
+    }
+    fn assert_no_remote_head(&self, remote: &str) {
+        let out = self
+            .command(
+                "git",
+                &self.main,
+                &[
+                    "symbolic-ref",
+                    "--quiet",
+                    &format!("refs/remotes/{remote}/HEAD"),
+                ],
+            )
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+    }
     fn mabo(&self, path: &Path, args: &[&str]) -> Output {
         self.command(env!("CARGO_BIN_EXE_mabo"), path, args)
             .output()
@@ -323,6 +352,107 @@ fn default_upstream_precedes_other_remote_heads_without_origin_head() {
 }
 
 #[test]
+fn custom_namespace_origin_head_precedes_other_remote_heads() {
+    for (refspec, destination) in [
+        (
+            "+refs/heads/*:refs/remotes/cache/*",
+            "refs/remotes/cache/main",
+        ),
+        ("+refs/heads/*:refs/cache/*", "refs/cache/main"),
+    ] {
+        let r = Repo::new();
+        r.git(&r.main, &["config", "remote.origin.fetch", refspec]);
+        r.git(&r.main, &["fetch", "origin"]);
+        r.git(
+            &r.main,
+            &["symbolic-ref", "refs/remotes/origin/HEAD", destination],
+        );
+        r.git(
+            &r.main,
+            &[
+                "remote",
+                "add",
+                "fork",
+                r.root.join("remote.git").to_str().unwrap(),
+            ],
+        );
+        r.git(&r.main, &["fetch", "fork"]);
+        // Explicitly create the HEAD on Git < 2.48 too.
+        r.git(&r.main, &["remote", "set-head", "fork", "main"]);
+        assert_eq!(r.git(&r.main, &["remote"]), "fork\norigin");
+        let fork_before = r.git(&r.main, &["for-each-ref", "refs/remotes/fork"]);
+        r.advance();
+        let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+
+        let doc = r.sync(&r.main, &[], 0);
+        assert_eq!(doc["data"]["default"]["base"], destination, "{doc}");
+        assert_eq!(doc["data"]["default"]["status"], "updated");
+        assert_eq!(doc["data"]["default"]["branch"], "refs/heads/main");
+        assert_eq!(r.git(&r.main, &["rev-parse", "main"]), expected);
+        assert_eq!(r.git(&r.main, &["rev-parse", destination]), expected);
+        assert_eq!(
+            r.git(&r.main, &["symbolic-ref", "refs/remotes/origin/HEAD"]),
+            destination
+        );
+        assert_eq!(
+            r.git(&r.main, &["for-each-ref", "refs/remotes/fork"]),
+            fork_before
+        );
+    }
+}
+
+#[test]
+fn remote_head_fallback_preserves_remaining_remote_order() {
+    for origin in ["absent", "missing-head", "dangling-head"] {
+        let r = Repo::new();
+        match origin {
+            "absent" => {
+                r.git(&r.main, &["remote", "remove", "origin"]);
+            }
+            "missing-head" => r.keep_remote_head_absent("origin"),
+            "dangling-head" => {
+                r.git(
+                    &r.main,
+                    &[
+                        "symbolic-ref",
+                        "refs/remotes/origin/HEAD",
+                        "refs/remotes/origin/missing",
+                    ],
+                );
+            }
+            _ => unreachable!(),
+        }
+        for remote in ["fork", "healthy"] {
+            r.git(
+                &r.main,
+                &[
+                    "remote",
+                    "add",
+                    remote,
+                    r.root.join("remote.git").to_str().unwrap(),
+                ],
+            );
+            r.git(&r.main, &["fetch", remote]);
+            r.git(&r.main, &["remote", "set-head", remote, "main"]);
+        }
+        let healthy_before = r.git(&r.main, &["for-each-ref", "refs/remotes/healthy"]);
+        r.advance();
+        let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+        let doc = r.sync(&r.main, &[], 0);
+        assert_eq!(
+            doc["data"]["default"]["base"], "refs/remotes/fork/main",
+            "{origin}: {doc}"
+        );
+        assert_eq!(doc["data"]["default"]["status"], "updated");
+        assert_eq!(r.git(&r.main, &["rev-parse", "main"]), expected);
+        assert_eq!(
+            r.git(&r.main, &["for-each-ref", "refs/remotes/healthy"]),
+            healthy_before
+        );
+    }
+}
+
+#[test]
 fn other_remote_head_remains_a_fallback_for_unresolved_default_upstream() {
     let r = Repo::new();
     let before = r.git(&r.main, &["rev-parse", "main"]);
@@ -365,7 +495,7 @@ fn other_remote_head_remains_a_fallback_for_unresolved_default_upstream() {
 fn default_upstream_ignores_child_branch_without_remote_head() {
     for has_upstream in [false, true] {
         let r = Repo::new();
-        r.git(&r.main, &["remote", "set-head", "origin", "--delete"]);
+        r.keep_remote_head_absent("origin");
         let before = r.git(&r.main, &["rev-parse", "main"]);
         r.git(&r.upstream, &["push", "origin", "main:trunk"]);
         r.advance();
@@ -414,7 +544,9 @@ fn default_upstream_ignores_child_branch_without_remote_head() {
             r.git(&r.main, &["rev-parse", "refs/heads/main/foo"]),
             child_tip
         );
+        r.assert_no_remote_head("origin");
         let doc = r.sync(&r.main, &[], 0);
+        r.assert_no_remote_head("origin");
         assert_eq!(doc["data"]["default"]["status"], "up-to-date");
         assert_eq!(
             doc["data"]["default"]["base"],
@@ -436,7 +568,7 @@ fn default_without_remote_head_uses_differently_named_upstream() {
     ] {
         for checked_out in [true, false] {
             let r = Repo::new();
-            r.git(&r.main, &["remote", "set-head", "origin", "--delete"]);
+            r.keep_remote_head_absent("origin");
             r.git(&r.upstream, &["push", "origin", "main:trunk"]);
             if tracking.contains("/mapped/") {
                 r.git(
@@ -458,6 +590,7 @@ fn default_without_remote_head_uses_differently_named_upstream() {
                 r.git(&r.main, &["update-ref", "-d", "refs/remotes/origin/main"]);
             }
             // Neither a missing nor a stale origin/main may override the upstream.
+            r.assert_no_remote_head("origin");
             let tree = r.create("topic");
             let doc = r.sync(&tree, &["--no-default"], 0);
             assert_eq!(doc["data"]["workspaces"][0]["base"], tracking);
@@ -474,10 +607,104 @@ fn default_without_remote_head_uses_differently_named_upstream() {
             assert_eq!(doc["data"]["default"]["base"], tracking);
             assert_eq!(r.git(&r.main, &["rev-parse", "main"]), expected);
             assert_eq!(r.git(&r.main, &["rev-parse", tracking]), expected);
+            r.assert_no_remote_head("origin");
             assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads/trunk"]), "");
             assert_eq!(
                 r.sync(&r.main, &[], 0)["data"]["default"]["status"],
                 "up-to-date"
+            );
+        }
+    }
+}
+
+#[test]
+fn default_branch_identity_survives_remote_head_creation_during_fetch() {
+    use std::os::unix::fs::PermissionsExt;
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|path| path.join("git"))
+        .find(|path| path.is_file())
+        .unwrap();
+    for checkout in ["primary", "unchecked", "linked"] {
+        for existing_trunk in [false, true] {
+            let r = Repo::new();
+            r.git(&r.upstream, &["push", "origin", "main:trunk"]);
+            r.git(&r.main, &["fetch", "origin"]);
+            r.git(
+                &r.main,
+                &["branch", "--set-upstream-to=origin/trunk", "main"],
+            );
+            if existing_trunk {
+                r.git(&r.main, &["branch", "trunk", "main"]);
+            }
+            let trunk_before = r.git(&r.main, &["for-each-ref", "refs/heads/trunk"]);
+            if checkout != "primary" {
+                r.git(&r.main, &["checkout", "-b", "other"]);
+            }
+            let linked = r.root.join("linked-default");
+            if checkout == "linked" {
+                r.git(
+                    &r.main,
+                    &["worktree", "add", linked.to_str().unwrap(), "main"],
+                );
+            }
+            r.advance();
+            r.git(&r.upstream, &["push", "origin", "main:trunk"]);
+            let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+            r.git(&r.main, &["remote", "set-head", "origin", "--delete"]);
+            r.assert_no_remote_head("origin");
+
+            // Emulate Git >= 2.48 creating origin/HEAD during mabo's fetch,
+            // so older Git also exercises the change between planning and use.
+            let bin = r.root.join("bin");
+            fs::create_dir(&bin).unwrap();
+            let wrapper = bin.join("git");
+            fs::write(
+                &wrapper,
+                "#!/bin/sh\n\"$REAL_GIT\" \"$@\" || exit $?\ncase \" $* \" in\n  *' fetch '*) \"$REAL_GIT\" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main ;;\nesac\n",
+            )
+            .unwrap();
+            fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+            let mut paths = vec![bin];
+            paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+            let cwd = if checkout == "linked" {
+                &linked
+            } else {
+                &r.main
+            };
+            let args = if checkout == "linked" {
+                vec!["sync", ".", "--no-default", "--json"]
+            } else {
+                vec!["sync", "--json"]
+            };
+            let out = r
+                .command(env!("CARGO_BIN_EXE_mabo"), cwd, &args)
+                .env("PATH", std::env::join_paths(paths).unwrap())
+                .env("REAL_GIT", &real_git)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{out:?}");
+            let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+            let item = if checkout == "linked" {
+                assert!(doc["data"]["default"].is_null());
+                &doc["data"]["workspaces"][0]
+            } else {
+                &doc["data"]["default"]
+            };
+            assert_eq!(item["status"], "updated", "{doc}");
+            assert_eq!(item["branch"], "refs/heads/main", "{doc}");
+            assert_eq!(item["base"], "refs/remotes/origin/trunk");
+            assert_eq!(r.git(&r.main, &["rev-parse", "main"]), expected);
+            assert_eq!(
+                r.git(&r.main, &["for-each-ref", "refs/heads/trunk"]),
+                trunk_before
+            );
+            assert_eq!(
+                r.git(&r.main, &["symbolic-ref", "refs/remotes/origin/HEAD"]),
+                "refs/remotes/origin/main"
+            );
+            assert_eq!(
+                r.git(&r.main, &["config", "branch.main.merge"]),
+                "refs/heads/trunk"
             );
         }
     }
@@ -2288,7 +2515,17 @@ fn slash_remote_default_and_explicit_bases_fetch_and_integrate_main() {
         r.git(&r.main, &["remote", "rename", "origin", "team/origin"]);
         if overlapping {
             // Fetching the shorter prefix would fail, and must never be attempted.
-            r.git(&r.main, &["remote", "add", "team", "/does/not/exist"]);
+            // Git >= 2.51 rejects overlapping names in `remote add`; config can
+            // still contain them, including repositories made with older Git.
+            r.git(&r.main, &["config", "remote.team.url", "/does/not/exist"]);
+            r.git(
+                &r.main,
+                &[
+                    "config",
+                    "remote.team.fetch",
+                    "+refs/heads/*:refs/remotes/team/*",
+                ],
+            );
         }
         for base in [
             None,
@@ -2751,6 +2988,8 @@ fn failed_default_remote_does_not_block_a_healthy_base_remote() {
         ],
     );
     r.git(&r.main, &["fetch", "healthy"]);
+    // Git >= 2.48 creates this on fetch; exercise the same state on older Git.
+    r.git(&r.main, &["remote", "set-head", "healthy", "main"]);
     assert!(r
         .mabo(&r.main, &["set", "healthy", "--base", "healthy/main"])
         .status
@@ -2760,9 +2999,17 @@ fn failed_default_remote_does_not_block_a_healthy_base_remote() {
     let default_before = r.snapshot(&r.main);
     let stale_before = r.snapshot(&stale);
     let doc = r.sync(&r.main, &["healthy", "stale"], 6);
+    assert_eq!(
+        r.git(&r.main, &["symbolic-ref", "refs/remotes/healthy/HEAD"]),
+        "refs/remotes/healthy/main"
+    );
     assert_eq!(doc["data"]["default"]["status"], "failed");
     assert_eq!(doc["data"]["workspaces"][0]["status"], "updated", "{doc}");
     assert_eq!(doc["data"]["workspaces"][1]["status"], "failed");
+    assert_eq!(
+        doc["data"]["workspaces"][1]["base"],
+        "refs/remotes/cache/main"
+    );
     for item in [&doc["data"]["default"], &doc["data"]["workspaces"][1]] {
         assert!(item["detail"]
             .as_str()
