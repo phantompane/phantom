@@ -168,7 +168,7 @@ pub fn replace(
 ) -> Result<WorktreeMetadata> {
     if save_injected() {
         return Err(Error::msg(
-            "Failed to save worktree metadata: injected failure".to_string(),
+            "Failed to save workspace metadata: injected failure".to_string(),
         ));
     }
     let key = path_key(path);
@@ -275,7 +275,7 @@ pub fn prepare(git_root: &Path) -> Result<()> {
     };
     fs::create_dir_all(&dir).map_err(|error| {
         Error::msg(format!(
-            "Worktree metadata directory {} is not writable: {error}",
+            "Workspace metadata directory {} is not writable: {error}",
             dir.display()
         ))
     })?;
@@ -287,7 +287,7 @@ pub fn prepare(git_root: &Path) -> Result<()> {
         .open(&probe)
         .map_err(|error| {
             Error::msg(format!(
-                "Worktree metadata directory {} is not writable: {error}",
+                "Workspace metadata directory {} is not writable: {error}",
                 dir.display()
             ))
         })?;
@@ -534,7 +534,7 @@ fn read_all_records_with(
     let mut problems = Vec::new();
     let entries = fs::read_dir(&dir).map_err(|error| {
         Error::msg(format!(
-            "Failed to read worktree metadata {}: {error}",
+            "Failed to read workspace metadata {}: {error}",
             dir.display()
         ))
     })?;
@@ -576,7 +576,7 @@ fn read_all_records_with(
         match result {
             Ok(record) => store.worktrees.push(record),
             Err(error) => {
-                let message = format!("Worktree metadata file {} {error}", file.display());
+                let message = format!("Workspace metadata file {} {error}", file.display());
                 if strict {
                     return Err(Error::msg(message));
                 }
@@ -608,7 +608,7 @@ fn ensure_records_with(git_root: &Path, before_publish: impl FnOnce()) -> Result
     } else {
         fs::create_dir_all(&dir).map_err(|error| {
             Error::msg(format!(
-                "Worktree metadata directory {} is not writable: {error}",
+                "Workspace metadata directory {} is not writable: {error}",
                 dir.display()
             ))
         })?;
@@ -624,7 +624,7 @@ fn save_record(dir: &Path, record: &StoredWorktree) -> Result<()> {
         .ok_or_else(|| Error::msg("Missing workspace id"))?;
     let body = serde_json::to_vec_pretty(record).map_err(|error| Error::msg(error.to_string()))?;
     crate::atomic::write(&dir.join(format!("{id}.json")), &body)
-        .map_err(|error| Error::msg(format!("Failed to save worktree metadata: {error}")))
+        .map_err(|error| Error::msg(format!("Failed to save workspace metadata: {error}")))
 }
 
 fn with_store<T>(git_root: &Path, body: impl FnOnce(&mut Store) -> Result<(T, bool)>) -> Result<T> {
@@ -669,13 +669,13 @@ fn validated_store(path: &Path) -> Result<Option<Store>> {
         let key = path_key(Path::new(&record.path));
         if key.is_empty() {
             return Err(Error::msg(format!(
-                "Worktree metadata file {} contains a record without a path",
+                "Workspace metadata file {} contains a record without a path",
                 path.display()
             )));
         }
         if !seen.insert(key) {
             return Err(Error::msg(format!(
-                "Worktree metadata file {} contains a duplicate path",
+                "Workspace metadata file {} contains a duplicate path",
                 path.display()
             )));
         }
@@ -691,20 +691,20 @@ fn read_store(path: &Path) -> Result<Option<Store>> {
         }
         Err(error) => {
             return Err(Error::msg(format!(
-                "Worktree metadata file {} could not be read: {error}",
+                "Workspace metadata file {} could not be read: {error}",
                 path.display()
             )));
         }
     };
     let value: serde_json::Value = serde_json::from_str(&content).map_err(|error| {
         Error::msg(format!(
-            "Worktree metadata file {} contains invalid JSON: {error}",
+            "Workspace metadata file {} contains invalid JSON: {error}",
             path.display()
         ))
     })?;
     if !value.is_object() {
         return Err(Error::msg(format!(
-            "Worktree metadata file {} is not a JSON object",
+            "Workspace metadata file {} is not a JSON object",
             path.display()
         )));
     }
@@ -714,13 +714,13 @@ fn read_store(path: &Path) -> Result<Option<Store>> {
         .unwrap_or(serde_json::Value::Null);
     if version.as_u64() != Some(u64::from(STORE_VERSION)) {
         return Err(Error::msg(format!(
-            "Worktree metadata file {} has unsupported version: {version}",
+            "Workspace metadata file {} has unsupported version: {version}",
             path.display()
         )));
     }
     serde_json::from_value(value).map(Some).map_err(|error| {
         Error::msg(format!(
-            "Worktree metadata file {} has an invalid shape: {error}",
+            "Workspace metadata file {} has an invalid shape: {error}",
             path.display()
         ))
     })

@@ -149,6 +149,14 @@ pub fn inherit(
     for (key, value) in env {
         cmd.env(key, value);
     }
+    if env
+        .iter()
+        .any(|(key, value)| *key == "MABO" && *value == "1")
+    {
+        for key in ["MABO_NAME", "MABO_PATH", "MABO_ROOT_PATH"] {
+            cmd.env_remove(key);
+        }
+    }
     let status = cmd.status().map_err(|error| spawn_error(command, &error))?;
     exit_code(command, status)
 }

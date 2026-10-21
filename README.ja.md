@@ -16,7 +16,7 @@ Git はコードとチェックアウトを記録します。しかし、誰が�
 
 Maboroshi はワークスペースを作成し、既存の作業を引き継いで準備し、ベースの変更に追従させ、片付けます。
 
-- **確保と準備。** `clone` は ghq のディレクトリ構成でリポジトリを配置します。`create`、`attach`、`github checkout`（別名 `gh checkout`）は、作業ごとに専用の worktree を用意し、`.worktreeinclude` で指定した Git の無視対象ファイルをコピーして、信頼済みのリポジトリでプロジェクトフックを実行します。
+- **確保と準備。** `clone` は ghq のディレクトリ構成でリポジトリを配置します。`create`、`attach`、`github checkout`（別名 `gh checkout`）は、作業ごとに専用のワークスペースを用意し、`.worktreeinclude` で指定した Git の無視対象ファイルをコピーして、信頼済みのリポジトリでプロジェクトフックを実行します。
 - **情報の記録。** `meta set` で所有者、目的、関連するプルリクエストや issue、ベースを記録します。新しいワークスペースでは、`MABO_AGENT_ID` に空白以外の文字が含まれていれば所有者として使い、`--owner` があればそちらを優先します。所有者と目的は未設定のままにもできます。`list` と `where` で、何がどこにあるかを確認できます。
 - **更新。** `sync` は fetch し、可能ならデフォルトブランチを fast-forward して、選択したワークスペースにベースの変更を取り込みます。
 - **片付け。** `gc` はマージ済みブランチ、クローズ済みのプルリクエスト、孤立したレコード、経過時間（`--older-than`）を根拠に対象を選びます。
@@ -25,7 +25,7 @@ Maboroshi はワークスペースを作成し、既存の作業を引き継い�
 
 ## デフォルトは安全、違うことをしたいときは明示する
 
-- **マージ済み、所有者なし、古い、という状態は判断材料であり、削除してよいという許可ではありません。** `gc` は `--apply` または `--force` を指定するまで、削除予定を表示するだけです（`--force` は適用も兼ねます）。`--force` がなければ、未コミットの変更がある作業や、公開済みまたは取り込み済みと確認できないコミットを保護します。デフォルトブランチの worktree、実行中のカレントディレクトリがある worktree、Git でロックされた worktree は、`--force` があっても保護します。
+- **マージ済み、所有者なし、古い、という状態は判断材料であり、削除してよいという許可ではありません。** `gc` は `--apply` または `--force` を指定するまで、削除予定を表示するだけです（`--force` は適用も兼ねます）。`--force` がなければ、未コミットの変更がある作業や、公開済みまたは取り込み済みと確認できないコミットを保護します。デフォルトブランチのワークスペース、実行中のカレントディレクトリがあるワークスペース、Git でロックされたワークスペースは、`--force` があっても保護します。
 - **所有者は情報であって、アクセス制御ではありません。** `MABO_AGENT_ID` に空白以外の文字が含まれていれば、`sync --mine` はそのエージェントのワークスペースだけを選び、`sync --all` は他のエージェントのワークスペースをスキップします（どちらも `--no-default` がなければデフォルトブランチの更新も試みます）。名前を明示すれば、所有者にかかわらず `sync` で同期できます。`gc` は他のエージェントのものでも、マージ済み、PR がクローズ済み、または孤立したワークスペースを対象にすることがあります。
 - **push 済みの履歴は既定で保ちます。** 変更の取り込みが必要な場合、`sync` は公開済みの作業にベースをマージします。リベースには `--rebase --force` が必要です。ベースに含まれないコミットがひとつでも、既知のリモート追跡参照または fetch 先として設定された参照から到達可能なら、公開済みとして扱います。
 - **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。`MABO_AGENT_ID` は所有者の既定値を設定するだけで、プロンプトを抑制しません。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust --yes` で信頼を記録するか、`--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。`--exec` と単体 `exec` は標準入力を引き継ぎます。
@@ -48,7 +48,7 @@ Maboroshi が担わない役割は次のとおりです。
 `--json` は `--output json` の別名です。`--output text` は人間向け出力を選びます。`MABO_OUTPUT=text|json` で既定値を設定でき、明示したフラグが優先されます。`exec`、`version`、ヘルプは環境変数を無視し、`exec --json` は使用方法エラーになります。
 
 ```json
-{"schema":2,"command":"list","ok":true,"data":{"worktrees":[]},"warnings":[],"error":null}
+{"schema":2,"command":"list","ok":true,"data":{"workspaces":[]},"warnings":[],"error":null}
 ```
 
 標準出力には envelope を1件だけ出し、進捗・フック・Git・`--exec` の出力は標準エラー出力へ出します。`data` は既存のコマンド結果を含み、最上位の `version` / `schema` は含みません。`command` は `meta set` のような空白区切りの名前です。エラーは `{code,message,details?}`、警告は `{code,message}` です。部分的な結果は `data` に残り、gc の dry-run では `data.plan: true` を返します。パーサーは未知のフィールドを無視してください。
@@ -69,8 +69,16 @@ Maboroshi が担わない役割は次のとおりです。
 
 ## メタデータの保存と移行
 
-worktree のメタデータは `<git-common-dir>/maboroshi/workspaces/<id>.json` に1件ずつ保存します。`id` は `ws_<uuid v4>`、各ファイルには `schema: 2`、`id`、`path`、任意の `name` と、既存の `owner`、`base`、`purpose`、`createdAt`、`createdFrom`、`lastUsedAt`、`links` が入ります。JSON 出力の worktree オブジェクトにも `id` が入り、未記録なら null です。検索・置き換え・削除は従来どおり path で行い、削除はそのファイルだけを消します。破損したレコードは警告と null メタデータになり、ほかのレコードは読み続けられます。変更するコマンドは破損があれば拒否して元のファイルを保ちます。`sync` も fetch や対象の更新前にメタデータを厳密に検証します。同じ path の初回同時登録で重複ができた場合は、`createdAt` が古いレコード、同時刻なら `id` の辞書順で小さいレコードに読み取り時にまとめます。全フィールドはそのレコードを採用し、次のメタデータ書き込みで余分なファイルを削除します。`delete` と `gc` はこのメタデータに記録されていれば、設定した保存先の外にある worktree も削除対象にできます。
+ワークスペースのメタデータは `<git-common-dir>/maboroshi/workspaces/<id>.json` に1件ずつ保存します。`id` は `ws_<uuid v4>`、各ファイルには `schema: 2`、`id`、`path`、任意の `name` と、既存の `owner`、`base`、`purpose`、`createdAt`、`createdFrom`、`lastUsedAt`、`links` が入ります。JSON 出力の ワークスペースオブジェクトにも `id` が入り、未記録なら null です。検索・置き換え・削除は従来どおり path で行い、削除はそのファイルだけを消します。破損したレコードは警告と null メタデータになり、ほかのレコードは読み続けられます。変更するコマンドは破損があれば拒否して元のファイルを保ちます。`sync` も fetch や対象の更新前にメタデータを厳密に検証します。同じ path の初回同時登録で重複ができた場合は、`createdAt` が古いレコード、同時刻なら `id` の辞書順で小さいレコードに読み取り時にまとめます。全フィールドはそのレコードを採用し、次のメタデータ書き込みで余分なファイルを削除します。`delete` と `gc` はこのメタデータに記録されていれば、設定した保存先の外にあるワークスペース も削除対象にできます。
 
 project registry は `$XDG_STATE_HOME/maboroshi/repos/<id>.json`（既定は `~/.local/state/maboroshi/repos/<id>.json`）に1件ずつ保存し、既存の `proj_<uuid>` ID を引き継ぎます。同じ root の重複は、読み込み時に `createdAt` が古い方へまとめます。同時刻なら ID の辞書順で決めます。
 
 旧 `maboroshi/worktrees.json` と `$XDG_STATE_HOME/maboroshi/projects.json` は読み取り専用コマンドでも読めます。最初の書き込みで全件を個別ファイルへ移し、旧ファイルを `*.json.imported` に改名します。移行に失敗した場合は旧ファイルを保ちます。mabo 内部のファイルロックはありません。各レコードと、単一ファイルの `trust.toml`・ユーザー設定 `config.toml` は、同じディレクトリの一時ファイルへの書き込み、fsync、rename でアトミックに置き換えます。別レコードの同時追加は両方残り、同じレコードの同時更新は後勝ちです。
+
+## Workspace paths and environment
+
+新規ワークスペースの既定パスは `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash8>/<name>` です。`XDG_DATA_HOME` が未設定・空・相対パスの場合は `~/.local/share/maboroshi/workspaces/...` を使います。`worktrees-directory` 設定は引き続き使えます。既存の `maboroshi/worktrees/` 以下は移動せず、`list`、`where`、`delete`、`sync`、`gc` で引き続き扱えます。
+
+フック（`post-create`、`pre-delete`）、`exec`、`create`/`attach --exec` には、`MABO=1`、名前の `MABO_WORKSPACE`、記録済み ID の `MABO_WORKSPACE_ID`（未記録なら空）、絶対パスの `MABO_WORKSPACE_PATH`、primary checkout の絶対パスの `MABO_REPO_PATH` を渡します。フック設定を読む場所は実行元チェックアウトのままです。旧 `MABO_NAME`、`MABO_PATH`、`MABO_ROOT_PATH` は子プロセスから取り除くため、スクリプトを更新してください。
+
+JSON の結果キーは `workspace` / `workspaces` です。共有オブジェクトの `default` 真偽値は `kind` に変わり、primary checkout は `primary`、ほかは `workspace` です。`owner`、schema 2、終了コード、旧メタデータの移行方法は変わりません。
