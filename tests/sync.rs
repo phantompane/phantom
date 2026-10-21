@@ -4676,6 +4676,85 @@ fn review2_dry_run_propagates_earlier_workspace_tips_through_local_bases() {
 }
 
 #[test]
+fn review4_dry_run_propagates_a_branch_named_like_a_full_ref() {
+    check_ref_prefixed_branch_plan("refs/heads/refs/heads/a", "updated");
+}
+
+#[test]
+fn review4_dry_run_does_not_alias_a_ref_prefixed_branch_to_another_branch() {
+    check_ref_prefixed_branch_plan("refs/heads/a", "up-to-date");
+}
+
+fn check_ref_prefixed_branch_plan(dependent_base: &str, expected_status: &str) {
+    for unknown_tip in [false, true] {
+        let r = Repo::new();
+        let a = r.create("a");
+        let dependent = r.create("dependent");
+        // Record a's full ref before Git's DWIM rules can also match
+        // refs/heads/refs/heads/a for the input refs/heads/a.
+        assert!(r.mabo(&dependent, &["set", "--base", "a"]).status.success());
+        let prefixed = r.create("refs/heads/a");
+        if unknown_tip {
+            r.write_commit(&prefixed, "own", "unpublished\n");
+        }
+        if dependent_base != "refs/heads/a" {
+            r.git(&dependent, &["reset", "--hard", dependent_base]);
+            assert!(r
+                .mabo(&dependent, &["set", "--base", dependent_base])
+                .status
+                .success());
+            if unknown_tip {
+                r.write_commit(&dependent, "dependent-own", "unpublished dependency\n");
+            }
+        }
+        let before = [
+            r.snapshot(&a),
+            r.snapshot(&prefixed),
+            r.snapshot(&dependent),
+        ];
+        let refs = r.git(&r.main, &["for-each-ref", "refs/heads"]);
+        let records = file_contents(&r.main.join(".git/maboroshi/workspaces"));
+        r.advance();
+        let plan = r.sync(&r.main, &["refs/heads/a", "dependent", "--dry-run"], 0);
+        assert_eq!(
+            [
+                r.snapshot(&a),
+                r.snapshot(&prefixed),
+                r.snapshot(&dependent)
+            ],
+            before
+        );
+        assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), refs);
+        assert_eq!(
+            file_contents(&r.main.join(".git/maboroshi/workspaces")),
+            records
+        );
+        let actual = r.sync(&r.main, &["refs/heads/a", "dependent"], 0);
+        assert_eq!(actual["data"]["items"][1]["status"], expected_status);
+        assert_eq!(r.snapshot(&a), before[0]);
+        assert_eq!(plan["data"]["items"][0]["status"], "updated", "{plan}");
+        let planned = &plan["data"]["items"][1];
+        assert_eq!(planned["base"], dependent_base);
+        assert_eq!(planned["status"], expected_status, "{plan}");
+        if unknown_tip && expected_status == "updated" {
+            assert!(planned["after"].is_null(), "{plan}");
+            assert!(planned["strategy"].is_null(), "{plan}");
+            assert!(planned["detail"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("depends on planned update of {dependent_base}")));
+        } else {
+            for field in ["status", "strategy", "base", "before", "after"] {
+                assert_eq!(
+                    planned[field], actual["data"]["items"][1][field],
+                    "{field}: plan={plan}, actual={actual}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn review2_git_prune_negative_exclusions_tags_and_remote_head_remain_scoped() {
     for dry_run in [true, false] {
         let r = Repo::new();

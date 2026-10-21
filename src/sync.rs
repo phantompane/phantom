@@ -703,15 +703,11 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             }
         };
         if request.dry_run && item.status == "updated" {
-            if let Some(branch) = &item.branch {
-                let reference = if branch.starts_with("refs/heads/") {
-                    branch.clone()
-                } else {
-                    format!("refs/heads/{branch}")
-                };
-                // None records a planned update whose future tip is unknown.
-                planned_refs.insert(reference, item.after.clone());
-            }
+            // tree.branch is always a short name, even when it starts with
+            // refs/heads/. Match the full refs used by primary and base reads.
+            let reference = format!("refs/heads/{}", tree.branch);
+            // None records a planned update whose future tip is unknown.
+            planned_refs.insert(reference, item.after.clone());
         }
         report.worktrees.push(item);
     }
