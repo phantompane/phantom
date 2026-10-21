@@ -954,7 +954,7 @@ fn reap_stale_staging(parent: Option<&Path>, keep: &Path) {
         let Some(pid) = staging_owner_pid(&entry.file_name()) else {
             continue;
         };
-        if process_is_alive(pid) {
+        if crate::process::process_is_alive(pid) {
             // A live pid may be a different process that reused it.
             // Leave the directory so this clone does not delete that checkout.
             continue;
@@ -973,30 +973,6 @@ fn staging_owner_pid(name: &std::ffi::OsStr) -> Option<u32> {
     }
     uuid::Uuid::parse_str(id).ok()?;
     Some(pid)
-}
-
-fn process_is_alive(pid: u32) -> bool {
-    let Ok(pid) = i32::try_from(pid) else {
-        return true;
-    };
-    if pid <= 0 {
-        return true;
-    }
-    #[cfg(unix)]
-    {
-        extern "C" {
-            fn kill(pid: i32, sig: i32) -> i32;
-        }
-        // SAFETY: signal 0 does not deliver a signal. It only reports whether `pid` exists.
-        let status = unsafe { kill(pid, 0) };
-        // EPERM means the process exists and belongs to another user.
-        status == 0 || std::io::Error::last_os_error().raw_os_error() == Some(1)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        true
-    }
 }
 
 fn git_missing_repository(stderr: &str) -> bool {

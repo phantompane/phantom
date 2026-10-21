@@ -216,6 +216,11 @@ fn create(args: &[String]) -> Result<i32> {
     if parsed.positionals.len() > 1 {
         return Err(Error::validation("Usage: mabo create [NAME] [options]"));
     }
+    if parsed.flag("no-setup") && parsed.flag("copy-file") {
+        return Err(Error::validation(
+            "--no-setup cannot be combined with --copy-file",
+        ));
+    }
     let context = command_context(&parsed)?;
     crate::allocation::create(
         &context,
@@ -229,8 +234,30 @@ fn create(args: &[String]) -> Result<i32> {
             reuse: parsed.flag("reuse"),
             copy_files: &parsed.values("copy-file"),
             metadata: metadata_input(&parsed)?,
+            no_setup: parsed.flag("no-setup"),
             hooks: hook_control(&parsed, crate::output::json(), true),
         },
+        &logger_for(crate::output::json()),
+    )
+}
+
+fn setup(args: &[String]) -> Result<i32> {
+    let parsed = args::parse(args, &command_options("setup"), true)?;
+    if parsed.positionals.len() > 1 {
+        return Err(Error::validation(
+            "Usage: mabo setup [SEL] [--copy-file PAT] [--no-hooks]",
+        ));
+    }
+    let context = command_context(&parsed)?;
+    crate::setup::execute(
+        &context,
+        parsed
+            .positionals
+            .first()
+            .map(String::as_str)
+            .unwrap_or("."),
+        &parsed.values("copy-file"),
+        hook_control(&parsed, crate::output::json(), true),
         &logger_for(crate::output::json()),
     )
 }
@@ -306,6 +333,7 @@ fn forget_resolved(
             let mut forgotten = tree.clone();
             forgotten.managed = worktree::is_managed(context, Path::new(&tree.path), false);
             forgotten.metadata = metadata::WorktreeMetadata::default();
+            forgotten.recorded = false;
             Ok(forgotten)
         } else {
             refresh(context, Path::new(&tree.path))
@@ -320,7 +348,7 @@ fn forget_resolved(
             Err(error) => {
                 // Keep only known identity fields; intent was removed and Git state is unknown.
                 items.push(serde_json::json!({
-                    "workspace": {"path":tree.path,"kind":if tree.is_default {"primary"} else {"workspace"}},
+                    "workspace": {"path":tree.path,"kind":if tree.is_default {"primary"} else {"workspace"},"setup":null},
                     "ok":true,
                     "error":error.to_json(error.exit_code()).error,
                 }));
@@ -439,13 +467,20 @@ fn list(args: &[String]) -> Result<i32> {
                     .collect::<Vec<_>>()
                     .join(" ");
                     println!(
-                        "{} {}  {}  {}  {}  {}  {}{}",
+                        "{} {}  {}  {}  {}  {}  {}  {}{}",
                         if workspace.current { "*" } else { " " },
                         visible_text(&tree.name),
                         visible_text(workspace.branch.as_deref().unwrap_or("(detached)")),
                         upstream,
                         if tree.is_clean { "" } else { "dirty" },
                         visible_text(&links),
+                        workspace
+                            .metadata
+                            .setup
+                            .as_ref()
+                            .filter(|s| s.state != crate::setup::State::Ok)
+                            .map(|s| format!("setup:{}", s.state.as_str()))
+                            .unwrap_or_default(),
                         visible_text(tree.metadata.purpose.as_deref().unwrap_or("")),
                         if tree.orphaned { " [orphaned]" } else { "" }
                     );
@@ -519,6 +554,12 @@ fn inspect(args: &[String], path_only: bool) -> Result<i32> {
                 visible_text(object.head.as_deref().unwrap_or("unknown"))
             );
             println!("Managed: {}", object.managed);
+            if let Some(setup) = &object.metadata.setup {
+                println!("Setup: {}", setup.state.as_str());
+                if let Some(error) = &setup.error {
+                    println!("Setup error: {}", visible_text(error));
+                }
+            }
             println!(
                 "Detached: {}",
                 object
@@ -1405,11 +1446,22 @@ fn command_options(key: &str) -> Vec<Opt> {
                     remainder: false,
                 },
                 value_flag("base", None),
-                flag("no-hooks", None),
+                flag("no-setup", None),
             ];
             options.extend(metadata_options());
             options
         }
+        "setup" => vec![
+            repo_flag(),
+            Opt {
+                name: "copy-file",
+                short: None,
+                value: true,
+                multiple: true,
+                remainder: false,
+            },
+            flag("no-hooks", None),
+        ],
         "adopt" => {
             let mut options = vec![
                 repo_flag(),
@@ -1622,7 +1674,7 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
     eprintln!(
         "{}\n{}",
         visible_text(&project.project),
-        trust::format_hooks(&project.post_create, &project.pre_delete)
+        trust::format_hooks(&project.setup, &project.pre_remove)
     );
     match trust::trust_root(Path::new(&project.git_root)) {
         Ok(record) => {
@@ -1944,6 +1996,12 @@ static COMMANDS: &[Command] = &[
         name: "create",
         help_key: "create",
         run: create,
+        children: &[],
+    },
+    Command {
+        name: "setup",
+        help_key: "setup",
+        run: setup,
         children: &[],
     },
     Command {

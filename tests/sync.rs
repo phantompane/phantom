@@ -1634,14 +1634,11 @@ fn git_hook_can_run_create_with_project_hooks_and_standalone_exec() {
     let gate = r.root.join("hook-entered");
     let status = r.root.join("hook-status");
     let standalone = r.root.join("standalone-exec");
-    let post_create = r.root.join("post-create");
+    let post_create = r.root.join("setup");
     let create_exec = r.root.join("create-exec");
     fs::write(
         r.main.join(".mabo.toml"),
-        format!(
-            "[hooks]\npost-create = [\"touch '{}'\"]\n",
-            post_create.display()
-        ),
+        format!("[hooks]\nsetup = [\"touch '{}'\"]\n", post_create.display()),
     )
     .unwrap();
     let hook = r.main.join(".git/hooks/post-checkout");
@@ -1668,7 +1665,7 @@ echo $? > '{status}'
     .unwrap();
     fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
     let child = r
-        .command(bin, &r.main, &["create", "outer", "--no-hooks"])
+        .command(bin, &r.main, &["create", "outer", "--no-setup"])
         .env("MABO_TRUST_ALL", "1")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1695,7 +1692,13 @@ echo $? > '{status}'
 fn post_create_hook_can_list_and_create_and_pre_delete_hook_can_create() {
     let r = Repo::new();
     let bin = env!("CARGO_BIN_EXE_mabo");
-    fs::write(r.main.join(".mabo.toml"), format!("[hooks]\npost-create = [\"'{bin}' list --json\", \"'{bin}' create nested --no-hooks\"]\n")).unwrap();
+    fs::write(
+        r.main.join(".mabo.toml"),
+        format!(
+            "[hooks]\nsetup = [\"'{bin}' list --json\", \"'{bin}' create nested --no-setup\"]\n"
+        ),
+    )
+    .unwrap();
     let child = r
         .command(bin, &r.main, &["create", "outer"])
         .env("MABO_TRUST_ALL", "1")
@@ -1711,7 +1714,7 @@ fn post_create_hook_can_list_and_create_and_pre_delete_hook_can_create() {
     );
     fs::write(
         r.main.join(".mabo.toml"),
-        format!("[hooks]\npre-delete = [\"'{bin}' create from-delete --no-hooks\"]\n"),
+        format!("[hooks]\npre-remove = [\"'{bin}' create from-delete --no-setup\"]\n"),
     )
     .unwrap();
     let child = r
@@ -1798,7 +1801,7 @@ fn create_branch_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
     r.git(&r.main, &["branch", "existing"]);
     fs::write(
         r.main.join(".mabo.toml"),
-        format!("[hooks]\npost-create = [\"'{bin}' create from-attach --no-hooks\"]\n"),
+        format!("[hooks]\nsetup = [\"'{bin}' create from-attach --no-setup\"]\n"),
     )
     .unwrap();
     let child = r
@@ -1821,7 +1824,7 @@ fn create_branch_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
     r.git(&r.main, &["push", "origin", "main"]);
     fs::write(
         r.main.join(".mabo.toml"),
-        format!("[hooks]\npre-delete = [\"'{bin}' create from-gc --no-hooks\"]\n"),
+        format!("[hooks]\npre-remove = [\"'{bin}' create from-gc --no-setup\"]\n"),
     )
     .unwrap();
     let child = r
@@ -1843,7 +1846,7 @@ fn create_branch_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
     // A hook can change the target; the old preflight is stale.
     fs::write(
         r.main.join(".mabo.toml"),
-        "[hooks]\npre-delete = [\"git commit --allow-empty -m changed-by-hook\"]\n",
+        "[hooks]\npre-remove = [\"git commit --allow-empty -m changed-by-hook\"]\n",
     )
     .unwrap();
     let child = r
@@ -2854,7 +2857,7 @@ printf 'token\000/\000'
     .unwrap();
     fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
     let mut child = r
-        .command(bin, &r.main, &["create", "outer", "--no-hooks"])
+        .command(bin, &r.main, &["create", "outer", "--no-setup"])
         .process_group(0)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

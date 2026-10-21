@@ -239,3 +239,27 @@ fn spawn_error(command: &str, error: &std::io::Error) -> Error {
         details: error.to_string(),
     }
 }
+
+pub(crate) fn process_is_alive(pid: u32) -> bool {
+    let Ok(pid) = i32::try_from(pid) else {
+        return true;
+    };
+    if pid <= 0 {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        // SAFETY: signal 0 does not deliver a signal. It only reports whether `pid` exists.
+        let status = unsafe { kill(pid, 0) };
+        // Only ESRCH proves absence. EPERM and other probe failures are unknown.
+        status == 0 || std::io::Error::last_os_error().raw_os_error() != Some(3)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}

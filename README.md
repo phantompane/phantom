@@ -28,7 +28,7 @@ Every command can run non-interactively. Every JSON command returns a schema 2 e
 - **Merged, closed, or old are signals, not permission to delete.** `gc` only prints its plan until you pass `--apply` or `--force` (`--force` also applies the plan). It keeps dirty work and commits it cannot confirm as published or landed unless you pass `--force`. The default-branch, current, and Git-locked workspaces remain protected even with `--force`.
 - **Bulk operations address every workspace.** `sync --all` selects every workspace in the repository (and updates the default branch unless `--no-default` is set). Use explicit names to narrow the selection. `gc` selects by evidence and age, with the same checks for dirty work and unpreserved commits.
 - **Pushed history is kept by default.** When integration is needed, `sync` merges the base into published work; rebasing it takes `--rebase --force`. A workspace counts as published when at least one commit beyond its base is reachable from a known remote-tracking ref or configured fetch destination.
-- **Non-interactive runs never wait at a prompt.** With nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or when stdin or stderr is not a terminal, `mabo` itself does not ask questions. If an operation would run untrusted hooks, it refuses before changing the repository and exits 4 (`untrusted` in JSON); `gc` instead skips removals requiring those hooks, without treating the skip as an error. Record trust in advance with `mabo trust add`, or skip hooks with `--no-hooks`. Network Git operations receive `GIT_TERMINAL_PROMPT=0`; repository hooks and gh read stdin from `/dev/null`.
+- **Non-interactive runs never wait at a prompt.** With nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or when stdin or stderr is not a terminal, `mabo` itself does not ask questions. If an operation would run untrusted hooks, it refuses before changing the repository and exits 4 (`untrusted` in JSON); `gc` instead skips removals requiring those hooks, without treating the skip as an error. Record trust in advance with `mabo trust add`, or use `create --no-setup` / `setup --no-hooks` / `delete --no-hooks` / `gc --no-hooks`. Network Git operations receive `GIT_TERMINAL_PROMPT=0`; repository hooks and gh read stdin from `/dev/null`.
 
 ## Non-goals
 
@@ -134,13 +134,13 @@ mabo sync pr:774 --no-default
 
 `path` prints only an absolute path and newline in text mode; JSON is `data: {path}`. `show` and `set` return `data.workspace`. `show`, `path`, `list`, and `exec` never change record contents or mtimes, or import legacy state. `set` atomically replaces the supplied purpose, base, PR and issue fields; omitted fields are kept. `--unset FIELD` clears one of purpose/base/pr/issue per occurrence; repeat the flag to clear several fields. It rejects unknown fields or a field that is also being set. `--base` validates and normalizes a ref; commit bases remain supported. `--unset base` records an unknown base without choosing a default. Sync skips it with `base-unknown` until `mabo set <name> --base REF` restores a base. Older records with no base field still use the default base.
 
-`list` includes primary checkouts. Use `--kind workspace` or `--kind primary` to filter, `--names` or `--paths` for shell output, and `--all-repos` for repositories known to `repo list` (registrations and enabled discovery). `--all-repos` cannot be combined with `-R`. Its JSON includes `data.repos` as well as the flattened `data.workspaces`. Human output starts each repository with its name and primary path, then shows current (`*`), name, branch, ahead/behind (`↑a ↓b`), dirty state, PR/issue links (`#12` / `issue #34`) and purpose. A deleted upstream appears as `upstream:gone`.
+`list` includes primary checkouts. Use `--kind workspace` or `--kind primary` to filter, `--names` or `--paths` for shell output, and `--all-repos` for repositories known to `repo list` (registrations and enabled discovery). `--all-repos` cannot be combined with `-R`. Its JSON includes `data.repos` as well as the flattened `data.workspaces`. Human output starts each repository with its name and primary path, then shows current (`*`), name, branch, ahead/behind (`↑a ↓b`), dirty state, PR/issue links (`#12` / `issue #34`), setup state when it is not `ok` (such as `setup:failed`), and purpose. A deleted upstream appears as `upstream:gone`.
 
 The removed `where` command exits 2 with a `path` / `show --json` hint. `meta` and `meta set` exit 2 with a `set` / `show` hint. `list --no-default` exits 2 with `--kind workspace` guidance. An exec invocation without the required `--` exits 2 with the new syntax. Exec preserves child output and exit status, ignores `MABO_OUTPUT`, and refuses explicit JSON output. Usage diagnostics and any accompanying help go to stderr, leaving text stdout empty.
 
 ## Copying gitignored files
 
-`mabo create` read `.worktreeinclude` from the root of the source checkout. The file uses gitignore syntax. A file is copied only when a pattern matches it and Git ignores it, so tracked files are never duplicated.
+`mabo create` and `mabo setup` read `.worktreeinclude` and copy files from the **primary checkout**, even when run in a subdirectory or another workspace. The file uses gitignore syntax. A file is copied only when a pattern matches it and Git ignores it, so tracked files are never duplicated.
 
 ```text
 .env
@@ -152,29 +152,45 @@ Files that already exist in the new workspace are left unchanged. Symlinks are s
 
 `--copy-file` adds extra gitignore patterns for that command.
 
+## Re-running setup
+
+```sh
+mabo setup feature-auth                     # copy, then run trusted setup hooks
+mabo setup --no-hooks --copy-file '*.env'    # current workspace, copying only
+mabo create feature-auth --no-setup         # prepare later
+```
+
+`setup [SEL]` defaults to `.` and uses the shared workspace selectors. The primary checkout is refused with exit 4 (`primary`), since it is the copy source. An untrusted setup hook refuses with exit 4 (`untrusted`) **before copying or updating records**. Missing targets exit 3. Copy or hook failures exit 1; a successful setup exits 0. Existing target files are preserved; a copying failure stops before hooks run.
+
+After create exits 6 because setup failed, retry with `mabo setup NAME`. `create NAME --reuse` only returns the matching workspace and never reruns setup. Setup hooks must be safe to run again.
+
+Every shared workspace JSON object includes `setup: {state, at, error}`, or `null` for an unrecorded checkout (including after `forget`). New creations record `pending`, then `running`, then `ok` or `failed`; `--no-setup` records `skipped`. Old, imported, and adopted records report `unknown` with null time/error. Setup records the current attempt's timestamp and error, clearing the error on success. `data.setup` also includes `ran`, `ok`, `command`, `exitCode`, and `signal` for the invocation; `data.copy` contains `copied` paths and `error`.
+
+A running attempt records its process ID and host internally. If that process no longer exists on the same host, inspection displays `interrupted` without changing the record. A different or unknown host keeps `running`. This is informational: it does not lock a workspace or block setup or any other operation. Concurrent updates of one record still use the last write.
+
 ## Repository hooks
 
-`.mabo.toml` is read from the source checkout: the checkout where the command runs (`git rev-parse --show-toplevel`). `.worktreeinclude` is read from that same checkout.
+`.mabo.toml` is read from the source checkout: the checkout where the command runs (`git rev-parse --show-toplevel`). `.worktreeinclude` and the files to copy always come from the primary checkout.
 
 ```toml
 [hooks]
-post-create = ["pnpm install"]
-pre-delete = ["./scripts/teardown.sh"]
+setup = ["pnpm install"]
+pre-remove = ["./scripts/teardown.sh"]
 ```
 
-`mabo create` run `post-create` in the new workspace. `mabo delete` and `mabo gc --apply` run `pre-delete` in the workspace before removing it. Commands run in order and stop at the first failure. Unknown keys are rejected.
+`mabo create` and `mabo setup` run `setup` in the target workspace after copying. Write setup hooks to tolerate repeated execution. `mabo delete` and `mabo gc --apply` run `pre-remove` in the workspace before removing it. Commands run in order and stop at the first failure. Unknown keys are rejected. Old `[hooks] post-create` and `pre-delete` keys fail with exit 1 (`failed`), with a hint to rename them to `setup` and `pre-remove`.
 
 Hooks run only when that repository is trusted. `.worktreeinclude` copies are not hooks and do not need trust. A repository with no hook commands never asks.
 
-On a terminal, mabo prints the repo path and the hook commands, then asks `Trust this project and run its hooks? [y/N]`. `y` or `yes` saves trust and runs the hooks. mabo does not ask when `CI` is nonempty, when `--no-input` or `MABO_NO_INPUT` is enabled, when stdin or stderr is not a terminal, or when JSON output is selected. It then exits 4 before changing the repository, the same as a non-terminal. With `--json`, stdout contains one error envelope with `error.code` set to `untrusted`. The message tells you to run `mabo trust add` or pass `--no-hooks`.
+On a terminal, mabo prints the repo path and the hook commands, then asks `Trust this project and run its hooks? [y/N]`. `y` or `yes` saves trust and runs the hooks. mabo does not ask when `CI` is nonempty, when `--no-input` or `MABO_NO_INPUT` is enabled, when stdin or stderr is not a terminal, or when JSON output is selected. It then exits 4 before changing the repository, the same as a non-terminal. With `--json`, stdout contains one error envelope with `error.code` set to `untrusted`. The message tells you to run `mabo trust add` or pass `--no-setup` for create / `--no-hooks` for setup, delete, and gc.
 
 `mabo trust add [REPO]` shows the hooks on stderr and records trust without prompting. `mabo trust remove [REPO]` removes the grant, and `mabo trust list` prints trusted common directories and grant times. REPO uses the same paths and names as `-R`; omission uses `-R` or the current repository. Trust is keyed by the canonical Git common directory, so the primary checkout and linked workspaces share a grant. Re-cloning at the same path keeps trust until `mabo trust remove`. Editing the hook commands does not ask again. The human TTY prompt during create is unchanged.
 
 The record is `$XDG_STATE_HOME/maboroshi/trust.toml` when `XDG_STATE_HOME` is an absolute path, otherwise `~/.local/state/maboroshi/trust.toml`. Each entry stores `path` and `trustedAt`.
 
-`MABO_TRUST_ALL=1` trusts every repository for that process and does not write the file. The value has to be the single character `1`. Use it in CI and containers. `--no-hooks` on `create`, `delete`, and `gc` does the workspace change and skips hooks. It does not write trust.
+`MABO_TRUST_ALL=1` trusts every repository for that process and does not write the file. The value has to be the single character `1`. Use it in CI and containers. `create --no-setup` skips copying and hooks. `setup --no-hooks` copies files only; `delete --no-hooks` and `gc --no-hooks` skip removal hooks. These flags do not write trust. Old `create --no-hooks` exits 2 with a `--no-setup` migration hint; `--no-setup` cannot be combined with `--copy-file`.
 
-`mabo gc` never asks, including on a terminal. An untrusted repository that has `pre-delete` hooks is skipped. The candidate detail is `untrusted hooks`. Other candidates still run. `--no-hooks` removes those workspaces without running hooks.
+`mabo gc` never asks, including on a terminal. An untrusted repository that has `pre-remove` hooks is skipped. The candidate detail is `untrusted hooks`. Other candidates still run. `--no-hooks` removes those workspaces without running hooks.
 
 Hooks and `mabo exec` receive the same environment:
 
@@ -209,15 +225,15 @@ The old `MABO_NAME`, `MABO_PATH`, and `MABO_ROOT_PATH` variables are removed fro
 | 1 | Operational failure | `failed`, `git_failed`, `io`, `command_failed`, `spawn`, `signaled` |
 | 2 | Invalid invocation | `usage`, `ambiguous` |
 | 3 | Not found or outside a repository | `not_found`, `branch_not_found`, `not_repository` |
-| 4 | Safety refusal before changes | `dirty`, `unpreserved`, `published`, `exists`, `exists_remote`, `untrusted`, `refused` |
+| 4 | Safety refusal before changes | `dirty`, `unpreserved`, `published`, `exists`, `exists_remote`, `untrusted`, `primary`, `refused` |
 | 5 | Sync conflict, rolled back or kept with `--keep-conflicts` | `conflict` |
 | 6 | Persistent changes followed by failure or partial success | `partial` |
 
-`refused` is the fallback when a safety refusal has no more specific cause. The same statuses apply to text output. Standalone `exec` preserves its child's exit status, including 128+signal. Create setup failures exit 6 and retain the workspace plus hook status in `data.setup.exitCode`. Metadata save and copy failures after creation also exit 6. Delete checks every name before removing any; a safety refusal exits 4 and removes nothing. A later failure exits 6 if something was removed, otherwise 1. A failed pre-delete hook aborts deletion. `unpreserved` protects commits absent from the default branch or remotes, or commits that could not be checked; use `--keep-branch` or `--force` (detached HEAD requires `--force`).
+`refused` is the fallback when a safety refusal has no more specific cause. The same statuses apply to text output. Standalone `exec` preserves its child's exit status, including 128+signal. Create setup failures exit 6 and retain the workspace plus hook status in `data.setup.exitCode`. Metadata save and copy failures after creation also exit 6. Delete checks every name before removing any; a safety refusal exits 4 and removes nothing. A later failure exits 6 if something was removed, otherwise 1. A failed pre-remove hook aborts deletion. `unpreserved` protects commits absent from the default branch or remotes, or commits that could not be checked; use `--keep-branch` or `--force` (detached HEAD requires `--force`).
 
 `MABO_OUTPUT=json|text` sets the default; empty means unset and other values exit 2. Explicit output flags override it. Unknown commands and missing commands after common options also return a usage envelope when JSON is selected. `list --names`/`--paths` (and repo `--names`/`--paths`) select text even with `MABO_OUTPUT=json`; explicitly combining it with JSON is a usage error. `exec` and text help through `--help` ignore `MABO_OUTPUT`. `--version` and `help` support JSON and honor the output mode. Explicit `exec --json` or `exec --output json` is a usage error; arguments after the required `--` belong to the child.
 
-Mabo never prompts in non-interactive mode: nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or stdin/stderr without a TTY. Untrusted hooks refuse before changes with exit 4 and a `mabo trust add` / `--no-hooks` hint. Network Git operations receive `GIT_TERMINAL_PROMPT=0`; repository hooks and gh read stdin from `/dev/null`. User commands (Standalone `exec`) inherit stdin.
+Mabo never prompts in non-interactive mode: nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or stdin/stderr without a TTY. Untrusted hooks refuse before changes with exit 4 and a `mabo trust add` / `create --no-setup` / `setup --no-hooks` hint. Network Git operations receive `GIT_TERMINAL_PROMPT=0`; repository hooks and gh read stdin from `/dev/null`. User commands (Standalone `exec`) inherit stdin.
 
 ### Workspace object
 
@@ -252,7 +268,7 @@ Mabo never prompts in non-interactive mode: nonempty `CI`, JSON output, `--no-in
 }
 ```
 
-`id`, `purpose`, `base`, `createdAt`, `updatedAt`, `createdFrom`, and `links` come from `maboroshi/workspaces/<id>.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `mabo create` writes a record. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `create --pr` or `create --issue` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `show`, `path`, `list`, and `exec` read metadata without changing record files. `delete` removes the record after Git removes the workspace. `create` replaces any record already stored at that path. `set` patches intent. Reusing an existing PR branch can add its missing PR link while preserving creation details. `create --json` include `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the workspace exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 6 with `error.code` set to `partial` and the result retained in `data`. A corrupt workspace record makes `list`, `show`, and `exec` continue with null metadata for that record and a warning; other records remain readable. `create`, `adopt`, `forget`, `delete`, `set`, `sync` refuse and leave the file unchanged. Sync validates metadata before fetching or updating any target. Concurrent first registrations for the same path are read as one record: the oldest `createdAt` wins, then the lexicographically smallest `id` breaks ties. All fields come from that record, and the next metadata write removes the extra files. `createdFrom` is the full commit the branch was created from, or the base tip sync last fast-forwarded it to while it had no commits of its own. `create` stores the new branch's HEAD. A record for a branch that already existed stores the oldest `refs/heads` reflog entry, or null when that reflog is missing. `set` and a later checkout leave it unchanged. A record written before this field existed has `createdFrom` null. `mabo set` patches the fields you pass and leaves the others. A workspace Git created outside `mabo`, including the primary checkout, has null metadata fields until `set`, `adopt`, or PR reuse records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
+`id`, `purpose`, `base`, `createdAt`, `updatedAt`, `createdFrom`, `setup`, and `links` come from `maboroshi/workspaces/<id>.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `mabo create` writes a record. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `create --pr` or `create --issue` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `show`, `path`, `list`, and `exec` read metadata without changing record files. `delete` removes the record after Git removes the workspace. `create` replaces any record already stored at that path. `set` patches intent. Reusing an existing PR branch can add its missing PR link while preserving creation details. `create --json` include `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the workspace exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 6 with `error.code` set to `partial` and the result retained in `data`. A corrupt workspace record makes `list`, `show`, and `exec` continue with null metadata for that record and a warning; other records remain readable. `create`, `setup`, `adopt`, `forget`, `delete`, `set`, `sync` refuse and leave the file unchanged. Sync validates metadata before fetching or updating any target. Concurrent first registrations for the same path are read as one record: the oldest `createdAt` wins, then the lexicographically smallest `id` breaks ties. All fields come from that record, and the next metadata write removes the extra files. `createdFrom` is the full commit the branch was created from, or the base tip sync last fast-forwarded it to while it had no commits of its own. `create` stores the new branch's HEAD. A record for a branch that already existed stores the oldest `refs/heads` reflog entry, or null when that reflog is missing. `set` and a later checkout leave it unchanged. A record written before this field existed has `createdFrom` null. `mabo set` patches the fields you pass and leaves the others. A workspace Git created outside `mabo`, including the primary checkout, has null metadata fields until `set`, `adopt`, or PR reuse records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
 
 Workspace records contain `schema: 2`, an `id` of the form `ws_<uuid v4>`, `path`, an optional `name`, and the metadata fields above. JSON workspace objects include `id` (null for an unrecorded workspace). Each record is written atomically through a temporary file in the same directory, fsync, and rename. Deleting a record removes only its file. Concurrent additions of different records preserve both; concurrent updates of the same record use the last write.
 
@@ -378,7 +394,7 @@ Orphaned records have neither a Git worktree registration nor an existing direct
   "data": {
     "workspace": {},
     "source": {"kind": "new", "base": "refs/remotes/origin/main", "reused": false},
-    "setup": {"ran": false, "ok": true, "command": null, "exitCode": null, "signal": null, "error": null},
+    "setup": {"state": "ok", "at": "2026-10-21T09:00:00Z", "ran": false, "ok": true, "command": null, "exitCode": null, "signal": null, "error": null},
     "copy": {"copied": [], "error": null},
     "metadata": {"ok": true, "error": null}
   },
@@ -524,7 +540,7 @@ mabo forget review pr:123
 
 `--pr NUMBER|URL` uses the PR head branch, with `owner/branch` for forks. Forks and deleted heads use `pull/N/head` without setting an upstream. `--issue NUMBER|URL` alone creates `issues/N` and defaults the purpose to the issue title. With `--pr` or `--branch`, it only adds a link. An explicit NAME overrides the workspace name; an existing branch retains its branch name. `--base`, `--branch`, and `--pr` are mutually exclusive. `--detach` accepts `--base` and `--issue`.
 
-An existing workspace exits 4 (`exists`). With `--reuse`, a workspace matching the requested base, branch or PR and any requested issue returns successfully without copying files or running hooks, even after a failed setup. A mismatch still exits 4. Repeated reuse preserves creation details and existing purpose. `--no-hooks` and `--copy-file` remain available on create.
+An existing workspace exits 4 (`exists`). With `--reuse`, a workspace matching the requested base, branch or PR and any requested issue returns successfully without copying files or running hooks, even after a failed setup. A mismatch still exits 4. Repeated reuse preserves creation details and existing purpose. `--no-setup` skips copying and hooks and cannot be combined with `--copy-file`. Old `create --no-hooks` exits 2 with migration guidance.
 
 `adopt PATH` records an existing linked Git worktree of the selected repository without running setup. It accepts `--name`, `--base`, `--purpose`, `--pr`, and `--issue`. `--base` optionally records the sync target for the existing checkout; when omitted, the target is unknown (`null`). Unknown creation time and creation commit are null. An already recorded path exits 4; a path that is not a linked checkout of this repository exits 3.
 

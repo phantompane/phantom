@@ -44,8 +44,8 @@ pub struct HookControl {
 
 #[derive(Debug, Clone, Copy)]
 pub enum HookKind {
-    PostCreate,
-    PreDelete,
+    Setup,
+    PreRemove,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,14 +93,14 @@ fn may_prompt(ci: bool, no_input: bool, stdin_tty: bool, stderr_tty: bool) -> bo
 /// Commands the caller should execute. Empty means run nothing and continue.
 pub fn authorize(
     git_root: &Path,
-    post_create: &[String],
-    pre_delete: &[String],
+    setup: &[String],
+    pre_remove: &[String],
     kind: HookKind,
     control: HookControl,
 ) -> Result<Vec<String>> {
     let relevant = match kind {
-        HookKind::PostCreate => post_create,
-        HookKind::PreDelete => pre_delete,
+        HookKind::Setup => setup,
+        HookKind::PreRemove => pre_remove,
     };
     if relevant.is_empty() || control.no_hooks {
         return Ok(Vec::new());
@@ -123,22 +123,22 @@ pub fn authorize(
         Decision::Run => Ok(relevant.to_vec()),
         Decision::Ask => {
             let project = project_label(git_root);
-            if confirm(&project, post_create, pre_delete, RUN_PROMPT)? {
+            if confirm(&project, setup, pre_remove, RUN_PROMPT)? {
                 remember(git_root)?;
                 Ok(relevant.to_vec())
             } else {
-                Err(untrusted(&project, post_create, pre_delete))
+                Err(untrusted(&project, setup, pre_remove))
             }
         }
         Decision::Refuse | Decision::SkipCandidate => {
-            Err(untrusted(&project_label(git_root), post_create, pre_delete))
+            Err(untrusted(&project_label(git_root), setup, pre_remove))
         }
     }
 }
 
-/// An untrusted repository with pre-delete hooks is skipped by gc.
-pub fn blocks_gc(git_root: &Path, pre_delete: &[String], no_hooks: bool) -> Result<bool> {
-    if no_hooks || pre_delete.is_empty() || trust_all() {
+/// An untrusted repository with pre-remove hooks is skipped by gc.
+pub fn blocks_gc(git_root: &Path, pre_remove: &[String], no_hooks: bool) -> Result<bool> {
+    if no_hooks || pre_remove.is_empty() || trust_all() {
         return Ok(false);
     }
     Ok(!is_trusted_root(git_root)?)
@@ -178,8 +178,8 @@ pub fn untrust_root(git_root: &Path) -> Result<bool> {
 pub struct ProjectView {
     pub project: String,
     pub git_root: PathBuf,
-    pub post_create: Vec<String>,
-    pub pre_delete: Vec<String>,
+    pub setup: Vec<String>,
+    pub pre_remove: Vec<String>,
 }
 
 pub fn load_hooks(start: &Path) -> Result<ProjectView> {
@@ -189,16 +189,16 @@ pub fn load_hooks(start: &Path) -> Result<ProjectView> {
     Ok(ProjectView {
         project: project_label(&git_root),
         git_root,
-        post_create: config::post_create_commands(loaded.as_ref()).to_vec(),
-        pre_delete: config::pre_delete_commands(loaded.as_ref()).to_vec(),
+        setup: config::setup_commands(loaded.as_ref()).to_vec(),
+        pre_remove: config::pre_remove_commands(loaded.as_ref()).to_vec(),
     })
 }
 
 pub fn ask(project: &ProjectView, question: &str) -> Result<bool> {
     confirm(
         &project.project,
-        &project.post_create,
-        &project.pre_delete,
+        &project.setup,
+        &project.pre_remove,
         question,
     )
 }
@@ -210,35 +210,30 @@ pub fn project_label(git_root: &Path) -> String {
     }
 }
 
-pub fn format_hooks(post_create: &[String], pre_delete: &[String]) -> String {
+pub fn format_hooks(setup: &[String], pre_remove: &[String]) -> String {
     format!(
         "{}\n{}",
-        format_list("post-create", post_create),
-        format_list("pre-delete", pre_delete)
+        format_list("setup", setup),
+        format_list("pre-remove", pre_remove)
     )
 }
 
-pub fn refusal_message(project: &str, post_create: &[String], pre_delete: &[String]) -> String {
+pub fn refusal_message(project: &str, setup: &[String], pre_remove: &[String]) -> String {
     format!(
-        "Untrusted project: {}\n{}\nRefusing to run project hooks. Run `mabo trust add` or pass `--no-hooks`.",
+        "Untrusted project: {}\n{}\nRefusing to run project hooks. Run `mabo trust add` or pass `--no-setup` (create) / `--no-hooks` (setup, delete, gc).",
         visible_text(project),
-        format_hooks(post_create, pre_delete)
+        format_hooks(setup, pre_remove)
     )
 }
 
-fn untrusted(project: &str, post_create: &[String], pre_delete: &[String]) -> Error {
-    Error::Untrusted(refusal_message(project, post_create, pre_delete))
+fn untrusted(project: &str, setup: &[String], pre_remove: &[String]) -> Error {
+    Error::Untrusted(refusal_message(project, setup, pre_remove))
 }
 
-fn confirm(
-    project: &str,
-    post_create: &[String],
-    pre_delete: &[String],
-    question: &str,
-) -> Result<bool> {
+fn confirm(project: &str, setup: &[String], pre_remove: &[String], question: &str) -> Result<bool> {
     let mut stderr = std::io::stderr().lock();
     writeln!(stderr, "Project: {}", visible_text(project)).map_err(prompt_io)?;
-    writeln!(stderr, "{}", format_hooks(post_create, pre_delete)).map_err(prompt_io)?;
+    writeln!(stderr, "{}", format_hooks(setup, pre_remove)).map_err(prompt_io)?;
     write!(stderr, "{question} ").map_err(prompt_io)?;
     stderr.flush().map_err(prompt_io)?;
     drop(stderr);

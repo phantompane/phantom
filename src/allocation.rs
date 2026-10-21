@@ -7,7 +7,7 @@ use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::metadata::{self, BranchOrigin, MetadataInput};
 use crate::output::visible_text;
-use crate::{config, git, github, names, paths, sync, tracking, trust, worktree};
+use crate::{git, github, names, paths, sync, tracking, trust, worktree};
 
 pub(crate) struct Request<'a> {
     pub name: Option<&'a str>,
@@ -20,6 +20,7 @@ pub(crate) struct Request<'a> {
     pub copy_files: &'a [String],
     pub metadata: MetadataInput,
     pub hooks: trust::HookControl,
+    pub no_setup: bool,
 }
 
 fn is_live_checkout(tree: &worktree::WorktreeInfo) -> Result<bool> {
@@ -305,7 +306,13 @@ pub(crate) fn create(
             tree
         };
         source["reused"] = json!(true);
-        return report(&tree, source, None, false, None, None, &[], logger);
+        return report(
+            &tree,
+            source,
+            None,
+            &crate::setup::Report::skipped(),
+            logger,
+        );
     }
     let path = paths::worktree_path(
         &context.worktrees_directory,
@@ -337,13 +344,11 @@ pub(crate) fn create(
             }
         }
     }
-    let commands = trust::authorize(
-        &context.git_root,
-        config::post_create_commands(context.config.as_ref()),
-        config::pre_delete_commands(context.config.as_ref()),
-        trust::HookKind::PostCreate,
-        request.hooks,
-    )?;
+    let commands = if request.no_setup {
+        Vec::new()
+    } else {
+        crate::setup::authorize(context, request.hooks)?
+    };
     metadata::prepare(&context.git_root)?;
     let branch_existed = branch
         .as_deref()
@@ -403,7 +408,12 @@ pub(crate) fn create(
         }
         return Err(error);
     }
-    let metadata_error = metadata::replace(
+    request.metadata.setup = Some(crate::setup::Status::new(if request.no_setup {
+        crate::setup::State::Skipped
+    } else {
+        crate::setup::State::Pending
+    }));
+    let mut metadata_error = metadata::replace(
         &context.git_root,
         &path,
         &request.metadata,
@@ -415,49 +425,34 @@ pub(crate) fn create(
     )
     .err()
     .map(|error| error.to_string());
-    let mut copied = Vec::new();
-    let copy_error = worktree::copy_files_recorded(
-        &context.source_checkout,
-        &path,
-        request.copy_files,
-        &mut copied,
-    )
-    .err()
-    .map(|error| error.to_string());
-    let failure = if commands.is_empty() {
-        None
+    let tree = worktree::worktree_at_path(context, &path)?;
+    let setup = if request.no_setup {
+        let mut skipped = crate::setup::Report::skipped();
+        if let Some(status) = &tree.metadata.setup {
+            skipped.status = status.clone();
+        }
+        skipped
     } else {
-        logger.log("\nRunning post-create commands...");
-        worktree::run_hook_commands(
-            context,
-            &worktree::worktree_at_path(context, &path)?,
-            &commands,
-            true,
-            logger,
-        )?
+        crate::setup::run(context, &tree, request.copy_files, &commands, logger, true)?
     };
+    if metadata_error.is_none() {
+        metadata_error = setup.metadata_error.clone();
+    }
     source["reused"] = json!(false);
     report(
         &worktree::worktree_at_path(context, &path)?,
         source,
         metadata_error.as_deref(),
-        !commands.is_empty(),
-        failure.as_ref(),
-        copy_error.as_deref(),
-        &copied,
+        &setup,
         logger,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn report(
     tree: &worktree::WorktreeInfo,
     source: Value,
     metadata_error: Option<&str>,
-    ran: bool,
-    failure: Option<&worktree::HookFailure>,
-    copy_error: Option<&str>,
-    copied: &[String],
+    setup: &crate::setup::Report,
     logger: &worktree::Logger,
 ) -> Result<i32> {
     logger.log(&format!(
@@ -476,25 +471,16 @@ fn report(
             &format!("Warning: {}", visible_text(error)),
         );
     }
-    if let Some(error) = copy_error {
-        logger.warn(
-            "copy_files",
-            &format!(
-                "Warning: Failed to copy some files: {}",
-                visible_text(error)
-            ),
-        );
-    }
-    if let Some(failure) = failure {
-        logger.warn("post_create", &failure.warning(Path::new(&tree.path)));
-    }
     crate::output::data(
-        &json!({"workspace":tree.to_json(None), "source":source, "setup":worktree::post_create_outcome(ran, failure), "copy":{"copied":copied,"error":copy_error}, "metadata":worktree::metadata_save_outcome(metadata_error)}),
+        &json!({"workspace":tree.to_json(None), "source":source, "setup":setup.outcome(), "copy":setup.copy(), "metadata":worktree::metadata_save_outcome(metadata_error)}),
     )?;
-    if metadata_error.is_some() || copy_error.is_some() || failure.is_some() {
+    if metadata_error.is_some() || setup.failed() {
         return Err(Error::status(
             crate::error::PARTIAL,
-            "Workspace created but setup did not complete",
+            format!(
+                "Workspace created but setup did not complete. Retry with `mabo setup {}`.",
+                visible_text(&tree.name)
+            ),
         ));
     }
     Ok(0)
@@ -557,6 +543,7 @@ fn adopt_with_refresh(
                 "id": saved.id, "base": saved.base, "purpose": saved.purpose,
                 "links": saved.links, "createdAt": saved.created_at,
                 "createdFrom": saved.created_from, "updatedAt": saved.updated_at,
+                "setup": crate::setup::display(true, saved.setup.as_ref()),
             }}))?;
             Err(Error::status(
                 crate::error::PARTIAL,
@@ -664,6 +651,7 @@ mod adopt_tests {
                 "id": saved.id, "base": saved.base, "purpose": saved.purpose,
                 "links": saved.links, "createdAt": null, "createdFrom": null,
                 "updatedAt": saved.updated_at,
+                "setup": {"state":"unknown", "at":null, "error":null},
             }})
         );
         assert!(saved.id.is_some());

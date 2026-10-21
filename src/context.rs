@@ -26,7 +26,7 @@ pub fn create(git_root: &Path) -> Result<Context> {
 
 /// Context for a repository selected with `--repo`.
 ///
-/// Hooks and included files are read from that repository's main checkout.
+/// Hooks are read from that repository's main checkout. Copies always use the primary.
 pub fn create_at(git_root: &Path) -> Result<Context> {
     assemble(git_root, git_root.to_path_buf())
 }
