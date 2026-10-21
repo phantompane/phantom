@@ -235,12 +235,12 @@ fn version_help_and_unknown_command() {
     assert!(where_help.status.success());
     let where_text = text(&where_help.stdout);
     assert!(where_text.contains("mabo where"));
-    assert!(where_text.contains("mabo where [--project <ref>] <worktree-name> [options]"));
+    assert!(where_text.contains("mabo where [--project <ref>] <workspace-name> [options]"));
     assert!(!where_text.contains("phantom where"));
 
     let missing_where = repo.mabo(&["where"]);
     assert_eq!(missing_where.status.code(), Some(2));
-    assert!(text(&missing_where.stderr).contains("Usage: mabo where <worktree-name>"));
+    assert!(text(&missing_where.stderr).contains("Usage: mabo where <workspace-name>"));
 
     let unknown = repo.mabo(&["nope"]);
     assert_eq!(unknown.status.code(), Some(2));
@@ -267,7 +267,7 @@ fn linked_worktree_git_file_and_insteadof_canonical_name() {
             &["list", "-p", worktree.to_str().expect("worktree"), "--json"],
         )
         .output()
-        .expect("list worktree");
+        .expect("list workspace");
     assert!(
         from_worktree.status.success(),
         "{}",
@@ -347,12 +347,12 @@ fn linked_worktree_git_file_and_insteadof_canonical_name() {
 }
 
 fn default_worktree_path(value: &serde_json::Value) -> String {
-    value["data"]["worktrees"]
+    value["data"]["workspaces"]
         .as_array()
         .expect("worktrees")
         .iter()
-        .find(|item| item["default"] == true)
-        .expect("default worktree")["path"]
+        .find(|item| item["kind"] == "primary")
+        .expect("primary checkout")["path"]
         .as_str()
         .expect("path")
         .to_string()
@@ -390,7 +390,7 @@ fn create_list_where_delete_and_attach() {
     let repo = Repo::new();
     let created = repo.mabo(&["create", "feature/add-tests"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    assert!(text(&created.stdout).contains("Created worktree 'feature/add-tests' at "));
+    assert!(text(&created.stdout).contains("Created workspace 'feature/add-tests' at "));
     let worktree = managed(&repo, "feature/add-tests");
     assert!(worktree.join("README.md").is_file());
     assert!(!repo.repo.join(".git/phantom").exists());
@@ -418,7 +418,7 @@ fn create_list_where_delete_and_attach() {
     repo.git(&["branch", "existing-feature"]);
     let attached = repo.mabo(&["attach", "existing-feature"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
-    assert!(text(&attached.stdout).contains("Attached worktree: existing-feature"));
+    assert!(text(&attached.stdout).contains("Attached workspace: existing-feature"));
     let missing_branch = repo.mabo(&["attach", "missing-branch"]);
     assert_eq!(missing_branch.status.code(), Some(3));
 
@@ -542,12 +542,12 @@ fn post_create_failure_reports_the_created_worktree() {
     let worktree = managed(&repo, "feature/hooks");
     assert!(
         worktree.join("README.md").is_file(),
-        "worktree should exist after a post-create failure"
+        "workspace should exist after a post-create failure"
     );
     let stdout = text(&created.stdout);
     let stderr = text(&created.stderr);
     assert!(
-        stdout.contains("Created worktree 'feature/hooks' at "),
+        stdout.contains("Created workspace 'feature/hooks' at "),
         "stdout: {stdout}"
     );
     assert!(
@@ -574,7 +574,7 @@ fn post_create_failure_reports_the_created_worktree() {
     let attached_path = managed(&repo, "existing-hook");
     assert!(attached_path.join("README.md").is_file());
     assert!(
-        text(&attached.stdout).contains("Attached worktree: existing-hook"),
+        text(&attached.stdout).contains("Attached workspace: existing-hook"),
         "{}",
         text(&attached.stdout)
     );
@@ -621,10 +621,10 @@ fn hooks_run_in_order_stop_on_failure_and_export_root_path() {
         repo.repo.join(".mabo.toml"),
         r#"[hooks]
 post-create = [
-  "printf '%s' \"$MABO_ROOT_PATH\" > root-path.txt",
+  "printf '%s' \"$MABO_REPO_PATH\" > root-path.txt",
   "printf '%s' \"$MABO\" > mabo-flag.txt",
-  "printf '%s' \"$MABO_NAME\" > mabo-name.txt",
-  "printf '%s' \"$MABO_PATH\" > mabo-path.txt",
+  "printf '%s' \"$MABO_WORKSPACE\" > mabo-name.txt",
+  "printf '%s' \"$MABO_WORKSPACE_PATH\" > mabo-path.txt",
   "printf '%s' \"$PTM\" > ptm-flag.txt",
   "printf '%s' \"$PTM_NAME\" > ptm-name.txt",
   "printf '%s' \"$PTM_PATH\" > ptm-path.txt",
@@ -701,7 +701,7 @@ pre-delete = [
     assert!(stderr.contains("exit code 9"), "{stderr}");
     assert!(
         worktree.exists(),
-        "pre-delete failure should keep the worktree"
+        "pre-delete failure should keep the workspace"
     );
     assert!(worktree.join("pre-first.txt").is_file());
     assert!(!worktree.join("pre-skipped.txt").exists());
@@ -726,8 +726,8 @@ fn hooks_follow_the_source_checkout_when_run_from_a_worktree() {
     fs::write(
         source.join(".mabo.toml"),
         r#"[hooks]
-post-create = ["printf '%s' \"$MABO_ROOT_PATH\" > root-path.txt"]
-pre-delete = ["printf '%s' \"$MABO_ROOT_PATH\" > \"$MABO_ROOT_PATH/pre-root.txt\""]
+post-create = ["printf '%s' \"$MABO_REPO_PATH\" > root-path.txt"]
+pre-delete = ["printf '%s' \"$MABO_REPO_PATH\" > \"$MABO_REPO_PATH/pre-root.txt\""]
 "#,
     )
     .expect("source hooks");
@@ -754,7 +754,7 @@ pre-delete = ["printf '%s' \"$MABO_ROOT_PATH\" > \"$MABO_ROOT_PATH/pre-root.txt\
     let child = managed(&repo, "feature/child");
     assert_eq!(
         fs::read_to_string(child.join("root-path.txt")).expect("root path"),
-        source_path
+        repo.repo.display().to_string()
     );
     assert!(!child.join("from-main.txt").exists());
 
@@ -773,8 +773,8 @@ pre-delete = ["printf '%s' \"$MABO_ROOT_PATH\" > \"$MABO_ROOT_PATH/pre-root.txt\
         text(&deleted.stderr)
     );
     assert_eq!(
-        fs::read_to_string(PathBuf::from(&source_path).join("pre-root.txt")).expect("pre-delete"),
-        source_path
+        fs::read_to_string(repo.repo.join("pre-root.txt")).expect("pre-delete"),
+        repo.repo.display().to_string()
     );
     assert!(!child.join("pre-from-main.txt").exists());
 }
@@ -1168,7 +1168,7 @@ fn reports_when_only_the_default_worktree_exists() {
     let repo = Repo::new();
     let result = repo.mabo(&["list", "--no-default"]);
     assert_eq!(result.status.code(), Some(0), "{}", text(&result.stderr));
-    assert!(text(&result.stdout).contains("No sub worktrees found"));
+    assert!(text(&result.stdout).contains("No linked workspaces found"));
 }
 
 #[test]
@@ -1460,7 +1460,7 @@ fn concurrent_project_add_processes_keep_every_record() {
 #[test]
 fn create_and_attach_exec_export_mabo_env() {
     let repo = Repo::new();
-    let script = "printf '%s\\n' \"$MABO\" \"$MABO_NAME\" \"$MABO_PATH\" \"$PTM\" \"$PTM_NAME\" \"$PTM_PATH\" \"$PHANTOM\" \"$PHANTOM_NAME\" \"$PHANTOM_PATH\" > mabo-env.txt";
+    let script = "printf '%s\\n' \"$MABO\" \"$MABO_WORKSPACE\" \"$MABO_WORKSPACE_PATH\" \"$PTM\" \"$PTM_NAME\" \"$PTM_PATH\" \"$PHANTOM\" \"$PHANTOM_NAME\" \"$PHANTOM_PATH\" > mabo-env.txt";
     let created = repo.mabo(&["create", "feature/env", "--exec", script]);
     assert!(
         created.status.success(),
@@ -1615,8 +1615,11 @@ fn delete_removes_empty_parents_but_keeps_the_project_directory_and_marker() {
     assert!(repo.mabo(&["create", "cursor/bar"]).status.success());
     assert!(repo.mabo(&["delete", "cursor/foo"]).status.success());
     assert!(parent.join("bar").is_dir());
-    assert!(parent.is_dir(), "parent still holds another worktree");
-    assert!(project.is_dir(), "project directory still holds a worktree");
+    assert!(parent.is_dir(), "parent still holds another workspace");
+    assert!(
+        project.is_dir(),
+        "project directory still holds a workspace"
+    );
     assert!(repo.mabo(&["delete", "cursor/bar"]).status.success());
     assert!(!parent.exists());
     assert!(project.is_dir());
@@ -1736,7 +1739,7 @@ fn directory_name_is_preferred_over_another_worktrees_branch() {
     assert!(!directory_topic.exists());
     assert!(
         branch_topic.exists(),
-        "delete topic must not remove the worktree whose branch is topic"
+        "delete topic must not remove the workspace whose branch is topic"
     );
     let kept = repo
         .command("git", &["branch", "--list", "other"])
@@ -1913,7 +1916,7 @@ fn assert_worktree_object(value: &serde_json::Value, name: &str, path: &std::pat
         path.display()
     );
     assert!(value["path"].as_str().unwrap_or("").starts_with('/'));
-    assert_eq!(value["default"], false);
+    assert_eq!(value["kind"], "workspace");
     assert!(value.get("rootPath").is_none());
     assert!(value.get("is_clean").is_none());
 }
@@ -1927,7 +1930,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     let empty_json = json_value(&empty);
     assert_eq!(empty_json["schema"], 2);
     assert_eq!(
-        empty_json["data"]["worktrees"].as_array().map(Vec::len),
+        empty_json["data"]["workspaces"].as_array().map(Vec::len),
         Some(0)
     );
     assert!(text(&empty.stderr).is_empty(), "{}", text(&empty.stderr));
@@ -1937,15 +1940,15 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     let created_json = json_value(&created);
     assert_eq!(created_json["schema"], 2);
     assert_worktree_object(
-        &created_json["data"]["worktree"],
+        &created_json["data"]["workspace"],
         "feature/json",
         &managed(&repo, "feature/json"),
     );
-    assert_eq!(created_json["data"]["worktree"]["branch"], "feature/json");
-    assert_eq!(created_json["data"]["worktree"]["head"], head);
-    assert_eq!(created_json["data"]["worktree"]["base"], "HEAD");
-    assert_eq!(created_json["data"]["worktree"]["dirty"], false);
-    assert_eq!(created_json["data"]["worktree"]["detached"], false);
+    assert_eq!(created_json["data"]["workspace"]["branch"], "feature/json");
+    assert_eq!(created_json["data"]["workspace"]["head"], head);
+    assert_eq!(created_json["data"]["workspace"]["base"], "HEAD");
+    assert_eq!(created_json["data"]["workspace"]["dirty"], false);
+    assert_eq!(created_json["data"]["workspace"]["detached"], false);
     assert_eq!(created_json["data"]["copyFiles"]["ok"], true);
     assert!(created_json["data"]["copyFiles"]["error"].is_null());
     assert_eq!(created_json["data"]["postCreate"]["ran"], false);
@@ -1953,7 +1956,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     assert!(created_json["data"]["postCreate"]["command"].is_null());
     assert!(created_json["data"]["postCreate"]["exitCode"].is_null());
     assert!(created_json["data"]["exec"].is_null());
-    assert!(!text(&created.stdout).contains("Created worktree"));
+    assert!(!text(&created.stdout).contains("Created workspace"));
 
     let duplicate = repo.mabo(&["create", "feature/json", "--json"]);
     assert_eq!(duplicate.status.code(), Some(4));
@@ -1973,12 +1976,12 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     let listed = repo.mabo(&["list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
-    let worktrees = listed_json["data"]["worktrees"]
+    let worktrees = listed_json["data"]["workspaces"]
         .as_array()
         .expect("worktrees");
     assert!(worktrees
         .iter()
-        .any(|entry| entry["default"] == true && entry["branch"] == "main"));
+        .any(|entry| entry["kind"] == "primary" && entry["branch"] == "main"));
     let feature = worktrees
         .iter()
         .find(|entry| entry["name"] == "feature/json")
@@ -1991,9 +1994,9 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     fs::write(worktree.join("README.md"), "dirty\n").expect("dirty");
     let dirty = repo.mabo(&["list", "--json", "--no-default"]);
     let dirty_json = json_value(&dirty);
-    assert_eq!(dirty_json["data"]["worktrees"][0]["dirty"], true);
+    assert_eq!(dirty_json["data"]["workspaces"][0]["dirty"], true);
     assert_eq!(
-        dirty_json["data"]["worktrees"].as_array().map(Vec::len),
+        dirty_json["data"]["workspaces"].as_array().map(Vec::len),
         Some(1)
     );
 
@@ -2001,7 +2004,11 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     assert!(located.status.success(), "{}", text(&located.stderr));
     let located_json = json_value(&located);
     assert_eq!(located_json["schema"], 2);
-    assert_worktree_object(&located_json["data"]["worktree"], "feature/json", &worktree);
+    assert_worktree_object(
+        &located_json["data"]["workspace"],
+        "feature/json",
+        &worktree,
+    );
     assert!(!text(&located.stdout).contains("feature/json ("));
 
     let missing = repo.mabo(&["where", "missing-worktree", "--json"]);
@@ -2025,12 +2032,15 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     let attached_json = json_value(&attached);
     assert_worktree_object(
-        &attached_json["data"]["worktree"],
+        &attached_json["data"]["workspace"],
         "existing-json",
         &managed(&repo, "existing-json"),
     );
-    assert!(attached_json["data"]["worktree"]["base"].is_null());
-    assert_eq!(attached_json["data"]["worktree"]["branch"], "existing-json");
+    assert!(attached_json["data"]["workspace"]["base"].is_null());
+    assert_eq!(
+        attached_json["data"]["workspace"]["branch"],
+        "existing-json"
+    );
     assert_eq!(attached_json["data"]["copyFiles"]["ok"], true);
     assert!(attached_json["data"]["exec"].is_null());
 
@@ -2042,7 +2052,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     assert!(kept_json["data"]["deleted"][0]["branchError"].is_null());
     assert!(kept_json["data"]["deleted"][0]["error"].is_null());
     assert_eq!(
-        kept_json["data"]["deleted"][0]["worktree"]["name"],
+        kept_json["data"]["deleted"][0]["workspace"]["name"],
         "existing-json"
     );
     let branch = repo
@@ -2061,7 +2071,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
         partial_json["data"]["deleted"].as_array().map(Vec::len),
         Some(1)
     );
-    assert!(partial_json["data"]["deleted"][0]["worktree"].is_null());
+    assert!(partial_json["data"]["deleted"][0]["workspace"].is_null());
     assert!(partial_json["data"]["deleted"][0]["error"]
         .as_str()
         .unwrap_or("")
@@ -2150,7 +2160,10 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     assert_eq!(failed_json["data"]["postCreate"]["ok"], false);
     assert_eq!(failed_json["data"]["postCreate"]["exitCode"], 7);
     assert_eq!(failed_json["data"]["postCreate"]["command"], "exit 7");
-    assert_eq!(failed_json["data"]["worktree"]["name"], "feature/hook-fail");
+    assert_eq!(
+        failed_json["data"]["workspace"]["name"],
+        "feature/hook-fail"
+    );
     assert!(!text(&failed.stdout).contains("HOOK_FAIL_MARKER"));
     assert!(text(&failed.stderr).contains("HOOK_FAIL_MARKER"));
     assert!(managed(&repo, "feature/hook-fail/README.md").is_file());
@@ -2167,7 +2180,10 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     let exec_json = json_value(&exec_failed);
     assert_eq!(exec_json["data"]["exec"]["ok"], false);
     assert_eq!(exec_json["data"]["exec"]["exitCode"], 3);
-    assert_eq!(exec_json["data"]["worktree"]["branch"], "feature/exec-fail");
+    assert_eq!(
+        exec_json["data"]["workspace"]["branch"],
+        "feature/exec-fail"
+    );
     assert!(text(&exec_failed.stderr)
         .lines()
         .any(|line| line == "EXEC_FAIL"));
@@ -2188,12 +2204,12 @@ fn json_reports_detached_head_and_copy_errors() {
     ]);
     let listed = repo.mabo(&["list", "--json", "--no-default"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
-    let entry = &json_value(&listed)["data"]["worktrees"][0];
+    let entry = &json_value(&listed)["data"]["workspaces"][0];
     assert_eq!(entry["name"], "next");
     assert!(entry["branch"].is_null());
     assert_eq!(entry["detached"], true);
     assert_eq!(entry["head"], full_head(&repo));
-    assert_eq!(entry["default"], false);
+    assert_eq!(entry["kind"], "workspace");
 
     std::os::unix::fs::symlink("elsewhere", repo.repo.join(".worktreeinclude")).expect("symlink");
     let created = repo.mabo(&["create", "feature/copy", "--json"]);
@@ -2204,7 +2220,7 @@ fn json_reports_detached_head_and_copy_errors() {
         .as_str()
         .unwrap_or("")
         .contains("symlink"));
-    assert_eq!(created_json["data"]["worktree"]["name"], "feature/copy");
+    assert_eq!(created_json["data"]["workspace"]["name"], "feature/copy");
 }
 
 #[test]
@@ -2254,13 +2270,13 @@ fn json_unborn_head_is_null() {
     let listed = repo.mabo(&["list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
-    let worktrees = listed_json["data"]["worktrees"]
+    let worktrees = listed_json["data"]["workspaces"]
         .as_array()
         .expect("worktrees");
     assert_eq!(worktrees.len(), 1, "{listed_json}");
     assert_eq!(worktrees[0]["name"], "main");
     assert_eq!(worktrees[0]["branch"], "main");
-    assert_eq!(worktrees[0]["default"], true);
+    assert_eq!(worktrees[0]["kind"], "primary");
     assert!(
         worktrees[0]["head"].is_null(),
         "unborn HEAD should be null, got {}",
@@ -2271,10 +2287,10 @@ fn json_unborn_head_is_null() {
     assert!(located.status.success(), "{}", text(&located.stderr));
     let located_json = json_value(&located);
     assert!(
-        located_json["data"]["worktree"]["head"].is_null(),
+        located_json["data"]["workspace"]["head"].is_null(),
         "{located_json}"
     );
-    assert_eq!(located_json["data"]["worktree"]["branch"], "main");
+    assert_eq!(located_json["data"]["workspace"]["branch"], "main");
 }
 
 #[test]
@@ -2388,7 +2404,7 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
         signaled_json["error"]["code"] == "partial",
         "{signaled_json}"
     );
-    assert_eq!(signaled_json["data"]["worktree"]["name"], "sig");
+    assert_eq!(signaled_json["data"]["workspace"]["name"], "sig");
     assert_eq!(signaled_json["data"]["exec"]["ok"], false);
     assert_eq!(signaled_json["data"]["exec"]["command"], "kill -TERM $$");
     assert_eq!(signaled_json["data"]["exec"]["exitCode"], 143);
@@ -2405,7 +2421,7 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
         text(&attached.stderr)
     );
     let attached_json = json_value(&attached);
-    assert_eq!(attached_json["data"]["worktree"]["name"], "attach-sig");
+    assert_eq!(attached_json["data"]["workspace"]["name"], "attach-sig");
     assert_eq!(attached_json["data"]["exec"]["ok"], false);
     assert_eq!(attached_json["data"]["exec"]["signal"], "SIGTERM");
     assert!(
@@ -2415,7 +2431,7 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
 
     let human = repo.mabo(&["create", "sig-human", "--exec", "kill -TERM $$"]);
     assert_eq!(human.status.code(), Some(6));
-    assert!(text(&human.stdout).contains("Created worktree 'sig-human'"));
+    assert!(text(&human.stdout).contains("Created workspace 'sig-human'"));
     assert!(text(&human.stderr).contains("SIGTERM"));
 
     let spawned = repo
@@ -2435,7 +2451,7 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
     );
     let spawned_json = json_value(&spawned);
     assert!(spawned_json["error"]["code"] == "partial", "{spawned_json}");
-    assert_eq!(spawned_json["data"]["worktree"]["name"], "spawn");
+    assert_eq!(spawned_json["data"]["workspace"]["name"], "spawn");
     assert_eq!(spawned_json["data"]["exec"]["ok"], false);
     assert_eq!(spawned_json["data"]["exec"]["exitCode"], 1);
     assert!(spawned_json["data"]["exec"]["signal"].is_null());
@@ -2457,7 +2473,7 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
         .expect("attach spawn");
     assert_eq!(attach_spawn.status.code(), Some(6));
     let attach_json = json_value(&attach_spawn);
-    assert_eq!(attach_json["data"]["worktree"]["name"], "attach-spawn");
+    assert_eq!(attach_json["data"]["workspace"]["name"], "attach-spawn");
     assert_eq!(attach_json["data"]["exec"]["ok"], false);
     assert!(attach_json["data"]["exec"]["error"]
         .as_str()
@@ -2500,7 +2516,7 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     );
     let created_json = json_value(&created);
     assert!(created_json["error"]["code"] == "partial", "{created_json}");
-    assert_eq!(created_json["data"]["worktree"]["name"], "h");
+    assert_eq!(created_json["data"]["workspace"]["name"], "h");
     assert_eq!(created_json["data"]["postCreate"]["ok"], false);
     assert_eq!(
         created_json["data"]["postCreate"]["command"],
@@ -2524,7 +2540,7 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
         attached_json["error"]["code"] == "partial",
         "{attached_json}"
     );
-    assert_eq!(attached_json["data"]["worktree"]["name"], "attach-hook");
+    assert_eq!(attached_json["data"]["workspace"]["name"], "attach-hook");
     assert_eq!(attached_json["data"]["postCreate"]["ok"], false);
     assert_eq!(attached_json["data"]["postCreate"]["signal"], "SIGTERM");
     assert_eq!(attached_json["data"]["postCreate"]["exitCode"], 143);
@@ -2551,7 +2567,7 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     );
     let spawned_json = json_value(&spawned);
     assert!(spawned_json["error"]["code"] == "partial", "{spawned_json}");
-    assert_eq!(spawned_json["data"]["worktree"]["name"], "hook-spawn");
+    assert_eq!(spawned_json["data"]["workspace"]["name"], "hook-spawn");
     assert_eq!(spawned_json["data"]["postCreate"]["ok"], false);
     assert_eq!(spawned_json["data"]["postCreate"]["exitCode"], 1);
     assert!(spawned_json["data"]["postCreate"]["signal"].is_null());
@@ -2599,9 +2615,9 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     let deleted_json = json_value(&deleted);
     assert_eq!(deleted_json["error"]["code"], "signaled");
     assert!(deleted_json["error"].get("exitCode").is_none());
-    assert_eq!(deleted_json["data"]["deleted"][0]["worktree"]["name"], "h");
+    assert_eq!(deleted_json["data"]["deleted"][0]["workspace"]["name"], "h");
     assert!(paths_match(
-        deleted_json["data"]["deleted"][0]["worktree"]["path"]
+        deleted_json["data"]["deleted"][0]["workspace"]["path"]
             .as_str()
             .unwrap_or(""),
         &managed(&repo, "h")
@@ -2626,11 +2642,11 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     assert_eq!(pre_json["error"]["code"], "spawn");
     assert!(pre_json["error"].get("exitCode").is_none());
     assert_eq!(
-        pre_json["data"]["deleted"][0]["worktree"]["name"],
+        pre_json["data"]["deleted"][0]["workspace"]["name"],
         "attach-hook"
     );
     assert!(paths_match(
-        pre_json["data"]["deleted"][0]["worktree"]["path"]
+        pre_json["data"]["deleted"][0]["workspace"]["path"]
             .as_str()
             .unwrap_or(""),
         &managed(&repo, "attach-hook")
@@ -2657,7 +2673,7 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
         text(&created.stderr)
     );
     assert!(!text(&created.stderr).contains("not found"));
-    assert!(text(&created.stdout).contains("Created worktree 'feature/topic'"));
+    assert!(text(&created.stdout).contains("Created workspace 'feature/topic'"));
     let directory = managed(&repo, "feature-topic");
     assert!(directory.join("README.md").is_file());
     let abbrev = repo
@@ -2687,13 +2703,13 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
     );
     assert_eq!(json_value_created["data"]["exec"]["ok"], true);
     assert_eq!(
-        json_value_created["data"]["worktree"]["name"],
+        json_value_created["data"]["workspace"]["name"],
         "feature-json-topic"
     );
-    assert_eq!(json_value_created["data"]["worktree"]["detached"], true);
-    assert!(json_value_created["data"]["worktree"]["branch"].is_null());
+    assert_eq!(json_value_created["data"]["workspace"]["detached"], true);
+    assert!(json_value_created["data"]["workspace"]["branch"].is_null());
     assert!(paths_match(
-        json_value_created["data"]["worktree"]["path"]
+        json_value_created["data"]["workspace"]["path"]
             .as_str()
             .unwrap_or(""),
         &managed(&repo, "feature-json-topic")
@@ -2716,12 +2732,12 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
     let attached_json = json_value(&attached);
     assert!(attached_json["error"].is_null(), "{attached_json}");
     assert_eq!(
-        attached_json["data"]["worktree"]["name"],
+        attached_json["data"]["workspace"]["name"],
         "feature-attached"
     );
-    assert_eq!(attached_json["data"]["worktree"]["detached"], true);
+    assert_eq!(attached_json["data"]["workspace"]["detached"], true);
     assert!(paths_match(
-        attached_json["data"]["worktree"]["path"]
+        attached_json["data"]["workspace"]["path"]
             .as_str()
             .unwrap_or(""),
         &managed(&repo, "feature-attached")
@@ -2765,11 +2781,11 @@ fn detached_exec_resolves_the_created_path_when_names_are_flattened() {
     );
     let checkout_json = json_value(&checkout);
     assert!(checkout_json["error"].is_null(), "{checkout_json}");
-    assert_eq!(checkout_json["data"]["worktree"]["name"], "issues-7");
-    assert_eq!(checkout_json["data"]["worktree"]["detached"], true);
+    assert_eq!(checkout_json["data"]["workspace"]["name"], "issues-7");
+    assert_eq!(checkout_json["data"]["workspace"]["detached"], true);
     assert_eq!(checkout_json["data"]["postCreate"]["ok"], true);
     assert!(paths_match(
-        checkout_json["data"]["worktree"]["path"]
+        checkout_json["data"]["workspace"]["path"]
             .as_str()
             .unwrap_or(""),
         &managed(&repo, "issues-7")
@@ -2817,23 +2833,23 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     assert!(checkout_json["data"]["github"]["headRef"].is_null());
     assert_eq!(checkout_json["data"]["github"]["alreadyExists"], false);
     assert_worktree_object(
-        &checkout_json["data"]["worktree"],
+        &checkout_json["data"]["workspace"],
         "issues/7",
         &managed(&repo, "issues/7"),
     );
-    assert_eq!(checkout_json["data"]["worktree"]["branch"], "issues/7");
-    assert_eq!(checkout_json["data"]["worktree"]["base"], "HEAD");
+    assert_eq!(checkout_json["data"]["workspace"]["branch"], "issues/7");
+    assert_eq!(checkout_json["data"]["workspace"]["base"], "HEAD");
     assert_eq!(
-        checkout_json["data"]["worktree"]["links"]["issue"]["number"],
+        checkout_json["data"]["workspace"]["links"]["issue"]["number"],
         7
     );
     assert_eq!(
-        checkout_json["data"]["worktree"]["links"]["issue"]["url"],
+        checkout_json["data"]["workspace"]["links"]["issue"]["url"],
         "https://github.com/acme/demo/issues/7"
     );
-    assert!(checkout_json["data"]["worktree"]["links"]["pr"].is_null());
-    assert!(checkout_json["data"]["worktree"]["createdAt"].is_string());
-    assert!(!text(&checkout.stdout).contains("Created worktree"));
+    assert!(checkout_json["data"]["workspace"]["links"]["pr"].is_null());
+    assert!(checkout_json["data"]["workspace"]["createdAt"].is_string());
+    assert!(!text(&checkout.stdout).contains("Created workspace"));
 
     let missing = repo
         .command(
@@ -2876,15 +2892,15 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     assert_eq!(again_json["data"]["github"]["number"], 7);
     assert_eq!(again_json["data"]["github"]["headRef"], "topic");
     assert_eq!(again_json["data"]["github"]["alreadyExists"], true);
-    assert!(again_json["data"]["worktree"]["base"].is_null());
+    assert!(again_json["data"]["workspace"]["base"].is_null());
     assert_eq!(again_json["data"]["postCreate"]["ran"], false);
-    assert_worktree_object(&again_json["data"]["worktree"], "topic", &checked_out);
-    assert_eq!(again_json["data"]["worktree"]["links"]["pr"]["number"], 7);
+    assert_worktree_object(&again_json["data"]["workspace"], "topic", &checked_out);
+    assert_eq!(again_json["data"]["workspace"]["links"]["pr"]["number"], 7);
     assert_eq!(
-        again_json["data"]["worktree"]["links"]["pr"]["url"],
+        again_json["data"]["workspace"]["links"]["pr"]["url"],
         "https://github.com/acme/demo/pull/7"
     );
-    assert!(again_json["data"]["worktree"]["links"]["issue"].is_null());
+    assert!(again_json["data"]["workspace"]["links"]["issue"].is_null());
     assert!(!text(&again.stdout).contains("already checked out"));
 }
 
@@ -2943,12 +2959,12 @@ fn exec_passes_command_options_through() {
         text(&nested.stdout),
         "--show-current\n-n\n--\n--keep\n--help"
     );
-    assert!(!text(&nested.stdout).contains("mabo exec <worktree-name>"));
+    assert!(!text(&nested.stdout).contains("mabo exec <workspace-name>"));
 
     let help = repo.mabo(&["exec", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
     assert!(text(&help.stdout)
-        .contains("mabo exec [--project <ref>] <worktree-name> <command> [args...]"));
+        .contains("mabo exec [--project <ref>] <workspace-name> <command> [args...]"));
 
     let early = repo.mabo(&["exec", "--show-current", "feature/exec-flags", "true"]);
     assert_eq!(early.status.code(), Some(2));
@@ -2967,7 +2983,7 @@ fn exec_help_skips_output_values_and_preserves_child_help() {
         let out = repo.mabo(&args);
         assert!(out.status.success(), "{args:?}: {}", text(&out.stderr));
         assert!(text(&out.stdout)
-            .contains("mabo exec [--project <ref>] <worktree-name> <command> [args...]"));
+            .contains("mabo exec [--project <ref>] <workspace-name> <command> [args...]"));
         assert!(out.stderr.is_empty());
     }
     let value = repo.mabo(&["exec", "--output", "--help"]);
@@ -3016,7 +3032,7 @@ fn create_and_attach_exec_pass_command_options_through() {
     let created_text = text(&created.stdout);
     assert!(
         created_text.contains(
-            "Executing command in worktree 'feature/exec-args': git branch --show-current"
+            "Executing command in workspace 'feature/exec-args': git branch --show-current"
         ),
         "{created_text}"
     );
@@ -3031,7 +3047,7 @@ fn create_and_attach_exec_pass_command_options_through() {
         "--exec",
         "sh",
         "-c",
-        "printf '%s\\n' \"$MABO_NAME\"",
+        "printf '%s\\n' \"$MABO_WORKSPACE\"",
     ]);
     assert!(
         env_exec.status.success(),
@@ -4203,13 +4219,13 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         text(&inside.stderr)
     );
     let inside_json = json_value(&inside);
-    let worktrees = inside_json["data"]["worktrees"]
+    let worktrees = inside_json["data"]["workspaces"]
         .as_array()
         .expect("worktrees");
     let default_tree = worktrees
         .iter()
-        .find(|worktree| worktree["default"].as_bool() == Some(true))
-        .expect("default worktree");
+        .find(|worktree| worktree["kind"].as_str() == Some("primary"))
+        .expect("primary checkout");
     assert!(same_dir(
         default_tree["path"].as_str().unwrap_or(""),
         &repo.repo
@@ -4218,7 +4234,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         .iter()
         .find(|worktree| worktree["name"] == "feature")
         .expect("feature");
-    assert_eq!(feature_tree["default"], false);
+    assert_eq!(feature_tree["kind"], "workspace");
     let from_link = run(&["where", "--project", ".", "main"], &worktree);
     assert!(from_link.status.success(), "{}", text(&from_link.stderr));
     assert!(same_dir(&text(&from_link.stdout), &repo.repo));
@@ -4824,14 +4840,14 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     let plain = repo.mabo(&["create", "plain", "--json"]);
     assert!(plain.status.success(), "{}", text(&plain.stderr));
     let plain_json = json_value(&plain);
-    assert!(plain_json["data"]["worktree"]["owner"].is_null());
-    assert!(plain_json["data"]["worktree"]["purpose"].is_null());
-    assert!(plain_json["data"]["worktree"]["createdAt"].is_string());
+    assert!(plain_json["data"]["workspace"]["owner"].is_null());
+    assert!(plain_json["data"]["workspace"]["purpose"].is_null());
+    assert!(plain_json["data"]["workspace"]["createdAt"].is_string());
     assert_eq!(
-        plain_json["data"]["worktree"]["createdAt"],
-        plain_json["data"]["worktree"]["lastUsedAt"]
+        plain_json["data"]["workspace"]["createdAt"],
+        plain_json["data"]["workspace"]["lastUsedAt"]
     );
-    assert!(plain_json["data"]["worktree"]["links"]["pr"].is_null());
+    assert!(plain_json["data"]["workspace"]["links"]["pr"].is_null());
 
     let ignored = repo
         .command(env!("CARGO_BIN_EXE_mabo"), &["create", "legacy", "--json"])
@@ -4840,7 +4856,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
         .output()
         .expect("legacy env");
     assert!(ignored.status.success(), "{}", text(&ignored.stderr));
-    assert!(json_value(&ignored)["data"]["worktree"]["owner"].is_null());
+    assert!(json_value(&ignored)["data"]["workspace"]["owner"].is_null());
 
     let created = repo
         .command(
@@ -4863,25 +4879,28 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     assert!(created.status.success(), "{}", text(&created.stderr));
     let created_json = json_value(&created);
     assert_eq!(created_json["schema"], 2);
-    assert_eq!(created_json["data"]["worktree"]["owner"], "from-flag");
-    assert_eq!(created_json["data"]["worktree"]["purpose"], "fix the flake");
+    assert_eq!(created_json["data"]["workspace"]["owner"], "from-flag");
     assert_eq!(
-        created_json["data"]["worktree"]["links"]["pr"]["number"],
+        created_json["data"]["workspace"]["purpose"],
+        "fix the flake"
+    );
+    assert_eq!(
+        created_json["data"]["workspace"]["links"]["pr"]["number"],
         774
     );
-    assert!(created_json["data"]["worktree"]["links"]["pr"]["url"].is_null());
-    assert!(created_json["data"]["worktree"]["createdAt"].is_string());
-    let created_at = created_json["data"]["worktree"]["createdAt"]
+    assert!(created_json["data"]["workspace"]["links"]["pr"]["url"].is_null());
+    assert!(created_json["data"]["workspace"]["createdAt"].is_string());
+    let created_at = created_json["data"]["workspace"]["createdAt"]
         .as_str()
         .expect("created")
         .to_string();
-    let created_from = created_json["data"]["worktree"]["createdFrom"]
+    let created_from = created_json["data"]["workspace"]["createdFrom"]
         .as_str()
         .expect("createdFrom")
         .to_string();
     assert_eq!(
         created_from,
-        created_json["data"]["worktree"]["head"]
+        created_json["data"]["workspace"]["head"]
             .as_str()
             .expect("head")
     );
@@ -4896,7 +4915,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
         .expect("env");
     assert!(from_env.status.success(), "{}", text(&from_env.stderr));
     assert_eq!(
-        json_value(&from_env)["data"]["worktree"]["owner"],
+        json_value(&from_env)["data"]["workspace"]["owner"],
         "from-env"
     );
 
@@ -4911,16 +4930,16 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
 
     let listed_json = json_value(&repo.mabo(&["list", "--json", "--owner", "from-env"]));
     assert_eq!(
-        listed_json["data"]["worktrees"].as_array().map(Vec::len),
+        listed_json["data"]["workspaces"].as_array().map(Vec::len),
         Some(1)
     );
-    assert_eq!(listed_json["data"]["worktrees"][0]["name"], "env-owned");
+    assert_eq!(listed_json["data"]["workspaces"][0]["name"], "env-owned");
 
     let none = repo.mabo(&["list", "--names", "--owner", "nobody"]);
     assert!(none.status.success(), "{}", text(&none.stderr));
     assert!(text(&none.stdout).is_empty());
     let none_human = repo.mabo(&["list", "--owner", "nobody"]);
-    assert!(text(&none_human.stdout).contains("No worktrees found for owner 'nobody'"));
+    assert!(text(&none_human.stdout).contains("No workspaces found for owner 'nobody'"));
 
     let invalid = repo.mabo(&["create", "nope", "--owner", " "]);
     assert_eq!(invalid.status.code(), Some(2));
@@ -4948,19 +4967,19 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     ]);
     assert!(updated.status.success(), "{}", text(&updated.stderr));
     let updated_json = json_value(&updated);
-    assert_eq!(updated_json["data"]["worktree"]["owner"], "from-flag");
-    assert_eq!(updated_json["data"]["worktree"]["purpose"], "land the fix");
+    assert_eq!(updated_json["data"]["workspace"]["owner"], "from-flag");
+    assert_eq!(updated_json["data"]["workspace"]["purpose"], "land the fix");
     assert_eq!(
-        updated_json["data"]["worktree"]["links"]["pr"]["number"],
+        updated_json["data"]["workspace"]["links"]["pr"]["number"],
         774
     );
     assert_eq!(
-        updated_json["data"]["worktree"]["links"]["issue"]["number"],
+        updated_json["data"]["workspace"]["links"]["issue"]["number"],
         12
     );
-    assert_eq!(updated_json["data"]["worktree"]["createdAt"], created_at);
+    assert_eq!(updated_json["data"]["workspace"]["createdAt"], created_at);
     assert_eq!(
-        updated_json["data"]["worktree"]["createdFrom"],
+        updated_json["data"]["workspace"]["createdFrom"],
         created_from
     );
 
@@ -4985,9 +5004,9 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     let located = repo.mabo(&["where", "feature", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
     let located_json = json_value(&located);
-    assert_eq!(located_json["data"]["worktree"]["createdAt"], created_at);
+    assert_eq!(located_json["data"]["workspace"]["createdAt"], created_at);
     assert_ne!(
-        located_json["data"]["worktree"]["lastUsedAt"],
+        located_json["data"]["workspace"]["lastUsedAt"],
         "2000-01-01T00:00:00.000Z"
     );
     let human_where = repo.mabo(&["where", "feature"]);
@@ -5017,7 +5036,7 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     assert!(ran.status.success(), "{}", text(&ran.stderr));
     let after_exec = json_value(&repo.mabo(&["list", "--json", "--owner", "from-flag"]));
     assert_ne!(
-        after_exec["data"]["worktrees"][0]["lastUsedAt"],
+        after_exec["data"]["workspaces"][0]["lastUsedAt"],
         "2000-01-01T00:00:00.000Z"
     );
 
@@ -5033,23 +5052,23 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
     ]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     let attached_json = json_value(&attached);
-    assert_eq!(attached_json["data"]["worktree"]["owner"], "reviewer");
+    assert_eq!(attached_json["data"]["workspace"]["owner"], "reviewer");
     assert_eq!(
-        attached_json["data"]["worktree"]["links"]["pr"]["number"],
+        attached_json["data"]["workspace"]["links"]["pr"]["number"],
         12
     );
-    assert!(attached_json["data"]["worktree"]["base"].is_null());
+    assert!(attached_json["data"]["workspace"]["base"].is_null());
 
     let deleted = repo.mabo(&["delete", "feature", "--keep-branch", "--json"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     let deleted_json = json_value(&deleted);
     assert_eq!(
-        deleted_json["data"]["deleted"][0]["worktree"]["owner"],
+        deleted_json["data"]["deleted"][0]["workspace"]["owner"],
         "from-flag"
     );
     let after_delete = repo.mabo(&["list", "--json", "--owner", "from-flag"]);
     assert_eq!(
-        json_value(&after_delete)["data"]["worktrees"]
+        json_value(&after_delete)["data"]["workspaces"]
             .as_array()
             .map(Vec::len),
         Some(0)
@@ -5109,7 +5128,7 @@ fn github_recheckout_keeps_the_original_owner() {
         .output()
         .expect("create");
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let created_at = json_value(&created)["data"]["worktree"]["createdAt"]
+    let created_at = json_value(&created)["data"]["workspace"]["createdAt"]
         .as_str()
         .expect("created")
         .to_string();
@@ -5148,17 +5167,17 @@ fn github_recheckout_keeps_the_original_owner() {
     assert!(again.status.success(), "{}", text(&again.stderr));
     let again_json = json_value(&again);
     assert_eq!(again_json["data"]["github"]["alreadyExists"], true);
-    assert_eq!(again_json["data"]["worktree"]["owner"], "creator");
-    assert_eq!(again_json["data"]["worktree"]["purpose"], "original task");
-    assert_eq!(again_json["data"]["worktree"]["createdAt"], created_at);
+    assert_eq!(again_json["data"]["workspace"]["owner"], "creator");
+    assert_eq!(again_json["data"]["workspace"]["purpose"], "original task");
+    assert_eq!(again_json["data"]["workspace"]["createdAt"], created_at);
     assert_ne!(
-        again_json["data"]["worktree"]["lastUsedAt"],
+        again_json["data"]["workspace"]["lastUsedAt"],
         "2000-01-01T00:00:00.000Z"
     );
-    assert_eq!(again_json["data"]["worktree"]["links"]["pr"]["number"], 7);
+    assert_eq!(again_json["data"]["workspace"]["links"]["pr"]["number"], 7);
     let listed = repo.mabo(&["list", "--json", "--owner", "creator"]);
     assert_eq!(
-        json_value(&listed)["data"]["worktrees"]
+        json_value(&listed)["data"]["workspaces"]
             .as_array()
             .map(Vec::len),
         Some(1)
@@ -5321,7 +5340,7 @@ fn create_replaces_a_record_left_by_git_worktree_remove() {
         "--json",
     ]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let created_at = json_value(&created)["data"]["worktree"]["createdAt"]
+    let created_at = json_value(&created)["data"]["workspace"]["createdAt"]
         .as_str()
         .expect("created")
         .to_string();
@@ -5339,14 +5358,14 @@ fn create_replaces_a_record_left_by_git_worktree_remove() {
     ]);
     assert!(again.status.success(), "{}", text(&again.stderr));
     let again_json = json_value(&again);
-    assert_eq!(again_json["data"]["worktree"]["owner"], "second");
-    assert_eq!(again_json["data"]["worktree"]["purpose"], "new task");
-    assert_ne!(again_json["data"]["worktree"]["createdAt"], created_at);
+    assert_eq!(again_json["data"]["workspace"]["owner"], "second");
+    assert_eq!(again_json["data"]["workspace"]["purpose"], "new task");
+    assert_ne!(again_json["data"]["workspace"]["createdAt"], created_at);
     assert_eq!(again_json["data"]["metadata"]["ok"], true);
     let listed = repo.mabo(&["list", "--names", "--owner", "first"]);
     assert!(text(&listed.stdout).is_empty(), "{}", text(&listed.stdout));
     assert_eq!(
-        json_value(&repo.mabo(&["list", "--json", "--owner", "second"]))["data"]["worktrees"]
+        json_value(&repo.mabo(&["list", "--json", "--owner", "second"]))["data"]["workspaces"]
             .as_array()
             .map(Vec::len),
         Some(1)
@@ -5374,8 +5393,8 @@ fn metadata_save_failure_after_create_still_runs_hooks() {
     assert_eq!(created.status.code(), Some(6), "{}", text(&created.stdout));
     let created_json = json_value(&created);
     assert!(created_json["error"]["code"] == "partial", "{created_json}");
-    assert_eq!(created_json["data"]["worktree"]["name"], "feature");
-    assert!(created_json["data"]["worktree"]["owner"].is_null());
+    assert_eq!(created_json["data"]["workspace"]["name"], "feature");
+    assert!(created_json["data"]["workspace"]["owner"].is_null());
     assert_eq!(created_json["data"]["metadata"]["ok"], false);
     assert!(created_json["data"]["metadata"]["error"]
         .as_str()
@@ -5397,7 +5416,7 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
     let repo = Repo::new();
     let created = repo.mabo(&["create", "feature", "--owner", "creator", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let id = json_value(&created)["data"]["worktree"]["id"]
+    let id = json_value(&created)["data"]["workspace"]["id"]
         .as_str()
         .expect("workspace id")
         .to_string();
@@ -5414,10 +5433,10 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
     let listed = repo.mabo(&["list", "--json", "--no-default"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
-    assert_eq!(listed_json["data"]["worktrees"][0]["name"], "feature");
-    assert!(listed_json["data"]["worktrees"][0]["owner"].is_null());
+    assert_eq!(listed_json["data"]["workspaces"][0]["name"], "feature");
+    assert!(listed_json["data"]["workspaces"][0]["owner"].is_null());
     assert!(text(&listed.stderr).contains("workspaces"));
-    let healthy = listed_json["data"]["worktrees"]
+    let healthy = listed_json["data"]["workspaces"]
         .as_array()
         .unwrap()
         .iter()
@@ -5432,7 +5451,7 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
 
     let located = repo.mabo(&["where", "feature", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
-    assert!(json_value(&located)["data"]["worktree"]["owner"].is_null());
+    assert!(json_value(&located)["data"]["workspace"]["owner"].is_null());
     assert!(text(&located.stderr).contains("invalid JSON"));
     let human = repo.mabo(&["where", "feature"]);
     assert!(human.status.success());
@@ -5483,12 +5502,12 @@ fn exec_command_json_flag_does_not_switch_mabo_to_json() {
     let created = repo.mabo(&["create", "topic", "--exec", "npm", "test", "--json"]);
     let stdout = text(&created.stdout);
     assert!(
-        stdout.contains("Created worktree 'topic'"),
+        stdout.contains("Created workspace 'topic'"),
         "{stdout}\n{}",
         text(&created.stderr)
     );
     assert!(
-        stdout.contains("Executing command in worktree 'topic': npm test --json"),
+        stdout.contains("Executing command in workspace 'topic': npm test --json"),
         "{stdout}"
     );
     assert!(
@@ -5575,11 +5594,11 @@ fn separate_git_dir_creates_the_default_worktree_under_xdg() {
     let created_json = json_value(&created);
     assert_eq!(created_json["schema"], 2);
     let worktree = managed_directory(&checkout, &root.join("xdg")).join("feature");
-    assert_worktree_object(&created_json["data"]["worktree"], "feature", &worktree);
+    assert_worktree_object(&created_json["data"]["workspace"], "feature", &worktree);
     assert!(worktree.is_dir());
     assert!(!sep
         .join("maboroshi")
-        .join("worktrees")
+        .join("workspaces")
         .join("feature")
         .exists());
     assert!(sep.join("maboroshi").join("workspaces").is_dir());
@@ -5796,12 +5815,12 @@ fn separate_git_dir_delete_current_removes_the_linked_worktree() {
     let linked = managed_directory(&repo.checkout, &repo.root.join("xdg")).join("linked");
     assert!(
         linked.is_dir(),
-        "default worktree lives under XDG data home"
+        "primary checkout lives under XDG data home"
     );
     assert!(!repo
         .git_dir
         .join("maboroshi")
-        .join("worktrees")
+        .join("workspaces")
         .join("linked")
         .exists());
     let deleted = repo.mabo(&linked, &["delete", "--current"]);
@@ -5809,20 +5828,20 @@ fn separate_git_dir_delete_current_removes_the_linked_worktree() {
     let stderr = text(&deleted.stderr);
     assert!(
         deleted.status.success(),
-        "delete --current from the linked worktree should remove it\n{stdout}\n{stderr}"
+        "delete --current from the linked workspace should remove it\n{stdout}\n{stderr}"
     );
     assert!(
-        stdout.contains("Deleted worktree 'linked'"),
+        stdout.contains("Deleted workspace 'linked'"),
         "{stdout}\n{stderr}"
     );
-    assert!(!linked.exists(), "linked worktree should be removed");
+    assert!(!linked.exists(), "linked workspace should be removed");
     assert!(
         repo.checkout.join("README.md").is_file(),
         "main checkout stays"
     );
     assert!(
         repo.checkout.join(".git").is_file(),
-        "main checkout stays a gitfile, not the deleted worktree"
+        "main checkout stays a gitfile, not the deleted workspace"
     );
     let branch = repo
         .command("git", &["branch", "--list", "linked"], &repo.checkout)
@@ -5831,7 +5850,7 @@ fn separate_git_dir_delete_current_removes_the_linked_worktree() {
     assert!(branch.status.success(), "{}", text(&branch.stderr));
     assert!(
         text(&branch.stdout).is_empty(),
-        "delete --current removes the worktree branch: {}",
+        "delete --current removes the workspace branch: {}",
         text(&branch.stdout)
     );
     let main = repo
@@ -5882,7 +5901,7 @@ fn separate_git_dir_relative_worktrees_directory_joins_the_main_checkout() {
             .join("wt")
             .join("r2")
             .exists(),
-        "must not nest under the linked worktree"
+        "must not nest under the linked workspace"
     );
     assert!(
         !repo.root.join("var").join("wt").join("r2").exists(),
@@ -6101,7 +6120,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
             "got {}",
             main["path"]
         );
-        assert_eq!(main["default"], true);
+        assert_eq!(main["kind"], "primary");
         let ran = mabo(checkout, &["exec", "main", "pwd"]);
         assert!(ran.status.success(), "{}", text(&ran.stderr));
         assert!(
@@ -6163,7 +6182,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
         "core.worktree selects zz-real, got {}",
         main["path"]
     );
-    assert_eq!(main["default"], true);
+    assert_eq!(main["kind"], "primary");
     let ran = mabo(&linked, &["exec", "main", "pwd"]);
     assert!(
         ran.status.success(),
@@ -6332,7 +6351,7 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
         "{}",
         main["path"]
     );
-    assert_eq!(main["default"], true);
+    assert_eq!(main["kind"], "primary");
 
     let deep_checkout = root
         .join("1")
@@ -6355,7 +6374,7 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
         "{}",
         deep_main["path"]
     );
-    assert_eq!(deep_main["default"], true);
+    assert_eq!(deep_main["kind"], "primary");
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -6506,7 +6525,7 @@ fn submodule_lists_and_execs_the_main_checkout() {
     assert!(git_dir.join("maboroshi").join("workspaces").is_dir());
     assert!(!git_dir
         .join("maboroshi")
-        .join("worktrees")
+        .join("workspaces")
         .join("linked")
         .exists());
     let listed = mabo(&linked, &["list"]);
@@ -6532,15 +6551,15 @@ fn submodule_lists_and_execs_the_main_checkout() {
         "{}",
         main["path"]
     );
-    assert_eq!(main["default"], true);
+    assert_eq!(main["kind"], "primary");
     let hidden = mabo(&linked, &["list", "--no-default", "--json"]);
     assert!(hidden.status.success(), "{}", text(&hidden.stderr));
-    let hidden_rows = json_value(&hidden)["data"]["worktrees"]
+    let hidden_rows = json_value(&hidden)["data"]["workspaces"]
         .as_array()
         .cloned()
         .unwrap_or_default();
     assert!(
-        hidden_rows.iter().all(|row| row["default"] != true
+        hidden_rows.iter().all(|row| row["kind"] != "primary"
             && !paths_match(row["path"].as_str().unwrap_or(""), &checkout)),
         "{hidden_rows:?}"
     );
@@ -6602,7 +6621,7 @@ fn running_inside_dot_git_returns_a_mabo_error() {
             !message.to_ascii_lowercase().contains("fatal:"),
             "{message}"
         );
-        assert!(error["data"]["worktrees"].is_null());
+        assert!(error["data"]["workspaces"].is_null());
     }
 }
 
@@ -6628,11 +6647,13 @@ fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path,
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let document = json_value(&json);
     assert_eq!(document["schema"], 2);
-    let rows = document["data"]["worktrees"].as_array().expect("worktrees");
+    let rows = document["data"]["workspaces"]
+        .as_array()
+        .expect("worktrees");
     assert!(
         rows.iter()
             .all(|row| !paths_match(row["path"].as_str().unwrap_or(""), git_dir)),
-        "git dir is still a worktree path: {rows:?}"
+        "git dir is still a workspace path: {rows:?}"
     );
     let main = default_worktree(&document);
     assert!(
@@ -6640,7 +6661,7 @@ fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path,
         "{}",
         main["path"]
     );
-    assert_eq!(main["default"], true);
+    assert_eq!(main["kind"], "primary");
     let hidden = repo.mabo(linked, &["list", "--no-default"]);
     assert!(hidden.status.success(), "{}", text(&hidden.stderr));
     let hidden_text = text(&hidden.stdout);
@@ -6664,11 +6685,11 @@ fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path,
 }
 
 fn default_worktree(document: &serde_json::Value) -> serde_json::Value {
-    document["data"]["worktrees"]
+    document["data"]["workspaces"]
         .as_array()
-        .and_then(|rows| rows.iter().find(|row| row["default"] == true))
+        .and_then(|rows| rows.iter().find(|row| row["kind"] == "primary"))
         .cloned()
-        .unwrap_or_else(|| panic!("no default worktree in {document}"))
+        .unwrap_or_else(|| panic!("no primary checkout in {document}"))
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -7050,7 +7071,7 @@ fn gc_skips_dirty_unpushed_current_and_other_agents() {
     assert!(current.status.success(), "{}", text(&current.stderr));
     let current_text = text(&current.stdout);
     assert!(
-        current_text.contains("skip here [merged] current worktree"),
+        current_text.contains("skip here [merged] current workspace"),
         "{current_text}"
     );
     assert!(
@@ -7457,7 +7478,7 @@ fn gc_runs_pre_delete_hooks_only_when_applying() {
     land_branch(&repo, "other");
     fs::write(
         repo.repo.join(".mabo.toml"),
-        "[hooks]\npre-delete = [\"test \\\"$MABO_NAME\\\" != feature && touch \\\"$MABO_ROOT_PATH/hooked\\\"\"]\n",
+        "[hooks]\npre-delete = [\"test \\\"$MABO_WORKSPACE\\\" != feature && touch \\\"$MABO_REPO_PATH/hooked\\\"\"]\n",
     )
     .expect("hooks");
 
@@ -7576,7 +7597,7 @@ fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
     repo.git(&["config", "core.logAllRefUpdates", "false"]);
     let created = repo.mabo(&["create", "fresh", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let head = json_value(&created)["data"]["worktree"]["head"]
+    let head = json_value(&created)["data"]["workspace"]["head"]
         .as_str()
         .expect("head")
         .to_string();
@@ -7593,7 +7614,7 @@ fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
     assert!(worktree_dir(&repo, "fresh").is_dir());
     assert!(branch_listed(&repo, "fresh"));
     assert_eq!(
-        json_value(&created)["data"]["worktree"]["createdFrom"],
+        json_value(&created)["data"]["workspace"]["createdFrom"],
         head,
         "create records the base commit"
     );
@@ -7914,7 +7935,7 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
     let path = managed(&repo, "feature");
     assert!(path.join("README.md").is_file());
     assert!(paths_match(
-        json_value(&created)["data"]["worktree"]["path"]
+        json_value(&created)["data"]["workspace"]["path"]
             .as_str()
             .unwrap_or(""),
         &path
@@ -7943,7 +7964,7 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
     assert!(!custom_path.exists());
     assert!(
         custom_path.parent().expect("custom dir").is_dir(),
-        "a preference directory stays when its last worktree is gone"
+        "a preference directory stays when its last workspace is gone"
     );
 
     let legacy = repo.repo.join(".git/maboroshi/worktrees/legacy");
@@ -8125,7 +8146,7 @@ fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
         text(&deleted.stderr)
     );
     assert!(!topic.exists());
-    assert!(parent.is_dir(), "parents of a recorded worktree stay");
+    assert!(parent.is_dir(), "parents of a recorded workspace stay");
     assert!(repo.repo.join(".git/maboroshi/worktrees").is_dir());
 
     let other = repo.root.join("other-xdg");
@@ -8410,7 +8431,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
     let next_row = candidates
         .iter()
         .find(|entry| entry["name"] == "next")
-        .expect("gc names the detached worktree next");
+        .expect("gc names the detached workspace next");
     assert_eq!(next_row["action"], "wouldRemove");
     let applied = repo.mabo(&["gc", "--older-than", "1d", "--apply", "--json"]);
     assert!(
@@ -8444,12 +8465,12 @@ fn delete_requests_the_same_worktree_once() {
     );
     let stdout = text(&deleted.stdout);
     assert_eq!(
-        stdout.matches("Deleted worktree 'a'").count(),
+        stdout.matches("Deleted workspace 'a'").count(),
         1,
         "{stdout}"
     );
     assert_eq!(
-        stdout.matches("Deleted worktree 'b'").count(),
+        stdout.matches("Deleted workspace 'b'").count(),
         1,
         "{stdout}"
     );
@@ -8472,12 +8493,12 @@ fn delete_requests_the_same_worktree_once() {
     );
     let once_stdout = text(&once.stdout);
     assert_eq!(
-        once_stdout.matches("Deleted worktree").count(),
+        once_stdout.matches("Deleted workspace").count(),
         1,
         "{once_stdout}"
     );
     assert!(
-        once_stdout.contains("Deleted worktree 'alias'"),
+        once_stdout.contains("Deleted workspace 'alias'"),
         "{once_stdout}"
     );
     assert!(!managed(&repo, "alias").exists());
@@ -8546,15 +8567,15 @@ fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
     );
     let created_json = json_value(&created);
     let real = PathBuf::from(
-        created_json["data"]["worktree"]["path"]
+        created_json["data"]["workspace"]["path"]
             .as_str()
             .expect("path"),
     );
-    let created_from = created_json["data"]["worktree"]["createdFrom"]
+    let created_from = created_json["data"]["workspace"]["createdFrom"]
         .as_str()
         .expect("createdFrom")
         .to_string();
-    let created_at = created_json["data"]["worktree"]["createdAt"]
+    let created_at = created_json["data"]["workspace"]["createdAt"]
         .as_str()
         .expect("createdAt")
         .to_string();
@@ -8577,7 +8598,7 @@ fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
 
     let listed = repo.mabo(&["list", "--json", "--no-default"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
-    let entry = &json_value(&listed)["data"]["worktrees"][0];
+    let entry = &json_value(&listed)["data"]["workspaces"][0];
     assert_eq!(entry["owner"], "alice");
     assert_eq!(entry["createdFrom"], created_from);
     assert_eq!(entry["createdAt"], created_at);
@@ -8593,7 +8614,7 @@ fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
         text(&deleted.stdout),
         text(&deleted.stderr)
     );
-    let removed = &json_value(&deleted)["data"]["deleted"][0]["worktree"];
+    let removed = &json_value(&deleted)["data"]["deleted"][0]["workspace"];
     assert_eq!(removed["owner"], "alice");
     assert_eq!(removed["createdFrom"], created_from);
     assert_eq!(removed["createdAt"], created_at);
@@ -8602,7 +8623,7 @@ fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
         managed_root(&repo)
             .join(maboroshi::paths::PROJECT_MARKER)
             .is_file(),
-        "last worktree deletion should keep the project directory and marker"
+        "last workspace deletion should keep the project directory and marker"
     );
     let store =
         records::read_to_string(repo.repo.join(".git/maboroshi/workspaces")).unwrap_or_default();
@@ -8631,11 +8652,11 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
     );
     let created_json = json_value(&created);
     assert!(created_json["error"].is_null(), "{created_json}");
-    assert_eq!(created_json["data"]["worktree"]["name"], "a");
+    assert_eq!(created_json["data"]["workspace"]["name"], "a");
     assert!(created_json["data"]["metadata"]["ok"]
         .as_bool()
         .unwrap_or(false));
-    let json_path = created_json["data"]["worktree"]["path"]
+    let json_path = created_json["data"]["workspace"]["path"]
         .as_str()
         .expect("path");
     let canonical = fs::canonicalize(Path::new(json_path)).expect("canonical");
@@ -8657,7 +8678,7 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
     );
     let attached_json = json_value(&attached);
     assert!(attached_json["error"].is_null(), "{attached_json}");
-    assert_eq!(attached_json["data"]["worktree"]["name"], "attached");
+    assert_eq!(attached_json["data"]["workspace"]["name"], "attached");
 
     let executed = run(&["create", "b", "--json", "--exec", "true"]);
     assert!(
@@ -8669,7 +8690,7 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
     let executed_json = json_value(&executed);
     assert!(executed_json["error"].is_null(), "{executed_json}");
     assert_eq!(executed_json["data"]["exec"]["ok"], true);
-    assert_eq!(executed_json["data"]["worktree"]["name"], "b");
+    assert_eq!(executed_json["data"]["workspace"]["name"], "b");
 }
 
 #[test]
@@ -8693,7 +8714,7 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
     let project = managed_directory(&repo.repo, &real);
     let via_link = link
         .join("maboroshi")
-        .join("worktrees")
+        .join("workspaces")
         .join(project.file_name().expect("project name"))
         .join("feature");
     let via_real = project.join("feature");
@@ -8758,7 +8779,7 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
         text(&deleted.stderr)
     );
     assert!(
-        text(&deleted.stdout).contains("Deleted worktree 'feature'"),
+        text(&deleted.stdout).contains("Deleted workspace 'feature'"),
         "{}",
         text(&deleted.stdout)
     );
@@ -8785,19 +8806,19 @@ fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
     );
     let created_json = json_value(&created);
     let real = PathBuf::from(
-        created_json["data"]["worktree"]["path"]
+        created_json["data"]["workspace"]["path"]
             .as_str()
             .expect("path"),
     );
-    let created_at = created_json["data"]["worktree"]["createdAt"]
+    let created_at = created_json["data"]["workspace"]["createdAt"]
         .as_str()
         .expect("createdAt")
         .to_string();
-    let created_from = created_json["data"]["worktree"]["createdFrom"]
+    let created_from = created_json["data"]["workspace"]["createdFrom"]
         .as_str()
         .expect("createdFrom")
         .to_string();
-    let last_used = created_json["data"]["worktree"]["lastUsedAt"]
+    let last_used = created_json["data"]["workspace"]["lastUsedAt"]
         .as_str()
         .expect("lastUsedAt")
         .to_string();
@@ -8865,7 +8886,7 @@ fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
     let again_json = json_value(&again);
     assert!(again_json["error"].is_null(), "{again_json}");
     assert_eq!(again_json["data"]["github"]["alreadyExists"], true);
-    let worktree = &again_json["data"]["worktree"];
+    let worktree = &again_json["data"]["workspace"];
     assert_eq!(worktree["owner"], "alice");
     assert_eq!(worktree["purpose"], "keep me");
     assert_eq!(worktree["createdAt"], created_at);
@@ -8921,7 +8942,7 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
         .unwrap_or("")
         .contains("unpushed"));
     assert_eq!(document["data"]["deleted"][0]["branchDeleted"], false);
-    assert_eq!(document["data"]["deleted"][0]["worktree"]["name"], "u");
+    assert_eq!(document["data"]["deleted"][0]["workspace"]["name"], "u");
     assert!(worktree.is_dir());
     assert!(branch_listed(&repo, "u"));
 
@@ -9178,7 +9199,10 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
     let document = json_value(&json);
     assert_eq!(document["error"]["code"], "refused");
     assert!(document["error"].get("exitCode").is_none());
-    assert_eq!(document["data"]["deleted"][0]["worktree"]["name"], "inside");
+    assert_eq!(
+        document["data"]["deleted"][0]["workspace"]["name"],
+        "inside"
+    );
     assert!(inside.is_dir());
 
     let neighbor = repo
@@ -9405,12 +9429,12 @@ fn delete_checks_every_name_before_removing_any() {
     let document = json_value(&json);
     let entries = document["data"]["deleted"].as_array().expect("deleted");
     assert_eq!(entries.len(), 2);
-    assert_eq!(entries[0]["worktree"]["name"], "b");
+    assert_eq!(entries[0]["workspace"]["name"], "b");
     assert!(entries[0]["error"]
         .as_str()
         .unwrap_or("")
         .contains("unpushed"));
-    assert!(entries[1]["worktree"].is_null());
+    assert!(entries[1]["workspace"].is_null());
     assert!(entries[1]["error"]
         .as_str()
         .unwrap_or("")
@@ -9459,19 +9483,19 @@ fn gc_keeps_the_current_worktree_when_its_parent_was_replaced_by_a_symlink() {
     );
     let stdout = text(&applied.stdout);
     assert!(
-        stdout.contains("skip here [merged] current worktree"),
+        stdout.contains("skip here [merged] current workspace"),
         "{stdout}"
     );
     assert!(stdout.contains("removed gone [merged]"), "{stdout}");
     assert!(
         moved.join("here").is_dir(),
-        "gc removed the worktree that contains the current directory"
+        "gc removed the workspace that contains the current directory"
     );
     assert!(
         parent.join("here").is_dir(),
-        "gc removed the worktree reached through the symlink"
+        "gc removed the workspace reached through the symlink"
     );
-    assert!(moved.is_dir(), "gc removed the current worktree's parent");
+    assert!(moved.is_dir(), "gc removed the current workspace's parent");
     assert!(
         parent
             .symlink_metadata()
@@ -9642,7 +9666,9 @@ fn meta_set_records_outside_worktrees_despite_orphaned_names() {
         let listed = repo.mabo(&["list", "--json", "--no-default"]);
         assert!(listed.status.success(), "{}", text(&listed.stderr));
         let document: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("json");
-        let worktrees = document["data"]["worktrees"].as_array().expect("worktrees");
+        let worktrees = document["data"]["workspaces"]
+            .as_array()
+            .expect("worktrees");
         assert_eq!(worktrees.len(), 2);
         assert!(worktrees
             .iter()
@@ -9843,7 +9869,7 @@ fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
 
     let attached = repo.mabo(&["attach", "feature/teammate"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
-    assert!(text(&attached.stdout).contains("Attached worktree: feature/teammate"));
+    assert!(text(&attached.stdout).contains("Attached workspace: feature/teammate"));
     assert_eq!(
         upstream_name(&repo, "feature/teammate"),
         "origin/feature/teammate"
@@ -9861,13 +9887,13 @@ fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
     assert_eq!(again.status.code(), Some(4));
     assert_eq!(
         text(&again.stderr),
-        "Worktree 'feature/teammate' already exists"
+        "Workspace 'feature/teammate' already exists"
     );
     let shadowed = repo.mabo(&["create", "feature/teammate"]);
     assert_eq!(shadowed.status.code(), Some(4));
     assert_eq!(
         text(&shadowed.stderr),
-        "Worktree 'feature/teammate' already exists"
+        "Workspace 'feature/teammate' already exists"
     );
 }
 
@@ -9897,7 +9923,7 @@ fn create_with_multiple_remotes_suggests_working_qualified_attach_commands() {
         let args: Vec<_> = command.split_whitespace().skip(1).collect();
         let attached = repo.mabo(&args);
         assert!(attached.status.success(), "{}", text(&attached.stderr));
-        assert!(text(&attached.stdout).contains("Attached worktree: feature/teammate"));
+        assert!(text(&attached.stdout).contains("Attached workspace: feature/teammate"));
         assert_eq!(upstream_name(&repo, "feature/teammate"), qualified);
         assert!(managed(&repo, "feature/teammate")
             .join("README.md")
@@ -9912,7 +9938,7 @@ fn attach_qualified_remote_drops_the_remote_prefix() {
     publish_tracking_branch(&repo, "origin", "feature/teammate");
     let attached = repo.mabo(&["attach", "origin/feature/teammate"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
-    assert!(text(&attached.stdout).contains("Attached worktree: feature/teammate"));
+    assert!(text(&attached.stdout).contains("Attached workspace: feature/teammate"));
     assert_eq!(
         upstream_name(&repo, "feature/teammate"),
         "origin/feature/teammate"
@@ -9934,14 +9960,14 @@ fn attach_qualified_remote_allows_special_characters_in_the_remote_name() {
 
     let attached = repo.mabo(&["attach", "user@host/feature"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
-    assert!(text(&attached.stdout).contains("Attached worktree: feature"));
+    assert!(text(&attached.stdout).contains("Attached workspace: feature"));
     assert_eq!(upstream_name(&repo, "feature"), "user@host/feature");
     assert!(managed(&repo, "feature").join("README.md").is_file());
     assert!(local_branch(&repo, "user@host/feature").is_empty());
 
     let invalid = repo.mabo(&["attach", "invalid@name"]);
     assert_eq!(invalid.status.code(), Some(2), "{}", text(&invalid.stderr));
-    assert!(text(&invalid.stderr).contains("Worktree name can only contain"));
+    assert!(text(&invalid.stderr).contains("Workspace name can only contain"));
 }
 
 #[test]
@@ -10056,7 +10082,7 @@ fn nameless_create_skips_a_remote_tracking_candidate() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    assert!(text(&created.stdout).contains("Created worktree 'calm-comet'"));
+    assert!(text(&created.stdout).contains("Created workspace 'calm-comet'"));
     assert!(local_branch(&repo, "bold-badger").is_empty());
     assert!(local_branch(&repo, "calm-comet").contains("calm-comet"));
     assert!(managed(&repo, "calm-comet").is_dir());
@@ -10078,7 +10104,7 @@ fn assert_no_upstream(repo: &Repo, branch: &str) {
         stderr.contains("no upstream configured"),
         "{branch} upstream check: {stderr}"
     );
-    assert!(managed(repo, branch).is_dir(), "{branch} worktree missing");
+    assert!(managed(repo, branch).is_dir(), "{branch} workspace missing");
 }
 
 #[test]
@@ -10158,7 +10184,9 @@ fn orphaned_records_are_listed_and_deleted_without_hooks_or_branch_changes() {
     let listed = repo.mabo(&["list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let document = json_value(&listed);
-    let entries = document["data"]["worktrees"].as_array().expect("worktrees");
+    let entries = document["data"]["workspaces"]
+        .as_array()
+        .expect("worktrees");
     assert_eq!(
         entries
             .iter()
@@ -10169,7 +10197,7 @@ fn orphaned_records_are_listed_and_deleted_without_hooks_or_branch_changes() {
     assert_eq!(
         entries
             .iter()
-            .find(|item| item["default"] == true)
+            .find(|item| item["kind"] == "primary")
             .expect("default")["orphaned"],
         false
     );
@@ -10194,7 +10222,10 @@ fn orphaned_records_are_listed_and_deleted_without_hooks_or_branch_changes() {
     let deleted = repo.mabo(&["delete", "json-gone", "--json"]);
     assert_eq!(deleted.status.code(), Some(0), "{}", text(&deleted.stderr));
     let document = json_value(&deleted);
-    assert_eq!(document["data"]["deleted"][0]["worktree"]["orphaned"], true);
+    assert_eq!(
+        document["data"]["deleted"][0]["workspace"]["orphaned"],
+        true
+    );
     assert_eq!(document["data"]["deleted"][0]["branchDeleted"], false);
     assert!(branch_listed(&repo, "json-gone"));
     let records: serde_json::Value = serde_json::from_slice(
@@ -10246,8 +10277,42 @@ fn ambiguous_orphaned_names_leave_all_records_untouched() {
     records::write(&records_path, &original).expect("records");
     let deleted = repo.mabo(&["delete", "shared"]);
     assert!(!deleted.status.success());
-    assert!(text(&deleted.stderr).contains("More than one worktree is named"));
+    assert!(text(&deleted.stderr).contains("More than one workspace is named"));
     assert_eq!(records::read(records_path).expect("records"), original);
+}
+
+fn assert_workspace_vocabulary(value: &serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            assert!(
+                !object.contains_key("worktree"),
+                "legacy result key: {value}"
+            );
+            assert!(
+                !object.contains_key("worktrees"),
+                "legacy result key: {value}"
+            );
+            if object.contains_key("dirty") && object.contains_key("detached") {
+                assert!(
+                    matches!(value["kind"].as_str(), Some("primary" | "workspace")),
+                    "{value}"
+                );
+                assert!(
+                    !object.contains_key("default"),
+                    "legacy workspace kind: {value}"
+                );
+            }
+            for child in object.values() {
+                assert_workspace_vocabulary(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                assert_workspace_vocabulary(child);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn assert_envelope(output: &std::process::Output, command: &str) -> serde_json::Value {
@@ -10263,6 +10328,7 @@ fn assert_envelope(output: &std::process::Output, command: &str) -> serde_json::
         keys,
         ["command", "data", "error", "ok", "schema", "warnings"]
     );
+    assert_workspace_vocabulary(&value["data"]);
     assert_eq!(value["schema"], 2);
     assert_eq!(value["command"], command);
     assert_eq!(value["ok"], output.status.success());
@@ -10556,10 +10622,10 @@ fn successful_json_commands_share_the_envelope_and_preserve_payload_keys() {
     let repo = Repo::new();
     repo.git(&["branch", "existing"]);
     let cases: &[(&[&str], &str, &str)] = &[
-        (&["create", "topic", "--json"], "create", "worktree"),
-        (&["attach", "existing", "--json"], "attach", "worktree"),
-        (&["list", "--json"], "list", "worktrees"),
-        (&["where", "topic", "--json"], "where", "worktree"),
+        (&["create", "topic", "--json"], "create", "workspace"),
+        (&["attach", "existing", "--json"], "attach", "workspace"),
+        (&["list", "--json"], "list", "workspaces"),
+        (&["where", "topic", "--json"], "where", "workspace"),
         (
             &[
                 "meta",
@@ -10570,9 +10636,9 @@ fn successful_json_commands_share_the_envelope_and_preserve_payload_keys() {
                 "--json",
             ],
             "meta set",
-            "worktree",
+            "workspace",
         ),
-        (&["sync", "--json"], "sync", "default"),
+        (&["sync", "--json"], "sync", "workspaces"),
         (&["gc", "--json"], "gc", "candidates"),
         (&["trust", "--yes", "--json"], "trust", "trustedAt"),
         (&["untrust", "--json"], "untrust", "removed"),
@@ -10606,12 +10672,23 @@ fn successful_json_commands_share_the_envelope_and_preserve_payload_keys() {
             env!("CARGO_BIN_EXE_mabo"),
             &["github", "checkout", "7", "--json"],
         )
-        .env("PATH", gh_path)
+        .env("PATH", &gh_path)
         .output()
         .expect("checkout");
     let value = assert_envelope(&out, "github checkout");
     assert!(out.status.success(), "{value}");
-    assert!(value["data"]["worktree"].is_object());
+    assert!(value["data"]["workspace"].is_object());
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["gh", "checkout", "7", "--json"],
+        )
+        .env("PATH", &gh_path)
+        .output()
+        .expect("gh checkout");
+    let value = assert_envelope(&out, "github checkout");
+    assert!(out.status.success(), "{value}");
+    assert_eq!(value["data"]["workspace"]["kind"], "workspace");
     let bare = repo.root.join("origin.git");
     append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
     let out = clone_widget(&repo, Some(&repo.root.join("clones")));
@@ -10654,7 +10731,7 @@ fn delete_partial_results_and_late_common_option_errors_keep_the_contract() {
     assert!(repo.mabo(&["create", "second"]).status.success());
     fs::write(
         repo.repo.join(".mabo.toml"),
-        "[hooks]\npre-delete = [\"if [ \\\"$MABO_NAME\\\" = second ]; then exit 42; fi\"]\n",
+        "[hooks]\npre-delete = [\"if [ \\\"$MABO_WORKSPACE\\\" = second ]; then exit 42; fi\"]\n",
     )
     .expect("hook");
     let out = repo.mabo(&["delete", "first", "second", "--json"]);
@@ -10948,7 +11025,7 @@ fn create_and_attach_setup_failures_report_text_and_json_without_duplicate_cause
                 assert_eq!(output.status.code(), Some(6), "{args:?}: {stderr}");
                 assert!(managed(&repo, "topic/README.md").is_file());
                 let diagnostic = match cause {
-                    "metadata" => "Warning: Failed to save worktree metadata: injected failure",
+                    "metadata" => "Warning: Failed to save workspace metadata: injected failure",
                     "copyFiles" => "Warning: Failed to copy some files:",
                     "postCreate" => "Warning: Post-create command",
                     _ => "failed with exit code 24",
@@ -10967,11 +11044,236 @@ fn create_and_attach_setup_failures_report_text_and_json_without_duplicate_cause
                     let summary = if cause == "exec" {
                         diagnostic
                     } else {
-                        "Worktree created but setup did not complete"
+                        "Workspace created but setup did not complete"
                     };
                     assert_eq!(stderr.matches(summary).count(), 1, "{stderr}");
                 }
             }
         }
     }
+}
+
+#[test]
+fn every_command_help_uses_workspace_vocabulary() {
+    let repo = Repo::new();
+    let data: serde_json::Value = serde_json::from_str(include_str!("../help-data.json")).unwrap();
+    let mut commands = vec![String::new()];
+    commands.extend(data["helps"].as_object().unwrap().keys().cloned());
+    for command in commands {
+        let mut args: Vec<_> = command.split_whitespace().collect();
+        args.push("--help");
+        let out = repo.mabo(&args);
+        assert!(out.status.success(), "{command}: {}", text(&out.stderr));
+        // These are retained interface and file names, not entity vocabulary.
+        // No Git diagnostic wording is currently needed in help.
+        let help = text(&out.stdout)
+            .to_ascii_lowercase()
+            .replace("worktrees-directory", "")
+            .replace("worktrees.json", "")
+            .replace(".worktreeinclude", "");
+        assert!(!help.contains("worktree"), "{command}: {help}");
+    }
+}
+
+fn workspace_env_script(output: &Path) -> String {
+    format!(
+        "printf '%s\\n' \"$MABO\" \"$MABO_WORKSPACE\" \"$MABO_WORKSPACE_ID\" \"$MABO_WORKSPACE_PATH\" \"$MABO_REPO_PATH\" \"${{MABO_NAME+present}}\" \"${{MABO_PATH+present}}\" \"${{MABO_ROOT_PATH+present}}\" > '{}'",
+        output.display()
+    )
+}
+
+fn assert_workspace_env(output: &Path, repo: &Repo, name: &str, path: &Path, id: &str) {
+    let values = fs::read_to_string(output).expect("environment capture");
+    let expected = format!(
+        "1\n{name}\n{id}\n{}\n{}\n\n\n\n",
+        path.display(),
+        repo.repo.display()
+    );
+    assert_eq!(values, expected);
+}
+
+#[test]
+fn hooks_and_exec_export_workspace_identity_and_remove_inherited_legacy_variables() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "source"]).status.success());
+    let source = managed(&repo, "source");
+    let post = repo.root.join("post-env");
+    let pre = repo.root.join("pre-env");
+    let exec = repo.root.join("exec-env");
+    let hook_config = format!(
+        "[hooks]\npost-create = [{}]\npre-delete = [{}]\n",
+        serde_json::to_string(&workspace_env_script(&post)).unwrap(),
+        serde_json::to_string(&workspace_env_script(&pre)).unwrap()
+    );
+    fs::write(source.join(".mabo.toml"), hook_config).unwrap();
+    // A linked source must determine the hook config, while MABO_REPO_PATH
+    // always identifies the primary checkout. All inherited context is stale.
+    let run = |args: &[&str]| {
+        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+            .current_dir(&source)
+            .env("MABO", "stale")
+            .env("MABO_WORKSPACE", "stale")
+            .env("MABO_WORKSPACE_ID", "stale")
+            .env("MABO_WORKSPACE_PATH", "/stale")
+            .env("MABO_REPO_PATH", "/stale")
+            .env("MABO_NAME", "legacy")
+            .env("MABO_PATH", "/legacy")
+            .env("MABO_ROOT_PATH", "/legacy")
+            .output()
+            .unwrap()
+    };
+    let script = workspace_env_script(&exec);
+    let out = run(&[
+        "create",
+        "feature/env-contract",
+        "--json",
+        "--exec",
+        &script,
+    ]);
+    let value = assert_envelope(&out, "create");
+    assert!(out.status.success(), "{value}");
+    let id = value["data"]["workspace"]["id"].as_str().unwrap();
+    assert!(id.starts_with("ws_"));
+    let path = managed(&repo, "feature/env-contract");
+    assert_workspace_env(&post, &repo, "feature/env-contract", &path, id);
+    assert_workspace_env(&exec, &repo, "feature/env-contract", &path, id);
+    fs::remove_file(&exec).unwrap();
+    let out = run(&["exec", "feature/env-contract", "sh", "-c", &script]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_workspace_env(&exec, &repo, "feature/env-contract", &path, id);
+    let out = run(&["delete", "feature/env-contract", "--json"]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert_workspace_env(&pre, &repo, "feature/env-contract", &path, id);
+    assert!(!path.exists());
+    // Unrecorded workspaces export an empty ID, including the primary checkout.
+    let out = run(&["exec", "main", "sh", "-c", &script]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_workspace_env(&exec, &repo, "main", &repo.repo, "");
+}
+
+#[test]
+fn legacy_worktrees_directories_remain_usable_without_moving_workspaces() {
+    for old_layout in ["xdg", "git"] {
+        let repo = Repo::new();
+        let common = maboroshi::git::canonical_common_dir(&repo.repo).unwrap();
+        let project = maboroshi::paths::project_directory_name("repo", &common);
+        let old_root = if old_layout == "xdg" {
+            repo.root.join("xdg/maboroshi/worktrees").join(project)
+        } else {
+            repo.repo.join(".git/maboroshi/worktrees")
+        };
+        let set = repo.mabo(&[
+            "preferences",
+            "set",
+            "worktrees-directory",
+            old_root.to_str().unwrap(),
+        ]);
+        assert!(set.status.success(), "{}", text(&set.stderr));
+        for name in ["feature/delete", "feature/gc"] {
+            let out = repo.mabo(&["create", name, "--base", "main", "--json"]);
+            let doc = assert_envelope(&out, "create");
+            assert!(out.status.success(), "{doc}");
+            assert_eq!(
+                doc["data"]["workspace"]["path"],
+                old_root.join(name).to_str().unwrap()
+            );
+        }
+        assert!(repo
+            .mabo(&["preferences", "remove", "worktrees-directory"])
+            .status
+            .success());
+        let listed = assert_envelope(&repo.mabo(&["list", "--json"]), "list");
+        for name in ["feature/delete", "feature/gc"] {
+            let row = listed["data"]["workspaces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["name"] == name)
+                .expect("old workspace in list");
+            assert_eq!(row["kind"], "workspace");
+            assert_eq!(row["path"], old_root.join(name).to_str().unwrap());
+            let located = assert_envelope(&repo.mabo(&["where", name, "--json"]), "where");
+            assert_eq!(located["data"]["workspace"]["path"], row["path"]);
+        }
+        fs::write(repo.repo.join("updated"), "new base\n").unwrap();
+        repo.git(&["add", "updated"]);
+        repo.git(&["commit", "-m", "advance base"]);
+        let sync = repo.mabo(&["sync", "--all", "--no-default", "--json"]);
+        let doc = assert_envelope(&sync, "sync");
+        assert!(sync.status.success(), "{doc}");
+        assert_eq!(doc["data"]["workspaces"].as_array().unwrap().len(), 2);
+        for name in ["feature/delete", "feature/gc"] {
+            assert!(old_root.join(name).join("updated").is_file());
+            assert!(
+                !managed(&repo, name).exists(),
+                "old workspace must not move"
+            );
+        }
+        let out = repo.mabo(&["delete", "feature/delete", "--json"]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        assert_envelope(&out, "delete");
+        assert!(!old_root.join("feature/delete").exists());
+        let dir = repo.repo.join(".git/maboroshi/workspaces");
+        for entry in fs::read_dir(&dir).unwrap() {
+            let file = entry.unwrap().path();
+            let mut record: serde_json::Value =
+                serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+            record["createdAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+            record["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+            fs::write(file, serde_json::to_vec(&record).unwrap()).unwrap();
+        }
+        let out = repo.mabo(&["gc", "--apply", "--older-than", "1m", "--json"]);
+        let doc = assert_envelope(&out, "gc");
+        assert!(out.status.success(), "{doc}");
+        assert!(
+            doc["data"]["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["name"] == "feature/gc" && row["action"] == "removed"),
+            "{doc}"
+        );
+        assert!(!old_root.join("feature/gc").exists());
+        let out = repo.mabo(&["create", "fresh", "--json"]);
+        let doc = assert_envelope(&out, "create");
+        assert!(out.status.success(), "{doc}");
+        assert!(
+            Path::new(doc["data"]["workspace"]["path"].as_str().unwrap())
+                .starts_with(repo.root.join("xdg/maboroshi/workspaces"))
+        );
+    }
+}
+
+#[test]
+fn exec_exports_the_id_allocated_by_legacy_metadata_import() {
+    let repo = Repo::new();
+    let old = repo.repo.join(".git/maboroshi/worktrees/feature/legacy");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature/legacy",
+        old.to_str().unwrap(),
+        "HEAD",
+    ]);
+    let legacy = repo.repo.join(".git/maboroshi/worktrees.json");
+    fs::write(
+        &legacy,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "worktrees": [{"path": old, "createdAt": "2000-01-01T00:00:00.000Z"}]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let capture = repo.root.join("legacy-env");
+    let script = workspace_env_script(&capture);
+    let out = repo.mabo(&["exec", "feature/legacy", "sh", "-c", &script]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let located = assert_envelope(&repo.mabo(&["where", "feature/legacy", "--json"]), "where");
+    let id = located["data"]["workspace"]["id"].as_str().unwrap();
+    assert!(id.starts_with("ws_"));
+    assert_workspace_env(&capture, &repo, "feature/legacy", &old, id);
+    assert!(legacy.with_extension("json.imported").is_file());
 }

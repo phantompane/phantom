@@ -18,9 +18,9 @@ pub enum Error {
     Message(String),
     #[error("{0}")]
     Validation(String),
-    #[error("Worktree '{0}' not found")]
+    #[error("Workspace '{0}' not found")]
     WorktreeNotFound(String),
-    #[error("Worktree '{0}' already exists")]
+    #[error("Workspace '{0}' already exists")]
     WorktreeAlreadyExists(String),
     #[error("Branch '{0}' not found")]
     BranchNotFound(String),
@@ -31,10 +31,10 @@ pub enum Error {
     #[error("Not a git repository. Run mabo from inside a Git repository.")]
     NotARepository,
     #[error(
-        "Worktree '{name}' has uncommitted changes ({files} files). Use --force to delete anyway."
+        "Workspace '{name}' has uncommitted changes ({files} files). Use --force to delete anyway."
     )]
     Uncommitted { name: String, files: usize },
-    #[error("Worktree '{name}' {detail}. {hint}")]
+    #[error("Workspace '{name}' {detail}. {hint}")]
     Unpushed {
         name: String,
         detail: &'static str,

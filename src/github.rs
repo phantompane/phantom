@@ -54,6 +54,7 @@ impl PullSource {
 #[serde(rename_all = "camelCase")]
 struct GithubCheckoutOutput {
     version: u32,
+    #[serde(rename = "workspace")]
     worktree: worktree::WorktreeJson,
     github: GithubSubjectOutput,
     copy_files: worktree::CopyFilesOutcome,
@@ -392,7 +393,7 @@ fn checkout_issue(
     let info = worktree::worktree_at_path(&context, &created.path)?;
     Ok(Checkout {
         message: format!(
-            "Created worktree '{name}' at {}",
+            "Created workspace '{name}' at {}",
             crate::paths::canonical_location(&created.path).display()
         ),
         worktree: name,
