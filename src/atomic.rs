@@ -32,8 +32,16 @@ fn write_with(
     result
 }
 
-/// Publish a complete import in one rename. Concurrent importers use private
-/// staging directories; the first complete directory wins, without a lock.
+/// Only this marker proves that all legacy records have been published.
+const IMPORT_COMPLETE: &str = ".import-complete";
+
+pub(crate) fn import_complete(target: &Path) -> bool {
+    target.join(IMPORT_COMPLETE).is_file()
+}
+
+/// Stage the complete import before publication. If another writer created the
+/// destination, add records without replacing its files or directory. Publish
+/// the completion marker only after every staged record is available.
 pub(crate) fn import_directory(
     target: &Path,
     legacy: &Path,
@@ -44,28 +52,54 @@ pub(crate) fn import_directory(
         .parent()
         .ok_or_else(|| Error::msg("Record directory has no parent"))?;
     fs::create_dir_all(parent).map_err(|error| Error::msg(error.to_string()))?;
-    if !target.exists() {
+    if target.exists() {
+        fs::read_dir(target).map_err(|error| {
+            Error::msg(format!(
+                "Failed to read imported record directory {}: {error}",
+                target.display()
+            ))
+        })?;
+    }
+    if !import_complete(target) {
         let staging = parent.join(format!(".import-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&staging).map_err(|error| Error::msg(error.to_string()))?;
         let result = (|| {
             populate(&staging)?;
+            write(&staging.join(IMPORT_COMPLETE), b"complete\n")
+                .map_err(|error| Error::msg(error.to_string()))?;
             match fs::rename(&staging, target) {
                 Ok(()) => Ok(()),
-                Err(_) if target.is_dir() => Ok(()),
+                Err(_) if target.is_dir() => {
+                    if !import_complete(target) {
+                        for entry in
+                            fs::read_dir(&staging).map_err(|error| Error::msg(error.to_string()))?
+                        {
+                            let entry = entry.map_err(|error| Error::msg(error.to_string()))?;
+                            if entry.file_name() == IMPORT_COMPLETE {
+                                continue;
+                            }
+                            // A hard link atomically publishes a complete file and never
+                            // replaces a record added or updated by another process.
+                            let destination = target.join(entry.file_name());
+                            match fs::hard_link(entry.path(), &destination) {
+                                Ok(()) => {}
+                                Err(error)
+                                    if error.kind() == io::ErrorKind::AlreadyExists
+                                        && destination.is_file() => {}
+                                Err(error) => return Err(Error::msg(error.to_string())),
+                            }
+                        }
+                        write(&target.join(IMPORT_COMPLETE), b"complete\n")
+                            .map_err(|error| Error::msg(error.to_string()))?;
+                    }
+                    Ok(())
+                }
                 Err(error) => Err(Error::msg(error.to_string())),
             }
         })();
         let _ = fs::remove_dir_all(&staging);
         result?;
     }
-    // Existence alone does not prove a complete import is available: a file or
-    // another invalid destination must never cause the legacy source to move.
-    fs::read_dir(target).map_err(|error| {
-        Error::msg(format!(
-            "Failed to read imported record directory {}: {error}",
-            target.display()
-        ))
-    })?;
     match fs::rename(legacy, legacy.with_extension("json.imported")) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -138,12 +172,55 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        assert_eq!(fs::read_dir(&target).unwrap().count(), 2);
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 3);
         assert!(!legacy.exists());
         assert_eq!(
             fs::read_to_string(legacy.with_extension("json.imported")).unwrap(),
             "original"
         );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn merging_an_import_keeps_existing_records_and_marks_completion_last() {
+        let dir = std::env::temp_dir().join(format!("mabo-import-merge-{}", uuid::Uuid::new_v4()));
+        let target = dir.join("records");
+        fs::create_dir_all(&target).unwrap();
+        let legacy = dir.join("legacy.json");
+        fs::write(&legacy, "original").unwrap();
+        write(&target.join("first.json"), b"concurrent update").unwrap();
+        // A failed record publication must not mark or archive the import.
+        fs::create_dir(target.join("second.json")).unwrap();
+        let populate = |staging: &Path| {
+            for name in ["first", "second"] {
+                write(&staging.join(format!("{name}.json")), name.as_bytes())
+                    .map_err(|error| crate::error::Error::msg(error.to_string()))?;
+            }
+            Ok(())
+        };
+        assert!(import_directory(&target, &legacy, populate).is_err());
+        assert!(!import_complete(&target));
+        assert_eq!(fs::read_to_string(&legacy).unwrap(), "original");
+        fs::remove_dir(target.join("second.json")).unwrap();
+        import_directory(&target, &legacy, populate).unwrap();
+        assert!(import_complete(&target));
+        assert_eq!(
+            fs::read(target.join("first.json")).unwrap(),
+            b"concurrent update"
+        );
+        assert_eq!(fs::read(target.join("second.json")).unwrap(), b"second");
+        assert!(!legacy.exists());
+        // Completion survives an archive failure/retry and subsequent deletion;
+        // importing again must not resurrect records removed by another writer.
+        fs::rename(legacy.with_extension("json.imported"), &legacy).unwrap();
+        fs::remove_file(target.join("second.json")).unwrap();
+        import_directory(&target, &legacy, |_| {
+            panic!("completed import must not run again")
+        })
+        .unwrap();
+        assert!(!target.join("second.json").exists());
+        assert!(!legacy.exists());
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 2);
         fs::remove_dir_all(dir).unwrap();
     }
 

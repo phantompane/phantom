@@ -1601,11 +1601,7 @@ fn fail_with(error: &Error, requested: i32) -> Result<i32> {
     } else {
         crate::error::exit_for_code(error.json_code(requested))
     };
-    if json {
-        crate::output::failure(error.to_json(requested).error);
-    } else {
-        eprintln!("{error}");
-    }
+    crate::output::failure(error.to_json(requested).error);
     Ok(code)
 }
 
@@ -1635,20 +1631,17 @@ fn finish_mutation(
         if let Some(exec) = exec.filter(|exec| !exec.ok) {
             error.details =
                 Some(serde_json::json!({"exitCode": exec.exit_code, "signal": exec.signal}));
-            if !json {
-                let message = if let Some(signal) = &exec.signal {
-                    Error::Signaled(signal.clone()).to_string()
-                } else if let Some(error) = &exec.error {
-                    error.clone()
-                } else {
-                    Error::CommandFailed {
-                        command: exec.shell.clone(),
-                        code: exec.exit_code,
-                    }
-                    .to_string()
-                };
-                eprintln!("{message}");
-            }
+            error.message = if let Some(signal) = &exec.signal {
+                Error::Signaled(signal.clone()).to_string()
+            } else if let Some(error) = &exec.error {
+                error.clone()
+            } else {
+                Error::CommandFailed {
+                    command: exec.shell.clone(),
+                    code: exec.exit_code,
+                }
+                .to_string()
+            };
         }
         crate::output::failure(error);
     }

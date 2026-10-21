@@ -160,7 +160,7 @@ pub fn status_code(exit: i32) -> &'static str {
     match exit {
         VALIDATION => "usage",
         NOT_FOUND => "not_found",
-        REFUSED => "dirty",
+        REFUSED => "refused",
         CONFLICT => "conflict",
         PARTIAL => "partial",
         _ => "failed",
@@ -205,6 +205,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unknown_refusals_do_not_claim_a_dirty_worktree() {
+        for error in [
+            Error::status(REFUSED, "guard refused"),
+            Error::msg("guard refused"),
+        ] {
+            assert_eq!(error.to_json(REFUSED).error.code, "refused");
+        }
+        assert_eq!(status_code(REFUSED), "refused");
+        assert_eq!(Error::status(REFUSED, "guard refused").exit_code(), REFUSED);
+    }
+
+    #[test]
     fn every_machine_error_uses_the_shared_exit_table() {
         for (codes, exit) in [
             (
@@ -214,7 +226,7 @@ mod tests {
             ("usage ambiguous", VALIDATION),
             ("not_found branch_not_found not_repository", NOT_FOUND),
             (
-                "dirty unpreserved published exists exists_remote untrusted",
+                "dirty unpreserved published exists exists_remote untrusted refused",
                 REFUSED,
             ),
             ("conflict", CONFLICT),

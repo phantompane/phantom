@@ -93,6 +93,10 @@ impl ProjectRegistryStore {
     }
 
     fn ensure_records(&self) -> Result<()> {
+        self.ensure_records_with(|| {})
+    }
+
+    fn ensure_records_with(&self, before_publish: impl FnOnce()) -> Result<()> {
         let dir = self.data_dir.join("repos");
         let legacy = self.data_dir.join(REGISTRY_FILE);
         if legacy.exists() {
@@ -100,6 +104,7 @@ impl ProjectRegistryStore {
                 for project in self.load_legacy()?.unwrap_or_else(empty_registry).projects {
                     save_project(staging, &project)?;
                 }
+                before_publish();
                 Ok(())
             })
         } else {
@@ -143,7 +148,7 @@ impl ProjectRegistryStore {
     }
 
     fn load_with(&self, before_legacy: impl FnOnce()) -> Result<RegistryState> {
-        if !self.data_dir.join("repos").exists() {
+        if !crate::atomic::import_complete(&self.data_dir.join("repos")) {
             before_legacy();
             if let Some(state) = self.load_legacy()? {
                 return Ok(state);
@@ -927,6 +932,63 @@ mod tests {
             .unwrap();
         assert_eq!(read.projects, before);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn imports_legacy_into_existing_or_concurrently_created_directory() {
+        for scenario in ["empty-before", "empty-during", "record-during"] {
+            let concurrent = scenario != "empty-before";
+            let addition = scenario == "record-during";
+            let dir = std::env::temp_dir().join(format!(
+                "mabo-project-import-existing-{}",
+                uuid::Uuid::new_v4()
+            ));
+            fs::create_dir_all(&dir).unwrap();
+            let legacy = dir.join(REGISTRY_FILE);
+            fs::write(
+                &legacy,
+                include_str!("../tests/fixtures/alpha6/projects.json"),
+            )
+            .unwrap();
+            let store = ProjectRegistryStore::new(dir.clone());
+            let before = store.list().unwrap();
+            let target = dir.join("repos");
+            let mut added = before[0].clone();
+            added.id = format!("proj_{}", uuid::Uuid::new_v4());
+            added.root_path = "/alpha6/concurrent".into();
+            added.name = "concurrent".into();
+            if !concurrent {
+                fs::create_dir_all(&target).unwrap();
+                assert_eq!(store.list().unwrap(), before);
+            }
+            store
+                .ensure_records_with(|| {
+                    if concurrent {
+                        std::thread::scope(|scope| {
+                            scope
+                                .spawn(|| {
+                                    fs::create_dir_all(&target).unwrap();
+                                    if addition {
+                                        save_project(&target, &added).unwrap();
+                                    }
+                                })
+                                .join()
+                                .unwrap()
+                        });
+                    }
+                })
+                .unwrap();
+            let after = store.list().unwrap();
+            assert_eq!(after.len(), before.len() + usize::from(addition));
+            assert!(before.iter().all(|project| after.contains(project)));
+            if addition {
+                assert!(after.contains(&added));
+            }
+            assert!(crate::atomic::import_complete(&target));
+            assert!(!legacy.exists());
+            assert!(legacy.with_extension("json.imported").is_file());
+            fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     #[test]

@@ -712,6 +712,7 @@ fn pushed_auto_merge_and_rebase_refusal_force_preserve_upstream() {
     r.git(&tree, &["push", "-u", "origin", "topic"]);
     r.advance();
     let refused = r.sync(&r.main, &["topic", "--rebase", "--no-default"], 4);
+    assert_eq!(refused["error"]["code"], "published");
     assert_eq!(refused["data"]["worktrees"][0]["code"], "published");
     assert_eq!(r.git(&tree, &["rev-parse", "HEAD"]), before);
     let forced = r.sync(&r.main, &["topic", "--rebase", "--force"], 0);

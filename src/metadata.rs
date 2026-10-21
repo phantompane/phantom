@@ -519,7 +519,7 @@ fn read_all_records_with(
     before_legacy: impl FnOnce(),
 ) -> Result<(Store, Vec<String>)> {
     let dir = records_dir(git_root)?;
-    if !dir.exists() {
+    if !crate::atomic::import_complete(&dir) {
         before_legacy();
         if let Some(store) = validated_store(&metadata_file(git_root)?)? {
             return Ok((store, Vec::new()));
@@ -588,6 +588,10 @@ fn read_all_records_with(
 }
 
 fn ensure_records(git_root: &Path) -> Result<()> {
+    ensure_records_with(git_root, || {})
+}
+
+fn ensure_records_with(git_root: &Path, before_publish: impl FnOnce()) -> Result<()> {
     let dir = records_dir(git_root)?;
     let legacy = metadata_file(git_root)?;
     if legacy.exists() {
@@ -598,6 +602,7 @@ fn ensure_records(git_root: &Path) -> Result<()> {
                 record.metadata.id = Some(format!("ws_{}", uuid::Uuid::new_v4()));
                 save_record(staging, record)?;
             }
+            before_publish();
             Ok(())
         })?;
     } else {
@@ -1063,6 +1068,73 @@ mod tests {
     }
 
     #[test]
+    fn imports_legacy_into_existing_or_concurrently_created_directory() {
+        for scenario in ["empty-before", "empty-during", "record-during"] {
+            let concurrent = scenario != "empty-before";
+            let addition = scenario == "record-during";
+            let root = root();
+            let legacy = metadata_file(&root).unwrap();
+            fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+            fs::write(
+                &legacy,
+                include_str!("../tests/fixtures/alpha6/worktrees.json"),
+            )
+            .unwrap();
+            let before = load_strict(&root).unwrap();
+            let target = records_dir(&root).unwrap();
+            if !concurrent {
+                fs::create_dir_all(&target).unwrap();
+                assert_eq!(load_strict(&root).unwrap(), before);
+            }
+            ensure_records_with(&root, || {
+                if concurrent {
+                    // Another writer creates the destination and adds a record
+                    // after staging is populated but before publication.
+                    thread::scope(|scope| {
+                        scope
+                            .spawn(|| {
+                                fs::create_dir_all(&target).unwrap();
+                                if addition {
+                                    let mut record = validated_store(&legacy)
+                                        .unwrap()
+                                        .unwrap()
+                                        .worktrees
+                                        .remove(0);
+                                    record.schema = Some(2);
+                                    record.path = path_key(&root.join("concurrent"));
+                                    record.metadata.id =
+                                        Some(format!("ws_{}", uuid::Uuid::new_v4()));
+                                    record.metadata.owner = Some("concurrent".into());
+                                    save_record(&target, &record).unwrap();
+                                }
+                            })
+                            .join()
+                            .unwrap()
+                    });
+                }
+            })
+            .unwrap();
+            let after = load_strict(&root).unwrap();
+            assert_eq!(after.len(), before.len() + usize::from(addition));
+            for (path, old) in before {
+                let mut imported = after[&path].clone();
+                imported.id = None;
+                assert_eq!(imported, old);
+            }
+            if addition {
+                assert_eq!(
+                    after[&path_key(&root.join("concurrent"))].owner.as_deref(),
+                    Some("concurrent")
+                );
+            }
+            assert!(crate::atomic::import_complete(&target));
+            assert!(!legacy.exists());
+            assert!(legacy.with_extension("json.imported").is_file());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn imports_alpha6_on_first_write_and_preserves_all_fields() {
         let root = root();
         let legacy = metadata_file(&root).unwrap();
@@ -1091,7 +1163,7 @@ mod tests {
         }
         assert_eq!(
             fs::read_dir(records_dir(&root).unwrap()).unwrap().count(),
-            3
+            4
         );
     }
 

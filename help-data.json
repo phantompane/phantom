@@ -187,7 +187,7 @@
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
         "New worktrees are created under $XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash> (default ~/.local/share/maboroshi/worktrees/...). <checkout> is the canonical main checkout directory name, so a symlink uses the same directory. <hash> is the first 8 hex digits of the SHA-256 of the canonical Git common directory. A relative XDG_DATA_HOME is ignored. worktrees-directory overrides this and is joined to the repository root",
         "Owner, purpose, and links are stored in maboroshi/workspaces/<id>.json under the Git common directory. --owner overrides MABO_AGENT_ID. Omit both to leave the owner empty. where and exec refresh lastUsedAt",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "attach": {
@@ -296,7 +296,7 @@
         "--json writes the worktree object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
         "post-create hooks run only after the repository is trusted. The prompt, refusal, mabo trust, --no-hooks, and MABO_TRUST_ALL=1 behave the same as mabo create",
         "Owner, purpose, and links are stored in maboroshi/workspaces/<id>.json under the Git common directory. --owner overrides MABO_AGENT_ID. Omit both to leave the owner empty",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "list": {
@@ -365,7 +365,7 @@
         "Use --names for scripts and automation",
         "--json cannot be combined with --names. The JSON schema is documented in the README",
         "--owner filters by the recorded owner. Worktrees with no owner are omitted. The human list prints [owner] and the purpose when they are set",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "where": {
@@ -412,7 +412,7 @@
         "--json prints the worktree object instead of the bare path. The schema is documented in the README",
         "Orphaned names are refused because the worktree directory is gone",
         "where updates lastUsedAt when the worktree already has a metadata record",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "delete": {
@@ -499,7 +499,7 @@
         "pre-delete hooks run only after the repository is trusted. On a terminal, mabo asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, nonempty CI, --no-input or MABO_NO_INPUT being enabled, or --json fails before deleting. An empty value counts as unset. Run mabo trust --yes or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "delete removes a linked worktree inside the resolved worktrees directory, or one recorded in maboroshi/workspaces/<id>.json. An unrecorded worktree outside that directory is refused. Empty parent directories below the project directory are removed only when the worktree is inside the resolved directory. The project directory and its repository marker stay in place, including after the last worktree is deleted",
         "--json reports each deleted worktree, whether its branch was deleted, and per-item errors. The schema is documented in the README",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "gc": {
@@ -608,7 +608,7 @@
         "Live removals run [hooks] pre-delete from .mabo.toml and then the same deletion as mabo delete. A hook failure marks that worktree failed and continues. Failures exit 6 if any persistent removal occurred, including when metadata cleanup fails after removal; otherwise they exit 1",
         "gc never asks for trust. An untrusted repository with pre-delete hooks is skipped, and the detail is 'untrusted hooks'. --no-hooks removes those worktrees without running hooks. MABO_TRUST_ALL=1 trusts every repository for that process",
         "--json lists each candidate, why it matched, and the action taken. The schema is documented in the README",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "trust": {
@@ -662,7 +662,7 @@
         "The file is $XDG_STATE_HOME/maboroshi/trust.toml when XDG_STATE_HOME is an absolute path, otherwise ~/.local/state/maboroshi/trust.toml. Each entry has path and trustedAt",
         "mabo trust shows the post-create and pre-delete commands from the checkout you name, then asks 'Trust this project? [y/N]'. It does not ask when CI is nonempty, --no-input or MABO_NO_INPUT is enabled, or when stdin or stderr is not a terminal. Use --yes then. A repository with no hooks can still be trusted",
         "MABO_TRUST_ALL=1 treats every repository as trusted for that process and does not write trust.toml. Set it to the single character 1. This is for CI and containers",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "untrust": {
@@ -699,7 +699,7 @@
       "notes": [
         "Removes the git common directory from trust.toml. A repository that is not trusted is left unchanged and the command exits 0",
         "MABO_TRUST_ALL=1 is not stored, so untrust does not turn that environment variable off",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "exec": {
@@ -847,7 +847,7 @@
         "At least one of --owner, --purpose, --pr, or --issue is required",
         "Omitted fields keep their current values. A worktree with no record yet gets createdAt and lastUsedAt",
         "The worktree must already exist. A missing name exits 3",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
         "Workspace records use schema 2 and ws_<uuid v4> IDs. Each file is replaced atomically. Concurrent first registrations for the same path use the oldest createdAt, then the smallest ID; all fields come from that record. The next write removes extra files. The first write imports legacy worktrees.json and renames it to worktrees.json.imported; read-only commands can read the legacy file before import."
       ]
     },
@@ -1071,7 +1071,7 @@
         "After clone or fetch, mabo registers the project. Registration failure exits 6 (partial) if a checkout was created or fetched, retaining path, cloned, updated, and the other result fields in data; otherwise it exits 1. Retrying can register the existing checkout. New worktrees for that repository are created under $XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash> unless worktrees-directory is set.",
         "Authentication is left to Git. mabo does not call gh.",
         "Git progress is written to stderr. With --json, stdout is the schema 2 envelope; data contains: path, host, owner, repo, remoteUrl, cloned, and updated.",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "version": {
@@ -1150,7 +1150,7 @@
       "notes": [
         "When path is omitted, the current directory is used.",
         "Adding an already registered repository succeeds without creating a duplicate.",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
         "Project records live in $XDG_STATE_HOME/maboroshi/repos/<id>.json (default ~/.local/state/maboroshi/repos/<id>.json), with proj_<uuid> IDs. The first write imports legacy projects.json and renames it to projects.json.imported. Duplicate roots are read once, using the oldest createdAt."
       ]
     },
@@ -1191,7 +1191,7 @@
         "--json includes canonicalName: host/owner/repo from the origin URL, or from a checkout at <root>/<host>/<owner>/<repo>, or the directory name when neither is available.",
         "The clone root is the root preference, then the first git config ghq.root value, then $GHQ_ROOT, then ~/ghq.",
         "ghq is optional. Checkouts under the clone root are still discovered when it is not installed.",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
         "Project records live in $XDG_STATE_HOME/maboroshi/repos/<id>.json (default ~/.local/state/maboroshi/repos/<id>.json), with proj_<uuid> IDs. The first write imports legacy projects.json and renames it to projects.json.imported. Duplicate roots are read once, using the oldest createdAt."
       ]
     },
@@ -1221,7 +1221,7 @@
         "If a name matches multiple projects, the command exits 2; use an id or path instead. A missing project exits 3.",
         "This command never deletes the Git repository or its worktrees.",
         "A repository discovered through ghq remains visible after its registry record is removed.",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
         "Project records live in $XDG_STATE_HOME/maboroshi/repos/<id>.json (default ~/.local/state/maboroshi/repos/<id>.json), with proj_<uuid> IDs. The first write imports legacy projects.json and renames it to projects.json.imported. Duplicate roots are read once, using the oldest createdAt."
       ]
     },
@@ -1331,7 +1331,7 @@
         "  - GitHub CLI (gh) must be installed",
         "  - Must be authenticated with 'gh auth login'",
         "--json includes github.kind, github.number, and github.headRef. The schema is documented in the README",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "gh": {
@@ -1440,7 +1440,7 @@
         "  - GitHub CLI (gh) must be installed",
         "  - Must be authenticated with 'gh auth login'",
         "--json includes github.kind, github.number, and github.headRef. The schema is documented in the README",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "sync": {
@@ -1521,7 +1521,7 @@
       ],
       "notes": [
         "sync validates all metadata before fetching or updating. After any item changes, a failure, conflict, or published refusal exits 6. Without changes, failures exit 1, conflicts 5, and published refusals 4. Usage errors exit 2",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     }
   },

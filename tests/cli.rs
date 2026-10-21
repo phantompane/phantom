@@ -9836,6 +9836,9 @@ fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
         text(&created.stderr),
         "Branch 'feature/teammate' already exists as a remote-tracking branch (origin). Run `mabo attach feature/teammate`."
     );
+    let remote_json = repo.mabo(&["create", "feature/teammate", "--json"]);
+    assert_eq!(remote_json.status.code(), Some(4));
+    assert_eq!(json_value(&remote_json)["error"]["code"], "exists_remote");
     assert!(local_branch(&repo, "feature/teammate").is_empty());
 
     let attached = repo.mabo(&["attach", "feature/teammate"]);
@@ -9849,6 +9852,11 @@ fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
         .join("README.md")
         .is_file());
 
+    for command in ["create", "attach"] {
+        let exists_json = repo.mabo(&[command, "feature/teammate", "--json"]);
+        assert_eq!(exists_json.status.code(), Some(4));
+        assert_eq!(json_value(&exists_json)["error"]["code"], "exists");
+    }
     let again = repo.mabo(&["attach", "feature/teammate"]);
     assert_eq!(again.status.code(), Some(4));
     assert_eq!(
@@ -10890,4 +10898,80 @@ fn output_and_help_scan_respects_command_option_arity_and_child_boundaries() {
     assert_eq!(out.status.code(), Some(2));
     assert!(out.stdout.is_empty());
     assert!(text(&out.stderr).contains("looks like an option"));
+}
+
+#[test]
+fn json_dirty_refusal_keeps_its_specific_cause() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "dirty"]).status.success());
+    fs::write(managed(&repo, "dirty/local.txt"), "uncommitted").unwrap();
+    let refused = repo.mabo(&["delete", "dirty", "--json"]);
+    assert_eq!(refused.status.code(), Some(4));
+    assert_eq!(json_value(&refused)["error"]["code"], "dirty");
+    assert!(managed(&repo, "dirty").is_dir());
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn create_and_attach_setup_failures_report_text_and_json_without_duplicate_causes() {
+    for command in ["create", "attach"] {
+        for json in [false, true] {
+            for cause in ["metadata", "copyFiles", "postCreate", "exec"] {
+                let repo = Repo::new();
+                if command == "attach" {
+                    repo.git(&["branch", "topic"]);
+                }
+                if cause == "copyFiles" {
+                    std::os::unix::fs::symlink("elsewhere", repo.repo.join(".worktreeinclude"))
+                        .unwrap();
+                }
+                if cause == "postCreate" {
+                    fs::write(
+                        repo.repo.join(".mabo.toml"),
+                        "[hooks]\npost-create = [\"exit 23\"]\n",
+                    )
+                    .unwrap();
+                }
+                let mut args = vec![command, "topic"];
+                if json {
+                    args.push("--json");
+                }
+                if cause == "exec" {
+                    args.extend(["--exec", "exit 24"]);
+                }
+                let mut process = repo.command(env!("CARGO_BIN_EXE_mabo"), &args);
+                if cause == "metadata" {
+                    process.env("MABO_TEST_FAIL_METADATA_SAVE", "1");
+                }
+                let output = process.output().unwrap();
+                let stderr = text(&output.stderr);
+                assert_eq!(output.status.code(), Some(6), "{args:?}: {stderr}");
+                assert!(managed(&repo, "topic/README.md").is_file());
+                let diagnostic = match cause {
+                    "metadata" => "Warning: Failed to save worktree metadata: injected failure",
+                    "copyFiles" => "Warning: Failed to copy some files:",
+                    "postCreate" => "Warning: Post-create command",
+                    _ => "failed with exit code 24",
+                };
+                if json {
+                    let document = json_value(&output);
+                    assert_eq!(document["error"]["code"], "partial");
+                    assert_eq!(document["data"][cause]["ok"], false);
+                    if cause == "exec" {
+                        assert!(!stderr.contains(diagnostic), "{stderr}");
+                    } else {
+                        assert_eq!(stderr.matches(diagnostic).count(), 1, "{stderr}");
+                    }
+                } else {
+                    assert_eq!(stderr.matches(diagnostic).count(), 1, "{stderr}");
+                    let summary = if cause == "exec" {
+                        diagnostic
+                    } else {
+                        "Worktree created but setup did not complete"
+                    };
+                    assert_eq!(stderr.matches(summary).count(), 1, "{stderr}");
+                }
+            }
+        }
+    }
 }
