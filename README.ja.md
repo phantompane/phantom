@@ -194,7 +194,11 @@ mabo gc [--merged] [--closed-pr] [--orphaned] [--older-than D] [--apply] [--keep
 
 `remove` は全セレクタと安全条件を確認し、信頼済みの `pre-remove` を実行してからチェックアウトを消します。ブランチは base への merge・squash・rebase (exact tree-entry matching) の取り込み、または自身の upstream との完全一致を確認できれば削除します。base が未記録ならリポジトリの既定 base を確認します。未保存のブランチは `branch_kept_unpreserved` 警告と `branchKeptReason: "unpreserved"` を付けて保持します。`--keep-branch` は常に保持し、`--delete-unpreserved-branch` は未保存でも削除を許可します。
 
-変更済み・未追跡・ignored ファイルは `--discard-changes` がなければ終了コード 4（`dirty`）で保護します。未保存の detached コミットは `--delete-unpreserved-branch` がなければ 4（`unpreserved`）、primary は常に 4（`primary`）です。2つの許可は独立しています。`--dry-run` はフックを実行せず、ファイル・参照・レコードを変更せずに `plan:true` と `removed:false`、`wouldRemove`、`wouldDeleteBranch` を返します。
+Modified or staged tracked files (including submodule changes) and non-ignored untracked files require `--discard-changes` (otherwise exit 4 `dirty`). 未保存の detached コミットは `--delete-unpreserved-branch` がなければ 4（`unpreserved`）、primary は常に 4（`primary`）です。2つの許可は独立しています。`--dry-run` はフックを実行せず、ファイル・参照・レコードを変更せずに `plan:true` と `removed:false`、`wouldRemove`、`wouldDeleteBranch` を返します。
+
+For remove (including `--dry-run`) and gc (plan and `--apply`), dirty uses the same rule as list/show. Ignored files do not count as dirty and are deleted with the workspace without a warning or `--discard-changes`. Known limitation: nested Git repositories inside ignored directories (for example, `vendor/x/.git` under ignored `vendor/`) are also deleted with the workspace.
+
+Even when clean, workspaces with populated submodules or retained submodule data are refused during remove preflight (exit 4 `dirty`, including `--dry-run`) and skipped by gc (plan and `--apply`) with a `mabo remove NAME --discard-changes` hint; review the submodule contents, including unpushed commits, before using that permission.
 
 Remove keeps the schema 2 envelope; `data.items` contains `{workspace, removed, branchDeleted, branchKeptReason, detail, alreadyGone, error}`. A selector with neither a metadata record nor a matching Git worktree exits 3 `not_found`, including with `--dry-run`. Every selector is checked before any hooks or removal; one unknown target prevents all removal, and text output lists every unknown selector. Selectors accept names, `.`, `pr:N`, `issue:N`, PR/issue URLs, and absolute paths or paths starting with `./` or `../`.
 
