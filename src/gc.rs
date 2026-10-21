@@ -234,6 +234,7 @@ enum DirState {
 enum Dirty {
     Clean,
     Changed,
+    Submodules,
     Unknown,
     Absent,
 }
@@ -272,6 +273,7 @@ enum Hold {
     Locked,
     StatusUnknown,
     Dirty,
+    Submodules,
     Unpushed,
     PrUnavailable,
     Untrusted,
@@ -286,6 +288,7 @@ impl Hold {
             Self::PrUnavailable => "pr status unavailable",
             Self::StatusUnknown => "status unknown",
             Self::Dirty => "dirty",
+            Self::Submodules => git::SUBMODULE_REMOVAL_DETAIL,
             Self::Unpushed => "unpushed",
             Self::Untrusted => "untrusted hooks",
         }
@@ -418,6 +421,9 @@ fn hold(facts: &WorktreeFacts, _policy: &Policy) -> Option<Hold> {
     }
     if facts.dirty == Dirty::Changed {
         return Some(Hold::Dirty);
+    }
+    if facts.dirty == Dirty::Submodules {
+        return Some(Hold::Submodules);
     }
     if facts.unpushed != Some(false)
         && facts.registered
@@ -618,9 +624,13 @@ fn observe_listed(
     let dirty = match directory {
         DirState::Absent => Dirty::Absent,
         DirState::Unknown => Dirty::Unknown,
-        DirState::Present => match git::retirement_status_count(&path) {
-            Ok(0) => Dirty::Clean,
-            Ok(_) => Dirty::Changed,
+        DirState::Present => match git::has_removal_submodules(&path) {
+            Ok(true) => Dirty::Submodules,
+            Ok(false) => match git::status_count(&path) {
+                Ok(0) => Dirty::Clean,
+                Ok(_) => Dirty::Changed,
+                Err(_) => Dirty::Unknown,
+            },
             Err(_) => Dirty::Unknown,
         },
     };
@@ -879,6 +889,7 @@ fn hold_untrusted(verdict: Verdict) -> Verdict {
 fn hold_detail(context: &Context, hold: Hold, subject: &Subject) -> String {
     let (status, permission) = match hold {
         Hold::Dirty => ("dirty", "--discard-changes"),
+        Hold::Submodules => (git::SUBMODULE_REMOVAL_DETAIL, "--discard-changes"),
         Hold::Unpushed => ("unpreserved", "--delete-unpreserved-branch"),
         _ => return hold.detail().to_string(),
     };
@@ -1024,7 +1035,7 @@ fn apply_delete(
                         ..
                     } if current.path == subject.path => {
                         let code = match hold {
-                            Hold::Dirty => "dirty",
+                            Hold::Dirty | Hold::Submodules => "dirty",
                             Hold::Unpushed => "unpreserved",
                             Hold::Untrusted => "untrusted",
                             _ => "refused",

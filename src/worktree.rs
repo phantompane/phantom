@@ -760,8 +760,19 @@ fn preflight_remove_selected(
             branch_kept_reason: None,
         });
     }
-    let changed =
-        git::retirement_status_count(&path).map_err(|error| RemoveError::kept(error, &worktree))?;
+    if !force
+        && git::has_removal_submodules(&path)
+            .map_err(|error| RemoveError::kept(error, &worktree))?
+    {
+        return Err(RemoveError::kept(
+            Error::Status {
+                code: "dirty",
+                message: format!("Workspace '{label}': {}", git::SUBMODULE_REMOVAL_DETAIL),
+            },
+            &worktree,
+        ));
+    }
+    let changed = git::status_count(&path).map_err(|error| RemoveError::kept(error, &worktree))?;
     if changed > 0 && !force {
         return Err(RemoveError::kept(
             Error::Uncommitted {
