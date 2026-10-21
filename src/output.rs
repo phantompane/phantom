@@ -231,10 +231,19 @@ pub(crate) fn warning_once(code: &str, message: impl Into<String>) {
     }
 }
 
-pub(crate) fn finish(exit: i32) -> Result<()> {
+pub(crate) fn finish(mut exit: i32) -> Result<i32> {
+    // Finalize diagnostics before committing the JSON envelope and its status.
+    // Commands have finished mutating; only the envelope's own stdout write
+    // remains to be checked by the caller after this function returns.
+    if json() {
+        if let Err(error) = check_io() {
+            exit = error.exit_code();
+            failure(error.to_json(exit).error);
+        }
+    }
     OUTPUT.with_borrow_mut(|out| {
         if !out.json {
-            return Ok(());
+            return Ok(exit);
         }
         if exit != 0 && out.error.is_none() {
             out.error = Some(
@@ -255,7 +264,7 @@ pub(crate) fn finish(exit: i32) -> Result<()> {
         let text = serde_json::to_string_pretty(&document)
             .map_err(|error| Error::msg(error.to_string()))?;
         outln!("{text}");
-        Ok(())
+        Ok(exit)
     })
 }
 

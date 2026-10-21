@@ -263,6 +263,72 @@ fn broken_pipe_progress_does_not_interrupt_create_or_setup() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn json_stderr_errors_are_included_before_emitting_the_envelope() {
+    let repo = Repo::new();
+    let args = ["config", "list", "--json"];
+    let normal = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &args)
+        .env("GIT_CONFIG_COUNT", "broken")
+        .output()
+        .unwrap();
+    assert!(normal.status.success(), "{}", text(&normal.stderr));
+    assert!(!normal.stderr.is_empty());
+    let expected = assert_envelope(&normal, "config list");
+    assert!(!expected["warnings"].as_array().unwrap().is_empty());
+
+    let output = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &args)
+        .env("GIT_CONFIG_COUNT", "broken")
+        .stderr(fs::File::options().write(true).open("/dev/full").unwrap())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let document = assert_envelope(&output, "config list");
+    assert_eq!(document["ok"], false);
+    assert_eq!(document["error"]["code"], "failed");
+    assert!(document["error"]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("Failed to write stderr: "));
+    assert_eq!(document["data"], expected["data"]);
+    assert_eq!(document["warnings"], expected["warnings"]);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn json_stderr_errors_preserve_mutations_and_override_partial_status() {
+    for last_hook in ["true", "exit 7"] {
+        let repo = Repo::new();
+        fs::write(
+            repo.repo.join(".mabo.toml"),
+            format!("[hooks]\nsetup = [\"touch setup-completed\", \"{last_hook}\"]\n"),
+        )
+        .unwrap();
+        let output = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &["create", "topic", "--json"])
+            .stderr(fs::File::options().write(true).open("/dev/full").unwrap())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let document = assert_envelope(&output, "create");
+        assert_eq!(document["ok"], false);
+        assert_eq!(document["error"]["code"], "failed");
+        assert!(document["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Failed to write stderr: "));
+        let workspace = &document["data"]["workspace"];
+        let path = workspace["path"].as_str().unwrap();
+        assert!(Path::new(path).join("setup-completed").is_file());
+        assert_eq!(
+            workspace["setup"]["state"],
+            if last_hook == "true" { "ok" } else { "failed" }
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn output_errors_other_than_broken_pipe_fail_without_panicking() {
     let repo = Repo::new();
     for args in [vec!["help"], vec!["help", "--json"], vec!["--help"]] {

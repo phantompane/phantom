@@ -20,6 +20,8 @@ struct Command {
 
 pub fn run(args: &[String]) -> Result<i32> {
     let result = run_inner(args);
+    // JSON diagnostics are already reflected in finish()'s envelope and status.
+    // Check its stdout write here, or all command output in text mode.
     crate::output::check_io()?;
     result
 }
@@ -101,8 +103,7 @@ fn run_inner(args: &[String]) -> Result<i32> {
                 Ok(exit) => exit,
                 Err(error) => fail_with(&error, error.exit_code())?,
             };
-            crate::output::finish(exit)?;
-            Ok(exit)
+            crate::output::finish(exit)
         }
         None => unresolved_usage(
             args,
@@ -130,8 +131,7 @@ fn unresolved_usage(args: &[String], command: &str, message: &str) -> Result<i32
     if !crate::output::json() && !removed_interface {
         errln!("{}", help::main_help()?);
     }
-    crate::output::finish(exit)?;
-    Ok(exit)
+    crate::output::finish(exit)
 }
 
 fn find<'a>(args: &'a [String], commands: &'a [Command]) -> Option<(&'a Command, &'a [String])> {
