@@ -591,11 +591,26 @@ pub(crate) fn retirement_integrated(root: &Path, tip: &str, base: &str) -> bool 
     if retirement_changes_landed(root, tip, base) {
         return true;
     }
+    // Cherry omits merge commits, including their unique conflict resolutions.
+    // A complete squash above can prove those changes landed; otherwise keep
+    // any history with merges outside the base.
+    let range = format!("{base}..{tip}");
+    if !raw_git(root, &["rev-list", "--merges", &range])
+        .is_ok_and(|result| result.code == 0 && result.stdout.trim().is_empty())
+    {
+        return false;
+    }
     // Rebased commits can have different IDs while retaining every patch.
+    // Cherry ignores whitespace, so also require whitespace-preserving IDs.
     raw_git(root, &["cherry", base, tip]).is_ok_and(|result| {
         result.code == 0
             && !result.stdout.trim().is_empty()
             && result.stdout.lines().all(|line| line.starts_with("- "))
+            && retirement_history_patches(root, &range).is_some_and(|patches| {
+                !patches.is_empty()
+                    && retirement_history_patches(root, &format!("{tip}..{base}"))
+                        .is_some_and(|landed| patches.iter().all(|patch| landed.contains(patch)))
+            })
     })
 }
 
@@ -648,7 +663,7 @@ pub(crate) fn retirement_preserved(
 }
 
 // A squash is one base commit whose complete patch matches the branch diff.
-// Compare patch IDs using read-only commands: merge-tree --write-tree can also
+// Compare whitespace-preserving IDs using read-only commands: merge-tree --write-tree can also
 // refresh timestamps of existing objects even with an alternate object store.
 fn retirement_changes_landed(root: &Path, tip: &str, base: &str) -> bool {
     let Ok(ancestor) = raw_git(root, &["merge-base", base, tip]) else {
@@ -682,7 +697,11 @@ fn retirement_changes_landed(root: &Path, tip: &str, base: &str) -> bool {
         return false;
     };
     let range = format!("{ancestor}..{base}");
-    let Ok(history) = raw_git_bytes(
+    retirement_history_patches(root, &range).is_some_and(|ids| ids.contains(&patch))
+}
+
+fn retirement_history_patches(root: &Path, range: &str) -> Option<Vec<String>> {
+    let history = raw_git_bytes(
         root,
         &[
             "log",
@@ -691,18 +710,20 @@ fn retirement_changes_landed(root: &Path, tip: &str, base: &str) -> bool {
             "--no-color",
             "--no-renames",
             "--no-merges",
-            "--pretty=medium",
+            "--pretty=format:commit %H",
+            "--no-show-signature",
             "-p",
             "--binary",
             "--full-index",
-            &range,
+            range,
             "--",
         ],
-    ) else {
-        return false;
-    };
-    history.status.success()
-        && patch_ids(root, &history.stdout).is_some_and(|ids| ids.contains(&patch))
+    )
+    .ok()?;
+    if !history.status.success() {
+        return None;
+    }
+    patch_ids(root, &history.stdout)
 }
 
 fn patch_ids(root: &Path, diff: &[u8]) -> Option<Vec<String>> {
@@ -726,7 +747,7 @@ fn patch_ids(root: &Path, diff: &[u8]) -> Option<Vec<String>> {
     drop(file);
     let result = process::raw_with_stdin(
         "git",
-        &["patch-id", "--stable"],
+        &["patch-id", "--verbatim"],
         Some(root),
         &[],
         Some(&input.0),

@@ -7002,7 +7002,7 @@ fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
     assert!(document["data"]["items"][0]["detail"]
         .as_str()
         .unwrap()
-        .contains("mabo remove 'topic' --delete-unpreserved-branch"));
+        .contains(" remove 'topic' --delete-unpreserved-branch"));
     assert!(worktree_dir(&repo, "topic").is_dir());
 
     fs::create_dir_all(repo.home.join(".config/maboroshi")).expect("config dir");
@@ -17088,10 +17088,10 @@ fn retirement_gc_closed_pr_and_missing_gh_report_separate_skip_hints() {
         assert_eq!(item["reasons"], serde_json::json!(["pullRequest"]));
         let hint = item["detail"].as_str().unwrap();
         if item["workspace"]["name"] == "dirty-pr" {
-            assert!(hint.contains("mabo remove 'dirty-pr' --discard-changes"));
+            assert!(hint.contains(" remove 'dirty-pr' --discard-changes"));
             assert!(!hint.contains("--delete-unpreserved-branch"));
         } else {
-            assert!(hint.contains("mabo remove 'unpreserved-pr' --delete-unpreserved-branch"));
+            assert!(hint.contains(" remove 'unpreserved-pr' --delete-unpreserved-branch"));
             assert!(!hint.contains("--discard-changes"));
         }
     }
@@ -17200,7 +17200,7 @@ fn retirement_gc_skips_dirty_content_created_by_pre_remove_hook() {
     assert!(doc["data"]["items"][0]["detail"]
         .as_str()
         .unwrap()
-        .contains("mabo remove 'hook-dirty' --discard-changes"));
+        .contains(" remove 'hook-dirty' --discard-changes"));
     assert_eq!(
         fs::read_to_string(managed(&repo, "hook-dirty/dirty")).unwrap(),
         "precious"
@@ -17254,4 +17254,304 @@ fn retirement_removed_flags_take_precedence_over_help() {
             }
         }
     }
+}
+
+#[test]
+fn retirement_review_keeps_unique_merge_conflict_resolution() {
+    let repo = Repo::new();
+    fs::write(repo.repo.join("conflict.txt"), "initial\n").unwrap();
+    repo.git(&["add", "."]);
+    repo.git(&["commit", "-m", "common conflict file"]);
+    repo.git(&["branch", "side"]);
+    assert!(repo
+        .mabo(&["create", "merge", "--no-setup"])
+        .status
+        .success());
+    commit_file(&repo, "merge", "conflict.txt", "left\n");
+    repo.git(&["checkout", "side"]);
+    fs::write(repo.repo.join("conflict.txt"), "right\n").unwrap();
+    repo.git(&["commit", "-am", "right"]);
+    repo.git(&["checkout", "main"]);
+    let path = managed(&repo, "merge");
+    let conflict = repo
+        .command("git", &["merge", "side"])
+        .current_dir(&path)
+        .output()
+        .unwrap();
+    assert!(!conflict.status.success());
+    fs::write(path.join("conflict.txt"), "unique resolution\n").unwrap();
+    git_at(&repo, &path, &["add", "."]);
+    git_at(&repo, &path, &["commit", "-m", "unique resolution"]);
+    empty_commit(&repo, &repo.repo, "base divergence");
+    repo.git(&["cherry-pick", "merge^1"]);
+    repo.git(&["revert", "--no-edit", "HEAD"]);
+    repo.git(&["cherry-pick", "side"]);
+    let cherry = repo
+        .command("git", &["cherry", "main", "merge"])
+        .output()
+        .unwrap();
+    assert!(cherry.status.success());
+    assert_eq!(text(&cherry.stdout).lines().count(), 2);
+    assert!(text(&cherry.stdout)
+        .lines()
+        .all(|line| line.starts_with("- ")));
+    let gc = repo.mabo(&["gc", "--merged", "--apply", "--json"]);
+    assert!(gc.status.success(), "{}", text(&gc.stdout));
+    assert!(path.exists(), "{}", text(&gc.stdout));
+    let removed = repo.mabo(&["remove", "merge", "--json"]);
+    assert!(removed.status.success());
+    assert_eq!(
+        json_value(&removed)["data"]["items"][0]["branchKeptReason"],
+        "unpreserved"
+    );
+    assert!(branch_listed(&repo, "merge"));
+}
+
+#[test]
+fn retirement_review_keeps_meaningful_whitespace_in_squash() {
+    assert_retirement_preserves_whitespace(false);
+}
+
+#[test]
+fn retirement_review_keeps_meaningful_whitespace_in_cherry() {
+    assert_retirement_preserves_whitespace(true);
+}
+
+fn assert_retirement_preserves_whitespace(cherry_only: bool) {
+    let repo = Repo::new();
+    assert!(repo
+        .mabo(&["create", "whitespace", "--no-setup"])
+        .status
+        .success());
+    commit_file(
+        &repo,
+        "whitespace",
+        "task.py",
+        "if ready:\n    task_a()\n    task_b()\n",
+    );
+    if cherry_only {
+        commit_file(&repo, "whitespace", "extra.txt", "same patch\n");
+    }
+    fs::write(
+        repo.repo.join("task.py"),
+        "if ready:\n    task_a()\ntask_b()\n",
+    )
+    .unwrap();
+    repo.git(&["add", "."]);
+    repo.git(&["commit", "-m", "different semantics"]);
+    if cherry_only {
+        repo.git(&["cherry-pick", "whitespace"]);
+    }
+    let gc = repo.mabo(&["gc", "--merged", "--apply", "--json"]);
+    assert!(gc.status.success(), "{}", text(&gc.stdout));
+    assert!(
+        managed(&repo, "whitespace").exists(),
+        "cherry_only={cherry_only}: {}",
+        text(&gc.stdout)
+    );
+    let removed = repo.mabo(&["remove", "whitespace", "--json"]);
+    assert!(removed.status.success());
+    assert_eq!(
+        json_value(&removed)["data"]["items"][0]["branchKeptReason"],
+        "unpreserved"
+    );
+    assert!(branch_listed(&repo, "whitespace"));
+}
+
+#[test]
+fn retirement_review_remove_keeps_missing_detached_registration_and_head() {
+    assert_retirement_keeps_missing_detached("remove");
+}
+
+#[test]
+fn retirement_review_gc_keeps_missing_detached_registration_and_head() {
+    assert_retirement_keeps_missing_detached("gc");
+}
+
+fn assert_retirement_keeps_missing_detached(command: &str) {
+    let repo = Repo::new();
+    assert!(repo
+        .mabo(&["create", "detached", "--detach", "--no-setup"])
+        .status
+        .success());
+    let path = managed(&repo, "detached");
+    fs::write(path.join("precious.txt"), "unpreserved\n").unwrap();
+    git_at(&repo, &path, &["add", "."]);
+    git_at(&repo, &path, &["commit", "-m", "unpreserved detached work"]);
+    let admin = repo
+        .command("git", &["rev-parse", "--absolute-git-dir"])
+        .current_dir(&path)
+        .output()
+        .unwrap();
+    let admin = PathBuf::from(text(&admin.stdout));
+    let head = fs::read(admin.join("HEAD")).unwrap();
+    let reflog = fs::read(admin.join("logs/HEAD")).unwrap();
+    let record_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let records_before = records::read(&record_dir).unwrap();
+    fs::remove_dir_all(&path).unwrap();
+    if command == "remove" {
+        for dry_run in [true, false] {
+            let mut args = vec!["remove", "detached", "--json"];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let out = repo.mabo(&args);
+            assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
+            assert_eq!(json_value(&out)["error"]["code"], "unpreserved");
+        }
+    } else {
+        for apply in [false, true] {
+            let mut args = vec!["gc", "--orphaned", "--json"];
+            if apply {
+                args.push("--apply");
+            }
+            let out = repo.mabo(&args);
+            assert!(out.status.success(), "{}", text(&out.stdout));
+            assert_eq!(json_value(&out)["data"]["items"][0]["action"], "skipped");
+            assert!(json_value(&out)["data"]["items"][0]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("--delete-unpreserved-branch"));
+        }
+    }
+    assert_eq!(fs::read(admin.join("HEAD")).unwrap(), head);
+    assert_eq!(fs::read(admin.join("logs/HEAD")).unwrap(), reflog);
+    assert_eq!(records::read(&record_dir).unwrap(), records_before);
+    let permitted = repo.mabo(&[
+        "remove",
+        "detached",
+        "--delete-unpreserved-branch",
+        "--json",
+    ]);
+    assert!(permitted.status.success(), "{}", text(&permitted.stdout));
+    assert!(!admin.exists());
+}
+
+fn retirement_review_gc_hint(out: &std::process::Output, json: bool) -> String {
+    assert!(
+        out.status.success(),
+        "{} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    let detail = if json {
+        json_value(out)["data"]["items"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    } else {
+        text(&out.stdout)
+    };
+    detail
+        .split_once("; use ")
+        .expect("targeted hint")
+        .1
+        .lines()
+        .next()
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
+#[test]
+fn retirement_review_gc_hint_pins_selected_repository() {
+    for json in [false, true] {
+        let mut repo = Repo::new();
+        let renamed = repo.root.join("primary's $repo `literal` with spaces");
+        fs::rename(&repo.repo, &renamed).unwrap();
+        repo.repo = renamed;
+        let other = Repo::new();
+        for root in [&repo.repo, &other.repo] {
+            let created =
+                repo.mabo(&["-R", root.to_str().unwrap(), "create", "same", "--no-setup"]);
+            assert!(created.status.success(), "{}", text(&created.stderr));
+        }
+        land_branch(&repo, "same");
+        fs::write(managed(&repo, "same/dirty"), "target\n").unwrap();
+        let decoy = managed_directory(&other.repo, &repo.root.join("xdg")).join("same");
+        fs::write(decoy.join("dirty"), "keep decoy\n").unwrap();
+        let mut args = vec![
+            "-R",
+            repo.repo.to_str().unwrap(),
+            "gc",
+            "--merged",
+            "--apply",
+        ];
+        if json {
+            args.push("--json");
+        }
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .current_dir(&other.repo)
+            .output()
+            .unwrap();
+        let hint = retirement_review_gc_hint(&out, json);
+        assert!(hint.contains("--discard-changes"), "{hint}");
+        assert!(!hint.contains("--delete-unpreserved-branch"), "{hint}");
+        let removed = run_setup_retry_hint(&repo, &other.repo, &hint);
+        assert!(
+            removed.status.success(),
+            "{hint}: {} {}",
+            text(&removed.stdout),
+            text(&removed.stderr)
+        );
+        assert!(!managed(&repo, "same").exists(), "{hint}");
+        assert_eq!(
+            fs::read_to_string(decoy.join("dirty")).unwrap(),
+            "keep decoy\n"
+        );
+    }
+}
+
+#[test]
+fn retirement_review_gc_hint_resolves_git_only_name() {
+    for json in [false, true] {
+        let repo = Repo::new();
+        let path = managed(&repo, "topic+fix");
+        repo.git(&[
+            "worktree",
+            "add",
+            "-b",
+            "topic+fix",
+            path.to_str().unwrap(),
+            "HEAD",
+        ]);
+        let adopted = repo.mabo(&["adopt", path.to_str().unwrap()]);
+        assert!(adopted.status.success(), "{}", text(&adopted.stderr));
+        land_branch(&repo, "topic+fix");
+        fs::write(path.join("dirty"), "target\n").unwrap();
+        let mut args = vec!["gc", "--merged", "--apply"];
+        if json {
+            args.push("--json");
+        }
+        let hint = retirement_review_gc_hint(&repo.mabo(&args), json);
+        let removed = run_setup_retry_hint(&repo, &repo.repo, &hint);
+        assert!(
+            removed.status.success(),
+            "{hint}: {} {}",
+            text(&removed.stdout),
+            text(&removed.stderr)
+        );
+        assert!(!path.exists());
+    }
+}
+
+#[test]
+fn retirement_review_already_gone_is_visible_in_text_only() {
+    let repo = Repo::new();
+    for args in [
+        vec!["remove", "missing"],
+        vec!["remove", "missing", "--dry-run"],
+    ] {
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(text(&out.stdout), "Workspace 'missing' is already gone");
+        assert!(out.stderr.is_empty());
+    }
+    let json = repo.mabo(&["remove", "missing", "--json"]);
+    assert_eq!(json.status.code(), Some(0));
+    let item = &json_value(&json)["data"]["items"][0];
+    assert_eq!(item["alreadyGone"], true);
+    assert_eq!(item["removed"], false);
+    assert!(item["error"].is_null());
 }

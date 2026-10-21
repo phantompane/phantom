@@ -738,6 +738,7 @@ fn preflight_remove_selected(
         ));
     }
     if worktree.orphaned {
+        check_detached_preserved(context, &worktree, options, label)?;
         return Ok(RemovePlan {
             name: name.to_string(),
             selector: selector.clone(),
@@ -760,12 +761,7 @@ fn preflight_remove_selected(
         ));
     }
     let preserved = preserved(context, &worktree);
-    if worktree.detached && !preserved && !options.delete_unpreserved_branch {
-        return Err(RemoveError::kept(
-            Error::Status { code: "unpreserved", message: format!(
-                "Workspace '{label}' has unpreserved detached commits. Use --delete-unpreserved-branch to remove it."
-            ) }, &worktree));
-    }
+    check_detached_preserved(context, &worktree, options, label)?;
     let branch_kept_reason = if worktree.detached {
         None
     } else if options.keep_branch {
@@ -784,6 +780,21 @@ fn preflight_remove_selected(
         changed,
         branch_kept_reason,
     })
+}
+
+fn check_detached_preserved(
+    context: &Context,
+    worktree: &WorktreeInfo,
+    options: &RemoveOptions,
+    label: &str,
+) -> std::result::Result<(), RemoveError> {
+    if worktree.detached && !options.delete_unpreserved_branch && !preserved(context, worktree) {
+        return Err(RemoveError::kept(
+            Error::Status { code: "unpreserved", message: format!(
+                "Workspace '{label}' has unpreserved detached commits. Use --delete-unpreserved-branch to remove it."
+            ) }, worktree));
+    }
+    Ok(())
 }
 
 pub fn commit_remove(
@@ -852,6 +863,9 @@ pub(crate) fn commit_remove_checked(
             ));
         }
         if registered.is_some() {
+            // Losing a directory does not preserve the registered detached HEAD.
+            // Recheck immediately before removing its last Git registration.
+            check_detached_preserved(context, &worktree, options, &name)?;
             git::remove_worktree(&context.git_root, &path, true)
                 .map_err(|error| RemoveError::kept(error, &worktree))?;
         }

@@ -195,7 +195,7 @@ pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Repo
         let mut entry = if request.apply {
             apply_verdict(context, request, logger, verdict)
         } else {
-            preview(verdict)
+            preview(context, verdict)
         };
         entry.workspace = workspaces
             .iter()
@@ -416,7 +416,10 @@ fn hold(facts: &WorktreeFacts, _policy: &Policy) -> Option<Hold> {
     if facts.dirty == Dirty::Changed {
         return Some(Hold::Dirty);
     }
-    if facts.unpushed != Some(false) && facts.registered && facts.directory == DirState::Present {
+    if facts.unpushed != Some(false)
+        && facts.registered
+        && (facts.directory == DirState::Present || facts.subject.branch.is_none())
+    {
         return Some(Hold::Unpushed);
     }
     None
@@ -855,18 +858,28 @@ fn hold_untrusted(verdict: Verdict) -> Verdict {
     }
 }
 
-fn hold_detail(hold: Hold, name: &str) -> String {
-    let quoted = crate::allocation::shell_quote(std::ffi::OsStr::new(name));
-    match hold {
-        Hold::Dirty => format!("dirty; use mabo remove {quoted} --discard-changes"),
-        Hold::Unpushed => {
-            format!("unpreserved; use mabo remove {quoted} --delete-unpreserved-branch")
-        }
-        _ => hold.detail().to_string(),
-    }
+fn hold_detail(context: &Context, hold: Hold, subject: &Subject) -> String {
+    let (status, permission) = match hold {
+        Hold::Dirty => ("dirty", "--discard-changes"),
+        Hold::Unpushed => ("unpreserved", "--delete-unpreserved-branch"),
+        _ => return hold.detail().to_string(),
+    };
+    let root = crate::allocation::shell_quote(context.git_root.as_os_str());
+    // Names observed in Git need not be legal or unique user selectors.
+    let resolves = crate::selectors::Selector::parse(&subject.name)
+        .and_then(|selector| selector.resolve_including_orphaned(context, false, None))
+        .is_ok_and(|tree| paths::same_location(Path::new(&tree.path), &subject.path));
+    let command = if resolves {
+        let name = crate::allocation::shell_quote(std::ffi::OsStr::new(&subject.name));
+        format!("mabo -R {root} remove {name} {permission}")
+    } else {
+        let path = crate::allocation::shell_quote(subject.path.as_os_str());
+        format!("(cd {path} && mabo -R {root} remove . {permission})")
+    };
+    format!("{status}; use {command}")
 }
 
-fn preview(verdict: Verdict) -> CandidateEntry {
+fn preview(context: &Context, verdict: Verdict) -> CandidateEntry {
     match verdict {
         Verdict::Remove(removal) => entry_from_removal(&removal, Action::WouldRemove, None, None),
         Verdict::Skip {
@@ -876,10 +889,10 @@ fn preview(verdict: Verdict) -> CandidateEntry {
         } => CandidateEntry {
             name: subject.name.clone(),
             path: subject.path.display().to_string(),
-            branch: subject.branch,
+            branch: subject.branch.clone(),
             reasons,
             action: Action::Skipped,
-            detail: Some(hold_detail(hold, &subject.name)),
+            detail: Some(hold_detail(context, hold, &subject)),
             branch_deleted: None,
             workspace: serde_json::Value::Null,
             changed: false,
@@ -901,10 +914,10 @@ fn apply_verdict(
         } => CandidateEntry {
             name: subject.name.clone(),
             path: subject.path.display().to_string(),
-            branch: subject.branch,
+            branch: subject.branch.clone(),
             reasons,
             action: Action::Skipped,
-            detail: Some(hold_detail(hold, &subject.name)),
+            detail: Some(hold_detail(context, hold, &subject)),
             branch_deleted: None,
             workspace: serde_json::Value::Null,
             changed: false,
@@ -943,7 +956,7 @@ fn apply_delete(
         Some(&subject.path),
     ) {
         Ok(plan) => plan,
-        Err(error) => return removal_failure(subject, reasons, error.error),
+        Err(error) => return removal_failure(context, subject, reasons, error.error),
     };
     match worktree::commit_remove_checked(
         context,
@@ -975,7 +988,7 @@ fn apply_delete(
                         };
                         return Err(Error::Status {
                             code,
-                            message: hold_detail(hold, &subject.name),
+                            message: hold_detail(context, hold, &subject),
                         });
                     }
                     _ => {}
@@ -1005,11 +1018,16 @@ fn apply_delete(
                 changed: true,
             }
         }
-        Err(error) => removal_failure(subject, reasons, error.error),
+        Err(error) => removal_failure(context, subject, reasons, error.error),
     }
 }
 
-fn removal_failure(subject: Subject, reasons: Vec<Reason>, error: Error) -> CandidateEntry {
+fn removal_failure(
+    context: &Context,
+    subject: Subject,
+    reasons: Vec<Reason>,
+    error: Error,
+) -> CandidateEntry {
     let hold = match error.json_code(error.exit_code()) {
         "dirty" => Some(Hold::Dirty),
         "unpreserved" => Some(Hold::Unpushed),
@@ -1017,11 +1035,14 @@ fn removal_failure(subject: Subject, reasons: Vec<Reason>, error: Error) -> Cand
         _ => None,
     };
     if let Some(hold) = hold {
-        return preview(Verdict::Skip {
-            subject,
-            reasons,
-            hold,
-        });
+        return preview(
+            context,
+            Verdict::Skip {
+                subject,
+                reasons,
+                hold,
+            },
+        );
     }
     failed(subject, reasons, error.to_string())
 }

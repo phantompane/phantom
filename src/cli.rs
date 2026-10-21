@@ -710,9 +710,22 @@ fn remove(args: &[String]) -> Result<i32> {
         emit_json(&serde_json::json!({"items": items, "plan": dry_run}))?;
         return fail_with(&error, error.exit_code());
     }
+    if !json {
+        for item in &items {
+            if item["alreadyGone"] == true && item.get("wouldRemove").is_none() {
+                outln!(
+                    "Workspace '{}' is already gone",
+                    visible_text(item["workspace"]["name"].as_str().unwrap_or("workspace"))
+                );
+            }
+        }
+    }
     if dry_run {
         if !json {
             for item in &items {
+                if item["alreadyGone"] == true && item.get("wouldRemove").is_none() {
+                    continue;
+                }
                 outln!(
                     "would remove {}{}",
                     visible_text(item["workspace"]["name"].as_str().unwrap_or("workspace")),
