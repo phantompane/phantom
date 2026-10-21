@@ -2,6 +2,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
+mod fetch;
+
 use serde::Serialize;
 
 use crate::context::Context;
@@ -460,51 +462,6 @@ fn remote_for(base: &str, specs: &[FetchRefspec]) -> Option<String> {
     source_for(base, specs).map(|(remote, _)| remote)
 }
 
-fn fetch_destination_allowed(destination: &str, dry_run: bool) -> bool {
-    let prefix = destination.split('*').next().unwrap_or(destination);
-    // Broad patterns such as refs/* can write local branches too. Fetch
-    // must not bypass sync's ff-only/published guards, even during execution.
-    let writes_heads = prefix.starts_with("refs/heads/") || "refs/heads/".starts_with(prefix);
-    let tracking_namespace =
-        destination.starts_with("refs/remotes/") || destination.starts_with("refs/tags/");
-    destination.starts_with("refs/") && !writes_heads && (!dry_run || tracking_namespace)
-}
-
-fn check_fetch_destinations(
-    root: &Path,
-    specs: &[FetchRefspec],
-    involved: &BTreeSet<String>,
-    dry_run: bool,
-) -> Result<()> {
-    if involved.is_empty() {
-        return Ok(());
-    }
-    let symbols = checked_output(
-        &["for-each-ref", "--format=%(refname)%09%(symref)"],
-        root,
-        true,
-    )?;
-    for spec in specs.iter().filter(|spec| involved.contains(&spec.remote)) {
-        let destination = spec.destination.as_str();
-        // A tracking ref may itself point at a local branch. Refuse matching
-        // unsafe symrefs rather than letting fetch dereference them on update.
-        let mut writes_symbol = false;
-        for (name, target) in symbols.lines().filter_map(|line| line.split_once('\t')) {
-            if !target.is_empty() && map_ref(name, destination, &spec.source).is_some() {
-                let resolved = checked_output(&["symbolic-ref", name], root, true)?;
-                writes_symbol |= !fetch_destination_allowed(&resolved, dry_run);
-            }
-        }
-        if !fetch_destination_allowed(destination, dry_run) || writes_symbol {
-            return Err(Error::status(crate::error::REFUSED, format!(
-                "Unsafe remote.{}.fetch destination '{destination}'; sync refuses local-branch updates through fetch (including symbolic refs), and --dry-run requires destinations under refs/remotes/ or refs/tags/. Configure safe tracking destinations before retrying",
-                spec.remote
-            )));
-        }
-    }
-    Ok(())
-}
-
 // Flattening a merge drops its resolution and any changes made only in that
 // commit. Compare trees without checking out either parent or touching the index.
 fn unsafe_merge(path: &Path, base: &str) -> Result<Option<String>> {
@@ -640,41 +597,10 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             involved.insert(remote);
         }
     }
-    // Check every involved remote before any fetch or integration can mutate
-    // refs. Custom tracking namespaces remain supported during execution.
     let mut fetch_errors = BTreeMap::new();
-    if let Err(error) =
-        check_fetch_destinations(&context.git_root, &remotes, &involved, request.dry_run)
-    {
-        if error.exit_code() == crate::error::REFUSED {
-            return Err(error);
-        }
-        // Preserve per-item operational errors, but fetch nothing when the
-        // safety query fails: no destination has been proved safe to update.
-        for remote in &involved {
-            fetch_errors.insert(remote.clone(), error.to_string());
-        }
-    }
     for remote in involved {
-        if fetch_errors.contains_key(&remote) {
-            continue;
-        }
-        let fetched = git::raw_git(
-            &context.git_root,
-            &[
-                "-c",
-                "core.hooksPath=/dev/null",
-                "fetch",
-                "--prune",
-                "--",
-                &remote,
-            ],
-        )?;
-        if fetched.code != 0 {
-            fetch_errors.insert(
-                remote.clone(),
-                format!("Fetch {remote} failed: {}", fetched.stderr.trim()),
-            );
+        if let Err(error) = fetch::fetch(&context.git_root, &remote) {
+            fetch_errors.insert(remote, error.to_string());
         }
     }
     let mut report = Report {
@@ -764,6 +690,16 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
                 item
             }
         };
+        if request.dry_run && item.status == "updated" {
+            if let (Some(branch), Some(after)) = (&item.branch, &item.after) {
+                let reference = if branch.starts_with("refs/heads/") {
+                    branch.clone()
+                } else {
+                    format!("refs/heads/{branch}")
+                };
+                planned_refs.insert(reference, after.clone());
+            }
+        }
         report.worktrees.push(item);
     }
     for item in report.default.iter_mut().chain(&mut report.worktrees) {
@@ -1265,6 +1201,7 @@ fn sync_tree(
     let mut unpublished_args = vec!["rev-list", "HEAD", "--not", base, "--remotes"];
     unpublished_args.extend(
         refs.lines()
+            .filter(|reference| !reference.starts_with("refs/heads/"))
             .filter(|reference| source_for(reference, &specs).is_some()),
     );
     unpublished_args.push("--");

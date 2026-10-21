@@ -217,6 +217,8 @@ mabo config list --sources
 
 関係する remote はそれぞれ一度だけ fetch します。`--dry-run` も fetch しますが checkout、index、ローカルブランチ、ワークスペース記録は変更せず `plan:true` を返します。将来の merge/rebase コミット ID は不明なので `after:null` です。push、upstream の変更、hooks の実行はしません。
 
+Execution and dry runs fetch through an isolated temporary bare repository sharing the original object store. Git applies negative refspecs, configured pruning, automatic tags and `followRemoteHEAD`. Tracking refs, including custom namespaces, are copied back without dereferencing symbolic refs; `refs/heads/` destinations are ignored, including mirror mappings. Fetch cannot update or create local branches. Plans use known tips from primary and earlier selected workspaces for later local bases.
+
 戦略はフラグ `--auto`/`--rebase`/`--merge`、ユーザー設定 `sync.strategy`、既定の auto の順です。auto は未公開コミットを rebase、公開済みコミットを merge します。公開済みコミットを rebase する場合は終了コード 4 `published` で拒否し、`--rewrite-published` を案内します。フラグかユーザー設定 `sync.rewrite-published=true` で許可できます。許可は戦略を変更しないため、auto は引き続き公開済み履歴を merge します。設定値は auto|rebase|merge と true|false、不正値は終了コード 2。個人の方針はユーザー config.toml の `[sync]` に置き、リポジトリの `.mabo.toml` には置けません。
 
 各 item は `strategySource`（flag/config/default）、`rewriteAllowed`、`rewriteSource`（flag/config/null）を別々に返します。実際に書き換えると `rewrotePublished:true` と対象名付きの `published_rewritten` warning（“updating the existing remote branch may require a force push”）を返します。dry-run では実際の書き換えは報告しません。
