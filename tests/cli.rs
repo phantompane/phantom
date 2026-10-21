@@ -19529,7 +19529,6 @@ fn retirement_remove_retry_keeps_a_branch_changed_after_partial_removal() {
 
 #[test]
 fn retirement_remove_retry_finishes_metadata_failure_after_checkout_is_gone() {
-    use std::os::unix::fs::PermissionsExt;
     for (json, recorded, orphaned) in [
         (false, true, false),
         (true, true, false),
@@ -19540,28 +19539,77 @@ fn retirement_remove_retry_finishes_metadata_failure_after_checkout_is_gone() {
         (false, false, true),
         (true, false, true),
     ] {
-        let repo = Repo::new();
-        for name in ["metadata-failure", "last"] {
-            assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+        assert_remove_metadata_failure_retry(json, recorded, orphaned, None);
+    }
+}
+
+#[test]
+fn retirement_remove_review_retry_retains_recorded_symlink_path_after_metadata_failure() {
+    for json in [false, true] {
+        for kind in ["workspace-root", "XDG_DATA_HOME"] {
+            assert_remove_metadata_failure_retry(json, true, false, Some(kind));
         }
-        if !recorded {
-            assert!(repo.mabo(&["forget", "metadata-failure"]).status.success());
+    }
+}
+
+fn assert_remove_metadata_failure_retry(
+    json: bool,
+    recorded: bool,
+    orphaned: bool,
+    symlink_root: Option<&str>,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    let workspace_root = if let Some(kind) = symlink_root {
+        let real = repo.root.join("real-workspaces");
+        let via = repo.root.join(if kind == "XDG_DATA_HOME" {
+            "xdg"
+        } else {
+            "via-workspaces"
+        });
+        fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, &via).unwrap();
+        if kind == "workspace-root" {
+            assert!(repo
+                .mabo(&["config", "set", "workspace-root", via.to_str().unwrap()])
+                .status
+                .success());
+            via
+        } else {
+            managed_root(&repo)
         }
-        if orphaned {
-            fs::remove_dir_all(managed(&repo, "metadata-failure")).unwrap();
-        }
-        let real_git = repo
-            .command("sh", &["-c", "command -v git"])
-            .output()
+    } else {
+        managed_root(&repo)
+    };
+    for name in ["metadata-failure", "last"] {
+        assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+    }
+    if symlink_root.is_some() {
+        let canonical = fs::canonicalize(workspace_root.join("metadata-failure")).unwrap();
+        let stored = maboroshi::metadata::matching_path(&repo.repo, &canonical)
+            .unwrap()
             .unwrap();
-        let bin = repo.root.join("bin");
-        fs::create_dir(&bin).unwrap();
-        let wrapper = bin.join("git");
-        // Real Git removal succeeds, then a filesystem obstruction makes the
-        // metadata write fail. Restore it before executing the supplied hint.
-        fs::write(
-            &wrapper,
-            r#"#!/bin/sh
+        assert_eq!(Path::new(&stored), workspace_root.join("metadata-failure"));
+        assert_ne!(Path::new(&stored), canonical);
+    }
+    if !recorded {
+        assert!(repo.mabo(&["forget", "metadata-failure"]).status.success());
+    }
+    if orphaned {
+        fs::remove_dir_all(workspace_root.join("metadata-failure")).unwrap();
+    }
+    let real_git = repo
+        .command("sh", &["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let bin = repo.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let wrapper = bin.join("git");
+    // Real Git removal succeeds, then a filesystem obstruction makes the
+    // metadata write fail. Restore it before executing the supplied hint.
+    fs::write(
+        &wrapper,
+        r#"#!/bin/sh
 case " $* " in
   *" worktree remove "*)
     "$REAL_GIT" "$@" || exit $?
@@ -19571,56 +19619,55 @@ case " $* " in
   *) exec "$REAL_GIT" "$@" ;;
 esac
 "#,
-        )
-        .unwrap();
-        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
-        let metadata_dir = repo.repo.join(".git/maboroshi/workspaces");
-        let mut args = vec!["remove", "metadata-failure", "last", "--no-hooks"];
-        if json {
-            args.push("--json");
-        }
-        let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
-            .env(
-                "PATH",
-                format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
-            )
-            .env("REAL_GIT", text(&real_git.stdout))
-            .env("METADATA_DIR", &metadata_dir)
-            .output()
-            .unwrap();
-        assert_eq!(
-            out.status.code(),
-            Some(6),
-            "{} {}",
-            text(&out.stdout),
-            text(&out.stderr)
-        );
-        assert!(!managed(&repo, "metadata-failure").exists());
-        let hint = setup_retry_hint(&out, json);
-        assert_eq!(
-            hint.contains(&format!(
-                "'{}'",
-                managed(&repo, "metadata-failure").display()
-            )),
-            recorded,
-            "{hint}"
-        );
-        fs::remove_file(&metadata_dir).unwrap();
-        fs::rename(metadata_dir.with_extension("saved"), &metadata_dir).unwrap();
-        let out = run_setup_retry_hint(&repo, &repo.home, &hint);
-        assert_eq!(
-            out.status.code(),
-            Some(0),
-            "{hint}: {} {}",
-            text(&out.stdout),
-            text(&out.stderr)
-        );
-        assert!(!managed(&repo, "last").exists());
-        let records: serde_json::Value =
-            serde_json::from_slice(&records::read(metadata_dir).unwrap()).unwrap();
-        assert_eq!(records["worktrees"], serde_json::json!([]));
+    )
+    .unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+    let metadata_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let mut args = vec!["remove", "metadata-failure", "last", "--no-hooks"];
+    if json {
+        args.push("--json");
     }
+    let out = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &args)
+        .env(
+            "PATH",
+            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+        )
+        .env("REAL_GIT", text(&real_git.stdout))
+        .env("METADATA_DIR", &metadata_dir)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(6),
+        "{} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert!(!workspace_root.join("metadata-failure").exists());
+    let hint = setup_retry_hint(&out, json);
+    assert_eq!(
+        hint.contains(&format!(
+            "'{}'",
+            workspace_root.join("metadata-failure").display()
+        )),
+        recorded,
+        "{hint}"
+    );
+    fs::remove_file(&metadata_dir).unwrap();
+    fs::rename(metadata_dir.with_extension("saved"), &metadata_dir).unwrap();
+    let out = run_setup_retry_hint(&repo, &repo.home, &hint);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{hint}: {} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert!(!workspace_root.join("last").exists());
+    let records: serde_json::Value =
+        serde_json::from_slice(&records::read(metadata_dir).unwrap()).unwrap();
+    assert_eq!(records["worktrees"], serde_json::json!([]));
 }
 
 #[test]
@@ -19703,12 +19750,20 @@ fn retirement_remove_retry_preserves_linked_source_hooks() {
 }
 
 #[test]
-fn retirement_remove_review_retry_survives_removed_source_checkout() {
+fn retirement_remove_review_retry_survives_removed_source_without_enabling_primary_hooks() {
     for (json, no_hooks) in [(false, true), (true, true), (false, false), (true, false)] {
         let repo = Repo::new();
         for name in ["source", "remaining", "last"] {
             assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
         }
+        fs::write(
+            repo.repo.join(".mabo.toml"),
+            r#"[hooks]
+pre-remove = ['touch "$MABO_REPO_PATH/unexpected-primary-hook"; exit 1']
+"#,
+        )
+        .unwrap();
+        let marker = repo.repo.join("unexpected-primary-hook");
         let source = managed(&repo, "source");
         let remaining = managed(&repo, "remaining");
         repo.git(&["worktree", "lock", remaining.to_str().unwrap()]);
@@ -19732,6 +19787,7 @@ fn retirement_remove_review_retry_survives_removed_source_checkout() {
             text(&out.stderr)
         );
         assert!(!source.exists());
+        assert!(!marker.exists());
         let hint = setup_retry_hint(&out, json);
         assert!(hint.contains("-R "), "{hint}");
         assert!(
@@ -19747,6 +19803,8 @@ fn retirement_remove_review_retry_survives_removed_source_checkout() {
             text(&out.stdout),
             text(&out.stderr)
         );
+        assert!(hint.contains(" --no-hooks"), "{hint}");
+        assert!(!marker.exists());
         assert!(!remaining.exists());
         assert!(!managed(&repo, "last").exists());
     }

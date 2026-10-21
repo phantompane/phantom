@@ -693,9 +693,13 @@ fn remove(args: &[String]) -> Result<i32> {
                     "wouldDeleteBranch": !plan.worktree.detached && !plan.worktree.orphaned && plan.branch_kept_reason.is_none(),
                 }));
                 let index = items.len() - 1;
-                // Paths remain exact even when a completed target shared a
-                // name/link with an unfinished one, or the caller selected dot.
-                retry_targets.push((index, plan.worktree.path.clone()));
+                // Preserve the record's spelling before removal: a symlink
+                // alias cannot be matched to its canonical path once gone.
+                // Unrecorded targets still use their resolved absolute path.
+                let retry_path =
+                    metadata::matching_path(&context.git_root, Path::new(&plan.worktree.path))?
+                        .unwrap_or_else(|| plan.worktree.path.clone());
+                retry_targets.push((index, retry_path));
                 plans.push((index, plan));
             }
             Err(mut failure) => {
@@ -923,11 +927,17 @@ fn remove_retry_command(
         "discard-changes",
         "delete-unpreserved-branch",
         "keep-branch",
-        "no-hooks",
     ] {
         if parsed.flag(flag) {
             command.push_str(&format!(" --{flag}"));
         }
+    }
+    // Selecting primary reloads its configuration. Keep hooks disabled when
+    // the original source had none, even if primary defines pre-remove hooks.
+    if parsed.flag("no-hooks")
+        || crate::config::pre_remove_commands(context.config.as_ref()).is_empty()
+    {
+        command.push_str(" --no-hooks");
     }
     if json {
         command.push_str(" --json");
