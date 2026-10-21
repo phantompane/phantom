@@ -194,20 +194,66 @@ fn link_identity(
 }
 
 fn url_link_identity(url: &str) -> Option<(String, bool, u64)> {
+    let parts = url_link_parts(url)?;
+    Some((
+        parts.repository.to_owned(),
+        matches!(parts.kind, "pull" | "pulls"),
+        parts.number,
+    ))
+}
+
+/// Source validation keeps exact scheme/kind/number spelling while treating
+/// the repository's host, owner, and name as case-insensitive identities.
+pub(crate) fn source_urls_equal(actual: &str, expected: &str) -> bool {
+    let (Some(actual), Some(expected)) = (url_link_parts(actual), url_link_parts(expected)) else {
+        return false;
+    };
+    let (Some(actual_repo), Some(expected_repo)) = (
+        repository_parts(actual.repository),
+        repository_parts(expected.repository),
+    ) else {
+        return false;
+    };
+    actual.scheme == expected.scheme
+        && actual.kind == expected.kind
+        && actual.number_text == expected.number_text
+        && actual_repo
+            .iter()
+            .zip(expected_repo)
+            .all(|(actual, expected)| actual.eq_ignore_ascii_case(expected))
+}
+
+fn repository_parts(repository: &str) -> Option<[&str; 3]> {
+    let (host, path) = repository.split_once('/')?;
+    let (owner, repo) = path.split_once('/')?;
+    Some([host, owner, repo])
+}
+
+struct UrlLinkParts<'a> {
+    scheme: &'a str,
+    repository: &'a str,
+    kind: &'a str,
+    number: u64,
+    number_text: &'a str,
+}
+
+fn url_link_parts(url: &str) -> Option<UrlLinkParts<'_>> {
     let (kind, number) = metadata::link_target(url)?;
     let clean = url
         .split(['?', '#'])
         .next()
         .unwrap_or(url)
         .trim_end_matches('/');
-    let (_, path) = clean.split_once("://")?;
-    let (prefix, _) = path.rsplit_once('/')?;
+    let (scheme, path) = clean.split_once("://")?;
+    let (prefix, number_text) = path.rsplit_once('/')?;
     let (repository, _) = prefix.rsplit_once('/')?;
-    Some((
-        repository.to_owned(),
-        matches!(kind, "pull" | "pulls"),
+    Some(UrlLinkParts {
+        scheme,
+        repository,
+        kind,
         number,
-    ))
+        number_text,
+    })
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -273,4 +319,31 @@ pub(crate) fn upstream(tree: &WorktreeInfo) -> Option<UpstreamJson> {
         behind: counts.next().and_then(|s| s.parse().ok()),
         gone,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_urls_equal;
+
+    #[test]
+    fn review10_source_url_matching_preserves_kind_and_number_validation() {
+        let expected = "https://github.com/acme/demo/pull/7";
+        assert!(source_urls_equal(
+            "https://GitHub.com/Acme/Demo/pull/7/?plain=1#details",
+            expected
+        ));
+        for actual in [
+            "https://github.com/acme/demo/pull/8",
+            "https://github.com/acme/demo/pull/07",
+            "https://github.com/acme/demo/pull/+7",
+            "https://github.com/acme/demo/pull/0",
+            "https://github.com/acme/demo/pull/7/files",
+            "https://github.com/acme/demo/pull/7/issues/7",
+            "https://github.com/acme/demo/issues/7",
+            "https://github.com/acme/demo/pulls/7",
+            "https://github.com/acme/demo/Pull/7",
+        ] {
+            assert!(!source_urls_equal(actual, expected), "{actual}");
+        }
+    }
 }

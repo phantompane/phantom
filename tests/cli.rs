@@ -14012,6 +14012,139 @@ fn unified_create_uses_the_default_base_and_supports_named_branch_and_detach() {
 }
 
 #[test]
+fn review10_create_pr_accepts_repository_url_case_variants() {
+    assert_review10_source_url_case_variants(true);
+}
+
+#[test]
+fn review10_create_issue_accepts_repository_url_case_variants() {
+    assert_review10_source_url_case_variants(false);
+}
+
+fn assert_review10_source_url_case_variants(pr: bool) {
+    let repo = Repo::new();
+    let path = fake_gh_for_topic_pr(&repo);
+    let gh = repo.root.join("bin/gh");
+    let script = fs::read_to_string(&gh)
+        .unwrap()
+        .replace("acme/demo", "Acme/Demo")
+        .replace("\"login\":\"acme\"", "\"login\":\"Acme\"")
+        .replace("\"name\":\"demo\"", "\"name\":\"Demo\"");
+    if pr {
+        publish_pr_topic(&repo);
+        fs::write(&gh, script).unwrap();
+    } else {
+        fs::write(
+            &gh,
+            script.replace("\"pull_request\":{}", "\"title\":\"Fix issue\""),
+        )
+        .unwrap();
+    }
+    let kind = if pr { "pull" } else { "issues" };
+    let link_key = if pr { "pr" } else { "issue" };
+    let canonical_url = format!("https://github.com/Acme/Demo/{kind}/7");
+    let mut workspace_id = None;
+    for (index, (repository, suffix)) in [
+        ("github.com/Acme/demo", ""),
+        ("github.com/acme/Demo", ""),
+        ("GitHub.com/Acme/Demo", ""),
+        ("GitHub.com/aCmE/dEmO", "/?plain=1#details"),
+        ("github.com/Acme/Demo", "#details"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let url = format!("https://{repository}/{kind}/7{suffix}");
+        let out = repo
+            .command(
+                env!("CARGO_BIN_EXE_mabo"),
+                &[
+                    "create",
+                    "review",
+                    if pr { "--pr" } else { "--issue" },
+                    &url,
+                    "--reuse",
+                    "--no-hooks",
+                    "--json",
+                ],
+            )
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{url}: {}", text(&out.stdout));
+        let doc = assert_envelope(&out, "create");
+        assert_eq!(doc["data"]["source"]["kind"], link_key);
+        assert_eq!(doc["data"]["source"]["number"], 7);
+        assert_eq!(doc["data"]["source"]["reused"], index > 0);
+        let workspace = &doc["data"]["workspace"];
+        assert_eq!(workspace["links"][link_key]["url"], canonical_url);
+        assert_eq!(workspace["links"][link_key]["number"], 7);
+        if let Some(id) = &workspace_id {
+            assert_eq!(&workspace["id"], id);
+        } else {
+            workspace_id = Some(workspace["id"].clone());
+        }
+    }
+}
+
+#[test]
+fn review10_create_rejects_foreign_repository_host_and_source_kind_urls() {
+    let repo = Repo::new();
+    let path = fake_gh_for_topic_pr(&repo);
+    let gh = repo.root.join("bin/gh");
+    let script = fs::read_to_string(&gh).unwrap();
+    fs::write(
+        &gh,
+        script.replace(
+            "#!/bin/sh\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$MABO_REVIEW10_GH_LOG\"\n",
+        ),
+    )
+    .unwrap();
+    let log = repo.root.join("gh.log");
+    for pr in [true, false] {
+        let kind = if pr { "pull" } else { "issues" };
+        let wrong_kind = if pr { "issues" } else { "pull" };
+        for url in [
+            format!("https://github.com/other/demo/{kind}/7"),
+            format!("https://github.com/acme/other/{kind}/7"),
+            format!("https://other.example/acme/demo/{kind}/7"),
+            format!("https://github.com/acme/demo/{wrong_kind}/7"),
+            format!(
+                "https://github.com/acme/demo/{}/7",
+                if pr { "pulls" } else { "issue" }
+            ),
+            format!("http://github.com/acme/demo/{kind}/7"),
+        ] {
+            fs::write(&log, "").unwrap();
+            let out = repo
+                .command(
+                    env!("CARGO_BIN_EXE_mabo"),
+                    &[
+                        "create",
+                        "review",
+                        if pr { "--pr" } else { "--issue" },
+                        &url,
+                        "--json",
+                    ],
+                )
+                .env("PATH", &path)
+                .env("MABO_REVIEW10_GH_LOG", &log)
+                .output()
+                .unwrap();
+            assert_eq!(out.status.code(), Some(2), "{url}: {}", text(&out.stdout));
+            assert_eq!(assert_envelope(&out, "create")["error"]["code"], "usage");
+            assert_eq!(
+                fs::read_to_string(&log).unwrap(),
+                "repo view --json url,owner,name\n"
+            );
+            assert!(!managed(&repo, "review").exists());
+            assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
+        }
+    }
+}
+
+#[test]
 fn unified_create_issue_defaults_and_pr_issue_links() {
     let repo = Repo::new();
     let path = fake_gh_for_topic_pr(&repo);

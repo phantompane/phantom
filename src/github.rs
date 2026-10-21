@@ -30,12 +30,11 @@ pub(crate) fn resolve(directory: &Path, reference: &str, pr: bool) -> Result<Sub
     let repo = repo_info(directory)?;
     if let Some(url) = link.url.as_deref() {
         let expected = subject_link(&repo, number, if pr { "pull" } else { "issues" });
-        let clean = url
-            .split(['?', '#'])
-            .next()
-            .unwrap_or(url)
-            .trim_end_matches('/');
-        if Some(clean) != expected.url.as_deref() {
+        if !expected
+            .url
+            .as_deref()
+            .is_some_and(|expected| crate::selectors::source_urls_equal(url, expected))
+        {
             return Err(Error::validation(
                 "Source URL must identify the selected repository and source kind",
             ));
