@@ -188,9 +188,13 @@ pub(crate) fn prepare(
         }
         index += 1;
     }
-    // Help ignores output defaults and unsupported JSON requests. Invalid or
-    // missing option values still take precedence over a help request.
-    if !supports_json && explicit == Some(true) && !help {
+    // Help ignores output defaults. Existing exec help also ignores unsupported
+    // JSON requests; script commands always refuse explicit JSON output.
+    // Invalid or missing option values take precedence over a help request.
+    if !supports_json
+        && explicit == Some(true)
+        && (!help || matches!(key, "completions" | "shell-init"))
+    {
         error.get_or_insert_with(|| Error::validation("This command does not support JSON output"));
     }
     let env_json = if supports_json && (!help || error.is_some()) {
