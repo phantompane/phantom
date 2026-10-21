@@ -764,6 +764,7 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&init.stderr)
         );
+        crate::test_git::configure_repo(&path);
         path
     }
 
