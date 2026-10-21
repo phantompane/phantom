@@ -760,8 +760,7 @@ fn preflight_remove_selected(
             branch_kept_reason: None,
         });
     }
-    let changed =
-        git::retirement_status_count(&path).map_err(|error| RemoveError::kept(error, &worktree))?;
+    let changed = git::status_count(&path).map_err(|error| RemoveError::kept(error, &worktree))?;
     if changed > 0 && !force {
         return Err(RemoveError::kept(
             Error::Uncommitted {

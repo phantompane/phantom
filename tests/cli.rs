@@ -12852,7 +12852,8 @@ fn assert_inspection_uses_checkout_config(include: bool) {
                 );
                 assert_eq!(workspace["branch"], "local");
                 assert_eq!(workspace["head"], head);
-                assert_eq!(workspace["dirty"], false);
+                // Inspection must detect real work even when checkout config hides it.
+                assert_eq!(workspace["dirty"], true);
                 assert_eq!(workspace["detached"], false);
             }
         }
@@ -16824,7 +16825,7 @@ fn retirement_remove_keeps_unpreserved_branch_but_branch_alone_is_not_a_workspac
 }
 
 #[test]
-fn retirement_dry_run_and_ignored_content_are_safe() {
+fn retirement_ignored_content_is_clean_and_removed_without_discard_changes() {
     let repo = Repo::new();
     assert!(repo
         .mabo(&["create", "safe", "--no-setup"])
@@ -16834,15 +16835,379 @@ fn retirement_dry_run_and_ignored_content_are_safe() {
     fs::create_dir_all(repo.repo.join(".git/info")).expect("info");
     fs::write(repo.repo.join(".git/info/exclude"), "secret\n").expect("ignore");
     fs::write(path.join("secret"), "keep me").expect("secret");
-    let out = repo.mabo(&["remove", "safe", "--json"]);
-    assert_eq!(out.status.code(), Some(4));
-    assert_eq!(json_value(&out)["error"]["code"], "dirty");
-    let out = repo.mabo(&["remove", "safe", "--discard-changes", "--dry-run", "--json"]);
+    assert_retirement_dirty(&repo, "safe", false);
+    let out = repo.mabo(&["remove", "safe", "--dry-run", "--json"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(json_value(&out)["data"]["plan"], true);
     assert_eq!(json_value(&out)["data"]["items"][0]["removed"], false);
+    assert_eq!(json_value(&out)["data"]["items"][0]["wouldRemove"], true);
+    assert_eq!(json_value(&out)["warnings"], serde_json::json!([]));
     assert!(path.join("secret").exists());
     assert!(branch_listed(&repo, "safe"));
+    let out = repo.mabo(&["remove", "safe", "--json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stdout));
+    let doc = assert_envelope(&out, "remove");
+    assert_eq!(doc["data"]["items"][0]["removed"], true);
+    assert_eq!(doc["warnings"], serde_json::json!([]));
+    assert!(!path.exists());
+    assert!(!path.join("secret").exists());
+    assert!(!worktree_registered(&repo, "safe"));
+}
+
+fn assert_retirement_dirty(repo: &Repo, name: &str, dirty: bool) {
+    for command in ["show", "list"] {
+        let args = if command == "show" {
+            vec!["show", name, "--json"]
+        } else {
+            vec!["list", "--kind", "workspace", "--json"]
+        };
+        let out = repo.mabo(&args);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = assert_envelope(&out, command);
+        let workspace = if command == "show" {
+            &doc["data"]["workspace"]
+        } else {
+            doc["data"]["workspaces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["name"] == name)
+                .unwrap()
+        };
+        assert_eq!(workspace["dirty"], dirty, "{command}: {doc}");
+    }
+}
+
+#[test]
+fn retirement_ignored_content_does_not_hide_uncommitted_work() {
+    for change in ["untracked", "modified", "staged", "renamed"] {
+        let repo = Repo::new();
+        repo.git(&["config", "status.showUntrackedFiles", "no"]);
+        fs::create_dir_all(repo.repo.join(".git/info")).unwrap();
+        fs::write(repo.repo.join(".git/info/exclude"), "target/\n").unwrap();
+        assert!(repo
+            .mabo(&["create", "dirty", "--no-setup"])
+            .status
+            .success());
+        land_branch(&repo, "dirty");
+        let path = managed(&repo, "dirty");
+        fs::create_dir(path.join("target")).unwrap();
+        fs::write(path.join("target/cache"), "disposable").unwrap();
+        match change {
+            "untracked" => fs::write(path.join("precious"), "keep").unwrap(),
+            "modified" | "staged" => {
+                fs::write(path.join("README.md"), "keep\n").unwrap();
+                if change == "staged" {
+                    let out = repo
+                        .command("git", &["add", "README.md"])
+                        .current_dir(&path)
+                        .output()
+                        .unwrap();
+                    assert!(out.status.success());
+                }
+            }
+            "renamed" => {
+                let out = repo
+                    .command("git", &["mv", "README.md", "renamed\nfile"])
+                    .current_dir(&path)
+                    .output()
+                    .unwrap();
+                assert!(out.status.success());
+            }
+            _ => unreachable!(),
+        }
+        assert_retirement_dirty(&repo, "dirty", true);
+        for dry_run in [false, true] {
+            let mut args = vec!["remove", "dirty", "--json"];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let out = repo.mabo(&args);
+            assert_eq!(
+                out.status.code(),
+                Some(4),
+                "{change}: {}",
+                text(&out.stdout)
+            );
+            let doc = assert_envelope(&out, "remove");
+            assert_eq!(doc["error"]["code"], "dirty");
+            assert!(
+                doc["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("(1 files)"),
+                "{doc}"
+            );
+            assert!(path.join("target/cache").is_file());
+        }
+        for apply in [false, true] {
+            let mut args = vec!["gc", "--merged", "--json"];
+            if apply {
+                args.push("--apply");
+            }
+            let out = repo.mabo(&args);
+            assert!(out.status.success(), "{}", text(&out.stdout));
+            let doc = assert_envelope(&out, "gc");
+            assert_eq!(doc["data"]["items"][0]["action"], "skipped");
+            assert!(doc["data"]["items"][0]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("--discard-changes"));
+            assert!(path.exists());
+        }
+        let out = repo.mabo(&["remove", "dirty", "--discard-changes", "--json"]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        assert!(!path.exists());
+    }
+}
+
+#[test]
+fn retirement_ignored_content_does_not_skip_gc_plan_or_apply() {
+    let repo = Repo::new();
+    fs::create_dir_all(repo.repo.join(".git/info")).unwrap();
+    fs::write(
+        repo.repo.join(".git/info/exclude"),
+        "target/\nnode_modules/\n",
+    )
+    .unwrap();
+    assert!(repo
+        .mabo(&["create", "landed", "--no-setup"])
+        .status
+        .success());
+    land_branch(&repo, "landed");
+    let path = managed(&repo, "landed");
+    for directory in ["target", "node_modules"] {
+        fs::create_dir(path.join(directory)).unwrap();
+        fs::write(path.join(directory).join("cache"), "disposable").unwrap();
+    }
+    assert_retirement_dirty(&repo, "landed", false);
+    for apply in [false, true] {
+        let mut args = vec!["gc", "--merged", "--json"];
+        if apply {
+            args.push("--apply");
+        }
+        let out = repo.mabo(&args);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = assert_envelope(&out, "gc");
+        assert_eq!(doc["data"]["plan"], !apply);
+        assert_eq!(
+            doc["data"]["items"][0]["action"],
+            if apply { "removed" } else { "wouldRemove" }
+        );
+        assert_eq!(doc["warnings"], serde_json::json!([]));
+        assert_eq!(path.join("target/cache").exists(), !apply);
+        assert_eq!(path.join("node_modules/cache").exists(), !apply);
+        assert_eq!(path.exists(), !apply);
+    }
+}
+
+#[test]
+fn retirement_ignored_nested_repository_is_removed_with_workspace() {
+    let repo = Repo::new();
+    fs::create_dir_all(repo.repo.join(".git/info")).unwrap();
+    fs::write(repo.repo.join(".git/info/exclude"), "vendor/\n").unwrap();
+    assert!(repo
+        .mabo(&["create", "nested", "--no-setup"])
+        .status
+        .success());
+    let path = managed(&repo, "nested");
+    let nested = path.join("vendor/x");
+    fs::create_dir_all(&nested).unwrap();
+    let out = repo
+        .command("git", &["init", "-b", "main"])
+        .current_dir(&nested)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    fs::write(nested.join("local"), "nested repository contents\n").unwrap();
+    assert_retirement_dirty(&repo, "nested", false);
+    let out = repo.mabo(&["remove", "nested", "--json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stdout));
+    assert_eq!(
+        assert_envelope(&out, "remove")["warnings"],
+        serde_json::json!([])
+    );
+    assert!(!path.exists());
+    assert!(!nested.exists());
+}
+
+#[test]
+fn retirement_ignored_content_does_not_hide_submodule_changes() {
+    let repo = Repo::new();
+    let source = Repo::new();
+    repo.git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        source.repo.to_str().unwrap(),
+        "sub",
+    ]);
+    repo.git(&["commit", "-m", "add submodule"]);
+    repo.git(&["config", "diff.ignoreSubmodules", "all"]);
+    repo.git(&["config", "submodule.sub.ignore", "all"]);
+    fs::create_dir_all(repo.repo.join(".git/info")).unwrap();
+    fs::write(repo.repo.join(".git/info/exclude"), "cache\n").unwrap();
+    assert!(repo
+        .mabo(&["create", "submodule", "--no-setup"])
+        .status
+        .success());
+    land_branch(&repo, "submodule");
+    let path = managed(&repo, "submodule");
+    let out = repo
+        .command(
+            "git",
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "update",
+                "--init",
+            ],
+        )
+        .current_dir(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    fs::write(path.join("cache"), "disposable\n").unwrap();
+    assert_retirement_dirty(&repo, "submodule", false);
+    for change in ["modified", "untracked", "head"] {
+        let sub = path.join("sub");
+        if change == "untracked" {
+            fs::write(sub.join("precious"), "keep\n").unwrap();
+        } else {
+            fs::write(sub.join("README.md"), "keep\n").unwrap();
+            if change == "head" {
+                for args in [
+                    vec!["add", "README.md"],
+                    vec![
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.com",
+                        "commit",
+                        "-m",
+                        "local submodule commit",
+                    ],
+                ] {
+                    let out = repo
+                        .command("git", &args)
+                        .current_dir(&sub)
+                        .output()
+                        .unwrap();
+                    assert!(out.status.success(), "{}", text(&out.stderr));
+                }
+            }
+        }
+        assert_retirement_dirty(&repo, "submodule", true);
+        for dry_run in [false, true] {
+            let mut args = vec!["remove", "submodule", "--json"];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let out = repo.mabo(&args);
+            assert_eq!(
+                out.status.code(),
+                Some(4),
+                "{change}: {}",
+                text(&out.stdout)
+            );
+            assert_eq!(assert_envelope(&out, "remove")["error"]["code"], "dirty");
+        }
+        for apply in [false, true] {
+            let mut args = vec!["gc", "--merged", "--json"];
+            if apply {
+                args.push("--apply");
+            }
+            let out = repo.mabo(&args);
+            assert!(out.status.success(), "{}", text(&out.stdout));
+            assert_eq!(
+                assert_envelope(&out, "gc")["data"]["items"][0]["action"],
+                "skipped"
+            );
+        }
+        if change == "modified" {
+            let out = repo
+                .command("git", &["restore", "README.md"])
+                .current_dir(&sub)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+        } else if change == "untracked" {
+            fs::remove_file(sub.join("precious")).unwrap();
+        }
+        assert!(path.join("cache").exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn retirement_ignored_content_does_not_force_remove_late_untracked_files() {
+    use std::os::unix::fs::PermissionsExt;
+    for gc in [false, true] {
+        let repo = Repo::new();
+        assert!(repo
+            .mabo(&["create", "race", "--no-setup"])
+            .status
+            .success());
+        land_branch(&repo, "race");
+        repo.git(&["config", "status.showUntrackedFiles", "no"]);
+        fs::create_dir_all(repo.repo.join(".git/info")).unwrap();
+        fs::write(repo.repo.join(".git/info/exclude"), "cache\n").unwrap();
+        let path = managed(&repo, "race");
+        fs::write(path.join("cache"), "ignored\n").unwrap();
+        let real_git = repo
+            .command("sh", &["-c", "command -v git"])
+            .output()
+            .unwrap();
+        assert!(real_git.status.success());
+        let bin = repo.root.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let shim = bin.join("git");
+        fs::write(
+            &shim,
+            r#"#!/bin/sh
+case " $* " in
+  *" worktree remove "*)
+    printf 'precious\n' > "$RACE_PATH/precious"
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+        let search_path = std::env::join_paths(
+            std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
+        let args = if gc {
+            vec!["gc", "--merged", "--apply", "--json"]
+        } else {
+            vec!["remove", "race", "--json"]
+        };
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("PATH", search_path)
+            .env("REAL_GIT", text(&real_git.stdout))
+            .env("RACE_PATH", &path)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+        let doc = assert_envelope(&out, if gc { "gc" } else { "remove" });
+        if gc {
+            assert_eq!(doc["data"]["items"][0]["action"], "failed");
+        } else {
+            assert_eq!(doc["data"]["items"][0]["removed"], false);
+        }
+        assert_eq!(
+            fs::read_to_string(path.join("precious")).unwrap(),
+            "precious\n"
+        );
+        assert!(path.join("cache").exists());
+        assert!(worktree_registered(&repo, "race"));
+        assert!(branch_listed(&repo, "race"));
+    }
 }
 
 #[test]

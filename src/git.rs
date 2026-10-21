@@ -507,7 +507,19 @@ pub fn remove_worktree(git_root: &Path, path: &Path, force: bool) -> Result<()> 
             Some(git_root),
         )
     } else {
-        run(&["worktree", "remove", path.as_ref()], Some(git_root))
+        // Git's own last dirty check honors status.showUntrackedFiles. Keep
+        // new non-ignored files protected even if that display setting hides
+        // them, and let ordinary worktree removal discard ignored files.
+        run(
+            &[
+                "-c",
+                "status.showUntrackedFiles=all",
+                "worktree",
+                "remove",
+                path.as_ref(),
+            ],
+            Some(git_root),
+        )
     };
     result.map_err(|error| Error::msg(format!("worktree remove failed: {error}")))
 }
@@ -809,23 +821,6 @@ fn retirement_tree_delta(root: &Path, before: &str, after: &str) -> Option<Vec<u
     diff.status.success().then_some(diff.stdout)
 }
 
-/// Count all content a checkout removal would lose, including ignored files.
-pub(crate) fn retirement_status_count(cwd: &Path) -> Result<usize> {
-    let stdout = output(
-        &[
-            "--no-optional-locks",
-            "status",
-            "--porcelain",
-            "-z",
-            "--ignored",
-            "--untracked-files=all",
-        ],
-        Some(cwd),
-        false,
-    )?;
-    Ok(stdout.split('\0').filter(|entry| !entry.is_empty()).count())
-}
-
 fn branch_tip_spec(branch: Option<&str>, head: Option<&str>) -> Option<String> {
     match branch {
         Some(name) => Some(format!("refs/heads/{name}")),
@@ -922,13 +917,37 @@ pub(crate) fn raw_git_with_env(
     process::raw_with_env("git", args, Some(git_root), env)
 }
 
+/// Count changed tracked entries (including submodules) and non-ignored
+/// untracked files, independently of status display and submodule settings.
+/// Keep inspection and retirement on the same read-only dirty check.
 pub fn status_count(cwd: &Path) -> Result<usize> {
     let stdout = output(
-        &["--no-optional-locks", "status", "--porcelain"],
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain",
+            "-z",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
         Some(cwd),
         false,
     )?;
-    Ok(stdout.lines().filter(|line| !line.is_empty()).count())
+    let mut entries = stdout.split('\0').filter(|entry| !entry.is_empty());
+    let mut count = 0;
+    while let Some(entry) = entries.next() {
+        count += 1;
+        // Porcelain v1 -z emits an extra source path for renames/copies.
+        // It is part of this change, not another changed file.
+        if entry
+            .as_bytes()
+            .get(..2)
+            .is_some_and(|status| status.iter().any(|byte| matches!(byte, b'R' | b'C')))
+        {
+            entries.next();
+        }
+    }
+    Ok(count)
 }
 
 pub fn is_clean(cwd: &Path) -> bool {

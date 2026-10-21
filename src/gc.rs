@@ -618,7 +618,7 @@ fn observe_listed(
     let dirty = match directory {
         DirState::Absent => Dirty::Absent,
         DirState::Unknown => Dirty::Unknown,
-        DirState::Present => match git::retirement_status_count(&path) {
+        DirState::Present => match git::status_count(&path) {
             Ok(0) => Dirty::Clean,
             Ok(_) => Dirty::Changed,
             Err(_) => Dirty::Unknown,
