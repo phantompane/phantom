@@ -25,7 +25,7 @@ This release redesigns the Rust `mabo` CLI around workspaces. Update scripts wri
 | `create --purpose/--pr/--issue` | `--purpose` still records intent; `--pr` selects the PR head; `--issue` looks up the issue, deriving `issues/N` and its title when used alone | B: PR/issue flags now resolve GitHub sources through `gh` |
 | `create --copy-file P` | `create --copy-file P` (passed through to setup) | — |
 | `create --no-hooks` | `create --no-setup` | B |
-| `create -x/--exec CMD` | `create …` then `exec -- CMD` | B (removed) |
+| `create -x/--exec CMD` | `create NAME …` then `exec NAME -- CMD` (name the new workspace; a bare `exec -- CMD` runs in the current checkout) | B (removed) |
 | `create --json` | `--json` (envelope schema 2) | B |
 | `attach B` / `attach remote/B` | `create --branch B` / `create --branch remote/B` | B |
 | `github checkout N` (PR) / `gh checkout N` | `create --pr N` | B |
