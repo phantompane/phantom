@@ -675,12 +675,13 @@ fn remove(args: &[String]) -> Result<i32> {
     let mut items = Vec::new();
     let mut plans = Vec::new();
     let mut first_error = None;
-    let mut seen = std::collections::HashSet::new();
+    let mut seen_paths = std::collections::HashSet::new();
+    let mut seen_failures = std::collections::HashSet::new();
     // Resolve and check every selector before the first hook or mutation.
     for name in &parsed.positionals {
         match worktree::preflight_remove(&context, name, &options, None) {
             Ok(plan) => {
-                if !seen.insert(plan.worktree.path.clone()) {
+                if !seen_paths.insert(plan.worktree.path.clone()) {
                     continue;
                 }
                 items.push(serde_json::json!({
@@ -693,7 +694,7 @@ fn remove(args: &[String]) -> Result<i32> {
                 plans.push((items.len() - 1, plan));
             }
             Err(failure) => {
-                if !seen.insert(name.clone()) {
+                if !seen_failures.insert(name.clone()) {
                     continue;
                 }
                 let gone = matches!(failure.error, Error::WorktreeNotFound(_));

@@ -107,7 +107,7 @@ pub fn fallback_base(root: &Path) -> Result<String> {
         .as_deref()
         .filter(|name| name.starts_with("origin/"))
     {
-        return normalize_base(root, default);
+        return normalize_base(root, &format!("refs/remotes/{default}"));
     }
     if let Some(default) = detected.as_deref() {
         if let Some(upstream) = default_upstream(root, default)? {

@@ -884,6 +884,15 @@ pub(crate) fn commit_remove_checked(
         });
     }
     let fresh = preflight_remove_selected(context, &selector, options, Some(&path))?;
+    if fresh.worktree.orphaned {
+        // A hook may delete or move the checkout. The orphan plan does not
+        // authorize branch deletion; leave its registration and record for a
+        // later orphan cleanup instead of continuing with normal removal.
+        return Err(RemoveError::kept(
+            Error::msg("Workspace directory disappeared while running pre-remove commands; refusing further removal"),
+            &fresh.worktree,
+        ));
+    }
     if fresh.worktree.head != worktree.head || fresh.worktree.branch != worktree.branch {
         return Err(RemoveError::kept(
             Error::msg("Workspace changed while running pre-remove commands"),

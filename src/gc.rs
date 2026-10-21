@@ -832,11 +832,11 @@ pub(crate) fn still_at_creation_point(
             subject.starts_with("mabo sync: fast-forward to ")
                 && subject.ends_with(": Fast-forward")
         })
-    }) && is_ancestor(git_root, branch, base)
+    }) && is_ancestor(git_root, &spec, base)
 }
 
 fn branch_tip(git_root: &Path, branch: &str) -> Option<String> {
-    let spec = format!("{branch}^{{commit}}");
+    let spec = format!("refs/heads/{branch}^{{commit}}");
     let Ok(tip) = git(git_root, &["rev-parse", "--verify", "--quiet", &spec]) else {
         return None;
     };

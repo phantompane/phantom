@@ -394,19 +394,13 @@ pub fn head_commit(worktree: &Path) -> Option<String> {
 /// An existing branch can already have moved, and storing its tip would hide
 /// a merged branch from gc.
 pub fn reflog_creation_commit(worktree: &Path) -> Option<String> {
-    let branch = output(
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-        Some(worktree),
-        true,
-    )
-    .ok()?;
-    let branch = branch.trim();
-    if branch.is_empty() {
+    let reference = output(&["symbolic-ref", "--quiet", "HEAD"], Some(worktree), true).ok()?;
+    let reference = reference.trim();
+    if !reference.starts_with("refs/heads/") {
         return None;
     }
-    let spec = format!("refs/heads/{branch}");
     let reflog = output(
-        &["reflog", "show", "--format=%H", &spec],
+        &["reflog", "show", "--format=%H", reference],
         Some(worktree),
         true,
     )
@@ -526,16 +520,12 @@ pub fn delete_branch(git_root: &Path, branch: &str) -> Result<()> {
 pub(crate) fn default_branch(git_root: &Path) -> Result<Option<String>> {
     let symbolic = raw_git(
         git_root,
-        &[
-            "symbolic-ref",
-            "--quiet",
-            "--short",
-            "refs/remotes/origin/HEAD",
-        ],
+        &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
     )?;
     if symbolic.code == 0 {
-        let name = symbolic.stdout.trim();
-        if !name.is_empty() && verify_commit(git_root, name)? {
+        let reference = symbolic.stdout.trim();
+        if !reference.is_empty() && verify_commit(git_root, reference)? {
+            let name = reference.strip_prefix("refs/remotes/").unwrap_or(reference);
             return Ok(Some(name.to_string()));
         }
     }
