@@ -12768,8 +12768,11 @@ fn set_updates_and_unsets_every_intent_field_atomically() {
 fn removed_inspection_interfaces_and_usage_keep_stdout_clean() {
     let repo = Repo::new();
     for (args, hint) in [
-        (vec!["where", "main"], "path"),
-        (vec!["meta"], "set"),
+        (
+            vec!["where", "main"],
+            "`mabo path [SEL]` or `mabo show [SEL] --json`",
+        ),
+        (vec!["meta"], "`mabo set [SEL]` or `mabo show [SEL]`"),
         (vec!["meta", "set", "main"], "show"),
         (vec!["list", "--no-default"], "--kind workspace"),
     ] {
@@ -12905,8 +12908,8 @@ fn list_filters_current_links_upstream_and_all_known_repositories() {
         "primary:",
         "* listed",
         "↑1 ↓1",
-        "#PR:42",
-        "#issue:73",
+        "#42",
+        "issue #73",
         "inspect me",
     ] {
         assert!(display.contains(expected), "{display}");
@@ -13074,7 +13077,7 @@ fn delete_link_selector_cannot_change_paths_after_a_hook_relinks_it() {
         env!("CARGO_BIN_EXE_mabo")
     );
     let config = format!(
-        "[hooks]\npre-delete = [{}]\n",
+        "[hooks]\npre-delete = [{}, \"printf '%s\\n' \\\"$MABO_WORKSPACE_PATH\\\" > hook-target\"]\n",
         serde_json::to_string(&script).unwrap()
     );
     fs::write(repo.repo.join(".mabo.toml"), config).unwrap();
@@ -13083,7 +13086,67 @@ fn delete_link_selector_cannot_change_paths_after_a_hook_relinks_it() {
     assert!(managed(&repo, "one").is_dir());
     assert!(second.is_dir());
     assert_eq!(
+        fs::read_to_string(managed(&repo, "one").join("hook-target"))
+            .unwrap()
+            .trim(),
+        managed(&repo, "one").to_str().unwrap()
+    );
+    assert!(!second.join("hook-target").exists());
+    assert_eq!(
         json_value(&repo.mabo(&["show", "pr:42", "--json"]))["data"]["workspace"]["name"],
         "two"
     );
+}
+
+#[test]
+fn set_invalid_base_reports_a_clear_error_without_git_stderr() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "topic"]).status.success());
+    for json in [false, true] {
+        let mut args = vec!["set", "topic", "--base", "does-not-exist"];
+        if json {
+            args.push("--json");
+        }
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(2));
+        let message = if json {
+            let doc = assert_envelope(&out, "set");
+            assert_eq!(doc["error"]["code"], "usage");
+            assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+            doc["error"]["message"].as_str().unwrap().to_owned()
+        } else {
+            assert!(out.stdout.is_empty());
+            text(&out.stderr)
+        };
+        assert!(
+            message.contains("Base 'does-not-exist' is not a valid ref"),
+            "{message}"
+        );
+        assert!(!message.contains("fatal:"), "{message}");
+    }
+}
+
+#[test]
+fn delete_stops_before_next_hook_when_checkout_directory_is_replaced() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "topic"]).status.success());
+    let path = managed(&repo, "topic");
+    let replace = "mv \"$MABO_WORKSPACE_PATH\" \"$MABO_WORKSPACE_PATH.old\" && mkdir \"$MABO_WORKSPACE_PATH\" && cp \"$MABO_WORKSPACE_PATH.old/.git\" \"$MABO_WORKSPACE_PATH/.git\"";
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        format!(
+            "[hooks]\npre-delete = [{}, \"touch second-hook-ran\"]\n",
+            serde_json::to_string(replace).unwrap()
+        ),
+    )
+    .unwrap();
+    let out = repo.mabo(&["delete", "topic", "--force", "--keep-branch", "--json"]);
+    assert_ne!(out.status.code(), Some(0));
+    assert!(
+        text(&out.stdout).contains("Workspace changed before running hook command"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert!(path.is_dir());
+    assert!(!path.join("second-hook-ran").exists());
 }

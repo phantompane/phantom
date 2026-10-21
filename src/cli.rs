@@ -401,7 +401,7 @@ fn list(args: &[String]) -> Result<i32> {
                     let links = [
                         tree.metadata.links.pr.as_ref().map(|l| {
                             format!(
-                                "#PR:{}",
+                                "#{}",
                                 l.number
                                     .map(|n| n.to_string())
                                     .unwrap_or_else(|| l.url.clone().unwrap_or_default())
@@ -409,7 +409,7 @@ fn list(args: &[String]) -> Result<i32> {
                         }),
                         tree.metadata.links.issue.as_ref().map(|l| {
                             format!(
-                                "#issue:{}",
+                                "issue #{}",
                                 l.number
                                     .map(|n| n.to_string())
                                     .unwrap_or_else(|| l.url.clone().unwrap_or_default())
@@ -926,16 +926,16 @@ fn help_cmd(args: &[String]) -> Result<i32> {
 
 fn removed_command_hint(command: &str) -> Option<String> {
     let replacement = match command.split_whitespace().next()? {
-        "project" => "mabo repo add/list/show/forget",
-        "preferences" => "mabo config get/set/unset/list",
-        "untrust" => "mabo trust remove",
-        "version" => "mabo --version",
-        "where" => "mabo path [SEL] or mabo show [SEL] --json",
-        "meta" => "mabo set [SEL] or mabo show [SEL]",
+        "project" => "`mabo repo add/list/show/forget`",
+        "preferences" => "`mabo config get/set/unset/list`",
+        "untrust" => "`mabo trust remove`",
+        "version" => "`mabo --version`",
+        "where" => "`mabo path [SEL]` or `mabo show [SEL] --json`",
+        "meta" => "`mabo set [SEL]` or `mabo show [SEL]`",
         _ => return None,
     };
     Some(format!(
-        "Command '{command}' was removed. Use `{replacement}`."
+        "Command '{command}' was removed. Use {replacement}."
     ))
 }
 

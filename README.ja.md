@@ -131,8 +131,8 @@ mabo list --all-repos --json
 
 `path` のテキスト出力は絶対パスと改行だけ、JSON は `data: {path}` です。`show` と `set` は `data.workspace` を返します。共有オブジェクトには `id`、`name`、`kind`、`path`、`current`、`repo:{root,name}`、`managed`、`orphaned`、`branch`、`head`、`detached`、`dirty`、`base`、`createdFrom`、`upstream`、`purpose`、`links`、`createdAt`、`updatedAt` が入り、不明な値は null です。`upstream` は未設定なら null、設定時は `{ref,ahead,behind,gone}` です。削除済みなら `gone:true`、件数は null になります。
 
-`show`・`path`・`list`・`exec` は記録の内容・mtime を変えず、旧ファイルの移行もしません。`set` は指定フィールドだけを一度の atomic write で更新します。`--unset` は purpose/base/pr/issue を削除し、複数フィールドやフラグの繰り返しを受け付けます。不正なフィールドや同じフィールドの設定と削除の併用は終了コード 2 です。`--base` は参照を検証して full ref 化し、コミット指定も引き続き使えます。`--unset base` は既定値を補わず、不明として記録します。
+`show`・`path`・`list`・`exec` は記録の内容・mtime を変えず、旧ファイルの移行もしません。`set` は指定フィールドだけを一度の atomic write で更新します。`--unset` は purpose/base/pr/issue を削除し、複数フィールドやフラグの繰り返しを受け付けます。不正なフィールドや同じフィールドの設定と削除の併用は終了コード 2 です。`--base` は参照を検証して full ref 化し、コミット指定も引き続き使えます。`--unset base` は既定値を補わず、不明として記録します。`mabo set <name> --base REF` で再設定するまで sync は `base-unknown` でスキップします。base フィールドが無い旧記録には従来どおり既定ベースを使います。
 
-`list --kind workspace|primary` は種類を絞り、`--names` と `--paths` は1行1件のテキストを出します。`--all-repos` は `repo list` が把握する登録済み・検出済みリポジトリを一覧にし、JSON には `data.repos` と全ワークスペースの `data.workspaces` が入ります。`-R` とは併用できません。人間向け出力にはリポジトリ見出し、現在位置の `*`、名前、ブランチ、upstream の進み・遅れ（`↑a ↓b`）、dirty、PR/issue、目的を表示し、削除済み upstream は `upstream:gone` と表示します。
+`list --kind workspace|primary` は種類を絞り、`--names` と `--paths` は1行1件のテキストを出します。`--all-repos` は `repo list` が把握する登録済み・検出済みリポジトリを一覧にし、JSON には `data.repos` と全ワークスペースの `data.workspaces` が入ります。`-R` とは併用できません。人間向け出力にはリポジトリ見出し、現在位置の `*`、名前、ブランチ、upstream の進み・遅れ（`↑a ↓b`）、dirty、PR/issue（`#12` / `issue #34`）、目的を表示し、削除済み upstream は `upstream:gone` と表示します。
 
 旧 `where` は `path` / `show --json`、旧 `meta` / `meta set` は `set` / `show`、`list --no-default` は `--kind workspace` を案内して終了コード 2 を返します。`exec` では子コマンドの前の `--` が必須です。省略時は新構文のヒントと終了コード 2 を返します。`exec` は `MABO_OUTPUT` を無視し、明示的な JSON 出力は拒否します。使用方法エラーと付随するヘルプは標準エラー出力へ出し、テキストの標準出力は空にします。

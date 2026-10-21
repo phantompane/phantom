@@ -72,28 +72,25 @@ pub fn normalize_base(root: &Path, reference: &str) -> Result<String> {
     if reference.starts_with('-') || reference.is_empty() {
         return Err(Error::validation("Base must be an existing ref"));
     }
-    let full = checked_output(
-        &["rev-parse", "--symbolic-full-name", "--verify", reference],
-        root,
-        true,
-    )?;
+    let resolve = |args: &[&str]| -> Result<String> {
+        let result = git::raw_git(root, args)?;
+        if result.code != 0 {
+            return Err(Error::validation(format!(
+                "Base '{reference}' is not a valid ref"
+            )));
+        }
+        Ok(result.stdout.trim().to_string())
+    };
+    let full = resolve(&["rev-parse", "--symbolic-full-name", "--verify", reference])?;
     if full.is_empty() || full == "HEAD" {
-        return checked_output(
-            &["rev-parse", "--verify", &format!("{reference}^{{commit}}")],
-            root,
-            true,
-        );
+        return resolve(&["rev-parse", "--verify", &format!("{reference}^{{commit}}")]);
     }
     if !full.starts_with("refs/") || full.lines().count() != 1 {
         return Err(Error::validation(format!(
             "Base '{reference}' must name an existing ref"
         )));
     }
-    checked_output(
-        &["rev-parse", "--verify", &format!("{full}^{{commit}}")],
-        root,
-        true,
-    )?;
+    resolve(&["rev-parse", "--verify", &format!("{full}^{{commit}}")])?;
     Ok(full)
 }
 
@@ -525,14 +522,17 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         None
     };
     targets.retain(|tree| {
-        tree.detached
+        tree.metadata.base_cleared
+            || tree.detached
             || Some(tree.branch.as_str()) != default_name.as_deref()
             || (request.no_default && !request.names.is_empty())
     });
     let bases: Vec<String> = targets
         .iter()
         .map(|tree| {
-            if !tree.detached && Some(tree.branch.as_str()) == default_name.as_deref() {
+            if tree.metadata.base_cleared {
+                String::new()
+            } else if !tree.detached && Some(tree.branch.as_str()) == default_name.as_deref() {
                 fallback.clone()
             } else {
                 tree.metadata
@@ -590,6 +590,10 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         report.default = Some(item);
     }
     for (tree, base) in targets.iter().zip(&bases) {
+        if tree.metadata.base_cleared {
+            report.worktrees.push(base_unknown_item(tree));
+            continue;
+        }
         // Only targets using the failed remote must refuse their stale base.
         let base_error = tree
             .metadata
@@ -695,6 +699,19 @@ fn tree_item(tree: &worktree::WorktreeInfo, base: &str) -> Item {
         detail: None,
         code: None,
     }
+}
+
+fn base_unknown_item(tree: &worktree::WorktreeInfo) -> Item {
+    let mut item = tree_item(tree, "");
+    item.base = None;
+    item.status(
+        "base-unknown",
+        Some(format!(
+            "Base was explicitly cleared; set a base: mabo set {} --base REF",
+            tree.name
+        )),
+    );
+    item
 }
 
 // Read private state directly, including registrations whose checkout is missing.
@@ -824,7 +841,6 @@ fn sync_default(context: &Context, base: &str, remotes: &[FetchRefspec]) -> Resu
         detail: None,
         code: None,
     };
-    let target = commit(root, base)?.ok_or_else(|| Error::msg("Default base no longer exists"))?;
     let trees = worktree::list_worktrees(context, false, true)?;
     if let Some((path, operation)) = branch_reservation(context, &local)? {
         item.path = Some(path.clone());
@@ -838,8 +854,12 @@ fn sync_default(context: &Context, base: &str, remotes: &[FetchRefspec]) -> Resu
         .into_iter()
         .find(|tree| !tree.detached && tree.branch == local_name);
     if let Some(tree) = &checked {
+        if tree.metadata.base_cleared {
+            return Ok(base_unknown_item(tree));
+        }
         item.path = Some(tree.path.clone());
     }
+    let target = commit(root, base)?.ok_or_else(|| Error::msg("Default base no longer exists"))?;
     if let Some(tree) = &checked {
         if !Path::new(&tree.path).is_dir() {
             item.status("dirty", Some("Workspace directory is missing".into()));

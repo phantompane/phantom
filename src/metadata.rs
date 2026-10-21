@@ -21,6 +21,9 @@ pub struct WorktreeMetadata {
     pub id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
+    /// Explicitly cleared intent must not use the legacy default-base fallback.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub base_cleared: bool,
     #[serde(default)]
     pub purpose: Option<String>,
     #[serde(default)]
@@ -96,6 +99,10 @@ struct StoredWorktree {
     name: Option<String>,
     #[serde(flatten)]
     metadata: WorktreeMetadata,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 pub fn path_key(path: &Path) -> String {
@@ -221,7 +228,10 @@ fn clear_fields(record: &mut WorktreeMetadata, fields: &[String]) {
     for field in fields {
         match field.as_str() {
             "purpose" => record.purpose = None,
-            "base" => record.base = None,
+            "base" => {
+                record.base = None;
+                record.base_cleared = true;
+            }
             "pr" => record.links.pr = None,
             "issue" => record.links.issue = None,
             _ => {}
@@ -425,6 +435,7 @@ fn stored_worktree(path: String, metadata: WorktreeMetadata) -> StoredWorktree {
 fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
     if input.base.is_some() {
         metadata.base = input.base.clone();
+        metadata.base_cleared = false;
     }
     if input.name.is_some() {
         metadata.name = input.name.clone();

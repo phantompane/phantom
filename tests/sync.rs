@@ -3454,3 +3454,105 @@ fn rebase_keeps_own_commits_after_upstream_rewind_with_forkpoint_config() {
         assert_eq!(fs::read_to_string(tree.join("own")).unwrap(), "own\n");
     }
 }
+
+#[test]
+fn explicitly_cleared_base_skips_sync_until_reset() {
+    for selector in ["--all", "topic"] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        let out = r.mabo(&r.main, &["set", "topic", "--unset", "base", "--json"]);
+        assert!(out.status.success());
+        // An unrelated edit must preserve the explicit clear across process boundaries.
+        assert!(r
+            .mabo(&r.main, &["set", "topic", "--purpose", "paused"])
+            .status
+            .success());
+        r.advance();
+        let before = r.snapshot(&tree);
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let record_before = records::read(&store).unwrap();
+        let doc = r.sync(&r.main, &[selector, "--no-default"], 0);
+        let item = &doc["data"]["workspaces"][0];
+        assert_eq!(item["status"], "base-unknown");
+        assert!(item["base"].is_null());
+        assert!(item["detail"]
+            .as_str()
+            .unwrap()
+            .contains("explicitly cleared"));
+        assert!(item["detail"]
+            .as_str()
+            .unwrap()
+            .contains("mabo set topic --base REF"));
+        assert_eq!(r.snapshot(&tree), before);
+        assert_eq!(records::read(&store).unwrap(), record_before);
+        let out = r.mabo(&r.main, &["set", "topic", "--base", "origin/main"]);
+        assert!(out.status.success());
+        let doc = r.sync(&r.main, &[selector, "--no-default"], 0);
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
+        assert_eq!(
+            r.git(&tree, &["rev-parse", "HEAD"]),
+            r.git(&r.upstream, &["rev-parse", "HEAD"])
+        );
+    }
+}
+
+#[test]
+fn cleared_base_on_default_checkout_is_skipped() {
+    for selector in ["--all", "topic"] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        r.git(&r.main, &["checkout", "-b", "primary"]);
+        r.git(&tree, &["checkout", "main"]);
+        assert!(r
+            .mabo(&r.main, &["set", "topic", "--unset", "base"])
+            .status
+            .success());
+        r.advance();
+        let before = r.snapshot(&tree);
+        let doc = r.sync(&r.main, &[selector, "--no-default"], 0);
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "base-unknown");
+        assert_eq!(r.snapshot(&tree), before);
+        let doc = r.sync(&r.main, &[selector], 0);
+        assert_eq!(doc["data"]["default"]["status"], "base-unknown");
+        assert_eq!(r.snapshot(&tree), before);
+    }
+}
+
+#[test]
+fn legacy_missing_base_falls_back_after_record_migration() {
+    let r = Repo::new();
+    let legacy = r.root.join("legacy");
+    let cleared = r.root.join("cleared");
+    for (name, path) in [("legacy", &legacy), ("cleared", &cleared)] {
+        r.git(
+            &r.main,
+            &["worktree", "add", "-b", name, path.to_str().unwrap()],
+        );
+    }
+    let file = r.main.join(".git/maboroshi/worktrees.json");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({"version": 1, "worktrees": [
+            {"path": legacy, "purpose": "old"}, {"path": cleared}
+        ]}))
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(r
+        .mabo(&r.main, &["set", "cleared", "--unset", "base"])
+        .status
+        .success());
+    assert!(!file.exists());
+    assert!(file.with_extension("json.imported").exists());
+    r.advance();
+    let before = r.snapshot(&cleared);
+    let doc = r.sync(&r.main, &["--all", "--no-default"], 0);
+    let items = doc["data"]["workspaces"].as_array().unwrap();
+    let old = items.iter().find(|item| item["name"] == "legacy").unwrap();
+    assert_eq!(old["base"], "refs/remotes/origin/main");
+    assert_eq!(old["status"], "updated");
+    let unknown = items.iter().find(|item| item["name"] == "cleared").unwrap();
+    assert_eq!(unknown["status"], "base-unknown");
+    assert_eq!(r.snapshot(&cleared), before);
+}

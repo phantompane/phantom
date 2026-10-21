@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Write;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
@@ -721,7 +722,13 @@ pub(crate) fn create_worktree_inner(
     let hooks_ran = !commands.is_empty();
     let hook_failure = if hooks_ran {
         logger.log("\nRunning post-create commands...");
-        run_hook_commands(context, name, commands, true, logger)?
+        run_hook_commands(
+            context,
+            &worktree_at_path(context, &path)?,
+            commands,
+            true,
+            logger,
+        )?
     } else {
         None
     };
@@ -881,7 +888,13 @@ pub(crate) fn attach_worktree_inner(
     let hooks_ran = !commands.is_empty();
     let hook_failure = if hooks_ran {
         logger.log("\nRunning post-create commands...");
-        run_hook_commands(context, &branch, commands, true, logger)?
+        run_hook_commands(
+            context,
+            &worktree_at_path(context, &path)?,
+            commands,
+            true,
+            logger,
+        )?
     } else {
         None
     };
@@ -1153,7 +1166,7 @@ pub(crate) fn commit_delete_checked(
     metadata::prepare(&context.git_root).map_err(|error| DeleteError::kept(error, &worktree))?;
     if !commands.is_empty() {
         logger.log("\nRunning pre-delete commands...");
-        if let Err(error) = run_hook_commands(context, &name, &commands, false, logger) {
+        if let Err(error) = run_hook_commands(context, &worktree, &commands, false, logger) {
             return Err(DeleteError::kept(error, &worktree));
         }
     }
@@ -1303,6 +1316,24 @@ pub fn exec_in_worktree(
         crate::output::warning("metadata_read", format!("Warning: {warning}"));
     }
     let worktree = find_worktree(context, name, false, None)?;
+    exec_in_resolved_worktree(
+        context,
+        &worktree,
+        command,
+        args,
+        env,
+        redirect_stdout_to_stderr,
+    )
+}
+
+fn exec_in_resolved_worktree(
+    context: &Context,
+    worktree: &WorktreeInfo,
+    command: &str,
+    args: &[&str],
+    env: &[(&str, &str)],
+    redirect_stdout_to_stderr: bool,
+) -> Result<i32> {
     let path = PathBuf::from(&worktree.path);
     let owned = workspace_env(context, &worktree.name, &path);
     let mut pairs = owned
@@ -1445,12 +1476,14 @@ fn combine_exit(action: Option<i32>, hook: Option<i32>) -> Option<i32> {
 
 fn run_hook_commands(
     context: &Context,
-    name: &str,
+    worktree: &WorktreeInfo,
     commands: &[String],
     post: bool,
     logger: &Logger,
 ) -> Result<Option<HookFailure>> {
     let _hook_scope = crate::runtime::hook_scope();
+    let path = Path::new(&worktree.path);
+    let original_dir = fs::metadata(path).map_err(|error| Error::msg(error.to_string()))?;
     for command in commands {
         if post {
             logger.log(&format!("Executing: {command}"));
@@ -1458,8 +1491,31 @@ fn run_hook_commands(
             logger.log(&format!("Executing pre-delete command: {command}"));
         }
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        let code = match exec_in_worktree(context, name, &shell, &["-c", command], &[], logger.json)
-        {
+        let run = || {
+            // A link may move during an earlier hook. Keep the preflight target,
+            // and refuse a removed or replaced checkout before running another command.
+            let current = worktree_at_path(context, path)?;
+            let dir = fs::metadata(path).map_err(|error| Error::msg(error.to_string()))?;
+            if current.metadata.id != worktree.metadata.id
+                || dir.dev() != original_dir.dev()
+                || dir.ino() != original_dir.ino()
+                || !paths::same_location(
+                    &git::git_common_dir(path)?,
+                    &git::git_common_dir(&context.git_root)?,
+                )
+            {
+                return Err(Error::msg("Workspace changed before running hook command"));
+            }
+            exec_in_resolved_worktree(
+                context,
+                worktree,
+                &shell,
+                &["-c", command],
+                &[],
+                logger.json,
+            )
+        };
+        let code = match run() {
             Ok(code) => code,
             Err(error) => {
                 if post {
@@ -1811,6 +1867,7 @@ impl WorktreeInfo {
             orphaned: self.orphaned,
             metadata: metadata::WorktreeMetadata {
                 base: None,
+                base_cleared: false,
                 ..self.metadata.clone()
             },
         }
