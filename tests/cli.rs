@@ -21404,6 +21404,125 @@ fn merged_pr_remove_linked_exact_and_ancestor() {
 }
 
 #[test]
+fn merged_pr_partial_clone_requires_exact_head_without_object_probes() {
+    for config in ["extension", "promisor", "not-promisor"] {
+        for relation in ["exact", "ancestor", "missing"] {
+            for gc in [false, true] {
+                let repo = merged_pr_fixture(Some("7"));
+                let local = retirement_head_at(&repo, &managed(&repo, "topic"));
+                let head = match relation {
+                    "ancestor" => {
+                        commit_file(&repo, "topic", "later.txt", "later PR work\n");
+                        let head = retirement_head_at(&repo, &managed(&repo, "topic"));
+                        git_at(
+                            &repo,
+                            &managed(&repo, "topic"),
+                            &["reset", "--hard", &local],
+                        );
+                        head
+                    }
+                    "missing" => "1234567890123456789012345678901234567890".to_owned(),
+                    _ => local.clone(),
+                };
+                match config {
+                    "extension" => repo.git(&["config", "extensions.partialClone", "origin"]),
+                    "promisor" => {
+                        repo.git(&["config", "remote.other.promisor", "false"]);
+                        repo.git(&["config", "remote.origin.promisor", "true"]);
+                    }
+                    _ => repo.git(&["config", "remote.origin.promisor", "false"]),
+                }
+                let partial = config != "not-promisor";
+                let preserved = relation == "exact" || (!partial && relation == "ancestor");
+                let response = merged_pr_response(&head, "MERGED");
+                for plan in [true, false] {
+                    let args = match (gc, plan) {
+                        (true, true) => vec!["gc", "--merged", "--json"],
+                        (true, false) => vec!["gc", "--merged", "--apply", "--json"],
+                        (false, true) => vec!["remove", "topic", "--dry-run", "--json"],
+                        (false, false) => vec!["remove", "topic", "--json"],
+                    };
+                    let trace = repo.root.join("git-trace.json");
+                    fs::write(&trace, "").unwrap();
+                    let mut child = merged_pr_command(&repo, &args, &response)
+                        .env("GIT_TRACE2_EVENT", &trace)
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .unwrap();
+                    let started = std::time::Instant::now();
+                    while child.try_wait().unwrap().is_none() {
+                        if started.elapsed() > std::time::Duration::from_secs(10) {
+                            child.kill().unwrap();
+                            child.wait().unwrap();
+                            panic!("PR preservation hung: {config} {relation} {args:?}");
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    let out = child.wait_with_output().unwrap();
+                    assert!(out.status.success(), "{}", text(&out.stderr));
+                    let doc = json_value(&out);
+                    let items = doc["data"]["items"].as_array().unwrap();
+                    if gc && !preserved {
+                        assert!(items.is_empty(), "{config} {relation}: {doc}");
+                    } else {
+                        let item = &items[0];
+                        if gc {
+                            assert_eq!(
+                                item["action"],
+                                if plan { "wouldRemove" } else { "removed" }
+                            );
+                        } else {
+                            assert_eq!(
+                                item[if plan {
+                                    "wouldDeleteBranch"
+                                } else {
+                                    "branchDeleted"
+                                }],
+                                preserved,
+                                "{config} {relation}: {item}"
+                            );
+                            if !preserved {
+                                assert_eq!(item["branchKeptReason"], "unpreserved");
+                            }
+                        }
+                        if preserved {
+                            assert_eq!(item["preservationReason"], "merged_pr");
+                        }
+                    }
+                    for line in fs::read_to_string(&trace).unwrap().lines() {
+                        let event: serde_json::Value = serde_json::from_str(line).unwrap();
+                        let Some(argv) = event["argv"].as_array() else {
+                            continue;
+                        };
+                        assert!(!argv.iter().any(|arg| arg == "fetch"), "{event}");
+                        if partial {
+                            assert!(
+                                !argv
+                                    .windows(3)
+                                    .any(|args| args == ["cat-file", "-t", head.as_str()]),
+                                "{event}"
+                            );
+                            assert!(
+                                !argv.windows(4).any(|args| args
+                                    == [
+                                        "merge-base",
+                                        "--is-ancestor",
+                                        local.as_str(),
+                                        head.as_str()
+                                    ]),
+                                "{event}"
+                            );
+                        }
+                    }
+                    assert_eq!(branch_listed(&repo, "topic"), plan || !preserved);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn merged_pr_remove_keeps_uncertain_and_unmerged_tips() {
     for case in [
         "ahead",

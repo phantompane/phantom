@@ -662,10 +662,35 @@ pub(crate) fn retirement_pr_contains(
         return true;
     }
     ancestor
+        && retirement_pr_ancestry_allowed(root)
         && raw_git_with_env(root, &["cat-file", "-t", head], &env)
             .is_ok_and(|result| result.code == 0 && result.stdout.trim() == "commit")
         && raw_git_with_env(root, &["merge-base", "--is-ancestor", tip, head], &env)
             .is_ok_and(|result| result.code == 0)
+}
+
+// Older Git versions ignore GIT_NO_LAZY_FETCH. In partial clones, even probing
+// a PR object can fetch and hang, so only the exact-tip proof above is allowed.
+fn retirement_pr_ancestry_allowed(root: &Path) -> bool {
+    let Ok(partial) = raw_git(root, &["config", "--get", "extensions.partialClone"]) else {
+        return false;
+    };
+    if partial.code != 1 {
+        return false;
+    }
+    let Ok(promisor) = raw_git(
+        root,
+        &[
+            "config",
+            "--type=bool",
+            "--get-regexp",
+            r"^remote\..*\.promisor$",
+        ],
+    ) else {
+        return false;
+    };
+    promisor.code == 1
+        || (promisor.code == 0 && promisor.stdout.lines().all(|line| line.ends_with(" false")))
 }
 
 pub(crate) fn retirement_preserved(
