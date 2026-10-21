@@ -282,6 +282,7 @@ pub(crate) fn create(
             source,
             None,
             &crate::setup::Report::skipped(),
+            request.copy_files,
             logger,
         );
     }
@@ -416,6 +417,7 @@ pub(crate) fn create(
         source,
         metadata_error.as_deref(),
         &setup,
+        request.copy_files,
         logger,
     )
 }
@@ -426,6 +428,7 @@ fn report(
     source: Value,
     metadata_error: Option<&str>,
     setup: &crate::setup::Report,
+    copy_files: &[String],
     logger: &worktree::Logger,
 ) -> Result<i32> {
     logger.log(&format!(
@@ -452,7 +455,7 @@ fn report(
             crate::error::PARTIAL,
             format!(
                 "Workspace created but setup did not complete. Retry with `{}`.",
-                visible_text(&setup_retry_command(context, tree))
+                visible_text(&setup_retry_command(context, tree, copy_files))
             ),
         ));
     }
@@ -473,11 +476,19 @@ fn shell_directory(path: &str) -> String {
     format!("\"$(printf '{octal}/')\"")
 }
 
-fn setup_retry_command(context: &Context, tree: &worktree::WorktreeInfo) -> String {
+fn setup_retry_command(
+    context: &Context,
+    tree: &worktree::WorktreeInfo,
+    copy_files: &[String],
+) -> String {
     let command = format!(
         "mabo -R {} setup",
         shell_directory(&context.git_root.to_string_lossy())
     );
+    let copy_options: String = copy_files
+        .iter()
+        .map(|pattern| format!(" --copy-file {}", shell_quote(pattern)))
+        .collect();
     let candidates = std::iter::once(tree.name.clone()).chain(
         [
             ("pr", &tree.metadata.links.pr),
@@ -496,12 +507,15 @@ fn setup_retry_command(context: &Context, tree: &worktree::WorktreeInfo) -> Stri
                 paths::same_location(Path::new(&resolved.path), Path::new(&tree.path))
             })
         {
-            return format!("{command} {}", shell_quote(&selector));
+            return format!("{command} {}{copy_options}", shell_quote(&selector));
         }
     }
     // Paths are not selectors. Dot resolves this checkout even when links were
     // not saved or match several workspaces, and -R keeps the primary's config.
-    format!("(cd {} && {command} .)", shell_directory(&tree.path))
+    format!(
+        "(cd {} && {command} .{copy_options})",
+        shell_directory(&tree.path)
+    )
 }
 
 pub(crate) fn adopt(

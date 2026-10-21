@@ -15799,6 +15799,136 @@ fn setup_and_create_escape_copy_failure_diagnostics() {
 }
 
 #[test]
+fn setup_retry_hint_preserves_copy_patterns_after_copy_failure() {
+    for json in [false, true] {
+        for fallback in [false, true] {
+            let repo = Repo::new();
+            let directory = "private's $data `literal`";
+            let outside = repo.root.join("outside");
+            fs::create_dir(&outside).unwrap();
+            std::os::unix::fs::symlink(&outside, repo.repo.join(directory)).unwrap();
+            fs::write(repo.repo.join(".gitignore"), "*.env\n").unwrap();
+            repo.git(&["add", ".gitignore", directory]);
+            repo.git(&["commit", "-m", "copy retry fixture"]);
+            let gh_path = fallback.then(|| {
+                let path = fake_gh_for_topic_pr(&repo);
+                publish_pr_topic(&repo);
+                let gh = repo.root.join("bin/gh");
+                let script = fs::read_to_string(&gh).unwrap();
+                fs::write(&gh, script.replace("\"topic\"", "\"topic+fix\"")).unwrap();
+                assert!(repo
+                    .create_recorded(&["create", "duplicate", "--pr", "7", "--no-setup"])
+                    .status
+                    .success());
+                path
+            });
+            fs::remove_file(repo.repo.join(directory)).unwrap();
+            fs::create_dir(repo.repo.join(directory)).unwrap();
+            fs::write(repo.repo.join(directory).join("secret.env"), "secret").unwrap();
+            fs::write(repo.repo.join(".env"), "environment").unwrap();
+            fs::write(repo.repo.join("extra.env"), "extra").unwrap();
+            assert!(!repo.repo.join(".worktreeinclude").exists());
+            let name = if fallback { "topic+fix" } else { "copy-retry" };
+            let mut args = if fallback {
+                vec!["create", "--pr", "7"]
+            } else {
+                vec!["create", name]
+            };
+            let pattern = format!("{directory}/*.env");
+            args.extend(["--copy-file", ".env", "--copy-file", &pattern]);
+            args.extend(["--copy-file", "extra.env"]);
+            if json {
+                args.push("--json");
+            }
+            let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), &args);
+            if let Some(path) = gh_path {
+                command.env("PATH", path);
+            }
+            let created = command.output().unwrap();
+            assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
+            let target = managed(&repo, name);
+            let shown = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &["show", "--json"])
+                .current_dir(&target)
+                .output()
+                .unwrap();
+            let shown = json_value(&shown);
+            assert_eq!(shown["data"]["workspace"]["setup"]["state"], "failed");
+            assert!(!target.join(directory).join("secret.env").exists());
+            assert!(!outside.join("secret.env").exists());
+            // Fix the destination obstruction, then execute the displayed hint verbatim.
+            fs::remove_file(target.join(directory)).unwrap();
+            let hint = setup_retry_hint(&created, json);
+            let retried = run_setup_retry_hint(&repo, &repo.root, &hint);
+            assert!(
+                retried.status.success(),
+                "{hint}: {} {}",
+                text(&retried.stdout),
+                text(&retried.stderr)
+            );
+            assert_eq!(
+                fs::read_to_string(target.join(directory).join("secret.env")).unwrap(),
+                "secret",
+                "{hint}"
+            );
+            assert_eq!(
+                fs::read_to_string(target.join(".env")).unwrap(),
+                "environment"
+            );
+            assert_eq!(
+                fs::read_to_string(target.join("extra.env")).unwrap(),
+                "extra"
+            );
+            assert_eq!(hint.starts_with("(cd "), fallback, "{hint}");
+            assert_eq!(hint.matches(" --copy-file ").count(), 3, "{hint}");
+            let shown = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &["show", "--json"])
+                .current_dir(&target)
+                .output()
+                .unwrap();
+            let shown = json_value(&shown);
+            assert_eq!(shown["data"]["workspace"]["setup"]["state"], "ok");
+        }
+    }
+}
+
+#[test]
+fn setup_retry_hint_escapes_copy_patterns_in_text_and_json() {
+    let mut hints = Vec::new();
+    for json in [false, true] {
+        let repo = Repo::new();
+        fs::write(
+            repo.repo.join(".mabo.toml"),
+            "[hooks]\nsetup = ['exit 1']\n",
+        )
+        .unwrap();
+        let mut args = vec![
+            "create",
+            "copy-retry",
+            "--copy-file",
+            "private's $data `literal`/*.env",
+            "--copy-file",
+            "control\u{1b}[31m\t*.env",
+        ];
+        if json {
+            args.push("--json");
+        }
+        let created = repo.mabo(&args);
+        assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
+        let hint = setup_retry_hint(&created, json);
+        assert!(!hint.chars().any(char::is_control), "{hint:?}");
+        assert!(
+            hint.ends_with(
+                " --copy-file 'private'\\''s $data `literal`/*.env' --copy-file 'control\\u{1b}[31m\\u{9}*.env'"
+            ),
+            "{hint}"
+        );
+        hints.push(hint.replace(repo.repo.to_str().unwrap(), "PRIMARY"));
+    }
+    assert_eq!(hints[0], hints[1]);
+}
+
+#[test]
 fn setup_retry_hint_resolves_pr_names_and_ambiguous_links() {
     for json in [false, true] {
         for ambiguous in [false, true] {
