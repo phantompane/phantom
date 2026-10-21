@@ -653,63 +653,109 @@ fn path_cmd(args: &[String]) -> Result<i32> {
     inspect(args, true)
 }
 
-fn delete(args: &[String]) -> Result<i32> {
+fn remove(args: &[String]) -> Result<i32> {
     let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("delete"), true) {
-        Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    let delete_current = parsed.flag("current");
-    if parsed.positionals.is_empty() && !delete_current {
-        return fail_with(
-            &Error::msg(
-                "Please provide at least one workspace name to delete, or use --current to delete the current workspace",
-            ),
-            VALIDATION,
-        );
+    let parsed = args::parse(args, &command_options("remove"), true)?;
+    if parsed.positionals.is_empty() {
+        return Err(Error::validation(
+            "Use `mabo remove SEL...`; use `mabo remove .` for the current workspace.",
+        ));
     }
-    if !parsed.positionals.is_empty() && delete_current {
-        return fail_with(
-            &Error::msg("Cannot specify --current with a workspace name"),
-            VALIDATION,
-        );
-    }
-    let context = match command_context(&parsed) {
-        Ok(context) => context,
-        Err(error) => return fail_with(&error, error.exit_code()),
+    let dry_run = parsed.flag("dry-run");
+    // Even selector resolution lists status for other workspaces. Suppress Git
+    // hooks before any inspection so a plan cannot run fsmonitor commands.
+    let _hooks = dry_run.then(crate::process::suppress_git_hooks);
+    let context = command_context(&parsed)?;
+    metadata::load_strict(&context.git_root)?;
+    let options = worktree::RemoveOptions {
+        discard_changes: parsed.flag("discard-changes"),
+        keep_branch: parsed.flag("keep-branch"),
+        delete_unpreserved_branch: parsed.flag("delete-unpreserved-branch"),
     };
-    let keep_branch =
-        parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false);
-    let names = if delete_current {
-        match worktree::current_worktree_name(&context) {
-            Ok(Some(_)) => vec![".".to_string()],
-            Ok(None) => {
-                return fail_with(
-                    &Error::msg(
-                        "Not in a workspace directory. The --current option can only be used from within a workspace.",
-                    ),
-                    VALIDATION,
+    let mut items = Vec::new();
+    let mut plans = Vec::new();
+    let mut first_error = None;
+    let mut seen_paths = std::collections::HashSet::new();
+    let mut seen_failures = std::collections::HashSet::new();
+    // Resolve and check every selector before the first hook or mutation.
+    for name in &parsed.positionals {
+        match worktree::preflight_remove(&context, name, &options, None) {
+            Ok(plan) => {
+                if !seen_paths.insert(plan.worktree.path.clone()) {
+                    continue;
+                }
+                items.push(serde_json::json!({
+                    "workspace": plan.worktree.to_json(None), "removed": false,
+                    "branchDeleted": false, "branchKeptReason": plan.branch_kept_reason,
+                    "alreadyGone": plan.worktree.orphaned, "error": null,
+                    "wouldRemove": true,
+                    "wouldDeleteBranch": !plan.worktree.detached && !plan.worktree.orphaned && plan.branch_kept_reason.is_none(),
+                }));
+                plans.push((items.len() - 1, plan));
+            }
+            Err(failure) => {
+                if !seen_failures.insert(name.clone()) {
+                    continue;
+                }
+                let gone = matches!(failure.error, Error::WorktreeNotFound(_));
+                items.push(serde_json::json!({
+                    "workspace": failure.worktree.as_ref().map(|tree| serde_json::to_value(tree.to_json(None))).transpose().map_err(|error| Error::msg(error.to_string()))?
+                        .unwrap_or_else(|| serde_json::json!({"name": name})),
+                    "removed": false, "branchDeleted": false, "branchKeptReason": null,
+                    "alreadyGone": gone, "error": if gone { None } else { Some(failure.error.to_json(failure.error.exit_code()).error) },
+                }));
+                if !gone {
+                    if !json {
+                        crate::output::failure(
+                            failure.error.to_json(failure.error.exit_code()).error,
+                        );
+                    }
+                    if first_error.is_none() {
+                        first_error = Some(failure.error);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(error) = first_error {
+        emit_json(&serde_json::json!({"items": items, "plan": dry_run}))?;
+        return fail_with(&error, error.exit_code());
+    }
+    if !json {
+        for item in &items {
+            if item["alreadyGone"] == true && item.get("wouldRemove").is_none() {
+                outln!(
+                    "Workspace '{}' is already gone",
+                    visible_text(item["workspace"]["name"].as_str().unwrap_or("workspace"))
                 );
             }
-            Err(error) => return fail_with(&error, GENERAL),
         }
-    } else {
-        parsed.positionals.clone()
-    };
+    }
+    if dry_run {
+        if !json {
+            for item in &items {
+                if item["alreadyGone"] == true && item.get("wouldRemove").is_none() {
+                    continue;
+                }
+                outln!(
+                    "would remove {}{}",
+                    visible_text(item["workspace"]["name"].as_str().unwrap_or("workspace")),
+                    if item["wouldDeleteBranch"] == true {
+                        " and its branch"
+                    } else {
+                        " (branch kept or no checkout)"
+                    }
+                );
+            }
+        }
+        emit_json(&serde_json::json!({"items": items, "plan": true}))?;
+        return Ok(SUCCESS);
+    }
     let logger = logger_for(json);
-    let options = worktree::DeleteOptions {
-        force: parsed.flag("force"),
-        keep_branch,
-        allow_current: delete_current,
-        published_tip: None,
-    };
-    let plans = match worktree::preflight_deletes(&context, &names, &options) {
-        Ok(plans) => plans,
-        Err(refusals) => return report_delete_refusals(refusals, json),
-    };
-    let mut deleted = Vec::new();
-    for plan in plans {
-        match worktree::commit_delete(
+    let mut changed = false;
+    let mut first_error = None;
+    for (index, plan) in plans {
+        match worktree::commit_remove(
             &context,
             plan,
             &options,
@@ -717,77 +763,55 @@ fn delete(args: &[String]) -> Result<i32> {
             hook_control(&parsed, json, true),
         ) {
             Ok(outcome) => {
-                if let Some(metadata_error) = outcome.metadata_error {
-                    let error = Error::msg(metadata_error);
-                    if !json {
-                        outln!("{}", outcome.message);
-                    }
-                    deleted.push(worktree::DeletedEntry {
-                        worktree: Some(outcome.worktree.to_json(None)),
-                        branch_deleted: outcome.branch_deleted,
-                        branch_error: outcome.branch_error.clone(),
-                        error: Some(error.to_string()),
-                    });
-                    if json {
-                        emit_json(&worktree::DeleteOutput {
-                            version: crate::error::JSON_VERSION,
-                            deleted,
-                            error: Some(error.to_json(crate::error::PARTIAL).error),
-                        })?;
-                        return Ok(crate::error::PARTIAL);
-                    }
-                    return fail(
-                        &Error::status(crate::error::PARTIAL, error.to_string()),
-                        crate::error::PARTIAL,
+                changed = true;
+                let error = outcome
+                    .metadata_error
+                    .or(outcome.branch_error)
+                    .map(Error::msg);
+                if outcome.branch_kept_reason.as_deref() == Some("unpreserved") {
+                    crate::output::warning(
+                        "branch_kept_unpreserved",
+                        format!(
+                            "Warning: kept branch '{}' because its commits are unpreserved.",
+                            visible_text(&outcome.worktree.branch)
+                        ),
                     );
                 }
+                items[index] = serde_json::json!({
+                    "workspace": outcome.worktree.to_json(None), "removed": !outcome.worktree.orphaned,
+                    "branchDeleted": outcome.branch_deleted, "branchKeptReason": outcome.branch_kept_reason,
+                    "alreadyGone": outcome.worktree.orphaned,
+                    "error": error.as_ref().map(|error| error.to_json(error.exit_code()).error),
+                });
                 if !json {
                     outln!("{}", outcome.message);
                 }
-                deleted.push(worktree::DeletedEntry {
-                    worktree: Some(outcome.worktree.to_json(None)),
-                    branch_deleted: outcome.branch_deleted,
-                    branch_error: outcome.branch_error,
-                    error: None,
-                });
+                if let Some(error) = error {
+                    first_error = Some(error);
+                    break;
+                }
             }
             Err(failure) => {
-                let error = &failure.error;
-                let code = if deleted.is_empty() {
-                    match error {
-                        Error::Untrusted(_) => error.exit_code(),
-                        _ => GENERAL,
-                    }
-                } else {
-                    crate::error::PARTIAL
-                };
-                if json {
-                    deleted.push(worktree::DeletedEntry {
-                        worktree: failure
-                            .worktree
-                            .as_ref()
-                            .map(|worktree| worktree.to_json(None)),
-                        branch_deleted: false,
-                        branch_error: None,
-                        error: Some(error.to_string()),
-                    });
-                    emit_json(&worktree::DeleteOutput {
-                        version: crate::error::JSON_VERSION,
-                        deleted,
-                        error: Some(error.aggregate_json(code)),
-                    })?;
-                    return Ok(code);
-                }
-                return fail(&Error::status(code, error.to_string()), code);
+                changed |= failure.changed;
+                items[index]["error"] =
+                    serde_json::json!(failure.error.to_json(failure.error.exit_code()).error);
+                first_error = Some(failure.error);
+                break;
             }
         }
     }
-    if json {
-        return emit_json(&worktree::DeleteOutput {
-            version: crate::error::JSON_VERSION,
-            deleted,
-            error: None,
-        });
+    if first_error.is_some() {
+        for item in &mut items {
+            if item["wouldRemove"] == true && item["error"].is_null() {
+                item["error"] = serde_json::json!({"code": "not_attempted", "message": "Removal stopped after an earlier failure; retry the same command."});
+            }
+        }
+    }
+    emit_json(&serde_json::json!({"items": items}))?;
+    if let Some(error) = first_error {
+        let code = if changed { PARTIAL } else { error.exit_code() };
+        crate::output::failure(error.aggregate_json(code));
+        return Ok(code);
     }
     Ok(SUCCESS)
 }
@@ -995,6 +1019,7 @@ fn help_cmd(args: &[String]) -> Result<i32> {
 
 fn removed_command_hint(command: &str) -> Option<String> {
     let replacement = match command.split_whitespace().next()? {
+        "delete" => "`mabo remove SEL...`; use `mabo remove .` instead of --current, and --discard-changes / --delete-unpreserved-branch instead of -f/--force",
         "attach" => "`mabo create --branch BRANCH`",
         "github" | "gh" => "`mabo create --pr REF` or `mabo create --issue REF`",
         "project" => "`mabo repo add/list/show/forget`",
@@ -1491,12 +1516,13 @@ fn command_options(key: &str) -> Vec<Opt> {
             flag("all-repos", None),
         ],
         "show" | "path" => vec![repo_flag()],
-        "delete" => vec![
+        "remove" => vec![
             repo_flag(),
-            flag("force", Some('f')),
+            flag("discard-changes", None),
+            flag("delete-unpreserved-branch", None),
             flag("keep-branch", None),
-            flag("current", None),
             flag("no-hooks", None),
+            flag("dry-run", None),
         ],
         "exec" => vec![repo_flag()],
         "clone" => vec![
@@ -1532,9 +1558,8 @@ fn command_options(key: &str) -> Vec<Opt> {
         "gc" => vec![
             repo_flag(),
             flag("apply", None),
-            flag("force", Some('f')),
             flag("merged", None),
-            flag("pr", None),
+            flag("closed-pr", None),
             flag("orphaned", None),
             value_flag("older-than", None),
             flag("keep-branch", None),
@@ -1619,20 +1644,18 @@ fn gc(args: &[String]) -> Result<i32> {
         Ok(context) => context,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let force = parsed.flag("force");
     let request = crate::gc::Request {
         policy: crate::gc::Policy {
             selection: crate::gc::selection_from_flags(
                 parsed.flag("merged"),
-                parsed.flag("pr"),
+                parsed.flag("closed-pr"),
                 parsed.flag("orphaned"),
                 older_than,
             ),
             now: std::time::SystemTime::now(),
-            force,
         },
-        apply: parsed.flag("apply") || force,
-        keep_branch: parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false),
+        apply: parsed.flag("apply"),
+        keep_branch: parsed.flag("keep-branch"),
         no_hooks: parsed.flag("no-hooks"),
     };
     let report = match crate::gc::run(&context, &request, &logger_for(json)) {
@@ -1830,44 +1853,6 @@ fn value_flag(name: &'static str, short: Option<char>) -> Opt {
     }
 }
 
-fn report_delete_refusals(failures: Vec<worktree::DeleteError>, json: bool) -> Result<i32> {
-    let first = failures
-        .first()
-        .map(|failure| delete_status(&failure.error))
-        .unwrap_or(GENERAL);
-    if json {
-        let deleted = failures
-            .iter()
-            .map(|failure| worktree::DeletedEntry {
-                worktree: failure
-                    .worktree
-                    .as_ref()
-                    .map(|worktree| worktree.to_json(None)),
-                branch_deleted: false,
-                branch_error: None,
-                error: Some(failure.error.to_string()),
-            })
-            .collect();
-        let error = failures
-            .first()
-            .map(|failure| failure.error.to_json(first).error);
-        emit_json(&worktree::DeleteOutput {
-            version: crate::error::JSON_VERSION,
-            deleted,
-            error,
-        })?;
-        return Ok(first);
-    }
-    for failure in &failures {
-        errln!("{}", failure.error);
-    }
-    Ok(first)
-}
-
-fn delete_status(error: &Error) -> i32 {
-    error.exit_code()
-}
-
 fn fail(error: &Error, code: i32) -> Result<i32> {
     fail_with(error, code)
 }
@@ -2046,9 +2031,9 @@ static COMMANDS: &[Command] = &[
         children: &[],
     },
     Command {
-        name: "delete",
-        help_key: "delete",
-        run: delete,
+        name: "remove",
+        help_key: "remove",
+        run: remove,
         children: &[],
     },
     Command {
@@ -2171,6 +2156,7 @@ mod contract_tests {
             }
         }
         for removed in [
+            "delete",
             "project",
             "preferences",
             "untrust",

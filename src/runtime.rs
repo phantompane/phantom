@@ -105,6 +105,14 @@ pub(crate) fn prepare(
                         Error::validation(format!("Option '{arg}' was removed. Use -R/--repo REF."))
                     });
                 }
+                if matches!(
+                    (key, name),
+                    ("remove", "--force" | "-f" | "--current") | ("gc", "--force" | "-f" | "--pr")
+                ) {
+                    if let Some(hint) = crate::args::retirement_option_hint(arg) {
+                        error.get_or_insert_with(|| Error::validation(hint));
+                    }
+                }
                 if key == "create"
                     && (name == "--exec" || (arg.starts_with("-x") && !arg.starts_with("--")))
                 {

@@ -19,16 +19,16 @@ Maboroshi はワークスペースを作成し、既存の作業を引き継い�
 - **確保と準備。** `clone` は ghq のディレクトリ構成でリポジトリを配置します。`create`は、作業ごとに専用のワークスペースを用意し、`.worktreeinclude` で指定した Git の無視対象ファイルをコピーして、信頼済みのリポジトリでプロジェクトフックを実行します。
 - **情報の記録。** `set` で目的、関連するプルリクエストや issue、ベースを記録します。`list` と `show` で、何がどこにあるかを確認できます。
 - **更新。** `sync` は fetch し、可能ならデフォルトブランチを fast-forward して、選択したワークスペースにベースの変更を取り込みます。
-- **片付け。** `gc` はマージ済みブランチ、クローズ済みのプルリクエスト、孤立したレコード、経過時間（`--older-than`）を根拠に対象を選びます。
+- **片付け。** `gc` はマージ済みブランチ、クローズ済みのプルリクエスト、孤立したレコードを根拠に対象を選び、`--older-than` は作成日時で絞り込みます。
 
 コマンドは非対話で実行できます。JSON 対応の全コマンドは、成功時もエラー時も schema 2 の共通 envelope を返します。`exec` は子コマンドの出力と終了コードをそのまま返します。人間も同じコマンドを使い、プレーンテキストの出力で操作します。
 
 ## デフォルトは安全、違うことをしたいときは明示する
 
-- **マージ済み、クローズ済み、古い、という状態は判断材料であり、削除してよいという許可ではありません。** `gc` は `--apply` または `--force` を指定するまで、削除予定を表示するだけです（`--force` は適用も兼ねます）。`--force` がなければ、未コミットの変更がある作業や、公開済みまたは取り込み済みと確認できないコミットを保護します。デフォルトブランチのワークスペース、実行中のカレントディレクトリがあるワークスペース、Git でロックされたワークスペースは、`--force` があっても保護します。
+- **安全な片付け。** `gc` は `--apply` まで計画だけを表示し、dirty や未保存の候補をスキップします。primary、デフォルトブランチ、カレントワークスペース、Git のロックがあるチェックアウトも保護します。
 - **一括操作はすべてのワークスペースが対象です。** `sync --all` はリポジトリ内の全ワークスペースを選び、`--no-default` がなければデフォルトブランチも更新します。対象を絞るには名前を明示してください。`gc` は根拠と経過時間で候補を選び、未コミットの変更や保存されていないコミットの保護は維持します。
-- **push 済みの履歴は既定で保ちます。** 変更の取り込みが必要な場合、`sync` は公開済みの作業にベースをマージします。リベースには `--rebase --force` が必要です。ベースに含まれないコミットがひとつでも、既知のリモート追跡参照または fetch 先として設定された参照から到達可能なら、公開済みとして扱います。
-- **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust add` で信頼を記録するか、create では `--no-setup`、setup/delete/gc では `--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。単体 `exec` は標準入力を引き継ぎます。
+- **push 済みの履歴は既定で保ちます。** 変更の取り込みが必要な場合、`sync` は公開済みの作業にベースをマージします。ベースに含まれないコミットがひとつでも、既知のリモート追跡参照または fetch 先として設定された参照から到達可能なら、公開済みとして扱います。
+- **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust add` で信頼を記録するか、create では `--no-setup`、setup/remove/gc では `--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。単体 `exec` は標準入力を引き継ぎます。
 
 ## 目指さないこと
 
@@ -69,7 +69,7 @@ Maboroshi が担わない役割は次のとおりです。
 
 ## メタデータの保存と移行
 
-ワークスペースのメタデータは `<git-common-dir>/maboroshi/workspaces/<id>.json` に1件ずつ保存します。`id` は `ws_<uuid v4>`、各ファイルには `schema: 2`、`id`、`path`、任意の `name` と、既存の `base`、`purpose`、`createdAt`、`updatedAt`、`createdFrom`、`links` が入ります。JSON 出力の ワークスペースオブジェクトにも `id` が入り、未記録なら null です。検索・置き換え・削除は従来どおり path で行い、削除はそのファイルだけを消します。破損したレコードは警告と null メタデータになり、ほかのレコードは読み続けられます。変更するコマンドは破損があれば拒否して元のファイルを保ちます。`sync` も fetch や対象の更新前にメタデータを厳密に検証します。同じ path の初回同時登録で重複ができた場合は、`createdAt` が古いレコード、同時刻なら `id` の辞書順で小さいレコードに読み取り時にまとめます。全フィールドはそのレコードを採用し、次のメタデータ書き込みで余分なファイルを削除します。`delete` と `gc` はこのメタデータに記録されていれば、設定した保存先の外にあるワークスペース も削除対象にできます。
+ワークスペースのメタデータは `<git-common-dir>/maboroshi/workspaces/<id>.json` に1件ずつ保存します。`id` は `ws_<uuid v4>`、各ファイルには `schema: 2`、`id`、`path`、任意の `name` と、既存の `base`、`purpose`、`createdAt`、`updatedAt`、`createdFrom`、`links` が入ります。JSON 出力の ワークスペースオブジェクトにも `id` が入り、未記録なら null です。検索・置き換え・削除は従来どおり path で行い、削除はそのファイルだけを消します。破損したレコードは警告と null メタデータになり、ほかのレコードは読み続けられます。変更するコマンドは破損があれば拒否して元のファイルを保ちます。`sync` も fetch や対象の更新前にメタデータを厳密に検証します。同じ path の初回同時登録で重複ができた場合は、`createdAt` が古いレコード、同時刻なら `id` の辞書順で小さいレコードに読み取り時にまとめます。全フィールドはそのレコードを採用し、次のメタデータ書き込みで余分なファイルを削除します。`remove` と `gc` はこのメタデータに記録されていれば、設定した保存先の外にあるワークスペース も削除対象にできます。
 
 リポジトリの登録情報は `$XDG_STATE_HOME/maboroshi/repos/<id>.json`（既定は `~/.local/state/maboroshi/repos/<id>.json`）に1件ずつ保存し、既存の `proj_<uuid>` ID を引き継ぎます。同じ root の重複は、読み込み時に `createdAt` が古い方へまとめます。同時刻なら ID の辞書順で決めます。
 
@@ -77,7 +77,7 @@ Maboroshi が担わない役割は次のとおりです。
 
 ## ワークスペースのパスと環境変数
 
-新規ワークスペースの既定パスは `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash8>/<name>` です。`XDG_DATA_HOME` が未設定・空・相対パスの場合は `~/.local/share/maboroshi/workspaces/...` を使います。`workspace-root` 設定は引き続き使えます。既存の `maboroshi/worktrees/` 以下は移動せず、`list`、`show`、`delete`、`sync`、`gc` で引き続き扱えます。
+新規ワークスペースの既定パスは `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash8>/<name>` です。`XDG_DATA_HOME` が未設定・空・相対パスの場合は `~/.local/share/maboroshi/workspaces/...` を使います。`workspace-root` 設定は引き続き使えます。既存の `maboroshi/worktrees/` 以下は移動せず、`list`、`show`、`remove`、`sync`、`gc` で引き続き扱えます。
 
 フック（`setup`、`pre-remove`）と `exec` には、`MABO=1`、名前の `MABO_WORKSPACE`、記録済み ID の `MABO_WORKSPACE_ID`（未記録なら空）、絶対パスの `MABO_WORKSPACE_PATH`、primary checkout の絶対パスの `MABO_REPO_PATH` を渡します。フック設定を読む場所は実行元チェックアウトのままです。旧 `MABO_NAME`、`MABO_PATH`、`MABO_ROOT_PATH` は子プロセスから取り除くため、スクリプトを更新してください。
 
@@ -106,7 +106,7 @@ mabo --version --json
 
 `repo forget` は登録情報だけを削除します。`repo show` は primary checkout、既定ブランチ、`.mabo.toml` の有無、信頼状態、ワークスペースの保存先を表示します。登録済みリポジトリは検出結果より優先され、`--discovered` は検出した未登録のルートだけを一覧表示します。`trust add` はフックを表示し、確認を求めずに信頼を記録します。作成時に人間向けの端末で信頼を確認する挙動は変わりません。非対話モードで未信頼のフックを実行しようとすると、終了コード 4 を返します。
 
-ユーザー設定のキーは `workspace-root`（絶対パス、`~/`、またはリポジトリルートからの相対パス）、`clone-root`、`discover-ghq`、`keep-branch` です。旧キーの `worktrees-directory`、`root`、`ghq-discovery` は `config_key_renamed` の警告を出して読み込みます。新しい名前の値が優先され、次に設定の書き込みが成功した際に旧キーを新しい名前へ書き換えます。`directory-name-separator` は `config_key_removed` の警告を出して無視し、書き込み時に削除します。`--sources` は各設定の有効な値、取得元、詳細を含みます。`clone-root` の既定値は従来どおり ghq.root → GHQ_ROOT → ~/ghq の順で決まります。
+ユーザー設定のキーは `workspace-root`（絶対パス、`~/`、またはリポジトリルートからの相対パス）、`clone-root`、`discover-ghq` です。旧キーの `worktrees-directory`、`root`、`ghq-discovery` は `config_key_renamed` の警告を出して読み込みます。新しい名前の値が優先され、次に設定の書き込みが成功した際に旧キーを新しい名前へ書き換えます。`directory-name-separator` と `keep-branch` は `config_key_removed` の警告を出して無視し、書き込み時に削除します。`--sources` は各設定の有効な値、取得元、詳細を含みます。`clone-root` の既定値は従来どおり ghq.root → GHQ_ROOT → ~/ghq の順で決まります。
 
 JSON は schema 2 の envelope を使います。リポジトリの結果キーは `repo` / `repos` で、clone は `data: {repo: {root, name, remoteUrl}, cloned, updated}` を返します。`help --json` は help-data.json の仕様全体を含み、すべてのコマンドとフラグ、終了コードとエラーコード、`schemaVersion: 2` を返します。`--version --json` はアプリケーションのバージョンを `data.version` に入れます。詳しい例は英語の README を参照してください。
 
@@ -116,7 +116,7 @@ JSON は schema 2 の envelope を使います。リポジトリの結果キー�
 
 `SEL` には名前、`.`（現在のディレクトリを含むチェックアウト）、`pr:N`、`issue:N`、PR/issue の URL を指定できます。PR/issue は記録済みのリンクだけを検索し、新規作成しません。該当なしは終了コード 3（`not_found`）、複数一致は 2（`ambiguous`）です。`.` と別リポジトリの `-R` の併用は 2、リポジトリ外での現在位置の選択は 3 になります。
 
-`show [SEL]`・`path [SEL]`・`set [SEL]`・`setup [SEL]`・`exec [SEL] -- COMMAND [ARG...]` は SEL 省略時に `.` を選びます。primary 内では primary checkout が対象です。`show` は primary や管理外の未記録チェックアウトを `managed:false` として表示します。`sync` と `delete` の位置引数にも同じセレクタを使えます。引数なしの `sync` の対象と `delete` のフラグ・安全判定は従来どおりです。
+`show [SEL]`・`path [SEL]`・`set [SEL]`・`setup [SEL]`・`exec [SEL] -- COMMAND [ARG...]` は SEL 省略時に `.` を選びます。primary 内では primary checkout が対象です。`show` は primary や管理外の未記録チェックアウトを `managed:false` として表示します。`sync` と `remove` の位置引数にも同じセレクタを使えます。引数なしの `sync` の対象は従来どおりです。`remove` は明示的なセレクタを必要とします。
 
 ```sh
 mabo show pr:774 --json
@@ -174,7 +174,7 @@ mabo create feature-auth --no-setup
 
 `setup [SEL]` は省略時に `.` を選び、共通セレクタを使います。`.worktreeinclude` と `--copy-file` に一致する Git の無視対象ファイルを、常に primary checkout からコピーします。サブディレクトリや別ワークスペースで実行してもコピー元は変わりません。既存ファイルは上書きせず、symlink はスキップします。コピー後に `[hooks] setup` を実行し、コピーの失敗時にはフックを実行しません。`setup --no-hooks` はコピーだけを実行します。
 
-`.mabo.toml` は実行元チェックアウトから読みます。フック名は `[hooks] setup` と `pre-remove` です。旧 `post-create` / `pre-delete` キーは終了コード 1（`failed`）となり、新しい名前への変更を案内します。未知キーも拒否します。`delete` と `gc` は `pre-remove` を実行します。
+`.mabo.toml` は実行元チェックアウトから読みます。フック名は `[hooks] setup` と `pre-remove` です。旧 `post-create` / `pre-delete` キーは終了コード 1（`failed`）となり、新しい名前への変更を案内します。未知キーも拒否します。`remove` と `gc` は `pre-remove` を実行します。
 
 setup の成功は 0、コピーやフックの失敗は 1、対象なしは 3 です。未信頼フックはコピーや記録更新の前に 4（`untrusted`）で拒否します。`mabo trust add` または `MABO_TRUST_ALL=1` で許可できます。primary checkout はコピー元と同じなので 4（`primary`）で拒否します。create の setup 失敗は 6 のままで、`cd '/absolute/source/checkout' && mabo setup 'SELECTOR'` で再試行します。`create --reuse` は setup を再実行しません。setup フックは何度実行してもよいように書いてください。
 
@@ -183,3 +183,21 @@ Run retry hints in bash or zsh. The hint preserves the original hook configurati
 共有ワークスペース JSON の `setup` は `{state, at, error}` です。新規作成では pending → running → ok / failed と遷移し、`--no-setup` は skipped を記録します。古いレコード・移行済みレコード・adopt は unknown（at/error は null）、未記録や forget 後は setup 自体が null です。成功した再実行で error を消します。人間向け list は ok 以外で `setup:failed` などを表示します。setup の JSON は `data: {workspace, setup, copy}` で、setup には実行したフックの ran/ok/command/exitCode/signal も含みます。
 
 running には内部的に pid とホストを記録します。同じホストでその pid が存在しなければ、表示時だけ interrupted とします。読み取りでレコードは書き換えず、別ホストやホスト不明なら running のままです。この情報はロックや使用中検出ではなく、操作や再実行をブロックしません。同一レコードへの同時書き込みは従来どおり後勝ちです。
+
+## Retirement
+
+```sh
+mabo remove SEL... [--keep-branch] [--delete-unpreserved-branch] [--discard-changes] [--no-hooks] [--dry-run]
+mabo remove .
+mabo gc [--merged] [--closed-pr] [--orphaned] [--older-than D] [--apply] [--keep-branch] [--no-hooks]
+```
+
+`remove` は全セレクタと安全条件を確認し、信頼済みの `pre-remove` を実行してからチェックアウトを消します。ブランチは base への merge・squash・rebase (exact tree-entry matching) の取り込み、または自身の upstream との完全一致を確認できれば削除します。base が未記録ならリポジトリの既定 base を確認します。未保存のブランチは `branch_kept_unpreserved` 警告と `branchKeptReason: "unpreserved"` を付けて保持します。`--keep-branch` は常に保持し、`--delete-unpreserved-branch` は未保存でも削除を許可します。
+
+変更済み・未追跡・ignored ファイルは `--discard-changes` がなければ終了コード 4（`dirty`）で保護します。未保存の detached コミットは `--delete-unpreserved-branch` がなければ 4（`unpreserved`）、primary は常に 4（`primary`）です。2つの許可は独立しています。`--dry-run` はフックを実行せず、ファイル・参照・レコードを変更せずに `plan:true` と `removed:false`、`wouldRemove`、`wouldDeleteBranch` を返します。
+
+JSON は schema 2 の envelope を維持し、remove の `data.items` は `{workspace, removed, branchDeleted, branchKeptReason, alreadyGone, error}` です。永続的な削除後の失敗は終了コード 6。全対象の結果を残し、同じコマンドを再実行できます。既に無い対象は成功して `alreadyGone:true` になり、記録も無ければ workspace には指定した名前のみを返します。孤立レコードはフックやブランチ削除なしで消します。
+
+`gc` は指定なしなら `--merged`・`--closed-pr`・`--orphaned` の3条件を使います。`--older-than D` は `createdAt` で絞り込み、日時不明のレコードを除外します。年齢だけでは候補にしません。`--apply` がなければ `plan:true`、終了コード 0。適用時は dirty・未保存の候補をスキップし、対象を絞った `mabo remove 'NAME' --discard-changes` または `mabo remove 'NAME' --delete-unpreserved-branch` のヒントを返します。許可フラグはまとめません。孤立レコード・登録の整理ではブランチと残存ファイルを保持します。gh が無い場合は PR 状態を `unavailable` と報告します。JSON は `{plan, items:[{workspace, reasons, action, detail}]}`、action は `wouldRemove`・`removed`・`skipped`・`failed` です。
+
+旧 `delete` は終了コード 2 で `remove SEL...` を案内し、`--current` は `remove .` に移行します。旧 `-f/--force` は remove の独立した許可か gc の `--apply` を案内します。`gc --pr` は `gc --closed-pr` です。旧 config の `keep-branch` は型にかかわらず警告して無視し、次の設定書き込みで消します。必要なら `--keep-branch` を明示してください。sync の挙動は P8 まで変更しません。
