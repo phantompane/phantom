@@ -4,16 +4,26 @@ on:
   release:
     types:
       - published
+  pull_request:
+    branches: [next]
+    paths:
+      - .github/workflows/release-compile.yml
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - install.sh
 
 permissions:
-  contents: write
-  # rust-cache saves to the Actions cache.
-  actions: write
+  contents: read
 
 jobs:
   compile:
     name: Build ${{ matrix.asset_os }}-${{ matrix.asset_arch }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      # rust-cache saves to the Actions cache.
+      actions: write
     env:
       # rust-toolchain.toml lists rustfmt and clippy. Setting RUSTUP_TOOLCHAIN
       # makes rustup ignore that file, so the release job does not install them.
@@ -23,11 +33,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             asset_os: linux
             asset_arch: x64
           - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
+            target: aarch64-unknown-linux-musl
             asset_os: linux
             asset_arch: arm64
           - os: macos-latest
@@ -60,6 +70,21 @@ jobs:
       - name: Build
         run: cargo build --locked --release --target ${{ matrix.target }}
 
+      - name: Verify static Linux binary on Alpine
+        if: matrix.asset_os == 'linux'
+        shell: bash
+        run: |
+          binary="target/${{ matrix.target }}/release/mabo"
+          description=$(file "$binary")
+          echo "$description"
+          if [[ "$description" != *"statically linked"* && "$description" != *"static-pie linked"* ]]; then
+            echo "::error::Linux release binary must be statically linked"
+            exit 1
+          fi
+          docker run --rm \
+            --mount "type=bind,src=$PWD/target/${{ matrix.target }}/release,dst=/build,readonly" \
+            alpine:3.22 /build/mabo --version
+
       # The archive name uses the version already committed in Cargo.toml.
       # Nothing in this workflow bumps that version.
       - name: Package
@@ -70,8 +95,115 @@ jobs:
           tar -C "target/${{ matrix.target }}/release" -czf "$archive" mabo
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
 
-      - name: Upload release asset
+      - name: Pass archive to finalize
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.asset_os }}-${{ matrix.asset_arch }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+          # Re-running the workflow must replace the previous attempt's archive.
+          overwrite: true
+
+  finalize:
+    name: Assemble release assets
+    # Default success gating requires every matrix build to succeed.
+    needs: compile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Download archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Assemble and verify checksums
+        working-directory: release-assets
+        shell: bash
+        run: |
+          version=$(awk -F '"' '/^version = / { print $2; exit }' ../Cargo.toml)
+          expected=(
+            "maboroshi-v${version}-darwin-arm64.tar.gz"
+            "maboroshi-v${version}-darwin-x64.tar.gz"
+            "maboroshi-v${version}-linux-arm64.tar.gz"
+            "maboroshi-v${version}-linux-x64.tar.gz"
+          )
+          # Compare the entire directory before adding installer/checksum files.
+          if ! diff -u <(printf '%s\n' "${expected[@]}") \
+            <(find . -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort); then
+            echo "::error::Expected exactly the four release archives listed above"
+            exit 1
+          fi
+          for archive in "${expected[@]}"; do
+            test -f "$archive"
+          done
+
+          files=("${expected[@]}")
+          if [[ -f ../install.sh ]]; then
+            cp ../install.sh install.sh
+            files+=(install.sh)
+          elif [[ "$GITHUB_EVENT_NAME" == release ]]; then
+            echo "::error::install.sh is missing from the release tag; refusing to publish assets"
+            exit 1
+          else
+            echo "::notice::install.sh is absent; skipping it for this PR dry run only"
+          fi
+          mapfile -t files < <(printf '%s\n' "${files[@]}" | LC_ALL=C sort)
+          sha256sum "${files[@]}" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      # Install from the assembled assets exactly as users will, through a
+      # local file:// mirror: checksum verification, extraction, the version
+      # check and the atomic install must all pass before anything is published.
+      - name: Install with install.sh from the assembled assets
+        shell: bash
+        run: |
+          version=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
+          if [[ ! -f release-assets/install.sh ]]; then
+            echo "::notice::install.sh is absent; skipping the installer check for this PR dry run only"
+            exit 0
+          fi
+          mirror="$RUNNER_TEMP/mirror/v${version}"
+          mkdir -p "$mirror"
+          cp release-assets/* "$mirror/"
+          MABO_RELEASE_BASE_URL="file://$RUNNER_TEMP/mirror" MABO_INSTALL_DIR="$RUNNER_TEMP/bin" \
+            sh release-assets/install.sh --version "v${version}" </dev/null
+          "$RUNNER_TEMP/bin/mabo" --version
+
+      - name: Attest release assets
+        if: github.event_name == 'release'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            release-assets/*.tar.gz
+            release-assets/install.sh
+            release-assets/SHA256SUMS
+
+      - name: Upload release assets
+        if: github.event_name == 'release'
+        working-directory: release-assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" "$ARCHIVE" --clobber
+        # gh uploads files in parallel and never rolls back, so publish
+        # SHA256SUMS last and on its own. A rerun first drops any stale
+        # SHA256SUMS, so old checksums never pair with rebuilt archives. The
+        # installer refuses a release without SHA256SUMS (fails closed).
+        run: |
+          # Fetch the asset list on its own so a failed lookup stops the job
+          # instead of silently skipping the stale-checksum cleanup.
+          existing=$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
+          if printf '%s\n' "$existing" | grep -qx SHA256SUMS; then
+            gh release delete-asset "$RELEASE_TAG" SHA256SUMS --yes
+          fi
+          gh release upload "$RELEASE_TAG" ./*.tar.gz install.sh --clobber
+          gh release upload "$RELEASE_TAG" SHA256SUMS --clobber
