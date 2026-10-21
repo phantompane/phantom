@@ -119,9 +119,9 @@ fn unresolved_usage(args: &[String], command: &str, message: &str) -> Result<i32
     let error = prepared.error.unwrap_or_else(|| Error::validation(message));
     let exit = fail_with(&error, VALIDATION)?;
     let removed_interface = removed_command_hint(command).is_some()
-        || args
-            .iter()
-            .any(|arg| crate::runtime::is_removed_repo_option(arg));
+        || args.iter().any(|arg| {
+            crate::runtime::is_removed_repo_option(arg) || args::removed_option_hint(arg).is_some()
+        });
     if !crate::output::json() && !removed_interface {
         println!("{}", help::main_help()?);
     }
@@ -154,16 +154,11 @@ fn sync(args: &[String]) -> Result<i32> {
     let request = crate::sync::Request {
         names: parsed.positionals.clone(),
         all: parsed.flag("all"),
-        mine: parsed.flag("mine"),
         no_default: parsed.flag("no-default"),
         rebase: parsed.flag("rebase"),
         merge: parsed.flag("merge"),
         force: parsed.flag("force"),
         keep_conflicts: parsed.flag("keep-conflicts"),
-        agent: std::env::var("MABO_AGENT_ID")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
     };
     let report = match crate::sync::run(&context, &request) {
         Ok(report) => report,
@@ -227,7 +222,7 @@ fn create(args: &[String]) -> Result<i32> {
         Ok(action) => action,
         Err(error) => return fail_with(&error, VALIDATION),
     };
-    let metadata = match metadata_input(&parsed, true) {
+    let metadata = match metadata_input(&parsed) {
         Ok(metadata) => metadata,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
@@ -283,7 +278,7 @@ fn attach(args: &[String]) -> Result<i32> {
         Ok(action) => action,
         Err(error) => return fail_with(&error, VALIDATION),
     };
-    let metadata = match metadata_input(&parsed, true) {
+    let metadata = match metadata_input(&parsed) {
         Ok(metadata) => metadata,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
@@ -324,10 +319,6 @@ fn list(args: &[String]) -> Result<i32> {
         Ok(parsed) => parsed,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let owner = match list_owner(&parsed) {
-        Ok(owner) => owner,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
     if json && parsed.flag("names") {
         return fail_with(
             &Error::msg("Only one of --json or --names can be specified"),
@@ -346,13 +337,6 @@ fn list(args: &[String]) -> Result<i32> {
         Ok(worktrees) => worktrees,
         Err(error) => return fail_with(&error, GENERAL),
     };
-    let worktrees = match owner.as_deref() {
-        Some(owner) => worktrees
-            .into_iter()
-            .filter(|worktree| worktree.metadata.owner.as_deref() == Some(owner))
-            .collect(),
-        None => worktrees,
-    };
     if json {
         return emit_json(&worktree::WorktreeListOutput {
             version: crate::error::JSON_VERSION,
@@ -365,9 +349,7 @@ fn list(args: &[String]) -> Result<i32> {
     if worktrees.is_empty() {
         if !parsed.flag("names") {
             let available = worktree::list_worktrees(&context, false, false).unwrap_or_default();
-            let message = if let Some(owner) = &owner {
-                format!("No workspaces found for owner '{owner}'")
-            } else if exclude_default && !available.is_empty() {
+            let message = if exclude_default && !available.is_empty() {
                 "No linked workspaces found".to_string()
             } else {
                 "No workspaces found".to_string()
@@ -409,15 +391,11 @@ fn where_cmd(args: &[String]) -> Result<i32> {
         Err(error) => return fail_with(&error, error.exit_code()),
     };
     let name = &parsed.positionals[0];
+    if let Some(warning) = metadata::read_problem(&context.git_root) {
+        crate::output::warning("metadata_read", format!("Warning: {warning}"));
+    }
     match worktree::find_worktree(&context, name, false, None) {
-        Ok(mut worktree) => {
-            match metadata::touch(&context.git_root, Path::new(&worktree.path)) {
-                Ok(Some(updated)) => worktree.metadata = updated,
-                Ok(None) => {}
-                Err(error) => {
-                    crate::output::warning("last_used_update", format!("Warning: {error}"))
-                }
-            }
+        Ok(worktree) => {
             if json {
                 emit_json(&worktree::WorktreeRefOutput {
                     version: crate::error::JSON_VERSION,
@@ -1146,7 +1124,7 @@ fn github_checkout(args: &[String]) -> Result<i32> {
         Ok(repository) => repository,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let metadata = match metadata_input(&parsed, true) {
+    let metadata = match metadata_input(&parsed) {
         Ok(metadata) => metadata,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
@@ -1227,18 +1205,17 @@ fn meta_set(args: &[String]) -> Result<i32> {
             VALIDATION,
         );
     }
-    let mut input = match metadata_input(&parsed, false) {
+    let mut input = match metadata_input(&parsed) {
         Ok(input) => input,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
     if parsed.value("base").is_none()
-        && input.owner.is_none()
         && input.purpose.is_none()
         && input.pr.is_none()
         && input.issue.is_none()
     {
         return fail_with(
-            &Error::msg("Specify at least one of --owner, --purpose, --pr, --issue, or --base"),
+            &Error::msg("Specify at least one of --purpose, --pr, --issue, or --base"),
             VALIDATION,
         );
     }
@@ -1299,7 +1276,6 @@ fn command_options(key: &str) -> Vec<Opt> {
         "sync" => vec![
             repo_flag(),
             flag("all", None),
-            flag("mine", None),
             flag("no-default", None),
             flag("rebase", None),
             flag("merge", None),
@@ -1339,12 +1315,7 @@ fn command_options(key: &str) -> Vec<Opt> {
             options.extend(metadata_options());
             options
         }
-        "list" => vec![
-            repo_flag(),
-            flag("no-default", None),
-            flag("names", None),
-            value_flag("owner", None),
-        ],
+        "list" => vec![repo_flag(), flag("no-default", None), flag("names", None)],
         "where" => vec![repo_flag()],
         "delete" => vec![
             repo_flag(),
@@ -1373,7 +1344,6 @@ fn command_options(key: &str) -> Vec<Opt> {
             repo_flag(),
             value_flag("base", None),
             flag("no-hooks", None),
-            value_flag("owner", None),
             value_flag("purpose", None),
         ],
         "meta set" => {
@@ -1389,7 +1359,6 @@ fn command_options(key: &str) -> Vec<Opt> {
             flag("pr", None),
             flag("orphaned", None),
             value_flag("older-than", None),
-            value_flag("owner", None),
             flag("keep-branch", None),
             flag("no-hooks", None),
         ],
@@ -1406,21 +1375,16 @@ fn repo_flag() -> Opt {
     value_flag("repo", Some('R'))
 }
 
-fn metadata_options() -> [Opt; 4] {
+fn metadata_options() -> [Opt; 3] {
     [
-        value_flag("owner", None),
         value_flag("purpose", None),
         value_flag("pr", None),
         value_flag("issue", None),
     ]
 }
 
-fn metadata_input(parsed: &Parsed, use_env: bool) -> Result<MetadataInput> {
-    let env = use_env
-        .then(|| std::env::var("MABO_AGENT_ID").ok())
-        .flatten();
+fn metadata_input(parsed: &Parsed) -> Result<MetadataInput> {
     Ok(MetadataInput {
-        owner: metadata::resolve_owner(single_value(parsed, "owner")?, env.as_deref())?,
         purpose: single_value(parsed, "purpose")?
             .map(metadata::parse_purpose)
             .transpose()?,
@@ -1433,12 +1397,6 @@ fn metadata_input(parsed: &Parsed, use_env: bool) -> Result<MetadataInput> {
         name: None,
         base: None,
     })
-}
-
-fn list_owner(parsed: &Parsed) -> Result<Option<String>> {
-    single_value(parsed, "owner")?
-        .map(metadata::parse_owner)
-        .transpose()
 }
 
 fn single_value<'a>(parsed: &'a Parsed, name: &str) -> Result<Option<&'a str>> {
@@ -1480,21 +1438,10 @@ fn gc(args: &[String]) -> Result<i32> {
         },
         None => None,
     };
-    let owner_filter = match parsed.value("owner") {
-        Some(value) => match metadata::parse_owner(value) {
-            Ok(owner) => Some(owner),
-            Err(error) => return fail_with(&error, error.exit_code()),
-        },
-        None => None,
-    };
     let context = match command_context(&parsed) {
         Ok(context) => context,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let agent_id = std::env::var("MABO_AGENT_ID")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
     let force = parsed.flag("force");
     let request = crate::gc::Request {
         policy: crate::gc::Policy {
@@ -1506,8 +1453,6 @@ fn gc(args: &[String]) -> Result<i32> {
             ),
             now: std::time::SystemTime::now(),
             force,
-            agent_id,
-            owner_filter,
         },
         apply: parsed.flag("apply") || force,
         keep_branch: parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false),

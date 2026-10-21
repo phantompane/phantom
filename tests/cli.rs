@@ -1907,6 +1907,9 @@ fn assert_worktree_object(value: &serde_json::Value, name: &str, path: &std::pat
     assert_eq!(value["kind"], "workspace");
     assert!(value.get("rootPath").is_none());
     assert!(value.get("is_clean").is_none());
+    for field in ["owner", "ownerRelation", "lastUsedAt"] {
+        assert!(value.get(field).is_none(), "removed field {field}: {value}");
+    }
 }
 
 #[test]
@@ -4807,130 +4810,35 @@ fn relative_origin_is_not_a_github_project_name() {
 }
 
 #[test]
-fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
+fn workspace_intent_is_recorded_updated_and_removed() {
     let repo = Repo::new();
-    let help = repo.mabo(&["meta", "--help"]);
-    assert!(help.status.success(), "{}", text(&help.stderr));
-    assert!(text(&help.stdout).contains("meta set"));
-
-    let plain = repo.mabo(&["create", "plain", "--json"]);
-    assert!(plain.status.success(), "{}", text(&plain.stderr));
-    let plain_json = json_value(&plain);
-    assert!(plain_json["data"]["workspace"]["owner"].is_null());
-    assert!(plain_json["data"]["workspace"]["purpose"].is_null());
-    assert!(plain_json["data"]["workspace"]["createdAt"].is_string());
-    assert_eq!(
-        plain_json["data"]["workspace"]["createdAt"],
-        plain_json["data"]["workspace"]["lastUsedAt"]
-    );
-    assert!(plain_json["data"]["workspace"]["links"]["pr"].is_null());
-
-    let ignored = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "legacy", "--json"])
-        .env("PHANTOM_AGENT_ID", "phantom-v6")
-        .env("PTM_AGENT_ID", "ptm")
-        .output()
-        .expect("legacy env");
-    assert!(ignored.status.success(), "{}", text(&ignored.stderr));
-    assert!(json_value(&ignored)["data"]["workspace"]["owner"].is_null());
-
     let created = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
             &[
                 "create",
                 "feature",
-                "--json",
                 "--purpose",
                 "fix the flake",
                 "--pr",
                 "774",
-                "--owner",
-                "from-flag",
+                "--json",
             ],
         )
-        .env("MABO_AGENT_ID", "from-env")
+        .env("MABO_AGENT_ID", "ignored")
+        .env("MABO_ACTOR", "also ignored")
         .output()
-        .expect("create");
+        .unwrap();
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let created_json = json_value(&created);
-    assert_eq!(created_json["schema"], 2);
-    assert_eq!(created_json["data"]["workspace"]["owner"], "from-flag");
-    assert_eq!(
-        created_json["data"]["workspace"]["purpose"],
-        "fix the flake"
-    );
-    assert_eq!(
-        created_json["data"]["workspace"]["links"]["pr"]["number"],
-        774
-    );
-    assert!(created_json["data"]["workspace"]["links"]["pr"]["url"].is_null());
-    assert!(created_json["data"]["workspace"]["createdAt"].is_string());
-    let created_at = created_json["data"]["workspace"]["createdAt"]
-        .as_str()
-        .expect("created")
-        .to_string();
-    let created_from = created_json["data"]["workspace"]["createdFrom"]
-        .as_str()
-        .expect("createdFrom")
-        .to_string();
-    assert_eq!(
-        created_from,
-        created_json["data"]["workspace"]["head"]
-            .as_str()
-            .expect("head")
-    );
-
-    let from_env = repo
-        .command(
-            env!("CARGO_BIN_EXE_mabo"),
-            &["create", "env-owned", "--json"],
-        )
-        .env("MABO_AGENT_ID", "from-env")
-        .output()
-        .expect("env");
-    assert!(from_env.status.success(), "{}", text(&from_env.stderr));
-    assert_eq!(
-        json_value(&from_env)["data"]["workspace"]["owner"],
-        "from-env"
-    );
-
-    let listed = repo.mabo(&["list", "--owner", "from-flag"]);
-    assert!(listed.status.success(), "{}", text(&listed.stderr));
-    let listed_text = text(&listed.stdout);
-    assert!(listed_text.contains("feature"));
-    assert!(listed_text.contains("[from-flag]"));
-    assert!(listed_text.contains("fix the flake"));
-    assert!(!listed_text.contains("plain"));
-    assert!(!listed_text.contains("env-owned"));
-
-    let listed_json = json_value(&repo.mabo(&["list", "--json", "--owner", "from-env"]));
-    assert_eq!(
-        listed_json["data"]["workspaces"].as_array().map(Vec::len),
-        Some(1)
-    );
-    assert_eq!(listed_json["data"]["workspaces"][0]["name"], "env-owned");
-
-    let none = repo.mabo(&["list", "--names", "--owner", "nobody"]);
-    assert!(none.status.success(), "{}", text(&none.stderr));
-    assert!(text(&none.stdout).is_empty());
-    let none_human = repo.mabo(&["list", "--owner", "nobody"]);
-    assert!(text(&none_human.stdout).contains("No workspaces found for owner 'nobody'"));
-
-    let invalid = repo.mabo(&["create", "nope", "--owner", " "]);
-    assert_eq!(invalid.status.code(), Some(2));
-    let invalid_json = repo.mabo(&["meta", "set", "feature", "--pr", "not-a-link", "--json"]);
-    assert_eq!(invalid_json.status.code(), Some(2));
-    assert_eq!(json_value(&invalid_json)["error"]["code"], "usage");
-    assert!(json_value(&invalid_json)["error"].get("exitCode").is_none());
-
-    let missing = repo.mabo(&["meta", "set", "missing", "--owner", "grok", "--json"]);
-    assert_eq!(missing.status.code(), Some(3));
-    assert_eq!(json_value(&missing)["error"]["code"], "not_found");
-
-    let unset = repo.mabo(&["meta", "set", "feature", "--json"]);
-    assert_eq!(unset.status.code(), Some(2));
-
+    let created = json_value(&created);
+    let workspace = &created["data"]["workspace"];
+    assert!(workspace.get("owner").is_none());
+    assert!(workspace.get("ownerRelation").is_none());
+    assert!(workspace.get("lastUsedAt").is_none());
+    assert_eq!(workspace["purpose"], "fix the flake");
+    assert_eq!(workspace["links"]["pr"]["number"], 774);
+    assert_eq!(workspace["createdFrom"], workspace["head"]);
+    assert!(text(&repo.mabo(&["list"]).stdout).contains("fix the flake"));
     let updated = repo.mabo(&[
         "meta",
         "set",
@@ -4938,168 +4846,76 @@ fn worktree_metadata_is_recorded_filtered_updated_and_removed() {
         "--purpose",
         "land the fix",
         "--issue",
-        "https://github.com/phantompane/phantom/issues/12",
+        "12",
         "--json",
     ]);
     assert!(updated.status.success(), "{}", text(&updated.stderr));
-    let updated_json = json_value(&updated);
-    assert_eq!(updated_json["data"]["workspace"]["owner"], "from-flag");
-    assert_eq!(updated_json["data"]["workspace"]["purpose"], "land the fix");
+    let updated = json_value(&updated);
+    assert_eq!(updated["data"]["workspace"]["purpose"], "land the fix");
+    assert_eq!(updated["data"]["workspace"]["links"]["pr"]["number"], 774);
+    assert_eq!(updated["data"]["workspace"]["links"]["issue"]["number"], 12);
     assert_eq!(
-        updated_json["data"]["workspace"]["links"]["pr"]["number"],
-        774
+        updated["data"]["workspace"]["createdAt"],
+        workspace["createdAt"]
     );
     assert_eq!(
-        updated_json["data"]["workspace"]["links"]["issue"]["number"],
-        12
+        updated["data"]["workspace"]["createdFrom"],
+        workspace["createdFrom"]
     );
-    assert_eq!(updated_json["data"]["workspace"]["createdAt"], created_at);
     assert_eq!(
-        updated_json["data"]["workspace"]["createdFrom"],
-        created_from
+        repo.mabo(&["meta", "set", "feature"]).status.code(),
+        Some(2)
     );
-
-    let file = repo.repo.join(".git/maboroshi/workspaces");
-    let mut document: serde_json::Value =
-        serde_json::from_str(&records::read_to_string(&file).expect("store")).expect("store json");
-    let records = document["worktrees"].as_array_mut().expect("records");
-    let feature = records
-        .iter_mut()
-        .find(|record| record["path"].as_str().unwrap_or("").ends_with("/feature"))
-        .expect("feature record");
-    feature["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
-    records::write(
-        &file,
-        format!(
-            "{}\n",
-            serde_json::to_string_pretty(&document).expect("encode")
-        ),
-    )
-    .expect("rewrite");
-
-    let located = repo.mabo(&["where", "feature", "--json"]);
-    assert!(located.status.success(), "{}", text(&located.stderr));
-    let located_json = json_value(&located);
-    assert_eq!(located_json["data"]["workspace"]["createdAt"], created_at);
-    assert_ne!(
-        located_json["data"]["workspace"]["lastUsedAt"],
-        "2000-01-01T00:00:00.000Z"
+    assert_eq!(
+        repo.mabo(&["meta", "set", "missing", "--purpose", "task"])
+            .status
+            .code(),
+        Some(3)
     );
-    let human_where = repo.mabo(&["where", "feature"]);
-    assert!(
-        text(&human_where.stdout).starts_with('/'),
-        "{}",
-        text(&human_where.stdout)
+    assert_eq!(
+        repo.mabo(&["meta", "set", "feature", "--pr", "invalid"])
+            .status
+            .code(),
+        Some(2)
     );
-
-    document =
-        serde_json::from_str(&records::read_to_string(&file).expect("store")).expect("store json");
-    let records = document["worktrees"].as_array_mut().expect("records");
-    let feature = records
-        .iter_mut()
-        .find(|record| record["path"].as_str().unwrap_or("").ends_with("/feature"))
-        .expect("feature record");
-    feature["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
-    records::write(
-        &file,
-        format!(
-            "{}\n",
-            serde_json::to_string_pretty(&document).expect("encode")
-        ),
-    )
-    .expect("rewrite");
-    let ran = repo.mabo(&["exec", "feature", "true"]);
-    assert!(ran.status.success(), "{}", text(&ran.stderr));
-    let after_exec = json_value(&repo.mabo(&["list", "--json", "--owner", "from-flag"]));
-    assert_ne!(
-        after_exec["data"]["workspaces"][0]["lastUsedAt"],
-        "2000-01-01T00:00:00.000Z"
-    );
-
     repo.git(&["branch", "side"]);
     let attached = repo.mabo(&[
         "attach",
         "side",
-        "--json",
-        "--owner",
-        "reviewer",
+        "--purpose",
+        "review",
         "--pr",
-        "https://github.com/phantompane/phantom/pull/12",
+        "12",
+        "--json",
     ]);
-    assert!(attached.status.success(), "{}", text(&attached.stderr));
-    let attached_json = json_value(&attached);
-    assert_eq!(attached_json["data"]["workspace"]["owner"], "reviewer");
-    assert_eq!(
-        attached_json["data"]["workspace"]["links"]["pr"]["number"],
-        12
-    );
-    assert!(attached_json["data"]["workspace"]["base"].is_null());
-
+    assert!(attached.status.success());
+    let attached = json_value(&attached);
+    assert_eq!(attached["data"]["workspace"]["purpose"], "review");
+    assert!(attached["data"]["workspace"].get("owner").is_none());
+    assert!(attached["data"]["workspace"].get("lastUsedAt").is_none());
     let deleted = repo.mabo(&["delete", "feature", "--keep-branch", "--json"]);
-    assert!(deleted.status.success(), "{}", text(&deleted.stderr));
-    let deleted_json = json_value(&deleted);
+    assert!(deleted.status.success());
+    let deleted = json_value(&deleted);
     assert_eq!(
-        deleted_json["data"]["deleted"][0]["workspace"]["owner"],
-        "from-flag"
+        deleted["data"]["deleted"][0]["workspace"]["purpose"],
+        "land the fix"
     );
-    let after_delete = repo.mabo(&["list", "--json", "--owner", "from-flag"]);
-    assert_eq!(
-        json_value(&after_delete)["data"]["workspaces"]
-            .as_array()
-            .map(Vec::len),
-        Some(0)
-    );
-    let store: serde_json::Value =
-        serde_json::from_str(&records::read_to_string(&file).expect("store")).expect("store json");
-    assert!(store["worktrees"]
-        .as_array()
-        .expect("records")
-        .iter()
-        .all(|record| !record["path"].as_str().unwrap_or("").ends_with("/feature")));
-
-    records::write(&file, "{not json").expect("corrupt");
-    let broken = repo.mabo(&["list", "--json"]);
-    assert!(broken.status.success(), "{}", text(&broken.stderr));
-    let broken_json = json_value(&broken);
-    assert_eq!(broken_json["schema"], 2);
-    assert!(broken_json["error"].is_null());
-    assert!(text(&broken.stderr).contains("invalid JSON"));
-    assert!(text(&broken.stderr).contains("workspaces"));
-    assert!(broken_json["warnings"]
-        .as_array()
-        .expect("warnings")
-        .iter()
-        .any(|warning| warning["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("invalid JSON")));
-    assert_eq!(records::read_to_string(&file).expect("kept"), "{not json");
-    let refused = repo.mabo(&["create", "after-corrupt", "--json"]);
-    assert_eq!(refused.status.code(), Some(1));
-    assert_eq!(json_value(&refused)["error"]["code"], "failed");
-    assert!(json_value(&refused)["error"]["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("workspaces"));
-    assert!(!managed(&repo, "after-corrupt").exists());
-    assert_eq!(records::read_to_string(&file).expect("kept"), "{not json");
+    assert!(deleted["data"]["deleted"][0]["workspace"]
+        .get("owner")
+        .is_none());
+    assert!(deleted["data"]["deleted"][0]["workspace"]
+        .get("lastUsedAt")
+        .is_none());
+    assert!(!text(&repo.mabo(&["list", "--names"]).stdout).contains("feature"));
 }
 
 #[test]
-fn github_recheckout_keeps_the_original_owner() {
+fn github_recheckout_keeps_the_original_intent() {
     let repo = Repo::new();
     let created = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &[
-                "create",
-                "topic",
-                "--owner",
-                "creator",
-                "--purpose",
-                "original task",
-                "--json",
-            ],
+            &["create", "topic", "--purpose", "original task", "--json"],
         )
         .output()
         .expect("create");
@@ -5125,16 +4941,7 @@ fn github_recheckout_keeps_the_original_owner() {
     let again = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &[
-                "github",
-                "checkout",
-                "7",
-                "--json",
-                "--purpose",
-                "stolen",
-                "--owner",
-                "intruder",
-            ],
+            &["github", "checkout", "7", "--json", "--purpose", "stolen"],
         )
         .env("PATH", &path)
         .env("MABO_AGENT_ID", "intruder")
@@ -5143,15 +4950,12 @@ fn github_recheckout_keeps_the_original_owner() {
     assert!(again.status.success(), "{}", text(&again.stderr));
     let again_json = json_value(&again);
     assert_eq!(again_json["data"]["github"]["alreadyExists"], true);
-    assert_eq!(again_json["data"]["workspace"]["owner"], "creator");
+
     assert_eq!(again_json["data"]["workspace"]["purpose"], "original task");
     assert_eq!(again_json["data"]["workspace"]["createdAt"], created_at);
-    assert_ne!(
-        again_json["data"]["workspace"]["lastUsedAt"],
-        "2000-01-01T00:00:00.000Z"
-    );
+    assert!(again_json["data"]["workspace"].get("lastUsedAt").is_none());
     assert_eq!(again_json["data"]["workspace"]["links"]["pr"]["number"], 7);
-    let listed = repo.mabo(&["list", "--json", "--owner", "creator"]);
+    let listed = repo.mabo(&["list", "--json", "--no-default"]);
     assert_eq!(
         json_value(&listed)["data"]["workspaces"]
             .as_array()
@@ -5281,7 +5085,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
 #[test]
 fn delete_refuses_when_metadata_is_not_writable() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "doomed", "--owner", "creator", "--json"]);
+    let created = repo.mabo(&["create", "doomed", "--purpose", "creator", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let metadata_dir = repo.repo.join(".git/maboroshi/workspaces");
     let store = records::read_to_string(&metadata_dir).expect("store");
@@ -5306,15 +5110,7 @@ fn delete_refuses_when_metadata_is_not_writable() {
 #[test]
 fn create_replaces_a_record_left_by_git_worktree_remove() {
     let repo = Repo::new();
-    let created = repo.mabo(&[
-        "create",
-        "feature",
-        "--owner",
-        "first",
-        "--purpose",
-        "old task",
-        "--json",
-    ]);
+    let created = repo.mabo(&["create", "feature", "--purpose", "old task", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let created_at = json_value(&created)["data"]["workspace"]["createdAt"]
         .as_str()
@@ -5323,25 +5119,17 @@ fn create_replaces_a_record_left_by_git_worktree_remove() {
     let path = managed(&repo, "feature");
     repo.git(&["worktree", "remove", path.to_str().expect("path")]);
     repo.git(&["branch", "-D", "feature"]);
-    let again = repo.mabo(&[
-        "create",
-        "feature",
-        "--owner",
-        "second",
-        "--purpose",
-        "new task",
-        "--json",
-    ]);
+    let again = repo.mabo(&["create", "feature", "--purpose", "new task", "--json"]);
     assert!(again.status.success(), "{}", text(&again.stderr));
     let again_json = json_value(&again);
-    assert_eq!(again_json["data"]["workspace"]["owner"], "second");
+
     assert_eq!(again_json["data"]["workspace"]["purpose"], "new task");
     assert_ne!(again_json["data"]["workspace"]["createdAt"], created_at);
     assert_eq!(again_json["data"]["metadata"]["ok"], true);
-    let listed = repo.mabo(&["list", "--names", "--owner", "first"]);
-    assert!(text(&listed.stdout).is_empty(), "{}", text(&listed.stdout));
+    let listed = repo.mabo(&["list", "--names", "--no-default"]);
+    assert_eq!(text(&listed.stdout), "feature");
     assert_eq!(
-        json_value(&repo.mabo(&["list", "--json", "--owner", "second"]))["data"]["workspaces"]
+        json_value(&repo.mabo(&["list", "--json", "--no-default"]))["data"]["workspaces"]
             .as_array()
             .map(Vec::len),
         Some(1)
@@ -5361,7 +5149,7 @@ fn metadata_save_failure_after_create_still_runs_hooks() {
     let created = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["create", "feature", "--owner", "creator", "--json"],
+            &["create", "feature", "--purpose", "creator", "--json"],
         )
         .env("MABO_TEST_FAIL_METADATA_SAVE", "1")
         .output()
@@ -5370,7 +5158,7 @@ fn metadata_save_failure_after_create_still_runs_hooks() {
     let created_json = json_value(&created);
     assert!(created_json["error"]["code"] == "partial", "{created_json}");
     assert_eq!(created_json["data"]["workspace"]["name"], "feature");
-    assert!(created_json["data"]["workspace"]["owner"].is_null());
+    assert!(created_json["data"]["workspace"]["purpose"].is_null());
     assert_eq!(created_json["data"]["metadata"]["ok"], false);
     assert!(created_json["data"]["metadata"]["error"]
         .as_str()
@@ -5390,14 +5178,14 @@ fn metadata_save_failure_after_create_still_runs_hooks() {
 #[test]
 fn readers_warn_on_corrupt_metadata_and_still_run() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "feature", "--owner", "creator", "--json"]);
+    let created = repo.mabo(&["create", "feature", "--purpose", "creator", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let id = json_value(&created)["data"]["workspace"]["id"]
         .as_str()
         .expect("workspace id")
         .to_string();
     assert!(repo
-        .mabo(&["create", "healthy", "--owner", "reader"])
+        .mabo(&["create", "healthy", "--purpose", "reader"])
         .status
         .success());
     let file = repo
@@ -5410,7 +5198,7 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
     assert_eq!(listed_json["data"]["workspaces"][0]["name"], "feature");
-    assert!(listed_json["data"]["workspaces"][0]["owner"].is_null());
+    assert!(listed_json["data"]["workspaces"][0]["purpose"].is_null());
     assert!(text(&listed.stderr).contains("workspaces"));
     let healthy = listed_json["data"]["workspaces"]
         .as_array()
@@ -5418,7 +5206,7 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
         .iter()
         .find(|tree| tree["name"] == "healthy")
         .unwrap();
-    assert_eq!(healthy["owner"], "reader");
+    assert_eq!(healthy["purpose"], "reader");
     assert!(healthy["id"].as_str().unwrap().starts_with("ws_"));
     assert!(!listed_json["warnings"]
         .as_array()
@@ -5427,7 +5215,7 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
 
     let located = repo.mabo(&["where", "feature", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
-    assert!(json_value(&located)["data"]["workspace"]["owner"].is_null());
+    assert!(json_value(&located)["data"]["workspace"]["purpose"].is_null());
     assert!(text(&located.stderr).contains("invalid JSON"));
     let human = repo.mabo(&["where", "feature"]);
     assert!(human.status.success());
@@ -5438,38 +5226,6 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
     assert!(text(&ran.stderr).contains("invalid JSON"));
 
     assert_eq!(fs::read_to_string(&file).expect("kept"), "{not json");
-}
-
-#[test]
-fn owner_flag_rejects_a_value_that_looks_like_an_option() {
-    let repo = Repo::new();
-    let value = repo.mabo(&["list", "--owner", "--json"]);
-    assert_eq!(value.status.code(), Some(2));
-    assert!(value.stdout.is_empty());
-    assert!(text(&value.stderr).contains("looks like an option"));
-    let listed = repo.mabo(&["list", "--json", "--owner", "--json"]);
-    assert_eq!(listed.status.code(), Some(2), "{}", text(&listed.stdout));
-    let listed_json = json_value(&listed);
-    assert_eq!(listed_json["error"]["code"], "usage");
-    assert!(listed_json["error"].get("exitCode").is_none());
-    assert!(listed_json["error"]["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("looks like an option"));
-    assert!(listed_json["error"]["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("--json"));
-    assert!(text(&listed.stderr).is_empty(), "{}", text(&listed.stderr));
-
-    let value = repo.mabo(&["create", "feature", "--purpose", "--json"]);
-    assert_eq!(value.status.code(), Some(2));
-    assert!(value.stdout.is_empty());
-    assert!(text(&value.stderr).contains("looks like an option"));
-    let created = repo.mabo(&["create", "feature", "--json", "--purpose", "--json"]);
-    assert_eq!(created.status.code(), Some(2));
-    assert_eq!(json_value(&created)["error"]["code"], "usage");
-    assert!(!managed(&repo, "feature").exists());
 }
 
 #[test]
@@ -5655,7 +5411,7 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
         worktrees.to_str().expect("worktrees"),
     ]);
     assert!(pref.status.success(), "{}", text(&pref.stderr));
-    let created = mabo(&["create", "feature", "--owner", "sep", "--json"]);
+    let created = mabo(&["create", "feature", "--purpose", "sep", "--json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -5671,7 +5427,7 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
         .as_array()
         .expect("records")
         .iter()
-        .any(|record| record["owner"] == "sep"));
+        .any(|record| record["purpose"] == "sep"));
     assert!(!checkout.join(".git").join("maboroshi").exists());
     let _ = fs::remove_dir_all(&root);
 }
@@ -6730,7 +6486,7 @@ fn blocked_workspace_import_exits_failure_and_preserves_legacy_for_retry() {
         let before = maboroshi::metadata::load_strict(&repo.repo).unwrap();
         let target = legacy.parent().unwrap().join("workspaces");
         fs::write(&target, "blocker").unwrap();
-        let mut args = vec!["meta", "set", "main", "--owner", "new-owner"];
+        let mut args = vec!["meta", "set", "main", "--purpose", "new purpose"];
         if json {
             args.push("--json");
         }
@@ -6770,7 +6526,7 @@ fn blocked_workspace_import_exits_failure_and_preserves_legacy_for_retry() {
 #[test]
 fn duplicate_legacy_metadata_paths_block_mutations() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "kept", "--owner", "creator"]);
+    let created = repo.mabo(&["create", "kept", "--purpose", "creator"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     repo.git(&["branch", "side"]);
     fs::remove_dir_all(repo.repo.join(".git/maboroshi/workspaces")).expect("remove records");
@@ -6782,7 +6538,7 @@ fn duplicate_legacy_metadata_paths_block_mutations() {
         vec!["create", "other", "--json"],
         vec!["attach", "side", "--json"],
         vec!["delete", "kept", "--json"],
-        vec!["meta", "set", "kept", "--owner", "nope", "--json"],
+        vec!["meta", "set", "kept", "--purpose", "nope", "--json"],
         vec!["gc", "--json"],
     ] {
         let output = repo.mabo(&args);
@@ -6921,7 +6677,7 @@ fn age_metadata(repo: &Repo, name: &str) {
             })
         })
         .expect(name);
-    record["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+    record["createdAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
     records::write(
         &file,
         serde_json::to_string_pretty(&document).expect("encode"),
@@ -6962,7 +6718,7 @@ fn gc_dry_run_keeps_a_merged_worktree_until_apply() {
 fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "feature", "--owner", "grok"])
+        .mabo(&["create", "feature", "--purpose", "grok"])
         .status
         .success());
     land_branch(&repo, "feature");
@@ -6974,7 +6730,7 @@ fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
     assert_eq!(document["data"]["applied"], false);
     assert!(document["error"].is_null());
     assert_eq!(document["data"]["candidates"][0]["name"], "feature");
-    assert_eq!(document["data"]["candidates"][0]["owner"], "grok");
+    assert!(document["data"]["candidates"][0].get("owner").is_none());
     assert_eq!(
         document["data"]["candidates"][0]["reasons"],
         serde_json::json!(["merged"])
@@ -6997,7 +6753,7 @@ fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
 }
 
 #[test]
-fn gc_skips_dirty_unpushed_current_and_other_agents() {
+fn gc_skips_dirty_unpushed_and_current_workspaces() {
     let repo = Repo::new();
     assert!(repo.mabo(&["create", "dirty"]).status.success());
     land_branch(&repo, "dirty");
@@ -7007,7 +6763,7 @@ fn gc_skips_dirty_unpushed_current_and_other_agents() {
     assert!(repo.mabo(&["create", "here"]).status.success());
     land_branch(&repo, "here");
     assert!(repo
-        .mabo(&["create", "bob", "--owner", "bob"])
+        .mabo(&["create", "bob", "--purpose", "bob"])
         .status
         .success());
     commit_in_worktree(&repo, "bob");
@@ -7031,7 +6787,7 @@ fn gc_skips_dirty_unpushed_current_and_other_agents() {
     assert!(aged.status.success(), "{}", text(&aged.stderr));
     let aged_text = text(&aged.stdout);
     assert!(
-        aged_text.contains("skip bob [olderThan] other agent"),
+        aged_text.contains("skip bob [olderThan] unpushed"),
         "{aged_text}"
     );
     assert!(!aged_text.contains("would remove dirty"), "{aged_text}");
@@ -7683,7 +7439,7 @@ fn gc_keeps_a_worktree_still_at_its_creation_point() {
     let repo = Repo::new();
     assert!(repo.mabo(&["create", "fresh"]).status.success());
     assert!(repo
-        .mabo(&["create", "theirs", "--owner", "other"])
+        .mabo(&["create", "theirs", "--purpose", "other"])
         .status
         .success());
 
@@ -8328,10 +8084,11 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
 
     let ran = repo.mabo(&["exec", "next", "true"]);
     assert!(ran.status.success(), "{}", text(&ran.stderr));
-    let marked = repo.mabo(&["meta", "set", "feature/topic", "--owner", "ada"]);
+    let marked = repo.mabo(&["meta", "set", "feature/topic", "--purpose", "review"]);
     assert!(marked.status.success(), "{}", text(&marked.stderr));
-    let owned = text(&repo.mabo(&["list", "--names", "--owner", "ada"]).stdout);
-    assert_eq!(owned, "feature/topic");
+    let listed = text(&repo.mabo(&["list", "--names", "--no-default"]).stdout);
+    assert!(listed.lines().any(|name| name == "feature/topic"));
+    assert!(text(&repo.mabo(&["list"]).stdout).contains("review"));
 
     let stray = repo.root.join("stray-detached");
     repo.git(&[
@@ -8384,7 +8141,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
             .unwrap_or("")
             .ends_with("/worktrees/next")
         {
-            record["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+            record["createdAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
         }
     }
     records::write(
@@ -8531,7 +8288,7 @@ fn list_shows_absolute_or_home_paths() {
 #[test]
 fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "feature", "--owner", "alice", "--json"]);
+    let created = repo.mabo(&["create", "feature", "--purpose", "alice", "--json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -8572,13 +8329,13 @@ fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
     let listed = repo.mabo(&["list", "--json", "--no-default"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let entry = &json_value(&listed)["data"]["workspaces"][0];
-    assert_eq!(entry["owner"], "alice");
+    assert_eq!(entry["purpose"], "alice");
     assert_eq!(entry["createdFrom"], created_from);
     assert_eq!(entry["createdAt"], created_at);
     let plan = repo.mabo(&["gc", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let candidate = &json_value(&plan)["data"]["candidates"][0];
-    assert_eq!(candidate["owner"], "alice");
+    assert!(candidate.get("owner").is_none());
     assert_eq!(candidate["name"], "feature");
     let deleted = repo.mabo(&["delete", "feature", "--json"]);
     assert!(
@@ -8588,7 +8345,7 @@ fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
         text(&deleted.stderr)
     );
     let removed = &json_value(&deleted)["data"]["deleted"][0]["workspace"];
-    assert_eq!(removed["owner"], "alice");
+    assert_eq!(removed["purpose"], "alice");
     assert_eq!(removed["createdFrom"], created_from);
     assert_eq!(removed["createdAt"], created_at);
     assert!(!real.exists());
@@ -8760,17 +8517,9 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
 }
 
 #[test]
-fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
+fn recheckout_through_a_symlink_keeps_intent_and_creation_details() {
     let repo = Repo::new();
-    let created = repo.mabo(&[
-        "create",
-        "issues/7",
-        "--owner",
-        "alice",
-        "--purpose",
-        "keep me",
-        "--json",
-    ]);
+    let created = repo.mabo(&["create", "issues/7", "--purpose", "keep me", "--json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -8791,11 +8540,6 @@ fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
         .as_str()
         .expect("createdFrom")
         .to_string();
-    let last_used = created_json["data"]["workspace"]["lastUsedAt"]
-        .as_str()
-        .expect("lastUsedAt")
-        .to_string();
-    std::thread::sleep(std::time::Duration::from_millis(5));
     let via = repo.root.join("via-project");
     std::os::unix::fs::symlink(real.parent().expect("repo"), &via).expect("symlink");
     let git_dir = repo
@@ -8836,16 +8580,7 @@ fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
     let again = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &[
-                "github",
-                "checkout",
-                "7",
-                "--owner",
-                "bob",
-                "--purpose",
-                "replace",
-                "--json",
-            ],
+            &["github", "checkout", "7", "--purpose", "replace", "--json"],
         )
         .env("PATH", &path)
         .output()
@@ -8860,11 +8595,11 @@ fn recheckout_through_a_symlink_keeps_owner_and_refreshes_last_used() {
     assert!(again_json["error"].is_null(), "{again_json}");
     assert_eq!(again_json["data"]["github"]["alreadyExists"], true);
     let worktree = &again_json["data"]["workspace"];
-    assert_eq!(worktree["owner"], "alice");
+
     assert_eq!(worktree["purpose"], "keep me");
     assert_eq!(worktree["createdAt"], created_at);
     assert_eq!(worktree["createdFrom"], created_from);
-    assert_ne!(worktree["lastUsedAt"], last_used);
+    assert!(worktree.get("lastUsedAt").is_none());
     assert_eq!(worktree["links"]["issue"]["number"], 7);
 }
 
@@ -9494,7 +9229,7 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
         outside.to_str().expect("outside"),
         "HEAD",
     ]);
-    let marked = repo.mabo(&["meta", "set", "zz", "--owner", "a"]);
+    let marked = repo.mabo(&["meta", "set", "zz", "--purpose", "a"]);
     assert!(
         marked.status.success(),
         "{}\n{}",
@@ -9553,7 +9288,7 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
         .expect("short head");
     assert!(head.status.success(), "{}", text(&head.stderr));
     let sha = text(&head.stdout);
-    let detached = repo.mabo(&["meta", "set", &sha, "--owner", "b"]);
+    let detached = repo.mabo(&["meta", "set", &sha, "--purpose", "b"]);
     assert!(
         detached.status.success(),
         "{}\n{}",
@@ -9631,7 +9366,7 @@ fn meta_set_records_outside_worktrees_despite_orphaned_names() {
             outside.to_str().expect("path"),
             "HEAD",
         ]);
-        let marked = repo.mabo(&["meta", "set", "shared", "--owner", "a"]);
+        let marked = repo.mabo(&["meta", "set", "shared", "--purpose", "a"]);
         assert!(marked.status.success(), "{}", text(&marked.stderr));
         let found = repo.mabo(&["where", "shared"]);
         assert!(found.status.success(), "{}", text(&found.stderr));
@@ -9681,7 +9416,7 @@ fn meta_set_refuses_to_record_an_outside_worktree_under_a_taken_name() {
     ]);
     let meta_path = repo.repo.join(".git/maboroshi/workspaces");
     let before = records::read(&meta_path).expect("before");
-    let marked = repo.mabo(&["meta", "set", "zz", "--owner", "a"]);
+    let marked = repo.mabo(&["meta", "set", "zz", "--purpose", "a"]);
     assert_eq!(
         marked.status.code(),
         Some(1),
@@ -9751,7 +9486,7 @@ fn a_record_without_a_stored_name_keeps_the_ptm_folder_name() {
     assert!(paths_match(text(&found.stdout).trim(), &next));
     let ran = repo.mabo(&["exec", "next", "true"]);
     assert!(ran.status.success(), "{}", text(&ran.stderr));
-    let marked = repo.mabo(&["meta", "set", "next", "--owner", "ada"]);
+    let marked = repo.mabo(&["meta", "set", "next", "--purpose", "ada"]);
     assert!(marked.status.success(), "{}", text(&marked.stderr));
     assert!(
         text(&marked.stdout).contains("next"),
@@ -10824,9 +10559,9 @@ fn invalid_usage_preserves_json_across_all_command_groups() {
 fn resolved_text_usage_errors_never_reenable_json() {
     let repo = Repo::new();
     for args in [
-        vec!["list", "--owner", "--json", "--output", "text"],
-        vec!["list", "--json", "--output", "text", "--owner"],
-        vec!["list", "--output=text", "--owner", "--json"],
+        vec!["list", "--repo", "--json", "--output", "text"],
+        vec!["list", "--json", "--output", "text", "--repo"],
+        vec!["list", "--output=text", "--repo", "--json"],
         vec!["list", "--repo", "--json", "--output", "text"],
         vec!["list", "--json", "--output=text", "--repo"],
         vec!["repo", "bogus", "--json", "--output", "text"],
@@ -10877,10 +10612,10 @@ fn help_requests_skip_option_values_and_reject_missing_values() {
         }
     }
     for (command, option) in [
-        ("list", "--owner"),
-        ("create", "--owner"),
-        ("attach", "--owner"),
-        ("meta set", "--owner"),
+        ("list", "--repo"),
+        ("create", "--repo"),
+        ("attach", "--repo"),
+        ("meta set", "--repo"),
     ] {
         let args = command
             .split_whitespace()
@@ -10892,7 +10627,7 @@ fn help_requests_skip_option_values_and_reject_missing_values() {
     }
     // A real help request does not hide a missing command-option value either.
     for (command, option) in [
-        ("list", "--owner"),
+        ("list", "--repo"),
         ("create", "--base"),
         ("attach", "--exec"),
         ("gc", "--older-than"),
@@ -10918,7 +10653,7 @@ fn output_and_help_scan_respects_command_option_arity_and_child_boundaries() {
     let repo = Repo::new();
     for args in [
         vec!["list", "--base", "--json"], // --base is not a list option.
-        vec!["repo", "list", "--owner", "--json"],
+        vec!["repo", "list", "--bogus", "--json"],
         vec!["gc", "--pr", "--json", "--bogus"], // --pr is a flag here.
     ] {
         let out = repo.mabo(&args);
@@ -10938,11 +10673,11 @@ fn output_and_help_scan_respects_command_option_arity_and_child_boundaries() {
             assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
         }
     }
-    let out = repo.mabo(&["list", "--owner", "alice", "--", "--json", "--help"]);
+    let out = repo.mabo(&["list", "--repo", "alice", "--", "--json", "--help"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(out.stdout.is_empty());
     assert!(text(&out.stderr).contains("Unexpected argument"));
-    let out = repo.mabo(&["list", "--owner=--help", "--output=text"]);
+    let out = repo.mabo(&["create", "--purpose=--help", "--output=text"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(out.stdout.is_empty());
     assert!(text(&out.stderr).contains("looks like an option"));
@@ -11190,7 +10925,6 @@ fn legacy_worktrees_directories_remain_usable_without_moving_workspaces() {
             let mut record: serde_json::Value =
                 serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
             record["createdAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
-            record["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
             fs::write(file, serde_json::to_vec(&record).unwrap()).unwrap();
         }
         let out = repo.mabo(&["gc", "--apply", "--older-than", "1m", "--json"]);
@@ -11216,7 +10950,7 @@ fn legacy_worktrees_directories_remain_usable_without_moving_workspaces() {
 }
 
 #[test]
-fn exec_exports_the_id_allocated_by_legacy_metadata_import() {
+fn exec_leaves_legacy_metadata_unimported_and_exports_an_empty_id() {
     let repo = Repo::new();
     let old = repo.repo.join(".git/maboroshi/worktrees/feature/legacy");
     fs::create_dir_all(old.parent().unwrap()).unwrap();
@@ -11243,10 +10977,11 @@ fn exec_exports_the_id_allocated_by_legacy_metadata_import() {
     let out = repo.mabo(&["exec", "feature/legacy", "sh", "-c", &script]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let located = assert_envelope(&repo.mabo(&["where", "feature/legacy", "--json"]), "where");
-    let id = located["data"]["workspace"]["id"].as_str().unwrap();
-    assert!(id.starts_with("ws_"));
-    assert_workspace_env(&capture, &repo, "feature/legacy", &old, id);
-    assert!(legacy.with_extension("json.imported").is_file());
+    assert!(located["data"]["workspace"]["id"].is_null());
+    assert_workspace_env(&capture, &repo, "feature/legacy", &old, "");
+    assert!(legacy.is_file());
+    assert!(!legacy.with_extension("json.imported").exists());
+    assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
 }
 
 fn outer_run(
@@ -12530,4 +12265,202 @@ fn outer_repo_forget_ambiguous_canonical_suffix_is_usage_and_keeps_registrations
         0,
     );
     assert_eq!(value["data"]["repos"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn removed_identity_flags_are_usage_errors_with_migration_hints() {
+    let repo = Repo::new();
+    for command in [
+        "create",
+        "attach",
+        "github checkout",
+        "gh checkout",
+        "meta set",
+        "list",
+        "gc",
+        "sync",
+    ] {
+        let flag = if command == "sync" {
+            "--mine"
+        } else {
+            "--owner"
+        };
+        let expected = if command == "sync" {
+            "explicit workspace names or --all"
+        } else {
+            "Ownership was removed"
+        };
+        for form in ["bare", "separate", "inline"] {
+            let option = if form == "inline" {
+                format!("{flag}=old-agent")
+            } else {
+                flag.into()
+            };
+            for output in [None, Some("--json"), Some("--output=json")] {
+                let mut args = command.split_whitespace().collect::<Vec<_>>();
+                args.push(&option);
+                if form == "separate" && flag == "--owner" {
+                    args.push("old-agent");
+                }
+                if let Some(output) = output {
+                    args.push(output);
+                }
+                let out = repo.mabo(&args);
+                assert_eq!(out.status.code(), Some(2), "{args:?}");
+                let message = if output.is_some() {
+                    assert!(out.stderr.is_empty(), "{args:?}: {}", text(&out.stderr));
+                    let doc = assert_envelope(
+                        &out,
+                        if command == "gh checkout" {
+                            "github checkout"
+                        } else {
+                            command
+                        },
+                    );
+                    assert_eq!(doc["error"]["code"], "usage");
+                    assert!(doc["data"].is_null());
+                    doc["error"]["message"].as_str().unwrap().to_string()
+                } else {
+                    assert!(out.stdout.is_empty(), "{args:?}: {}", text(&out.stdout));
+                    text(&out.stderr)
+                };
+                assert!(message.contains(expected), "{args:?}: {message}");
+                if flag == "--owner" {
+                    for hint in ["--purpose", "PR links", "workspace names"] {
+                        assert!(message.contains(hint), "{message}");
+                    }
+                }
+            }
+        }
+    }
+    // Removed options in a child command retain their original meaning.
+    let out = repo.mabo(&["create", "child", "--exec", "printf", "%s", "--owner"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let out = repo.mabo(&["exec", "child", "printf", "%s", "--mine"]);
+    assert!(out.status.success());
+    assert_eq!(text(&out.stdout), "--mine");
+}
+
+#[test]
+fn where_and_exec_leave_legacy_and_schema2_record_bytes_and_mtime_unchanged() {
+    for legacy in [false, true] {
+        let repo = Repo::new();
+        let created = json_value(&repo.mabo(&["create", "feature", "--purpose", "task", "--json"]));
+        let dir = repo.repo.join(".git/maboroshi/workspaces");
+        let file = dir.join(format!(
+            "{}.json",
+            created["data"]["workspace"]["id"].as_str().unwrap()
+        ));
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        record["owner"] = serde_json::json!("previous-agent");
+        record["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+        let file = if legacy {
+            record.as_object_mut().unwrap().remove("id");
+            record.as_object_mut().unwrap().remove("schema");
+            fs::remove_dir_all(&dir).unwrap();
+            let file = repo.repo.join(".git/maboroshi/worktrees.json");
+            fs::write(
+                &file,
+                serde_json::to_vec(&serde_json::json!({"version": 1, "worktrees": [record]}))
+                    .unwrap(),
+            )
+            .unwrap();
+            file
+        } else {
+            fs::write(&file, serde_json::to_vec(&record).unwrap()).unwrap();
+            file
+        };
+        let sentinel = std::time::UNIX_EPOCH + std::time::Duration::from_secs(946684800);
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(sentinel)
+            .unwrap();
+        let before = fs::read(&file).unwrap();
+        let modified = fs::metadata(&file).unwrap().modified().unwrap();
+        for args in [
+            vec!["where", "feature"],
+            vec!["where", "feature", "--json"],
+            vec!["exec", "feature", "true"],
+            vec!["exec", "feature", "sh", "-c", "exit 17"],
+        ] {
+            let out = repo.mabo(&args);
+            assert_eq!(
+                out.status.code(),
+                Some(if args.last() == Some(&"exit 17") {
+                    17
+                } else {
+                    0
+                }),
+                "{args:?}: {}",
+                text(&out.stderr)
+            );
+            if args.contains(&"--json") {
+                let doc = json_value(&out);
+                let workspace = &doc["data"]["workspace"];
+                assert!(workspace.get("owner").is_none());
+                assert!(workspace.get("lastUsedAt").is_none());
+            }
+            assert_eq!(fs::read(&file).unwrap(), before, "{args:?}");
+            assert_eq!(
+                fs::metadata(&file).unwrap().modified().unwrap(),
+                modified,
+                "{args:?}"
+            );
+            if legacy {
+                assert!(!dir.exists(), "read-only command imported legacy state");
+            }
+        }
+        let updated = repo.mabo(&["meta", "set", "feature", "--purpose", "task", "--json"]);
+        assert!(updated.status.success(), "{}", text(&updated.stderr));
+        let updated = json_value(&updated);
+        let rewritten = dir.join(format!(
+            "{}.json",
+            updated["data"]["workspace"]["id"].as_str().unwrap()
+        ));
+        let rewritten: serde_json::Value =
+            serde_json::from_slice(&fs::read(rewritten).unwrap()).unwrap();
+        assert!(rewritten.get("owner").is_none());
+        assert!(rewritten.get("lastUsedAt").is_none());
+        assert_eq!(rewritten["purpose"], "task");
+        assert_eq!(rewritten["schema"], 2);
+        if legacy {
+            assert_eq!(
+                fs::read(file.with_extension("json.imported")).unwrap(),
+                before
+            );
+        }
+    }
+}
+
+#[test]
+fn gc_age_selection_ignores_legacy_owner_and_last_used() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "old"]).status.success());
+    let dir = repo.repo.join(".git/maboroshi/workspaces");
+    let mut record =
+        serde_json::from_slice::<serde_json::Value>(&records::read(&dir).unwrap()).unwrap();
+    record["worktrees"][0]["owner"] = serde_json::json!("another-agent");
+    record["worktrees"][0]["createdAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
+    record["worktrees"][0]["lastUsedAt"] = serde_json::json!("2099-01-01T00:00:00.000Z");
+    records::write(&dir, serde_json::to_vec(&record).unwrap()).unwrap();
+    for agent in [None, Some("different-agent")] {
+        let mut command = repo.command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["gc", "--older-than", "14d", "--json"],
+        );
+        if let Some(agent) = agent {
+            command.env("MABO_AGENT_ID", agent);
+        }
+        let out = command.output().unwrap();
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        let doc = json_value(&out);
+        let candidates = doc["data"]["candidates"].as_array().unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0]["action"], "wouldRemove");
+        assert!(candidates[0].get("owner").is_none());
+        assert!(candidates[0].get("lastUsedAt").is_none());
+    }
 }

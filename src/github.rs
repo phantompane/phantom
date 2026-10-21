@@ -409,10 +409,9 @@ fn checkout_issue(
     })
 }
 
-/// An existing record keeps its owner, purpose, createdAt, and createdFrom.
-/// Links are updated and lastUsedAt moves. A worktree with no record yet is a
-/// first checkout and stores the owner. `createdFrom` is that branch's reflog
-/// creation commit when the reflog exists.
+/// An existing record keeps its purpose, base, createdAt, and createdFrom.
+/// Links are updated. A workspace with no record yet stores the supplied intent.
+/// `createdFrom` is that branch's reflog creation commit when the reflog exists.
 fn record_existing_checkout(
     context: &context::Context,
     path: &Path,
@@ -429,7 +428,6 @@ fn record_existing_checkout(
                 ..MetadataInput::default()
             },
         )?;
-        metadata::touch(&context.git_root, path)?;
     } else {
         let name = worktree::outside_name_to_store(context, path)?;
         metadata::write(

@@ -25,9 +25,6 @@ pub struct Policy {
     pub selection: Selection,
     pub now: SystemTime,
     pub force: bool,
-    /// `MABO_AGENT_ID` after trimming. Empty and unset are `None`.
-    pub agent_id: Option<String>,
-    pub owner_filter: Option<String>,
 }
 
 #[derive(Clone)]
@@ -76,7 +73,6 @@ pub struct CandidateEntry {
     pub name: String,
     pub path: String,
     pub branch: Option<String>,
-    pub owner: Option<String>,
     pub reasons: Vec<Reason>,
     pub action: Action,
     pub detail: Option<String>,
@@ -204,7 +200,6 @@ struct Subject {
     name: String,
     branch: Option<String>,
     head: Option<String>,
-    owner: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -249,7 +244,6 @@ struct WorktreeFacts {
     published_tip: Option<String>,
     merged: bool,
     pr: PullRequestState,
-    last_used_at: Option<SystemTime>,
     created_at: Option<SystemTime>,
 }
 
@@ -258,7 +252,6 @@ enum Hold {
     Protected,
     DefaultBranch,
     Locked,
-    OtherAgent,
     StatusUnknown,
     Dirty,
     Unpushed,
@@ -273,7 +266,6 @@ impl Hold {
             Self::DefaultBranch => "default branch",
             Self::Locked => "locked",
             Self::PrUnavailable => "pr status unavailable",
-            Self::OtherAgent => "other agent",
             Self::StatusUnknown => "status unknown",
             Self::Dirty => "dirty",
             Self::Unpushed => "unpushed",
@@ -308,29 +300,24 @@ enum Removal {
 
 struct Criterion {
     reason: Reason,
-    qualifies_other_agent: bool,
     matches: fn(&WorktreeFacts, &Policy) -> bool,
 }
 
 static CRITERIA: &[Criterion] = &[
     Criterion {
         reason: Reason::Merged,
-        qualifies_other_agent: true,
         matches: |facts, _| facts.merged,
     },
     Criterion {
         reason: Reason::PullRequest,
-        qualifies_other_agent: true,
         matches: |facts, _| facts.pr == PullRequestState::ClosedOrMerged,
     },
     Criterion {
         reason: Reason::Orphaned,
-        qualifies_other_agent: true,
         matches: |facts, _| orphaned(facts),
     },
     Criterion {
         reason: Reason::OlderThan,
-        qualifies_other_agent: false,
         matches: |facts, policy| age_hit(facts, policy),
     },
 ];
@@ -347,7 +334,7 @@ fn age_hit(facts: &WorktreeFacts, policy: &Policy) -> bool {
     let Some(limit) = policy.selection.older_than else {
         return false;
     };
-    let Some(anchor) = facts.last_used_at.or(facts.created_at) else {
+    let Some(anchor) = facts.created_at else {
         return false;
     };
     policy
@@ -356,32 +343,9 @@ fn age_hit(facts: &WorktreeFacts, policy: &Policy) -> bool {
         .is_ok_and(|elapsed| elapsed >= limit)
 }
 
-fn owner_in_scan(owner: Option<&str>, policy: &Policy) -> bool {
-    match &policy.owner_filter {
-        Some(wanted) => owner == Some(wanted.as_str()),
-        None => true,
-    }
-}
-
-fn is_other_agent(facts: &WorktreeFacts, policy: &Policy) -> bool {
-    if policy.owner_filter.is_some() {
-        return false;
-    }
-    let Some(owner) = facts.subject.owner.as_deref() else {
-        return false;
-    };
-    match &policy.agent_id {
-        None => true,
-        Some(agent) => owner != agent,
-    }
-}
-
 fn classify(facts: &[WorktreeFacts], policy: &Policy) -> Vec<Verdict> {
     let mut verdicts = Vec::new();
     for facts in facts {
-        if !owner_in_scan(facts.subject.owner.as_deref(), policy) {
-            continue;
-        }
         let reasons = CRITERIA
             .iter()
             .filter(|row| policy.selection.selects(row.reason) && (row.matches)(facts, policy))
@@ -397,7 +361,7 @@ fn classify(facts: &[WorktreeFacts], policy: &Policy) -> Vec<Verdict> {
             }
             continue;
         }
-        if let Some(hold) = hold(facts, policy, &reasons) {
+        if let Some(hold) = hold(facts, policy) {
             verdicts.push(Verdict::Skip {
                 subject: facts.subject.clone(),
                 reasons,
@@ -421,7 +385,7 @@ impl Selection {
     }
 }
 
-fn hold(facts: &WorktreeFacts, policy: &Policy, reasons: &[Reason]) -> Option<Hold> {
+fn hold(facts: &WorktreeFacts, policy: &Policy) -> Option<Hold> {
     if facts.is_default {
         return Some(Hold::DefaultBranch);
     }
@@ -430,9 +394,6 @@ fn hold(facts: &WorktreeFacts, policy: &Policy, reasons: &[Reason]) -> Option<Ho
     }
     if facts.locked {
         return Some(Hold::Locked);
-    }
-    if is_other_agent(facts, policy) && !qualifies_other_agent(reasons) {
-        return Some(Hold::OtherAgent);
     }
     if facts.directory == DirState::Unknown && !(policy.force && facts.registered) {
         return Some(Hold::StatusUnknown);
@@ -451,12 +412,6 @@ fn hold(facts: &WorktreeFacts, policy: &Policy, reasons: &[Reason]) -> Option<Ho
         return Some(Hold::Unpushed);
     }
     None
-}
-
-fn qualifies_other_agent(reasons: &[Reason]) -> bool {
-    CRITERIA
-        .iter()
-        .any(|row| row.qualifies_other_agent && reasons.contains(&row.reason))
 }
 
 fn removal_kind(facts: &WorktreeFacts, reasons: Vec<Reason>) -> Removal {
@@ -517,9 +472,6 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
             .clone()
             .unwrap_or_else(|| metadata::path_key(&path));
         let record = found.map(|(_, record)| record);
-        if !owner_in_scan(record.and_then(|record| record.owner.as_deref()), policy) {
-            continue;
-        }
         let mut facts = observe_listed(
             context,
             policy,
@@ -550,7 +502,7 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
         rows.insert(key, facts);
     }
     for (key, record) in &stored {
-        if rows.contains_key(key) || !owner_in_scan(record.owner.as_deref(), policy) {
+        if rows.contains_key(key) {
             continue;
         }
         let path = PathBuf::from(key);
@@ -663,7 +615,6 @@ fn observe_listed(
             path,
             branch,
             head: worktree.head.clone(),
-            owner: metadata.owner.clone(),
         },
         registered: true,
         directory,
@@ -678,7 +629,7 @@ fn observe_listed(
         published_tip,
         merged,
         pr,
-        last_used_at: metadata.last_used_at.as_deref().and_then(parse_time),
+
         created_at: metadata.created_at.as_deref().and_then(parse_time),
     }
 }
@@ -696,7 +647,6 @@ fn observe_record(
             path: path.to_path_buf(),
             branch: None,
             head: None,
-            owner: record.owner.clone(),
         },
         registered: false,
         directory: DirState::Absent,
@@ -715,7 +665,7 @@ fn observe_record(
             record.links.pr.as_ref(),
             pull_requests,
         ),
-        last_used_at: record.last_used_at.as_deref().and_then(parse_time),
+
         created_at: record.created_at.as_deref().and_then(parse_time),
     }
 }
@@ -946,7 +896,6 @@ fn preview(verdict: Verdict) -> CandidateEntry {
             name: subject.name,
             path: subject.path.display().to_string(),
             branch: subject.branch,
-            owner: subject.owner,
             reasons,
             action: Action::Skipped,
             detail: Some(hold.detail().to_string()),
@@ -971,7 +920,6 @@ fn apply_verdict(
             name: subject.name,
             path: subject.path.display().to_string(),
             branch: subject.branch,
-            owner: subject.owner,
             reasons,
             action: Action::Skipped,
             detail: Some(hold.detail().to_string()),
@@ -1040,7 +988,6 @@ fn apply_delete(
                 name: subject.name,
                 path: subject.path.display().to_string(),
                 branch: subject.branch,
-                owner: subject.owner,
                 reasons,
                 action: if failed_metadata {
                     Action::Failed
@@ -1056,7 +1003,6 @@ fn apply_delete(
             name: subject.name,
             path: subject.path.display().to_string(),
             branch: subject.branch,
-            owner: subject.owner,
             reasons,
             action: Action::Skipped,
             detail: Some(Hold::Untrusted.detail().to_string()),
@@ -1087,7 +1033,6 @@ fn apply_drop(
             name: subject.name,
             path: subject.path.display().to_string(),
             branch: subject.branch,
-            owner: subject.owner,
             reasons,
             action: Action::Skipped,
             detail: Some("Workspace branch or HEAD changed since gc planning".into()),
@@ -1124,7 +1069,6 @@ fn apply_drop(
             name: subject.name,
             path: subject.path.display().to_string(),
             branch: subject.branch,
-            owner: subject.owner,
             reasons,
             action: Action::Failed,
             detail: Some(error.to_string()),
@@ -1138,7 +1082,6 @@ fn apply_drop(
         name: subject.name,
         path: subject.path.display().to_string(),
         branch: subject.branch,
-        owner: subject.owner,
         reasons,
         action: Action::Removed,
         detail,
@@ -1187,7 +1130,6 @@ fn failed(subject: Subject, reasons: Vec<Reason>, detail: String) -> CandidateEn
         name: subject.name,
         path: subject.path.display().to_string(),
         branch: subject.branch,
-        owner: subject.owner,
         reasons,
         action: Action::Failed,
         detail: Some(detail),
@@ -1214,7 +1156,6 @@ fn entry_from_removal(
         name: subject.name.clone(),
         path: subject.path.display().to_string(),
         branch: subject.branch.clone(),
-        owner: subject.owner.clone(),
         reasons: reasons.clone(),
         action,
         detail,
@@ -1303,8 +1244,6 @@ mod tests {
             selection: selection_from_flags(false, false, false, None),
             now: SystemTime::UNIX_EPOCH,
             force: false,
-            agent_id: None,
-            owner_filter: None,
         }
     }
 
@@ -1315,7 +1254,6 @@ mod tests {
                 name: "feature".to_string(),
                 branch: Some("feature".to_string()),
                 head: None,
-                owner: None,
             },
             registered: true,
             directory: DirState::Present,
@@ -1329,7 +1267,6 @@ mod tests {
             merged: true,
             pr: PullRequestState::Unlinked,
             published_tip: None,
-            last_used_at: None,
             created_at: None,
         }
     }
@@ -1434,34 +1371,14 @@ mod tests {
     }
 
     #[test]
-    fn other_agents_are_kept_unless_merged_orphaned_or_closed() {
+    fn age_alone_can_select_a_workspace() {
         let mut old = feature();
         old.merged = false;
-        old.subject.owner = Some("other".to_string());
-        old.last_used_at = Some(SystemTime::UNIX_EPOCH);
+        old.created_at = Some(SystemTime::UNIX_EPOCH);
         let mut aged = policy();
         aged.selection = selection_from_flags(false, false, false, Some(Duration::from_secs(60)));
         aged.now = SystemTime::UNIX_EPOCH + Duration::from_secs(120);
-        assert!(matches!(
-            classify(&[old.clone()], &aged).as_slice(),
-            [Verdict::Skip {
-                hold: Hold::OtherAgent,
-                ..
-            }]
-        ));
-        let mut named = aged.clone();
-        named.owner_filter = Some("other".to_string());
-        assert!(matches!(
-            classify(&[old], &named).as_slice(),
-            [Verdict::Remove(Removal::Delete { .. })]
-        ));
-
-        let mut merged = feature();
-        merged.subject.owner = Some("other".to_string());
-        assert_eq!(
-            removal_name(&classify(&[merged], &policy())),
-            Some("feature")
-        );
+        assert_eq!(removal_name(&classify(&[old], &aged)), Some("feature"));
     }
 
     #[test]
@@ -1489,7 +1406,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_directory_drops_the_registration_and_age_uses_last_used() {
+    fn missing_directory_drops_the_registration_and_age_uses_creation() {
         let mut gone = feature();
         gone.directory = DirState::Absent;
         gone.prunable = true;
@@ -1518,8 +1435,7 @@ mod tests {
 
         let mut recent = feature();
         recent.merged = false;
-        recent.last_used_at = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_000));
-        recent.created_at = Some(SystemTime::UNIX_EPOCH);
+        recent.created_at = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_000));
         let mut aged = policy();
         aged.now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_500);
         aged.selection =
@@ -1528,7 +1444,7 @@ mod tests {
     }
 
     #[test]
-    fn open_pull_request_does_not_match_and_owner_filter_omits_others() {
+    fn open_pull_request_does_not_match() {
         let mut open = feature();
         open.merged = false;
         open.pr = PullRequestState::Open;
@@ -1553,15 +1469,5 @@ mod tests {
                 ..
             }]
         ));
-
-        let mut mine = feature();
-        mine.subject.owner = Some("me".to_string());
-        let mut other = feature();
-        other.subject.name = "other".to_string();
-        other.subject.owner = Some("other".to_string());
-        let mut filtered = policy();
-        filtered.owner_filter = Some("me".to_string());
-        let verdicts = classify(&[mine, other], &filtered);
-        assert_eq!(removal_name(&verdicts), Some("feature"));
     }
 }
