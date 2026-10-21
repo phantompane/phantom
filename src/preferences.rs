@@ -217,7 +217,7 @@ fn migrate_keys(document: &mut DocumentMut) {
                 .with_dotted_decor(key.dotted_decor().clone())
         });
         if let Some(item) = document.remove(old) {
-            crate::output::warning("config_key_renamed", format!(
+            crate::output::warning_once("config_key_renamed", format!(
                 "Warning: config key '{old}' was renamed to '{new}'. Use `mabo config set {new} VALUE`; the next config write rewrites old keys. If both exist, '{new}' takes precedence."
             ));
             if !document.contains_key(new) {
@@ -228,7 +228,7 @@ fn migrate_keys(document: &mut DocumentMut) {
         }
     }
     if document.remove("directory-name-separator").is_some() {
-        crate::output::warning("config_key_removed", "Warning: config key 'directory-name-separator' was removed and is ignored. Workspace names use '/'. The next config write removes this key.");
+        crate::output::warning_once("config_key_removed", "Warning: config key 'directory-name-separator' was removed and is ignored. Workspace names use '/'. The next config write removes this key.");
     }
 }
 

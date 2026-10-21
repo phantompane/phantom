@@ -119,6 +119,19 @@ pub(crate) fn warning(code: &str, message: impl Into<String>) {
     });
 }
 
+/// Report a diagnostic only once in the invocation begun by `begin`.
+pub(crate) fn warning_once(code: &str, message: impl Into<String>) {
+    let message = message.into();
+    let reported = OUTPUT.with_borrow(|out| {
+        out.warnings
+            .iter()
+            .any(|warning| warning.code == code && warning.message == message)
+    });
+    if !reported {
+        warning(code, message);
+    }
+}
+
 pub(crate) fn finish(exit: i32) -> Result<()> {
     OUTPUT.with_borrow_mut(|out| {
         if !out.json {
@@ -198,6 +211,20 @@ fn hides_the_prompt(ch: char) -> bool {
 mod tests {
     use super::*;
     use crate::error::{GENERAL, PARTIAL, REFUSED};
+
+    #[test]
+    fn warning_once_distinguishes_diagnostics_and_resets_per_invocation() {
+        for json in [false, true] {
+            for _ in 0..2 {
+                begin("config list", json);
+                warning_once("renamed", "Warning: first key");
+                warning_once("renamed", "Warning: first key");
+                warning_once("renamed", "Warning: second key");
+                warning_once("removed", "Warning: first key");
+                OUTPUT.with_borrow(|out| assert_eq!(out.warnings.len(), 3));
+            }
+        }
+    }
 
     #[test]
     fn recorded_failures_are_reported_once_in_text_and_retained_in_json() {

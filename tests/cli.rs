@@ -11524,6 +11524,81 @@ fn outer_clone_root_sources_match_the_existing_resolution_chain() {
 }
 
 #[test]
+fn outer_legacy_config_warnings_appear_once_per_invocation() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["repo", "add"]).status.success());
+    let path = repo.home.join(".config/maboroshi/config.toml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let path_env = silent_ghq_path(&repo);
+    let warnings = [
+        ("config_key_renamed", "config key 'worktrees-directory'"),
+        ("config_key_renamed", "config key 'root'"),
+        ("config_key_renamed", "config key 'ghq-discovery'"),
+        (
+            "config_key_removed",
+            "config key 'directory-name-separator'",
+        ),
+    ];
+    for discovery in [false, true] {
+        for (args, command) in [
+            (vec!["repo", "list"], "repo list"),
+            (vec!["config", "list", "--sources"], "config list"),
+            (vec!["config", "list", "--repo", "repo"], "config list"),
+            (
+                vec!["config", "get", "clone-root", "-R", "repo"],
+                "config get",
+            ),
+            (vec!["repo", "show", "repo"], "repo show"),
+            (vec!["list", "-R", "repo"], "list"),
+            (
+                vec!["config", "set", "keep-branch", "false", "-R", "repo"],
+                "config set",
+            ),
+            (
+                vec!["config", "unset", "keep-branch", "-R", "repo"],
+                "config unset",
+            ),
+        ] {
+            for json in [false, true] {
+                let legacy = format!("worktrees-directory = \"../spaces\"\nroot = \"~/clones\"\nghq-discovery = {discovery}\ndirectory-name-separator = \"-\"\nkeep-branch = true\n");
+                fs::write(&path, &legacy).unwrap();
+                let mut argv = args.clone();
+                if json {
+                    argv.push("--json");
+                }
+                let out = repo
+                    .command(env!("CARGO_BIN_EXE_mabo"), &argv)
+                    .env("PATH", &path_env)
+                    .output()
+                    .unwrap();
+                assert!(out.status.success(), "{argv:?}: {out:?}");
+                let stderr = text(&out.stderr);
+                for (code, message) in warnings {
+                    assert_eq!(stderr.matches(message).count(), 1, "{argv:?}: {stderr}");
+                    if json {
+                        let value = assert_envelope(&out, command);
+                        let recorded = value["warnings"].as_array().unwrap();
+                        assert_eq!(recorded.len(), warnings.len(), "{argv:?}: {value}");
+                        assert_eq!(
+                            recorded
+                                .iter()
+                                .filter(|warning| warning["code"] == code
+                                    && warning["message"].as_str().unwrap().contains(message))
+                                .count(),
+                            1,
+                            "{argv:?}: {value}"
+                        );
+                    }
+                }
+                if !matches!(command, "config set" | "config unset") {
+                    assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn outer_legacy_config_warns_takes_effect_and_rewrites_on_set_or_unset() {
     for mutation in ["set", "unset"] {
         let repo = Repo::new();
@@ -11986,6 +12061,52 @@ fn outer_diagnostics_escape_repository_names_and_paths() {
                 .as_str()
                 .unwrap()
                 .contains(directory.to_str().unwrap()));
+        }
+    }
+}
+
+#[test]
+fn outer_removed_trust_flags_only_hint_for_trust_commands() {
+    let repo = Repo::new();
+    for (args, command) in [
+        (vec!["list"], "list"),
+        (vec!["gc"], "gc"),
+        (vec!["repo", "list"], "repo list"),
+        (vec!["config", "list"], "config list"),
+        (vec!["trust"], "trust"),
+        (vec!["trust", "add"], "trust add"),
+        (vec!["trust", "remove"], "trust remove"),
+        (vec!["trust", "list"], "trust list"),
+    ] {
+        for flag in ["--yes", "-y", "--list"] {
+            for json in [false, true] {
+                let mut argv = args.clone();
+                argv.push(flag);
+                if json {
+                    argv.push("--json");
+                }
+                let out = repo.mabo(&argv);
+                assert_eq!(out.status.code(), Some(2), "{argv:?}: {out:?}");
+                let message = if json {
+                    let value = assert_envelope(&out, command);
+                    assert_eq!(value["error"]["code"], "usage");
+                    value["error"]["message"].as_str().unwrap().to_owned()
+                } else {
+                    assert!(out.stdout.is_empty(), "{argv:?}: {out:?}");
+                    text(&out.stderr)
+                };
+                if command.starts_with("trust") {
+                    assert!(message.contains("mabo trust add"), "{argv:?}: {message}");
+                    assert!(message.contains("mabo trust list"), "{argv:?}: {message}");
+                } else {
+                    assert!(
+                        message.starts_with(&format!("Unknown option '{flag}'.")),
+                        "{argv:?}: {message}"
+                    );
+                    assert!(!message.contains("trust"), "{argv:?}: {message}");
+                    assert!(!text(&out.stderr).contains("trust"), "{argv:?}: {out:?}");
+                }
+            }
         }
     }
 }
