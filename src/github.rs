@@ -132,6 +132,7 @@ fn subject_link(repo: &RepoIdentity, number: u64, kind: &str) -> WorktreeLink {
     }
 }
 
+#[derive(Debug, Clone)]
 struct RepoIdentity {
     owner: String,
     name: String,
@@ -305,31 +306,194 @@ pub enum PullRequestStatus {
     Unavailable,
 }
 
-/// `gh pr view <target> --json state`. `target` is a pull request URL or a
-/// number in the repository `gh` resolves from `cwd`. A missing `gh`, a
-/// non-zero exit, or an unreadable body is `Unavailable`.
-pub fn pull_request_state(cwd: &Path, target: &str) -> PullRequestStatus {
-    let Ok(captured) = process::raw("gh", &["pr", "view", target, "--json", "state"], Some(cwd))
-    else {
-        return PullRequestStatus::Unavailable;
-    };
+// Preservation probes never prompt, fetch, or turn operational failures into proof.
+const PRESERVATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const PR_FIELDS: &str = "state,number,url,headRefOid,headRefName";
+
+fn retirement_gh(cwd: &Path, args: &[&str]) -> Option<Value> {
+    // Tests and callers may shorten the deadline, but cannot extend the bound.
+    let timeout = std::env::var("MABO_GH_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(PRESERVATION_TIMEOUT)
+        .min(PRESERVATION_TIMEOUT);
+    let captured = process::raw_with_timeout(
+        "gh",
+        args,
+        Some(cwd),
+        &[("GH_PROMPT_DISABLED", "1")],
+        timeout,
+    )
+    .ok()?;
     if captured.code != 0 {
-        return PullRequestStatus::Unavailable;
+        return None;
     }
-    let Ok(value) = serde_json::from_str::<Value>(&captured.stdout) else {
-        return PullRequestStatus::Unavailable;
-    };
+    serde_json::from_str(&captured.stdout).ok()
+}
+
+fn pr_status(value: Option<&Value>) -> PullRequestStatus {
     match value
-        .get("state")
+        .and_then(|value| value.get("state"))
         .and_then(Value::as_str)
-        .map(str::to_ascii_uppercase)
-        .as_deref()
     {
         Some("OPEN") => PullRequestStatus::Open,
         Some("CLOSED") => PullRequestStatus::Closed,
         Some("MERGED") => PullRequestStatus::Merged,
         _ => PullRequestStatus::Unavailable,
     }
+}
+
+/// Per-command remote snapshots. Local tips and ancestry are always rechecked.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RetirementQueries {
+    repo: Option<Option<RepoIdentity>>,
+    pulls: std::collections::BTreeMap<String, Option<Value>>,
+    heads: std::collections::BTreeMap<String, Option<Value>>,
+}
+
+impl RetirementQueries {
+    fn repo(&mut self, cwd: &Path) -> Option<RepoIdentity> {
+        self.repo
+            .get_or_insert_with(|| {
+                let value = retirement_gh(cwd, &["repo", "view", "--json", "url,owner,name"])?;
+                let owner = value.pointer("/owner/login")?.as_str()?;
+                let name = value.get("name")?.as_str()?;
+                let url = value.get("url")?.as_str()?;
+                let host = host_from_web_url(url).ok()?;
+                // Reconstruct the URL to reject malformed identities and extra paths.
+                let expected = format!("https://{host}/{owner}/{name}");
+                if !url.eq_ignore_ascii_case(&expected) || owner.is_empty() || name.is_empty() {
+                    return None;
+                }
+                Some(RepoIdentity {
+                    owner: owner.to_owned(),
+                    name: name.to_owned(),
+                    host,
+                })
+            })
+            .clone()
+    }
+
+    fn pull(&mut self, cwd: &Path, link: &WorktreeLink) -> Option<Value> {
+        let target = if let Some(url) = &link.url {
+            url.clone()
+        } else {
+            link.number.filter(|number| *number > 0)?.to_string()
+        };
+        // A known repository identity lets URL and number links share a snapshot.
+        let key = self
+            .repo
+            .as_ref()
+            .and_then(Option::as_ref)
+            .and_then(|repo| {
+                let number = link.number?;
+                let expected = subject_link(repo, number, "pull").url?;
+                (link
+                    .url
+                    .as_ref()
+                    .is_none_or(|url| crate::selectors::source_urls_equal(url, &expected)))
+                .then_some(expected)
+            })
+            .unwrap_or_else(|| target.clone());
+        self.pulls
+            .entry(key)
+            .or_insert_with(|| retirement_gh(cwd, &["pr", "view", &target, "--json", PR_FIELDS]))
+            .clone()
+    }
+
+    pub(crate) fn status(&mut self, cwd: &Path, link: &WorktreeLink) -> PullRequestStatus {
+        let repo = self.repo(cwd);
+        if link.url.is_none() && repo.is_none() {
+            return PullRequestStatus::Unavailable;
+        }
+        pr_status(self.pull(cwd, link).as_ref())
+    }
+
+    pub(crate) fn merged_contains(
+        &mut self,
+        cwd: &Path,
+        branch: &str,
+        link: Option<&WorktreeLink>,
+    ) -> bool {
+        let Some(repo) = self.repo(cwd) else {
+            return false;
+        };
+        if let Some(link) = link {
+            let Some(number) = link.number.filter(|number| *number > 0) else {
+                return false;
+            };
+            let Some(expected) = subject_link(&repo, number, "pull").url else {
+                return false;
+            };
+            if link
+                .url
+                .as_ref()
+                .is_some_and(|url| !crate::selectors::source_urls_equal(url, &expected))
+            {
+                return false;
+            }
+            let Some(value) = self.pull(cwd, link) else {
+                return false;
+            };
+            if !valid_merged_pr(&value, &repo)
+                || value.get("number").and_then(Value::as_u64) != Some(number)
+            {
+                return false;
+            }
+            value
+                .get("headRefOid")
+                .and_then(Value::as_str)
+                .is_some_and(|head| git::retirement_pr_contains(cwd, branch, head, true))
+        } else {
+            let value = self.heads.entry(branch.to_owned()).or_insert_with(|| {
+                retirement_gh(
+                    cwd,
+                    &[
+                        "pr", "list", "--head", branch, "--state", "merged", "--limit", "2",
+                        "--json", PR_FIELDS,
+                    ],
+                )
+            });
+            let Some(values) = value.as_ref().and_then(Value::as_array) else {
+                return false;
+            };
+            if values.len() != 1 {
+                return false;
+            }
+            let value = &values[0];
+            valid_merged_pr(value, &repo)
+                && value.get("headRefName").and_then(Value::as_str) == Some(branch)
+                && value
+                    .get("headRefOid")
+                    .and_then(Value::as_str)
+                    .is_some_and(|head| git::retirement_pr_contains(cwd, branch, head, false))
+        }
+    }
+}
+
+fn valid_merged_pr(value: &Value, repo: &RepoIdentity) -> bool {
+    let Some(number) = value
+        .get("number")
+        .and_then(Value::as_u64)
+        .filter(|number| *number > 0)
+    else {
+        return false;
+    };
+    let Some(url) = value.get("url").and_then(Value::as_str) else {
+        return false;
+    };
+    pr_status(Some(value)) == PullRequestStatus::Merged
+        && subject_link(repo, number, "pull")
+            .url
+            .as_deref()
+            .is_some_and(|expected| crate::selectors::source_urls_equal(url, expected))
+}
+
+/// Query a PR state with the same bounded, non-prompting capture as retirement.
+pub fn pull_request_state(cwd: &Path, target: &str) -> PullRequestStatus {
+    pr_status(retirement_gh(cwd, &["pr", "view", target, "--json", "state"]).as_ref())
 }
 
 /// `owner/repo` from `gh repo view` when that command can name the checkout.

@@ -6830,7 +6830,7 @@ fn gc_skips_missing_registration_with_changed_branch_or_head() {
 }
 
 #[test]
-fn gc_apply_rechecks_only_each_target_pull_request() {
+fn gc_apply_caches_each_target_pull_request() {
     use std::os::unix::fs::PermissionsExt;
     for kind in ["live", "missing", "orphan"] {
         let repo = Repo::new();
@@ -6892,16 +6892,16 @@ printf '%s\n' '{{"state":"MERGED"}}'
         assert_eq!(candidates.len(), count);
         assert!(candidates.iter().all(|item| item["action"] == "removed"));
         let calls = fs::read_to_string(calls).unwrap();
-        assert_eq!(calls.lines().count(), 2 * count, "{kind}: {calls}");
+        assert_eq!(calls.lines().count(), count, "{kind}: {calls}");
         for number in 1..=count {
             let url = format!("https://github.com/acme/demo/pull/{number}");
-            assert_eq!(calls.lines().filter(|line| *line == url).count(), 2);
+            assert_eq!(calls.lines().filter(|line| *line == url).count(), 1);
         }
     }
 }
 
 #[test]
-fn gc_rechecks_pull_request_eligibility_after_pre_delete_hooks() {
+fn gc_rechecks_pull_request_link_after_pre_remove_hooks() {
     use std::os::unix::fs::PermissionsExt;
     let repo = Repo::new();
     assert!(repo
@@ -6920,13 +6920,17 @@ fn gc_rechecks_pull_request_eligibility_after_pre_delete_hooks() {
     let gh = bin.join("gh");
     fs::write(&gh, format!("#!/bin/sh\ncat '{}'\n", state.display())).unwrap();
     fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    // Remote responses are command snapshots; metadata and local Git state are
+    // still rechecked after hooks, so removing the PR link revokes eligibility.
+    let hook = format!(
+        "'{}' set topic --unset pr",
+        env!("CARGO_BIN_EXE_mabo").replace('\'', "'\"'\"'")
+    );
     fs::write(
         repo.repo.join(".mabo.toml"),
         format!(
-            r#"[hooks]
-pre-remove = ["echo '{{\"state\":\"OPEN\"}}' > '{}' "]
-"#,
-            state.display()
+            "[hooks]\npre-remove = [{}]\n",
+            serde_json::to_string(&hook).unwrap()
         ),
     )
     .unwrap();
@@ -21285,5 +21289,524 @@ _mabo_candidates setup --copy-file > "$MABO_TEST_RESULTS/value-pending"
                 );
             }
         }
+    }
+}
+
+// GitHub retirement evidence must never turn an uncertain response into deletion.
+fn merged_pr_fixture(link: Option<&str>) -> Repo {
+    let repo = Repo::new();
+    assert!(repo
+        .mabo(&["create", "topic", "--no-setup"])
+        .status
+        .success());
+    commit_file(&repo, "topic", "work.txt", "topic work\n");
+    if let Some(link) = link {
+        assert!(repo.mabo(&["set", "topic", "--pr", link]).status.success());
+    }
+    repo
+}
+
+fn merged_pr_response(oid: &str, state: &str) -> serde_json::Value {
+    serde_json::json!({"number":7,"url":"https://github.com/acme/demo/pull/7",
+        "state":state,"headRefOid":oid})
+}
+
+fn merged_pr_command(repo: &Repo, args: &[&str], response: &serde_json::Value) -> Command {
+    let path = gh_path(
+        repo,
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$GH_CALLS"
+if [ -n "$GH_CHECK_INPUT" ]; then
+  [ "$GH_PROMPT_DISABLED" = 1 ] || exit 9
+  # A character device distinguishes /dev/null from a closed stdin pipe.
+  [ -c /dev/stdin ] || exit 9
+  read line && exit 9
+fi
+case "$1 $2" in
+  'repo view') printf '%s\n' "$GH_REPO" ;;
+  'pr view'|'pr list')
+    case "$GH_PR_FAILURE" in
+      exit) exit 1 ;;
+      json) printf 'invalid json'; exit 0 ;;
+      timeout) exec sleep 5 ;;
+      descendant) sleep 5 & exit 0 ;;
+    esac
+    printf '%s\n' "$GH_RESPONSE" ;;
+
+  *) exit 1 ;;
+esac
+"#,
+    );
+    let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), args);
+    command
+        .env("PATH", path)
+        .env("GH_CALLS", repo.root.join("gh-calls"))
+        .env("GH_RESPONSE", response.to_string())
+        .env(
+            "GH_REPO",
+            r#"{"url":"https://github.com/acme/demo","owner":{"login":"acme"},"name":"demo"}"#,
+        );
+    command
+}
+
+#[test]
+fn merged_pr_remove_linked_exact_and_ancestor() {
+    for ancestor in [false, true] {
+        for link in ["7", "https://github.com/acme/demo/pull/7"] {
+            let repo = merged_pr_fixture(Some(link));
+            let local = retirement_head_at(&repo, &managed(&repo, "topic"));
+            if ancestor {
+                commit_file(&repo, "topic", "later.txt", "later PR work\n");
+            }
+            let head = retirement_head_at(&repo, &managed(&repo, "topic"));
+            if ancestor {
+                git_at(
+                    &repo,
+                    &managed(&repo, "topic"),
+                    &["reset", "--hard", &local],
+                );
+            }
+            let response = merged_pr_response(&head, "MERGED");
+            let plan = merged_pr_command(
+                &repo,
+                &["remove", "topic", "--dry-run", "--json"],
+                &response,
+            )
+            .output()
+            .unwrap();
+            assert!(plan.status.success(), "{}", text(&plan.stderr));
+            let item = &json_value(&plan)["data"]["items"][0];
+            assert_eq!(item["wouldDeleteBranch"], true, "{item}");
+            assert_eq!(item["preservationReason"], "merged_pr");
+            assert!(managed(&repo, "topic").is_dir());
+            fs::remove_file(repo.root.join("gh-calls")).unwrap();
+            let removed = merged_pr_command(&repo, &["remove", "topic", "--json"], &response)
+                .output()
+                .unwrap();
+            assert!(removed.status.success(), "{}", text(&removed.stderr));
+            assert_eq!(
+                json_value(&removed)["data"]["items"][0]["branchDeleted"],
+                true
+            );
+            assert!(!branch_listed(&repo, "topic"));
+            let calls = fs::read_to_string(repo.root.join("gh-calls")).unwrap();
+            assert_eq!(
+                calls
+                    .lines()
+                    .filter(|line| line.starts_with("pr view"))
+                    .count(),
+                1,
+                "{calls}"
+            );
+            assert!(calls.contains(&format!("pr view {link} --json")), "{calls}");
+        }
+    }
+}
+
+#[test]
+fn merged_pr_remove_keeps_uncertain_and_unmerged_tips() {
+    for case in [
+        "ahead",
+        "open",
+        "closed",
+        "missing-object",
+        "foreign-url",
+        "foreign-response",
+        "wrong-number",
+        "bad-oid",
+        "repo-unavailable",
+        "detached",
+    ] {
+        let link = if case == "foreign-url" {
+            "https://github.com/other/demo/pull/7"
+        } else {
+            "https://github.com/acme/demo/pull/7"
+        };
+        let repo = merged_pr_fixture(Some(link));
+        let head = retirement_head_at(&repo, &managed(&repo, "topic"));
+        let mut response = merged_pr_response(&head, "MERGED");
+        match case {
+            "ahead" => commit_file(&repo, "topic", "unpublished", "keep this\n"),
+            "open" => response["state"] = "OPEN".into(),
+            "closed" => response["state"] = "CLOSED".into(),
+            "missing-object" => {
+                response["headRefOid"] = "1234567890123456789012345678901234567890".into()
+            }
+            "foreign-response" => response["url"] = "https://github.com/other/demo/pull/7".into(),
+            "wrong-number" => response["number"] = 8.into(),
+            "bad-oid" => response["headRefOid"] = "main".into(),
+            "detached" => git_at(&repo, &managed(&repo, "topic"), &["checkout", "--detach"]),
+            _ => (),
+        }
+        let mut cmd = merged_pr_command(
+            &repo,
+            &["remove", "topic", "--dry-run", "--json"],
+            &response,
+        );
+        if case == "repo-unavailable" {
+            cmd.env("GH_REPO", "{}");
+        }
+        let out = cmd.output().unwrap();
+        if case == "detached" {
+            assert_eq!(
+                json_value(&out)["error"]["code"],
+                "unpreserved",
+                "{case}: {}",
+                text(&out.stdout)
+            );
+        } else {
+            assert!(out.status.success(), "{case}: {}", text(&out.stderr));
+            assert_eq!(
+                json_value(&out)["data"]["items"][0]["branchKeptReason"],
+                "unpreserved",
+                "{case}"
+            );
+            let mut cmd = merged_pr_command(&repo, &["remove", "topic", "--json"], &response);
+            if case == "repo-unavailable" {
+                cmd.env("GH_REPO", "{}");
+            }
+            let removed = cmd.output().unwrap();
+            assert!(
+                removed.status.success(),
+                "{case}: {}",
+                text(&removed.stderr)
+            );
+            assert!(
+                !json_value(&removed)["data"]["items"][0]["branchDeleted"]
+                    .as_bool()
+                    .unwrap(),
+                "{case}"
+            );
+        }
+        assert!(branch_listed(&repo, "topic"), "{case}");
+    }
+}
+
+#[test]
+fn merged_pr_remove_gh_failures_keep_branch() {
+    for body in [
+        "exit 1",
+        "printf 'invalid json'",
+        "exec sleep 5",
+        "exit 127",
+        "printf '{}'",
+        "printf '{\"state\":\"MERGED\"}'",
+    ] {
+        let repo = merged_pr_fixture(Some("7"));
+        let path = gh_path(&repo, &format!("#!/bin/sh\n{body}\n"));
+        let started = std::time::Instant::now();
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &["remove", "topic", "--json"])
+            .env("PATH", path)
+            .env("MABO_GH_TIMEOUT_MS", "50")
+            .output()
+            .unwrap();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "{body}"
+        );
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        assert_eq!(
+            json_value(&out)["data"]["items"][0]["branchKeptReason"],
+            "unpreserved",
+            "{body}"
+        );
+        assert!(branch_listed(&repo, "topic"));
+    }
+    let repo = merged_pr_fixture(Some("7"));
+    let bin = repo.root.join("without-gh");
+    fs::create_dir(&bin).unwrap();
+    let git = repo
+        .command("sh", &["-c", "command -v git"])
+        .output()
+        .unwrap();
+    std::os::unix::fs::symlink(text(&git.stdout), bin.join("git")).unwrap();
+    let out = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &["remove", "topic", "--json"])
+        .env("PATH", bin)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(branch_listed(&repo, "topic"));
+}
+
+#[test]
+fn merged_pr_unlinked_requires_one_exact_head() {
+    for case in [
+        "exact",
+        "multiple",
+        "none",
+        "ancestor",
+        "wrong-head",
+        "foreign",
+    ] {
+        let repo = merged_pr_fixture(None);
+        let local = retirement_head_at(&repo, &managed(&repo, "topic"));
+        let mut response = merged_pr_response(&local, "MERGED");
+        response["headRefName"] = "topic".into();
+        if case == "ancestor" {
+            commit_file(&repo, "topic", "later", "later\n");
+            response["headRefOid"] = retirement_head_at(&repo, &managed(&repo, "topic")).into();
+            git_at(
+                &repo,
+                &managed(&repo, "topic"),
+                &["reset", "--hard", &local],
+            );
+        }
+        if case == "wrong-head" {
+            response["headRefName"] = "other".into();
+        }
+        if case == "foreign" {
+            response["url"] = "https://github.com/other/demo/pull/7".into();
+        }
+        let response = match case {
+            "multiple" => serde_json::json!([response, response]),
+            "none" => serde_json::json!([]),
+            _ => serde_json::json!([response]),
+        };
+        let out = merged_pr_command(&repo, &["remove", "topic", "--json"], &response)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{case}: {}", text(&out.stderr));
+        assert_eq!(
+            json_value(&out)["data"]["items"][0]["branchDeleted"],
+            case == "exact",
+            "{case}: {}",
+            text(&out.stdout)
+        );
+        let calls = fs::read_to_string(repo.root.join("gh-calls")).unwrap();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.starts_with("pr list"))
+                .count(),
+            1,
+            "{calls}"
+        );
+    }
+}
+
+#[test]
+fn merged_pr_gc_merged_candidates_share_queries_and_recheck_local_tips() {
+    for apply in [false, true] {
+        let repo = merged_pr_fixture(Some("https://github.com/acme/demo/pull/7"));
+        let head = retirement_head_at(&repo, &managed(&repo, "topic"));
+        repo.git(&["branch", "copy", "topic"]);
+        assert!(repo
+            .mabo(&["create", "copy", "--branch", "copy", "--no-setup"])
+            .status
+            .success());
+        assert!(repo.mabo(&["set", "copy", "--pr", "7"]).status.success());
+        let response = merged_pr_response(&head, "MERGED");
+        let args = if apply {
+            vec!["gc", "--merged", "--closed-pr", "--apply", "--json"]
+        } else {
+            vec!["gc", "--merged", "--json"]
+        };
+        let out = merged_pr_command(&repo, &args, &response).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{} {}",
+            text(&out.stdout),
+            text(&out.stderr)
+        );
+        let doc = json_value(&out);
+        let items = doc["data"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2, "{doc}");
+        for item in items {
+            assert_eq!(
+                item["action"],
+                if apply { "removed" } else { "wouldRemove" },
+                "{item}"
+            );
+            assert!(item["reasons"]
+                .as_array()
+                .unwrap()
+                .contains(&"merged".into()));
+            assert_eq!(item["preservationReason"], "merged_pr");
+        }
+        assert_eq!(managed(&repo, "topic").is_dir(), !apply);
+        let calls = fs::read_to_string(repo.root.join("gh-calls")).unwrap();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.starts_with("pr view"))
+                .count(),
+            1,
+            "{calls}"
+        );
+    }
+}
+
+#[test]
+fn merged_pr_local_proof_avoids_gh_and_noninteractive_stdin_is_null() {
+    let repo = merged_pr_fixture(Some("7"));
+    repo.git(&["merge", "--ff-only", "topic"]);
+    let out = merged_pr_command(
+        &repo,
+        &["remove", "topic", "--dry-run", "--json"],
+        &serde_json::Value::Null,
+    )
+    .output()
+    .unwrap();
+    assert!(out.status.success());
+    assert_eq!(
+        json_value(&out)["data"]["items"][0]["wouldDeleteBranch"],
+        true
+    );
+    assert!(!repo.root.join("gh-calls").exists());
+    for env in ["MABO_NO_INPUT", "CI", "NO_TTY"] {
+        let repo = merged_pr_fixture(Some("7"));
+        let response = merged_pr_response(
+            &retirement_head_at(&repo, &managed(&repo, "topic")),
+            "MERGED",
+        );
+        let out = merged_pr_command(
+            &repo,
+            &["remove", "topic", "--dry-run", "--output", "text"],
+            &response,
+        )
+        .env(env, "1")
+        .env("GH_CHECK_INPUT", "1")
+        .stdin(std::process::Stdio::piped())
+        .output()
+        .unwrap();
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        assert!(
+            text(&out.stdout).contains("and its branch (preserved by merged PR)"),
+            "{env}: {}",
+            text(&out.stdout)
+        );
+    }
+}
+
+#[test]
+fn merged_pr_query_failures_are_cached_and_gc_reports_unavailable() {
+    for failure in ["exit", "json", "timeout", "descendant"] {
+        let repo = merged_pr_fixture(Some("https://github.com/acme/demo/pull/7"));
+        let response = merged_pr_response(
+            &retirement_head_at(&repo, &managed(&repo, "topic")),
+            "MERGED",
+        );
+        let started = std::time::Instant::now();
+        let out = merged_pr_command(&repo, &["gc", "--merged", "--apply", "--json"], &response)
+            .env("GH_PR_FAILURE", failure)
+            .env("MABO_GH_TIMEOUT_MS", "200")
+            .output()
+            .unwrap();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "{failure}"
+        );
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        let doc = json_value(&out);
+        assert_eq!(
+            doc["data"]["items"][0]["action"], "skipped",
+            "{failure}: {doc}"
+        );
+        assert_eq!(doc["data"]["items"][0]["detail"], "pr status unavailable");
+        assert!(doc["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning["code"] == "pull_request_unavailable"));
+        assert!(branch_listed(&repo, "topic"));
+        let calls = fs::read_to_string(repo.root.join("gh-calls")).unwrap();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.starts_with("pr view"))
+                .count(),
+            1,
+            "{calls}"
+        );
+    }
+}
+
+#[test]
+fn merged_pr_after_base_edit_and_squash_proves_retirement() {
+    let repo = Repo::new();
+    fs::write(repo.repo.join("work.txt"), "start\n").unwrap();
+    repo.git(&["add", "work.txt"]);
+    repo.git(&["commit", "-m", "original file"]);
+    assert!(repo
+        .mabo(&["create", "topic", "--no-setup"])
+        .status
+        .success());
+    commit_file(&repo, "topic", "work.txt", "start\ntopic\n");
+    assert!(repo.mabo(&["set", "topic", "--pr", "7"]).status.success());
+    let head = retirement_head_at(&repo, &managed(&repo, "topic"));
+    for (body, message) in [
+        ("base\nstart\n", "base edit after PR creation"),
+        ("base\nstart\ntopic\n", "squash PR on updated base"),
+    ] {
+        fs::write(repo.repo.join("work.txt"), body).unwrap();
+        repo.git(&["add", "work.txt"]);
+        repo.git(&["commit", "-m", message]);
+    }
+    // Exact tree-entry transitions cannot establish this squash locally.
+    let kept = merged_pr_command(
+        &repo,
+        &["remove", "topic", "--dry-run", "--json"],
+        &serde_json::Value::Null,
+    )
+    .env("GH_REPO", "{}")
+    .output()
+    .unwrap();
+    assert_eq!(
+        json_value(&kept)["data"]["items"][0]["branchKeptReason"],
+        "unpreserved"
+    );
+    let response = merged_pr_response(&head, "MERGED");
+    let out = merged_pr_command(&repo, &["gc", "--merged", "--apply", "--json"], &response)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(json_value(&out)["data"]["items"][0]["action"], "removed");
+    assert!(!branch_listed(&repo, "topic"));
+}
+
+#[test]
+fn merged_pr_cached_proof_does_not_cover_new_local_commits_after_hooks() {
+    for command in ["remove", "gc"] {
+        let repo = merged_pr_fixture(Some("7"));
+        let head = retirement_head_at(&repo, &managed(&repo, "topic"));
+        let hook = "printf 'new unpublished work\\n' > later.txt && git add later.txt && git commit -m later";
+        fs::write(
+            repo.repo.join(".mabo.toml"),
+            format!(
+                "[hooks]\npre-remove = [{}]\n",
+                serde_json::to_string(hook).unwrap()
+            ),
+        )
+        .unwrap();
+        let args = if command == "gc" {
+            vec!["gc", "--merged", "--apply", "--json"]
+        } else {
+            vec!["remove", "topic", "--json"]
+        };
+        let out = merged_pr_command(&repo, &args, &merged_pr_response(&head, "MERGED"))
+            .output()
+            .unwrap();
+        assert!(
+            managed(&repo, "topic").is_dir(),
+            "{command}: {}",
+            text(&out.stdout)
+        );
+        assert!(branch_listed(&repo, "topic"));
+        assert_ne!(
+            retirement_head_at(&repo, &managed(&repo, "topic")),
+            head,
+            "hook must create new work"
+        );
+        let calls = fs::read_to_string(repo.root.join("gh-calls")).unwrap();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.starts_with("pr view"))
+                .count(),
+            1,
+            "{calls}"
+        );
     }
 }

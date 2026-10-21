@@ -8,6 +8,7 @@ use crate::preferences::{self, Preferences};
 
 #[derive(Debug, Clone)]
 pub struct Context {
+    pub(crate) retirement_queries: std::cell::RefCell<crate::github::RetirementQueries>,
     pub git_root: PathBuf,
     /// Checkout the command is running in. `.mabo.toml` is loaded from here.
     pub source_checkout: PathBuf,
@@ -84,6 +85,7 @@ fn assemble(git_root: &Path, source_checkout: PathBuf) -> Result<Context> {
         }
     };
     Ok(Context {
+        retirement_queries: Default::default(),
         git_root: git_root.to_path_buf(),
         source_checkout,
         worktrees_directory: location.path,

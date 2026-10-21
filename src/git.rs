@@ -635,6 +635,39 @@ fn retirement_destination(root: &Path, tip: &str, destination: &str) -> Option<S
     Some(destination)
 }
 
+/// GitHub evidence covers a full local branch tip; never fetch missing PR objects.
+pub(crate) fn retirement_pr_contains(
+    root: &Path,
+    branch: &str,
+    head: &str,
+    ancestor: bool,
+) -> bool {
+    if !matches!(head.len(), 40 | 64) || !head.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return false;
+    }
+    let reference = format!("refs/heads/{branch}^{{commit}}");
+    let env = [("GIT_NO_LAZY_FETCH", "1"), ("GIT_NO_REPLACE_OBJECTS", "1")];
+    let Ok(tip) = raw_git_with_env(
+        root,
+        &["rev-parse", "--verify", "--quiet", &reference],
+        &env,
+    ) else {
+        return false;
+    };
+    if tip.code != 0 {
+        return false;
+    }
+    let tip = tip.stdout.trim();
+    if tip.eq_ignore_ascii_case(head) {
+        return true;
+    }
+    ancestor
+        && raw_git_with_env(root, &["cat-file", "-t", head], &env)
+            .is_ok_and(|result| result.code == 0 && result.stdout.trim() == "commit")
+        && raw_git_with_env(root, &["merge-base", "--is-ancestor", tip, head], &env)
+            .is_ok_and(|result| result.code == 0)
+}
+
 pub(crate) fn retirement_preserved(
     root: &Path,
     branch: Option<&str>,
