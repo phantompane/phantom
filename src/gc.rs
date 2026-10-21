@@ -81,6 +81,10 @@ pub struct CandidateEntry {
     pub action: Action,
     pub detail: Option<String>,
     pub branch_deleted: Option<bool>,
+    /// A checkout, registration, or metadata record was removed, even if a
+    /// later step failed. This is independent of the candidate's action.
+    #[serde(skip)]
+    changed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,6 +92,7 @@ pub struct CandidateEntry {
 pub struct Report {
     pub version: u32,
     pub applied: bool,
+    pub plan: bool,
     pub candidates: Vec<CandidateEntry>,
     #[serde(skip)]
     pub lines: Vec<String>,
@@ -97,7 +102,11 @@ pub struct Report {
 impl Report {
     pub fn exit_code(&self) -> i32 {
         if self.error.is_some() {
-            error::GENERAL
+            if self.candidates.iter().any(|entry| entry.changed) {
+                error::PARTIAL
+            } else {
+                error::GENERAL
+            }
         } else {
             error::SUCCESS
         }
@@ -160,7 +169,6 @@ pub fn selection_from_flags(
 }
 
 pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Report> {
-    let _operation = crate::operation::lock(&context.git_root)?;
     let facts = gather(context, &request.policy, None)?;
     warn_unavailable_pull_requests(&facts, &request.policy);
     let verdicts = classify(&facts, &request.policy);
@@ -169,16 +177,6 @@ pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Repo
         crate::config::pre_delete_commands(context.config.as_ref()),
         request.no_hooks,
     )?;
-    _operation.check_post_release_children(
-        request.apply
-            && !skip_untrusted
-            && !request.no_hooks
-            && !crate::config::pre_delete_commands(context.config.as_ref()).is_empty()
-            && verdicts
-                .iter()
-                .any(|verdict| matches!(verdict, Verdict::Remove(Removal::Delete { .. }))),
-    )?;
-    drop(_operation);
     let mut candidates = Vec::with_capacity(verdicts.len());
     let mut first_failure = None;
     for verdict in verdicts {
@@ -479,10 +477,10 @@ fn removal_kind(facts: &WorktreeFacts, reasons: Vec<Reason>) -> Removal {
     }
 }
 
-// Re-verification must refresh metadata and Git state under the operation lock,
+// Re-verification must refresh metadata and Git state,
 // but observing unrelated worktrees would repeat their GitHub queries per target.
 fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<Vec<WorktreeFacts>> {
-    let stored = metadata::load(&context.git_root)?;
+    let stored = metadata::load_strict(&context.git_root)?;
     let common_dir = git::canonical_common_dir(&context.git_root)?;
     let listed = git::list_worktrees(&context.git_root)
         .map_err(|error| Error::msg(format!("Failed to list worktrees: {error}")))?;
@@ -491,7 +489,10 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
         .as_deref()
         .and_then(|base| crate::sync::default_local_branch(&context.git_root, base).ok());
     if name.is_none() {
-        eprintln!("Warning: cannot resolve the default branch; keeping all branch worktrees");
+        crate::output::warning(
+            "default_branch_unavailable",
+            "Warning: cannot resolve the default branch; keeping all branch worktrees",
+        );
     }
     let default = DefaultBranch { base, name };
     let current = current_worktree_path(context);
@@ -752,9 +753,12 @@ fn warn_unavailable_pull_requests(facts: &[WorktreeFacts], policy: &Policy) {
     }
     for facts in facts {
         if facts.pr == PullRequestState::Unavailable {
-            eprintln!(
-                "Warning: pull request status unavailable for {}",
-                facts.subject.name
+            crate::output::warning(
+                "pull_request_unavailable",
+                format!(
+                    "Warning: pull request status unavailable for {}",
+                    facts.subject.name
+                ),
             );
         }
     }
@@ -947,6 +951,7 @@ fn preview(verdict: Verdict) -> CandidateEntry {
             action: Action::Skipped,
             detail: Some(hold.detail().to_string()),
             branch_deleted: None,
+            changed: false,
         },
     }
 }
@@ -971,6 +976,7 @@ fn apply_verdict(
             action: Action::Skipped,
             detail: Some(hold.detail().to_string()),
             branch_deleted: None,
+            changed: false,
         },
         Verdict::Remove(Removal::Delete {
             subject,
@@ -1043,6 +1049,7 @@ fn apply_delete(
                 },
                 detail: outcome.metadata_error.or(outcome.branch_error),
                 branch_deleted: Some(outcome.branch_deleted),
+                changed: true,
             }
         }
         Err(error) if matches!(error.error, Error::Untrusted(_)) => CandidateEntry {
@@ -1054,6 +1061,7 @@ fn apply_delete(
             action: Action::Skipped,
             detail: Some(Hold::Untrusted.detail().to_string()),
             branch_deleted: None,
+            changed: false,
         },
         Err(error) => failed(subject, reasons, error.error.to_string()),
     }
@@ -1065,15 +1073,11 @@ fn apply_drop(
     subject: Subject,
     reasons: Vec<Reason>,
 ) -> CandidateEntry {
-    let _operation = match crate::operation::lock(&context.git_root) {
-        Ok(lock) => lock,
-        Err(error) => return failed(subject, reasons, error.to_string()),
-    };
     let facts = match gather(context, &request.policy, Some(&subject.path)) {
         Ok(facts) => facts,
         Err(error) => return failed(subject, reasons, error.to_string()),
     };
-    // The path can be reused while earlier targets run unlocked project hooks.
+    // The path can be reused while earlier targets run project hooks.
     // Never apply another branch's safety verdict to the planned branch.
     if facts.iter().any(|facts| {
         facts.subject.path == subject.path
@@ -1088,6 +1092,7 @@ fn apply_drop(
             action: Action::Skipped,
             detail: Some("Worktree branch or HEAD changed since gc planning".into()),
             branch_deleted: None,
+            changed: false,
         };
     }
     let fresh = classify(&facts, &request.policy);
@@ -1124,6 +1129,7 @@ fn apply_drop(
             action: Action::Failed,
             detail: Some(error.to_string()),
             branch_deleted: Some(false),
+            changed: git_listed,
         };
     }
     let (branch_deleted, detail) =
@@ -1137,6 +1143,7 @@ fn apply_drop(
         action: Action::Removed,
         detail,
         branch_deleted: Some(branch_deleted),
+        changed: true,
     }
 }
 
@@ -1185,6 +1192,7 @@ fn failed(subject: Subject, reasons: Vec<Reason>, detail: String) -> CandidateEn
         action: Action::Failed,
         detail: Some(detail),
         branch_deleted: None,
+        changed: false,
     }
 }
 
@@ -1211,6 +1219,7 @@ fn entry_from_removal(
         action,
         detail,
         branch_deleted,
+        changed: false,
     }
 }
 
@@ -1219,12 +1228,13 @@ fn finish(candidates: Vec<CandidateEntry>, applied: bool, first_failure: Option<
     lines.push(summary(&candidates, applied));
     let error = first_failure.map(|message| JsonErrorBody {
         message,
-        code: "error".to_string(),
-        exit_code: error::GENERAL,
+        code: "failed".to_string(),
+        details: None,
     });
     Report {
         version: error::JSON_VERSION,
         applied,
+        plan: !applied,
         candidates,
         lines,
         error,

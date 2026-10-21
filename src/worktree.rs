@@ -71,10 +71,10 @@ impl Logger {
         }
     }
 
-    fn warn(&self, message: &str) {
+    fn warn(&self, code: &str, message: &str) {
         if self.enabled {
             let _ = std::io::stdout().flush();
-            eprintln!("{message}");
+            crate::output::warning(code, message);
         }
     }
 }
@@ -508,12 +508,6 @@ pub struct CreateOutcome {
 pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
     let action = resolve_action(&request.action)?;
     let context = context::open(request.repository)?;
-    let operation = crate::operation::lock(&context.git_root)?;
-    operation.check_post_release_children(
-        action.is_some()
-            || (!request.hooks.no_hooks
-                && !config::post_create_commands(context.config.as_ref()).is_empty()),
-    )?;
     let name = match request.name {
         Some(name) => name.to_string(),
         None => {
@@ -535,8 +529,7 @@ pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
         trust::HookKind::PostCreate,
         request.hooks,
     )?;
-    let created = create_worktree_locked(
-        operation,
+    let created = create_worktree_inner(
         &context,
         &name,
         base,
@@ -550,22 +543,28 @@ pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
         paths::canonical_location(&created.path).display()
     ));
     if let Some(error) = &created.metadata_error {
-        request.logger.warn(&format!("Warning: {error}"));
-    }
-    if let Some(error) = &created.copy_error {
         request
             .logger
-            .warn(&format!("\nWarning: Failed to copy some files: {error}"));
+            .warn("metadata_save", &format!("Warning: {error}"));
+    }
+    if let Some(error) = &created.copy_error {
+        request.logger.warn(
+            "copy_files",
+            &format!("\nWarning: Failed to copy some files: {error}"),
+        );
     }
     if let Some(failure) = &created.hook_failure {
-        request.logger.warn(&failure.warning(&created.path));
+        request
+            .logger
+            .warn("post_create", &failure.warning(&created.path));
     }
     let exec = run_action(&name, &created.path, action, &request.logger)?;
     if exec.is_some() {
         if let Err(error) = touch_after_action(&context, &created.path) {
-            request
-                .logger
-                .warn(&format!("Warning: Failed to update lastUsedAt: {error}"));
+            request.logger.warn(
+                "last_used_update",
+                &format!("Warning: Failed to update lastUsedAt: {error}"),
+            );
         }
     }
     let hook_code = created.hook_failure.as_ref().map(|failure| failure.code);
@@ -640,7 +639,6 @@ impl HookFailure {
 }
 
 fn touch_after_action(context: &Context, path: &Path) -> Result<()> {
-    let _operation = crate::operation::lock(&context.git_root)?;
     // The command may have deleted this worktree. Never recreate its record.
     if metadata::records_path(&context.git_root, path)? {
         worktree_at_path(context, path)?;
@@ -658,16 +656,12 @@ pub fn create_worktree(
     logger: &Logger,
     metadata: &MetadataInput,
 ) -> Result<CreatedWorktree> {
-    let operation = crate::operation::lock(&context.git_root)?;
-    create_worktree_locked(
-        operation, context, name, base, copy_files, commands, logger, metadata,
-    )
+    create_worktree_inner(context, name, base, copy_files, commands, logger, metadata)
 }
 
-// The caller may already hold the lock while preparing branch state.
+// Branch preparation is complete before creating the worktree.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn create_worktree_locked(
-    operation: crate::operation::OperationLock,
+pub(crate) fn create_worktree_inner(
     context: &Context,
     name: &str,
     base: &str,
@@ -676,7 +670,6 @@ pub(crate) fn create_worktree_locked(
     logger: &Logger,
     metadata: &MetadataInput,
 ) -> Result<CreatedWorktree> {
-    operation.check_post_release_children(!commands.is_empty())?;
     validate_worktree_name(name)?;
     metadata::prepare(&context.git_root)?;
     let path = paths::worktree_path(
@@ -704,7 +697,6 @@ pub(crate) fn create_worktree_locked(
     let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
         .err()
         .map(|error| error.to_string());
-    drop(operation);
     let hooks_ran = !commands.is_empty();
     let hook_failure = if hooks_ran {
         logger.log("\nRunning post-create commands...");
@@ -735,12 +727,6 @@ pub struct AttachRequest<'a> {
 pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action = resolve_action(&request.action)?;
     let context = context::open(request.repository)?;
-    let operation = crate::operation::lock(&context.git_root)?;
-    operation.check_post_release_children(
-        action.is_some()
-            || (!request.hooks.no_hooks
-                && !config::post_create_commands(context.config.as_ref()).is_empty()),
-    )?;
     let commands = trust::authorize(
         &context.git_root,
         config::post_create_commands(context.config.as_ref()),
@@ -748,8 +734,7 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
         trust::HookKind::PostCreate,
         request.hooks,
     )?;
-    let attached = attach_worktree_locked(
-        operation,
+    let attached = attach_worktree_inner(
         &context,
         request.name,
         request.copy_files,
@@ -761,17 +746,22 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
         .logger
         .log(&format!("Attached worktree: {}", attached.name));
     if let Some(error) = &attached.metadata_error {
-        request.logger.warn(&format!("Warning: {error}"));
+        request
+            .logger
+            .warn("metadata_save", &format!("Warning: {error}"));
     }
     if let Some(failure) = &attached.hook_failure {
-        request.logger.warn(&failure.warning(&attached.path));
+        request
+            .logger
+            .warn("post_create", &failure.warning(&attached.path));
     }
     let exec = run_action(&attached.name, &attached.path, action, &request.logger)?;
     if exec.is_some() {
         if let Err(error) = touch_after_action(&context, &attached.path) {
-            request
-                .logger
-                .warn(&format!("Warning: Failed to update lastUsedAt: {error}"));
+            request.logger.warn(
+                "last_used_update",
+                &format!("Warning: Failed to update lastUsedAt: {error}"),
+            );
         }
     }
     let hook_code = attached.hook_failure.as_ref().map(|failure| failure.code);
@@ -800,16 +790,12 @@ pub fn attach_worktree(
     logger: &Logger,
     metadata: &MetadataInput,
 ) -> Result<AttachedWorktree> {
-    let operation = crate::operation::lock(&context.git_root)?;
-    attach_worktree_locked(
-        operation, context, name, copy_files, commands, logger, metadata,
-    )
+    attach_worktree_inner(context, name, copy_files, commands, logger, metadata)
 }
 
-// The caller may already hold the lock while preparing branch state.
+// Branch preparation is complete before creating the worktree.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn attach_worktree_locked(
-    operation: crate::operation::OperationLock,
+pub(crate) fn attach_worktree_inner(
     context: &Context,
     name: &str,
     copy_files: &[String],
@@ -817,7 +803,6 @@ pub(crate) fn attach_worktree_locked(
     logger: &Logger,
     metadata: &MetadataInput,
 ) -> Result<AttachedWorktree> {
-    operation.check_post_release_children(!commands.is_empty())?;
     let lookup = crate::tracking::lookup_attach(&context.git_root, name)?;
     validate_worktree_name(&lookup.directory)?;
     metadata::prepare(&context.git_root)?;
@@ -868,10 +853,12 @@ pub(crate) fn attach_worktree_locked(
     let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
         .err()
         .map(|error| {
-            logger.warn(&format!("Warning: Failed to copy some files: {error}"));
+            logger.warn(
+                "copy_files",
+                &format!("Warning: Failed to copy some files: {error}"),
+            );
             error.to_string()
         });
-    drop(operation);
     let hooks_ran = !commands.is_empty();
     let hook_failure = if hooks_ran {
         logger.log("\nRunning post-create commands...");
@@ -1002,9 +989,12 @@ pub fn preflight_delete(
     }
     if !force && !options.allow_current && command_is_inside(&path) {
         return Err(DeleteError::kept(
-            Error::validation(format!(
+            Error::Status {
+                code: "refused",
+                message: format!(
                 "Worktree '{name}' is the current directory. Use --current or --force to delete it."
-            )),
+            ),
+            },
             &worktree,
         ));
     }
@@ -1141,13 +1131,6 @@ pub(crate) fn commit_delete_checked(
         )
         .map_err(|error| DeleteError::kept(error, &worktree))?
     };
-    {
-        let operation = crate::operation::lock(&context.git_root)
-            .map_err(|error| DeleteError::kept(error, &worktree))?;
-        operation
-            .check_post_release_children(!commands.is_empty())
-            .map_err(|error| DeleteError::kept(error, &worktree))?;
-    }
     metadata::prepare(&context.git_root).map_err(|error| DeleteError::kept(error, &worktree))?;
     if !commands.is_empty() {
         logger.log("\nRunning pre-delete commands...");
@@ -1155,8 +1138,6 @@ pub(crate) fn commit_delete_checked(
             return Err(DeleteError::kept(error, &worktree));
         }
     }
-    let _operation = crate::operation::lock(&context.git_root)
-        .map_err(|error| DeleteError::kept(error, &worktree))?;
     check().map_err(|error| DeleteError::kept(error, &worktree))?;
     if worktree.orphaned {
         let listed = git::list_worktrees(&context.git_root)
@@ -1208,11 +1189,7 @@ pub(crate) fn commit_delete_checked(
     .err()
     .map(|error| error.to_string());
     let cleanup_warning = if inside {
-        remove_empty_parents(
-            &path,
-            &context.worktrees_directory,
-            context.project_common_dir.as_deref(),
-        )
+        remove_empty_parents(&path, &context.worktrees_directory)
     } else {
         None
     };
@@ -1303,11 +1280,10 @@ pub fn exec_in_worktree(
     env: &[(&str, &str)],
     redirect_stdout_to_stderr: bool,
 ) -> Result<i32> {
-    crate::operation::check_user_command(Some(&context.git_root))?;
     let worktree = find_worktree(context, name, false, None)?;
     let path = PathBuf::from(&worktree.path);
     if let Err(error) = metadata::touch(&context.git_root, &path) {
-        eprintln!("Warning: {error}");
+        crate::output::warning("last_used_update", format!("Warning: {error}"));
     }
     let owned = mabo_env(&worktree.name, &path);
     let mut pairs = owned
@@ -1385,7 +1361,7 @@ fn run_action(
                 Err(error @ (Error::Signaled(_) | Error::Spawn { .. })) => Ok(Some(ExecOutcome {
                     ok: false,
                     command: shown,
-                    exit_code: error.exit_code(),
+                    exit_code: error.child_exit_code(),
                     signal: match &error {
                         Error::Signaled(signal) => Some(signal.clone()),
                         _ => None,
@@ -1413,7 +1389,7 @@ pub fn mabo_env(name: &str, path: &Path) -> Vec<(String, String)> {
 fn hook_failure_from_start(command: &str, error: &Error) -> HookFailure {
     HookFailure {
         command: command.to_string(),
-        code: error.exit_code(),
+        code: error.child_exit_code(),
         signal: match error {
             Error::Signaled(signal) => Some(signal.clone()),
             _ => None,
@@ -1441,6 +1417,7 @@ fn run_hook_commands(
     logger: &Logger,
 ) -> Result<Option<HookFailure>> {
     let root_path = context.source_checkout.display().to_string();
+    let _hook_scope = crate::runtime::hook_scope();
     for command in commands {
         if post {
             logger.log(&format!("Executing: {command}"));
@@ -1481,11 +1458,9 @@ fn run_hook_commands(
     Ok(None)
 }
 
-fn remove_empty_parents(
-    path: &Path,
-    root: &Path,
-    project_common_dir: Option<&Path>,
-) -> Option<String> {
+// Keep the project directory and its marker: another creator may have claimed
+// it and still be waiting to run git worktree add.
+fn remove_empty_parents(path: &Path, root: &Path) -> Option<String> {
     let mut current = path.parent().map(Path::to_path_buf);
     while let Some(dir) = current {
         if !paths::is_strictly_inside(&dir, root) {
@@ -1503,11 +1478,7 @@ fn remove_empty_parents(
             }
         }
     }
-    let common_dir = project_common_dir?;
-    match paths::remove_project_directory_if_empty(root, common_dir) {
-        Ok(removal) => removal.warning,
-        Err(error) => Some(error.to_string()),
-    }
+    None
 }
 
 /// Copy gitignored files matched by `.worktreeinclude` and extra gitignore patterns.

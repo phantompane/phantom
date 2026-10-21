@@ -217,7 +217,6 @@ fn checkout_pull_request(
     hooks: crate::trust::HookControl,
 ) -> Result<Checkout> {
     let context = context::open(repository)?;
-    let operation = crate::operation::lock(&context.git_root)?;
     let git_root = &context.git_root;
     let worktree_name = if pull.fork {
         let owner = pull.head_repo.split('/').next().unwrap_or("");
@@ -261,7 +260,6 @@ fn checkout_pull_request(
         crate::trust::HookKind::PostCreate,
         hooks,
     )?;
-    operation.check_post_release_children(!commands.is_empty())?;
     metadata::prepare(git_root)?;
     let branch_existed = git::branch_exists(git_root, &worktree_name)?;
     let result = (|| {
@@ -279,8 +277,7 @@ fn checkout_pull_request(
             }
             _ => crate::sync::creation_base(git_root, None)?,
         });
-        let attached = worktree::attach_worktree_locked(
-            operation,
+        let attached = worktree::attach_worktree_inner(
             &context,
             &worktree_name,
             &[],
@@ -293,7 +290,6 @@ fn checkout_pull_request(
     let (fetched, attached) = match result {
         Ok(checkout) => checkout,
         Err(error) => {
-            let _operation = crate::operation::lock(git_root)?;
             // Git refuses to delete a branch attached to a worktree. Only remove
             // branches created by this attempt, never a pre-existing branch.
             if !branch_existed && git::branch_exists(git_root, &worktree_name)? {
@@ -362,7 +358,6 @@ fn checkout_issue(
     hooks: crate::trust::HookControl,
 ) -> Result<Checkout> {
     let context = context::open(repository)?;
-    let operation = crate::operation::lock(&context.git_root)?;
     let name = format!("issues/{number}");
     metadata.issue = Some(subject_link(repo, number, "issues"));
     if let Ok(existing) = worktree::find_worktree(&context, &name, false, None) {
@@ -392,16 +387,8 @@ fn checkout_issue(
     )?;
     metadata.base = Some(crate::sync::creation_base(&context.git_root, base)?);
     let base = base.unwrap_or("HEAD");
-    let created = worktree::create_worktree_locked(
-        operation,
-        &context,
-        &name,
-        base,
-        &[],
-        &commands,
-        logger,
-        &metadata,
-    )?;
+    let created =
+        worktree::create_worktree_inner(&context, &name, base, &[], &commands, logger, &metadata)?;
     let info = worktree::worktree_at_path(&context, &created.path)?;
     Ok(Checkout {
         message: format!(

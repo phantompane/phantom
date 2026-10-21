@@ -8,6 +8,8 @@ use crate::error::{Error, Result};
 #[derive(Debug, Deserialize)]
 struct HelpFile {
     commands: Vec<CommandSummary>,
+    #[serde(rename = "globalOptions")]
+    global_options: Vec<CommandOption>,
     helps: std::collections::BTreeMap<String, CommandHelp>,
 }
 
@@ -100,6 +102,13 @@ pub fn main_help() -> Result<String> {
         "  {}Show version",
         cyan(&format!("{version_option:width$}"))
     ));
+    for option in &file.global_options {
+        lines.push(format!(
+            "  {}  {}",
+            cyan(&option_name(option)),
+            option.description
+        ));
+    }
     lines.push(String::new());
     lines.push(dim(
         "Run 'mabo <command> --help' for more information on a command.",
