@@ -1,6 +1,7 @@
+#[path = "common/git.rs"]
+mod test_git;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 #[path = "../build_git.rs"]
 mod build_git;
@@ -99,7 +100,7 @@ fn packed_refs_are_watched_and_missing_loose_refs_are_not() {
 }
 
 fn git(cwd: &Path, args: &[&str]) {
-    let output = Command::new("git")
+    let output = test_git::command("git")
         .args(args)
         .current_dir(cwd)
         .output()

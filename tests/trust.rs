@@ -1,3 +1,5 @@
+#[path = "common/git.rs"]
+mod test_git;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -22,7 +24,7 @@ impl Repo {
         let home = root.join("home");
         fs::create_dir_all(home.join(".config/git")).expect("home");
         fs::create_dir_all(&repo).expect("repo");
-        fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+        test_git::write_config(&home);
         let repo_ctx = Repo { root, repo, home };
         repo_ctx.git(&["init", "-b", "main"]);
         repo_ctx.git(&["config", "user.name", "Phantom Rust"]);

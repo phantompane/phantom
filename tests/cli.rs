@@ -1,5 +1,7 @@
 #[path = "common/records.rs"]
 mod records;
+#[path = "common/git.rs"]
+mod test_git;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -17,7 +19,7 @@ impl Repo {
         let home = root.join("home");
         fs::create_dir_all(home.join(".config/git")).expect("home");
         fs::create_dir_all(&repo).expect("repo");
-        fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+        test_git::write_config(&home);
         let repo_ctx = Repo { root, repo, home };
         repo_ctx.git(&["init", "-b", "main"]);
         repo_ctx.git(&["config", "user.name", "Phantom Rust"]);
@@ -1388,7 +1390,7 @@ fn copy_file_globs_ignore_brackets_in_the_repository_path() {
     let home = root.join("home");
     fs::create_dir_all(home.join(".config/git")).expect("home");
     fs::create_dir_all(&repo_dir).expect("repo");
-    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    test_git::write_config(&home);
     let git = |args: &[&str]| {
         let output = Command::new("git")
             .args(args)
@@ -4948,7 +4950,7 @@ fn separate_git_dir_creates_the_default_worktree_under_xdg() {
     let template = root.join("git-template");
     fs::create_dir_all(home.join(".config/git")).expect("home");
     fs::create_dir_all(&template).expect("git template");
-    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    test_git::write_config(&home);
     fs::create_dir_all(&checkout).expect("checkout");
     let init = std::process::Command::new("git")
         .args([
@@ -5034,7 +5036,7 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
     let sep = root.join("sep.git");
     let worktrees = root.join("worktrees");
     fs::create_dir_all(home.join(".config/git")).expect("home");
-    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    test_git::write_config(&home);
     fs::create_dir_all(&checkout).expect("checkout");
     let init = std::process::Command::new("git")
         .args([
@@ -5133,7 +5135,7 @@ impl SeparateCheckout {
         let checkout = root.join("deep").join("checkout");
         let git_dir = root.join("var").join("sep.git");
         fs::create_dir_all(home.join(".config/git")).expect("home");
-        fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+        test_git::write_config(&home);
         fs::create_dir_all(&checkout).expect("checkout");
         fs::create_dir_all(git_dir.parent().expect("git dir parent")).expect("git dir parent");
         let repo = Self {
@@ -5337,7 +5339,7 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
     let superproject = root.join("super");
     let checkout = superproject.join("sub");
     fs::create_dir_all(home.join(".config/git")).expect("home");
-    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    test_git::write_config(&home);
     fs::create_dir_all(&remote).expect("remote");
     fs::create_dir_all(&superproject).expect("super");
     let git = |cwd: &Path, args: &[&str]| {
@@ -5455,7 +5457,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
     let copy = root.join("aa-copy");
     let git_dir = root.join("var").join("sep.git");
     fs::create_dir_all(home.join(".config/git")).expect("home");
-    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    test_git::write_config(&home);
     fs::create_dir_all(&real).expect("checkout");
     fs::create_dir_all(git_dir.parent().expect("parent")).expect("var");
     let git = |cwd: &Path, args: &[&str]| {
@@ -5621,7 +5623,7 @@ fn missing_separate_checkout_names_the_git_dir() {
     let checkout = root.join("deep").join("checkout");
     let git_dir = root.join("var").join("sep.git");
     fs::create_dir_all(home.join(".config/git")).expect("home");
-    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    test_git::write_config(&home);
     fs::create_dir_all(&checkout).expect("checkout");
     fs::create_dir_all(git_dir.parent().expect("parent")).expect("var");
     let init = Command::new("git")
@@ -5686,7 +5688,7 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
     let root = std::env::temp_dir().join(format!("mabo-far-checkout-{}", uuid()));
     let home = root.join("home");
     fs::create_dir_all(home.join(".config/git")).expect("home");
-    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    test_git::write_config(&home);
     let mabo = |cwd: &Path, args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_mabo"))
             .args(args)
@@ -5858,7 +5860,7 @@ fn submodule_lists_and_execs_the_main_checkout() {
     let superproject = root.join("super");
     let checkout = superproject.join("sub");
     fs::create_dir_all(home.join(".config/git")).expect("home");
-    fs::write(home.join(".gitconfig"), "").expect("gitconfig");
+    test_git::write_config(&home);
     fs::create_dir_all(&remote).expect("remote");
     fs::create_dir_all(&superproject).expect("super");
     let git = |cwd: &Path, args: &[&str]| {

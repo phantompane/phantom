@@ -1951,7 +1951,7 @@ mod tests {
     }
 
     fn git(args: &[&str], cwd: Option<&Path>) {
-        let mut command = std::process::Command::new("git");
+        let mut command = crate::test_git::command("git");
         command.args(args);
         if let Some(cwd) = cwd {
             command.current_dir(cwd);

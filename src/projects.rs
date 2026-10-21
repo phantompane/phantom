@@ -1380,7 +1380,7 @@ mod tests {
     }
 
     fn git_ok(cwd: &Path, args: &[&str]) {
-        let output = std::process::Command::new("git")
+        let output = crate::test_git::command("git")
             .args(args)
             .current_dir(cwd)
             .env("GIT_CONFIG_NOSYSTEM", "1")

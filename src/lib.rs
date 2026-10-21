@@ -51,6 +51,10 @@ fn format_version(version: &str, sha: Option<&str>) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/common/git.rs"]
+mod test_git;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
