@@ -102,7 +102,9 @@ pub(crate) fn prepare(
                         Error::validation(format!("Option '{arg}' was removed. Use -R/--repo REF."))
                     });
                 }
-                if key == "trust" && matches!(name, "--yes" | "-y" | "--list") {
+                if matches!(key, "trust" | "trust add" | "trust remove" | "trust list")
+                    && matches!(name, "--yes" | "-y" | "--list")
+                {
                     error.get_or_insert_with(|| Error::validation("Old trust flags were removed. Use `mabo trust add` or `mabo trust list`."));
                 }
                 if inline.is_none()

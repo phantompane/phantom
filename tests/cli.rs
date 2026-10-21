@@ -11686,6 +11686,358 @@ fn outer_trust_commands_text_json_and_exit_codes() {
 }
 
 #[test]
+#[cfg(unix)]
+fn outer_trust_output_escapes_repository_control_characters() {
+    let mut failures = Vec::new();
+    for json in [false, true] {
+        let mut repo = Repo::new();
+        let name = "repo\u{1b}[31m\nforged";
+        let renamed = repo.root.join(name);
+        fs::rename(&repo.repo, &renamed).unwrap();
+        repo.repo = renamed;
+        fs::write(
+            repo.repo.join(".mabo.toml"),
+            "[hooks]\npost-create = [\"echo hook-visible\"]\n",
+        )
+        .unwrap();
+        let root = canonical(&repo.repo).to_string_lossy().into_owned();
+        let key = format!("{root}/.git");
+        let visible_root = root.replace('\u{1b}', "\\u{1b}").replace('\n', "\\u{a}");
+        let visible_key = format!("{visible_root}/.git");
+        for (args, command, expected) in [
+            (vec!["trust", "add"], "trust add", "Trusted "),
+            (vec!["trust", "list"], "trust list", ""),
+            (
+                vec!["trust", "remove"],
+                "trust remove",
+                "Removed trust for ",
+            ),
+            (vec!["trust", "remove"], "trust remove", "Not trusted: "),
+        ] {
+            let mut argv = args;
+            if json {
+                argv.push("--json");
+            }
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &argv)
+                .env_remove("MABO_TRUST_ALL")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{argv:?}: {out:?}");
+            let stderr = text(&out.stderr);
+            if command == "trust add" {
+                if !stderr.starts_with(&format!("{visible_root}\n")) {
+                    failures.push(format!("{argv:?} stderr: {stderr:?}"));
+                }
+                assert!(stderr.contains("echo hook-visible"));
+            }
+            if stderr.contains('\u{1b}') || stderr.contains(name) {
+                failures.push(format!("{argv:?} unsafe stderr: {stderr:?}"));
+            }
+            if json {
+                let envelope = assert_envelope(&out, command);
+                let data = &envelope["data"];
+                let path = if command == "trust list" {
+                    &data["repos"][0]["path"]
+                } else {
+                    &data["path"]
+                };
+                assert_eq!(path, &key);
+            } else {
+                let stdout = text(&out.stdout);
+                if !stdout.starts_with(&format!("{expected}{visible_key}")) {
+                    failures.push(format!("{argv:?} stdout: {stdout:?}"));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+#[cfg(unix)]
+fn outer_repo_output_escapes_repository_control_characters() {
+    let mut repo = Repo::new();
+    let name = "repo\u{1b}[31m\nforged";
+    let visible_name = "repo\\u{1b}[31m\\u{a}forged";
+    let renamed = repo.root.join(name);
+    fs::rename(&repo.repo, &renamed).unwrap();
+    repo.repo = renamed;
+    let root = canonical(&repo.repo).to_string_lossy().into_owned();
+    let visible_root = root.replace(name, visible_name);
+    let mut failures = Vec::new();
+    for (args, expected) in [
+        (
+            vec!["repo", "add"],
+            format!("'{visible_name}' ({visible_root})"),
+        ),
+        (
+            vec!["repo", "add"],
+            format!("'{visible_name}' is already registered ({visible_root})"),
+        ),
+        (
+            vec!["repo", "list", "--registered"],
+            format!("{visible_name} ({visible_root})"),
+        ),
+        (
+            vec!["repo", "list", "--registered", "--names"],
+            visible_name.into(),
+        ),
+        (
+            vec!["repo", "list", "--registered", "--paths"],
+            visible_root.clone(),
+        ),
+        (
+            vec!["repo", "show"],
+            format!("{visible_name}\nPrimary checkout: {visible_root}\n"),
+        ),
+        (
+            vec!["repo", "forget", &root],
+            format!("'{visible_name}' ({visible_root})"),
+        ),
+    ] {
+        let out = repo.mabo(&args);
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        let stdout = text(&out.stdout);
+        if !stdout.contains(&expected) || stdout.contains(name) || stdout.contains('\u{1b}') {
+            failures.push(format!("{args:?}: {stdout:?}"));
+        }
+        if args == ["repo", "show"] {
+            let shown = repo.mabo(&["repo", "show", "--json"]);
+            let envelope = assert_envelope(&shown, "repo show");
+            assert_eq!(envelope["data"]["repo"]["root"], root);
+            assert_eq!(envelope["data"]["repo"]["name"], name);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+#[cfg(unix)]
+fn outer_discovery_and_ambiguity_escape_repository_paths() {
+    let mut repo = Repo::new();
+    let clone_root = repo.root.join("clones\u{1b}[31m\nforged");
+    let checkout = clone_root.join("github.com/example/widget");
+    fs::create_dir_all(checkout.parent().unwrap()).unwrap();
+    fs::rename(&repo.repo, &checkout).unwrap();
+    repo.repo = checkout.clone();
+    assert!(repo
+        .mabo(&["config", "set", "clone-root", clone_root.to_str().unwrap()])
+        .status
+        .success());
+    let raw = checkout.to_str().unwrap();
+    let visible = raw.replace('\u{1b}', "\\u{1b}").replace('\n', "\\u{a}");
+    for (args, expected) in [
+        (
+            vec!["repo", "list", "--discovered"],
+            format!("widget ({visible}) [ghq]"),
+        ),
+        (
+            vec!["repo", "list", "--discovered", "--paths"],
+            visible.clone(),
+        ),
+        (
+            vec!["repo", "list", "--discovered", "--names"],
+            "widget".into(),
+        ),
+    ] {
+        let out = repo.mabo(&args);
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        assert_eq!(text(&out.stdout), expected, "{args:?}");
+        assert!(!text(&out.stderr).contains('\u{1b}'), "{args:?}: {out:?}");
+    }
+    let out = repo.mabo(&["repo", "add", "--json"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        assert_envelope(&out, "repo add")["data"]["repo"]["rootPath"],
+        raw
+    );
+
+    let other = clone_root.join("other/widget");
+    fs::create_dir_all(other.parent().unwrap()).unwrap();
+    repo.git(&[
+        "clone",
+        repo.repo.to_str().unwrap(),
+        other.to_str().unwrap(),
+    ]);
+    assert!(repo
+        .mabo(&["repo", "add", other.to_str().unwrap()])
+        .status
+        .success());
+    for (args, command, lines) in [
+        (vec!["repo", "show", "widget"], "repo show", 3),
+        (vec!["repo", "forget", "widget"], "repo forget", 1),
+    ] {
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {out:?}");
+        let stderr = text(&out.stderr);
+        assert!(!stderr.contains('\u{1b}'), "{args:?}: {stderr:?}");
+        assert_eq!(stderr.lines().count(), lines, "{args:?}: {stderr:?}");
+        if command == "repo show" {
+            assert!(stderr.contains(&visible), "{stderr:?}");
+        }
+        let mut args = args;
+        args.push("--json");
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(2));
+        let value = assert_envelope(&out, command);
+        assert_eq!(value["error"]["code"], "ambiguous");
+        if command == "repo show" {
+            assert!(value["error"]["message"].as_str().unwrap().contains(raw));
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn outer_config_output_escapes_paths_in_values_and_sources() {
+    let repo = Repo::new();
+    let directory = repo.root.join("config\u{1b}[31m\nforged");
+    fs::create_dir_all(&directory).unwrap();
+    let raw = directory.to_str().unwrap();
+    let visible = raw.replace('\u{1b}', "\\u{1b}").replace('\n', "\\u{a}");
+    for args in [
+        vec!["config", "set", "workspace-root", raw],
+        vec!["config", "get", "workspace-root"],
+        vec!["config", "get", "workspace-root", "--sources"],
+        vec!["config", "list"],
+        vec!["config", "list", "--sources"],
+        vec!["repo", "show"],
+        vec!["config", "unset", "workspace-root"],
+    ] {
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("XDG_CONFIG_HOME", &directory)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        let stdout = text(&out.stdout);
+        assert!(stdout.contains(&visible), "{args:?}: {stdout:?}");
+        assert!(!stdout.contains(raw), "{args:?}: {stdout:?}");
+        assert!(!stdout.contains('\u{1b}'), "{args:?}: {stdout:?}");
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn outer_diagnostics_escape_repository_names_and_paths() {
+    let repo = Repo::new();
+    let directory = repo.root.join("repo\u{1b}[31m\nforged");
+    fs::create_dir_all(&directory).unwrap();
+    let missing = directory.join("missing");
+    let path = missing.to_str().unwrap();
+    let name = "missing\u{1b}[31m\nforged";
+    for (args, command, reference) in [
+        (vec!["repo", "show", name], "repo show", name),
+        (vec!["repo", "forget", name], "repo forget", name),
+        (vec!["repo", "add", path], "repo add", path),
+        (vec!["trust", "add", path], "trust add", path),
+        (vec!["trust", "remove", path], "trust remove", path),
+    ] {
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(3), "{args:?}: {out:?}");
+        let stderr = text(&out.stderr);
+        let visible = reference
+            .replace('\u{1b}', "\\u{1b}")
+            .replace('\n', "\\u{a}");
+        assert!(stderr.contains(&visible), "{args:?}: {stderr:?}");
+        assert_eq!(stderr.lines().count(), 1, "{args:?}: {stderr:?}");
+        assert!(!stderr.contains('\u{1b}'), "{args:?}: {stderr:?}");
+        let mut json_args = args;
+        json_args.push("--json");
+        let out = repo.mabo(&json_args);
+        assert_eq!(out.status.code(), Some(3));
+        let value = assert_envelope(&out, command);
+        assert!(value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(reference));
+        assert!(out.stderr.is_empty());
+    }
+
+    // Discovery diagnostics are printed to stderr even in JSON mode.
+    let path = silent_ghq_path(&repo);
+    fs::write(
+        repo.root.join("bin/ghq"),
+        "#!/bin/sh\nprintf '%s\\n' \"$MABO_TEST_DIAGNOSTIC\" >&2\nexit 17\n",
+    )
+    .unwrap();
+    for json in [false, true] {
+        let mut args = vec!["repo", "list"];
+        if json {
+            args.push("--json");
+        }
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("PATH", &path)
+            .env("MABO_TEST_DIAGNOSTIC", &directory)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        let stderr = text(&out.stderr);
+        assert!(!stderr.contains('\u{1b}'), "{args:?}: {stderr:?}");
+        assert!(
+            stderr.contains("repo\\u{1b}[31m\\u{a}forged"),
+            "{args:?}: {stderr:?}"
+        );
+        if json {
+            let value = assert_envelope(&out, "repo list");
+            assert!(value["warnings"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains(directory.to_str().unwrap()));
+        }
+    }
+}
+
+#[test]
+fn outer_removed_flags_take_precedence_over_child_help() {
+    let repo = Repo::new();
+    for child in ["add", "remove", "list"] {
+        let command = format!("trust {child}");
+        for flag in [
+            "--yes",
+            "-y",
+            "--list",
+            "--project=repo",
+            "-prepo",
+            "--project",
+            "-p",
+        ] {
+            for help in ["--help", "-h"] {
+                for json in [false, true] {
+                    let mut args = vec!["trust", child, flag];
+                    if matches!(flag, "--project" | "-p") {
+                        args.push("repo");
+                    }
+                    args.push(help);
+                    if json {
+                        args.push("--json");
+                    }
+                    let out = repo.mabo(&args);
+                    assert_eq!(out.status.code(), Some(2), "{args:?}: {out:?}");
+                    let hint = if matches!(flag, "--yes" | "-y" | "--list") {
+                        "mabo trust"
+                    } else {
+                        "-R/--repo"
+                    };
+                    if json {
+                        let value = assert_envelope(&out, &command);
+                        assert_eq!(value["error"]["code"], "usage");
+                        assert!(value["error"]["message"].as_str().unwrap().contains(hint));
+                    } else {
+                        assert!(out.stdout.is_empty(), "{args:?}: {out:?}");
+                        let stderr = text(&out.stderr);
+                        assert_eq!(stderr.lines().count(), 1, "{args:?}: {stderr:?}");
+                        assert!(stderr.contains(hint), "{args:?}: {stderr:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn outer_removed_commands_and_flags_fail_with_migration_hints() {
     let repo = Repo::new();
     for (args, command, hint) in [

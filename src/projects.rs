@@ -553,12 +553,15 @@ fn select_named_project(reference: &str, projects: &[ProjectCandidate]) -> Resul
 }
 
 fn ambiguous_project_message(reference: &str, matches: &[&ProjectCandidate]) -> String {
-    let mut lines = vec![format!("Repository '{reference}' matches multiple repos:")];
+    let mut lines = vec![format!(
+        "Repository '{}' matches multiple repos:",
+        crate::output::diagnostic_value(reference)
+    )];
     for project in matches {
         lines.push(format!(
             "  {} ({})",
-            project.canonical_name,
-            project.root.display()
+            crate::output::diagnostic_value(&project.canonical_name),
+            crate::output::diagnostic_value(&project.root.to_string_lossy())
         ));
     }
     lines.join("\n")

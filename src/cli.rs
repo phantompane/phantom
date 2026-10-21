@@ -5,6 +5,7 @@ use crate::error::{Error, Result, GENERAL, NOT_FOUND, PARTIAL, SUCCESS, VALIDATI
 use crate::github;
 use crate::help;
 use crate::metadata::{self, MetadataInput};
+use crate::output::visible_text;
 use crate::preferences;
 use crate::projects::{self, ProjectListEntry, ProjectRecord, ProjectRegistryStore};
 use crate::repository;
@@ -676,11 +677,13 @@ fn config_read(args: &[String], list: bool) -> Result<i32> {
             };
             if parsed.flag("sources") {
                 println!(
-                    "{label}{value}\t{} ({})",
-                    effective.source, effective.detail
+                    "{label}{}\t{} ({})",
+                    visible_text(&value),
+                    effective.source,
+                    visible_text(&effective.detail)
                 );
             } else {
-                println!("{label}{value}");
+                println!("{label}{}", visible_text(&value));
             }
         }
     }
@@ -717,7 +720,11 @@ fn config_set(args: &[String]) -> Result<i32> {
         };
         emit_json(&serde_json::json!({"key": key, "value": value}))
     } else {
-        println!("Set {key} to '{value}' in {}", path.display());
+        println!(
+            "Set {key} to '{}' in {}",
+            visible_text(value),
+            visible_text(&path.to_string_lossy())
+        );
         Ok(SUCCESS)
     }
 }
@@ -734,7 +741,7 @@ fn config_unset(args: &[String]) -> Result<i32> {
     if crate::output::json() {
         emit_json(&serde_json::json!({"key": key, "unset": true}))
     } else {
-        println!("Unset {key} in {}", path.display());
+        println!("Unset {key} in {}", visible_text(&path.to_string_lossy()));
         Ok(SUCCESS)
     }
 }
@@ -880,11 +887,16 @@ fn project_add(args: &[String]) -> Result<i32> {
     if json {
         return emit_json(&project_add_json(added, &project));
     } else if added {
-        println!("Added repo '{}' ({})", project.name, project.root_path);
+        println!(
+            "Added repo '{}' ({})",
+            visible_text(&project.name),
+            visible_text(&project.root_path)
+        );
     } else {
         println!(
             "Repository '{}' is already registered ({})",
-            project.name, project.root_path
+            visible_text(&project.name),
+            visible_text(&project.root_path)
         );
     }
     Ok(SUCCESS)
@@ -946,25 +958,32 @@ fn project_list(args: &[String]) -> Result<i32> {
                 name,
                 root_path,
                 ..
-            } if parsed.flag("names") => println!("{name}"),
-            ProjectListEntry::Ghq { name, .. } if parsed.flag("names") => println!("{name}"),
+            } if parsed.flag("names") => println!("{}", visible_text(name)),
+            ProjectListEntry::Ghq { name, .. } if parsed.flag("names") => {
+                println!("{}", visible_text(name))
+            }
             ProjectListEntry::Registry { root_path, .. }
             | ProjectListEntry::Ghq { root_path, .. }
                 if parsed.flag("paths") =>
             {
-                println!("{root_path}");
+                println!("{}", visible_text(root_path));
             }
             ProjectListEntry::Ghq {
                 name, root_path, ..
             } => {
-                println!("{name} ({root_path}) [ghq]")
+                println!("{} ({}) [ghq]", visible_text(name), visible_text(root_path))
             }
             ProjectListEntry::Registry {
                 id,
                 name,
                 root_path,
                 ..
-            } => println!("{name} ({root_path}) [{id}]"),
+            } => println!(
+                "{} ({}) [{}]",
+                visible_text(name),
+                visible_text(root_path),
+                visible_text(id)
+            ),
         }
     }
     Ok(SUCCESS)
@@ -1018,7 +1037,11 @@ fn project_remove(args: &[String]) -> Result<i32> {
             "repo": removed,
         }));
     } else {
-        println!("Removed repo '{}' ({})", removed.name, removed.root_path);
+        println!(
+            "Removed repo '{}' ({})",
+            visible_text(&removed.name),
+            visible_text(&removed.root_path)
+        );
     }
     Ok(SUCCESS)
 }
@@ -1050,7 +1073,7 @@ fn repo_show(args: &[String]) -> Result<i32> {
     if crate::output::json() {
         emit_json(&value)
     } else {
-        println!("{name}\nPrimary checkout: {}\nDefault branch: {}\n.mabo.toml: {}\nTrusted: {trusted}\nWorkspace root: {}", root.display(), default_branch.as_deref().unwrap_or("unknown"), root.join(".mabo.toml").is_file(), context.worktrees_directory.display());
+        println!("{}\nPrimary checkout: {}\nDefault branch: {}\n.mabo.toml: {}\nTrusted: {trusted}\nWorkspace root: {}", visible_text(&name), visible_text(&root.to_string_lossy()), visible_text(default_branch.as_deref().unwrap_or("unknown")), root.join(".mabo.toml").is_file(), visible_text(&context.worktrees_directory.to_string_lossy()));
         Ok(SUCCESS)
     }
 }
@@ -1075,7 +1098,10 @@ fn find_project(projects: &[ProjectRecord], identifier: &str) -> Result<Option<P
     if name_matches.len() > 1 {
         return Err(Error::Status {
             code: "ambiguous",
-            message: format!("Repository '{identifier}' is ambiguous; use its id or path"),
+            message: format!(
+                "Repository '{}' is ambiguous; use its id or path",
+                crate::output::diagnostic_value(identifier)
+            ),
         });
     }
     match projects::resolve_project_ref(identifier) {
@@ -1536,7 +1562,7 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
     };
     eprintln!(
         "{}\n{}",
-        project.project,
+        visible_text(&project.project),
         trust::format_hooks(&project.post_create, &project.pre_delete)
     );
     match trust::trust_root(Path::new(&project.git_root)) {
@@ -1548,7 +1574,7 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
                     "trustedAt": record.trusted_at,
                 }))
             } else {
-                println!("Trusted {}", record.path);
+                println!("Trusted {}", visible_text(&record.path));
                 Ok(SUCCESS)
             }
         }
@@ -1589,10 +1615,10 @@ fn untrust_cmd(args: &[String]) -> Result<i32> {
                     "removed": removed,
                 }))
             } else if removed {
-                println!("Removed trust for {key}");
+                println!("Removed trust for {}", visible_text(&key));
                 Ok(SUCCESS)
             } else {
-                println!("Not trusted: {key}");
+                println!("Not trusted: {}", visible_text(&key));
                 Ok(SUCCESS)
             }
         }
@@ -1625,7 +1651,11 @@ fn print_trust_list(json: bool) -> Result<i32> {
         return Ok(SUCCESS);
     }
     for project in projects {
-        println!("{}\t{}", project.path, project.trusted_at);
+        println!(
+            "{}\t{}",
+            visible_text(&project.path),
+            visible_text(&project.trusted_at)
+        );
     }
     Ok(SUCCESS)
 }
