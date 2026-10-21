@@ -1645,7 +1645,7 @@
     "remove": {
       "name": "remove",
       "description": "Retire workspaces, deleting branches only when preserved",
-      "usage": "mabo remove SEL... [--keep-branch] [--delete-unpreserved-branch] [--discard-changes] [--no-hooks] [--dry-run]",
+      "usage": "mabo remove SEL... [--keep-branch] [--delete-unpreserved-branch] [--discard-changes] [--no-hooks] [--source-checkout PATH] [--dry-run]",
       "options": [
         {
           "name": "repo",
@@ -1653,6 +1653,11 @@
           "type": "string",
           "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
           "example": "--repo owner/repo"
+        },
+        {
+          "name": "source-checkout",
+          "type": "string",
+          "description": "Read pre-remove hooks from this checkout in the selected repository; preserves the original hook source when retrying from primary"
         },
         {
           "name": "discard-changes",
@@ -1724,14 +1729,15 @@
         }
       ],
       "notes": [
-        "SEL is a name, ., pr:N, issue:N, or a PR/issue URL. Selectors are required; remove . selects the current workspace. Ambiguous selectors exit 2. The primary checkout always exits 4 primary.",
-        "All selectors and safety guards are checked before any removal. Dirty content, including ignored files, exits 4 dirty unless --discard-changes. Unpreserved detached commits exit 4 unpreserved unless --delete-unpreserved-branch.",
+        "SEL is a name, ., pr:N, issue:N, a PR/issue URL, or an absolute path / path starting with ./ or ../. Selectors are required; remove . selects the current workspace. Ambiguous selectors exit 2. The primary checkout always exits 4 primary.",
+        "All selectors and safety guards are checked before any hooks or removal. A selector with neither metadata nor a matching Git worktree exits 3 not_found, including with --dry-run; any unknown target aborts all removal and text lists every unknown selector. Dirty content, including ignored files, exits 4 dirty unless --discard-changes. Unpreserved detached commits exit 4 unpreserved unless --delete-unpreserved-branch.",
         "Branches are deleted only if integrated into their recorded base (merge, or squash/rebase verified by exact tree entries) or exactly matching their own upstream. Squash/rebase evidence uses non-merge commits on the base first-parent history: one complete squash transition, or a distinct base commit for every workspace commit in ancestor-to-tip order, without reusing evidence. Preservation requires an independent ref in the common Git directory after symbolic-ref resolution; the retiring ref, detached HEAD, and bare commit IDs are insufficient. Otherwise the branch is kept with warning branch_kept_unpreserved and branchKeptReason: unpreserved. --keep-branch always keeps a branch; --delete-unpreserved-branch explicitly allows deleting it.",
-        "--dry-run returns plan:true and items with removed:false, wouldRemove and wouldDeleteBranch, without hooks or mutations. JSON data.items contains workspace, removed, branchDeleted, branchKeptReason, alreadyGone, and error.",
-        "Later failures exit 6 if persistent removal occurred, otherwise the cause exit code. Every item remains in data.items. Repeating the command is idempotent: missing targets succeed with alreadyGone:true. Orphaned records are removed without hooks or branch changes.",
-        "Removal is limited to linked workspaces inside the resolved directory or recorded paths. Unrecorded external checkouts are refused. Empty parents are cleaned up only below the resolved workspace directory.",
+        "--dry-run returns plan:true and items with removed:false, wouldRemove and wouldDeleteBranch, without hooks or mutations. JSON data.items contains workspace, removed, branchDeleted, branchKeptReason, detail (the Git error when branch deletion fails), alreadyGone, and error.",
+        "If branch deletion fails after checkout removal, remove keeps the branch with warning branch_kept_delete_failed, branchKeptReason: delete_failed, and the Git error in the item detail. This does not fail the item or stop later targets; branch-only failures exit 0 and have no retry command. Decide on any later branch cleanup with Git.",
+        "A failure after persistent removal exits 6 and retains every item result. Completed removals also remove their records, so repeating the original command may exit 3. Fix the cause, then run error.details.retryCommand, also shown as Retry with in text. The retry is one invocation: cd <primary> && mabo -R <primary> remove [flags] -- <unfinished paths>. It selects only unfinished checkout or record work, preserves permission flags and output mode, and protects selectors with --. Run hints in bash or zsh; paths are shell-quoted and control characters use ANSI-C quoting. Metadata cleanup is retried only for recorded targets, using the absolute path spelling saved in the record before removal. Location selectors are fixed before removal. A linked checkout supplying pre-remove hooks is removed last; retries preserve its configuration with --source-checkout PATH, which must belong to the selected repository. Once that source is removed, only record cleanup remains and retries disable hooks. Retries add --no-hooks when the original command disabled hooks or its source had no pre-remove hooks, preserving hook non-execution even if primary defines hooks. With -R PRIMARY, dot also resolves a recorded checkout whose Git registration disappeared.",
+        "alreadyGone:true requires evidence: a missing directory with metadata and/or an eligible Git registration succeeds, cleaning stale records/registrations without hooks or branch deletion. A record with remaining files but no Git registration also succeeds with alreadyGone:true while retaining files, record and branch. A branch alone or an unregistered directory without a record is insufficient evidence. Removal is limited to linked workspaces inside the resolved directory or recorded paths. Unrecorded external checkouts are refused. Empty parents are cleaned up only below the resolved workspace directory.",
         "Old delete, -f/--force, and --current exit 2. Use mabo remove SEL..., remove ., and the separate --discard-changes / --delete-unpreserved-branch permissions.",
-        ".mabo.toml is read from the source checkout, the checkout where the command runs. [hooks] pre-remove commands run in the workspace before it is removed, in order, and stop at the first failure",
+        ".mabo.toml is read from --source-checkout when supplied, otherwise from the source checkout where the command runs. [hooks] pre-remove commands run in the workspace before it is removed, in order, and stop at the first failure",
         "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
         "pre-remove hooks run only after the repository is trusted. On a terminal, mabo asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, nonempty CI, --no-input or MABO_NO_INPUT being enabled, or --json fails before deleting. An empty value counts as unset. Run mabo trust add or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
@@ -1809,7 +1815,8 @@
     "config_key_renamed",
     "config_key_removed",
     "repo_discovery",
-    "branch_kept_unpreserved"
+    "branch_kept_unpreserved",
+    "branch_kept_delete_failed"
   ],
   "schemaVersion": 2
 }
