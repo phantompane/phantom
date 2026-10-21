@@ -41,9 +41,9 @@ pub fn open(repository: Option<&Path>) -> Result<Context> {
     create(&git_root)
 }
 
-/// Select setup hooks independently of the target checkout used by dot.
+/// Select hooks independently of the target checkout used by dot.
 /// The source must belong to the selected repository; copies still use primary.
-pub(crate) fn open_for_setup(repository: Option<&Path>, source: &Path) -> Result<Context> {
+pub(crate) fn open_for_hooks(repository: Option<&Path>, source: &Path) -> Result<Context> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = match repository {
         Some(root) => root.to_path_buf(),

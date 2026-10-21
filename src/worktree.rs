@@ -970,7 +970,7 @@ pub(crate) fn commit_remove_checked(
                 let branch_error = error.to_string();
                 (
                     format!(
-                        "Deleted workspace '{name}'\nNote: Branch '{}' could not be deleted: {branch_error}",
+                        "Deleted workspace '{name}' and kept its branch '{}'",
                         worktree.branch
                     ),
                     false,

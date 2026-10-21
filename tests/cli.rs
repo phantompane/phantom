@@ -19462,16 +19462,72 @@ fn retirement_remove_missing_wins_over_other_preflight_errors() {
 }
 
 #[test]
-fn retirement_remove_retry_finishes_branch_failure_without_reselecting_deleted_workspace() {
+fn retirement_remove_branch_delete_failure_keeps_branch_and_continues() {
+    for json in [false, true] {
+        for force in [false, true] {
+            let repo = Repo::new();
+            for name in ["branch-failure", "last"] {
+                assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+            }
+            let lock = repo.repo.join(".git/refs/heads/branch-failure.lock");
+            fs::write(&lock, "locked").unwrap();
+            let mut args = vec!["remove", "branch-failure", "last", "--no-hooks"];
+            if json {
+                args.push("--json");
+            }
+            if force {
+                args.push("--delete-unpreserved-branch");
+            }
+            let out = repo.mabo(&args);
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{} {}",
+                text(&out.stdout),
+                text(&out.stderr)
+            );
+            assert!(branch_listed(&repo, "branch-failure"));
+            assert!(!managed(&repo, "branch-failure").exists());
+            assert!(!managed(&repo, "last").exists());
+            assert!(maboroshi::metadata::load_strict(&repo.repo)
+                .unwrap()
+                .is_empty());
+            if json {
+                let doc = json_value(&out); // Parsing the entire stdout rejects multiple documents.
+                assert_eq!(doc["ok"], true);
+                assert!(doc["error"].is_null());
+                assert_eq!(doc["warnings"][0]["code"], "branch_kept_delete_failed");
+                let item = &doc["data"]["items"][0];
+                assert_eq!(item["removed"], true);
+                assert_eq!(item["branchDeleted"], false);
+                assert_eq!(item["branchKeptReason"], "delete_failed");
+                assert!(item["error"].is_null());
+                assert!(item["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("branch-failure.lock"));
+            } else {
+                assert!(text(&out.stderr).contains("kept branch 'branch-failure'"));
+                assert!(text(&out.stderr).contains("branch-failure.lock"));
+                assert!(!text(&out.stderr).contains("Retry with"));
+            }
+        }
+    }
+}
+
+#[test]
+fn retirement_remove_branch_failure_and_unfinished_targets_use_one_retry() {
     for json in [false, true] {
         let repo = Repo::new();
-        for name in ["done", "branch-failure", "last"] {
+        for name in ["branch-failure", "remaining", "last"] {
             assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
         }
-        // Prevent only branch deletion; the checkout and record really disappear.
+        fs::write(repo.repo.join(".mabo.toml"), "[hooks]\npre-remove = ['test \"$MABO_WORKSPACE\" != last || test -f \"$MABO_REPO_PATH/allow-remove\"']\n").unwrap();
         let lock = repo.repo.join(".git/refs/heads/branch-failure.lock");
         fs::write(&lock, "locked").unwrap();
-        let mut args = vec!["remove", "done", "branch-failure", "last", "--no-hooks"];
+        let remaining = managed(&repo, "remaining");
+        repo.git(&["worktree", "lock", remaining.to_str().unwrap()]);
+        let mut args = vec!["remove", "branch-failure", "remaining", "last"];
         if json {
             args.push("--json");
         }
@@ -19484,112 +19540,61 @@ fn retirement_remove_retry_finishes_branch_failure_without_reselecting_deleted_w
             text(&out.stderr)
         );
         assert!(!managed(&repo, "branch-failure").exists());
-        assert!(branch_listed(&repo, "branch-failure"));
+        assert!(remaining.exists());
+        if json {
+            let doc = json_value(&out);
+            assert_eq!(doc["error"]["code"], "partial");
+            assert_eq!(doc["data"]["items"][0]["branchKeptReason"], "delete_failed");
+            assert!(doc["data"]["items"][0]["error"].is_null());
+            assert!(!doc["data"]["items"][1]["error"].is_null());
+            assert_eq!(doc["data"]["items"][2]["error"]["code"], "not_attempted");
+        }
         let hint = setup_retry_hint(&out, json);
-        assert!(hint.contains("__remove-branch-retry"), "{hint}");
-        assert!(hint.contains("--no-hooks"), "{hint}");
-        fs::remove_file(lock).unwrap();
+        assert_eq!(hint.matches("mabo ").count(), 1, "{hint}");
+        assert_eq!(hint.matches(" && ").count(), 1, "{hint}");
+        assert!(hint.contains("-R ") && hint.contains(" remove "), "{hint}");
+        assert!(!hint.contains("branch-failure"), "{hint}");
+        // The branch lock stays in place: workspace retries must never touch it.
+        repo.git(&["worktree", "unlock", remaining.to_str().unwrap()]);
         let retried = run_setup_retry_hint(&repo, &repo.home, &hint);
         assert_eq!(
             retried.status.code(),
-            Some(0),
-            "{hint}: {} {}",
+            Some(6),
+            "{} {}",
             text(&retried.stdout),
             text(&retried.stderr)
         );
-        assert!(!branch_listed(&repo, "branch-failure"));
-        assert!(!managed(&repo, "last").exists());
-    }
-}
-
-#[test]
-fn retirement_remove_review3_branch_retry_rechecks_preservation() {
-    for proof in ["base", "recorded-base", "upstream", "squash"] {
-        for lost in [true, false] {
-            for force in [false, true] {
-                for json in [false, true] {
-                    let repo = Repo::new();
-                    repo.git(&["branch", "integration"]);
-                    let base = if proof == "recorded-base" {
-                        "integration"
-                    } else {
-                        "main"
-                    };
-                    assert!(repo
-                        .mabo(&["create", "branch-failure", "--base", base, "--no-setup"])
-                        .status
-                        .success());
-                    commit_file(&repo, "branch-failure", "unique.txt", "history to preserve");
-                    match proof {
-                        "upstream" => {
-                            repo.git(&["branch", "saved", "branch-failure"]);
-                            repo.git(&["branch", "--set-upstream-to=saved", "branch-failure"]);
-                        }
-                        "recorded-base" => {
-                            repo.git(&["branch", "-f", "integration", "branch-failure"])
-                        }
-                        "squash" => {
-                            repo.git(&["merge", "--squash", "branch-failure"]);
-                            repo.git(&["commit", "-m", "squash"]);
-                        }
-                        _ => repo.git(&["merge", "--ff-only", "branch-failure"]),
-                    }
-                    let lock = repo.repo.join(".git/refs/heads/branch-failure.lock");
-                    fs::write(&lock, "locked").unwrap();
-                    let mut args = vec!["remove", "branch-failure", "--no-hooks"];
-                    if force {
-                        args.push("--delete-unpreserved-branch");
-                    }
-                    if json {
-                        args.push("--json");
-                    }
-                    let out = repo.mabo(&args);
-                    assert_eq!(
-                        out.status.code(),
-                        Some(6),
-                        "{} {}",
-                        text(&out.stdout),
-                        text(&out.stderr)
-                    );
-                    let hint = setup_retry_hint(&out, json);
-                    assert!(!managed(&repo, "branch-failure").exists());
-                    assert!(maboroshi::metadata::load_strict(&repo.repo)
-                        .unwrap()
-                        .is_empty());
-                    fs::remove_file(lock).unwrap();
-                    if lost {
-                        match proof {
-                            "upstream" => repo.git(&["branch", "-D", "saved"]),
-                            "recorded-base" => repo.git(&["branch", "-f", "integration", "main"]),
-                            _ => repo.git(&["reset", "--hard", "HEAD^"]),
-                        }
-                    }
-                    let out = run_setup_retry_hint(&repo, &repo.home, &hint);
-                    assert_eq!(
-                        out.status.code(),
-                        Some(0),
-                        "{proof}/{lost}/{force}/{json}: {hint}: {} {}",
-                        text(&out.stdout),
-                        text(&out.stderr)
-                    );
-                    assert_eq!(
-                        branch_listed(&repo, "branch-failure"),
-                        lost && !force,
-                        "{proof}/{lost}/{force}/{json}: {hint}"
-                    );
-                    if lost && !force {
-                        if json {
-                            let doc = json_value(&out);
-                            assert_eq!(doc["warnings"][0]["code"], "branch_kept_unpreserved");
-                            assert_eq!(doc["data"]["branchKeptReason"], "unpreserved");
-                            assert_eq!(doc["data"]["branchDeleted"], false);
-                        } else {
-                            assert!(text(&out.stderr).contains("kept branch 'branch-failure'"));
-                        }
-                    }
-                }
-            }
+        assert!(!remaining.exists());
+        assert!(managed(&repo, "last").exists());
+        if json {
+            let doc = json_value(&retried);
+            assert_eq!(doc["error"]["code"], "partial");
+            assert_eq!(doc["data"]["items"].as_array().unwrap().len(), 2);
+            assert_eq!(doc["data"]["items"][0]["removed"], true);
         }
+        let next = setup_retry_hint(&retried, json);
+        assert_eq!(next.matches("mabo ").count(), 1, "{next}");
+        assert!(
+            !next.contains("branch-failure") && !next.contains("remaining"),
+            "{next}"
+        );
+        fs::write(repo.repo.join("allow-remove"), "allow").unwrap();
+        let finished = run_setup_retry_hint(&repo, &repo.home, &next);
+        assert_eq!(
+            finished.status.code(),
+            Some(0),
+            "{} {}",
+            text(&finished.stdout),
+            text(&finished.stderr)
+        );
+        if json {
+            assert_eq!(json_value(&finished)["ok"], true);
+        }
+        assert!(!managed(&repo, "last").exists());
+        assert!(branch_listed(&repo, "branch-failure"));
+        assert!(maboroshi::metadata::load_strict(&repo.repo)
+            .unwrap()
+            .is_empty());
     }
 }
 
@@ -19657,28 +19662,6 @@ eval "$retry"
 }
 
 #[test]
-fn retirement_remove_retry_keeps_a_branch_changed_after_partial_removal() {
-    let repo = Repo::new();
-    assert!(repo
-        .mabo(&["create", "branch-failure", "--no-setup"])
-        .status
-        .success());
-    let lock = repo.repo.join(".git/refs/heads/branch-failure.lock");
-    fs::write(&lock, "locked").unwrap();
-    let out = repo.mabo(&["remove", "branch-failure", "--json"]);
-    assert_eq!(out.status.code(), Some(6));
-    let hint = setup_retry_hint(&out, true);
-    fs::remove_file(lock).unwrap();
-    fs::write(repo.repo.join("new-commit"), "preserve").unwrap();
-    repo.git(&["add", "new-commit"]);
-    repo.git(&["commit", "-m", "advance"]);
-    repo.git(&["branch", "-f", "branch-failure", "HEAD"]);
-    let out = run_setup_retry_hint(&repo, &repo.home, &hint);
-    assert!(!out.status.success());
-    assert!(branch_listed(&repo, "branch-failure"));
-}
-
-#[test]
 fn retirement_remove_retry_finishes_metadata_failure_after_checkout_is_gone() {
     for (json, recorded, orphaned) in [
         (false, true, false),
@@ -19690,7 +19673,7 @@ fn retirement_remove_retry_finishes_metadata_failure_after_checkout_is_gone() {
         (false, false, true),
         (true, false, true),
     ] {
-        assert_remove_metadata_failure_retry(json, recorded, orphaned, None);
+        assert_remove_metadata_failure_retry(json, recorded, orphaned, None, false);
     }
 }
 
@@ -19698,8 +19681,15 @@ fn retirement_remove_retry_finishes_metadata_failure_after_checkout_is_gone() {
 fn retirement_remove_review_retry_retains_recorded_symlink_path_after_metadata_failure() {
     for json in [false, true] {
         for kind in ["workspace-root", "XDG_DATA_HOME"] {
-            assert_remove_metadata_failure_retry(json, true, false, Some(kind));
+            assert_remove_metadata_failure_retry(json, true, false, Some(kind), false);
         }
+    }
+}
+
+#[test]
+fn retirement_remove_retry_cleans_metadata_after_hook_source_is_removed() {
+    for json in [false, true] {
+        assert_remove_metadata_failure_retry(json, true, false, None, true);
     }
 }
 
@@ -19708,6 +19698,7 @@ fn assert_remove_metadata_failure_retry(
     recorded: bool,
     orphaned: bool,
     symlink_root: Option<&str>,
+    hook_source: bool,
 ) {
     use std::os::unix::fs::PermissionsExt;
     let repo = Repo::new();
@@ -19749,6 +19740,19 @@ fn assert_remove_metadata_failure_retry(
     if orphaned {
         fs::remove_dir_all(workspace_root.join("metadata-failure")).unwrap();
     }
+    let source = workspace_root.join("metadata-failure");
+    if hook_source {
+        fs::write(
+            source.join(".mabo.toml"),
+            "[hooks]\npre-remove = ['printf x >> \"$MABO_REPO_PATH/source-hooks\"']\n",
+        )
+        .unwrap();
+        fs::write(
+            repo.repo.join(".mabo.toml"),
+            "[hooks]\npre-remove = ['touch unexpected-primary-hook; exit 1']\n",
+        )
+        .unwrap();
+    }
     let real_git = repo
         .command("sh", &["-c", "command -v git"])
         .output()
@@ -19764,6 +19768,10 @@ fn assert_remove_metadata_failure_retry(
 case " $* " in
   *" worktree remove "*)
     "$REAL_GIT" "$@" || exit $?
+    case " $* " in
+      *" $METADATA_WORKSPACE "*) ;;
+      *) exit 0 ;;
+    esac
     mv "$METADATA_DIR" "$METADATA_DIR.saved" || exit $?
     printf 'not a directory' > "$METADATA_DIR"
     ;;
@@ -19775,6 +19783,9 @@ esac
     fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
     let metadata_dir = repo.repo.join(".git/maboroshi/workspaces");
     let mut args = vec!["remove", "metadata-failure", "last", "--no-hooks"];
+    if hook_source {
+        args = vec!["remove", "last", "metadata-failure", "--discard-changes"];
+    }
     if json {
         args.push("--json");
     }
@@ -19786,6 +19797,11 @@ esac
         )
         .env("REAL_GIT", text(&real_git.stdout))
         .env("METADATA_DIR", &metadata_dir)
+        .env(
+            "METADATA_WORKSPACE",
+            fs::canonicalize(&source).unwrap_or_else(|_| source.clone()),
+        )
+        .current_dir(if hook_source { &source } else { &repo.repo })
         .output()
         .unwrap();
     assert_eq!(
@@ -19805,6 +19821,14 @@ esac
         recorded,
         "{hint}"
     );
+    if hook_source {
+        assert!(hint.contains(" --no-hooks"), "{hint}");
+        assert!(!hint.contains("--source-checkout"), "{hint}");
+        assert_eq!(
+            fs::read_to_string(repo.repo.join("source-hooks")).unwrap(),
+            "xx"
+        );
+    }
     fs::remove_file(&metadata_dir).unwrap();
     fs::rename(metadata_dir.with_extension("saved"), &metadata_dir).unwrap();
     let out = run_setup_retry_hint(&repo, &repo.home, &hint);
@@ -19815,6 +19839,7 @@ esac
         text(&out.stdout),
         text(&out.stderr)
     );
+    assert!(!repo.repo.join("unexpected-primary-hook").exists());
     assert!(!workspace_root.join("last").exists());
     let records: serde_json::Value =
         serde_json::from_slice(&records::read(metadata_dir).unwrap()).unwrap();
@@ -19866,6 +19891,42 @@ fn retirement_remove_path_and_name_aliases_deduplicate_before_hooks() {
 }
 
 #[test]
+fn retirement_remove_source_checkout_rejects_another_repository_before_changes() {
+    let repo = Repo::new();
+    let other = Repo::new();
+    assert!(repo
+        .mabo(&["create", "target", "--no-setup"])
+        .status
+        .success());
+    let store = repo.repo.join(".git/maboroshi/workspaces");
+    let before = records::read(&store).unwrap();
+    fs::write(
+        other.repo.join(".mabo.toml"),
+        "[hooks]\npre-remove = ['touch wrong-hook']\n",
+    )
+    .unwrap();
+    let out = repo.mabo(&[
+        "remove",
+        "target",
+        "--source-checkout",
+        other.repo.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(json_value(&out)["error"]["code"], "usage");
+    assert!(managed(&repo, "target").is_dir());
+    assert!(!managed(&repo, "target/wrong-hook").exists());
+    assert!(branch_listed(&repo, "target"));
+    assert_eq!(records::read(&store).unwrap(), before);
+}
+
+#[test]
 fn retirement_remove_retry_preserves_linked_source_hooks() {
     let repo = Repo::new();
     for name in ["source", "done", "remaining"] {
@@ -19883,6 +19944,15 @@ fn retirement_remove_retry_preserves_linked_source_hooks() {
         .unwrap();
     assert_eq!(out.status.code(), Some(6), "{}", text(&out.stdout));
     let hint = setup_retry_hint(&out, true);
+    assert!(
+        hint.starts_with(&format!(
+            "cd '{}' && mabo -R '{}' remove",
+            repo.repo.display(),
+            repo.repo.display()
+        )),
+        "{hint}"
+    );
+    assert_eq!(hint.matches("mabo ").count(), 1, "{hint}");
     fs::write(repo.repo.join("allow-remove"), "allow").unwrap();
     let out = run_setup_retry_hint(&repo, &repo.home, &hint);
     assert_eq!(
