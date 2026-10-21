@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/next/install.sh
 | `--install-dir <DIR>` | `MABO_INSTALL_DIR` | インストール先（既定は `~/.local/bin`） |
 | `--verify-attestation` | `MABO_VERIFY_ATTESTATION=1` | GitHub の成果物の来歴も検証。`gh` が必要で、検証失敗時は中止 |
 
-`GITHUB_TOKEN` は任意で、バージョン未固定時の GitHub API のレート制限対策にだけ使い、アセットのダウンロードには送信しません。インストーラーには `curl`（または GNU Wget）と `tar` が必要です。BusyBox の `wget` では足りないため、Alpine では先に `apk add curl` を実行してください。インストーラーは入力を求めず、sudo を使わず、シェルの起動ファイルを編集しません。必要なら PATH 設定のヒントを表示します。必ず SHA-256 を検証し、バイナリをアトミックに置き換えます。別のツールが管理するシンボリックリンクの `mabo` は置き換えを拒否するため、そのツールで更新するか、別のインストール先を指定してください。
+`GITHUB_TOKEN` は任意で、バージョン未固定時の GitHub API のレート制限対策にだけ使い、アセットのダウンロードには送信しません。インストーラーには `curl` と `tar` が必要です。Alpine では先に `apk add curl` を実行してください。インストーラーは入力を求めず、sudo を使わず、シェルの起動ファイルを編集しません。必要なら PATH 設定のヒントを表示します。必ず SHA-256 を検証し、バイナリをアトミックに置き換えます。別のツールが管理するシンボリックリンクの `mabo` は置き換えを拒否するため、そのツールで更新するか、別のインストール先を指定してください。
 
 配布バイナリは Linux x64/arm64（static musl ビルドで Alpine を含む各ディストリビューションに対応）と macOS x64/arm64 に対応します。Windows は未対応です。WSL では Linux バイナリを使ってください。
 

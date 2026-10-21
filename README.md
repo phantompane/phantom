@@ -37,7 +37,7 @@ Pass installer options with `sh -s -- [options]`; flags override environment var
 | `--install-dir <DIR>` | `MABO_INSTALL_DIR` | Install directory (default `~/.local/bin`) |
 | `--verify-attestation` | `MABO_VERIFY_ATTESTATION=1` | Also verify GitHub artifact provenance; requires `gh` and aborts if verification fails |
 
-`GITHUB_TOKEN` is optional, only for GitHub API rate limits on unpinned installs; it is not sent to asset downloads. The installer needs `curl` (or GNU Wget) and `tar`; on Alpine, where BusyBox `wget` is not enough, run `apk add curl` first. It never prompts, uses no sudo, and does not edit shell profiles; it prints a PATH hint if needed. It always verifies SHA-256 and replaces the binary atomically. It refuses to replace a symlinked `mabo` managed by another tool; update with that tool or choose another install directory.
+`GITHUB_TOKEN` is optional, only for GitHub API rate limits on unpinned installs; it is not sent to asset downloads. The installer needs `curl` and `tar`; on Alpine, run `apk add curl` first. It never prompts, uses no sudo, and does not edit shell profiles; it prints a PATH hint if needed. It always verifies SHA-256 and replaces the binary atomically. It refuses to replace a symlinked `mabo` managed by another tool; update with that tool or choose another install directory.
 
 Release binaries support Linux x64/arm64 (static musl builds for any distribution, including Alpine) and macOS x64/arm64. Windows is not supported; use WSL with the Linux binaries.
 
