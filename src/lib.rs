@@ -64,13 +64,13 @@ mod tests {
     #[test]
     fn version_line_marks_the_rust_build() {
         assert_eq!(
-            format_version("7.0.0-alpha.6", None),
-            "mabo v7.0.0-alpha.6+rust"
+            format_version("7.0.0-alpha.7", None),
+            "mabo v7.0.0-alpha.7+rust"
         );
         assert_eq!(
-            format_version("7.0.0-alpha.6", Some("abc1234")),
-            "mabo v7.0.0-alpha.6+rust (abc1234)"
+            format_version("7.0.0-alpha.7", Some("abc1234")),
+            "mabo v7.0.0-alpha.7+rust (abc1234)"
         );
-        assert_ne!(format_version("7.0.0-alpha.6", None), "mabo v7.0.0-alpha.6");
+        assert_ne!(format_version("7.0.0-alpha.7", None), "mabo v7.0.0-alpha.7");
     }
 }
