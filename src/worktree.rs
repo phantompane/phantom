@@ -725,6 +725,17 @@ fn preflight_remove_selected(
         name
     };
     let path = PathBuf::from(&worktree.path);
+    // Freeze location selectors while cwd still exists. Rechecks must not
+    // reinterpret dot or relative paths after another target removes cwd.
+    let selector = match selector {
+        crate::selectors::Selector::Path(_) => {
+            crate::selectors::Selector::Path(worktree.path.clone())
+        }
+        crate::selectors::Selector::Special(input) if input == "." => {
+            crate::selectors::Selector::Path(worktree.path.clone())
+        }
+        _ => selector.clone(),
+    };
     let inside = paths::is_strictly_inside(&path, &context.worktrees_directory);
     let recorded = metadata::records_path(&context.git_root, &path)
         .map_err(|error| RemoveError::kept(error, &worktree))?;
@@ -862,6 +873,8 @@ pub(crate) fn commit_remove_checked(
                 &worktree,
             ));
         }
+        let recorded_path = metadata::matching_path(&context.git_root, &path)
+            .map_err(|error| RemoveError::kept(error, &worktree))?;
         if registered.is_some() {
             // Losing a directory does not preserve the registered detached HEAD.
             // Recheck immediately before removing its last Git registration.
@@ -869,11 +882,13 @@ pub(crate) fn commit_remove_checked(
             git::remove_worktree(&context.git_root, &path, true)
                 .map_err(|error| RemoveError::kept(error, &worktree))?;
         }
-        metadata::remove(&context.git_root, &path).map_err(|error| {
-            let mut failure = RemoveError::kept(error, &worktree);
-            failure.changed = registered.is_some();
-            failure
-        })?;
+        if let Some(recorded_path) = recorded_path {
+            metadata::remove(&context.git_root, Path::new(&recorded_path)).map_err(|error| {
+                let mut failure = RemoveError::kept(error, &worktree);
+                failure.changed = registered.is_some();
+                failure
+            })?;
+        }
         return Ok(RemoveOutcome {
             message: format!("Workspace '{name}' was already gone; removed only the stale record."),
             worktree,
@@ -912,15 +927,14 @@ pub(crate) fn commit_remove_checked(
     if let Err(error) = git::remove_worktree(&context.git_root, &path, force) {
         return Err(RemoveError::kept(error, &worktree));
     }
-    let metadata_error = metadata::remove(
-        &context.git_root,
-        recorded_path
-            .as_deref()
-            .map(Path::new)
-            .unwrap_or(path.as_path()),
-    )
-    .err()
-    .map(|error| error.to_string());
+    // An unrecorded target has no metadata cleanup to retry once Git removes
+    // it. Reading an unrelated broken store here would invent unfinished work.
+    let metadata_error = recorded_path
+        .as_deref()
+        .map(|path| metadata::remove(&context.git_root, Path::new(path)))
+        .transpose()
+        .err()
+        .map(|error| error.to_string());
     let cleanup_warning = if inside {
         remove_empty_parents(&path, &context.worktrees_directory)
     } else {
@@ -956,7 +970,7 @@ pub(crate) fn commit_remove_checked(
                 let branch_error = error.to_string();
                 (
                     format!(
-                        "Deleted workspace '{name}'\nNote: Branch '{}' could not be deleted: {branch_error}",
+                        "Deleted workspace '{name}' and kept its branch '{}'",
                         worktree.branch
                     ),
                     false,

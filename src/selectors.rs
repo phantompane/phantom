@@ -11,11 +11,14 @@ use crate::{git, metadata, paths, worktree::WorktreeInfo};
 pub(crate) enum Selector {
     Name(String),
     Special(String),
+    Path(String),
 }
 
 impl Selector {
     pub(crate) fn parse(input: &str) -> Result<Self> {
-        if input == "."
+        if Path::new(input).is_absolute() || input.starts_with("./") || input.starts_with("../") {
+            Ok(Self::Path(input.to_owned()))
+        } else if input == "."
             || input.starts_with("pr:")
             || input.starts_with("issue:")
             || input.starts_with("https://")
@@ -30,7 +33,69 @@ impl Selector {
 
     pub(crate) fn as_str(&self) -> &str {
         match self {
-            Self::Name(value) | Self::Special(value) => value,
+            Self::Name(value) | Self::Special(value) | Self::Path(value) => value,
+        }
+    }
+
+    /// Remove historically acknowledges a recorded checkout whose Git
+    /// registration is gone but whose files remain. It must leave those files
+    /// and the record alone. Ordinary selectors and gc exclude this state.
+    pub(crate) fn unregistered_record(&self, context: &Context) -> Result<Option<WorktreeInfo>> {
+        let registered = git::list_worktrees(&context.git_root)?;
+        let common = git::canonical_common_dir(&context.git_root)?;
+        let records = metadata::load_strict(&context.git_root)?;
+        let candidates = records
+            .iter()
+            .filter_map(|(path, record)| {
+                let path = Path::new(path);
+                if paths::same_location(path, &context.git_root)
+                    || registered
+                        .iter()
+                        .any(|tree| paths::same_location(Path::new(&tree.path), path))
+                {
+                    return None;
+                }
+                let mut tree = crate::worktree::orphaned_info(context, path, record, &common);
+                tree.orphaned = false;
+                Some(tree)
+            })
+            .collect::<Vec<_>>();
+        let found = match self {
+            Self::Name(name) => candidates
+                .into_iter()
+                .filter(|tree| tree.name == *name)
+                .collect(),
+            Self::Path(path) => {
+                let path = absolute_path(path)?;
+                candidates
+                    .into_iter()
+                    .filter(|tree| paths::same_location(Path::new(&tree.path), &path))
+                    .collect()
+            }
+            Self::Special(input) if input == "." => {
+                // A stale gitfile cannot tell Git which checkout contains cwd.
+                // The explicitly selected repository's records still can.
+                let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
+                candidates
+                    .into_iter()
+                    .filter(|tree| {
+                        let path = Path::new(&tree.path);
+                        paths::same_location(path, &cwd) || paths::is_strictly_inside(&cwd, path)
+                    })
+                    .collect()
+            }
+            Self::Special(input) => matches(context, &candidates, input)?,
+        };
+        match found.as_slice() {
+            [] => Ok(None),
+            [tree] => Ok(Some(tree.clone())),
+            _ => Err(Error::Status {
+                code: "ambiguous",
+                message: format!(
+                    "Selector '{}' matches multiple recorded workspaces",
+                    self.as_str()
+                ),
+            }),
         }
     }
 
@@ -50,7 +115,15 @@ impl Selector {
         }
         let input = self.as_str();
         let listed = crate::worktree::list_worktrees(context, false, true)?;
-        let mut found = matches(context, &listed, input)?;
+        let mut found = if let Self::Path(path) = self {
+            let path = absolute_path(path)?;
+            listed
+                .into_iter()
+                .filter(|tree| paths::same_location(Path::new(&tree.path), &path))
+                .collect()
+        } else {
+            matches(context, &listed, input)?
+        };
         found.retain(|tree| {
             expected_path.is_none_or(|path| paths::same_location(Path::new(&tree.path), path))
         });
@@ -68,6 +141,18 @@ impl Selector {
                 ),
             }),
         }
+    }
+}
+
+// Absolute selectors remain usable after an earlier removal deletes cwd.
+fn absolute_path(path: &str) -> Result<std::path::PathBuf> {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()
+            .map_err(|error| Error::msg(error.to_string()))?
+            .join(path))
     }
 }
 
