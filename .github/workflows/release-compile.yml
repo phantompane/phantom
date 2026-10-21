@@ -101,6 +101,8 @@ jobs:
           name: release-${{ matrix.asset_os }}-${{ matrix.asset_arch }}
           path: ${{ env.ARCHIVE }}
           if-no-files-found: error
+          # Re-running the workflow must replace the previous attempt's archive.
+          overwrite: true
 
   finalize:
     name: Assemble release assets
