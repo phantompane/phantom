@@ -58,12 +58,15 @@ pub(crate) fn matches(
             .split('/')
             .collect::<Vec<_>>();
         let kind = parts.get(parts.len().saturating_sub(2)).copied();
-        if !matches!(kind, Some("pull" | "issues")) {
+        if !matches!(kind, Some("pull" | "pulls" | "issues" | "issue")) {
             return Err(Error::validation(
                 "Selector URL must identify a pull request or issue",
             ));
         }
-        (kind == Some("pull"), metadata::parse_link(selector)?)
+        (
+            matches!(kind, Some("pull" | "pulls")),
+            metadata::parse_link(selector)?,
+        )
     };
     if link.number.is_none()
         || (selector.contains(':') && !selector.starts_with("http") && link.url.is_some())
@@ -86,9 +89,10 @@ pub(crate) fn matches(
                         return url_identity(saved) == url_identity(url);
                     }
                     // A bare number belongs to this repository, never another repository's URL.
-                    let prefix = url
-                        .split(if pr { "/pull/" } else { "/issues/" })
-                        .next()
+                    let prefix = url_identity(url)
+                        .rsplit_once('/')
+                        .and_then(|(path, _)| path.rsplit_once('/'))
+                        .map(|(repository, _)| repository)
                         .unwrap_or("");
                     let identity = prefix.split_once("://").map(|(_, rest)| rest);
                     if identity != Some(repo_json(&context.git_root).name.as_str()) {

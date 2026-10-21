@@ -1484,6 +1484,7 @@ fn run_hook_commands(
     let _hook_scope = crate::runtime::hook_scope();
     let path = Path::new(&worktree.path);
     let original_dir = fs::metadata(path).map_err(|error| Error::msg(error.to_string()))?;
+    let mut expected_id = worktree.metadata.id.clone();
     for command in commands {
         if post {
             logger.log(&format!("Executing: {command}"));
@@ -1491,12 +1492,12 @@ fn run_hook_commands(
             logger.log(&format!("Executing pre-delete command: {command}"));
         }
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        let run = || {
+        let mut run = || {
             // A link may move during an earlier hook. Keep the preflight target,
             // and refuse a removed or replaced checkout before running another command.
             let current = worktree_at_path(context, path)?;
             let dir = fs::metadata(path).map_err(|error| Error::msg(error.to_string()))?;
-            if current.metadata.id != worktree.metadata.id
+            if (expected_id.is_some() && current.metadata.id != expected_id)
                 || dir.dev() != original_dir.dev()
                 || dir.ino() != original_dir.ino()
                 || !paths::same_location(
@@ -1506,6 +1507,9 @@ fn run_hook_commands(
             {
                 return Err(Error::msg("Workspace changed before running hook command"));
             }
+            // Legacy records gain an ID on the first metadata write. The same
+            // registered checkout may adopt that ID once; pin it for later hooks.
+            expected_id = current.metadata.id;
             exec_in_resolved_worktree(
                 context,
                 worktree,

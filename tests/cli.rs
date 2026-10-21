@@ -13150,3 +13150,162 @@ fn delete_stops_before_next_hook_when_checkout_directory_is_replaced() {
     assert!(path.is_dir());
     assert!(!path.join("second-hook-ran").exists());
 }
+
+#[test]
+fn delete_legacy_workspaces_with_hooks_survives_id_migration() {
+    assert_legacy_delete_with_hooks(false);
+}
+
+#[test]
+fn delete_legacy_workspaces_survives_id_migration_inside_hook() {
+    assert_legacy_delete_with_hooks(true);
+}
+
+fn assert_legacy_delete_with_hooks(migrate_in_hook: bool) {
+    let repo = Repo::new();
+    let paths = [managed(&repo, "one"), managed(&repo, "two")];
+    for (name, path) in ["one", "two"].iter().zip(&paths) {
+        repo.git(&["worktree", "add", "-b", name, path.to_str().unwrap()]);
+    }
+    let legacy = repo.repo.join(".git/maboroshi/worktrees.json");
+    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    let fixture = serde_json::to_vec(&serde_json::json!({
+        "version": 1, "worktrees": [{"path": paths[0]}, {"path": paths[1]}]
+    }))
+    .unwrap();
+    fs::write(&legacy, &fixture).unwrap();
+    let first = if migrate_in_hook {
+        format!("'{}' set . --purpose migrated", env!("CARGO_BIN_EXE_mabo"))
+    } else {
+        "true".to_owned()
+    };
+    let commands = [
+        first,
+        "printf '%s\\n' \"$MABO_WORKSPACE\" >> \"$MABO_REPO_PATH/hooks-ran\"".to_owned(),
+    ];
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        format!(
+            "[hooks]\npre-delete = {}\n",
+            serde_json::to_string(&commands).unwrap()
+        ),
+    )
+    .unwrap();
+    // Exercise persisted trust rather than the test helper's trust-all override.
+    assert!(repo.mabo(&["trust", "add"]).status.success());
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["delete", "one", "two", "--force", "--keep-branch", "--json"],
+        )
+        .env_remove("MABO_TRUST_ALL")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "migrate_in_hook={migrate_in_hook}: {} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(repo.repo.join("hooks-ran")).unwrap(),
+        "one\ntwo\n"
+    );
+    assert!(paths.iter().all(|path| !path.exists()));
+    assert!(!legacy.exists());
+    assert_eq!(
+        fs::read(legacy.with_extension("json.imported")).unwrap(),
+        fixture
+    );
+    let records = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    let records: serde_json::Value = serde_json::from_slice(&records).unwrap();
+    assert!(records["worktrees"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn delete_stops_when_a_migrated_record_is_replaced_between_hooks() {
+    let repo = Repo::new();
+    let path = managed(&repo, "topic");
+    repo.git(&["worktree", "add", "-b", "topic", path.to_str().unwrap()]);
+    let legacy = repo.repo.join(".git/maboroshi/worktrees.json");
+    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    fs::write(
+        &legacy,
+        serde_json::to_vec(&serde_json::json!({"version": 1, "worktrees": [{"path": path}]}))
+            .unwrap(),
+    )
+    .unwrap();
+    let bin = env!("CARGO_BIN_EXE_mabo");
+    let commands = [
+        format!("'{bin}' set . --purpose migrated"),
+        format!("rm \"$MABO_REPO_PATH/.git/maboroshi/workspaces/$MABO_WORKSPACE_ID.json\" && '{bin}' set . --purpose replacement"),
+        "touch third-hook-ran".to_owned(),
+    ];
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        format!(
+            "[hooks]\npre-delete = {}\n",
+            serde_json::to_string(&commands).unwrap()
+        ),
+    )
+    .unwrap();
+    let out = repo.mabo(&["delete", "topic", "--force", "--keep-branch", "--json"]);
+    assert_ne!(out.status.code(), Some(0));
+    assert!(
+        text(&out.stdout).contains("Workspace changed before running hook command"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert!(path.is_dir());
+    assert!(!path.join("third-hook-ran").exists());
+    let out = repo.mabo(&["show", "topic", "--json"]);
+    assert_eq!(
+        assert_envelope(&out, "show")["data"]["workspace"]["purpose"],
+        "replacement"
+    );
+}
+
+#[test]
+fn selector_urls_strip_the_final_link_suffix_for_reserved_repository_names() {
+    for (repo_name, kind, flag, number) in [
+        ("issues", "issues", "--issue", "73"),
+        ("pull", "pull", "--pr", "5"),
+        ("issue", "issue", "--issue", "73"),
+        ("pulls", "pulls", "--pr", "5"),
+    ] {
+        for url_link in [false, true] {
+            let repo = Repo::new();
+            repo.git(&[
+                "remote",
+                "add",
+                "origin",
+                &format!("git@github.com:acme/{repo_name}.git"),
+            ]);
+            let url = format!("https://github.com/acme/{repo_name}/{kind}/{number}");
+            let link = if url_link { &url } else { number };
+            assert!(repo
+                .mabo(&["create", "linked", "--base", "main", flag, link])
+                .status
+                .success());
+            for selector in [url.clone(), format!("{url}/?plain=1#details")] {
+                let out = repo.mabo(&["show", &selector, "--json"]);
+                assert_eq!(
+                    out.status.code(),
+                    Some(0),
+                    "{selector}, url_link={url_link}: {} {}",
+                    text(&out.stdout),
+                    text(&out.stderr)
+                );
+                assert_eq!(
+                    assert_envelope(&out, "show")["data"]["workspace"]["name"],
+                    "linked"
+                );
+            }
+            let foreign = format!("https://github.com/other/{repo_name}/{kind}/{number}");
+            let out = repo.mabo(&["show", &foreign, "--json"]);
+            assert_eq!(out.status.code(), Some(3));
+            assert_eq!(assert_envelope(&out, "show")["error"]["code"], "not_found");
+        }
+    }
+}
