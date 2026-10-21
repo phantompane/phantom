@@ -391,7 +391,7 @@ Orphaned records have neither a Git worktree registration nor an existing direct
 
 `copy.copied` contains the relative paths copied during this invocation. Copy errors leave the workspace in place. `setup.ran` is false when hooks did not run; a successful hook has `exitCode: 0`. A failed hook reports its command, exit code, signal, or startup error. Checkout creation followed by a metadata, copy, or hook failure exits 6 and preserves the workspace object in `data`.
 
-`adopt --json` returns `{workspace: {...}}`. `forget --json` returns `{items: [{workspace: {...}, ok: true}]}` using the workspace objects as observed before forgetting.
+`adopt --json` returns `{workspace: {...}}`. If refreshing the workspace after saving its record fails, it exits 6 (`partial`) and preserves the saved registration fields in `data.workspace`. `forget --json` returns `{items: [{workspace: {...}, ok: true}]}` using the workspace state after record removal.
 
 `delete --json`:
 
@@ -526,7 +526,7 @@ mabo forget review pr:123
 
 An existing workspace exits 4 (`exists`). With `--reuse`, a workspace matching the requested base, branch or PR and any requested issue returns successfully without copying files or running hooks, even after a failed setup. A mismatch still exits 4. Repeated reuse preserves creation details and existing purpose. `--no-hooks` and `--copy-file` remain available on create.
 
-`adopt PATH` records an existing linked Git worktree of the selected repository without running setup. It accepts `--name`, `--base`, `--purpose`, `--pr`, and `--issue`. Unknown creation time and creation commit are null. An already recorded path exits 4; a path that is not a linked checkout of this repository exits 3.
+`adopt PATH` records an existing linked Git worktree of the selected repository without running setup. It accepts `--name`, `--base`, `--purpose`, `--pr`, and `--issue`. `--base` optionally records the sync target for the existing checkout; when omitted, the target is unknown (`null`). Unknown creation time and creation commit are null. An already recorded path exits 4; a path that is not a linked checkout of this repository exits 3.
 
 `forget SEL...` drops only records, including intent on the primary checkout. Files, branches and Git worktree registrations remain. It accepts names, `.`, `pr:N`, `issue:N`, and PR/issue URLs, and resolves every selector before dropping any records.
 

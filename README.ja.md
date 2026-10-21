@@ -158,8 +158,8 @@ mabo forget review pr:123
 
 create の JSON は `data.workspace`、`data.source`、`data.setup`、`data.copy`、`data.metadata` を返します。source.kind は new/branch/pr/issue/detach、base は正規化済み ref、reused は再利用の有無です。branch は branch/ref、PR は number/url/headRef/headRepository/branch/checkout、issue は number/url/issue を含みます。checkout は作成時の branch または pullHead です。copy は copied（コピーした相対パスの配列）と error、setup は ran/ok/command/exitCode/signal/error を持ちます。作成後のコピー・フック・記録の失敗は部分完了の 6 です。
 
-`adopt PATH` は同一リポジトリの既存 linked worktree を管理下に入れます。`--name`・`--base`・`--purpose`・`--pr`・`--issue` を指定でき、setup は実行せず、createdAt と createdFrom は null です。既に記録済みなら 4、対象リポジトリの linked checkout でないパスは 3 です。JSON は workspace を返します。
+`adopt PATH` は同一リポジトリの既存 linked worktree を管理下に入れます。`--name`・`--base`・`--purpose`・`--pr`・`--issue` を指定でき、setup は実行せず、createdAt と createdFrom は null です。`--base` は既存チェックアウトの同期先を任意で記録し、省略時は不明（`null`）です。既に記録済みなら 4、対象リポジトリの linked checkout でないパスは 3 です。JSON は workspace を返します。記録保存後にワークスペースの再取得が失敗した場合は 6（`partial`）を返し、保存済みの登録情報を `data.workspace` に残します。
 
-`forget SEL...` は記録だけを消し、チェックアウト・ブランチ・Git 登録を残します。primary の記録も対象にできます。名前・`.`・pr:N・issue:N・PR/issue URL を複数指定でき、全セレクタを解決してから記録を削除します。JSON は `{items:[{workspace,ok}]}` です。
+`forget SEL...` は記録だけを消し、チェックアウト・ブランチ・Git 登録を残します。primary の記録も対象にできます。名前・`.`・pr:N・issue:N・PR/issue URL を複数指定でき、全セレクタを解決してから記録を削除します。JSON は `{items:[{workspace,ok}]}` で、workspace は記録削除後の状態を返します。
 
 移行: attach BRANCH は create --branch BRANCH、github/gh checkout は create --pr REF または create --issue REF に変わりました。create -x/--exec は create の後に exec SEL -- COMMAND を実行してください。旧構文は text・JSON ともに終了コード 2 と移行ヒントを返します。

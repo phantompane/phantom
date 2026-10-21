@@ -44,6 +44,11 @@ pub(crate) fn json() -> bool {
     OUTPUT.with_borrow(|out| out.json)
 }
 
+#[cfg(test)]
+pub(crate) fn test_data() -> Option<Value> {
+    OUTPUT.with_borrow(|out| out.data.clone())
+}
+
 pub(crate) fn data(value: &impl Serialize) -> Result<i32> {
     let mut value = serde_json::to_value(value).map_err(|error| Error::msg(error.to_string()))?;
     if let Some(object) = value.as_object_mut() {

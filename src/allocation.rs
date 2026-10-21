@@ -497,7 +497,16 @@ fn report(
 pub(crate) fn adopt(
     context: &Context,
     path: &Path,
+    input: MetadataInput,
+) -> Result<worktree::WorktreeInfo> {
+    adopt_with_refresh(context, path, input, worktree::worktree_at_path)
+}
+
+fn adopt_with_refresh(
+    context: &Context,
+    path: &Path,
     mut input: MetadataInput,
+    refresh: impl FnOnce(&Context, &Path) -> Result<worktree::WorktreeInfo>,
 ) -> Result<worktree::WorktreeInfo> {
     let path = paths::canonical_location(path);
     let trees = worktree::list_worktrees(context, false, true)?;
@@ -532,6 +541,158 @@ pub(crate) fn adopt(
         input.base = Some(sync::normalize_base(&path, base)?);
     }
     input.name = Some(name);
-    metadata::replace(&context.git_root, &path, &input, BranchOrigin::Adopted)?;
-    worktree::worktree_at_path(context, &path)
+    let saved = metadata::replace(&context.git_root, &path, &input, BranchOrigin::Adopted)?;
+    match refresh(context, &path) {
+        Ok(tree) => Ok(tree),
+        Err(error) => {
+            // Registration completed. Preserve its saved fields without claiming fresh Git state.
+            crate::output::data(&json!({"workspace": {
+                "path": path, "kind": "workspace", "name": input.name, "managed": true,
+                "id": saved.id, "base": saved.base, "purpose": saved.purpose,
+                "links": saved.links, "createdAt": saved.created_at,
+                "createdFrom": saved.created_from, "updatedAt": saved.updated_at,
+            }}))?;
+            Err(Error::status(
+                crate::error::PARTIAL,
+                format!("Workspace registered but failed to refresh its state: {error}"),
+            ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod adopt_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    struct Fixture {
+        root: PathBuf,
+        context: Context,
+        path: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("mabo-adopt-{}", uuid::Uuid::new_v4()));
+            let repo = root.join("repo");
+            fs::create_dir_all(&repo).unwrap();
+            git::run(&["init", "--template=", "-b", "main"], Some(&repo)).unwrap();
+            git::run(
+                &[
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    "initial",
+                ],
+                Some(&repo),
+            )
+            .unwrap();
+            let path = root.join("checkout");
+            git::run(
+                &["worktree", "add", "-b", "topic", path.to_str().unwrap()],
+                Some(&repo),
+            )
+            .unwrap();
+            Self {
+                context: Context {
+                    git_root: repo.clone(),
+                    source_checkout: repo,
+                    worktrees_directory: root.join("workspaces"),
+                    project_common_dir: None,
+                    directory_name_separator: "/".into(),
+                    config: None,
+                    preferences: crate::preferences::Preferences::default(),
+                },
+                root,
+                path,
+            }
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn review7_adopt_refresh_failure_preserves_saved_registration_and_returns_partial() {
+        let fixture = Fixture::new();
+        crate::output::begin("adopt", true);
+        let input = MetadataInput {
+            name: Some("review".into()),
+            base: Some("main".into()),
+            purpose: Some("review existing work".into()),
+            pr: Some(metadata::WorktreeLink {
+                number: Some(7),
+                url: None,
+            }),
+            issue: Some(metadata::WorktreeLink {
+                number: Some(8),
+                url: None,
+            }),
+        };
+        let error = adopt_with_refresh(&fixture.context, &fixture.path, input, |context, path| {
+            // Inject the failure only after the real record has been persisted.
+            assert!(metadata::records_path(&context.git_root, path).unwrap());
+            Err(Error::msg("injected refresh failure"))
+        })
+        .unwrap_err();
+        assert_eq!(error.exit_code(), crate::error::PARTIAL);
+        assert_eq!(error.to_json(error.exit_code()).error.code, "partial");
+        assert!(error.to_string().contains("injected refresh failure"));
+        let records = metadata::load_strict(&fixture.context.git_root).unwrap();
+        let (_, saved) = metadata::find_in(&records, &fixture.path).unwrap();
+        let data = crate::output::test_data().unwrap();
+        assert_eq!(
+            data,
+            json!({"workspace": {
+                "path": fixture.path, "kind": "workspace", "name": "review", "managed": true,
+                "id": saved.id, "base": saved.base, "purpose": saved.purpose,
+                "links": saved.links, "createdAt": null, "createdFrom": null,
+                "updatedAt": saved.updated_at,
+            }})
+        );
+        assert!(saved.id.is_some());
+        assert!(saved.updated_at.is_some());
+        assert_eq!(saved.base.as_deref(), Some("refs/heads/main"));
+        assert!(fixture.path.join(".git").is_file());
+        // A retry sees the completed adoption rather than creating another record.
+        assert_eq!(
+            adopt(&fixture.context, &fixture.path, MetadataInput::default())
+                .unwrap_err()
+                .exit_code(),
+            crate::error::REFUSED
+        );
+        assert_eq!(
+            metadata::load_strict(&fixture.context.git_root)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn review7_adopt_failure_before_save_keeps_original_status_and_has_no_data() {
+        let fixture = Fixture::new();
+        crate::output::begin("adopt", true);
+        let error = adopt_with_refresh(
+            &fixture.context,
+            &fixture.path,
+            MetadataInput {
+                base: Some("missing-base".into()),
+                ..MetadataInput::default()
+            },
+            |_, _| panic!("refresh must not run before a successful save"),
+        )
+        .unwrap_err();
+        assert_ne!(error.exit_code(), crate::error::PARTIAL);
+        assert!(!metadata::records_path(&fixture.context.git_root, &fixture.path).unwrap());
+        assert!(crate::output::test_data().is_none());
+    }
 }

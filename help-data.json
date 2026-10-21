@@ -1572,7 +1572,7 @@
         {
           "name": "base",
           "type": "string",
-          "description": "Base ref for a new branch or detached checkout; defaults to the remote default branch, then the local default branch",
+          "description": "Optionally record the sync target for the existing checkout; unknown (null) when omitted",
           "example": "--base main, --base origin/release, --base feature"
         },
         {
