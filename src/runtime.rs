@@ -40,6 +40,10 @@ pub(crate) struct Prepared {
     pub error: Option<Error>,
 }
 
+pub(crate) fn is_removed_repo_option(arg: &str) -> bool {
+    arg.split('=').next() == Some("--project") || (arg.starts_with("-p") && !arg.starts_with("--"))
+}
+
 pub(crate) fn prepare(
     args: &[String],
     supports_json: bool,
@@ -93,7 +97,7 @@ pub(crate) fn prepare(
             }
             "--help" | "-h" if inline.is_none() && help_available => help = true,
             _ => {
-                if name == "--project" || (arg.starts_with("-p") && !arg.starts_with("--")) {
+                if is_removed_repo_option(arg) {
                     error.get_or_insert_with(|| {
                         Error::validation(format!("Option '{arg}' was removed. Use -R/--repo REF."))
                     });

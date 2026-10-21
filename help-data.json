@@ -753,7 +753,7 @@
           "command": "mabo exec feature git branch --show-current"
         },
         {
-          "description": "Run in another project and pass --repo through to the command",
+          "description": "Run in another repo and pass --repo through to the command",
           "command": "mabo exec --repo owner/repo feature pwd --repo y"
         },
         {

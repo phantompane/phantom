@@ -99,7 +99,7 @@ pub fn run(args: &[String]) -> Result<i32> {
             args,
             &args[0],
             &removed_command_hint(&args[0]).unwrap_or_else(|| {
-                if args[0].starts_with("-p") && !args[0].starts_with("--") {
+                if crate::runtime::is_removed_repo_option(&args[0]) {
                     format!("Option '{}' was removed. Use -R/--repo REF.", args[0])
                 } else {
                     format!("Unknown command '{}'", args.join(" "))
@@ -114,7 +114,11 @@ fn unresolved_usage(args: &[String], command: &str, message: &str) -> Result<i32
     crate::output::begin(command, prepared.json);
     let error = prepared.error.unwrap_or_else(|| Error::validation(message));
     let exit = fail_with(&error, VALIDATION)?;
-    if !crate::output::json() {
+    let removed_interface = removed_command_hint(command).is_some()
+        || args
+            .iter()
+            .any(|arg| crate::runtime::is_removed_repo_option(arg));
+    if !crate::output::json() && !removed_interface {
         println!("{}", help::main_help()?);
     }
     crate::output::finish(exit)?;

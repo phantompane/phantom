@@ -11707,6 +11707,9 @@ fn outer_removed_commands_and_flags_fail_with_migration_hints() {
         (vec!["list", "-prepo"], "list", "-R/--repo"),
         (vec!["-p", "repo", "list"], "list", "-R/--repo"),
         (vec!["--project", "repo", "list"], "list", "-R/--repo"),
+        (vec!["--project=repo"], "", "-R/--repo"),
+        (vec!["-prepo"], "-prepo", "-R/--repo"),
+        (vec!["help", "project"], "help", "mabo repo"),
     ] {
         for json in [false, true] {
             let mut argv = args.clone();
@@ -11725,9 +11728,21 @@ fn outer_removed_commands_and_flags_fail_with_migration_hints() {
                 assert_eq!(value["error"]["code"], "usage");
                 value["error"]["message"].as_str().unwrap().to_string()
             } else {
+                assert!(out.stdout.is_empty(), "{argv:?}: {}", text(&out.stdout));
+                assert_eq!(
+                    text(&out.stderr).lines().count(),
+                    1,
+                    "{argv:?}: {}",
+                    text(&out.stderr)
+                );
                 text(&out.stderr)
             };
             assert!(message.contains(hint), "{argv:?}: {message}");
+            assert!(
+                !text(&out.stderr).contains("COMMANDS"),
+                "{argv:?}: {}",
+                text(&out.stderr)
+            );
         }
     }
     // Help cannot revive removed commands or flags.
@@ -11737,7 +11752,12 @@ fn outer_removed_commands_and_flags_fail_with_migration_hints() {
         vec!["list", "-p", "repo", "--help"],
         vec!["trust", "--yes", "--help"],
     ] {
-        assert_eq!(repo.mabo(&args).status.code(), Some(2), "{args:?}");
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert!(out.stdout.is_empty(), "{args:?}: {}", text(&out.stdout));
+        let stderr = text(&out.stderr);
+        assert_eq!(stderr.lines().count(), 1, "{args:?}: {stderr}");
+        assert!(!stderr.contains("COMMANDS"), "{args:?}: {stderr}");
     }
 }
 
