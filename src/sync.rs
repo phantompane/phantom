@@ -1067,7 +1067,7 @@ fn sync_default(
         if dry_run {
             item.status(
                 "updated",
-                Some("Would fast-forward primary checkout".into()),
+                Some(format!("Would fast-forward checkout {}", tree.path)),
             );
             item.after = Some(target);
             return Ok(item);
