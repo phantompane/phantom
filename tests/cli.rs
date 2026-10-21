@@ -14754,14 +14754,125 @@ fn review3_reuse_rejects_a_checkout_pointing_to_a_foreign_common_directory() {
     assert_eq!(assert_envelope(&out, "create")["error"]["code"], "failed");
 }
 
+fn assert_reuse_rejects_swapped_git_dir(primary: bool) {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "review"]).status.success());
+    let directory = managed(&repo, "review");
+    if primary {
+        fs::write(
+            directory.join(".git"),
+            format!("gitdir: {}\n", repo.repo.join(".git").display()),
+        )
+        .unwrap();
+    } else {
+        assert!(repo.mabo(&["create", "other"]).status.success());
+        fs::copy(managed(&repo, "other").join(".git"), directory.join(".git")).unwrap();
+    }
+    let observed = repo
+        .command("git", &["rev-parse", "--show-toplevel"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(observed.status.success());
+    assert_eq!(Path::new(&text(&observed.stdout)), directory);
+    let actual_branch = repo
+        .command("git", &["branch", "--show-current"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(actual_branch.status.success());
+    assert_eq!(
+        text(&actual_branch.stdout),
+        if primary { "main" } else { "other" }
+    );
+    let records_before = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    let gitfile_before = fs::read(directory.join(".git")).unwrap();
+    for source in [vec![], vec!["--branch", "review"]] {
+        let mut args = vec!["create", "review", "--reuse", "--json"];
+        args.extend(source);
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+        let doc = assert_envelope(&out, "create");
+        assert_eq!(doc["error"]["code"], "failed");
+        assert!(doc["error"]["message"].as_str().unwrap().contains(".git"));
+        assert_eq!(
+            records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+            records_before
+        );
+        assert_eq!(fs::read(directory.join(".git")).unwrap(), gitfile_before);
+    }
+}
+
+#[test]
+fn review5_reuse_rejects_a_git_file_pointing_to_primary() {
+    assert_reuse_rejects_swapped_git_dir(true);
+}
+
+#[test]
+fn review5_reuse_rejects_a_git_file_pointing_to_another_workspace() {
+    assert_reuse_rejects_swapped_git_dir(false);
+}
+
+#[test]
+fn review5_user_names_reject_reserved_selectors_without_records() {
+    for command in ["adopt", "create"] {
+        for name in [
+            ".",
+            "pr:7",
+            "pr:topic",
+            "issue:12",
+            "issue:topic",
+            "https://github.com/owner/repo/pull/7",
+            "http://github.com/owner/repo/issues/12",
+        ] {
+            let repo = Repo::new();
+            let directory = repo.root.join("directory-name");
+            repo.git(&[
+                "worktree",
+                "add",
+                "-b",
+                "topic",
+                directory.to_str().unwrap(),
+            ]);
+            let args = if command == "adopt" {
+                vec![
+                    "adopt",
+                    directory.to_str().unwrap(),
+                    "--name",
+                    name,
+                    "--json",
+                ]
+            } else {
+                vec!["create", name, "--detach", "--json"]
+            };
+            let out = repo.mabo(&args);
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "{command} {name}: {}",
+                text(&out.stdout)
+            );
+            assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
+            assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
+            assert!(directory.join(".git").is_file());
+        }
+    }
+}
+
 #[test]
 fn review3_forget_matches_show_and_list_after_record_removal() {
-    for location in ["inside", "outside", "primary"] {
+    for location in [
+        "inside",
+        "outside",
+        "primary",
+        "inside-alias",
+        "outside-alias",
+    ] {
         let repo = Repo::new();
-        let (selector, expected_managed) = match location {
+        let (selector, after_selector, expected_managed) = match location {
             "inside" => {
                 assert!(repo.mabo(&["create", "review"]).status.success());
-                ("review", true)
+                ("review", "review", true)
             }
             "outside" => {
                 let outside = repo.root.join("plain");
@@ -14770,9 +14881,33 @@ fn review3_forget_matches_show_and_list_after_record_removal() {
                     .mabo(&["adopt", outside.to_str().unwrap()])
                     .status
                     .success());
-                ("review", false)
+                ("review", "review", false)
             }
-            _ => (".", false),
+            "inside-alias" | "outside-alias" => {
+                let inside = location == "inside-alias";
+                let directory = if inside {
+                    managed(&repo, "directory-name")
+                } else {
+                    repo.root.join("directory-name")
+                };
+                repo.git(&[
+                    "worktree",
+                    "add",
+                    "-b",
+                    "topic",
+                    directory.to_str().unwrap(),
+                ]);
+                assert!(repo
+                    .mabo(&["adopt", directory.to_str().unwrap(), "--name", "review"])
+                    .status
+                    .success());
+                (
+                    "review",
+                    if inside { "directory-name" } else { "topic" },
+                    inside,
+                )
+            }
+            _ => (".", ".", false),
         };
         assert!(repo
             .mabo(&[
@@ -14792,7 +14927,7 @@ fn review3_forget_matches_show_and_list_after_record_removal() {
         let out = repo.mabo(&["forget", selector, "issue:12", "--json"]);
         assert!(out.status.success(), "{}", text(&out.stdout));
         let forgotten = assert_envelope(&out, "forget");
-        let show = repo.mabo(&["show", selector, "--json"]);
+        let show = repo.mabo(&["show", after_selector, "--json"]);
         assert!(show.status.success(), "{}", text(&show.stdout));
         let shown = assert_envelope(&show, "show");
         let list = repo.mabo(&["list", "--json"]);

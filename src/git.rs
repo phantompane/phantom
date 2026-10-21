@@ -61,6 +61,33 @@ pub fn canonical_common_dir(cwd: &Path) -> Result<PathBuf> {
     }
 }
 
+/// Find the admin directory from Git's registration, without trusting the
+/// checkout's `.git` entry, which may point at a different worktree.
+pub(crate) fn registered_git_dir(repo: &Path, checkout: &Path) -> Result<PathBuf> {
+    if same_path(repo, checkout) {
+        return Ok(PathBuf::from(output(
+            &["rev-parse", "--absolute-git-dir"],
+            Some(repo),
+            true,
+        )?));
+    }
+    let inspect_error = |error| Error::msg(format!("Failed to inspect Git registration: {error}"));
+    let entries =
+        std::fs::read_dir(git_common_dir(repo)?.join("worktrees")).map_err(inspect_error)?;
+    let gitfile = checkout.join(".git");
+    for entry in entries {
+        let admin = entry.map_err(inspect_error)?.path();
+        let backlink = std::fs::read_to_string(admin.join("gitdir")).map_err(inspect_error)?;
+        let backlink = backlink.strip_suffix('\n').unwrap_or(&backlink);
+        if same_path(&admin.join(backlink), &gitfile) {
+            return Ok(admin);
+        }
+    }
+    Err(Error::msg(
+        "No Git admin directory is registered for this workspace",
+    ))
+}
+
 pub fn git_root(cwd: &Path) -> Result<PathBuf> {
     let common = git_common_dir_text(cwd)?;
     let common_dir = normalize(&cwd.join(&common));

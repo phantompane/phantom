@@ -53,6 +53,15 @@ fn validate_reuse_checkout(context: &Context, tree: &worktree::WorktreeInfo) -> 
     if common_dir != git::canonical_common_dir(&context.git_root)? {
         return Err(invalid("checkout does not belong to this repository"));
     }
+    let actual_git_dir = git::output(&["rev-parse", "--absolute-git-dir"], Some(path), true)
+        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?;
+    let registered_git_dir = git::registered_git_dir(&context.git_root, path)
+        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?;
+    if !paths::same_location(Path::new(&actual_git_dir), &registered_git_dir) {
+        return Err(invalid(
+            "checkout Git directory does not match its registered Git directory",
+        ));
+    }
     Ok(())
 }
 

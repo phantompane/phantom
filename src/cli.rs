@@ -276,17 +276,24 @@ fn forget(args: &[String]) -> Result<i32> {
         })
         .collect::<Result<Vec<_>>>()?;
     let mut items = Vec::new();
-    for mut tree in trees {
-        match metadata::remove(&context.git_root, Path::new(&tree.path)) {
-            Ok(()) => {
+    for tree in trees {
+        let forgotten = metadata::remove(&context.git_root, Path::new(&tree.path)).and_then(|()| {
+            if tree.orphaned {
+                // Orphaned records have no Git checkout to resolve after removal.
+                let mut forgotten = tree.clone();
+                forgotten.managed = worktree::is_managed(&context, Path::new(&tree.path), false);
+                forgotten.metadata = metadata::WorktreeMetadata::default();
+                Ok(forgotten)
+            } else {
+                worktree::worktree_at_path(&context, Path::new(&tree.path))
+            }
+        });
+        match forgotten {
+            Ok(forgotten) => {
                 if !crate::output::json() {
                     println!("Forgot workspace '{}'", visible_text(&tree.name));
                 }
-                // Keep the observed checkout snapshot (also for orphaned and
-                // repeated selectors), but remove every record-derived field.
-                tree.managed = worktree::is_managed(&context, Path::new(&tree.path), false);
-                tree.metadata = metadata::WorktreeMetadata::default();
-                items.push(serde_json::json!({"workspace":tree.to_json(None),"ok":true}));
+                items.push(serde_json::json!({"workspace":forgotten.to_json(None),"ok":true}));
             }
             Err(error) => {
                 let code = if items.is_empty() {

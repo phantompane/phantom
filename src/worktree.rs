@@ -76,6 +76,11 @@ pub fn validate_worktree_name(name: &str) -> Result<()> {
             "Workspace name cannot be empty".to_string(),
         ));
     }
+    if name == "." {
+        return Err(Error::validation(
+            "Workspace name cannot be the reserved selector '.'",
+        ));
+    }
     if Path::new(name).is_absolute() {
         return Err(Error::validation("Workspace name must be a relative name"));
     }
