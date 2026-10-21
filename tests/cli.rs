@@ -10127,7 +10127,7 @@ fn successful_json_commands_share_the_envelope_and_preserve_payload_keys() {
             "set",
             "workspace",
         ),
-        (&["sync", "--json"], "sync", "workspaces"),
+        (&["sync", "--json"], "sync", "items"),
         (&["gc", "--json"], "gc", "items"),
         (&["trust", "add", "--json"], "trust add", "trustedAt"),
         (&["trust", "remove", "--json"], "trust remove", "removed"),
@@ -10695,10 +10695,10 @@ fn legacy_worktrees_directories_remain_usable_without_moving_workspaces() {
         fs::write(repo.repo.join("updated"), "new base\n").unwrap();
         repo.git(&["add", "updated"]);
         repo.git(&["commit", "-m", "advance base"]);
-        let sync = repo.mabo(&["sync", "--all", "--no-default", "--json"]);
+        let sync = repo.mabo(&["sync", "--all", "--json"]);
         let doc = assert_envelope(&sync, "sync");
         assert!(sync.status.success(), "{doc}");
-        assert_eq!(doc["data"]["workspaces"].as_array().unwrap().len(), 2);
+        assert_eq!(doc["data"]["items"].as_array().unwrap().len(), 2);
         for name in ["feature/delete", "feature/gc"] {
             assert!(old_root.join(name).join("updated").is_file());
             assert!(
@@ -12297,7 +12297,7 @@ fn selectors_resolve_linked_workspaces_across_inspection_and_mutations() {
             match command {
                 "set" => args.extend(["--purpose", "selected", "--json"]),
                 "exec" => args.extend(["--", "pwd"]),
-                "sync" => args.extend(["--no-default", "--json"]),
+                "sync" => args.extend(["--json"]),
                 _ => args.push("--json"),
             }
             let out = run(&args);
@@ -14939,13 +14939,10 @@ fn review9_pr_unknown_base_stays_unknown_after_default_returns() {
     let store = repo.repo.join(".git/maboroshi/workspaces");
     let record_before = records::read(&store).unwrap();
     for selector in ["topic", "--all"] {
-        let out = repo.mabo(&["sync", selector, "--no-default", "--json"]);
+        let out = repo.mabo(&["sync", selector, "--json"]);
         assert!(out.status.success(), "{}", text(&out.stdout));
         let doc = json_value(&out);
-        assert_eq!(
-            doc["data"]["workspaces"][0]["status"], "base-unknown",
-            "{doc}"
-        );
+        assert_eq!(doc["data"]["items"][0]["status"], "base-unknown", "{doc}");
         assert_eq!(head(), head_before);
         assert_eq!(records::read(&store).unwrap(), record_before);
     }
@@ -18814,7 +18811,7 @@ fn retirement_review2_sync_base_hints_accept_leading_hyphen_alias() {
             text(&out.stderr)
         );
         let doc = json_value(&out);
-        let item = &doc["data"]["workspaces"][0];
+        let item = &doc["data"]["items"][0];
         assert_eq!(
             item["status"],
             if missing_base {
@@ -19130,7 +19127,7 @@ fn retirement_review4_sync_missing_directory_hint_can_set_base() {
         text(&out.stderr)
     );
     let doc = json_value(&out);
-    let hint = doc["data"]["workspaces"][0]["detail"]
+    let hint = doc["data"]["items"][0]["detail"]
         .as_str()
         .unwrap()
         .split_once(": ")

@@ -6,7 +6,13 @@ use toml_edit::{DocumentMut, Item, Value};
 use crate::error::{Error, Result};
 use crate::paths;
 
-pub const SUPPORTED_KEYS: &[&str] = &["workspace-root", "discover-ghq", "clone-root"];
+pub const SUPPORTED_KEYS: &[&str] = &[
+    "workspace-root",
+    "discover-ghq",
+    "clone-root",
+    "sync.strategy",
+    "sync.rewrite-published",
+];
 
 const NEW_FILE_COMMENT: &str = "# mabo user config. `mabo config` reads and writes this file.\n";
 
@@ -15,6 +21,8 @@ pub struct Preferences {
     pub worktrees_directory: Option<String>,
     pub ghq_discovery: Option<bool>,
     pub root: Option<String>,
+    pub sync_strategy: Option<String>,
+    pub sync_rewrite_published: Option<bool>,
 }
 
 pub fn is_preference_key(value: &str) -> bool {
@@ -26,6 +34,10 @@ pub fn preference_value(preferences: &Preferences, key: &str) -> Option<String> 
         "workspace-root" => preferences.worktrees_directory.clone(),
         "discover-ghq" => preferences.ghq_discovery.map(|value| value.to_string()),
         "clone-root" => preferences.root.clone(),
+        "sync.strategy" => preferences.sync_strategy.clone(),
+        "sync.rewrite-published" => preferences
+            .sync_rewrite_published
+            .map(|value| value.to_string()),
         _ => None,
     }
 }
@@ -55,6 +67,12 @@ pub fn effective_value(preferences: &Preferences, key: &str) -> Result<Effective
         "default"
     };
     let value = match key {
+        "sync.strategy" => {
+            serde_json::json!(preferences.sync_strategy.as_deref().unwrap_or("auto"))
+        }
+        "sync.rewrite-published" => {
+            serde_json::json!(preferences.sync_rewrite_published.unwrap_or(false))
+        }
         "workspace-root" => serde_json::json!(configured),
         "discover-ghq" => serde_json::json!(preferences.ghq_discovery.unwrap_or(true)),
         _ => return Err(Error::validation(unknown_key_message(key))),
@@ -73,6 +91,8 @@ pub fn effective_value(preferences: &Preferences, key: &str) -> Result<Effective
 pub fn validate_preference_value(key: &str, value: &str) -> Option<String> {
     if is_bool_key(key) && value != "true" && value != "false" {
         Some(format!("Config key '{key}' must be 'true' or 'false'"))
+    } else if key == "sync.strategy" && !matches!(value, "auto" | "rebase" | "merge") {
+        Some("Config key 'sync.strategy' must be auto, rebase, or merge".into())
     } else if key == "clone-root" && !is_root_preference(value) {
         Some("Config key 'clone-root' must be an absolute path or start with ~/".to_string())
     } else {
@@ -117,7 +137,7 @@ fn load_preferences_from(path: &Path) -> Result<Preferences> {
 fn set_preference_at(path: &Path, key: &str, value: &str) -> Result<()> {
     require_key(key)?;
     if let Some(message) = validate_preference_value(key, value) {
-        return Err(Error::msg(message));
+        return Err(Error::validation(message));
     }
     let existing = read_document(path)?;
     let created = existing.is_none();
@@ -140,7 +160,15 @@ fn remove_preference_at(path: &Path, key: &str) -> Result<()> {
     };
     migrate_keys(&mut document);
     preferences_from(&document, path)?;
-    if document.remove(key).is_none() {
+    let removed = if let Some((table, field)) = key.split_once('.') {
+        document
+            .get_mut(table)
+            .and_then(Item::as_table_like_mut)
+            .and_then(|table| table.remove(field))
+    } else {
+        document.remove(key)
+    };
+    if removed.is_none() {
         return Err(not_set(path, key));
     }
     write_document(path, &document, false)
@@ -188,6 +216,33 @@ fn preferences_from(document: &DocumentMut, path: &Path) -> Result<Preferences> 
             }
             "discover-ghq" => preferences.ghq_discovery = Some(require_bool(path, key, item)?),
             "clone-root" => preferences.root = Some(require_string(path, key, item)?),
+            "sync" => {
+                let table = item
+                    .as_table_like()
+                    .ok_or_else(|| Error::validation("Config sync must be a table"))?;
+                for (field, value) in table.iter() {
+                    match field {
+                        "strategy" => {
+                            let value = require_string(path, "sync.strategy", value)?;
+                            if let Some(message) =
+                                validate_preference_value("sync.strategy", &value)
+                            {
+                                return Err(Error::validation(message));
+                            }
+                            preferences.sync_strategy = Some(value);
+                        }
+                        "rewrite-published" => {
+                            preferences.sync_rewrite_published =
+                                Some(value.as_bool().ok_or_else(|| {
+                                    Error::validation(
+                                        "Config sync.rewrite-published must be a boolean",
+                                    )
+                                })?)
+                        }
+                        _ => return Err(unknown_file_key(path, &format!("sync.{field}"))),
+                    }
+                }
+            }
             _ => return Err(unknown_file_key(path, key)),
         }
     }
@@ -227,9 +282,13 @@ fn migrate_keys(document: &mut DocumentMut) {
 }
 
 fn require_string(path: &Path, key: &str, item: &Item) -> Result<String> {
-    item.as_str()
-        .map(str::to_string)
-        .ok_or_else(|| invalid_value(path, key, "a string"))
+    item.as_str().map(str::to_string).ok_or_else(|| {
+        if key == "sync.strategy" {
+            Error::validation("Config sync.strategy must be auto, rebase, or merge")
+        } else {
+            invalid_value(path, key, "a string")
+        }
+    })
 }
 
 fn require_bool(path: &Path, key: &str, item: &Item) -> Result<bool> {
@@ -238,6 +297,19 @@ fn require_bool(path: &Path, key: &str, item: &Item) -> Result<bool> {
 }
 
 fn assign(document: &mut DocumentMut, key: &str, new_value: Value) {
+    if let Some((table, field)) = key.split_once('.') {
+        if document.get(table).is_none() {
+            document[table] = Item::Table(toml_edit::Table::new());
+        }
+        if let Some(existing) = document[table].get_mut(field).and_then(Item::as_value_mut) {
+            let decor = existing.decor().clone();
+            *existing = new_value;
+            *existing.decor_mut() = decor;
+        } else {
+            document[table][field] = toml_edit::value(new_value);
+        }
+        return;
+    }
     if let Some(existing) = document.get_mut(key).and_then(Item::as_value_mut) {
         let decor = existing.decor().clone();
         *existing = new_value;
@@ -256,7 +328,7 @@ fn toml_value(key: &str, value: &str) -> Value {
 }
 
 fn is_bool_key(key: &str) -> bool {
-    matches!(key, "discover-ghq")
+    matches!(key, "discover-ghq" | "sync.rewrite-published")
 }
 
 fn unknown_file_key(path: &Path, key: &str) -> Error {

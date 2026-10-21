@@ -150,20 +150,33 @@ fn sync(args: &[String]) -> Result<i32> {
     let json = crate::output::json();
     let parsed = match args::parse(args, &command_options("sync"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, 2),
-    };
-    let context = match command_context(&parsed) {
-        Ok(context) => context,
-        Err(error) => return fail_with(&error, error.exit_code()),
+        Err(error) => {
+            let message = error.to_string();
+            let error = if message.contains("--force") || message.contains("'-f'") {
+                Error::validation("sync -f/--force was removed; use --rewrite-published to allow rebasing published commits")
+            } else if message.contains("--no-default") {
+                Error::validation("sync --no-default was removed: current-only is now the default; use --main to also fast-forward primary when it is on the default branch")
+            } else {
+                error
+            };
+            return fail_with(&error, 2);
+        }
     };
     let request = crate::sync::Request {
         names: parsed.positionals.clone(),
         all: parsed.flag("all"),
-        no_default: parsed.flag("no-default"),
+        main: parsed.flag("main"),
+        auto: parsed.flag("auto"),
+        dry_run: parsed.flag("dry-run"),
         rebase: parsed.flag("rebase"),
         merge: parsed.flag("merge"),
-        force: parsed.flag("force"),
+        rewrite_published: parsed.flag("rewrite-published"),
         keep_conflicts: parsed.flag("keep-conflicts"),
+    };
+    request.validate()?;
+    let context = match command_context(&parsed) {
+        Ok(context) => context,
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let report = match crate::sync::run(&context, &request) {
         Ok(report) => report,
@@ -948,7 +961,7 @@ fn config_set(args: &[String]) -> Result<i32> {
     }
     let path = preferences::set_preference(key, value)?;
     if crate::output::json() {
-        let value = if matches!(key.as_str(), "keep-branch" | "discover-ghq") {
+        let value = if matches!(key.as_str(), "sync.rewrite-published" | "discover-ghq") {
             serde_json::json!(value == "true")
         } else {
             serde_json::json!(value)
@@ -1461,10 +1474,12 @@ fn command_options(key: &str) -> Vec<Opt> {
         "sync" => vec![
             repo_flag(),
             flag("all", None),
-            flag("no-default", None),
+            flag("main", None),
+            flag("auto", None),
+            flag("dry-run", None),
             flag("rebase", None),
             flag("merge", None),
-            flag("force", Some('f')),
+            flag("rewrite-published", None),
             flag("keep-conflicts", None),
         ],
         "create" => {

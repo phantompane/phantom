@@ -1,4 +1,4 @@
-//! Fetch and integrate bases without changing published history or upstreams.
+//! Fetch and integrate bases, requiring permission to rewrite published history.
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
@@ -12,15 +12,40 @@ use crate::{git, metadata, worktree};
 pub struct Request {
     pub names: Vec<String>,
     pub all: bool,
-    pub no_default: bool,
+    pub main: bool,
+    pub auto: bool,
+    pub dry_run: bool,
     pub rebase: bool,
     pub merge: bool,
-    pub force: bool,
+    pub rewrite_published: bool,
     pub keep_conflicts: bool,
 }
 
+impl Request {
+    pub fn validate(&self) -> Result<()> {
+        if (self.all && !self.names.is_empty())
+            || [self.auto, self.rebase, self.merge]
+                .into_iter()
+                .filter(|flag| *flag)
+                .count()
+                > 1
+        {
+            return Err(Error::validation(
+                "Conflicting sync selectors or strategies",
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Item {
+    pub workspace: Option<worktree::WorktreeJson>,
+    pub strategy_source: String,
+    pub rewrite_allowed: bool,
+    pub rewrite_source: Option<String>,
+    pub rewrote_published: bool,
     pub name: String,
     pub path: Option<String>,
     pub branch: Option<String>,
@@ -43,8 +68,10 @@ impl Item {
 
 #[derive(Serialize)]
 pub struct Report {
+    pub plan: bool,
+    #[serde(rename = "main")]
     pub default: Option<Item>,
-    #[serde(rename = "workspaces")]
+    #[serde(rename = "items")]
     pub worktrees: Vec<Item>,
     #[serde(skip)]
     pub exit: i32,
@@ -474,14 +501,11 @@ fn unsafe_merge(path: &Path, base: &str) -> Result<Option<String>> {
 
 pub fn run(context: &Context, request: &Request) -> Result<Report> {
     let _hooks = crate::process::suppress_git_hooks();
-    if (request.all && !request.names.is_empty()) || (request.rebase && request.merge) {
-        return Err(Error::validation(
-            "Conflicting sync selectors or strategies",
-        ));
-    }
+    request.validate()?;
     metadata::load_strict(&context.git_root)?;
     let listed = worktree::list_worktrees(context, false, true)?;
     let mut targets = Vec::new();
+    let mut include_main = request.main;
     if request.all {
         targets = listed
             .iter()
@@ -494,6 +518,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             // Primary selections use only the default branch's ff-only path,
             // just like an implicit sync from the primary checkout.
             if tree.is_default {
+                include_main = true;
                 continue;
             }
             if !targets
@@ -503,12 +528,18 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
                 targets.push(tree);
             }
         }
-    } else if let Some(tree) = listed
-        .iter()
-        .find(|tree| !tree.is_default && crate::selectors::is_current(Path::new(&tree.path)))
-    {
-        targets.push(tree.clone());
+    } else if !request.main {
+        if let Some(tree) = listed
+            .iter()
+            .find(|tree| !tree.is_default && crate::selectors::is_current(Path::new(&tree.path)))
+        {
+            targets.push(tree.clone());
+        } else {
+            include_main = true;
+        }
     }
+    // Only workspace integration can leave conflicts; preserve the existing
+    // single-workspace rule even when primary is explicitly included (ff-only).
     if request.keep_conflicts && targets.len() != 1 {
         return Err(Error::validation(
             "--keep-conflicts requires exactly one workspace target",
@@ -531,19 +562,12 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
     } else {
         None
     };
-    // The default branch may be checked out outside the selected targets,
-    // including in the primary checkout. Honor its clear before planning fetches.
-    let cleared_default = listed.iter().find(|tree| {
-        !tree.detached
-            && Some(tree.branch.as_str()) == default_name.as_deref()
-            && tree.metadata.base_cleared
+    // §3.4: --main only operates on primary while it is on the default branch.
+    let primary = listed.iter().find(|tree| tree.is_default);
+    let primary_on_default = primary.is_some_and(|tree| {
+        !tree.detached && Some(tree.branch.as_str()) == default_name.as_deref()
     });
-    targets.retain(|tree| {
-        tree.metadata.base_cleared
-            || tree.detached
-            || Some(tree.branch.as_str()) != default_name.as_deref()
-            || (request.no_default && !request.names.is_empty())
-    });
+    let cleared_default = primary.filter(|tree| primary_on_default && tree.metadata.base_cleared);
     let bases: Vec<String> = targets
         .iter()
         .map(|tree| {
@@ -565,7 +589,9 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         .zip(&bases)
         .filter(|(tree, _)| !tree.metadata.base_cleared)
         .map(|(_, base)| base)
-        .chain((!request.no_default && cleared_default.is_none()).then_some(&fallback))
+        .chain(
+            (include_main && primary_on_default && cleared_default.is_none()).then_some(&fallback),
+        )
     {
         if let Some(remote) = remote_for(base, &remotes) {
             involved.insert(remote);
@@ -592,14 +618,26 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         }
     }
     let mut report = Report {
+        plan: request.dry_run,
         default: None,
         worktrees: Vec::new(),
         exit: 0,
     };
     let fetch_error =
         |base: &str| remote_for(base, &remotes).and_then(|remote| fetch_errors.get(&remote));
-    if !request.no_default {
-        let item = if let Some(tree) = cleared_default {
+    if include_main {
+        let item = if fallback_error.is_none() && !primary_on_default {
+            let mut item = match primary {
+                Some(tree) => tree_item(tree, &fallback),
+                None => failed_item("main", Error::msg("Primary checkout is unavailable")),
+            };
+            item.strategy = Some("ff-only".into());
+            item.status(
+                "not-default-branch",
+                Some("Primary checkout is not on the default branch".into()),
+            );
+            item
+        } else if let Some(tree) = cleared_default {
             base_unknown_item(context, tree)
         } else {
             let result = match (
@@ -607,7 +645,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
                 default_name.as_deref(),
             ) {
                 (Some(error), _) => Err(Error::msg(error.clone())),
-                (None, Some(name)) => sync_default(context, &fallback, name),
+                (None, Some(name)) => sync_default(context, &fallback, name, request.dry_run, true),
                 (None, None) => Err(Error::msg("Cannot determine the default branch")),
             };
             match result {
@@ -653,6 +691,35 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         };
         report.worktrees.push(item);
     }
+    for item in report.default.iter_mut().chain(&mut report.worktrees) {
+        let main_strategy = item.strategy.as_deref() == Some("ff-only");
+        item.strategy_source = if main_strategy {
+            "default"
+        } else {
+            strategy_source(context, request)
+        }
+        .into();
+        item.rewrite_allowed = request.rewrite_published
+            || context.preferences.sync_rewrite_published.unwrap_or(false);
+        item.rewrite_source = if request.rewrite_published {
+            Some("flag".into())
+        } else {
+            context
+                .preferences
+                .sync_rewrite_published
+                .map(|_| "config".into())
+        };
+        if item.workspace.is_none() {
+            let tree = if item.name == "default" {
+                primary
+            } else {
+                listed
+                    .iter()
+                    .find(|tree| item.path.as_deref() == Some(tree.path.as_str()))
+            };
+            item.workspace = tree.map(|tree| tree.to_json(item.base.clone()));
+        }
+    }
     let ordinary_failure = !fetch_errors.is_empty()
         || report
             .default
@@ -671,7 +738,8 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
     let items = || report.default.iter().chain(&report.worktrees);
     // Leaving a conflict in progress can move HEAD during rebase. It still
     // returns exit 5 when no other item changed.
-    let changed = items().any(|item| item.status != "conflict" && item.before != item.after);
+    let changed = !request.dry_run
+        && items().any(|item| item.status != "conflict" && item.before != item.after);
     let conflict = items().any(|item| item.status == "conflict");
     report.exit = if changed && (ordinary_failure || conflict || refused) {
         crate::error::PARTIAL
@@ -698,6 +766,11 @@ fn short_detail(value: &str) -> String {
 
 fn failed_item(name: &str, error: Error) -> Item {
     Item {
+        workspace: None,
+        strategy_source: "default".into(),
+        rewrite_allowed: false,
+        rewrite_source: None,
+        rewrote_published: false,
         name: name.to_string(),
         path: None,
         branch: None,
@@ -714,6 +787,11 @@ fn failed_item(name: &str, error: Error) -> Item {
 
 fn tree_item(tree: &worktree::WorktreeInfo, base: &str) -> Item {
     Item {
+        workspace: Some(tree.to_json((!base.is_empty()).then(|| base.to_string()))),
+        strategy_source: "default".into(),
+        rewrite_allowed: false,
+        rewrite_source: None,
+        rewrote_published: false,
         name: tree.name.clone(),
         path: Some(tree.path.clone()),
         branch: (!tree.detached).then(|| tree.branch.clone()),
@@ -867,13 +945,24 @@ fn default_local_name(root: &Path, base: &str, remotes: &[FetchRefspec]) -> Resu
     Ok(local_name.to_string())
 }
 
-fn sync_default(context: &Context, base: &str, local_name: &str) -> Result<Item> {
+fn sync_default(
+    context: &Context,
+    base: &str,
+    local_name: &str,
+    dry_run: bool,
+    primary_only: bool,
+) -> Result<Item> {
     // Fetch may create a remote HEAD. Keep the branch identity resolved during
     // planning so integration and the preflight guards use the same target.
     let local = format!("refs/heads/{local_name}");
     let root = &context.git_root;
     let before = commit(root, &local)?;
     let mut item = Item {
+        workspace: None,
+        strategy_source: "default".into(),
+        rewrite_allowed: false,
+        rewrite_source: None,
+        rewrote_published: false,
         name: local_name.to_string(),
         path: None,
         branch: Some(local.clone()),
@@ -887,6 +976,22 @@ fn sync_default(context: &Context, base: &str, local_name: &str) -> Result<Item>
         code: None,
     };
     let trees = worktree::list_worktrees(context, false, true)?;
+    // Fetch can take time; enforce --main at the mutation boundary too.
+    if primary_only {
+        let primary = trees
+            .iter()
+            .find(|tree| tree.is_default)
+            .ok_or_else(|| Error::msg("Primary checkout is unavailable"))?;
+        if primary.detached || primary.branch != local_name {
+            let mut item = tree_item(primary, base);
+            item.strategy = Some("ff-only".into());
+            item.status(
+                "not-default-branch",
+                Some("Primary checkout is not on the default branch".into()),
+            );
+            return Ok(item);
+        }
+    }
     if let Some((path, operation)) = branch_reservation(context, &local)? {
         item.path = Some(path.clone());
         item.status(
@@ -903,6 +1008,7 @@ fn sync_default(context: &Context, base: &str, local_name: &str) -> Result<Item>
             return Ok(base_unknown_item(context, tree));
         }
         item.path = Some(tree.path.clone());
+        item.workspace = Some(tree.to_json(Some(base.into())));
     }
     let target = commit(root, base)?.ok_or_else(|| Error::msg("Default base no longer exists"))?;
     if let Some(tree) = &checked {
@@ -934,6 +1040,18 @@ fn sync_default(context: &Context, base: &str, local_name: &str) -> Result<Item>
             item.status("dirty", Some("Ignored files would be overwritten".into()));
             return Ok(item);
         }
+        if dirty(path)? {
+            item.status("dirty", None);
+            return Ok(item);
+        }
+        if dry_run {
+            item.status(
+                "updated",
+                Some("Would fast-forward primary checkout".into()),
+            );
+            item.after = Some(target);
+            return Ok(item);
+        }
         let result = git::raw_git(
             path,
             &[
@@ -958,7 +1076,7 @@ fn sync_default(context: &Context, base: &str, local_name: &str) -> Result<Item>
             );
             return Ok(item);
         }
-    } else {
+    } else if !dry_run {
         checked_output(
             &[
                 "-c",
@@ -987,7 +1105,7 @@ fn sync_tree(
 ) -> Result<Item> {
     // Keep this guard at the integration boundary, regardless of selector/strategy.
     if !tree.detached && default_name == Some(tree.branch.as_str()) {
-        let mut item = sync_default(context, default_base, &tree.branch)?;
+        let mut item = sync_default(context, default_base, &tree.branch, request.dry_run, false)?;
         item.name = tree.name.clone();
         return Ok(item);
     }
@@ -1055,7 +1173,7 @@ fn sync_tree(
             || git::changes_landed(path, "HEAD", base))
     {
         item.status(
-            "merged",
+            "integrated",
             Some("Use mabo gc to remove landed workspaces".into()),
         );
         return Ok(item);
@@ -1073,19 +1191,40 @@ fn sync_tree(
     let unpublished = checked_output(&unpublished_args, path, true)?;
     let unpublished: BTreeSet<&str> = unpublished.lines().collect();
     let pushed = own.lines().any(|sha| !unpublished.contains(sha));
-    let strategy = if request.merge || (!request.rebase && pushed) {
+    let policy = if request.merge {
         "merge"
-    } else {
+    } else if request.rebase {
         "rebase"
+    } else if request.auto {
+        "auto"
+    } else {
+        context
+            .preferences
+            .sync_strategy
+            .as_deref()
+            .unwrap_or("auto")
+    };
+    let strategy = if policy == "auto" {
+        if pushed {
+            "merge"
+        } else {
+            "rebase"
+        }
+    } else {
+        policy
     };
     item.strategy = Some(strategy.into());
     if ancestor(path, base, "HEAD")? {
         return Ok(item);
     }
-    if request.rebase && pushed && !request.force {
+    if strategy == "rebase"
+        && pushed
+        && !request.rewrite_published
+        && !context.preferences.sync_rewrite_published.unwrap_or(false)
+    {
         item.status(
-            "failed",
-            Some("Published commits require --force with --rebase".into()),
+            "refused",
+            Some("Published commits require --rewrite-published with rebase".into()),
         );
         item.code = Some("published".into());
         return Ok(item);
@@ -1098,6 +1237,16 @@ fn sync_tree(
     }
     if ignored_would_be_overwritten(path, base, strategy == "rebase")? {
         item.status("dirty", Some("Ignored files would be overwritten".into()));
+        return Ok(item);
+    }
+    if request.dry_run {
+        item.status("updated", Some(format!("Would {strategy} onto {base}")));
+        // Rebased and merged commit IDs do not exist yet. Never invent them.
+        item.after = if own.is_empty() {
+            commit(path, base)?
+        } else {
+            None
+        };
         return Ok(item);
     }
     let short_base = base
@@ -1240,6 +1389,12 @@ fn sync_tree(
         return Ok(item);
     }
     item.after = commit(path, "HEAD")?;
+    item.rewrote_published = strategy == "rebase" && pushed && item.after != item.before;
+    if item.rewrote_published {
+        crate::output::workspace_warning("published_rewritten",
+            "Published history was rewritten; updating the existing remote branch may require a force push",
+            &tree.name);
+    }
     if own.is_empty() {
         if let Some(tip) = item.after.as_deref() {
             if let Err(error) = metadata::record_sync_tip(&context.git_root, path, tip) {
@@ -1273,4 +1428,14 @@ fn sync_tree(
         None,
     );
     Ok(item)
+}
+
+fn strategy_source(context: &Context, request: &Request) -> &'static str {
+    if request.auto || request.rebase || request.merge {
+        "flag"
+    } else if context.preferences.sync_strategy.is_some() {
+        "config"
+    } else {
+        "default"
+    }
 }
