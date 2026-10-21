@@ -105,6 +105,13 @@ pub(crate) fn prepare(
                         Error::validation(format!("Option '{arg}' was removed. Use -R/--repo REF."))
                     });
                 }
+                if key == "list" && name == "--no-default" {
+                    error.get_or_insert_with(|| {
+                        Error::validation(
+                            "list --no-default was removed. Use `mabo list --kind workspace`.",
+                        )
+                    });
+                }
                 if matches!(key, "trust" | "trust add" | "trust remove" | "trust list")
                     && matches!(name, "--yes" | "-y" | "--list")
                 {
@@ -113,7 +120,7 @@ pub(crate) fn prepare(
                 if inline.is_none()
                     && matches!(
                         (key, name),
-                        ("list", "--names") | ("repo list", "--names" | "--paths")
+                        ("list", "--names" | "--paths") | ("repo list", "--names" | "--paths")
                     )
                 {
                     text_listing = true;

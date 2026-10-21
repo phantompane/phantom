@@ -957,8 +957,12 @@ fn apply_delete(
         allow_current: false,
         published_tip,
     };
-    let plan = match worktree::preflight_delete(context, &info.name, &options, Some(&subject.path))
-    {
+    let plan = match worktree::preflight_delete_named(
+        context,
+        &info.name,
+        &options,
+        Some(&subject.path),
+    ) {
         Ok(plan) => plan,
         Err(error) => return failed(subject, reasons, error.error.to_string()),
     };

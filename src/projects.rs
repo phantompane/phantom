@@ -605,6 +605,15 @@ fn entry_match_names(entry: &ProjectListEntry) -> Vec<String> {
     }
 }
 
+/// Canonical display name shared by repository and workspace inspection.
+pub(crate) fn canonical_name(root: &Path) -> String {
+    let clone_root = clone_root_for_names(false, &mut Vec::new());
+    names_for_root(root, clone_root.as_deref())
+        .into_iter()
+        .next()
+        .unwrap_or_default()
+}
+
 /// Names `--repo` matches for this checkout.
 ///
 /// The first name is canonical: the `origin` URL when it parses as
