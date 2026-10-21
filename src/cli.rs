@@ -704,8 +704,15 @@ fn remove(args: &[String]) -> Result<i32> {
                     "removed": false, "branchDeleted": false, "branchKeptReason": null,
                     "alreadyGone": gone, "error": if gone { None } else { Some(failure.error.to_json(failure.error.exit_code()).error) },
                 }));
-                if !gone && first_error.is_none() {
-                    first_error = Some(failure.error);
+                if !gone {
+                    if !json {
+                        crate::output::failure(
+                            failure.error.to_json(failure.error.exit_code()).error,
+                        );
+                    }
+                    if first_error.is_none() {
+                        first_error = Some(failure.error);
+                    }
                 }
             }
         }

@@ -522,10 +522,7 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
         if paths::normalize(&path) == paths::normalize(&context.git_root) {
             continue;
         }
-        if listed
-            .iter()
-            .any(|tree| paths::same_location(&path, Path::new(&tree.path)))
-        {
+        if !orphaned_record(&path, &listed) {
             continue;
         }
         let mut facts = observe_record(context, policy, &path, record, &mut pull_requests);
@@ -659,6 +656,8 @@ fn observe_record(
     record: &WorktreeMetadata,
     pull_requests: &mut BTreeMap<String, PullRequestStatus>,
 ) -> WorktreeFacts {
+    // Recheck the directory even after orphaned_record: it may have reappeared.
+    let directory = directory_state(path);
     WorktreeFacts {
         subject: Subject {
             name: String::new(),
@@ -667,13 +666,17 @@ fn observe_record(
             head: None,
         },
         registered: false,
-        directory: DirState::Absent,
+        directory,
         prunable: false,
         branch_missing: false,
         is_default: false,
         is_current: false,
         locked: false,
-        dirty: Dirty::Absent,
+        dirty: if directory == DirState::Absent {
+            Dirty::Absent
+        } else {
+            Dirty::Unknown
+        },
         unpushed: None,
         merged: false,
         pr: pull_state(

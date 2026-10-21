@@ -17650,12 +17650,21 @@ fn retirement_gc_closed_pr_and_missing_gh_report_separate_skip_hints() {
 }
 
 #[test]
-fn retirement_gc_drops_a_record_with_missing_registration_preserving_files() {
+fn retirement_bugbot_gc_keeps_live_unregistered_records() {
     let repo = Repo::new();
     assert!(repo
         .mabo(&["create", "unregistered", "--no-setup"])
         .status
         .success());
+    let pr = "https://github.com/acme/demo/pull/7";
+    assert!(repo
+        .mabo(&["set", "unregistered", "--pr", pr])
+        .status
+        .success());
+    let fake = gh_path(
+        &repo,
+        "#!/bin/sh\nprintf '%s\\n' '{\"state\":\"CLOSED\"}'\n",
+    );
     let path = managed(&repo, "unregistered");
     fs::write(path.join("precious"), "keep this\n").unwrap();
     let admin = text(
@@ -17669,6 +17678,55 @@ fn retirement_gc_drops_a_record_with_missing_registration_preserving_files() {
     fs::remove_dir_all(admin).unwrap();
     let record_dir = repo.repo.join(".git/maboroshi/workspaces");
     let before = records::read(&record_dir).unwrap();
+    let listed = repo.mabo(&["list", "--json"]);
+    assert!(listed.status.success());
+    assert!(!json_value(&listed)["data"]["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["name"] == "unregistered"));
+    for apply in [false, true] {
+        for criterion in [None, Some("--orphaned"), Some("--closed-pr")] {
+            let mut args = vec!["gc", "--json"];
+            if let Some(criterion) = criterion {
+                args.push(criterion);
+            }
+            if apply {
+                args.push("--apply");
+            }
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .env("PATH", &fake)
+                .output()
+                .unwrap();
+            assert_eq!(out.status.code(), Some(0), "{}", text(&out.stdout));
+            assert_eq!(json_value(&out)["data"]["items"], serde_json::json!([]));
+            assert_eq!(records::read(&record_dir).unwrap(), before);
+            assert_eq!(
+                fs::read_to_string(path.join("precious")).unwrap(),
+                "keep this\n"
+            );
+            assert!(branch_listed(&repo, "unregistered"));
+        }
+        for selector in ["unregistered", "pr:7", pr] {
+            let mut args = vec!["remove", selector, "--json"];
+            if !apply {
+                args.push("--dry-run");
+            }
+            let out = repo.mabo(&args);
+            assert_eq!(out.status.code(), Some(0), "{}", text(&out.stdout));
+            assert_eq!(json_value(&out)["data"]["items"][0]["alreadyGone"], true);
+            assert_eq!(json_value(&out)["data"]["items"][0]["removed"], false);
+            assert_eq!(records::read(&record_dir).unwrap(), before);
+            assert_eq!(
+                fs::read_to_string(path.join("precious")).unwrap(),
+                "keep this\n"
+            );
+            assert!(branch_listed(&repo, "unregistered"));
+        }
+    }
+    // The same record becomes orphaned only after its directory is truly gone.
+    fs::remove_dir_all(&path).unwrap();
     let plan = repo.mabo(&["gc", "--orphaned", "--json"]);
     assert_eq!(plan.status.code(), Some(0));
     assert_eq!(
@@ -17679,14 +17737,119 @@ fn retirement_gc_drops_a_record_with_missing_registration_preserving_files() {
     let out = repo.mabo(&["gc", "--orphaned", "--apply", "--json"]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(json_value(&out)["data"]["items"][0]["action"], "removed");
-    assert_eq!(
-        fs::read_to_string(path.join("precious")).unwrap(),
-        "keep this\n"
-    );
     assert!(branch_listed(&repo, "unregistered"));
     assert!(maboroshi::metadata::load_strict(&repo.repo)
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn retirement_bugbot_remove_reports_all_preflight_refusals() {
+    let repo = Repo::new();
+    for name in ["clean", "dirty-one", "dirty-two"] {
+        assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+    }
+    for name in ["dirty-one", "dirty-two"] {
+        fs::write(managed(&repo, name).join("precious"), "keep this\n").unwrap();
+    }
+    assert!(repo
+        .mabo(&["create", "detached", "--detach", "--no-setup"])
+        .status
+        .success());
+    commit_file(&repo, "detached", "committed", "unpreserved\n");
+    let head = retirement_head_at(&repo, &managed(&repo, "detached"));
+    let marker = repo.root.join("hook-ran");
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        format!("[hooks]\npre-remove = ['touch {}']\n", marker.display()),
+    )
+    .unwrap();
+    let record_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let before = records::read(&record_dir).unwrap();
+    for invalid_first in [false, true] {
+        for dry_run in [false, true] {
+            for json in [false, true] {
+                let mut args = vec![
+                    "remove",
+                    "clean",
+                    "dirty-one",
+                    "dirty-two",
+                    "detached",
+                    ".",
+                    "dirty-one",
+                ];
+                if invalid_first {
+                    args.insert(1, "bad+selector");
+                } else {
+                    args.push("bad+selector");
+                }
+                if dry_run {
+                    args.push("--dry-run");
+                }
+                if json {
+                    args.push("--json");
+                }
+                let out = repo.mabo(&args);
+                assert_eq!(
+                    out.status.code(),
+                    Some(if invalid_first { 2 } else { 4 }),
+                    "{args:?}: {} {}",
+                    text(&out.stdout),
+                    text(&out.stderr)
+                );
+                if json {
+                    let doc = json_value(&out);
+                    assert_eq!(
+                        doc["error"]["code"],
+                        if invalid_first { "usage" } else { "dirty" }
+                    );
+                    let items = doc["data"]["items"].as_array().unwrap();
+                    assert_eq!(items.len(), 6, "{doc}");
+                    for (name, code) in [
+                        ("dirty-one", "dirty"),
+                        ("dirty-two", "dirty"),
+                        ("detached", "unpreserved"),
+                        ("main", "primary"),
+                        ("bad+selector", "usage"),
+                    ] {
+                        assert!(
+                            items.iter().any(|item| item["workspace"]["name"] == name
+                                && item["error"]["code"] == code),
+                            "{doc}"
+                        );
+                    }
+                    assert!(items.iter().all(|item| item["removed"] == false));
+                } else {
+                    let stderr = text(&out.stderr);
+                    for reason in [
+                        "dirty-one",
+                        "dirty-two",
+                        "unpreserved detached commits",
+                        "primary checkout",
+                        "Workspace name can only contain",
+                    ] {
+                        assert_eq!(stderr.matches(reason).count(), 1, "{args:?}: {stderr}");
+                    }
+                }
+                assert!(!marker.exists());
+                assert_eq!(records::read(&record_dir).unwrap(), before);
+                assert_eq!(retirement_head_at(&repo, &managed(&repo, "detached")), head);
+                for name in ["clean", "dirty-one", "dirty-two", "detached"] {
+                    assert!(managed(&repo, name).is_dir());
+                    assert!(worktree_registered(&repo, name));
+                }
+                for name in ["clean", "dirty-one", "dirty-two"] {
+                    assert!(branch_listed(&repo, name));
+                }
+                for name in ["dirty-one", "dirty-two"] {
+                    assert_eq!(
+                        fs::read_to_string(managed(&repo, name).join("precious")).unwrap(),
+                        "keep this\n"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]
