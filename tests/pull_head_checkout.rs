@@ -108,6 +108,7 @@ fn deleted_pr_remote(root: &Path) -> (PathBuf, String) {
             origin.to_str().expect("origin"),
         ],
     );
+    test_git::configure_repo(&origin);
     git(root, &["init", "-b", "main", seed.to_str().expect("seed")]);
     git(&seed, &["commit", "--allow-empty", "-m", "main"]);
     git(
@@ -771,6 +772,7 @@ fn live_branch(root: &Path, branch: &str) -> (PathBuf, String) {
             origin.to_str().expect("origin"),
         ],
     );
+    test_git::configure_repo(&origin);
     git(root, &["init", "-b", "main", seed.to_str().expect("seed")]);
     git(&seed, &["commit", "--allow-empty", "-m", "main"]);
     git(
@@ -808,6 +810,7 @@ fn pull_ref_only(root: &Path, number: u64) -> (PathBuf, String) {
             origin.to_str().expect("origin"),
         ],
     );
+    test_git::configure_repo(&origin);
     git(root, &["init", "-b", "main", seed.to_str().expect("seed")]);
     git(&seed, &["commit", "--allow-empty", "-m", "main"]);
     git(
@@ -850,6 +853,7 @@ fn cloned_before_branch_delete(root: &Path) -> (PathBuf, String) {
             origin.to_str().expect("origin"),
         ],
     );
+    test_git::configure_repo(&origin);
     git(root, &["init", "-b", "main", seed.to_str().expect("seed")]);
     git(&seed, &["commit", "--allow-empty", "-m", "main"]);
     git(

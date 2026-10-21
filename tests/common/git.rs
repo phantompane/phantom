@@ -14,7 +14,8 @@ pub fn write_config(home: &Path) {
 pub fn command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     // Also reaches Git children (including those started by mabo) when the
-    // fixture does not use an isolated HOME.
+    // fixture does not use an isolated HOME. Local push receivers clear these
+    // variables, so configure their repositories with configure_repo first.
     command
         .env("GIT_CONFIG_COUNT", "2")
         .env("GIT_CONFIG_KEY_0", "maintenance.auto")
@@ -25,7 +26,7 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
 }
 
 pub fn configure_repo(repo: &Path) {
-    // Persist the settings for tests that invoke the production Git executor.
+    // Persist the settings for production Git calls and local push receivers.
     for (key, value) in [("maintenance.auto", "false"), ("gc.auto", "0")] {
         let output = command("git")
             .args(["config", "--local", key, value])
