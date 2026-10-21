@@ -191,11 +191,11 @@ fn failure_with(error: JsonErrorBody, report: impl FnOnce(&str)) {
                 if ((is_outer_command(&out.command) && error.code != "ambiguous")
                     || matches!(
                         out.command.as_str(),
-                        "create" | "adopt" | "forget" | "setup"
+                        "create" | "adopt" | "forget" | "setup" | "remove"
                     ))
-                    // Create partial errors contain an already shell-encoded retry
+                    // Partial errors contain an already shell-encoded retry
                     // command. Preserve it verbatim for execution in bash/zsh.
-                    && !(out.command == "create" && error.code == "partial")
+                    && !(matches!(out.command.as_str(), "create" | "remove") && error.code == "partial")
                 {
                     report(&visible_text(&message));
                 } else {

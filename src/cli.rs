@@ -674,6 +674,7 @@ fn remove(args: &[String]) -> Result<i32> {
     };
     let mut items = Vec::new();
     let mut plans = Vec::new();
+    let mut retry_targets = Vec::new();
     let mut first_error = None;
     let mut seen_paths = std::collections::HashSet::new();
     let mut seen_failures = std::collections::HashSet::new();
@@ -691,28 +692,55 @@ fn remove(args: &[String]) -> Result<i32> {
                     "wouldRemove": true,
                     "wouldDeleteBranch": !plan.worktree.detached && !plan.worktree.orphaned && plan.branch_kept_reason.is_none(),
                 }));
-                plans.push((items.len() - 1, plan));
+                let index = items.len() - 1;
+                // Paths remain exact even when a completed target shared a
+                // name/link with an unfinished one, or the caller selected dot.
+                retry_targets.push((index, plan.worktree.path.clone()));
+                plans.push((index, plan));
             }
-            Err(failure) => {
+            Err(mut failure) => {
+                if matches!(failure.error, Error::WorktreeNotFound(_)) {
+                    match crate::selectors::Selector::parse(name)?.unregistered_record(&context) {
+                        Ok(Some(tree)) => {
+                            if seen_paths.insert(tree.path.clone()) {
+                                // A record proves existence, but supplies no
+                                // observed branch or working-directory status.
+                                let workspace = worktree::WorktreeJson {
+                                    branch: None,
+                                    dirty: None,
+                                    detached: None,
+                                    upstream: None,
+                                    ..tree.to_json(None)
+                                };
+                                items.push(serde_json::json!({
+                                    "workspace": workspace, "removed": false,
+                                    "branchDeleted": false, "branchKeptReason": null,
+                                    "alreadyGone": true, "error": null,
+                                }));
+                            }
+                            continue;
+                        }
+                        Ok(None) => {}
+                        Err(error) => failure.error = error,
+                    }
+                }
                 if !seen_failures.insert(name.clone()) {
                     continue;
                 }
-                let gone = matches!(failure.error, Error::WorktreeNotFound(_));
+                let missing = matches!(failure.error, Error::WorktreeNotFound(_));
                 items.push(serde_json::json!({
                     "workspace": failure.worktree.as_ref().map(|tree| serde_json::to_value(tree.to_json(None))).transpose().map_err(|error| Error::msg(error.to_string()))?
                         .unwrap_or_else(|| serde_json::json!({"name": name})),
                     "removed": false, "branchDeleted": false, "branchKeptReason": null,
-                    "alreadyGone": gone, "error": if gone { None } else { Some(failure.error.to_json(failure.error.exit_code()).error) },
+                    "alreadyGone": false, "error": failure.error.to_json(failure.error.exit_code()).error,
                 }));
-                if !gone {
-                    if !json {
-                        crate::output::failure(
-                            failure.error.to_json(failure.error.exit_code()).error,
-                        );
-                    }
-                    if first_error.is_none() {
-                        first_error = Some(failure.error);
-                    }
+                if !json {
+                    crate::output::failure(failure.error.to_json(failure.error.exit_code()).error);
+                }
+                // A typo must be visible even when another target also fails a
+                // safety guard. All failures remain in the per-item results.
+                if first_error.is_none() || missing {
+                    first_error = Some(failure.error);
                 }
             }
         }
@@ -754,6 +782,8 @@ fn remove(args: &[String]) -> Result<i32> {
     let logger = logger_for(json);
     let mut changed = false;
     let mut first_error = None;
+    let mut retry_cleanup = Vec::new();
+    let mut retry_metadata = std::collections::HashSet::new();
     for (index, plan) in plans {
         match worktree::commit_remove(
             &context,
@@ -764,6 +794,27 @@ fn remove(args: &[String]) -> Result<i32> {
         ) {
             Ok(outcome) => {
                 changed = true;
+                if outcome.metadata_error.is_some() {
+                    retry_metadata.insert(index);
+                }
+                if outcome.branch_error.is_some() {
+                    // The checkout and possibly its record are already gone.
+                    // A workspace selector cannot finish branch cleanup. Check
+                    // its original tip before retrying Git's branch deletion;
+                    // branch -D still refuses a newly checked-out branch.
+                    if let Some(head) = &outcome.worktree.head {
+                        let root = crate::allocation::shell_quote(&context.git_root);
+                        let reference = crate::allocation::shell_quote(format!(
+                            "refs/heads/{}",
+                            outcome.worktree.branch
+                        ));
+                        retry_cleanup.push(format!(
+                            "test \"$(git -C {root} show-ref --verify --hash {reference})\" = {} && git -C {root} branch -D -- {}",
+                            crate::allocation::shell_quote(head),
+                            crate::allocation::shell_quote(&outcome.worktree.branch)
+                        ));
+                    }
+                }
                 let error = outcome
                     .metadata_error
                     .or(outcome.branch_error)
@@ -803,17 +854,80 @@ fn remove(args: &[String]) -> Result<i32> {
     if first_error.is_some() {
         for item in &mut items {
             if item["wouldRemove"] == true && item["error"].is_null() {
-                item["error"] = serde_json::json!({"code": "not_attempted", "message": "Removal stopped after an earlier failure; retry the same command."});
+                item["error"] = serde_json::json!({"code": "not_attempted", "message": "Removal stopped after an earlier failure; retry only the unfinished targets."});
             }
         }
     }
     emit_json(&serde_json::json!({"items": items}))?;
     if let Some(error) = first_error {
         let code = if changed { PARTIAL } else { error.exit_code() };
-        crate::output::failure(error.aggregate_json(code));
+        let mut body = error.aggregate_json(code);
+        if code == PARTIAL {
+            let targets = retry_targets
+                .into_iter()
+                .filter_map(|(index, path)| {
+                    (!items[index]["error"].is_null()
+                        && (items[index]["removed"] != true || retry_metadata.contains(&index)))
+                    .then_some(path)
+                })
+                .collect::<Vec<_>>();
+            if !targets.is_empty() {
+                retry_cleanup.push(remove_retry_command(&context, &parsed, json, &targets));
+            }
+            let retry = retry_cleanup.join(" && ");
+            body.message = format!(
+                "{}. Retry with `{retry}`.",
+                crate::output::diagnostic_value(&body.message)
+            );
+            let details = body.details.get_or_insert_with(|| serde_json::json!({}));
+            details["retryCommand"] = serde_json::json!(retry);
+        }
+        crate::output::failure(body);
         return Ok(code);
     }
     Ok(SUCCESS)
+}
+
+fn remove_retry_command(
+    context: &crate::context::Context,
+    parsed: &Parsed,
+    json: bool,
+    targets: &[String],
+) -> String {
+    let mut command =
+        if parsed.value("repo").is_none() && context.source_checkout != context.git_root {
+            format!(
+                "cd {} && mabo remove",
+                crate::allocation::shell_quote(&context.source_checkout)
+            )
+        } else {
+            format!(
+                "mabo -R {} remove",
+                crate::allocation::shell_quote(&context.git_root)
+            )
+        };
+    for flag in [
+        "discard-changes",
+        "delete-unpreserved-branch",
+        "keep-branch",
+        "no-hooks",
+    ] {
+        if parsed.flag(flag) {
+            command.push_str(&format!(" --{flag}"));
+        }
+    }
+    if json {
+        command.push_str(" --json");
+    }
+    if crate::runtime::non_interactive() {
+        command.push_str(" --no-input");
+    }
+    command.push_str(" --");
+    for target in targets {
+        command.push(' ');
+        command.push_str(&crate::allocation::shell_quote(target));
+    }
+    command
 }
 
 fn exec(args: &[String]) -> Result<i32> {
