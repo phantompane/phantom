@@ -187,40 +187,103 @@ pub fn inherit(
 }
 
 pub fn run_with_timeout(command: &str, args: &[&str], timeout: Duration) -> Result<Captured> {
-    let mut cmd = self::command(command);
+    raw_with_timeout(command, args, None, &[], timeout)
+}
+
+/// Drain both pipes while waiting, and bound the entire capture (including EOF).
+/// A timed-out gh must not leave a child holding stdout/stderr open indefinitely.
+pub(crate) fn raw_with_timeout(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[(&str, &str)],
+    timeout: Duration,
+) -> Result<Captured> {
+    let mut cmd = self::command(program);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|error| spawn_error(command, &error))?;
+    if let Some(cwd) = cwd {
+        cmd.current_dir(cwd);
+    }
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = cmd.spawn().map_err(|error| spawn_error(program, &error))?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    // Separate readers avoid pipe-buffer deadlocks. Messages also let the caller
+    // enforce the deadline when a descendant inherits an otherwise exited pipe.
+    fn drain(
+        pipe: impl Read + Send + 'static,
+        sender: std::sync::mpsc::Sender<(bool, std::io::Result<String>)>,
+        stdout: bool,
+    ) {
+        std::thread::spawn(move || {
+            let mut pipe = pipe;
+            let mut text = String::new();
+            let result = pipe.read_to_string(&mut text).map(|_| text);
+            let _ = sender.send((stdout, result));
+        });
+    }
+    if let Some(pipe) = child.stdout.take() {
+        drain(pipe, sender.clone(), true);
+    }
+    if let Some(pipe) = child.stderr.take() {
+        drain(pipe, sender, false);
+    }
     let started = std::time::Instant::now();
+    let mut stdout = None;
+    let mut stderr = None;
     loop {
+        while let Ok((is_stdout, result)) = receiver.try_recv() {
+            if is_stdout {
+                stdout = Some(result);
+            } else {
+                stderr = Some(result);
+            }
+        }
         if let Some(status) = child
             .try_wait()
             .map_err(|error| Error::msg(error.to_string()))?
         {
-            let mut stdout = String::new();
-            let mut stderr = String::new();
-            if let Some(mut pipe) = child.stdout.take() {
-                pipe.read_to_string(&mut stdout)
-                    .map_err(|error| Error::msg(error.to_string()))?;
+            if stdout.is_some() && stderr.is_some() {
+                return Ok(Captured {
+                    stdout: stdout
+                        .take()
+                        .transpose()
+                        .map_err(|error| Error::msg(error.to_string()))?
+                        .unwrap_or_default(),
+                    stderr: stderr
+                        .take()
+                        .transpose()
+                        .map_err(|error| Error::msg(error.to_string()))?
+                        .unwrap_or_default(),
+                    code: status.code().unwrap_or(1),
+                });
             }
-            if let Some(mut pipe) = child.stderr.take() {
-                pipe.read_to_string(&mut stderr)
-                    .map_err(|error| Error::msg(error.to_string()))?;
-            }
-            return Ok(Captured {
-                stdout,
-                stderr,
-                code: status.code().unwrap_or(1),
-            });
         }
-        if started.elapsed() > timeout {
+        if started.elapsed() >= timeout {
+            #[cfg(unix)]
+            if let Ok(pid) = i32::try_from(child.id()) {
+                extern "C" {
+                    fn kill(pid: i32, sig: i32) -> i32;
+                }
+                // SAFETY: the child was spawned in its own process group.
+                unsafe {
+                    kill(-pid, 9);
+                }
+            }
             let _ = child.kill();
             let _ = child.wait();
             return Err(Error::msg(format!(
-                "Failed to discover ghq repositories: timed out after {} ms",
+                "{program} timed out after {} ms",
                 timeout.as_millis()
             )));
         }
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -286,5 +349,28 @@ pub(crate) fn process_is_alive(pid: u32) -> bool {
     {
         let _ = pid;
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_capture_drains_both_pipes_without_deadlock() {
+        let result = raw_with_timeout(
+            "sh",
+            &[
+                "-c",
+                "head -c 131072 /dev/zero; head -c 131072 /dev/zero >&2",
+            ],
+            None,
+            &[],
+            Duration::from_secs(3),
+        )
+        .unwrap();
+        assert_eq!(result.code, 0);
+        assert_eq!(result.stdout.len(), 131072);
+        assert_eq!(result.stderr.len(), 131072);
     }
 }

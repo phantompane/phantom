@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::context::Context;
 use crate::error::{self, Error, JsonErrorBody, Result};
 use crate::git::{self};
-use crate::github::{self, PullRequestStatus};
+use crate::github::PullRequestStatus;
 use crate::metadata::{self, WorktreeLink, WorktreeMetadata};
 use crate::paths;
 use crate::process;
@@ -74,6 +74,7 @@ pub struct CandidateEntry {
     pub action: Action,
     pub detail: Option<String>,
     pub branch_deleted: Option<bool>,
+    pub preservation_reason: Option<String>,
     pub workspace: serde_json::Value,
     /// A checkout, registration, or metadata record was removed, even if a
     /// later step failed. This is independent of the candidate's action.
@@ -167,6 +168,7 @@ pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Repo
     // Gathering facts, rendering workspaces and resolving hint selectors all
     // inspect status; fsmonitor must not run anywhere in a read-only plan.
     let _hooks = (!request.apply).then(crate::process::suppress_git_hooks);
+    *context.retirement_queries.borrow_mut() = Default::default();
     let facts = gather(context, &request.policy, None)?;
     let mut workspaces = worktree::list_worktrees(context, false, true)?;
     let common = git::canonical_common_dir(&context.git_root)?;
@@ -221,6 +223,7 @@ struct Subject {
     name: String,
     branch: Option<String>,
     head: Option<String>,
+    preservation_reason: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -259,7 +262,8 @@ struct WorktreeFacts {
     locked: bool,
     dirty: Dirty,
     /// `Some(true)` means the tip is not integrated into its base and does not
-    /// exactly match its own upstream. Unknown state is protected too.
+    /// exactly match its own upstream, and has no merged PR proof.
+    /// Unknown state is protected too.
     unpushed: Option<bool>,
     merged: bool,
     pr: PullRequestState,
@@ -371,10 +375,16 @@ fn classify(facts: &[WorktreeFacts], policy: &Policy) -> Vec<Verdict> {
             .map(|row| row.reason)
             .collect::<Vec<_>>();
         if reasons.is_empty() {
-            if policy.selection.pull_request && facts.pr == PullRequestState::Unavailable {
+            if (policy.selection.pull_request || policy.selection.merged)
+                && facts.pr == PullRequestState::Unavailable
+            {
                 verdicts.push(Verdict::Skip {
                     subject: facts.subject.clone(),
-                    reasons: vec![Reason::PullRequest],
+                    reasons: vec![if policy.selection.pull_request {
+                        Reason::PullRequest
+                    } else {
+                        Reason::Merged
+                    }],
                     hold: Hold::PrUnavailable,
                 });
             }
@@ -467,7 +477,6 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
     }
     let default = DefaultBranch { base, name };
     let current = current_worktree_path(context);
-    let mut pull_requests = BTreeMap::new();
     let mut rows = BTreeMap::new();
     for worktree in &listed {
         let path = PathBuf::from(&worktree.path);
@@ -495,7 +504,6 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
             current.as_deref(),
             worktree,
             record,
-            &mut pull_requests,
         );
         let short_head = worktree
             .head
@@ -531,7 +539,7 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
         if !orphaned_record(&path, &listed) {
             continue;
         }
-        let mut facts = observe_record(context, policy, &path, record, &mut pull_requests);
+        let mut facts = observe_record(context, policy, &path, record);
         facts.subject.name = worktree::resolve_worktree_name(
             &path,
             &context.worktrees_directory,
@@ -558,7 +566,6 @@ fn observe_listed(
     current: Option<&Path>,
     worktree: &git::GitWorktree,
     record: Option<&WorktreeMetadata>,
-    pull_requests: &mut BTreeMap<String, PullRequestStatus>,
 ) -> WorktreeFacts {
     let base = record
         .and_then(|record| record.base.clone())
@@ -610,9 +617,18 @@ fn observe_listed(
             }),
         _ => false,
     };
-    let merged = moved && integrated;
-    let preserved =
+    let local_preserved =
         integrated || git::retirement_upstream_matches(&context.git_root, branch.as_deref());
+    let merged_pr = !local_preserved
+        && branch.as_deref().is_some_and(|branch| {
+            context.retirement_queries.borrow_mut().merged_contains(
+                &context.git_root,
+                branch,
+                record.and_then(|item| item.links.pr.as_ref()),
+            )
+        });
+    let merged = (moved && integrated) || merged_pr;
+    let preserved = local_preserved || merged_pr;
     // An unresolved remote mapping must not prevent orphan-record cleanup or
     // accidentally allow deletion of the checkout holding the default branch.
     let is_default = branch
@@ -620,7 +636,11 @@ fn observe_listed(
         .is_some_and(|branch| default.name.as_deref() == Some(branch) || default.name.is_none());
     let unpushed = Some(!preserved);
     let pr_link = record.and_then(|item| item.links.pr.as_ref());
-    let pr = pull_state(policy, &context.git_root, pr_link, pull_requests);
+    let pr = if policy.selection.pull_request || (policy.selection.merged && !local_preserved) {
+        pull_state(context, pr_link)
+    } else {
+        PullRequestState::Unlinked
+    };
     let dirty = match directory {
         DirState::Absent => Dirty::Absent,
         DirState::Unknown => Dirty::Unknown,
@@ -641,6 +661,7 @@ fn observe_listed(
             path,
             branch,
             head: worktree.head.clone(),
+            preservation_reason: merged_pr.then(|| "merged_pr".to_string()),
         },
         registered: true,
         directory,
@@ -664,7 +685,6 @@ fn observe_record(
     policy: &Policy,
     path: &Path,
     record: &WorktreeMetadata,
-    pull_requests: &mut BTreeMap<String, PullRequestStatus>,
 ) -> WorktreeFacts {
     // Recheck the directory even after orphaned_record: it may have reappeared.
     let directory = directory_state(path);
@@ -674,6 +694,7 @@ fn observe_record(
             path: path.to_path_buf(),
             branch: None,
             head: None,
+            preservation_reason: None,
         },
         registered: false,
         directory,
@@ -689,19 +710,18 @@ fn observe_record(
         },
         unpushed: None,
         merged: false,
-        pr: pull_state(
-            policy,
-            &context.git_root,
-            record.links.pr.as_ref(),
-            pull_requests,
-        ),
+        pr: if policy.selection.pull_request {
+            pull_state(context, record.links.pr.as_ref())
+        } else {
+            PullRequestState::Unlinked
+        },
 
         created_at: record.created_at.as_deref().and_then(parse_time),
     }
 }
 
 fn warn_unavailable_pull_requests(facts: &[WorktreeFacts], policy: &Policy) {
-    if !policy.selection.pull_request {
+    if !policy.selection.pull_request && !policy.selection.merged {
         return;
     }
     for facts in facts {
@@ -717,57 +737,22 @@ fn warn_unavailable_pull_requests(facts: &[WorktreeFacts], policy: &Policy) {
     }
 }
 
-struct PullRequestQuery {
-    key: String,
-    view: String,
-}
-
-fn pull_state(
-    policy: &Policy,
-    git_root: &Path,
-    link: Option<&WorktreeLink>,
-    pull_requests: &mut BTreeMap<String, PullRequestStatus>,
-) -> PullRequestState {
-    if !policy.selection.pull_request {
-        return PullRequestState::Unlinked;
-    }
+fn pull_state(context: &Context, link: Option<&WorktreeLink>) -> PullRequestState {
     let Some(link) = link else {
         return PullRequestState::Unlinked;
     };
     if link.number.is_none() && link.url.as_deref().unwrap_or("").is_empty() {
         return PullRequestState::Unlinked;
     }
-    let Some(query) = pull_request_query(git_root, link) else {
-        return PullRequestState::Unavailable;
-    };
-    let status = pull_requests
-        .entry(query.key)
-        .or_insert_with(|| github::pull_request_state(git_root, &query.view));
-    match *status {
+    match context
+        .retirement_queries
+        .borrow_mut()
+        .status(&context.git_root, link)
+    {
         PullRequestStatus::Open => PullRequestState::Open,
         PullRequestStatus::Closed | PullRequestStatus::Merged => PullRequestState::ClosedOrMerged,
         PullRequestStatus::Unavailable => PullRequestState::Unavailable,
     }
-}
-
-fn pull_request_query(git_root: &Path, link: &WorktreeLink) -> Option<PullRequestQuery> {
-    if let Some(url) = link
-        .url
-        .as_deref()
-        .map(str::trim)
-        .filter(|url| !url.is_empty())
-    {
-        return Some(PullRequestQuery {
-            key: url.to_string(),
-            view: url.to_string(),
-        });
-    }
-    let number = link.number?;
-    let repo = github::current_repo_name(git_root)?;
-    Some(PullRequestQuery {
-        key: format!("{repo}#{number}"),
-        view: number.to_string(),
-    })
 }
 
 /// A stale metadata record has neither a Git registration nor a directory.
@@ -948,6 +933,7 @@ fn preview(context: &Context, verdict: Verdict) -> CandidateEntry {
             action: Action::Skipped,
             detail: Some(hold_detail(context, hold, &subject)),
             branch_deleted: None,
+            preservation_reason: subject.preservation_reason.clone(),
             workspace: serde_json::Value::Null,
             changed: false,
         },
@@ -973,6 +959,7 @@ fn apply_verdict(
             action: Action::Skipped,
             detail: Some(hold_detail(context, hold, &subject)),
             branch_deleted: None,
+            preservation_reason: subject.preservation_reason.clone(),
             workspace: serde_json::Value::Null,
             changed: false,
         },
@@ -1066,8 +1053,14 @@ fn apply_delete(
                 } else {
                     Action::Removed
                 },
-                detail: outcome.metadata_error.or(outcome.branch_error),
+                detail: outcome.metadata_error.or(outcome.branch_error).or_else(|| {
+                    outcome
+                        .preservation_reason
+                        .filter(|reason| reason == "merged_pr")
+                        .map(|_| "preserved by merged PR".to_string())
+                }),
                 branch_deleted: Some(outcome.branch_deleted),
+                preservation_reason: subject.preservation_reason.clone(),
                 workspace: serde_json::Value::Null,
                 changed: true,
             }
@@ -1125,6 +1118,7 @@ fn apply_drop(
             action: Action::Skipped,
             detail: Some("Workspace branch or HEAD changed since gc planning".into()),
             branch_deleted: None,
+            preservation_reason: subject.preservation_reason.clone(),
             workspace: serde_json::Value::Null,
             changed: false,
         };
@@ -1162,6 +1156,7 @@ fn apply_drop(
             action: Action::Failed,
             detail: Some(error.to_string()),
             branch_deleted: Some(false),
+            preservation_reason: subject.preservation_reason.clone(),
             workspace: serde_json::Value::Null,
             changed: git_listed,
         };
@@ -1175,6 +1170,7 @@ fn apply_drop(
         action: Action::Removed,
         detail,
         branch_deleted: Some(branch_deleted),
+        preservation_reason: subject.preservation_reason.clone(),
         workspace: serde_json::Value::Null,
         changed: true,
     }
@@ -1197,6 +1193,7 @@ fn failed(subject: Subject, reasons: Vec<Reason>, detail: String) -> CandidateEn
         action: Action::Failed,
         detail: Some(detail),
         branch_deleted: None,
+        preservation_reason: subject.preservation_reason.clone(),
         workspace: serde_json::Value::Null,
         changed: false,
     }
@@ -1222,8 +1219,15 @@ fn entry_from_removal(
         branch: subject.branch.clone(),
         reasons: reasons.clone(),
         action,
-        detail,
+        detail: detail.or_else(|| {
+            subject
+                .preservation_reason
+                .as_deref()
+                .filter(|reason| *reason == "merged_pr")
+                .map(|_| "preserved by merged PR".to_string())
+        }),
         branch_deleted,
+        preservation_reason: subject.preservation_reason.clone(),
         workspace: serde_json::Value::Null,
         changed: false,
     }
@@ -1318,6 +1322,7 @@ mod tests {
                 name: "feature".to_string(),
                 branch: Some("feature".to_string()),
                 head: None,
+                preservation_reason: None,
             },
             registered: true,
             directory: DirState::Present,

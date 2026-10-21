@@ -730,6 +730,7 @@ fn remove(args: &[String]) -> Result<i32> {
                 items.push(serde_json::json!({
                     "workspace": plan.worktree.to_json(None), "removed": false,
                     "branchDeleted": false, "branchKeptReason": plan.branch_kept_reason,
+                    "preservationReason": plan.preservation_reason,
                     "alreadyGone": plan.worktree.orphaned, "error": null,
                     "wouldRemove": true,
                     "wouldDeleteBranch": !plan.worktree.detached && !plan.worktree.orphaned && plan.branch_kept_reason.is_none(),
@@ -812,12 +813,17 @@ fn remove(args: &[String]) -> Result<i32> {
                     continue;
                 }
                 outln!(
-                    "would remove {}{}",
+                    "would remove {}{}{}",
                     visible_text(item["workspace"]["name"].as_str().unwrap_or("workspace")),
                     if item["wouldDeleteBranch"] == true {
                         " and its branch"
                     } else {
                         " (branch kept or no checkout)"
+                    },
+                    if item["preservationReason"] == "merged_pr" {
+                        " (preserved by merged PR)"
+                    } else {
+                        ""
                     }
                 );
             }
@@ -878,6 +884,7 @@ fn remove(args: &[String]) -> Result<i32> {
                 items[index] = serde_json::json!({
                     "workspace": outcome.worktree.to_json(None), "removed": !outcome.worktree.orphaned,
                     "branchDeleted": outcome.branch_deleted, "branchKeptReason": branch_kept_reason,
+                    "preservationReason": outcome.preservation_reason,
                     "detail": outcome.branch_error,
                     "alreadyGone": outcome.worktree.orphaned,
                     "error": error.as_ref().map(|error| error.to_json(error.exit_code()).error),
@@ -2398,6 +2405,7 @@ mod forget_tests {
             )
             .unwrap();
             let context = Context {
+                retirement_queries: Default::default(),
                 git_root: repo.clone(),
                 source_checkout: repo.clone(),
                 worktrees_directory: root.join("workspaces"),

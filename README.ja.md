@@ -506,7 +506,9 @@ mabo remove .
 mabo gc [--merged] [--closed-pr] [--orphaned] [--older-than D] [--apply] [--keep-branch] [--no-hooks]
 ```
 
-remove は信頼済み pre-remove 後に checkout を削除し、フック後にも対象を再確認します。保存の根拠は base への統合（通常 merge、完全 tree-entry 遷移で証明した squash/rebase）か、tip と自身の upstream の完全一致です。base 未記録なら repo default。base/upstream は common directory の独立 ref に解決する必要があり、独自 fetch 名前空間も使えます。自分のブランチの symbolic alias、detached HEAD、裸の commit ID は根拠になりません。証明できれば削除、それ以外は branch_kept_unpreserved warning と branchKeptReason:unpreserved で保持します。keep-branch は必ず保持、delete-unpreserved-branch は未保存履歴の削除を許可します。
+remove は信頼済み pre-remove 後に checkout を削除し、フック後にも対象を再確認します。保存の根拠は base への統合（通常 merge、完全 tree-entry 遷移で証明した squash/rebase）か、tip と自身の upstream の完全一致です。base 未記録なら repo default。ローカルの証拠に使う base/upstream は common directory の独立 ref に解決する必要があり、独自 fetch 名前空間も使えます。自分のブランチの symbolic alias、detached HEAD、裸の commit ID は根拠になりません。証明できれば削除、それ以外は branch_kept_unpreserved warning と branchKeptReason:unpreserved で保持します。keep-branch は必ず保持、delete-unpreserved-branch は未保存履歴の削除を許可します。
+
+ローカルの保存判定で証明できなかった場合、remove と gc は名前付きブランチについて GitHub の証拠も確認します。記録済み PR（`set --pr` / `create --pr`）が `MERGED` で、`headRefOid` がローカル tip と一致するか、ローカル tip がその祖先なら保存済みです。祖先判定は PR コミットが既にローカルにある場合だけで、fetch はしません。partial clone（`extensions.partialClone` 設定あり、またはいずれかの remote が `promisor=true`）では Git のバージョンにかかわらず tip の完全一致だけを使い、PR オブジェクトの存在確認と祖先判定を行いません。記録 URL を `gh` に渡し、`gh repo view` が checkout から解決した repo との一致を確認します。番号だけならその repo を使います。未リンクなら `gh pr list --head BRANCH --state merged --limit 2` を1回実行し、結果がちょうど1件、head 名と tip ID が完全一致する場合だけ認め、祖先判定はしません。repo の解決はコマンドごとに1回です。gh なし・未認証・失敗・不正 JSON・曖昧な同一性・タイムアウトは従来のローカル判定を維持します。各 gh 呼び出しは10秒制限（正の `MABO_GH_TIMEOUT_MS` で短縮可）で認証プロンプトを無効化し、非対話時の stdin は `/dev/null`。失敗も含むリモート応答をコマンド内でキャッシュし、フック後もローカル tip と祖先関係を再確認します。JSON item に `preservationReason` を追加し、GitHub の証拠は `merged_pr`、remove のローカル証拠は `local`、それ以外は null または省略です。テキスト詳細も merged PR の証拠を示します。計画にも同じ規則が適用されます。既知の制限: repo の同一性はポートなしの `https://HOST/OWNER/REPO` で比較するため、HTTP やデフォルト以外のポートで提供される GitHub Enterprise では merged PR の証拠が成立せず、ブランチは保持されます（確認後に `git branch -d`）。
 
 変更・ステージ済み追跡ファイル（submodule を含む）や非 ignored の未追跡は --discard-changes が必要（なければ 4 dirty）。未保存の detached コミットは --delete-unpreserved-branch が必要（4 unpreserved）。権限は独立です。primary は常に 4 primary。dry-run はフックも変更もなく、plan:true、removed:false、wouldRemove/wouldDeleteBranch を返します。
 
@@ -523,6 +525,7 @@ clean でも populated submodule や残った submodule data は remove の事�
     "removed": true,
     "branchDeleted": true,
     "branchKeptReason": null,
+    "preservationReason": "local",
     "alreadyGone": false,
     "error": null
   }]
@@ -539,7 +542,7 @@ checkout 削除後にブランチ削除だけ失敗すると、branch_kept_delet
 
 squash/rebase は完全パス、mode、変更前後の完全 blob/gitlink ID を比較します。base の first-parent にある非 merge コミットを使い、squash は全遷移を1コミットと一致させ、rebase は workspace の全コミットを先祖から tip の順で別々の base コミットに対応させます。同じ証拠は再利用せず、後の編集でも base の履歴は根拠です。side history だけの証拠、検証不能 merge、曖昧な merge base、Git 失敗、内容差はブランチ保持。外部 diff/textconv、Git object 書き込み、merge-tree --write-tree は使いません。
 
-gc の既定は全3条件: 統合済み（--merged、証明済み squash/rebase も）、閉じたまたは merged のリンク PR（--closed-pr）、ディレクトリまたは登録なし（--orphaned）。--older-than D は createdAt で絞り、不明時刻は除外し、年齢だけでは候補にしません。D は正の整数と m/h/d/w。作成コミットのままでは merged ではなく、古い・未記録の reflog 判定も保守的です。
+gc の既定は全3条件: 統合済み（--merged、証明済み squash/rebase と merged PR の証拠も）、閉じたまたは merged のリンク PR（--closed-pr）、ディレクトリまたは登録なし（--orphaned）。--older-than D は createdAt で絞り、不明時刻は除外し、年齢だけでは候補にしません。D は正の整数と m/h/d/w。merged PR の証拠がなければ作成コミットのままでは merged ではなく、古い・未記録の reflog 判定も保守的です。
 
 apply なしは plan:true と 0（保護対象も含む）。apply は remove の安全判定に従い dirty/未保存をスキップし、対象別の `mabo remove 'NAME' --discard-changes` または --delete-unpreserved-branch を案内します。権限はまとめません。ヒントは repo を固定し、セレクタの一意性を確認します。cd/dot は既存ディレクトリだけで、消えた場合は記録したリンク、なければ `git -C REPO worktree remove --force -- PATH` でその Git 登録と HEAD reflog だけを消す例です。残る記録は後の orphan gc で整理できます。orphan はファイル・ブランチを残して記録/登録を片付けます。gh なし・PR 状態取得不可は unavailable。フック後に再確認し、失敗は永続的削除後なら 6、それ以外は 1 です。
 
@@ -550,6 +553,7 @@ apply なしは plan:true と 0（保護対象も含む）。apply は remove �
     "workspace": {},
     "reasons": ["merged"],
     "action": "wouldRemove",
+    "preservationReason": null,
     "detail": null
   }]
 }
