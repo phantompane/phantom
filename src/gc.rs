@@ -164,6 +164,9 @@ pub fn selection_from_flags(
 }
 
 pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Report> {
+    // Gathering facts, rendering workspaces and resolving hint selectors all
+    // inspect status; fsmonitor must not run anywhere in a read-only plan.
+    let _hooks = (!request.apply).then(crate::process::suppress_git_hooks);
     let facts = gather(context, &request.policy, None)?;
     let mut workspaces = worktree::list_worktrees(context, false, true)?;
     let common = git::canonical_common_dir(&context.git_root)?;
@@ -586,7 +589,23 @@ fn observe_listed(
             base,
             record.is_none(),
         ),
-        _ => true,
+        (None, _) => worktree
+            .head
+            .as_deref()
+            .zip(created_from)
+            .is_some_and(|(head, created)| {
+                // A detached checkout has no branch creation reflog to consult.
+                // Require a known creation commit and a different current HEAD.
+                let spec = format!("{created}^{{commit}}");
+                git::raw_git(
+                    &context.git_root,
+                    &["rev-parse", "--verify", "--quiet", &spec],
+                )
+                .is_ok_and(|created| {
+                    created.code == 0 && !created.stdout.trim().eq_ignore_ascii_case(head)
+                })
+            }),
+        _ => false,
     };
     let merged = moved && integrated;
     let preserved = git::retirement_preserved(
@@ -871,7 +890,7 @@ fn hold_detail(context: &Context, hold: Hold, subject: &Subject) -> String {
         .is_ok_and(|tree| paths::same_location(Path::new(&tree.path), &subject.path));
     let command = if resolves {
         let name = crate::allocation::shell_quote(std::ffi::OsStr::new(&subject.name));
-        format!("mabo -R {root} remove {name} {permission}")
+        format!("mabo -R {root} remove {permission} -- {name}")
     } else {
         let path = crate::allocation::shell_quote(subject.path.as_os_str());
         format!("(cd {path} && mabo -R {root} remove . {permission})")

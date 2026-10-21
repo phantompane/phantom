@@ -734,11 +734,22 @@ fn base_unknown_item(tree: &worktree::WorktreeInfo) -> Item {
     item.status(
         "base-unknown",
         Some(format!(
-            "Base was explicitly cleared; set a base: mabo set {} --base REF",
-            tree.name
+            "Base was explicitly cleared; set a base: {}",
+            set_base_hint(tree, "REF")
         )),
     );
     item
+}
+
+fn set_base_hint(tree: &worktree::WorktreeInfo, reference: &str) -> String {
+    if tree.name.starts_with('-') {
+        format!(
+            "(cd {} && mabo set . --base {reference})",
+            crate::allocation::shell_quote(&tree.path)
+        )
+    } else {
+        format!("mabo set {} --base {reference}", tree.name)
+    }
 }
 
 // Read private state directly, including registrations whose checkout is missing.
@@ -1012,10 +1023,7 @@ fn sync_tree(
     if !base_exists {
         item.status(
             "base-gone",
-            Some(format!(
-                "Set a new base: mabo set {} --base <ref>",
-                tree.name
-            )),
+            Some(format!("Set a new base: {}", set_base_hint(tree, "<ref>"))),
         );
         return Ok(item);
     }

@@ -661,6 +661,10 @@ fn remove(args: &[String]) -> Result<i32> {
             "Use `mabo remove SEL...`; use `mabo remove .` for the current workspace.",
         ));
     }
+    let dry_run = parsed.flag("dry-run");
+    // Even selector resolution lists status for other workspaces. Suppress Git
+    // hooks before any inspection so a plan cannot run fsmonitor commands.
+    let _hooks = dry_run.then(crate::process::suppress_git_hooks);
     let context = command_context(&parsed)?;
     metadata::load_strict(&context.git_root)?;
     let options = worktree::RemoveOptions {
@@ -668,7 +672,6 @@ fn remove(args: &[String]) -> Result<i32> {
         keep_branch: parsed.flag("keep-branch"),
         delete_unpreserved_branch: parsed.flag("delete-unpreserved-branch"),
     };
-    let dry_run = parsed.flag("dry-run");
     let mut items = Vec::new();
     let mut plans = Vec::new();
     let mut first_error = None;
