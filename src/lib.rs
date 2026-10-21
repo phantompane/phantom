@@ -1,6 +1,7 @@
 #![cfg_attr(
     not(test),
     deny(
+        clippy::disallowed_macros,
         clippy::unwrap_used,
         clippy::expect_used,
         clippy::panic,
@@ -23,7 +24,7 @@ pub mod github;
 pub mod help;
 pub mod metadata;
 pub mod names;
-mod output;
+pub mod output;
 pub mod paths;
 pub mod preferences;
 pub mod process;
