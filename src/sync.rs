@@ -477,10 +477,14 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         ));
     }
     metadata::load_strict(&context.git_root)?;
-    let listed = worktree::list_worktrees(context, true, true)?;
+    let listed = worktree::list_worktrees(context, false, true)?;
     let mut targets = Vec::new();
     if request.all {
-        targets = listed;
+        targets = listed
+            .iter()
+            .filter(|tree| !tree.is_default)
+            .cloned()
+            .collect();
     } else if !request.names.is_empty() {
         for name in &request.names {
             let tree = crate::selectors::resolve(context, name, false, None)?;
@@ -495,10 +499,10 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             }
         }
     } else if let Some(tree) = listed
-        .into_iter()
-        .find(|tree| crate::selectors::is_current(Path::new(&tree.path)))
+        .iter()
+        .find(|tree| !tree.is_default && crate::selectors::is_current(Path::new(&tree.path)))
     {
-        targets.push(tree);
+        targets.push(tree.clone());
     }
     if request.keep_conflicts && targets.len() != 1 {
         return Err(Error::validation(
@@ -522,6 +526,13 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
     } else {
         None
     };
+    // The default branch may be checked out outside the selected targets,
+    // including in the primary checkout. Honor its clear before planning fetches.
+    let cleared_default = listed.iter().find(|tree| {
+        !tree.detached
+            && Some(tree.branch.as_str()) == default_name.as_deref()
+            && tree.metadata.base_cleared
+    });
     targets.retain(|tree| {
         tree.metadata.base_cleared
             || tree.detached
@@ -544,9 +555,12 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         })
         .collect();
     let mut involved = BTreeSet::new();
-    for base in bases
+    for base in targets
         .iter()
-        .chain((!request.no_default).then_some(&fallback))
+        .zip(&bases)
+        .filter(|(tree, _)| !tree.metadata.base_cleared)
+        .map(|(_, base)| base)
+        .chain((!request.no_default && cleared_default.is_none()).then_some(&fallback))
     {
         if let Some(remote) = remote_for(base, &remotes) {
             involved.insert(remote);
@@ -580,13 +594,17 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
     let fetch_error =
         |base: &str| remote_for(base, &remotes).and_then(|remote| fetch_errors.get(&remote));
     if !request.no_default {
-        let item = match fallback_error.as_ref().or_else(|| fetch_error(&fallback)) {
-            Some(error) => Err(Error::msg(error.clone())),
-            None => sync_default(context, &fallback, &remotes),
-        };
-        let item = match item {
-            Ok(item) => item,
-            Err(error) => failed_item("default", error),
+        let item = if let Some(tree) = cleared_default {
+            base_unknown_item(tree)
+        } else {
+            let result = match fallback_error.as_ref().or_else(|| fetch_error(&fallback)) {
+                Some(error) => Err(Error::msg(error.clone())),
+                None => sync_default(context, &fallback, &remotes),
+            };
+            match result {
+                Ok(item) => item,
+                Err(error) => failed_item("default", error),
+            }
         };
         report.default = Some(item);
     }

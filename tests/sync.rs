@@ -3561,6 +3561,112 @@ fn cleared_base_on_default_checkout_is_skipped() {
     }
 }
 
+fn assert_cleared_default_skips_unavailable_remote(selectors: &[&str]) {
+    for no_default in [false, true] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        r.git(&r.main, &["checkout", "-b", "primary"]);
+        r.git(&tree, &["checkout", "main"]);
+        assert!(r.mabo(&tree, &["set", "--unset", "base"]).status.success());
+        r.advance();
+        r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
+        let before = r.snapshot(&tree);
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let records_before = records::read(&store).unwrap();
+        let refs_before = r.git(&r.main, &["for-each-ref"]);
+        let trace = r.root.join("trace");
+        let mut args = vec!["sync", "--json"];
+        args.extend_from_slice(selectors);
+        if no_default {
+            args.push("--no-default");
+        }
+        let out = r
+            .command(env!("CARGO_BIN_EXE_mabo"), &tree, &args)
+            .env("GIT_TRACE", &trace)
+            .output()
+            .unwrap();
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(doc["schema"], 2);
+        if no_default {
+            assert!(doc["data"]["default"].is_null());
+        } else {
+            assert_eq!(doc["data"]["default"]["status"], "base-unknown", "{doc}");
+        }
+        let items = doc["data"]["workspaces"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["status"], "base-unknown");
+        assert!(items[0]["base"].is_null());
+        assert_eq!(out.status.code(), Some(0), "{doc}");
+        assert!(!fs::read_to_string(&trace)
+            .unwrap()
+            .contains("fetch --prune"));
+        assert_eq!(r.snapshot(&tree), before);
+        assert_eq!(records::read(&store).unwrap(), records_before);
+        assert_eq!(r.git(&r.main, &["for-each-ref"]), refs_before);
+    }
+}
+
+#[test]
+fn cleared_default_named_sync_skips_unavailable_remote() {
+    assert_cleared_default_skips_unavailable_remote(&["topic"]);
+}
+
+#[test]
+fn cleared_default_all_sync_skips_unavailable_remote() {
+    assert_cleared_default_skips_unavailable_remote(&["--all"]);
+}
+
+#[test]
+fn cleared_default_implicit_sync_skips_unavailable_remote() {
+    assert_cleared_default_skips_unavailable_remote(&[]);
+}
+
+#[test]
+fn cleared_primary_default_skips_unavailable_remote() {
+    for selectors in [vec!["."], vec!["--all"], vec![]] {
+        let r = Repo::new();
+        assert!(r
+            .mabo(&r.main, &["set", "--unset", "base"])
+            .status
+            .success());
+        r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
+        let doc = r.sync(&r.main, &selectors, 0);
+        assert_eq!(doc["data"]["default"]["status"], "base-unknown");
+    }
+}
+
+#[test]
+fn cleared_bases_do_not_hide_other_targets_fetch_failures() {
+    for clear_default in [false, true] {
+        for selectors in [vec!["topic"], vec!["--all"], vec![]] {
+            let r = Repo::new();
+            let tree = r.create("topic");
+            let cleared = if clear_default { &r.main } else { &tree };
+            assert!(r
+                .mabo(cleared, &["set", "--unset", "base"])
+                .status
+                .success());
+            r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
+            let before = r.snapshot(&tree);
+            let doc = r.sync(&tree, &selectors, 1);
+            assert_eq!(doc["schema"], 2);
+            let (unknown, failed) = if clear_default {
+                (&doc["data"]["default"], &doc["data"]["workspaces"][0])
+            } else {
+                (&doc["data"]["workspaces"][0], &doc["data"]["default"])
+            };
+            assert_eq!(unknown["status"], "base-unknown", "{doc}");
+            assert!(unknown["base"].is_null());
+            assert_eq!(failed["status"], "failed", "{doc}");
+            assert!(failed["detail"]
+                .as_str()
+                .unwrap()
+                .contains("Fetch origin failed"));
+            assert_eq!(r.snapshot(&tree), before);
+        }
+    }
+}
+
 #[test]
 fn legacy_missing_base_falls_back_after_record_migration() {
     let r = Repo::new();
