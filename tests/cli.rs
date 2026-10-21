@@ -20500,6 +20500,9 @@ complete -C 'mabo ' > "$MABO_TEST_COMMANDS"
 complete -C 'mabo path ' > "$MABO_TEST_NAMES"
 complete -C 'mabo repo ' > "$MABO_TEST_CHILDREN"
 complete -C 'mabo sync --' > "$MABO_TEST_FLAGS"
+# The token under the cursor is a prefix to complete, not a consumed word.
+complete -C 'mabo pat' | string match -q -r '^path\t'; or exit 41
+complete -C 'mabo path ordin' | string match -q -r '^ordinary$'; or exit 42
 "#
     } else {
         r#"
