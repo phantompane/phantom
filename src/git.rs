@@ -583,12 +583,54 @@ pub(crate) fn tip_reachability(
 /// Retirement uses the selected base and the branch's own upstream only.
 /// Unlike sync's publication check, an unrelated remote is not preservation.
 pub(crate) fn retirement_integrated(root: &Path, tip: &str, base: &str) -> bool {
-    if raw_git(root, &["merge-base", "--is-ancestor", tip, base])
+    let Some(base) = retirement_destination(root, tip, base) else {
+        return false;
+    };
+    if raw_git(root, &["merge-base", "--is-ancestor", tip, &base])
         .is_ok_and(|result| result.code == 0)
     {
         return true;
     }
-    retirement_changes_landed(root, tip, base)
+    retirement_changes_landed(root, tip, &base)
+}
+
+// Evidence must survive deleting the checkout and its branch. Object IDs and
+// detached/pseudo refs prove reachability now, but do not provide a retained ref.
+// Require the resolved ref to live in the common Git directory, so removing a
+// linked checkout cannot remove it. Custom fetch namespaces are valid too.
+fn retirement_destination(root: &Path, tip: &str, destination: &str) -> Option<String> {
+    fn shared_ref(root: &Path, spec: &str) -> Option<String> {
+        let full = raw_git(
+            root,
+            &["rev-parse", "--symbolic-full-name", "--verify", spec],
+        )
+        .ok()?;
+        if full.code != 0 || full.stdout.lines().count() != 1 {
+            return None;
+        }
+        let full = full.stdout.trim();
+        let symbolic = raw_git(root, &["symbolic-ref", "--quiet", full]).ok()?;
+        let reference = match symbolic.code {
+            0 => symbolic.stdout.trim(),
+            1 => full,
+            _ => return None,
+        };
+        if !reference.starts_with("refs/") {
+            return None;
+        }
+        let location = raw_git(root, &["rev-parse", "--git-path", reference]).ok()?;
+        if location.code != 0 || location.stdout.lines().count() != 1 {
+            return None;
+        }
+        let common = git_common_dir(root).ok()?;
+        (normalize(&root.join(location.stdout.trim())) == normalize(&common.join(reference)))
+            .then(|| reference.to_owned())
+    }
+    let destination = shared_ref(root, destination)?;
+    if tip.starts_with("refs/") && shared_ref(root, tip)? == destination {
+        return None;
+    }
+    Some(destination)
 }
 
 pub(crate) fn retirement_preserved(
@@ -627,13 +669,16 @@ pub(crate) fn retirement_preserved(
     else {
         return false;
     };
+    let Some(upstream) = retirement_destination(root, &tip, upstream) else {
+        return false;
+    };
     let resolve = |spec: &str| {
         raw_git(root, &["rev-parse", "--verify", "--quiet", spec])
             .ok()
             .filter(|result| result.code == 0)
             .map(|result| result.stdout.trim().to_string())
     };
-    match (resolve(&tip), resolve(upstream)) {
+    match (resolve(&tip), resolve(&upstream)) {
         (Some(tip), Some(upstream)) => tip == upstream,
         _ => false,
     }

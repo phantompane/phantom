@@ -18158,3 +18158,313 @@ fn retirement_review2_sync_base_hints_accept_leading_hyphen_alias() {
         assert!(json_value(&decoy)["data"]["workspace"]["base"].is_null());
     }
 }
+
+#[test]
+fn retirement_review4_rejects_own_branch_as_base() {
+    assert_retirement_rejects_self_evidence("base");
+}
+
+#[test]
+fn retirement_review4_rejects_symbolic_base_to_own_branch() {
+    assert_retirement_rejects_self_evidence("symbolic-base");
+}
+
+#[test]
+fn retirement_review4_rejects_own_branch_as_upstream() {
+    assert_retirement_rejects_self_evidence("upstream");
+}
+
+#[test]
+fn retirement_review4_rejects_symbolic_upstream_to_own_branch() {
+    assert_retirement_rejects_self_evidence("symbolic-upstream");
+}
+
+fn assert_retirement_rejects_self_evidence(evidence: &str) {
+    let repo = Repo::new();
+    assert!(repo
+        .mabo(&["create", "topic", "--no-setup"])
+        .status
+        .success());
+    commit_file(&repo, "topic", "precious", "only on topic\n");
+    if evidence.contains("base") {
+        let base = if evidence == "base" { "topic" } else { "alias" };
+        if base == "alias" {
+            repo.git(&["branch", "alias"]);
+        }
+        assert!(repo
+            .mabo(&["set", "topic", "--base", base])
+            .status
+            .success());
+    } else {
+        repo.git(&["config", "branch.topic.remote", "."]);
+        repo.git(&[
+            "config",
+            "branch.topic.merge",
+            if evidence == "upstream" {
+                "refs/heads/topic"
+            } else {
+                "refs/heads/alias"
+            },
+        ]);
+    }
+    if evidence.starts_with("symbolic") {
+        // Retarget after recording too: stored names must be resolved at deletion time.
+        repo.git(&["symbolic-ref", "refs/heads/alias", "refs/heads/topic"]);
+    }
+    assert_retirement_review3_keeps_workspace(&repo, "topic", false);
+}
+
+#[test]
+fn retirement_review4_rejects_detached_head_and_unrooted_commit_bases() {
+    for base in ["HEAD", "oid", "worktree-head"] {
+        let repo = Repo::new();
+        assert!(repo
+            .mabo(&["create", "topic", "--detach", "--no-setup"])
+            .status
+            .success());
+        commit_file(&repo, "topic", "precious", "only in detached HEAD\n");
+        let path = managed(&repo, "topic");
+        let head = retirement_head_at(&repo, &path);
+        let admin = repo
+            .command("git", &["rev-parse", "--absolute-git-dir"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        assert!(admin.status.success());
+        let id = Path::new(&text(&admin.stdout))
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let reference = match base {
+            "oid" => head.trim().to_owned(),
+            "worktree-head" => format!("worktrees/{id}/HEAD"),
+            _ => "HEAD".to_owned(),
+        };
+        // Exercise imported/raw metadata as well as the OID produced by normalizing
+        // --base HEAD in a detached checkout. HEAD must not prove its own retention.
+        let store = repo.repo.join(".git/maboroshi/workspaces");
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
+        document["worktrees"][0]["base"] = serde_json::json!(reference);
+        records::write(&store, serde_json::to_vec(&document).unwrap()).unwrap();
+        if base == "HEAD" {
+            // The observing checkout's HEAD can itself be detached at this tip.
+            repo.git(&["checkout", "--detach", head.trim()]);
+        }
+        assert_retirement_review3_keeps_workspace(&repo, "topic", true);
+    }
+}
+
+#[test]
+fn retirement_review4_accepts_independent_refs_at_same_commit() {
+    for evidence in [
+        "branch",
+        "tag",
+        "custom-fetch",
+        "symbolic-base",
+        "upstream",
+        "symbolic-upstream",
+    ] {
+        let repo = Repo::new();
+        assert!(repo
+            .mabo(&["create", "topic", "--no-setup"])
+            .status
+            .success());
+        commit_file(&repo, "topic", "precious", "saved independently\n");
+        repo.git(&["branch", "saved", "topic"]);
+        repo.git(&["symbolic-ref", "refs/heads/alias", "refs/heads/saved"]);
+        if evidence.contains("upstream") {
+            repo.git(&["config", "branch.topic.remote", "."]);
+            repo.git(&[
+                "config",
+                "branch.topic.merge",
+                if evidence == "upstream" {
+                    "refs/heads/saved"
+                } else {
+                    "refs/heads/alias"
+                },
+            ]);
+        } else {
+            let base = match evidence {
+                "custom-fetch" => {
+                    repo.git(&["update-ref", "refs/cache/saved", "topic"]);
+                    "refs/cache/saved"
+                }
+                "tag" => {
+                    repo.git(&["tag", "archive", "topic"]);
+                    "refs/tags/archive"
+                }
+                "symbolic-base" => "alias",
+                _ => "saved",
+            };
+            assert!(repo
+                .mabo(&["set", "topic", "--base", base])
+                .status
+                .success());
+        }
+        let out = repo.mabo(&["remove", "topic", "--json"]);
+        assert!(out.status.success(), "{evidence}: {}", text(&out.stdout));
+        assert_eq!(
+            json_value(&out)["data"]["items"][0]["branchDeleted"],
+            true,
+            "{evidence}"
+        );
+        assert!(branch_listed(&repo, "saved"));
+    }
+}
+
+#[test]
+fn retirement_review4_missing_git_only_workspace_hint_uses_link() {
+    assert_retirement_missing_git_only_hint("linked");
+}
+
+#[test]
+fn retirement_review4_missing_git_only_workspace_hint_uses_git() {
+    assert_retirement_missing_git_only_hint("unrecorded");
+    assert_retirement_missing_git_only_hint("ambiguous");
+}
+
+fn assert_retirement_missing_git_only_hint(kind: &str) {
+    for json in [false, true] {
+        for apply in [false, true] {
+            let repo = Repo::new();
+            let other = Repo::new();
+            let path = managed(&repo, "topic+fix");
+            repo.git(&[
+                "worktree",
+                "add",
+                "--detach",
+                path.to_str().unwrap(),
+                "HEAD",
+            ]);
+            if kind != "unrecorded" {
+                let out = repo.mabo(&["adopt", path.to_str().unwrap(), "--issue", "17"]);
+                assert!(out.status.success(), "{}", text(&out.stderr));
+                if kind == "ambiguous" {
+                    let decoy = managed(&repo, "decoy");
+                    repo.git(&[
+                        "worktree",
+                        "add",
+                        "-b",
+                        "decoy",
+                        decoy.to_str().unwrap(),
+                        "HEAD",
+                    ]);
+                    let adopted = repo.mabo(&["adopt", decoy.to_str().unwrap(), "--issue", "17"]);
+                    assert!(adopted.status.success(), "{}", text(&adopted.stderr));
+                }
+            }
+            commit_file(
+                &repo,
+                "topic+fix",
+                "precious",
+                "unpreserved detached work\n",
+            );
+            let admin = repo
+                .command("git", &["rev-parse", "--absolute-git-dir"])
+                .current_dir(&path)
+                .output()
+                .unwrap();
+            assert!(admin.status.success());
+            let admin = PathBuf::from(text(&admin.stdout));
+            let head = fs::read(admin.join("HEAD")).unwrap();
+            let reflog = fs::read(admin.join("logs/HEAD")).unwrap();
+            fs::remove_dir_all(&path).unwrap();
+            let mut args = vec!["-R", repo.repo.to_str().unwrap(), "gc", "--orphaned"];
+            if json {
+                args.push("--json");
+            }
+            if apply {
+                args.push("--apply");
+            }
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .current_dir(&other.repo)
+                .output()
+                .unwrap();
+            let hint = retirement_review_gc_hint(&out, json);
+            assert_eq!(fs::read(admin.join("HEAD")).unwrap(), head);
+            assert_eq!(fs::read(admin.join("logs/HEAD")).unwrap(), reflog);
+            assert!(!hint.contains("cd "), "{hint}");
+            if kind == "linked" {
+                assert!(hint.contains("'issue:17'"), "{hint}");
+                assert!(hint.contains("--delete-unpreserved-branch"), "{hint}");
+            } else {
+                assert!(hint.contains("worktree remove --force"), "{hint}");
+            }
+            let removed = run_setup_retry_hint(&repo, &other.repo, &hint);
+            assert!(
+                removed.status.success(),
+                "{hint}: {} {}",
+                text(&removed.stdout),
+                text(&removed.stderr)
+            );
+            assert!(!admin.exists(), "{hint}");
+            assert!(!worktree_registered(&repo, "topic+fix"));
+            assert!(other.repo.join(".git").is_dir());
+            if kind == "ambiguous" {
+                assert!(managed(&repo, "decoy").is_dir());
+            }
+        }
+    }
+}
+
+#[test]
+fn retirement_review4_sync_missing_directory_hint_can_set_base() {
+    let repo = Repo::new();
+    assert!(repo
+        .mabo(&["create", "topic", "--no-setup"])
+        .status
+        .success());
+    assert!(repo
+        .mabo(&["set", "topic", "--unset", "base"])
+        .status
+        .success());
+    persist_retirement_hyphen_alias(&repo);
+    fs::remove_dir_all(managed(&repo, "topic")).unwrap();
+    let other = Repo::new();
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &[
+                "-R",
+                repo.repo.to_str().unwrap(),
+                "sync",
+                "--json",
+                "--",
+                "-alias",
+            ],
+        )
+        .current_dir(&other.repo)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    let doc = json_value(&out);
+    let hint = doc["data"]["workspaces"][0]["detail"]
+        .as_str()
+        .unwrap()
+        .split_once(": ")
+        .unwrap()
+        .1
+        .replace("REF", "main");
+    assert!(!hint.contains("cd "), "{hint}");
+    let set = run_setup_retry_hint(&repo, &other.repo, &hint);
+    assert!(
+        set.status.success(),
+        "{hint}: {} {}",
+        text(&set.stdout),
+        text(&set.stderr)
+    );
+    let show = repo.mabo(&["show", "--json", "--", "-alias"]);
+    assert_eq!(
+        json_value(&show)["data"]["workspace"]["base"],
+        "refs/heads/main"
+    );
+}

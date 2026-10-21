@@ -884,16 +884,41 @@ fn hold_detail(context: &Context, hold: Hold, subject: &Subject) -> String {
         _ => return hold.detail().to_string(),
     };
     let root = crate::allocation::shell_quote(context.git_root.as_os_str());
-    // Names observed in Git need not be legal or unique user selectors.
-    let resolves = crate::selectors::Selector::parse(&subject.name)
-        .and_then(|selector| selector.resolve_including_orphaned(context, false, None))
-        .is_ok_and(|tree| paths::same_location(Path::new(&tree.path), &subject.path));
-    let command = if resolves {
-        let name = crate::allocation::shell_quote(std::ffi::OsStr::new(&subject.name));
-        format!("mabo -R {root} remove {permission} -- {name}")
-    } else {
+    // Names observed in Git need not be legal or unique user selectors. Links
+    // can still select a missing checkout; verify each candidate independently.
+    let mut candidates = vec![subject.name.clone()];
+    if let Ok(records) = metadata::load_strict(&context.git_root) {
+        if let Some(record) = records.get(&metadata::path_key(&subject.path)) {
+            for (kind, link) in [("pr", &record.links.pr), ("issue", &record.links.issue)] {
+                if let Some(link) = link {
+                    if let Some(number) = link.number {
+                        candidates.push(format!("{kind}:{number}"));
+                    }
+                    if let Some(url) = &link.url {
+                        candidates.push(url.clone());
+                    }
+                }
+            }
+        }
+    }
+    let selector = candidates.into_iter().find(|candidate| {
+        crate::selectors::resolve_including_orphaned(context, candidate, false, None)
+            .is_ok_and(|tree| paths::same_location(Path::new(&tree.path), &subject.path))
+    });
+    let command = if let Some(selector) = selector {
+        let selector = crate::allocation::shell_quote(std::ffi::OsStr::new(&selector));
+        format!("mabo -R {root} remove {permission} -- {selector}")
+    } else if subject.path.is_dir() {
         let path = crate::allocation::shell_quote(subject.path.as_os_str());
         format!("(cd {path} && mabo -R {root} remove . {permission})")
+    } else {
+        // There is nowhere to cd and no unambiguous mabo selector. Git accepts
+        // the exact missing path and removes only this registration. A remaining
+        // metadata record can be cleaned by a subsequent orphan gc.
+        let path = crate::allocation::shell_quote(subject.path.as_os_str());
+        return format!(
+            "{status}; directory missing; Git removal discards this workspace registration and its HEAD reflog; use git -C {root} worktree remove --force -- {path}"
+        );
     };
     format!("{status}; use {command}")
 }

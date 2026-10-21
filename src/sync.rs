@@ -600,7 +600,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         |base: &str| remote_for(base, &remotes).and_then(|remote| fetch_errors.get(&remote));
     if !request.no_default {
         let item = if let Some(tree) = cleared_default {
-            base_unknown_item(tree)
+            base_unknown_item(context, tree)
         } else {
             let result = match (
                 fallback_error.as_ref().or_else(|| fetch_error(&fallback)),
@@ -619,7 +619,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
     }
     for (tree, base) in targets.iter().zip(&bases) {
         if tree.metadata.base_cleared {
-            report.worktrees.push(base_unknown_item(tree));
+            report.worktrees.push(base_unknown_item(context, tree));
             continue;
         }
         // Only targets using the failed remote must refuse their stale base.
@@ -728,21 +728,27 @@ fn tree_item(tree: &worktree::WorktreeInfo, base: &str) -> Item {
     }
 }
 
-fn base_unknown_item(tree: &worktree::WorktreeInfo) -> Item {
+fn base_unknown_item(context: &Context, tree: &worktree::WorktreeInfo) -> Item {
     let mut item = tree_item(tree, "");
     item.base = None;
     item.status(
         "base-unknown",
         Some(format!(
             "Base was explicitly cleared; set a base: {}",
-            set_base_hint(tree, "REF")
+            set_base_hint(context, tree, "REF")
         )),
     );
     item
 }
 
-fn set_base_hint(tree: &worktree::WorktreeInfo, reference: &str) -> String {
-    if tree.name.starts_with('-') {
+fn set_base_hint(context: &Context, tree: &worktree::WorktreeInfo, reference: &str) -> String {
+    if tree.name.starts_with('-') && !Path::new(&tree.path).is_dir() {
+        format!(
+            "mabo -R {} set --base {reference} -- {}",
+            crate::allocation::shell_quote(&context.git_root),
+            crate::allocation::shell_quote(&tree.name)
+        )
+    } else if tree.name.starts_with('-') {
         format!(
             "(cd {} && mabo set . --base {reference})",
             crate::allocation::shell_quote(&tree.path)
@@ -894,7 +900,7 @@ fn sync_default(context: &Context, base: &str, local_name: &str) -> Result<Item>
         .find(|tree| !tree.detached && tree.branch == local_name);
     if let Some(tree) = &checked {
         if tree.metadata.base_cleared {
-            return Ok(base_unknown_item(tree));
+            return Ok(base_unknown_item(context, tree));
         }
         item.path = Some(tree.path.clone());
     }
@@ -1023,7 +1029,10 @@ fn sync_tree(
     if !base_exists {
         item.status(
             "base-gone",
-            Some(format!("Set a new base: {}", set_base_hint(tree, "<ref>"))),
+            Some(format!(
+                "Set a new base: {}",
+                set_base_hint(context, tree, "<ref>")
+            )),
         );
         return Ok(item);
     }
