@@ -14215,6 +14215,117 @@ fn create_reuse_propagates_corrupt_record_errors() {
 }
 
 #[test]
+fn review2_branch_usage_compares_branches_when_workspace_names_cross() {
+    for reuse in [false, true] {
+        let repo = Repo::new();
+        repo.git(&["branch", "feature"]);
+        repo.git(&["branch", "review"]);
+        let first = repo.mabo(&["create", "review", "--branch", "feature", "--json"]);
+        assert!(first.status.success(), "{}", text(&first.stdout));
+        let mut args = vec!["create", "second", "--branch", "review", "--json"];
+        if reuse {
+            args.push("--reuse");
+        }
+        let second = repo.mabo(&args);
+        assert!(second.status.success(), "{}", text(&second.stdout));
+        let doc = assert_envelope(&second, "create");
+        assert_eq!(doc["data"]["workspace"]["name"], "second");
+        assert_eq!(doc["data"]["workspace"]["branch"], "review");
+        assert_eq!(doc["data"]["source"]["reused"], false);
+        for branch in ["feature", "review", "main"] {
+            let out = repo.mabo(&["create", "third", "--branch", branch, "--json"]);
+            assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
+            assert_eq!(json_value(&out)["error"]["code"], "exists");
+        }
+        assert!(!managed(&repo, "third").exists());
+    }
+}
+
+#[test]
+fn review2_pr_usage_compares_branches_when_workspace_names_cross() {
+    for reuse in [false, true] {
+        let repo = Repo::new();
+        let path = fake_gh_for_topic_pr(&repo);
+        publish_pr_topic(&repo);
+        repo.git(&["branch", "feature"]);
+        let first = repo.mabo(&["create", "topic", "--branch", "feature", "--json"]);
+        assert!(first.status.success(), "{}", text(&first.stdout));
+        let mut args = vec!["create", "second", "--pr", "7", "--json"];
+        if reuse {
+            args.push("--reuse");
+        }
+        let run = |args: &[&str]| {
+            repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+                .env("PATH", &path)
+                .output()
+                .expect("mabo")
+        };
+        let second = run(&args);
+        assert!(second.status.success(), "{}", text(&second.stdout));
+        let doc = assert_envelope(&second, "create");
+        assert_eq!(doc["data"]["workspace"]["name"], "second");
+        assert_eq!(doc["data"]["workspace"]["branch"], "topic");
+        assert_eq!(doc["data"]["source"]["reused"], false);
+        assert!(managed(&repo, "second/topic.txt").is_file());
+        let out = run(&["create", "third", "--pr", "7", "--json"]);
+        assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
+        assert_eq!(json_value(&out)["error"]["code"], "exists");
+        assert!(!managed(&repo, "third").exists());
+    }
+}
+
+#[test]
+fn review2_reuse_with_an_explicit_name_does_not_reuse_a_branch_alias() {
+    for pr in [false, true] {
+        let repo = Repo::new();
+        let path = fake_gh_for_topic_pr(&repo);
+        publish_pr_topic(&repo);
+        let first = repo.mabo(&["create", "review", "--branch", "origin/topic", "--json"]);
+        assert!(first.status.success(), "{}", text(&first.stdout));
+        let out = repo
+            .command(
+                env!("CARGO_BIN_EXE_mabo"),
+                &[
+                    "create",
+                    "topic",
+                    if pr { "--pr" } else { "--branch" },
+                    if pr { "7" } else { "topic" },
+                    "--reuse",
+                    "--json",
+                ],
+            )
+            .env("PATH", &path)
+            .output()
+            .expect("mabo");
+        assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
+        assert_eq!(json_value(&out)["error"]["code"], "exists");
+        assert!(!managed(&repo, "topic").exists());
+        let reused = repo.mabo(&["create", "review", "--branch", "topic", "--reuse", "--json"]);
+        assert!(reused.status.success(), "{}", text(&reused.stdout));
+        assert_eq!(json_value(&reused)["data"]["source"]["reused"], true);
+    }
+}
+
+#[test]
+fn review2_explicit_detached_name_can_match_another_workspaces_branch() {
+    let repo = Repo::new();
+    repo.git(&["branch", "feature"]);
+    let first = repo.mabo(&["create", "review", "--branch", "feature", "--json"]);
+    assert!(first.status.success(), "{}", text(&first.stdout));
+    let new = repo.mabo(&["create", "feature", "--json"]);
+    assert_eq!(new.status.code(), Some(4));
+    assert_eq!(json_value(&new)["error"]["code"], "exists_remote");
+    for reused in [false, true] {
+        let out = repo.mabo(&["create", "feature", "--detach", "--reuse", "--json"]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = assert_envelope(&out, "create");
+        assert_eq!(doc["data"]["workspace"]["name"], "feature");
+        assert_eq!(doc["data"]["workspace"]["detached"], true);
+        assert_eq!(doc["data"]["source"]["reused"], reused);
+    }
+}
+
+#[test]
 fn review1_create_rejects_names_outside_the_workspace_root_for_every_source() {
     for source in [
         vec![],

@@ -458,6 +458,18 @@ pub(crate) fn require_live(found: WorktreeInfo, name: &str) -> Result<WorktreeIn
 }
 
 /// Literal internal lookup, including stale records; no input validation.
+/// Only workspace names match; branch aliases are excluded.
+pub(crate) fn find_named_including_orphaned(context: &Context, name: &str) -> Result<WorktreeInfo> {
+    select_worktree(
+        list_worktrees(context, false, true)?
+            .into_iter()
+            .filter(|tree| tree.name == name)
+            .collect(),
+        name,
+    )
+}
+
+/// Literal internal lookup, including stale records; no input validation.
 pub fn find_including_orphaned(
     context: &Context,
     name: &str,

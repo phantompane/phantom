@@ -22,15 +22,31 @@ pub(crate) struct Request<'a> {
     pub hooks: trust::HookControl,
 }
 
-// Observed names are literal. A stale record is not an existing checkout.
-fn existing(context: &Context, name: &str) -> Result<Option<worktree::WorktreeInfo>> {
-    match worktree::find_including_orphaned(context, name, false, None) {
-        Ok(tree) if !tree.orphaned => match std::fs::metadata(&tree.path) {
-            Ok(meta) => Ok(meta.is_dir().then_some(tree)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(Error::msg(format!("Failed to inspect workspace: {error}"))),
-        },
-        Ok(_) => Ok(None),
+fn is_live_checkout(tree: &worktree::WorktreeInfo) -> Result<bool> {
+    if tree.orphaned {
+        return Ok(false);
+    }
+    match std::fs::metadata(&tree.path) {
+        Ok(meta) => Ok(meta.is_dir()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(Error::msg(format!("Failed to inspect workspace: {error}"))),
+    }
+}
+
+// An explicit NAME identifies a workspace, not another workspace's branch.
+// Inferred names retain the branch fallback for unnamed checkout/reuse.
+fn existing(
+    context: &Context,
+    name: &str,
+    explicit_name: bool,
+) -> Result<Option<worktree::WorktreeInfo>> {
+    let found = if explicit_name {
+        worktree::find_named_including_orphaned(context, name)
+    } else {
+        worktree::find_including_orphaned(context, name, false, None)
+    };
+    match found {
+        Ok(tree) => Ok(is_live_checkout(&tree)?.then_some(tree)),
         Err(Error::WorktreeNotFound(_)) => Ok(None),
         Err(error) => Err(error),
     }
@@ -203,7 +219,7 @@ pub(crate) fn create(
             source["url"] = json!(link.url);
         }
     }
-    if let Some(tree) = existing(context, &name)? {
+    if let Some(tree) = existing(context, &name, request.name.is_some())? {
         let source_matches = if pull.is_some() {
             tree.branch == branch.as_deref().unwrap_or_default()
                 && (tree.metadata.links.pr.is_none()
@@ -272,8 +288,10 @@ pub(crate) fn create(
     }
     // Refuse a branch already checked out under another workspace name before fetching.
     if let Some(branch) = &branch {
-        if existing(context, branch)?.is_some() {
-            return Err(Error::WorktreeAlreadyExists(name));
+        for tree in worktree::list_worktrees(context, false, true)? {
+            if !tree.detached && tree.branch == *branch && is_live_checkout(&tree)? {
+                return Err(Error::WorktreeAlreadyExists(name));
+            }
         }
     }
     let commands = trust::authorize(
