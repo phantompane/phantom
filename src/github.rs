@@ -1,162 +1,71 @@
 use std::path::Path;
 
-use serde::Serialize;
 use serde_json::Value;
 
-use crate::context;
-use crate::error::{self, Error, Result};
+use crate::error::{Error, Result};
 use crate::git;
-use crate::metadata::{self, MetadataInput, WorktreeLink};
+use crate::metadata::{self, WorktreeLink};
 use crate::process;
-use crate::worktree::{self, Logger, WorktreeInfo};
 
-pub struct Checkout {
-    pub message: String,
-    pub worktree: String,
-    pub path: std::path::PathBuf,
-    pub already_exists: bool,
-    pub hook_failure: Option<worktree::HookFailure>,
-    pub copy_error: Option<String>,
-    pub hooks_ran: bool,
-    pub metadata_error: Option<String>,
-    pub info: WorktreeInfo,
-    pub base: Option<String>,
-    pub subject: GithubSubject,
+/// GitHub source information, resolved before checkout mutation.
+pub(crate) struct PullRequest {
+    pub number: u64,
+    pub fork: bool,
+    pub head_ref: String,
+    pub head_repo: String,
+    pub base_ref: Option<String>,
 }
 
-pub enum GithubSubject {
-    PullRequest {
-        number: u64,
-        head_ref: String,
-        source: Option<PullSource>,
-    },
-    Issue {
-        number: u64,
-    },
+pub(crate) struct Subject {
+    pub link: WorktreeLink,
+    pub title: Option<String>,
+    pub pull: Option<PullRequest>,
 }
 
-#[derive(Clone, Copy)]
-pub enum PullSource {
-    Branch,
-    PullHead,
-}
-
-impl PullSource {
-    fn json_name(self) -> &'static str {
-        match self {
-            Self::Branch => "branch",
-            Self::PullHead => "pullHead",
+pub(crate) fn resolve(directory: &Path, reference: &str, pr: bool) -> Result<Subject> {
+    let link = metadata::parse_link(reference)?;
+    let number = link
+        .number
+        .ok_or_else(|| Error::validation("Expected a PR or issue number or URL"))?;
+    let repo = repo_info(directory)?;
+    if let Some(url) = link.url.as_deref() {
+        let expected = subject_link(&repo, number, if pr { "pull" } else { "issues" });
+        if !expected
+            .url
+            .as_deref()
+            .is_some_and(|expected| crate::selectors::source_urls_equal(url, expected))
+        {
+            return Err(Error::validation(
+                "Source URL must identify the selected repository and source kind",
+            ));
         }
     }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct GithubCheckoutOutput {
-    version: u32,
-    #[serde(rename = "workspace")]
-    worktree: worktree::WorktreeJson,
-    github: GithubSubjectOutput,
-    copy_files: worktree::CopyFilesOutcome,
-    post_create: worktree::PostCreateOutcome,
-    metadata: worktree::MetadataSaveOutcome,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct GithubSubjectOutput {
-    kind: &'static str,
-    number: u64,
-    head_ref: Option<String>,
-    already_exists: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    source: Option<&'static str>,
-}
-
-impl Checkout {
-    pub fn to_json(&self) -> Result<Value> {
-        let (kind, number, head_ref, source) = match &self.subject {
-            GithubSubject::PullRequest {
-                number,
-                head_ref,
-                source,
-            } => (
-                "pullRequest",
-                *number,
-                Some(head_ref.clone()),
-                source.map(PullSource::json_name),
-            ),
-            GithubSubject::Issue { number } => ("issue", *number, None, None),
-        };
-        serde_json::to_value(GithubCheckoutOutput {
-            version: error::JSON_VERSION,
-            worktree: self.info.to_json(self.base.clone()),
-            github: GithubSubjectOutput {
-                kind,
-                number,
-                head_ref,
-                already_exists: self.already_exists,
-                source,
-            },
-            copy_files: worktree::copy_files_outcome(self.copy_error.as_deref()),
-            post_create: worktree::post_create_outcome(self.hooks_ran, self.hook_failure.as_ref()),
-            metadata: worktree::metadata_save_outcome(self.metadata_error.as_deref()),
-        })
-        .map_err(|error| Error::msg(error.to_string()))
+    let issue = fetch_issue(
+        directory,
+        &repo.host,
+        &repo.owner,
+        &repo.name,
+        &number.to_string(),
+    )?
+    .ok_or_else(|| Error::Status {
+        code: "not_found",
+        message: format!("GitHub subject #{number} not found or inaccessible"),
+    })?;
+    if pr != issue.pull_request.is_some() {
+        return Err(Error::validation(
+            "Use --pr for a pull request or --issue for an issue",
+        ));
     }
-}
-
-pub fn checkout(
-    number: &str,
-    base: Option<&str>,
-    logger: &Logger,
-    repository: Option<&Path>,
-    metadata: MetadataInput,
-    hooks: crate::trust::HookControl,
-) -> Result<Checkout> {
-    let cwd = match repository {
-        Some(path) => path.to_path_buf(),
-        None => std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?,
-    };
-    let repo = repo_info(&cwd)?;
-    let issue = fetch_issue(&cwd, &repo.host, &repo.owner, &repo.name, number)?;
-    let Some(issue) = issue else {
-        return Err(Error::msg(format!(
-            "GitHub issue or pull request #{number} not found or you don't have permission to access it."
-        )));
-    };
-    if let Some(pull) = issue.pull_request {
-        if base.is_some() {
-            return Err(Error::msg(format!(
-                "The --base option cannot be used with pull requests. Pull request #{number} already has a branch '{}'.",
-                pull.head_ref
-            )));
-        }
-        checkout_pull_request(&pull, &repo, logger, repository, metadata, hooks)
-    } else {
-        checkout_issue(
-            issue.number,
-            base,
-            &repo,
-            logger,
-            repository,
-            metadata,
-            hooks,
-        )
-    }
+    Ok(Subject {
+        link: subject_link(&repo, number, if pr { "pull" } else { "issues" }),
+        title: issue.title,
+        pull: issue.pull_request,
+    })
 }
 
 struct Issue {
-    number: u64,
+    title: Option<String>,
     pull_request: Option<PullRequest>,
-}
-
-struct PullRequest {
-    number: u64,
-    fork: bool,
-    head_ref: String,
-    head_repo: String,
-    base_ref: Option<String>,
 }
 
 /// `refs/pull/<n>/head` still exists after GitHub deletes the head branch.
@@ -164,13 +73,17 @@ fn pull_head_refspec(number: u64, local_branch: &str) -> String {
     format!("refs/pull/{number}/head:refs/heads/{local_branch}")
 }
 
-enum PullFetch {
-    Branch { upstream: String },
+pub(crate) enum PullFetch {
+    Branch,
     Fork,
     DeletedHead,
 }
 
-fn fetch_pull_head(git_root: &Path, pull: &PullRequest, local_branch: &str) -> Result<PullFetch> {
+pub(crate) fn fetch_pull_head(
+    git_root: &Path,
+    pull: &PullRequest,
+    local_branch: &str,
+) -> Result<PullFetch> {
     if pull.fork {
         git::fetch(
             git_root,
@@ -182,7 +95,7 @@ fn fetch_pull_head(git_root: &Path, pull: &PullRequest, local_branch: &str) -> R
     }
     if git::remote_has_branch(git_root, "origin", &pull.head_ref)? {
         match fetch_head_branch(git_root, &pull.head_ref, local_branch) {
-            Ok(upstream) => return Ok(PullFetch::Branch { upstream }),
+            Ok(_) => return Ok(PullFetch::Branch),
             Err(error) if missing_remote_ref(&error) => {}
             Err(error) => return Err(error),
         }
@@ -209,245 +122,6 @@ fn missing_remote_ref(error: &Error) -> bool {
     error.to_string().contains("couldn't find remote ref")
 }
 
-fn checkout_pull_request(
-    pull: &PullRequest,
-    repo: &RepoIdentity,
-    logger: &Logger,
-    repository: Option<&Path>,
-    mut metadata: MetadataInput,
-    hooks: crate::trust::HookControl,
-) -> Result<Checkout> {
-    let context = context::open(repository)?;
-    let git_root = &context.git_root;
-    let worktree_name = if pull.fork {
-        let owner = pull.head_repo.split('/').next().unwrap_or("");
-        if owner.is_empty() {
-            pull.head_ref.clone()
-        } else {
-            format!("{owner}/{}", pull.head_ref)
-        }
-    } else {
-        pull.head_ref.clone()
-    };
-    metadata.pr = Some(subject_link(repo, pull.number, "pull"));
-    match worktree::find_including_orphaned(&context, &worktree_name, false, None) {
-        Ok(existing) if !existing.orphaned && existing.branch == worktree_name => {
-            let info = record_existing_checkout(&context, Path::new(&existing.path), &metadata)?;
-            let path = info.path.clone().into();
-            return Ok(Checkout {
-                message: format!("PR #{} is already checked out", pull.number),
-                worktree: worktree_name,
-                path,
-                already_exists: true,
-                hook_failure: None,
-                copy_error: None,
-                hooks_ran: false,
-                metadata_error: None,
-                info,
-                base: None,
-                subject: GithubSubject::PullRequest {
-                    number: pull.number,
-                    head_ref: pull.head_ref.clone(),
-                    source: None,
-                },
-            });
-        }
-        Ok(_) | Err(Error::WorktreeNotFound(_)) => {}
-        Err(error) => return Err(error),
-    }
-    let post = post_commands(&context);
-    let commands = crate::trust::authorize(
-        git_root,
-        &post,
-        crate::config::pre_delete_commands(context.config.as_ref()),
-        crate::trust::HookKind::PostCreate,
-        hooks,
-    )?;
-    metadata::prepare(git_root)?;
-    let branch_existed = git::branch_exists(git_root, &worktree_name)?;
-    let result = (|| {
-        let fetched = fetch_pull_head(git_root, pull, &worktree_name)?;
-        // All PR fetch paths use the base repository's origin remote.
-        metadata.base = Some(match pull.base_ref.as_deref() {
-            Some(base)
-                if crate::sync::normalize_base(
-                    git_root,
-                    &format!("refs/remotes/origin/{base}"),
-                )
-                .is_ok() =>
-            {
-                format!("refs/remotes/origin/{base}")
-            }
-            _ => crate::sync::creation_base(git_root, None)?,
-        });
-        let attached = worktree::attach_worktree_inner(
-            &context,
-            &worktree_name,
-            &[],
-            &commands,
-            logger,
-            &metadata,
-        )?;
-        Ok((fetched, attached))
-    })();
-    let (fetched, attached) = match result {
-        Ok(checkout) => checkout,
-        Err(error) => {
-            // Git refuses to delete a branch attached to a worktree. Only remove
-            // branches created by this attempt, never a pre-existing branch.
-            if !branch_existed && git::branch_exists(git_root, &worktree_name)? {
-                if let Err(cleanup) = git::delete_branch(git_root, &worktree_name) {
-                    return Err(Error::msg(format!(
-                        "{error}; branch cleanup failed: {cleanup}"
-                    )));
-                }
-            }
-            return Err(error);
-        }
-    };
-    let (message, base, source) = match fetched {
-        PullFetch::Branch { upstream } => (
-            format!(
-                "Checked out PR #{} from branch {}",
-                pull.number, pull.head_ref
-            ),
-            Some(upstream),
-            Some(PullSource::Branch),
-        ),
-        PullFetch::Fork => (
-            format!(
-                "Checked out PR #{} from fork {}",
-                pull.number, pull.head_repo
-            ),
-            None,
-            Some(PullSource::PullHead),
-        ),
-        PullFetch::DeletedHead => (
-            format!(
-                "Checked out PR #{} from pull/{}/head (head branch deleted; no upstream)",
-                pull.number, pull.number
-            ),
-            None,
-            Some(PullSource::PullHead),
-        ),
-    };
-    let info = worktree::worktree_at_path(&context, &attached.path)?;
-    Ok(Checkout {
-        message,
-        worktree: worktree_name,
-        path: attached.path,
-        already_exists: false,
-        hook_failure: attached.hook_failure,
-        copy_error: attached.copy_error,
-        hooks_ran: attached.hooks_ran,
-        metadata_error: attached.metadata_error,
-        info,
-        base,
-        subject: GithubSubject::PullRequest {
-            number: pull.number,
-            head_ref: pull.head_ref.clone(),
-            source,
-        },
-    })
-}
-
-fn checkout_issue(
-    number: u64,
-    base: Option<&str>,
-    repo: &RepoIdentity,
-    logger: &Logger,
-    repository: Option<&Path>,
-    mut metadata: MetadataInput,
-    hooks: crate::trust::HookControl,
-) -> Result<Checkout> {
-    let context = context::open(repository)?;
-    let name = format!("issues/{number}");
-    metadata.issue = Some(subject_link(repo, number, "issues"));
-    match worktree::find_including_orphaned(&context, &name, false, None) {
-        Ok(existing) if !existing.orphaned => {
-            let info = record_existing_checkout(&context, Path::new(&existing.path), &metadata)?;
-            let path = info.path.clone().into();
-            return Ok(Checkout {
-                message: format!("Issue #{number} is already checked out"),
-                worktree: name,
-                path,
-                already_exists: true,
-                hook_failure: None,
-                copy_error: None,
-                hooks_ran: false,
-                metadata_error: None,
-                info,
-                base: None,
-                subject: GithubSubject::Issue { number },
-            });
-        }
-        Ok(_) | Err(Error::WorktreeNotFound(_)) => {}
-        Err(error) => return Err(error),
-    }
-    let post = post_commands(&context);
-    let commands = crate::trust::authorize(
-        &context.git_root,
-        &post,
-        crate::config::pre_delete_commands(context.config.as_ref()),
-        crate::trust::HookKind::PostCreate,
-        hooks,
-    )?;
-    metadata.base = Some(crate::sync::creation_base(&context.git_root, base)?);
-    let base = base.unwrap_or("HEAD");
-    let created =
-        worktree::create_worktree_inner(&context, &name, base, &[], &commands, logger, &metadata)?;
-    let info = worktree::worktree_at_path(&context, &created.path)?;
-    Ok(Checkout {
-        message: format!(
-            "Created workspace '{name}' at {}",
-            crate::paths::canonical_location(&created.path).display()
-        ),
-        worktree: name,
-        path: created.path,
-        already_exists: false,
-        hook_failure: created.hook_failure,
-        copy_error: created.copy_error,
-        hooks_ran: created.hooks_ran,
-        metadata_error: created.metadata_error,
-        info,
-        base: Some(base.to_string()),
-        subject: GithubSubject::Issue { number },
-    })
-}
-
-/// An existing record keeps its purpose, base, createdAt, and createdFrom.
-/// Links are updated. A workspace with no record yet stores the supplied intent.
-/// `createdFrom` is that branch's reflog creation commit when the reflog exists.
-fn record_existing_checkout(
-    context: &context::Context,
-    path: &Path,
-    metadata: &MetadataInput,
-) -> Result<worktree::WorktreeInfo> {
-    let known = metadata::records_path(&context.git_root, path)?;
-    if known {
-        metadata::write(
-            &context.git_root,
-            path,
-            &MetadataInput {
-                pr: metadata.pr.clone(),
-                issue: metadata.issue.clone(),
-                ..MetadataInput::default()
-            },
-        )?;
-    } else {
-        let name = worktree::outside_name_to_store(context, path)?;
-        metadata::write(
-            &context.git_root,
-            path,
-            &MetadataInput {
-                name,
-                ..metadata.clone()
-            },
-        )?;
-    }
-    worktree::worktree_at_path(context, path)
-}
-
 fn subject_link(repo: &RepoIdentity, number: u64, kind: &str) -> WorktreeLink {
     WorktreeLink {
         number: Some(number),
@@ -456,10 +130,6 @@ fn subject_link(repo: &RepoIdentity, number: u64, kind: &str) -> WorktreeLink {
             repo.host, repo.owner, repo.name
         )),
     }
-}
-
-fn post_commands(context: &context::Context) -> Vec<String> {
-    crate::config::post_create_commands(context.config.as_ref()).to_vec()
 }
 
 struct RepoIdentity {
@@ -578,7 +248,10 @@ fn fetch_issue(
         None
     };
     Ok(Some(Issue {
-        number: parsed,
+        title: value
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         pull_request,
     }))
 }

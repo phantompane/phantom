@@ -61,6 +61,45 @@ pub fn canonical_common_dir(cwd: &Path) -> Result<PathBuf> {
     }
 }
 
+/// Find the admin directory from Git's registration, without trusting the
+/// checkout's `.git` entry, which may point at a different worktree.
+pub(crate) fn registered_git_dir(repo: &Path, checkout: &Path) -> Result<PathBuf> {
+    if same_path(repo, checkout) {
+        return Ok(PathBuf::from(output(
+            &["rev-parse", "--absolute-git-dir"],
+            Some(repo),
+            true,
+        )?));
+    }
+    let inspect_error = |error| Error::msg(format!("Failed to inspect Git registration: {error}"));
+    let entries =
+        std::fs::read_dir(git_common_dir(repo)?.join("worktrees")).map_err(inspect_error)?;
+    let gitfile = checkout.join(".git");
+    for entry in entries {
+        let admin = entry.map_err(inspect_error)?.path();
+        if !admin.is_dir() {
+            continue;
+        }
+        let Ok(backlink) = std::fs::read_to_string(admin.join("gitdir")) else {
+            continue;
+        };
+        let backlink = backlink.strip_suffix('\n').unwrap_or(&backlink);
+        if same_path(&admin.join(backlink), &gitfile) {
+            return Ok(admin);
+        }
+    }
+    Err(Error::msg(
+        "No Git admin directory is registered for this workspace",
+    ))
+}
+
+/// Check the checkout's actual admin directory against Git's independent registration.
+pub(crate) fn matches_registered_git_dir(repo: &Path, checkout: &Path) -> Result<bool> {
+    let actual = output(&["rev-parse", "--absolute-git-dir"], Some(checkout), true)?;
+    let registered = registered_git_dir(repo, checkout)?;
+    Ok(crate::paths::same_location(Path::new(&actual), &registered))
+}
+
 pub fn git_root(cwd: &Path) -> Result<PathBuf> {
     let common = git_common_dir_text(cwd)?;
     let common_dir = normalize(&cwd.join(&common));
@@ -380,7 +419,22 @@ pub fn branch_exists(git_root: &Path, name: &str) -> Result<bool> {
     Ok(!stdout.trim().is_empty())
 }
 
+/// Check an observed full ref without hiding Git read failures.
+pub(crate) fn reference_exists(root: &Path, reference: &str) -> Result<bool> {
+    let result = raw_git(root, &["for-each-ref", "--format=%(refname)", reference])?;
+    if result.code != 0 {
+        return Err(Error::msg(format!(
+            "Failed to read Git refs: {}",
+            result.stderr.trim()
+        )));
+    }
+    Ok(result.stdout.lines().any(|line| line == reference))
+}
+
 pub enum WorktreeAdd<'a> {
+    Detach {
+        base: &'a str,
+    },
     Existing {
         branch: &'a str,
     },
@@ -401,6 +455,7 @@ pub enum WorktreeAdd<'a> {
 pub fn add_worktree(git_root: &Path, path: &Path, add: WorktreeAdd<'_>) -> Result<()> {
     let path = path.to_string_lossy();
     let args: Vec<&str> = match add {
+        WorktreeAdd::Detach { base } => vec!["worktree", "add", "--detach", path.as_ref(), base],
         WorktreeAdd::Existing { branch } => vec!["worktree", "add", path.as_ref(), branch],
         WorktreeAdd::New { branch, base } => {
             vec![
@@ -625,7 +680,11 @@ pub fn is_clean(cwd: &Path) -> bool {
 }
 
 pub fn list_worktrees(git_root: &Path) -> Result<Vec<GitWorktree>> {
-    let stdout = output(&["worktree", "list", "--porcelain"], Some(git_root), true)?;
+    let stdout = output(
+        &["worktree", "list", "--porcelain", "-z"],
+        Some(git_root),
+        false,
+    )?;
     Ok(parse_worktrees(&stdout))
 }
 
@@ -737,7 +796,12 @@ fn first_output(captured: &process::Captured) -> String {
 pub fn parse_worktrees(stdout: &str) -> Vec<GitWorktree> {
     let mut worktrees = Vec::new();
     let mut current: Option<GitWorktree> = None;
-    for line in stdout.lines().filter(|line| !line.is_empty()) {
+    let fields: Box<dyn Iterator<Item = &str> + '_> = if stdout.contains('\0') {
+        Box::new(stdout.split('\0'))
+    } else {
+        Box::new(stdout.lines())
+    };
+    for line in fields.filter(|line| !line.is_empty()) {
         if let Some(path) = line.strip_prefix("worktree ") {
             if let Some(worktree) = current.take() {
                 worktrees.push(worktree);
@@ -781,6 +845,41 @@ fn normalize(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review11_registration_scan_still_refuses_an_unregistered_checkout() {
+        let root =
+            std::env::temp_dir().join(format!("mabo-git-registration-{}", uuid::Uuid::new_v4()));
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        run(&["init", "--template=", "-b", "main"], Some(&repo)).unwrap();
+        let registrations = git_common_dir(&repo).unwrap().join("worktrees");
+        std::fs::create_dir_all(registrations.join("broken")).unwrap();
+        std::fs::write(registrations.join("pending.lock"), "").unwrap();
+        std::fs::create_dir_all(registrations.join("unreadable/gitdir")).unwrap();
+        let other_admin = registrations.join("other");
+        std::fs::create_dir(&other_admin).unwrap();
+        std::fs::write(
+            other_admin.join("gitdir"),
+            format!("{}\n", root.join("other/.git").display()),
+        )
+        .unwrap();
+        let checkout = root.join("unregistered");
+        std::fs::create_dir(&checkout).unwrap();
+        // A checkout's own gitfile cannot substitute for a matching backlink.
+        std::fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", other_admin.display()),
+        )
+        .unwrap();
+        let error = registered_git_dir(&repo, &checkout).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "No Git admin directory is registered for this workspace"
+        );
+        assert_eq!(error.exit_code(), crate::error::GENERAL);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn rewrites_missing_repository_errors() {

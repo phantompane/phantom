@@ -2,11 +2,7 @@
   "commands": [
     {
       "name": "create",
-      "description": "Create a new workspace"
-    },
-    {
-      "name": "attach",
-      "description": "Attach to an existing branch by creating a new workspace"
+      "description": "Create a workspace from a new branch, existing branch, pull request, issue, or detached commit"
     },
     {
       "name": "list",
@@ -57,37 +53,30 @@
       "description": "Register, discover, and inspect repositories"
     },
     {
-      "name": "github",
-      "description": "GitHub-specific commands for workspaces"
-    },
-    {
-      "name": "gh",
-      "description": "GitHub-specific commands for workspaces (alias)"
-    },
-    {
       "name": "help",
       "description": "Show command help or the complete machine-readable command contract"
+    },
+    {
+      "name": "adopt",
+      "description": "Manage an existing linked Git worktree without running setup"
+    },
+    {
+      "name": "forget",
+      "description": "Drop workspace records while preserving checkouts and branches"
     }
   ],
   "helps": {
     "create": {
       "name": "create",
-      "description": "Create a new workspace",
-      "usage": "mabo create [--repo <ref>] [name] [options]",
+      "description": "Create a workspace from a new branch, existing branch, pull request, issue, or detached commit",
+      "usage": "mabo create [NAME] [--base REF | --branch BRANCH | --pr REF] [--issue REF] [--detach] [options]",
       "options": [
         {
           "name": "repo",
           "short": "R",
           "type": "string",
-          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A --repo after --exec is part of that command. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
           "example": "--repo github.com/owner/repo"
-        },
-        {
-          "name": "exec",
-          "short": "x",
-          "type": "string",
-          "description": "Execute a command in the new workspace after creation. Arguments after --exec are the command and are passed through, including options. Put the workspace name and other options before --exec",
-          "example": "--exec 'npm install'"
         },
         {
           "name": "copy-file",
@@ -99,7 +88,7 @@
         {
           "name": "base",
           "type": "string",
-          "description": "Branch or commit to create the new workspace from (defaults to HEAD)",
+          "description": "Base ref for a new branch or detached checkout; defaults to the remote default branch, then the local default branch",
           "example": "--base main, --base origin/release, --base feature"
         },
         {
@@ -111,13 +100,13 @@
         {
           "name": "pr",
           "type": "string",
-          "description": "Pull request number or http(s) URL to link to the workspace",
+          "description": "Create from a GitHub pull request number or URL, linking the PR; requires authenticated gh",
           "example": "--pr 774"
         },
         {
           "name": "issue",
           "type": "string",
-          "description": "Issue number or http(s) URL to link to the workspace",
+          "description": "Link a GitHub issue number or URL; without --branch/--pr, default name is issues/N and purpose is its title",
           "example": "--issue 12"
         },
         {
@@ -145,6 +134,21 @@
           "short": "h",
           "type": "boolean",
           "description": "Show text help"
+        },
+        {
+          "name": "branch",
+          "type": "string",
+          "description": "Use an existing local branch or locally observed remote-tracking branch; no fetch. Pass remote/branch to select a remote"
+        },
+        {
+          "name": "detach",
+          "type": "boolean",
+          "description": "Create a detached checkout at --base"
+        },
+        {
+          "name": "reuse",
+          "type": "boolean",
+          "description": "Return an existing workspace only when its source matches; skip all setup. Mismatches exit 4 exists"
         }
       ],
       "examples": [
@@ -157,10 +161,6 @@
           "command": "mabo create feature-auth"
         },
         {
-          "description": "Create a workspace and run npm install",
-          "command": "mabo create new-feature --exec 'npm install'"
-        },
-        {
           "description": "Create a workspace and copy environment files",
           "command": "mabo create staging --copy-file .env --copy-file database.yml"
         },
@@ -171,12 +171,30 @@
         {
           "description": "Create a workspace from remote branch",
           "command": "mabo create hotfix --base origin/production"
+        },
+        {
+          "command": "mabo create --branch origin/feature",
+          "description": "Track an observed remote branch"
+        },
+        {
+          "command": "mabo create --pr 123",
+          "description": "Check out a pull request"
+        },
+        {
+          "command": "mabo create --issue 456 --base main",
+          "description": "Create a workspace for an issue"
+        },
+        {
+          "command": "mabo create review --detach --base main",
+          "description": "Create a detached checkout"
+        },
+        {
+          "command": "mabo create feature --reuse",
+          "description": "Retry allocation without repeating setup"
         }
       ],
       "notes": [
         "If name is omitted, a random human-readable name is generated automatically",
-        "The workspace name will be used as the branch name. An existing workspace is refused with exit 4; failures after creation, including metadata, copy, hooks, or --exec, exit 6",
-        "When the name is already a branch on a configured remote, create exits 4 and tells you to run mabo attach <name>. It does not fetch. A workspace that already exists is still reported as already existing.",
         "Gitignored files matching .worktreeinclude at the checkout root are copied into the new workspace",
         ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
         "Files that already exist in the new workspace are left unchanged",
@@ -184,119 +202,16 @@
         ".mabo.toml is read from the source checkout, the checkout where the command runs. [hooks] post-create commands run in the new workspace, in order, and stop at the first failure",
         "post-create hooks run only after the repository is trusted. On a terminal, mabo shows the project path and the hook commands and asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, nonempty CI, --no-input or MABO_NO_INPUT being enabled, or --json fails before creating the workspace. An empty value counts as unset. Run mabo trust add or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
-        "--json writes the workspace object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
         "New workspaces are created under $XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash> (default ~/.local/share/maboroshi/workspaces/...). <checkout> is the canonical primary checkout directory name, so a symlink uses the same directory. <hash> is the first 8 hex digits of the SHA-256 of the canonical Git common directory. A relative XDG_DATA_HOME is ignored. workspace-root overrides this and is joined to the repository root",
         "Purpose and links are stored in maboroshi/workspaces/<id>.json under the Git common directory",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
-      ]
-    },
-    "attach": {
-      "name": "attach",
-      "description": "Attach a workspace to a local or remote-tracking branch",
-      "usage": "mabo attach [--repo <ref>] <branch-name> [options]",
-      "options": [
-        {
-          "name": "repo",
-          "short": "R",
-          "type": "string",
-          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A --repo after --exec is part of that command. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
-          "example": "--repo github.com/owner/repo"
-        },
-        {
-          "name": "exec",
-          "short": "x",
-          "type": "string",
-          "description": "Execute a command in the workspace after attaching. Arguments after --exec are the command and are passed through, including options. Put the branch name and other options before --exec",
-          "example": "--exec 'git pull'"
-        },
-        {
-          "name": "copy-file",
-          "type": "string",
-          "multiple": true,
-          "description": "Extra gitignore pattern of files to copy from the current checkout. Can be used multiple times. Only gitignored matches are copied",
-          "example": "--copy-file .env --copy-file .npmrc"
-        },
-        {
-          "name": "purpose",
-          "type": "string",
-          "description": "Free-text description of the task this workspace is for",
-          "example": "--purpose 'review the pull request'"
-        },
-        {
-          "name": "pr",
-          "type": "string",
-          "description": "Pull request number or http(s) URL to link to the workspace",
-          "example": "--pr 774"
-        },
-        {
-          "name": "issue",
-          "type": "string",
-          "description": "Issue number or http(s) URL to link to the workspace",
-          "example": "--issue 12"
-        },
-        {
-          "name": "no-hooks",
-          "type": "boolean",
-          "description": "Attach the workspace without running project hooks. This does not trust the repository"
-        },
-        {
-          "name": "json",
-          "type": "boolean",
-          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
-        },
-        {
-          "name": "output",
-          "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
-        },
-        {
-          "name": "no-input",
-          "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
-        },
-        {
-          "name": "help",
-          "short": "h",
-          "type": "boolean",
-          "description": "Show text help"
-        }
-      ],
-      "examples": [
-        {
-          "description": "Attach to an existing branch",
-          "command": "mabo attach main"
-        },
-        {
-          "description": "Attach the remote-tracking branch when only one remote has it",
-          "command": "mabo attach feature/teammate"
-        },
-        {
-          "description": "Choose the remote when more than one has the branch",
-          "command": "mabo attach origin/feature/teammate"
-        },
-        {
-          "description": "Attach to a branch and pull latest changes",
-          "command": "mabo attach develop --exec 'git pull'"
-        },
-        {
-          "description": "Attach and copy shared environment files",
-          "command": "mabo attach feature-branch --copy-file .env --copy-file .npmrc"
-        }
-      ],
-      "notes": [
-        "A local branch is attached as itself. The workspace uses that branch name. A missing branch exits 3; failures after creation, including metadata, copy, hooks, or --exec, exit 6",
-        "When no local branch has that name and exactly one configured remote already has it, attach creates the local branch tracking that remote. mabo does not fetch.",
-        "When more than one configured remote has the name, attach exits 2 and lists those remotes. Pass <remote>/<name>. The remote is a configured remote name. A slash in a branch name is not itself a remote.",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
+        "When no local branch has that name and exactly one configured remote already has it, create --branch creates the local branch tracking that remote. mabo does not fetch.",
+        "When more than one configured remote has the name, create --branch exits 2 and lists those remotes. Pass <remote>/<name>. The remote is a configured remote name. A slash in a branch name is not itself a remote.",
         "<remote>/<name> attaches local branch <name> when that remote is configured and the remote-tracking ref exists. The workspace name omits the remote. An existing local branch keeps its upstream.",
-        "Gitignored files matching .worktreeinclude at the checkout root are copied into the new workspace",
-        ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
-        "Files that already exist in the new workspace are left unchanged",
-        "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
-        "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
-        "--json writes the workspace object, copyFiles, and postCreate outcome to stdout. The schema is documented in the README",
-        "post-create hooks run only after the repository is trusted. The prompt, refusal, mabo trust, --no-hooks, and MABO_TRUST_ALL=1 behave the same as mabo create",
-        "Purpose and links are stored in maboroshi/workspaces/<id>.json under the Git common directory",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "A new branch name already present locally or in locally observed remote-tracking refs is refused with exit 4 exists_remote. Use mabo create --branch <name>. mabo does not fetch for this check.",
+        "An existing workspace is refused with exit 4 exists unless --reuse matches its source (base/branch/PR and requested issue). Reuse never runs hooks or copies files and never edits existing intent.",
+        "Same-repository PRs use the head branch; fork PRs use owner/head. Fork or deleted heads are fetched from pull/N/head without an upstream. --base, --branch, and --pr are mutually exclusive; --detach cannot accompany --branch or --pr.",
+        "--json returns workspace, source (kind new/branch/pr/issue/detach and source details), setup (ran, ok, command, exitCode, signal, error), copy (copied paths, error), and metadata (ok, error). Failures after checkout creation exit 6."
       ]
     },
     "list": {
@@ -1157,250 +1072,6 @@
         "Repository records live in $XDG_STATE_HOME/maboroshi/repos/<id>.json (default ~/.local/state/maboroshi/repos/<id>.json), with proj_<uuid> IDs. The first write imports legacy projects.json and renames it to projects.json.imported. Duplicate roots are read once, using the oldest createdAt."
       ]
     },
-    "github": {
-      "name": "github",
-      "usage": "mabo github <subcommand> [options]",
-      "description": "GitHub-specific commands for workspaces",
-      "examples": [
-        {
-          "command": "mabo github checkout 123",
-          "description": "Create a workspace for PR or issue #123"
-        },
-        {
-          "command": "mabo gh checkout 456",
-          "description": "Same as above, using the gh alias"
-        }
-      ],
-      "notes": [
-        "Subcommands:",
-        "  checkout    Create a workspace for a GitHub PR or issue",
-        "",
-        "Alias: 'gh' can be used instead of 'github'",
-        "",
-        "Requirements:",
-        "  - GitHub CLI (gh) must be installed",
-        "  - Must be authenticated with 'gh auth login'"
-      ],
-      "options": [
-        {
-          "name": "repo",
-          "short": "R",
-          "type": "string",
-          "description": "Select a repository by path, registered ID, canonical host/owner/repo name, or an unambiguous name suffix. May precede the command. For exec, put it before the workspace name."
-        },
-        {
-          "name": "no-input",
-          "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
-        },
-        {
-          "name": "help",
-          "short": "h",
-          "type": "boolean",
-          "description": "Show text help"
-        }
-      ]
-    },
-    "github checkout": {
-      "name": "github checkout",
-      "usage": "mabo github checkout [--repo <ref>] <number> [options]",
-      "description": "Create a workspace for a GitHub PR or issue",
-      "options": [
-        {
-          "name": "repo",
-          "short": "R",
-          "type": "string",
-          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
-          "example": "--repo owner/repo"
-        },
-        {
-          "name": "base",
-          "type": "string",
-          "description": "Base branch for new issue branches (issues only, default: repository HEAD)"
-        },
-        {
-          "name": "purpose",
-          "type": "string",
-          "description": "Free-text description of the task this workspace is for",
-          "example": "--purpose 'review the pull request'"
-        },
-        {
-          "name": "no-hooks",
-          "type": "boolean",
-          "description": "Check out the pull request or issue without running post-create hooks. This does not trust the repository"
-        },
-        {
-          "name": "json",
-          "type": "boolean",
-          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
-        },
-        {
-          "name": "output",
-          "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
-        },
-        {
-          "name": "no-input",
-          "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
-        },
-        {
-          "name": "help",
-          "short": "h",
-          "type": "boolean",
-          "description": "Show text help"
-        }
-      ],
-      "examples": [
-        {
-          "command": "mabo github checkout 123",
-          "description": "Create a workspace for PR #123 (checks out PR branch)"
-        },
-        {
-          "command": "mabo github checkout 456",
-          "description": "Create a workspace for issue #456 (creates new branch)"
-        },
-        {
-          "command": "mabo github checkout 789 --base develop",
-          "description": "Create a workspace for issue #789 based on develop branch"
-        }
-      ],
-      "notes": [
-        "For same-repo PRs: Workspace name matches the PR branch (e.g., 'feature/add-logging')",
-        "For fork PRs: Workspace name is '{owner}/{branch}' (e.g., 'aku11i/feature/add-logging')",
-        "For Issues: Creates workspace named 'issues/{number}' with a new branch",
-        "The pull request or issue number and URL are stored on the workspace. --purpose is recorded the same way as mabo create",
-        "",
-        "Requirements:",
-        "  - GitHub CLI (gh) must be installed",
-        "  - Must be authenticated with 'gh auth login'",
-        "--json includes github.kind, github.number, and github.headRef. The schema is documented in the README",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
-      ]
-    },
-    "gh": {
-      "name": "github",
-      "usage": "mabo github <subcommand> [options]",
-      "description": "GitHub-specific commands for workspaces",
-      "examples": [
-        {
-          "command": "mabo github checkout 123",
-          "description": "Create a workspace for PR or issue #123"
-        },
-        {
-          "command": "mabo gh checkout 456",
-          "description": "Same as above, using the gh alias"
-        }
-      ],
-      "notes": [
-        "Subcommands:",
-        "  checkout    Create a workspace for a GitHub PR or issue",
-        "",
-        "Alias: 'gh' can be used instead of 'github'",
-        "",
-        "Requirements:",
-        "  - GitHub CLI (gh) must be installed",
-        "  - Must be authenticated with 'gh auth login'"
-      ],
-      "options": [
-        {
-          "name": "repo",
-          "short": "R",
-          "type": "string",
-          "description": "Select a repository by path, registered ID, canonical host/owner/repo name, or an unambiguous name suffix. May precede the command. For exec, put it before the workspace name."
-        },
-        {
-          "name": "no-input",
-          "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
-        },
-        {
-          "name": "help",
-          "short": "h",
-          "type": "boolean",
-          "description": "Show text help"
-        }
-      ],
-      "aliasOf": "github"
-    },
-    "gh checkout": {
-      "name": "github checkout",
-      "usage": "mabo github checkout [--repo <ref>] <number> [options]",
-      "description": "Create a workspace for a GitHub PR or issue",
-      "options": [
-        {
-          "name": "repo",
-          "short": "R",
-          "type": "string",
-          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
-          "example": "--repo owner/repo"
-        },
-        {
-          "name": "base",
-          "type": "string",
-          "description": "Base branch for new issue branches (issues only, default: repository HEAD)"
-        },
-        {
-          "name": "purpose",
-          "type": "string",
-          "description": "Free-text description of the task this workspace is for",
-          "example": "--purpose 'review the pull request'"
-        },
-        {
-          "name": "no-hooks",
-          "type": "boolean",
-          "description": "Check out the pull request or issue without running post-create hooks. This does not trust the repository"
-        },
-        {
-          "name": "json",
-          "type": "boolean",
-          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
-        },
-        {
-          "name": "output",
-          "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
-        },
-        {
-          "name": "no-input",
-          "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
-        },
-        {
-          "name": "help",
-          "short": "h",
-          "type": "boolean",
-          "description": "Show text help"
-        }
-      ],
-      "examples": [
-        {
-          "command": "mabo github checkout 123",
-          "description": "Create a workspace for PR #123 (checks out PR branch)"
-        },
-        {
-          "command": "mabo github checkout 456",
-          "description": "Create a workspace for issue #456 (creates new branch)"
-        },
-        {
-          "command": "mabo github checkout 789 --base develop",
-          "description": "Create a workspace for issue #789 based on develop branch"
-        }
-      ],
-      "notes": [
-        "For same-repo PRs: Workspace name matches the PR branch (e.g., 'feature/add-logging')",
-        "For fork PRs: Workspace name is '{owner}/{branch}' (e.g., 'aku11i/feature/add-logging')",
-        "For Issues: Creates workspace named 'issues/{number}' with a new branch",
-        "The pull request or issue number and URL are stored on the workspace. --purpose is recorded the same way as mabo create",
-        "",
-        "Requirements:",
-        "  - GitHub CLI (gh) must be installed",
-        "  - Must be authenticated with 'gh auth login'",
-        "--json includes github.kind, github.number, and github.headRef. The schema is documented in the README",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
-      ],
-      "aliasOf": "github checkout"
-    },
     "sync": {
       "name": "sync",
       "description": "Fetch involved remotes once, fast-forward the default branch, then safely integrate each workspace base. Never pushes, changes upstreams, or runs hooks. No arguments in the primary checkout sync only the default branch; in a linked workspace (including subdirectories), sync that workspace too. Auto rebases unpublished commits and merges published commits. Conflicts are aborted unless --keep-conflicts is set.",
@@ -1858,6 +1529,111 @@
         "--base validates an existing ref and stores its full ref name; commit bases remain supported.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
         "Workspace records use schema 2 and ws_<uuid v4> IDs. Each file is replaced atomically. Concurrent first registrations for the same path use the oldest createdAt, then the smallest ID; all fields come from that record. The next write removes extra files. The first write imports legacy worktrees.json and renames it to worktrees.json.imported; read-only commands can read the legacy file before import."
+      ]
+    },
+    "adopt": {
+      "name": "adopt",
+      "description": "Manage an existing linked Git worktree without running setup",
+      "usage": "mabo adopt PATH [--name NAME] [--base REF] [--purpose TEXT] [--pr REF] [--issue REF]",
+      "options": [
+        {
+          "name": "repo",
+          "short": "R",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--repo github.com/owner/repo"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+        },
+        {
+          "name": "help",
+          "short": "h",
+          "type": "boolean",
+          "description": "Show text help"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "description": "Workspace name; defaults to the observed checkout name"
+        },
+        {
+          "name": "base",
+          "type": "string",
+          "description": "Optionally record the sync target for the existing checkout; unknown (null) when omitted",
+          "example": "--base main, --base origin/release, --base feature"
+        },
+        {
+          "name": "purpose",
+          "type": "string",
+          "description": "Free-text description of the task this workspace is for",
+          "example": "--purpose 'fix the flaky checkout test'"
+        },
+        {
+          "name": "pr",
+          "type": "string",
+          "description": "Intent to record",
+          "example": "--pr 774"
+        },
+        {
+          "name": "issue",
+          "type": "string",
+          "description": "Intent to record",
+          "example": "--issue 12"
+        }
+      ],
+      "notes": [
+        "The path must be a linked worktree of the selected repository. No hooks or file copying run. createdAt and createdFrom are null. Already recorded paths exit 4 exists; paths outside this repository exit 3 not_found. JSON returns workspace."
+      ]
+    },
+    "forget": {
+      "name": "forget",
+      "description": "Drop workspace records while preserving checkouts and branches",
+      "usage": "mabo forget SEL...",
+      "options": [
+        {
+          "name": "repo",
+          "short": "R",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--repo github.com/owner/repo"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+        },
+        {
+          "name": "help",
+          "short": "h",
+          "type": "boolean",
+          "description": "Show text help"
+        }
+      ],
+      "notes": [
+        "Selectors are names, ., pr:N, issue:N, or PR/issue URLs; multiple selectors are accepted. The primary checkout record can also be forgotten. Git registration, files, and branches remain. JSON returns items:[{workspace,ok}]."
       ]
     }
   },

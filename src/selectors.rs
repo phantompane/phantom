@@ -160,20 +160,8 @@ pub(crate) fn matches(
                 &tree.metadata.links.issue
             };
             stored.as_ref().is_some_and(|stored| {
-                if let Some(url) = &link.url {
-                    if let Some(saved) = &stored.url {
-                        return url_identity(saved) == url_identity(url);
-                    }
-                    // A bare number belongs to this repository, never another repository's URL.
-                    let prefix = url_identity(url)
-                        .rsplit_once('/')
-                        .and_then(|(path, _)| path.rsplit_once('/'))
-                        .map(|(repository, _)| repository)
-                        .unwrap_or("");
-                    let identity = prefix.split_once("://").map(|(_, rest)| rest);
-                    if identity != Some(repo_json(&context.git_root).name.as_str()) {
-                        return false;
-                    }
+                if link.url.is_some() {
+                    return links_equal(context, stored, &link, pr);
                 }
                 stored.number == link.number
             })
@@ -182,11 +170,90 @@ pub(crate) fn matches(
         .collect())
 }
 
-fn url_identity(url: &str) -> &str {
-    url.split(['?', '#'])
+/// Link identity shared by URL selectors and allocation retries. Bare numbers
+/// belong to the selected repository; the terminal pair supplies kind/number.
+pub(crate) fn links_equal(
+    context: &Context,
+    actual: &metadata::WorktreeLink,
+    wanted: &metadata::WorktreeLink,
+    pr: bool,
+) -> bool {
+    let actual = link_identity(context, actual, pr);
+    actual.is_some() && actual == link_identity(context, wanted, pr)
+}
+
+fn link_identity(
+    context: &Context,
+    link: &metadata::WorktreeLink,
+    pr: bool,
+) -> Option<(String, bool, u64)> {
+    match &link.url {
+        Some(url) => url_link_identity(url),
+        None => Some((repo_json(&context.git_root).name, pr, link.number?)),
+    }
+}
+
+fn url_link_identity(url: &str) -> Option<(String, bool, u64)> {
+    let parts = url_link_parts(url)?;
+    Some((
+        parts.repository.to_owned(),
+        matches!(parts.kind, "pull" | "pulls"),
+        parts.number,
+    ))
+}
+
+/// Source validation keeps exact scheme/kind/number spelling while treating
+/// the repository's host, owner, and name as case-insensitive identities.
+pub(crate) fn source_urls_equal(actual: &str, expected: &str) -> bool {
+    let (Some(actual), Some(expected)) = (url_link_parts(actual), url_link_parts(expected)) else {
+        return false;
+    };
+    let (Some(actual_repo), Some(expected_repo)) = (
+        repository_parts(actual.repository),
+        repository_parts(expected.repository),
+    ) else {
+        return false;
+    };
+    actual.scheme == expected.scheme
+        && actual.kind == expected.kind
+        && actual.number_text == expected.number_text
+        && actual_repo
+            .iter()
+            .zip(expected_repo)
+            .all(|(actual, expected)| actual.eq_ignore_ascii_case(expected))
+}
+
+fn repository_parts(repository: &str) -> Option<[&str; 3]> {
+    let (host, path) = repository.split_once('/')?;
+    let (owner, repo) = path.split_once('/')?;
+    Some([host, owner, repo])
+}
+
+struct UrlLinkParts<'a> {
+    scheme: &'a str,
+    repository: &'a str,
+    kind: &'a str,
+    number: u64,
+    number_text: &'a str,
+}
+
+fn url_link_parts(url: &str) -> Option<UrlLinkParts<'_>> {
+    let (kind, number) = metadata::link_target(url)?;
+    let clean = url
+        .split(['?', '#'])
         .next()
         .unwrap_or(url)
-        .trim_end_matches('/')
+        .trim_end_matches('/');
+    let (scheme, path) = clean.split_once("://")?;
+    let (prefix, number_text) = path.rsplit_once('/')?;
+    let (repository, _) = prefix.rsplit_once('/')?;
+    Some(UrlLinkParts {
+        scheme,
+        repository,
+        kind,
+        number,
+        number_text,
+    })
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -252,4 +319,31 @@ pub(crate) fn upstream(tree: &WorktreeInfo) -> Option<UpstreamJson> {
         behind: counts.next().and_then(|s| s.parse().ok()),
         gone,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_urls_equal;
+
+    #[test]
+    fn review10_source_url_matching_preserves_kind_and_number_validation() {
+        let expected = "https://github.com/acme/demo/pull/7";
+        assert!(source_urls_equal(
+            "https://GitHub.com/Acme/Demo/pull/7/?plain=1#details",
+            expected
+        ));
+        for actual in [
+            "https://github.com/acme/demo/pull/8",
+            "https://github.com/acme/demo/pull/07",
+            "https://github.com/acme/demo/pull/+7",
+            "https://github.com/acme/demo/pull/0",
+            "https://github.com/acme/demo/pull/7/files",
+            "https://github.com/acme/demo/pull/7/issues/7",
+            "https://github.com/acme/demo/issues/7",
+            "https://github.com/acme/demo/pulls/7",
+            "https://github.com/acme/demo/Pull/7",
+        ] {
+            assert!(!source_urls_equal(actual, expected), "{actual}");
+        }
+    }
 }

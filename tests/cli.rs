@@ -44,6 +44,26 @@ impl Repo {
             .expect("mabo")
     }
 
+    fn create_recorded(&self, args: &[&str]) -> std::process::Output {
+        let mut create = vec!["create"];
+        let mut intent = vec!["set", args[1]];
+        let mut index = 1;
+        while index < args.len() {
+            if matches!(args[index], "--pr" | "--issue") {
+                intent.extend_from_slice(&args[index..index + 2]);
+                index += 2;
+            } else {
+                create.push(args[index]);
+                index += 1;
+            }
+        }
+        let created = self.mabo(&create);
+        assert!(created.status.success(), "{}", text(&created.stderr));
+        let set = self.mabo(&intent);
+        assert!(set.status.success(), "{}", text(&set.stderr));
+        self.mabo(&["show", args[1], "--json"])
+    }
+
     fn command(&self, program: &str, args: &[&str]) -> Command {
         let mut command = Command::new(program);
         command
@@ -156,7 +176,7 @@ fn help_is_plain_when_stdout_is_not_a_tty() {
         "NO_COLOR disables color even when FORCE_COLOR is set"
     );
 
-    let disabled = mabo_color(&repo, &["github", "checkout", "--help"], None, Some("0"));
+    let disabled = mabo_color(&repo, &["create", "--pr", "--help"], None, Some("0"));
     assert!(!text(&disabled.stdout).contains('\u{1b}'));
 }
 
@@ -359,10 +379,10 @@ fn removed_tmux_options_are_unknown() {
     let cases = [
         vec!["create", "name", "--tmux"],
         vec!["create", "name", "-t"],
-        vec!["attach", "main", "--tmux-vertical"],
+        vec!["create", "--branch", "main", "--tmux-vertical"],
         vec!["exec", "--tmux-h", "name", "true"],
-        vec!["github", "checkout", "1", "--tmux"],
-        vec!["gh", "checkout", "1", "-t"],
+        vec!["create", "--pr", "1", "--tmux"],
+        vec!["create", "--pr", "1", "-t"],
     ];
     for args in cases {
         let output = repo.mabo(&args);
@@ -411,10 +431,10 @@ fn create_list_where_delete_and_attach() {
     assert!(text(&missing.stderr).contains("not found"));
 
     repo.git(&["branch", "existing-feature"]);
-    let attached = repo.mabo(&["attach", "existing-feature"]);
+    let attached = repo.mabo(&["create", "--branch", "existing-feature"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
-    assert!(text(&attached.stdout).contains("Attached workspace: existing-feature"));
-    let missing_branch = repo.mabo(&["attach", "missing-branch"]);
+    assert!(text(&attached.stdout).contains("Created workspace 'existing-feature'"));
+    let missing_branch = repo.mabo(&["create", "--branch", "missing-branch"]);
     assert_eq!(missing_branch.status.code(), Some(3));
 
     let kept = repo.mabo(&["delete", "existing-feature", "--keep-branch"]);
@@ -508,7 +528,7 @@ fn github_checkout_logs_the_post_create_hook() {
     );
 
     let cli = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["github", "checkout", "7"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "--issue", "7"])
         .env("PATH", &path)
         .output()
         .expect("cli");
@@ -565,11 +585,11 @@ fn post_create_failure_reports_the_created_worktree() {
     assert_eq!(created.status.code(), Some(6), "{stderr}");
 
     repo.git(&["branch", "existing-hook"]);
-    let attached = repo.mabo(&["attach", "existing-hook"]);
+    let attached = repo.mabo(&["create", "--branch", "existing-hook"]);
     let attached_path = managed(&repo, "existing-hook");
     assert!(attached_path.join("README.md").is_file());
     assert!(
-        text(&attached.stdout).contains("Attached workspace: existing-hook"),
+        text(&attached.stdout).contains("Created workspace 'existing-hook'"),
         "{}",
         text(&attached.stdout)
     );
@@ -1109,7 +1129,7 @@ fn removed_shell_command_and_flag_are_unknown() {
 
     for args in [
         vec!["create", "name", "--shell"],
-        vec!["attach", "main", "-s"],
+        vec!["create", "--branch", "main", "-s"],
     ] {
         let output = repo.mabo(&args);
         assert_eq!(
@@ -1307,7 +1327,7 @@ fn worktreeinclude_copies_only_matching_gitignored_files() {
     assert!(!worktree.join("from-config.local").exists());
 
     repo.git(&["branch", "attached"]);
-    let attached = repo.mabo(&["attach", "attached"]);
+    let attached = repo.mabo(&["create", "--branch", "attached"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     let attached_path = managed(&repo, "attached");
     assert_eq!(read_copy(&attached_path.join("secret.env")), "secret\n");
@@ -1448,44 +1468,29 @@ fn concurrent_project_add_processes_keep_every_record() {
 #[test]
 fn create_and_attach_exec_export_mabo_env() {
     let repo = Repo::new();
-    let script = "printf '%s\\n' \"$MABO\" \"$MABO_WORKSPACE\" \"$MABO_WORKSPACE_PATH\" \"$PTM\" \"$PTM_NAME\" \"$PTM_PATH\" \"$PHANTOM\" \"$PHANTOM_NAME\" \"$PHANTOM_PATH\" > mabo-env.txt";
-    let created = repo.mabo(&["create", "feature/env", "--exec", script]);
-    assert!(
-        created.status.success(),
-        "{}\n{}",
-        text(&created.stdout),
-        text(&created.stderr)
-    );
-    let worktree = managed(&repo, "feature/env");
-    assert_mabo_env(&worktree, "feature/env");
-
-    repo.git(&["branch", "attached-env"]);
-    let attached = repo.mabo(&["attach", "attached-env", "--exec", script]);
-    assert!(
-        attached.status.success(),
-        "{}\n{}",
-        text(&attached.stdout),
-        text(&attached.stderr)
-    );
-    assert_mabo_env(&managed(&repo, "attached-env"), "attached-env");
-
-    let execed = repo.mabo(&["exec", "feature/env", "--", "sh", "-c", script]);
-    assert!(execed.status.success(), "{}", text(&execed.stderr));
-    assert_mabo_env(&worktree, "feature/env");
-}
-
-fn assert_mabo_env(worktree: &std::path::Path, name: &str) {
-    let recorded = fs::read_to_string(worktree.join("mabo-env.txt")).expect("mabo env");
-    let mut lines = recorded.lines();
-    assert_eq!(lines.next(), Some("1"), "{recorded}");
-    assert_eq!(lines.next(), Some(name), "{recorded}");
-    assert_eq!(
-        lines.next(),
-        Some(worktree.to_string_lossy().as_ref()),
-        "{recorded}"
-    );
-    for _ in 0..6 {
-        assert_eq!(lines.next(), Some(""), "{recorded}");
+    for (name, branch) in [("new-env", false), ("existing-env", true)] {
+        if branch {
+            repo.git(&["branch", name]);
+        }
+        let args = if branch {
+            vec!["create", "--branch", name]
+        } else {
+            vec!["create", name]
+        };
+        assert!(repo.mabo(&args).status.success());
+        let output = repo.mabo(&[
+            "exec",
+            name,
+            "--",
+            "sh",
+            "-c",
+            "printf '%s\n' \"$MABO\" \"$MABO_WORKSPACE\" \"$MABO_WORKSPACE_PATH\"",
+        ]);
+        assert!(output.status.success());
+        assert_eq!(
+            text(&output.stdout),
+            format!("1\n{name}\n{}", managed(&repo, name).display())
+        );
     }
 }
 
@@ -1825,13 +1830,16 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
         "HEAD",
     ]);
     let output = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["github", "checkout", "7"])
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["create", "--pr", "7", "--reuse"],
+        )
         .env("PATH", &path)
         .output()
         .expect("checkout");
     let combined = format!("{}\n{}", text(&output.stdout), text(&output.stderr));
     assert!(
-        !combined.contains("already checked out"),
+        !combined.contains("Reused workspace"),
         "directory topic on branch other is not PR branch topic:\n{combined}"
     );
     let current = repo
@@ -1853,7 +1861,10 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
         "HEAD",
     ]);
     let again = matching
-        .command(env!("CARGO_BIN_EXE_mabo"), &["github", "checkout", "7"])
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["create", "--pr", "7", "--reuse"],
+        )
         .env("PATH", &matching_path)
         .output()
         .expect("again");
@@ -1864,7 +1875,7 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
         text(&again.stderr)
     );
     assert!(
-        text(&again.stdout).contains("already checked out"),
+        text(&again.stdout).contains("Reused workspace"),
         "{}",
         text(&again.stdout)
     );
@@ -1964,15 +1975,15 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     );
     assert_eq!(created_json["data"]["workspace"]["branch"], "feature/json");
     assert_eq!(created_json["data"]["workspace"]["head"], head);
-    assert_eq!(created_json["data"]["workspace"]["base"], "HEAD");
+    assert_eq!(created_json["data"]["workspace"]["base"], "refs/heads/main");
     assert_eq!(created_json["data"]["workspace"]["dirty"], false);
     assert_eq!(created_json["data"]["workspace"]["detached"], false);
-    assert_eq!(created_json["data"]["copyFiles"]["ok"], true);
-    assert!(created_json["data"]["copyFiles"]["error"].is_null());
-    assert_eq!(created_json["data"]["postCreate"]["ran"], false);
-    assert_eq!(created_json["data"]["postCreate"]["ok"], true);
-    assert!(created_json["data"]["postCreate"]["command"].is_null());
-    assert!(created_json["data"]["postCreate"]["exitCode"].is_null());
+    assert!(created_json["data"]["copy"]["error"].is_null());
+    assert!(created_json["data"]["copy"]["error"].is_null());
+    assert_eq!(created_json["data"]["setup"]["ran"], false);
+    assert_eq!(created_json["data"]["setup"]["ok"], true);
+    assert!(created_json["data"]["setup"]["command"].is_null());
+    assert!(created_json["data"]["setup"]["exitCode"].is_null());
     assert!(created_json["data"]["exec"].is_null());
     assert!(!text(&created.stdout).contains("Created workspace"));
 
@@ -2046,7 +2057,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     );
 
     repo.git(&["branch", "existing-json"]);
-    let attached = repo.mabo(&["attach", "existing-json", "--json"]);
+    let attached = repo.mabo(&["create", "--branch", "existing-json", "--json"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     let attached_json = json_value(&attached);
     assert_worktree_object(
@@ -2059,7 +2070,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
         attached_json["data"]["workspace"]["branch"],
         "existing-json"
     );
-    assert_eq!(attached_json["data"]["copyFiles"]["ok"], true);
+    assert!(attached_json["data"]["copy"]["error"].is_null());
     assert!(attached_json["data"]["exec"].is_null());
 
     let kept = repo.mabo(&["delete", "existing-json", "--keep-branch", "--json"]);
@@ -2081,7 +2092,10 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
 
     fs::write(worktree.join("README.md"), "# phantom\n").expect("restore");
     repo.git(&["branch", "second-json"]);
-    assert!(repo.mabo(&["attach", "second-json"]).status.success());
+    assert!(repo
+        .mabo(&["create", "--branch", "second-json"])
+        .status
+        .success());
     let partial = repo.mabo(&["delete", "feature/json", "missing-json", "--json"]);
     assert_eq!(partial.status.code(), Some(3), "{}", text(&partial.stderr));
     let partial_json = json_value(&partial);
@@ -2130,13 +2144,7 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
         "[hooks]\npost-create = [\"echo HOOK_STDOUT_MARKER\"]\npre-delete = [\"echo PRE_DELETE_MARKER\"]\n",
     )
     .expect("hooks");
-    let created = repo.mabo(&[
-        "create",
-        "feature/hooks-json",
-        "--json",
-        "--exec",
-        "echo EXEC_MARKER",
-    ]);
+    let created = repo.mabo(&["create", "feature/hooks-json", "--json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -2148,15 +2156,12 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     assert!(text(&created.stderr)
         .lines()
         .any(|line| line == "HOOK_STDOUT_MARKER"));
-    assert!(text(&created.stderr)
-        .lines()
-        .any(|line| line == "EXEC_MARKER"));
-    assert_eq!(created_json["data"]["postCreate"]["ran"], true);
-    assert_eq!(created_json["data"]["postCreate"]["ok"], true);
-    assert_eq!(created_json["data"]["postCreate"]["exitCode"], 0);
-    assert_eq!(created_json["data"]["exec"]["ok"], true);
-    assert_eq!(created_json["data"]["exec"]["exitCode"], 0);
-    assert_eq!(created_json["data"]["exec"]["command"], "echo EXEC_MARKER");
+    let executed = repo.mabo(&["exec", "feature/hooks-json", "--", "echo", "EXEC_MARKER"]);
+    assert!(executed.status.success());
+    assert_eq!(text(&executed.stdout), "EXEC_MARKER");
+    assert_eq!(created_json["data"]["setup"]["ran"], true);
+    assert_eq!(created_json["data"]["setup"]["ok"], true);
+    assert_eq!(created_json["data"]["setup"]["exitCode"], 0);
 
     let deleted = repo.mabo(&["delete", "--force", "feature/hooks-json", "--json"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
@@ -2175,9 +2180,9 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     let failed = repo.mabo(&["create", "feature/hook-fail", "--json"]);
     assert_eq!(failed.status.code(), Some(6), "{}", text(&failed.stderr));
     let failed_json = json_value(&failed);
-    assert_eq!(failed_json["data"]["postCreate"]["ok"], false);
-    assert_eq!(failed_json["data"]["postCreate"]["exitCode"], 7);
-    assert_eq!(failed_json["data"]["postCreate"]["command"], "exit 7");
+    assert_eq!(failed_json["data"]["setup"]["ok"], false);
+    assert_eq!(failed_json["data"]["setup"]["exitCode"], 7);
+    assert_eq!(failed_json["data"]["setup"]["command"], "exit 7");
     assert_eq!(
         failed_json["data"]["workspace"]["name"],
         "feature/hook-fail"
@@ -2187,25 +2192,21 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     assert!(managed(&repo, "feature/hook-fail/README.md").is_file());
 
     fs::write(repo.repo.join(".mabo.toml"), "").expect("clear hooks");
+    assert!(repo
+        .mabo(&["create", "feature/exec-fail", "--json"])
+        .status
+        .success());
     let exec_failed = repo.mabo(&[
-        "create",
+        "exec",
         "feature/exec-fail",
-        "--json",
-        "--exec",
+        "--",
+        "sh",
+        "-c",
         "echo EXEC_FAIL; exit 3",
     ]);
-    assert_eq!(exec_failed.status.code(), Some(6));
-    let exec_json = json_value(&exec_failed);
-    assert_eq!(exec_json["data"]["exec"]["ok"], false);
-    assert_eq!(exec_json["data"]["exec"]["exitCode"], 3);
-    assert_eq!(
-        exec_json["data"]["workspace"]["branch"],
-        "feature/exec-fail"
-    );
-    assert!(text(&exec_failed.stderr)
-        .lines()
-        .any(|line| line == "EXEC_FAIL"));
-    assert!(!text(&exec_failed.stderr).contains("failed with exit code"));
+    assert_eq!(exec_failed.status.code(), Some(3));
+    assert_eq!(text(&exec_failed.stdout), "EXEC_FAIL");
+    assert!(managed(&repo, "feature/exec-fail/README.md").is_file());
 }
 
 #[test]
@@ -2233,8 +2234,8 @@ fn json_reports_detached_head_and_copy_errors() {
     let created = repo.mabo(&["create", "feature/copy", "--json"]);
     assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
     let created_json = json_value(&created);
-    assert_eq!(created_json["data"]["copyFiles"]["ok"], false);
-    assert!(created_json["data"]["copyFiles"]["error"]
+    assert!(!created_json["data"]["copy"]["error"].is_null());
+    assert!(created_json["data"]["copy"]["error"]
         .as_str()
         .unwrap_or("")
         .contains("symlink"));
@@ -2323,10 +2324,10 @@ fn argument_errors_are_validation_for_every_command() {
         &["show", "--json", "--bogus"],
         &["delete", "--bogus", "x"],
         &["delete", "--json", "--bogus", "x"],
-        &["attach", "--zzz", "b"],
-        &["attach", "--json", "--zzz", "b"],
-        &["github", "checkout", "--bogus", "1"],
-        &["gh", "checkout", "1", "--json", "--base"],
+        &["create", "--branch", "--zzz", "b"],
+        &["create", "--json", "--branch", "--zzz", "b"],
+        &["create", "--pr", "--bogus", "1"],
+        &["create", "--pr", "1", "--json", "--base"],
         &["exec", "--bogus", "name", "true"],
         &["config", "get", "--bogus"],
         &["--version", "extra"],
@@ -2344,7 +2345,8 @@ fn argument_errors_are_validation_for_every_command() {
         );
         let detail = format!("{}\n{}", text(&output.stdout), text(&output.stderr));
         assert!(
-            detail.contains("Unknown option")
+            detail.contains("looks like an option")
+                || detail.contains("Unknown option")
                 || detail.contains("argument missing")
                 || detail.contains("Unexpected argument"),
             "{args:?} {detail}"
@@ -2368,8 +2370,8 @@ fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
     for args in [
         &["create", "a/../x"][..],
         &["create", "a/../x", "--json"],
-        &["attach", "a/../x"],
-        &["attach", "a/../x", "--json"],
+        &["create", "--branch", "a/../x"],
+        &["create", "--branch", "a/../x", "--json"],
     ] {
         let output = repo.mabo(args);
         assert_eq!(
@@ -2412,111 +2414,12 @@ fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
 #[test]
 fn json_exec_signal_and_spawn_failure_return_the_worktree() {
     let repo = Repo::new();
-    let signaled = repo.mabo(&["create", "sig", "--json", "--exec", "kill -TERM $$"]);
-    assert_eq!(
-        signaled.status.code(),
-        Some(6),
-        "{}\n{}",
-        text(&signaled.stdout),
-        text(&signaled.stderr)
-    );
-    let signaled_json = json_value(&signaled);
-    assert!(
-        signaled_json["error"]["code"] == "partial",
-        "{signaled_json}"
-    );
-    assert_eq!(signaled_json["data"]["workspace"]["name"], "sig");
-    assert_eq!(signaled_json["data"]["exec"]["ok"], false);
-    assert_eq!(signaled_json["data"]["exec"]["command"], "kill -TERM $$");
-    assert_eq!(signaled_json["data"]["exec"]["exitCode"], 143);
-    assert_eq!(signaled_json["data"]["exec"]["signal"], "SIGTERM");
-    assert!(signaled_json["data"]["exec"]["error"].is_null());
-    assert!(managed(&repo, "sig/README.md").is_file());
-
-    repo.git(&["branch", "attach-sig"]);
-    let attached = repo.mabo(&["attach", "attach-sig", "--json", "--exec", "kill -TERM $$"]);
-    assert_eq!(
-        attached.status.code(),
-        Some(6),
-        "{}",
-        text(&attached.stderr)
-    );
-    let attached_json = json_value(&attached);
-    assert_eq!(attached_json["data"]["workspace"]["name"], "attach-sig");
-    assert_eq!(attached_json["data"]["exec"]["ok"], false);
-    assert_eq!(attached_json["data"]["exec"]["signal"], "SIGTERM");
-    assert!(
-        attached_json["error"]["code"] == "partial",
-        "{attached_json}"
-    );
-
-    let human = repo.mabo(&["create", "sig-human", "--exec", "kill -TERM $$"]);
-    assert_eq!(human.status.code(), Some(6));
-    assert!(text(&human.stdout).contains("Created workspace 'sig-human'"));
-    assert!(text(&human.stderr).contains("SIGTERM"));
-
-    let spawned = repo
-        .command(
-            env!("CARGO_BIN_EXE_mabo"),
-            &["create", "spawn", "--json", "--exec", "true"],
-        )
-        .env("SHELL", "/no/such/maboroshi-shell")
-        .output()
-        .expect("spawn");
-    assert_eq!(
-        spawned.status.code(),
-        Some(6),
-        "{}\n{}",
-        text(&spawned.stdout),
-        text(&spawned.stderr)
-    );
-    let spawned_json = json_value(&spawned);
-    assert!(spawned_json["error"]["code"] == "partial", "{spawned_json}");
-    assert_eq!(spawned_json["data"]["workspace"]["name"], "spawn");
-    assert_eq!(spawned_json["data"]["exec"]["ok"], false);
-    assert_eq!(spawned_json["data"]["exec"]["exitCode"], 1);
-    assert!(spawned_json["data"]["exec"]["signal"].is_null());
-    let spawn_error = spawned_json["data"]["exec"]["error"].as_str().unwrap_or("");
-    assert!(
-        spawn_error.contains("ENOENT") && spawn_error.contains("/no/such/maboroshi-shell"),
-        "{spawn_error}"
-    );
-    assert!(managed(&repo, "spawn/README.md").is_file());
-
-    repo.git(&["branch", "attach-spawn"]);
-    let attach_spawn = repo
-        .command(
-            env!("CARGO_BIN_EXE_mabo"),
-            &["attach", "attach-spawn", "--json", "--exec", "true"],
-        )
-        .env("SHELL", "/no/such/maboroshi-shell")
-        .output()
-        .expect("attach spawn");
-    assert_eq!(attach_spawn.status.code(), Some(6));
-    let attach_json = json_value(&attach_spawn);
-    assert_eq!(attach_json["data"]["workspace"]["name"], "attach-spawn");
-    assert_eq!(attach_json["data"]["exec"]["ok"], false);
-    assert!(attach_json["data"]["exec"]["error"]
-        .as_str()
-        .unwrap_or("")
-        .contains("ENOENT"));
-    assert!(attach_json["error"]["code"] == "partial", "{attach_json}");
-
-    let interrupted = repo.mabo(&["create", "sigint", "--json", "--exec", "kill -INT $$"]);
-    assert_eq!(
-        interrupted.status.code(),
-        Some(6),
-        "{}\n{}",
-        text(&interrupted.stdout),
-        text(&interrupted.stderr)
-    );
-    let interrupted_json = json_value(&interrupted);
-    assert_eq!(interrupted_json["data"]["exec"]["signal"], "SIGINT");
-    assert_eq!(interrupted_json["data"]["exec"]["exitCode"], 130);
-    assert!(
-        interrupted_json["error"]["code"] == "partial",
-        "{interrupted_json}"
-    );
+    assert!(repo.mabo(&["create", "child", "--json"]).status.success());
+    let signal = repo.mabo(&["exec", "child", "--", "sh", "-c", "kill -TERM $$"]);
+    assert_eq!(signal.status.code(), Some(143));
+    let missing = repo.mabo(&["exec", "child", "--", "missing-mabo-child-command"]);
+    assert!(!missing.status.success());
+    assert!(managed(&repo, "child").exists());
 }
 
 #[test]
@@ -2538,18 +2441,15 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     let created_json = json_value(&created);
     assert!(created_json["error"]["code"] == "partial", "{created_json}");
     assert_eq!(created_json["data"]["workspace"]["name"], "h");
-    assert_eq!(created_json["data"]["postCreate"]["ok"], false);
-    assert_eq!(
-        created_json["data"]["postCreate"]["command"],
-        "kill -TERM $$"
-    );
-    assert_eq!(created_json["data"]["postCreate"]["exitCode"], 143);
-    assert_eq!(created_json["data"]["postCreate"]["signal"], "SIGTERM");
-    assert!(created_json["data"]["postCreate"]["error"].is_null());
+    assert_eq!(created_json["data"]["setup"]["ok"], false);
+    assert_eq!(created_json["data"]["setup"]["command"], "kill -TERM $$");
+    assert_eq!(created_json["data"]["setup"]["exitCode"], 143);
+    assert_eq!(created_json["data"]["setup"]["signal"], "SIGTERM");
+    assert!(created_json["data"]["setup"]["error"].is_null());
     assert!(managed(&repo, "h/README.md").is_file());
 
     repo.git(&["branch", "attach-hook"]);
-    let attached = repo.mabo(&["attach", "attach-hook", "--json"]);
+    let attached = repo.mabo(&["create", "--branch", "attach-hook", "--json"]);
     assert_eq!(
         attached.status.code(),
         Some(6),
@@ -2562,9 +2462,9 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
         "{attached_json}"
     );
     assert_eq!(attached_json["data"]["workspace"]["name"], "attach-hook");
-    assert_eq!(attached_json["data"]["postCreate"]["ok"], false);
-    assert_eq!(attached_json["data"]["postCreate"]["signal"], "SIGTERM");
-    assert_eq!(attached_json["data"]["postCreate"]["exitCode"], 143);
+    assert_eq!(attached_json["data"]["setup"]["ok"], false);
+    assert_eq!(attached_json["data"]["setup"]["signal"], "SIGTERM");
+    assert_eq!(attached_json["data"]["setup"]["exitCode"], 143);
 
     fs::write(
         repo.repo.join(".mabo.toml"),
@@ -2589,10 +2489,10 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     let spawned_json = json_value(&spawned);
     assert!(spawned_json["error"]["code"] == "partial", "{spawned_json}");
     assert_eq!(spawned_json["data"]["workspace"]["name"], "hook-spawn");
-    assert_eq!(spawned_json["data"]["postCreate"]["ok"], false);
-    assert_eq!(spawned_json["data"]["postCreate"]["exitCode"], 1);
-    assert!(spawned_json["data"]["postCreate"]["signal"].is_null());
-    let spawn_error = spawned_json["data"]["postCreate"]["error"]
+    assert_eq!(spawned_json["data"]["setup"]["ok"], false);
+    assert_eq!(spawned_json["data"]["setup"]["exitCode"], 1);
+    assert!(spawned_json["data"]["setup"]["signal"].is_null());
+    let spawn_error = spawned_json["data"]["setup"]["error"]
         .as_str()
         .unwrap_or("");
     assert!(
@@ -2605,15 +2505,15 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     let attach_spawn = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["attach", "attach-hook-spawn", "--json"],
+            &["create", "--branch", "attach-hook-spawn", "--json"],
         )
         .env("SHELL", "/nonexistent")
         .output()
         .expect("attach hook spawn");
     assert_eq!(attach_spawn.status.code(), Some(6));
     let attach_json = json_value(&attach_spawn);
-    assert_eq!(attach_json["data"]["postCreate"]["ok"], false);
-    assert!(attach_json["data"]["postCreate"]["error"]
+    assert_eq!(attach_json["data"]["setup"]["ok"], false);
+    assert!(attach_json["data"]["setup"]["error"]
         .as_str()
         .unwrap_or("")
         .contains("ENOENT"));
@@ -2678,95 +2578,26 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
 #[test]
 fn detached_exec_resolves_the_created_path_with_a_configured_root() {
     let repo = Repo::new();
+    assert!(repo
+        .mabo(&["config", "set", "workspace-root", "custom"])
+        .status
+        .success());
+    let output = repo.mabo(&["create", "detached", "--detach", "--json"]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let path = repo.repo.join("custom/detached");
+    let ran = repo.mabo(&["exec", "detached", "--", "pwd"]);
+    assert!(ran.status.success());
+    assert!(paths_match(&text(&ran.stdout), &path));
+}
+
+#[test]
+fn create_issue_refreshes_the_workspace_after_a_hook_detaches_head() {
+    let repo = Repo::new();
     let set = repo.mabo(&["config", "set", "workspace-root", "../spaces"]);
     assert!(set.status.success(), "{}", text(&set.stderr));
-
-    let created = repo.mabo(&[
-        "create",
-        "feature/topic",
-        "--exec",
-        "git checkout -q --detach",
-    ]);
-    assert!(
-        created.status.success(),
-        "{}\n{}",
-        text(&created.stdout),
-        text(&created.stderr)
-    );
-    assert!(!text(&created.stderr).contains("not found"));
-    assert!(text(&created.stdout).contains("Created workspace 'feature/topic'"));
-    let directory = repo.root.join("spaces/feature/topic");
-    assert!(directory.join("README.md").is_file());
-    let abbrev = repo
-        .command("git", &["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(&directory)
-        .output()
-        .expect("abbrev");
-    assert_eq!(text(&abbrev.stdout), "HEAD");
-
-    let json_created = repo.mabo(&[
-        "create",
-        "feature/json-topic",
-        "--json",
-        "--exec",
-        "git checkout -q --detach",
-    ]);
-    assert!(
-        json_created.status.success(),
-        "{}\n{}",
-        text(&json_created.stdout),
-        text(&json_created.stderr)
-    );
-    let json_value_created = json_value(&json_created);
-    assert!(
-        json_value_created["error"].is_null(),
-        "{json_value_created}"
-    );
-    assert_eq!(json_value_created["data"]["exec"]["ok"], true);
-    assert_eq!(
-        json_value_created["data"]["workspace"]["name"],
-        "feature/json-topic"
-    );
-    assert_eq!(json_value_created["data"]["workspace"]["detached"], true);
-    assert!(json_value_created["data"]["workspace"]["branch"].is_null());
-    assert!(paths_match(
-        json_value_created["data"]["workspace"]["path"]
-            .as_str()
-            .unwrap_or(""),
-        &repo.root.join("spaces/feature/json-topic")
-    ));
-
-    repo.git(&["branch", "feature/attached"]);
-    let attached = repo.mabo(&[
-        "attach",
-        "feature/attached",
-        "--json",
-        "--exec",
-        "git checkout -q --detach",
-    ]);
-    assert!(
-        attached.status.success(),
-        "{}\n{}",
-        text(&attached.stdout),
-        text(&attached.stderr)
-    );
-    let attached_json = json_value(&attached);
-    assert!(attached_json["error"].is_null(), "{attached_json}");
-    assert_eq!(
-        attached_json["data"]["workspace"]["name"],
-        "feature/attached"
-    );
-    assert_eq!(attached_json["data"]["workspace"]["detached"], true);
-    assert!(paths_match(
-        attached_json["data"]["workspace"]["path"]
-            .as_str()
-            .unwrap_or(""),
-        &repo.root.join("spaces/feature/attached")
-    ));
-
     fs::write(
         repo.repo.join(".mabo.toml"),
-        "[hooks]\npost-create = [\"git checkout -q --detach\"]\n",
+        "[hooks]\npost-create = [\"test \\\"$(git branch --show-current)\\\" = issues/7 && git checkout -q --detach\"]\n",
     )
     .expect("detach hook");
     let bin = repo.root.join("bin");
@@ -2774,43 +2605,59 @@ fn detached_exec_resolves_the_created_path_with_a_configured_root() {
     let gh = bin.join("gh");
     fs::write(
         &gh,
-        "#!/bin/sh\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' '{\"url\":\"https://github.com/acme/demo\",\"owner\":{\"login\":\"acme\"},\"name\":\"demo\"}'\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":7}'\nexit 0\n",
+        r#"#!/bin/sh
+set -eu
+if [ "$1" = "repo" ]; then
+  printf '%s\n' '{"url":"https://github.com/acme/demo","owner":{"login":"acme"},"name":"demo"}'
+elif [ "$1" = "api" ] && [ "$2" = "repos/acme/demo/issues/7" ]; then
+  printf '%s\n' '{"number":7,"title":"Issue with a detached checkout"}'
+else
+  echo "unexpected gh invocation: $*" >&2
+  exit 1
+fi
+"#,
     )
     .expect("gh");
     use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(&gh).expect("meta").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&gh, perms).expect("chmod");
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
     let checkout = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["github", "checkout", "7", "--json"],
+            &["create", "--issue", "7", "--json"],
         )
-        .env("PATH", &path)
+        .env("PATH", path)
         .output()
-        .expect("checkout");
+        .expect("create issue");
     assert!(
         checkout.status.success(),
         "{}\n{}",
         text(&checkout.stdout),
         text(&checkout.stderr)
     );
-    let checkout_json = json_value(&checkout);
-    assert!(checkout_json["error"].is_null(), "{checkout_json}");
-    assert_eq!(checkout_json["data"]["workspace"]["name"], "issues/7");
-    assert_eq!(checkout_json["data"]["workspace"]["detached"], true);
-    assert_eq!(checkout_json["data"]["postCreate"]["ok"], true);
-    assert!(paths_match(
-        checkout_json["data"]["workspace"]["path"]
-            .as_str()
-            .unwrap_or(""),
-        &repo.root.join("spaces/issues/7")
-    ));
+    let document = json_value(&checkout);
+    assert!(document["error"].is_null(), "{document}");
+    assert_eq!(document["data"]["source"]["kind"], "issue");
+    assert_eq!(document["data"]["source"]["number"], 7);
+    assert_eq!(document["data"]["setup"]["ran"], true);
+    assert_eq!(document["data"]["setup"]["ok"], true);
+    let directory = repo.root.join("spaces/issues/7");
+    let workspace = &document["data"]["workspace"];
+    assert_worktree_object(workspace, "issues/7", &directory);
+    assert_eq!(workspace["detached"], true);
+    assert!(workspace["branch"].is_null());
+    assert_eq!(workspace["links"]["issue"]["number"], 7);
+    assert!(directory.join("README.md").is_file());
+    let head = repo
+        .command("git", &["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&directory)
+        .output()
+        .expect("detached HEAD");
+    assert!(head.status.success(), "{}", text(&head.stderr));
+    assert_eq!(text(&head.stdout), "HEAD");
+    let ran = repo.mabo(&["exec", "issues/7", "--", "pwd"]);
+    assert!(ran.status.success(), "{}", text(&ran.stderr));
+    assert!(paths_match(&text(&ran.stdout), &directory));
 }
 
 #[test]
@@ -2836,7 +2683,7 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     let checkout = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["github", "checkout", "7", "--json"],
+            &["create", "--issue", "7", "--json"],
         )
         .env("PATH", &path)
         .output()
@@ -2849,17 +2696,20 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     );
     let checkout_json = json_value(&checkout);
     assert_eq!(checkout_json["schema"], 2);
-    assert_eq!(checkout_json["data"]["github"]["kind"], "issue");
-    assert_eq!(checkout_json["data"]["github"]["number"], 7);
-    assert!(checkout_json["data"]["github"]["headRef"].is_null());
-    assert_eq!(checkout_json["data"]["github"]["alreadyExists"], false);
+    assert_eq!(checkout_json["data"]["source"]["kind"], "issue");
+    assert_eq!(checkout_json["data"]["source"]["number"], 7);
+    assert!(checkout_json["data"]["source"]["headRef"].is_null());
+    assert_eq!(checkout_json["data"]["source"]["reused"], false);
     assert_worktree_object(
         &checkout_json["data"]["workspace"],
         "issues/7",
         &managed(&repo, "issues/7"),
     );
     assert_eq!(checkout_json["data"]["workspace"]["branch"], "issues/7");
-    assert_eq!(checkout_json["data"]["workspace"]["base"], "HEAD");
+    assert_eq!(
+        checkout_json["data"]["workspace"]["base"],
+        "refs/heads/main"
+    );
     assert_eq!(
         checkout_json["data"]["workspace"]["links"]["issue"]["number"],
         7
@@ -2875,7 +2725,7 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     let missing = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["github", "checkout", "--json"],
+            &["create", "--pr", "--json", "--output=json"],
         )
         .env("PATH", &path)
         .output()
@@ -2897,7 +2747,7 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     let again = matching
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["gh", "checkout", "7", "--json"],
+            &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &matching_path)
         .output()
@@ -2909,12 +2759,12 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
         text(&again.stderr)
     );
     let again_json = json_value(&again);
-    assert_eq!(again_json["data"]["github"]["kind"], "pullRequest");
-    assert_eq!(again_json["data"]["github"]["number"], 7);
-    assert_eq!(again_json["data"]["github"]["headRef"], "topic");
-    assert_eq!(again_json["data"]["github"]["alreadyExists"], true);
+    assert_eq!(again_json["data"]["source"]["kind"], "pr");
+    assert_eq!(again_json["data"]["source"]["number"], 7);
+    assert_eq!(again_json["data"]["source"]["headRef"], "topic");
+    assert_eq!(again_json["data"]["source"]["reused"], true);
     assert!(again_json["data"]["workspace"]["base"].is_null());
-    assert_eq!(again_json["data"]["postCreate"]["ran"], false);
+    assert_eq!(again_json["data"]["setup"]["ran"], false);
     assert_worktree_object(&again_json["data"]["workspace"], "topic", &checked_out);
     assert_eq!(again_json["data"]["workspace"]["links"]["pr"]["number"], 7);
     assert_eq!(
@@ -3032,225 +2882,31 @@ fn exec_help_skips_output_values_and_preserves_child_help() {
 #[test]
 fn create_and_attach_exec_pass_command_options_through() {
     let repo = Repo::new();
-    let created = repo.mabo(&[
-        "create",
-        "feature/exec-args",
-        "--base",
-        "main",
-        "--exec",
-        "git",
-        "branch",
-        "--show-current",
-    ]);
-    assert!(
-        created.status.success(),
-        "{}\n{}",
-        text(&created.stdout),
-        text(&created.stderr)
-    );
-    let created_text = text(&created.stdout);
-    assert!(
-        created_text.contains(
-            "Executing command in workspace 'feature/exec-args': git branch --show-current"
-        ),
-        "{created_text}"
-    );
-    assert!(
-        created_text.lines().any(|line| line == "feature/exec-args"),
-        "{created_text}"
-    );
-
-    let env_exec = repo.mabo(&[
-        "create",
-        "feature/exec-env-args",
-        "--exec",
-        "sh",
-        "-c",
-        "printf '%s\\n' \"$MABO_WORKSPACE\"",
-    ]);
-    assert!(
-        env_exec.status.success(),
-        "{}\n{}",
-        text(&env_exec.stdout),
-        text(&env_exec.stderr)
-    );
-    assert!(
-        text(&env_exec.stdout)
-            .lines()
-            .any(|line| line == "feature/exec-env-args"),
-        "{}",
-        text(&env_exec.stdout)
-    );
-
-    let short = repo.mabo(&[
-        "create",
-        "feature/exec-short",
-        "-x",
-        "git",
-        "status",
-        "--short",
-    ]);
-    assert!(
-        short.status.success(),
-        "{}\n{}",
-        text(&short.stdout),
-        text(&short.stderr)
-    );
-    assert!(text(&short.stdout).contains("git status --short"));
-
-    let missing = repo.mabo(&["create", "feature/missing-exec", "--exec"]);
-    assert_eq!(missing.status.code(), Some(2));
-    assert!(text(&missing.stderr).contains("Option '--exec <value>' argument missing"));
-
-    repo.git(&["branch", "attached-exec-flags"]);
-    let attached = repo.mabo(&[
-        "attach",
-        "attached-exec-flags",
-        "--exec",
-        "git",
-        "branch",
-        "--show-current",
-    ]);
-    assert!(
-        attached.status.success(),
-        "{}\n{}",
-        text(&attached.stdout),
-        text(&attached.stderr)
-    );
-    assert!(
-        text(&attached.stdout)
-            .lines()
-            .any(|line| line == "attached-exec-flags"),
-        "{}",
-        text(&attached.stdout)
-    );
-
-    let help_arg = repo.mabo(&[
-        "create",
-        "feature/exec-help",
-        "--exec",
-        "sh",
-        "-c",
-        "printf '%s\\n' --help",
-    ]);
-    assert!(
-        help_arg.status.success(),
-        "{}\n{}",
-        text(&help_arg.stdout),
-        text(&help_arg.stderr)
-    );
-    assert!(
-        text(&help_arg.stdout).lines().any(|line| line == "--help"),
-        "{}",
-        text(&help_arg.stdout)
-    );
-    assert!(!text(&help_arg.stdout).contains("mabo create [name]"));
-
-    let option_after = repo.mabo(&[
-        "create",
-        "feature/exec-base",
-        "--exec",
-        "git",
-        "status",
-        "--base",
-    ]);
-    assert!(!option_after.status.success());
-    let combined = format!(
-        "{}\n{}",
-        text(&option_after.stdout),
-        text(&option_after.stderr)
-    );
-    assert!(
-        !combined.contains("Option '--base <value>' argument missing"),
-        "{combined}"
-    );
-    assert!(
-        combined.contains("failed with exit code") || combined.contains("unknown"),
-        "{combined}"
-    );
+    repo.git(&["branch", "existing"]);
+    for args in [
+        vec!["create", "new"],
+        vec!["create", "--branch", "existing"],
+    ] {
+        assert!(repo.mabo(&args).status.success());
+        let name = args.last().unwrap();
+        let output = repo.mabo(&["exec", name, "--", "printf", "%s", "--json --repo --help"]);
+        assert!(output.status.success());
+        assert_eq!(text(&output.stdout), "--json --repo --help");
+    }
 }
 
 #[test]
 fn repeated_exec_options_are_rejected() {
     let repo = Repo::new();
-    let message = "The --exec option can only be specified once";
-
-    let created = repo.mabo(&["create", "a", "--exec=echo", "--exec=true"]);
-    assert_eq!(created.status.code(), Some(2), "{}", text(&created.stderr));
-    assert!(
-        text(&created.stderr).contains(message),
-        "{}",
-        text(&created.stderr)
-    );
-    assert_eq!(text(&created.stdout), "");
-    assert!(!managed(&repo, "a").exists());
-
-    let quoted = repo.mabo(&["create", "b", "--exec=echo one", "--exec=echo two"]);
-    assert_eq!(quoted.status.code(), Some(2), "{}", text(&quoted.stderr));
-    assert!(
-        text(&quoted.stderr).contains(message),
-        "{}",
-        text(&quoted.stderr)
-    );
-    assert!(!managed(&repo, "b").exists());
-
-    let mixed = repo.mabo(&["create", "c", "-xecho", "--exec=true"]);
-    assert_eq!(mixed.status.code(), Some(2), "{}", text(&mixed.stderr));
-    assert!(text(&mixed.stderr).contains(message));
-
-    repo.git(&["branch", "attached-repeat"]);
-    let attached = repo.mabo(&["attach", "attached-repeat", "--exec=echo", "--exec=true"]);
-    assert_eq!(
-        attached.status.code(),
-        Some(2),
-        "{}",
-        text(&attached.stderr)
-    );
-    assert!(
-        text(&attached.stderr).contains(message),
-        "{}",
-        text(&attached.stderr)
-    );
-    assert_eq!(text(&attached.stdout), "");
-    assert!(!managed(&repo, "attached-repeat").exists());
-
-    let attached_short = repo.mabo(&["attach", "attached-repeat", "-xecho", "-xtrue"]);
-    assert_eq!(
-        attached_short.status.code(),
-        Some(2),
-        "{}",
-        text(&attached_short.stderr)
-    );
-    assert!(text(&attached_short.stderr).contains(message));
-
-    let trailing = repo.mabo(&["create", "kept", "--exec", "echo", "--exec"]);
-    assert!(
-        trailing.status.success(),
-        "{}\n{}",
-        text(&trailing.stdout),
-        text(&trailing.stderr)
-    );
-    assert!(
-        text(&trailing.stdout).lines().any(|line| line == "--exec"),
-        "{}",
-        text(&trailing.stdout)
-    );
-
-    let trailing_attach =
-        repo.mabo(&["attach", "attached-repeat", "--exec", "echo", "--exec=true"]);
-    assert!(
-        trailing_attach.status.success(),
-        "{}\n{}",
-        text(&trailing_attach.stdout),
-        text(&trailing_attach.stderr)
-    );
-    assert!(
-        text(&trailing_attach.stdout)
-            .lines()
-            .any(|line| line == "--exec=true"),
-        "{}",
-        text(&trailing_attach.stdout)
-    );
+    for args in [
+        vec!["create", "removed", "--exec", "true", "--exec", "true"],
+        vec!["create", "removed", "-x", "true"],
+    ] {
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(2));
+        assert!(text(&out.stderr).contains("mabo exec SEL -- COMMAND"));
+        assert!(!managed(&repo, "removed").exists());
+    }
 }
 
 #[test]
@@ -4342,10 +3998,10 @@ fn project_option_resolves_paths_suffixes_and_errors() {
     fs::set_permissions(&checkout_bin, perms).expect("chmod");
     let checkout = run(
         &[
-            "github",
-            "checkout",
+            "create",
             "--repo",
             repo.repo.to_str().expect("repo"),
+            "--issue",
             "9",
             "--json",
         ],
@@ -4359,7 +4015,14 @@ fn project_option_resolves_paths_suffixes_and_errors() {
     );
     assert!(managed(&repo, "issues/9").is_dir());
     let missing_checkout = run(
-        &["gh", "checkout", "--repo", "no-such-ptm805", "9", "--json"],
+        &[
+            "create",
+            "--repo",
+            "no-such-ptm805",
+            "--issue",
+            "9",
+            "--json",
+        ],
         &repo.home,
     );
     assert_eq!(missing_checkout.status.code(), Some(3));
@@ -4642,11 +4305,9 @@ fn github_checkout_project_passes_the_selected_host() {
         .command(
             env!("CARGO_BIN_EXE_mabo"),
             &[
-                "github",
-                "checkout",
-                "-R",
+                "create", "-R",
                 tool.to_str().expect("tool"),
-                "3",
+                "--issue", "3",
                 "--json",
             ],
         )
@@ -4681,7 +4342,7 @@ fn github_checkout_project_passes_the_selected_host() {
 
     fs::write(&log, "").expect("truncate");
     let local = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["github", "checkout", "4"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "--issue", "4"])
         .current_dir(&tool)
         .env("PATH", &path_env)
         .env("MABO_GH_LOG", &log)
@@ -4722,10 +4383,10 @@ fn github_checkout_project_passes_the_selected_host() {
         .command(
             env!("CARGO_BIN_EXE_mabo"),
             &[
-                "github",
-                "checkout",
+                "create",
                 "-R",
                 alias.to_str().expect("alias"),
+                "--issue",
                 "5",
             ],
         )
@@ -4843,22 +4504,18 @@ fn workspace_intent_is_recorded_updated_and_removed() {
     let created = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &[
-                "create",
-                "feature",
-                "--purpose",
-                "fix the flake",
-                "--pr",
-                "774",
-                "--json",
-            ],
+            &["create", "feature", "--purpose", "fix the flake", "--json"],
         )
         .env("MABO_AGENT_ID", "ignored")
         .env("MABO_ACTOR", "also ignored")
         .output()
         .unwrap();
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let created = json_value(&created);
+    assert!(repo
+        .mabo(&["set", "feature", "--pr", "774"])
+        .status
+        .success());
+    let created = json_value(&repo.mabo(&["show", "feature", "--json"]));
     let workspace = &created["data"]["workspace"];
     assert!(workspace.get("owner").is_none());
     assert!(workspace.get("ownerRelation").is_none());
@@ -4904,11 +4561,12 @@ fn workspace_intent_is_recorded_updated_and_removed() {
     );
     repo.git(&["branch", "side"]);
     let attached = repo.mabo(&[
-        "attach",
+        "create",
+        "--branch",
         "side",
         "--purpose",
         "review",
-        "--pr",
+        "--issue",
         "12",
         "--json",
     ]);
@@ -4936,6 +4594,13 @@ fn workspace_intent_is_recorded_updated_and_removed() {
 #[test]
 fn github_recheckout_keeps_the_original_intent() {
     let repo = Repo::new();
+    // Bare links must belong to the repository returned by the gh fixture.
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/acme/demo.git",
+    ]);
     let created = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
@@ -4961,11 +4626,20 @@ fn github_recheckout_keeps_the_original_intent() {
     )
     .expect("rewrite");
 
+    assert!(repo.mabo(&["set", "topic", "--pr", "7"]).status.success());
     let path = fake_gh_for_topic_pr(&repo);
     let again = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["github", "checkout", "7", "--json", "--purpose", "stolen"],
+            &[
+                "create",
+                "--pr",
+                "7",
+                "--reuse",
+                "--json",
+                "--purpose",
+                "stolen",
+            ],
         )
         .env("PATH", &path)
         .env("MABO_AGENT_ID", "intruder")
@@ -4973,7 +4647,7 @@ fn github_recheckout_keeps_the_original_intent() {
         .expect("checkout");
     assert!(again.status.success(), "{}", text(&again.stderr));
     let again_json = json_value(&again);
-    assert_eq!(again_json["data"]["github"]["alreadyExists"], true);
+    assert_eq!(again_json["data"]["source"]["reused"], true);
 
     assert_eq!(again_json["data"]["workspace"]["purpose"], "original task");
     assert_eq!(again_json["data"]["workspace"]["createdAt"], created_at);
@@ -4997,7 +4671,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     fs::create_dir_all(file.parent().expect("dir")).expect("dir");
     records::write(&file, "{not json").expect("corrupt");
     let refused = corrupt
-        .command(env!("CARGO_BIN_EXE_mabo"), &["github", "checkout", "7"])
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "--pr", "7"])
         .env("PATH", &corrupt_path)
         .output()
         .expect("checkout");
@@ -5034,7 +4708,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     let unwritable = locked
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["github", "checkout", "7", "--json"],
+            &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &locked_path)
         .output()
@@ -5075,7 +4749,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     let checked_out = ready
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["github", "checkout", "7", "--json"],
+            &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &ready_path)
         .output()
@@ -5088,9 +4762,9 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     );
     let checked_out_json = json_value(&checked_out);
     assert!(checked_out_json["error"].is_null(), "{checked_out_json}");
-    assert_eq!(checked_out_json["data"]["github"]["kind"], "pullRequest");
-    assert_eq!(checked_out_json["data"]["github"]["headRef"], "topic");
-    assert_eq!(checked_out_json["data"]["github"]["alreadyExists"], false);
+    assert_eq!(checked_out_json["data"]["source"]["kind"], "pr");
+    assert_eq!(checked_out_json["data"]["source"]["headRef"], "topic");
+    assert_eq!(checked_out_json["data"]["source"]["reused"], false);
     assert_eq!(checked_out_json["data"]["metadata"]["ok"], true);
     assert!(managed(&ready, "topic").is_dir());
     assert!(
@@ -5188,8 +4862,8 @@ fn metadata_save_failure_after_create_still_runs_hooks() {
         .as_str()
         .unwrap_or("")
         .contains("injected"));
-    assert_eq!(created_json["data"]["postCreate"]["ok"], true);
-    assert_eq!(created_json["data"]["copyFiles"]["ok"], true);
+    assert_eq!(created_json["data"]["setup"]["ok"], true);
+    assert!(created_json["data"]["copy"]["error"].is_null());
     assert!(managed(&repo, "feature/hook-ran").is_file());
     assert!(text(&created.stderr).contains("Warning"));
     assert!(text(&created.stderr).contains("injected"));
@@ -5255,21 +4929,10 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
 #[test]
 fn exec_command_json_flag_does_not_switch_mabo_to_json() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "topic", "--exec", "npm", "test", "--json"]);
-    let stdout = text(&created.stdout);
-    assert!(
-        stdout.contains("Created workspace 'topic'"),
-        "{stdout}\n{}",
-        text(&created.stderr)
-    );
-    assert!(
-        stdout.contains("Executing command in workspace 'topic': npm test --json"),
-        "{stdout}"
-    );
-    assert!(
-        serde_json::from_str::<serde_json::Value>(&stdout).is_err(),
-        "stdout should stay human logs, not a JSON document:\n{stdout}"
-    );
+    assert!(repo.mabo(&["create", "child"]).status.success());
+    let out = repo.mabo(&["exec", "child", "--", "printf", "%s", "--json"]);
+    assert!(out.status.success());
+    assert_eq!(text(&out.stdout), "--json");
 }
 
 #[test]
@@ -6560,7 +6223,7 @@ fn duplicate_legacy_metadata_paths_block_mutations() {
     let before = records::read_to_string(&file).expect("snapshot");
     for args in [
         vec!["create", "other", "--json"],
-        vec!["attach", "side", "--json"],
+        vec!["create", "--branch", "side", "--json"],
         vec!["delete", "kept", "--json"],
         vec!["set", "kept", "--purpose", "nope", "--json"],
         vec!["gc", "--json"],
@@ -6937,7 +6600,7 @@ fn gc_apply_rechecks_only_each_target_pull_request() {
         for number in 1..=count {
             let name = format!("topic-{number}");
             let url = format!("https://github.com/acme/demo/pull/{number}");
-            let created = repo.mabo(&["create", &name, "--pr", &url]);
+            let created = repo.create_recorded(&["create", &name, "--pr", &url]);
             assert!(created.status.success(), "{}", text(&created.stderr));
             if kind == "missing" {
                 fs::remove_dir_all(managed(&repo, &name)).unwrap();
@@ -7004,7 +6667,7 @@ fn gc_rechecks_pull_request_eligibility_after_pre_delete_hooks() {
     use std::os::unix::fs::PermissionsExt;
     let repo = Repo::new();
     assert!(repo
-        .mabo(&[
+        .create_recorded(&[
             "create",
             "topic",
             "--pr",
@@ -7063,7 +6726,7 @@ pre-delete = ["echo '{{\"state\":\"OPEN\"}}' > '{}' "]
 fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&[
+        .create_recorded(&[
             "create",
             "topic",
             "--pr",
@@ -7324,7 +6987,7 @@ fn gc_does_not_remove_a_worktree_checked_out_on_the_default_branch() {
     repo.git(&["push", "origin", "main"]);
     repo.git(&["remote", "set-head", "origin", "main"]);
     repo.git(&["checkout", "-b", "dev"]);
-    let attached = repo.mabo(&["attach", "main"]);
+    let attached = repo.mabo(&["create", "--branch", "main"]);
     assert!(
         attached.status.success(),
         "{}\n{}",
@@ -7410,7 +7073,7 @@ fn gc_removes_an_attached_branch_that_already_moved_past_its_creation_commit() {
     repo.git(&["commit", "-m", "landed"]);
     repo.git(&["checkout", "main"]);
     repo.git(&["merge", "--ff-only", "landed"]);
-    let attached = repo.mabo(&["attach", "landed"]);
+    let attached = repo.mabo(&["create", "--branch", "landed"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
 
     let applied = repo.mabo(&["gc", "--apply"]);
@@ -7433,7 +7096,7 @@ fn gc_removes_an_attached_merged_branch_when_its_reflog_is_missing() {
     let reflog = repo.repo.join(".git/logs/refs/heads/landed");
     assert!(reflog.is_file(), "landed reflog");
     fs::remove_file(&reflog).expect("remove reflog");
-    let attached = repo.mabo(&["attach", "landed"]);
+    let attached = repo.mabo(&["create", "--branch", "landed"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
 
     let applied = repo.mabo(&["gc", "--apply"]);
@@ -7493,7 +7156,7 @@ fn gc_keeps_a_worktree_still_at_its_creation_point() {
 fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&[
+        .create_recorded(&[
             "create",
             "alpha",
             "--pr",
@@ -7502,7 +7165,7 @@ fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
         .status
         .success());
     assert!(repo
-        .mabo(&[
+        .create_recorded(&[
             "create",
             "beta",
             "--pr",
@@ -7511,7 +7174,7 @@ fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
         .status
         .success());
     assert!(repo
-        .mabo(&["create", "local", "--pr", "4"])
+        .create_recorded(&["create", "local", "--pr", "4"])
         .status
         .success());
     let log = repo.root.join("gh.log");
@@ -8037,19 +7700,14 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         ])
         .status
         .success());
-    let detached = repo.mabo(&["create", "next", "--exec", "git checkout -q --detach"]);
+    let detached = repo.mabo(&["create", "next", "--detach"]);
     assert!(
         detached.status.success(),
         "{}\n{}",
         text(&detached.stdout),
         text(&detached.stderr)
     );
-    let nested = repo.mabo(&[
-        "create",
-        "feature/topic",
-        "--exec",
-        "git checkout -q --detach",
-    ]);
+    let nested = repo.mabo(&["create", "feature/topic", "--detach"]);
     assert!(
         nested.status.success(),
         "{}\n{}",
@@ -8413,7 +8071,7 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
     assert!(!message.contains(link.to_str().expect("link")), "{message}");
 
     repo.git(&["branch", "attached"]);
-    let attached = run(&["attach", "attached", "--json"]);
+    let attached = run(&["create", "--branch", "attached", "--json"]);
     assert!(
         attached.status.success(),
         "{}\n{}",
@@ -8424,7 +8082,7 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
     assert!(attached_json["error"].is_null(), "{attached_json}");
     assert_eq!(attached_json["data"]["workspace"]["name"], "attached");
 
-    let executed = run(&["create", "b", "--json", "--exec", "true"]);
+    let executed = run(&["create", "b", "--json"]);
     assert!(
         executed.status.success(),
         "{}\n{}",
@@ -8433,7 +8091,7 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
     );
     let executed_json = json_value(&executed);
     assert!(executed_json["error"].is_null(), "{executed_json}");
-    assert_eq!(executed_json["data"]["exec"]["ok"], true);
+    assert!(run(&["exec", "b", "--", "true"]).status.success());
     assert_eq!(executed_json["data"]["workspace"]["name"], "b");
 }
 
@@ -8533,6 +8191,13 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
 #[test]
 fn recheckout_through_a_symlink_keeps_intent_and_creation_details() {
     let repo = Repo::new();
+    // Bare links must belong to the repository returned by the gh fixture.
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/acme/demo.git",
+    ]);
     let created = repo.mabo(&["create", "issues/7", "--purpose", "keep me", "--json"]);
     assert!(
         created.status.success(),
@@ -8540,6 +8205,10 @@ fn recheckout_through_a_symlink_keeps_intent_and_creation_details() {
         text(&created.stdout),
         text(&created.stderr)
     );
+    assert!(repo
+        .mabo(&["set", "issues/7", "--issue", "7"])
+        .status
+        .success());
     let created_json = json_value(&created);
     let real = PathBuf::from(
         created_json["data"]["workspace"]["path"]
@@ -8594,7 +8263,15 @@ fn recheckout_through_a_symlink_keeps_intent_and_creation_details() {
     let again = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["github", "checkout", "7", "--purpose", "replace", "--json"],
+            &[
+                "create",
+                "--issue",
+                "7",
+                "--reuse",
+                "--purpose",
+                "replace",
+                "--json",
+            ],
         )
         .env("PATH", &path)
         .output()
@@ -8607,7 +8284,7 @@ fn recheckout_through_a_symlink_keeps_intent_and_creation_details() {
     );
     let again_json = json_value(&again);
     assert!(again_json["error"].is_null(), "{again_json}");
-    assert_eq!(again_json["data"]["github"]["alreadyExists"], true);
+    assert_eq!(again_json["data"]["source"]["reused"], true);
     let worktree = &again_json["data"]["workspace"];
 
     assert_eq!(worktree["purpose"], "keep me");
@@ -9594,16 +9271,16 @@ fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
     assert_eq!(created.status.code(), Some(4), "{}", text(&created.stderr));
     assert_eq!(
         text(&created.stderr),
-        "Branch 'feature/teammate' already exists as a remote-tracking branch (origin). Run `mabo attach feature/teammate`."
+        "Branch 'feature/teammate' already exists as a remote-tracking branch (origin). Run `mabo create --branch feature/teammate`."
     );
     let remote_json = repo.mabo(&["create", "feature/teammate", "--json"]);
     assert_eq!(remote_json.status.code(), Some(4));
     assert_eq!(json_value(&remote_json)["error"]["code"], "exists_remote");
     assert!(local_branch(&repo, "feature/teammate").is_empty());
 
-    let attached = repo.mabo(&["attach", "feature/teammate"]);
+    let attached = repo.mabo(&["create", "--branch", "feature/teammate"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
-    assert!(text(&attached.stdout).contains("Attached workspace: feature/teammate"));
+    assert!(text(&attached.stdout).contains("Created workspace 'feature/teammate'"));
     assert_eq!(
         upstream_name(&repo, "feature/teammate"),
         "origin/feature/teammate"
@@ -9612,12 +9289,17 @@ fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
         .join("README.md")
         .is_file());
 
-    for command in ["create", "attach"] {
-        let exists_json = repo.mabo(&[command, "feature/teammate", "--json"]);
+    for command in ["create", "create --branch"] {
+        let exists_json = repo.mabo(
+            &command
+                .split_whitespace()
+                .chain(["feature/teammate", "--json"])
+                .collect::<Vec<_>>(),
+        );
         assert_eq!(exists_json.status.code(), Some(4));
         assert_eq!(json_value(&exists_json)["error"]["code"], "exists");
     }
-    let again = repo.mabo(&["attach", "feature/teammate"]);
+    let again = repo.mabo(&["create", "--branch", "feature/teammate"]);
     assert_eq!(again.status.code(), Some(4));
     assert_eq!(
         text(&again.stderr),
@@ -9644,7 +9326,7 @@ fn create_with_multiple_remotes_suggests_working_qualified_attach_commands() {
         let message = text(&created.stderr);
         assert_eq!(
             message,
-            "Branch 'feature/teammate' already exists as a remote-tracking branch (origin, upstream). Run `mabo attach origin/feature/teammate` or `mabo attach upstream/feature/teammate`."
+            "Branch 'feature/teammate' already exists as a remote-tracking branch (origin, upstream). Run `mabo create --branch origin/feature/teammate` or `mabo create --branch upstream/feature/teammate`."
         );
         assert!(local_branch(&repo, "feature/teammate").is_empty());
         assert!(!managed(&repo, "feature/teammate").exists());
@@ -9652,12 +9334,12 @@ fn create_with_multiple_remotes_suggests_working_qualified_attach_commands() {
         let qualified = format!("{remote}/feature/teammate");
         let command = message
             .split('`')
-            .find(|command| *command == format!("mabo attach {qualified}"))
+            .find(|command| *command == format!("mabo create --branch {qualified}"))
             .expect("suggested attach command");
         let args: Vec<_> = command.split_whitespace().skip(1).collect();
         let attached = repo.mabo(&args);
         assert!(attached.status.success(), "{}", text(&attached.stderr));
-        assert!(text(&attached.stdout).contains("Attached workspace: feature/teammate"));
+        assert!(text(&attached.stdout).contains("Created workspace 'feature/teammate'"));
         assert_eq!(upstream_name(&repo, "feature/teammate"), qualified);
         assert!(managed(&repo, "feature/teammate")
             .join("README.md")
@@ -9670,9 +9352,9 @@ fn attach_qualified_remote_drops_the_remote_prefix() {
     let repo = Repo::new();
     repo.git(&["config", "branch.autoSetupMerge", "false"]);
     publish_tracking_branch(&repo, "origin", "feature/teammate");
-    let attached = repo.mabo(&["attach", "origin/feature/teammate"]);
+    let attached = repo.mabo(&["create", "--branch", "origin/feature/teammate"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
-    assert!(text(&attached.stdout).contains("Attached workspace: feature/teammate"));
+    assert!(text(&attached.stdout).contains("Created workspace 'feature/teammate'"));
     assert_eq!(
         upstream_name(&repo, "feature/teammate"),
         "origin/feature/teammate"
@@ -9688,18 +9370,18 @@ fn attach_qualified_remote_allows_special_characters_in_the_remote_name() {
     publish_tracking_branch(&repo, "origin", "feature");
     publish_tracking_branch(&repo, "user@host", "feature");
 
-    let ambiguous = repo.mabo(&["attach", "feature"]);
+    let ambiguous = repo.mabo(&["create", "--branch", "feature"]);
     assert_eq!(ambiguous.status.code(), Some(2));
     assert!(text(&ambiguous.stderr).contains("origin, user@host"));
 
-    let attached = repo.mabo(&["attach", "user@host/feature"]);
+    let attached = repo.mabo(&["create", "--branch", "user@host/feature"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
-    assert!(text(&attached.stdout).contains("Attached workspace: feature"));
+    assert!(text(&attached.stdout).contains("Created workspace 'feature'"));
     assert_eq!(upstream_name(&repo, "feature"), "user@host/feature");
     assert!(managed(&repo, "feature").join("README.md").is_file());
     assert!(local_branch(&repo, "user@host/feature").is_empty());
 
-    let invalid = repo.mabo(&["attach", "invalid@name"]);
+    let invalid = repo.mabo(&["create", "--branch", "invalid@name"]);
     assert_eq!(invalid.status.code(), Some(2), "{}", text(&invalid.stderr));
     assert!(text(&invalid.stderr).contains("Workspace name can only contain"));
 }
@@ -9710,7 +9392,7 @@ fn attach_lists_every_remote_that_has_the_name() {
     repo.git(&["config", "branch.autoSetupMerge", "false"]);
     publish_tracking_branch(&repo, "origin", "solo");
     publish_tracking_branch(&repo, "upstream", "solo");
-    let attached = repo.mabo(&["attach", "solo"]);
+    let attached = repo.mabo(&["create", "--branch", "solo"]);
     assert_eq!(
         attached.status.code(),
         Some(2),
@@ -9719,12 +9401,12 @@ fn attach_lists_every_remote_that_has_the_name() {
     );
     assert_eq!(
         text(&attached.stderr),
-        "Branch 'solo' exists on more than one remote (origin, upstream). Run `mabo attach <remote>/solo`."
+        "Branch 'solo' exists on more than one remote (origin, upstream). Run `mabo create --branch <remote>/solo`."
     );
     assert!(local_branch(&repo, "solo").is_empty());
     assert!(!managed(&repo, "solo").exists());
 
-    let chosen = repo.mabo(&["attach", "upstream/solo"]);
+    let chosen = repo.mabo(&["create", "--branch", "upstream/solo"]);
     assert!(chosen.status.success(), "{}", text(&chosen.stderr));
     assert_eq!(upstream_name(&repo, "solo"), "upstream/solo");
     assert!(managed(&repo, "solo").is_dir());
@@ -9740,7 +9422,7 @@ fn attach_uses_the_local_branch_when_it_already_exists() {
         "feature/teammate",
         "origin/feature/teammate",
     ]);
-    let attached = repo.mabo(&["attach", "feature/teammate"]);
+    let attached = repo.mabo(&["create", "--branch", "feature/teammate"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     let upstream = repo
         .command(
@@ -9760,15 +9442,15 @@ fn create_still_fails_for_a_local_branch_that_is_not_on_a_remote() {
     let repo = Repo::new();
     repo.git(&["branch", "lonely"]);
     let created = repo.mabo(&["create", "lonely"]);
-    assert_eq!(created.status.code(), Some(1), "{}", text(&created.stderr));
-    assert!(text(&created.stderr).contains("a branch named 'lonely' already exists"));
-    assert!(!text(&created.stderr).contains("mabo attach"));
+    assert_eq!(created.status.code(), Some(4), "{}", text(&created.stderr));
+    assert!(text(&created.stderr).contains("Branch 'lonely' already exists"));
+    assert!(text(&created.stderr).contains("create --branch"));
 }
 
 #[test]
 fn help_describes_remote_aware_attach_and_create() {
     let repo = Repo::new();
-    let attach_help = repo.mabo(&["attach", "--help"]);
+    let attach_help = repo.mabo(&["create", "--help"]);
     assert!(
         attach_help.status.success(),
         "{}",
@@ -9779,7 +9461,7 @@ fn help_describes_remote_aware_attach_and_create() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(attach.contains("mabo does not fetch"));
-    assert!(attach.contains("attach exits 2 and lists those remotes"));
+    assert!(attach.contains("create --branch exits 2 and lists those remotes"));
     assert!(!attach.contains("must already exist locally"));
     assert!(!attach.contains("first checkout the branch with git"));
     let create_help = repo.mabo(&["create", "--help"]);
@@ -9792,8 +9474,8 @@ fn help_describes_remote_aware_attach_and_create() {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    assert!(create.contains("mabo attach <name>"));
-    assert!(create.contains("create exits 4"));
+    assert!(create.contains("mabo create --branch <name>"));
+    assert!(create.contains("refused with exit 4"));
     let meta = repo.mabo(&["set", "--help"]);
     assert!(meta.status.success());
     assert!(text(&meta.stdout).contains("A missing name exits 3"));
@@ -9820,6 +9502,89 @@ fn nameless_create_skips_a_remote_tracking_candidate() {
     assert!(local_branch(&repo, "bold-badger").is_empty());
     assert!(local_branch(&repo, "calm-comet").contains("calm-comet"));
     assert!(managed(&repo, "calm-comet").is_dir());
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn review4_nameless_create_skips_recorded_workspace_names() {
+    assert_generated_name_skips_adopted_alias(false);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn review4_nameless_detach_skips_recorded_workspace_names() {
+    assert_generated_name_skips_adopted_alias(true);
+}
+
+#[cfg(debug_assertions)]
+fn assert_generated_name_skips_adopted_alias(detach: bool) {
+    for (inside_root, state) in [
+        (true, "live"),
+        (false, "live"),
+        (false, "prunable"),
+        (false, "orphaned"),
+    ] {
+        let repo = Repo::new();
+        let path = if inside_root {
+            let seed = repo.mabo(&["create", "seed", "--json"]);
+            assert!(seed.status.success(), "{}", text(&seed.stdout));
+            managed(&repo, "directory-name")
+        } else {
+            repo.root.join("outside")
+        };
+        repo.git(&[
+            "worktree",
+            "add",
+            "-b",
+            "topic",
+            path.to_str().unwrap(),
+            "main",
+        ]);
+        let adopted = repo.mabo(&[
+            "adopt",
+            path.to_str().unwrap(),
+            "--name",
+            "calm-comet",
+            "--json",
+        ]);
+        assert!(adopted.status.success(), "{}", text(&adopted.stdout));
+        match state {
+            "prunable" => fs::remove_dir_all(&path).expect("remove checkout"),
+            "orphaned" => repo.git(&["worktree", "remove", path.to_str().unwrap()]),
+            _ => {}
+        }
+        let records_before = maboroshi::metadata::load_strict(&repo.repo).expect("records");
+        let args = if detach {
+            vec!["create", "--detach", "--json"]
+        } else {
+            vec!["create", "--json"]
+        };
+        let created = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("MABO_NAME_CANDIDATES", "calm-comet,bold-badger")
+            .output()
+            .expect("mabo");
+        assert!(
+            created.status.success(),
+            "inside_root={inside_root}, state={state}: {}\n{}",
+            text(&created.stdout),
+            text(&created.stderr)
+        );
+        let doc = assert_envelope(&created, "create");
+        assert_eq!(doc["data"]["workspace"]["name"], "bold-badger");
+        assert_eq!(doc["data"]["workspace"]["detached"], detach);
+        assert_eq!(
+            doc["data"]["source"]["kind"],
+            if detach { "detach" } else { "new" }
+        );
+        assert!(managed(&repo, "bold-badger").is_dir());
+        assert!(!managed(&repo, "calm-comet").exists());
+        assert!(local_branch(&repo, "calm-comet").is_empty());
+        let records_after = maboroshi::metadata::load_strict(&repo.repo).expect("records");
+        for (path, record) in records_before {
+            assert_eq!(records_after.get(&path), Some(&record));
+        }
+    }
 }
 
 fn assert_no_upstream(repo: &Repo, branch: &str) {
@@ -10211,7 +9976,7 @@ fn every_json_command_uses_the_same_error_envelope() {
     let repo = Repo::new();
     for command in [
         "create",
-        "attach",
+        "create",
         "list",
         "show",
         "delete",
@@ -10224,7 +9989,7 @@ fn every_json_command_uses_the_same_error_envelope() {
         "repo add",
         "repo list",
         "repo forget",
-        "github checkout",
+        "create",
     ] {
         let mut args = command.split_whitespace().collect::<Vec<_>>();
         args.extend(["--json", "--unknown-option"]);
@@ -10320,16 +10085,7 @@ fn non_interactive_git_gets_prompt_control_and_hooks_preserve_user_stdin() {
     )
     .expect("hook");
     let mut child = repo
-        .command(
-            env!("CARGO_BIN_EXE_mabo"),
-            &[
-                "create",
-                "stdin",
-                "--json",
-                "--exec",
-                "read line; test \"$line\" = sentinel",
-            ],
-        )
+        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "stdin", "--json"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -10358,7 +10114,11 @@ fn successful_json_commands_share_the_envelope_and_preserve_payload_keys() {
     repo.git(&["branch", "existing"]);
     let cases: &[(&[&str], &str, &str)] = &[
         (&["create", "topic", "--json"], "create", "workspace"),
-        (&["attach", "existing", "--json"], "attach", "workspace"),
+        (
+            &["create", "--branch", "existing", "--json"],
+            "create",
+            "workspace",
+        ),
         (&["list", "--json"], "list", "workspaces"),
         (&["show", "topic", "--json"], "show", "workspace"),
         (
@@ -10394,23 +10154,23 @@ fn successful_json_commands_share_the_envelope_and_preserve_payload_keys() {
     let out = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["github", "checkout", "7", "--json"],
+            &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &gh_path)
         .output()
         .expect("checkout");
-    let value = assert_envelope(&out, "github checkout");
+    let value = assert_envelope(&out, "create");
     assert!(out.status.success(), "{value}");
     assert!(value["data"]["workspace"].is_object());
     let out = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["gh", "checkout", "7", "--json"],
+            &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &gh_path)
         .output()
         .expect("gh checkout");
-    let value = assert_envelope(&out, "github checkout");
+    let value = assert_envelope(&out, "create");
     assert!(out.status.success(), "{value}");
     assert_eq!(value["data"]["workspace"]["kind"], "workspace");
     let bare = repo.root.join("origin.git");
@@ -10519,7 +10279,7 @@ fn invalid_usage_preserves_json_across_all_command_groups() {
     // unresolved top-level commands must use exactly one usage envelope.
     for (command, invalid, key) in [
         ("create", "--bogus", "create"),
-        ("attach", "--bogus", "attach"),
+        ("create --branch", "--bogus", "create"),
         ("list", "--bogus", "list"),
         ("show", "--bogus", "show"),
         ("delete", "--bogus", "delete"),
@@ -10532,17 +10292,17 @@ fn invalid_usage_preserves_json_across_all_command_groups() {
         ("repo add", "--bogus", "repo add"),
         ("repo list", "--bogus", "repo list"),
         ("repo forget", "--bogus", "repo forget"),
-        ("github checkout", "--bogus", "github checkout"),
-        ("gh checkout", "--bogus", "github checkout"),
+        ("create", "--bogus", "create"),
+        ("create", "--bogus", "create"),
         ("repo", "bogus", "repo"),
         ("meta", "bogus", "meta"),
         ("config", "bogus", "config"),
-        ("github", "bogus", "github"),
-        ("gh", "bogus", "github"),
+        ("adopt", "--bogus", "adopt"),
+        ("forget", "--bogus", "forget"),
         ("repo", "--bogus", "repo"),
         ("meta", "--bogus", "meta"),
         ("config", "--bogus", "config"),
-        ("github", "--bogus", "github"),
+        ("adopt", "--bogus", "adopt"),
         ("frobnicate", "--bogus", "frobnicate"),
     ] {
         for (output_args, env_mode) in [
@@ -10603,7 +10363,7 @@ fn help_requests_skip_option_values_and_reject_missing_values() {
     for command in [
         "list",
         "create",
-        "attach",
+        "create",
         "repo list",
         "set",
         "gc",
@@ -10632,7 +10392,7 @@ fn help_requests_skip_option_values_and_reject_missing_values() {
     for (command, option) in [
         ("list", "--repo"),
         ("create", "--repo"),
-        ("attach", "--repo"),
+        ("adopt", "--repo"),
         ("set", "--repo"),
     ] {
         let args = command
@@ -10647,7 +10407,7 @@ fn help_requests_skip_option_values_and_reject_missing_values() {
     for (command, option) in [
         ("list", "--repo"),
         ("create", "--base"),
-        ("attach", "--exec"),
+        ("create", "--branch"),
         ("gc", "--older-than"),
         ("clone", "--depth"),
     ] {
@@ -10682,8 +10442,7 @@ fn output_and_help_scan_respects_command_option_arity_and_child_boundaries() {
         for exec in ["--exec", "-x"] {
             let out = repo.mabo(&[command, "--bogus", exec, "ignored", "--json", "--help"]);
             assert_eq!(out.status.code(), Some(2));
-            assert!(out.stdout.is_empty());
-            assert!(text(&out.stderr).contains("Unknown option"));
+            assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
         }
         for exec in ["--exec=ignored", "-xignored"] {
             let out = repo.mabo(&[command, "--bogus", exec, "--json"]);
@@ -10715,11 +10474,11 @@ fn json_dirty_refusal_keeps_its_specific_cause() {
 #[cfg(debug_assertions)]
 #[test]
 fn create_and_attach_setup_failures_report_text_and_json_without_duplicate_causes() {
-    for command in ["create", "attach"] {
+    for command in ["create", "create --branch"] {
         for json in [false, true] {
-            for cause in ["metadata", "copyFiles", "postCreate", "exec"] {
+            for cause in ["metadata", "copyFiles", "postCreate"] {
                 let repo = Repo::new();
-                if command == "attach" {
+                if command == "create --branch" {
                     repo.git(&["branch", "topic"]);
                 }
                 if cause == "copyFiles" {
@@ -10733,7 +10492,10 @@ fn create_and_attach_setup_failures_report_text_and_json_without_duplicate_cause
                     )
                     .unwrap();
                 }
-                let mut args = vec![command, "topic"];
+                let mut args = command
+                    .split_whitespace()
+                    .chain(["topic"])
+                    .collect::<Vec<_>>();
                 if json {
                     args.push("--json");
                 }
@@ -10757,7 +10519,18 @@ fn create_and_attach_setup_failures_report_text_and_json_without_duplicate_cause
                 if json {
                     let document = json_value(&output);
                     assert_eq!(document["error"]["code"], "partial");
-                    assert_eq!(document["data"][cause]["ok"], false);
+                    if cause == "copyFiles" {
+                        assert!(document["data"]["copy"]["error"].is_string());
+                    } else {
+                        assert_eq!(
+                            document["data"][if cause == "postCreate" {
+                                "setup"
+                            } else {
+                                cause
+                            }]["ok"],
+                            false
+                        );
+                    }
                     if cause == "exec" {
                         assert!(!stderr.contains(diagnostic), "{stderr}");
                     } else {
@@ -10792,9 +10565,15 @@ fn every_command_help_uses_workspace_vocabulary() {
         // No Git diagnostic wording is currently needed in help.
         let help = text(&out.stdout)
             .to_ascii_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
             .replace("worktrees-directory", "")
             .replace("worktrees.json", "")
-            .replace(".worktreeinclude", "");
+            .replace(".worktreeinclude", "")
+            .replace("git worktree", "git checkout")
+            .replace("git worktrees", "git checkouts")
+            .replace("linked worktree", "linked checkout");
         assert!(!help.contains("worktree"), "{command}: {help}");
     }
 }
@@ -10847,21 +10626,14 @@ fn hooks_and_exec_export_workspace_identity_and_remove_inherited_legacy_variable
             .unwrap()
     };
     let script = workspace_env_script(&exec);
-    let out = run(&[
-        "create",
-        "feature/env-contract",
-        "--json",
-        "--exec",
-        &script,
-    ]);
+    let out = run(&["create", "feature/env-contract", "--json"]);
     let value = assert_envelope(&out, "create");
     assert!(out.status.success(), "{value}");
     let id = value["data"]["workspace"]["id"].as_str().unwrap();
     assert!(id.starts_with("ws_"));
     let path = managed(&repo, "feature/env-contract");
     assert_workspace_env(&post, &repo, "feature/env-contract", &path, id);
-    assert_workspace_env(&exec, &repo, "feature/env-contract", &path, id);
-    fs::remove_file(&exec).unwrap();
+
     let out = run(&["exec", "feature/env-contract", "--", "sh", "-c", &script]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_workspace_env(&exec, &repo, "feature/env-contract", &path, id);
@@ -12058,13 +11830,7 @@ fn outer_global_repo_selection_works_before_commands_and_preserves_child_argumen
 #[test]
 fn outer_parent_commands_require_subcommands_in_json_and_show_text_help() {
     let repo = Repo::new();
-    for (command, key) in [
-        ("trust", "trust"),
-        ("repo", "repo"),
-        ("config", "config"),
-        ("github", "github"),
-        ("gh", "github"),
-    ] {
+    for (command, key) in [("trust", "trust"), ("repo", "repo"), ("config", "config")] {
         let help = repo.mabo(&[command, "--help"]);
         assert_eq!(help.status.code(), Some(0));
         assert!(help.stderr.is_empty());
@@ -12158,7 +11924,7 @@ fn outer_help_and_version_contracts_text_json_and_exit_codes() {
     }
     for command in [
         "create",
-        "attach",
+        "create",
         "delete",
         "show",
         "list",
@@ -12166,10 +11932,10 @@ fn outer_help_and_version_contracts_text_json_and_exit_codes() {
         "gc",
         "exec",
         "set",
-        "gh",
-        "gh checkout",
-        "github",
-        "github checkout",
+        "adopt",
+        "adopt",
+        "forget",
+        "create",
         "clone",
         "repo",
         "repo add",
@@ -12296,14 +12062,7 @@ fn outer_repo_forget_ambiguous_canonical_suffix_is_usage_and_keeps_registrations
 fn removed_identity_flags_are_usage_errors_with_migration_hints() {
     let repo = Repo::new();
     for command in [
-        "create",
-        "attach",
-        "github checkout",
-        "gh checkout",
-        "set",
-        "list",
-        "gc",
-        "sync",
+        "create", "create", "--branch", "create", "create", "set", "list", "gc", "sync",
     ] {
         let flag = if command == "sync" {
             "--mine"
@@ -12336,8 +12095,8 @@ fn removed_identity_flags_are_usage_errors_with_migration_hints() {
                     assert!(out.stderr.is_empty(), "{args:?}: {}", text(&out.stderr));
                     let doc = assert_envelope(
                         &out,
-                        if command == "gh checkout" {
-                            "github checkout"
+                        if command == "create" {
+                            "create"
                         } else {
                             command
                         },
@@ -12359,7 +12118,9 @@ fn removed_identity_flags_are_usage_errors_with_migration_hints() {
         }
     }
     // Removed options in a child command retain their original meaning.
-    let out = repo.mabo(&["create", "child", "--exec", "printf", "%s", "--owner"]);
+    let out = repo.mabo(&["create", "child"]);
+    assert!(out.status.success());
+    let out = repo.mabo(&["exec", "child", "--", "printf", "%s", "--owner"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let out = repo.mabo(&["exec", "child", "--", "printf", "%s", "--mine"]);
     assert!(out.status.success());
@@ -12507,7 +12268,7 @@ fn selectors_resolve_linked_workspaces_across_inspection_and_mutations() {
         "https://github.com/acme/demo/issues/73",
     ] {
         let repo = Repo::new();
-        let created = repo.mabo(&[
+        let created = repo.create_recorded(&[
             "create",
             "feature/select",
             "--pr",
@@ -12571,7 +12332,10 @@ fn selectors_resolve_linked_workspaces_across_inspection_and_mutations() {
 fn selectors_fail_before_side_effects_for_missing_ambiguous_and_foreign_dot() {
     let repo = Repo::new();
     for name in ["one", "two"] {
-        assert!(repo.mabo(&["create", name, "--pr", "42"]).status.success());
+        assert!(repo
+            .create_recorded(&["create", name, "--pr", "42"])
+            .status
+            .success());
     }
     let other = repo.root.join("other");
     fs::create_dir(&other).unwrap();
@@ -13098,7 +12862,7 @@ fn list_filters_current_links_upstream_and_all_known_repositories() {
             .success());
     }
     assert!(repo
-        .mabo(&[
+        .create_recorded(&[
             "create",
             "listed",
             "--purpose",
@@ -13198,7 +12962,7 @@ fn linked_urls_respect_repository_identity_and_url_navigation() {
     let repo = Repo::new();
     repo.git(&["remote", "add", "origin", "git@github.com:acme/demo.git"]);
     assert!(repo
-        .mabo(&["create", "linked", "--base", "main", "--pr", "42", "--issue", "73"])
+        .create_recorded(&["create", "linked", "--base", "main", "--pr", "42", "--issue", "73"])
         .status
         .success());
     for selector in [
@@ -13320,7 +13084,10 @@ fn all_repos_uses_enabled_discovery_without_importing_workspace_records() {
 fn delete_link_selector_cannot_change_paths_after_a_hook_relinks_it() {
     let repo = Repo::new();
     for (name, pr) in [("one", "42"), ("two", "43")] {
-        assert!(repo.mabo(&["create", name, "--pr", pr]).status.success());
+        assert!(repo
+            .create_recorded(&["create", name, "--pr", pr])
+            .status
+            .success());
     }
     let second = managed(&repo, "two");
     let out = repo
@@ -13543,7 +13310,7 @@ fn selector_urls_strip_the_final_link_suffix_for_reserved_repository_names() {
             let url = format!("https://github.com/acme/{repo_name}/{kind}/{number}");
             let link = if url_link { &url } else { number };
             assert!(repo
-                .mabo(&["create", "linked", "--base", "main", flag, link])
+                .create_recorded(&["create", "linked", "--base", "main", flag, link])
                 .status
                 .success());
             for selector in [url.clone(), format!("{url}/?plain=1#details")] {
@@ -13586,11 +13353,11 @@ fn selector_urls_use_the_terminal_pair_for_selection_and_deletion() {
             ]);
             let url = format!("https://git.example.com/pull/123/{kind}/42");
             assert!(repo
-                .mabo(&["create", "earlier", "--base", "main", flag, "123"])
+                .create_recorded(&["create", "earlier", "--base", "main", flag, "123"])
                 .status
                 .success());
             assert!(repo
-                .mabo(&[
+                .create_recorded(&[
                     "create",
                     "terminal",
                     "--base",
@@ -13644,7 +13411,11 @@ fn create_and_set_save_link_numbers_from_the_terminal_pair() {
         let repo = Repo::new();
         for (command, number) in [("create", 42), ("set", 43)] {
             let url = format!("https://git.example.com/pull/123/{kind}/{number}/?plain=1#details");
-            let out = repo.mabo(&[command, "linked", flag, &url, "--json"]);
+            let out = if command == "create" {
+                repo.create_recorded(&[command, "linked", flag, &url, "--json"])
+            } else {
+                repo.mabo(&[command, "linked", flag, &url, "--json"])
+            };
             assert_eq!(
                 out.status.code(),
                 Some(0),
@@ -13652,7 +13423,9 @@ fn create_and_set_save_link_numbers_from_the_terminal_pair() {
                 text(&out.stdout),
                 text(&out.stderr)
             );
-            let workspace = &assert_envelope(&out, command)["data"]["workspace"];
+            let workspace =
+                &assert_envelope(&out, if command == "create" { "show" } else { command })["data"]
+                    ["workspace"];
             assert_eq!(workspace["links"][field]["number"], number);
             assert_eq!(workspace["links"][field]["url"], url);
             let out = repo.mabo(&["show", "linked", "--json"]);
@@ -13736,7 +13509,12 @@ fn assert_github_recreates_orphaned_checkout(issue: bool) {
     let checkout = || {
         repo.command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["github", "checkout", "7", "--json"],
+            &[
+                "create",
+                if issue { "--issue" } else { "--pr" },
+                "7",
+                "--json",
+            ],
         )
         .env("PATH", &path)
         .output()
@@ -13744,8 +13522,8 @@ fn assert_github_recreates_orphaned_checkout(issue: bool) {
     };
     let first = checkout();
     assert!(first.status.success(), "{}", text(&first.stdout));
-    let first = assert_envelope(&first, "github checkout");
-    assert_eq!(first["data"]["github"]["alreadyExists"], false);
+    let first = assert_envelope(&first, "create");
+    assert_eq!(first["data"]["source"]["reused"], false);
     let directory = managed(&repo, branch);
     repo.git(&["worktree", "remove", directory.to_str().expect("path")]);
     assert!(!directory.exists());
@@ -13765,8 +13543,8 @@ fn assert_github_recreates_orphaned_checkout(issue: bool) {
         text(&again.stdout),
         text(&again.stderr)
     );
-    let again = assert_envelope(&again, "github checkout");
-    assert_eq!(again["data"]["github"]["alreadyExists"], false);
+    let again = assert_envelope(&again, "create");
+    assert_eq!(again["data"]["source"]["reused"], false);
     assert_eq!(again["data"]["workspace"]["orphaned"], false);
     assert_eq!(again["data"]["workspace"]["branch"], branch);
     assert_eq!(again["data"]["workspace"]["links"][link]["number"], 7);
@@ -13842,7 +13620,13 @@ exec "$REAL_GIT" "$@"
             let result = repo
                 .command(
                     env!("CARGO_BIN_EXE_mabo"),
-                    &["github", "checkout", "7", "--json"],
+                    &[
+                        "create",
+                        if issue { "--issue" } else { "--pr" },
+                        "7",
+                        "--reuse",
+                        "--json",
+                    ],
                 )
                 .env("PATH", &path)
                 .env("REAL_GIT", text(&real_git.stdout))
@@ -13855,7 +13639,7 @@ exec "$REAL_GIT" "$@"
                 "{}",
                 text(&result.stdout)
             );
-            let value = assert_envelope(&result, "github checkout");
+            let value = assert_envelope(&result, "create");
             assert_eq!(
                 value["error"]["code"],
                 if read_error { "failed" } else { "ambiguous" }
@@ -13901,7 +13685,7 @@ fn github_reuses_plain_git_checkout_with_a_git_only_branch_name() {
     let result = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["github", "checkout", "7", "--json"],
+            &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &path)
         .env_remove("MABO_TRUST_ALL")
@@ -13915,14 +13699,14 @@ fn github_reuses_plain_git_checkout_with_a_git_only_branch_name() {
     );
     let value = json_value(&result);
     assert_eq!(value["schema"], 2);
-    assert_eq!(value["data"]["github"]["alreadyExists"], true);
+    assert_eq!(value["data"]["source"]["reused"], true);
     assert_eq!(value["data"]["workspace"]["branch"], "topic+fix");
     assert!(paths_match(
         value["data"]["workspace"]["path"].as_str().expect("path"),
         &checkout
     ));
     assert_eq!(value["data"]["workspace"]["links"]["pr"]["number"], 7);
-    assert_eq!(value["data"]["postCreate"]["ran"], false);
+    assert_eq!(value["data"]["setup"]["ran"], false);
     assert!(!checkout.join("should-not-run").exists());
     let after = repo
         .command("git", &["worktree", "list", "--porcelain"])
@@ -13969,7 +13753,13 @@ fn github_propagates_ambiguous_internal_lookups() {
         let result = repo
             .command(
                 env!("CARGO_BIN_EXE_mabo"),
-                &["github", "checkout", "7", "--json"],
+                &[
+                    "create",
+                    if issue { "--issue" } else { "--pr" },
+                    "7",
+                    "--reuse",
+                    "--json",
+                ],
             )
             .env("PATH", &path)
             .env_remove("MABO_TRUST_ALL")
@@ -14030,7 +13820,7 @@ fn user_selectors_still_reject_git_only_branch_names() {
     let repo = Repo::new();
     for args in [
         vec!["create", "topic+fix", "--json"],
-        vec!["attach", "topic+fix", "--json"],
+        vec!["create", "--branch", "topic+fix", "--json"],
         vec!["show", "topic+fix", "--json"],
         vec!["path", "topic+fix", "--json"],
         vec!["set", "topic+fix", "--purpose", "task", "--json"],
@@ -14070,7 +13860,7 @@ fn github_attaches_a_git_only_head_branch_without_user_name_validation() {
     let result = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["github", "checkout", "7", "--json"],
+            &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &path)
         .output()
@@ -14082,8 +13872,1592 @@ fn github_attaches_a_git_only_head_branch_without_user_name_validation() {
         text(&result.stderr)
     );
     let value = json_value(&result);
-    assert_eq!(value["data"]["github"]["alreadyExists"], false);
+    assert_eq!(value["data"]["source"]["reused"], false);
     assert_eq!(value["data"]["workspace"]["branch"], "topic+fix");
     assert!(managed(&repo, "topic+fix").join("topic.txt").is_file());
     assert_eq!(upstream_name(&repo, "topic+fix"), "origin/topic+fix");
+}
+
+#[test]
+fn unified_create_reuse_is_idempotent_and_never_repeats_setup() {
+    let repo = Repo::new();
+    fs::write(repo.repo.join(".gitignore"), "secret\n").unwrap();
+    fs::write(repo.repo.join("secret"), "first").unwrap();
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        "[hooks]\npost-create = [\"echo setup >> calls; exit 21\"]\n",
+    )
+    .unwrap();
+    let first = repo.mabo(&[
+        "create",
+        "retry",
+        "--base",
+        "main",
+        "--copy-file",
+        "secret",
+        "--json",
+    ]);
+    assert_eq!(first.status.code(), Some(6));
+    let first = assert_envelope(&first, "create");
+    assert_eq!(first["data"]["source"]["kind"], "new");
+    assert_eq!(first["data"]["source"]["base"], "refs/heads/main");
+    assert_eq!(first["data"]["setup"]["exitCode"], 21);
+    assert_eq!(
+        first["data"]["copy"]["copied"],
+        serde_json::json!(["secret"])
+    );
+    let records = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    fs::write(repo.repo.join("secret"), "changed").unwrap();
+    for _ in 0..2 {
+        let out = repo
+            .command(
+                env!("CARGO_BIN_EXE_mabo"),
+                &[
+                    "create",
+                    "retry",
+                    "--base",
+                    "main",
+                    "--copy-file",
+                    "secret",
+                    "--reuse",
+                    "--json",
+                ],
+            )
+            .env_remove("MABO_TRUST_ALL")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = assert_envelope(&out, "create");
+        assert_eq!(doc["data"]["source"]["reused"], true);
+        assert_eq!(doc["data"]["setup"]["ran"], false);
+        assert_eq!(doc["data"]["copy"]["copied"], serde_json::json!([]));
+        assert_eq!(
+            doc["data"]["workspace"]["id"],
+            first["data"]["workspace"]["id"]
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(managed(&repo, "retry/calls")).unwrap(),
+        "setup\n"
+    );
+    assert_eq!(
+        fs::read_to_string(managed(&repo, "retry/secret")).unwrap(),
+        "first"
+    );
+    assert_eq!(
+        records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+        records
+    );
+    repo.git(&["branch", "another"]);
+    for args in [
+        vec!["create", "retry", "--base", "another", "--reuse", "--json"],
+        vec![
+            "create", "retry", "--branch", "another", "--reuse", "--json",
+        ],
+        vec!["create", "retry", "--detach", "--reuse", "--json"],
+        vec!["create", "retry", "--json"],
+    ] {
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
+        assert_eq!(json_value(&out)["error"]["code"], "exists");
+    }
+}
+
+#[test]
+fn unified_create_uses_the_default_base_and_supports_named_branch_and_detach() {
+    let repo = Repo::new();
+    repo.git(&["remote", "add", "origin", repo.repo.to_str().unwrap()]);
+    repo.git(&["fetch", "origin"]);
+    repo.git(&[
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+    ]);
+    empty_commit(&repo, &repo.repo, "local only");
+    let default_head = text(
+        &repo
+            .command("git", &["rev-parse", "refs/remotes/origin/main"])
+            .output()
+            .unwrap()
+            .stdout,
+    );
+    let out = repo.mabo(&["create", "from-default", "--json"]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    let doc = json_value(&out);
+    assert_eq!(doc["data"]["workspace"]["head"], default_head);
+    assert_eq!(doc["data"]["workspace"]["base"], "refs/remotes/origin/main");
+    for _ in 0..2 {
+        let out = repo.mabo(&[
+            "create", "snapshot", "--detach", "--base", "main", "--reuse", "--json",
+        ]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = json_value(&out);
+        assert_eq!(doc["data"]["source"]["kind"], "detach");
+        assert_eq!(doc["data"]["workspace"]["branch"], serde_json::Value::Null);
+        assert_eq!(doc["data"]["workspace"]["detached"], true);
+        assert_eq!(doc["data"]["workspace"]["base"], "refs/heads/main");
+    }
+    repo.git(&["branch", "existing"]);
+    for _ in 0..2 {
+        let out = repo.mabo(&[
+            "create", "review", "--branch", "existing", "--issue", "12", "--reuse", "--json",
+        ]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = json_value(&out);
+        assert_eq!(doc["data"]["source"]["kind"], "branch");
+        assert_eq!(doc["data"]["source"]["branch"], "existing");
+        assert_eq!(doc["data"]["workspace"]["name"], "review");
+        assert_eq!(doc["data"]["workspace"]["links"]["issue"]["number"], 12);
+    }
+}
+
+#[test]
+fn review10_create_pr_accepts_repository_url_case_variants() {
+    assert_review10_source_url_case_variants(true);
+}
+
+#[test]
+fn review10_create_issue_accepts_repository_url_case_variants() {
+    assert_review10_source_url_case_variants(false);
+}
+
+fn assert_review10_source_url_case_variants(pr: bool) {
+    let repo = Repo::new();
+    let path = fake_gh_for_topic_pr(&repo);
+    let gh = repo.root.join("bin/gh");
+    let script = fs::read_to_string(&gh)
+        .unwrap()
+        .replace("acme/demo", "Acme/Demo")
+        .replace("\"login\":\"acme\"", "\"login\":\"Acme\"")
+        .replace("\"name\":\"demo\"", "\"name\":\"Demo\"");
+    if pr {
+        publish_pr_topic(&repo);
+        fs::write(&gh, script).unwrap();
+    } else {
+        fs::write(
+            &gh,
+            script.replace("\"pull_request\":{}", "\"title\":\"Fix issue\""),
+        )
+        .unwrap();
+    }
+    let kind = if pr { "pull" } else { "issues" };
+    let link_key = if pr { "pr" } else { "issue" };
+    let canonical_url = format!("https://github.com/Acme/Demo/{kind}/7");
+    let mut workspace_id = None;
+    for (index, (repository, suffix)) in [
+        ("github.com/Acme/demo", ""),
+        ("github.com/acme/Demo", ""),
+        ("GitHub.com/Acme/Demo", ""),
+        ("GitHub.com/aCmE/dEmO", "/?plain=1#details"),
+        ("github.com/Acme/Demo", "#details"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let url = format!("https://{repository}/{kind}/7{suffix}");
+        let out = repo
+            .command(
+                env!("CARGO_BIN_EXE_mabo"),
+                &[
+                    "create",
+                    "review",
+                    if pr { "--pr" } else { "--issue" },
+                    &url,
+                    "--reuse",
+                    "--no-hooks",
+                    "--json",
+                ],
+            )
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{url}: {}", text(&out.stdout));
+        let doc = assert_envelope(&out, "create");
+        assert_eq!(doc["data"]["source"]["kind"], link_key);
+        assert_eq!(doc["data"]["source"]["number"], 7);
+        assert_eq!(doc["data"]["source"]["reused"], index > 0);
+        let workspace = &doc["data"]["workspace"];
+        assert_eq!(workspace["links"][link_key]["url"], canonical_url);
+        assert_eq!(workspace["links"][link_key]["number"], 7);
+        if let Some(id) = &workspace_id {
+            assert_eq!(&workspace["id"], id);
+        } else {
+            workspace_id = Some(workspace["id"].clone());
+        }
+    }
+}
+
+#[test]
+fn review10_create_rejects_foreign_repository_host_and_source_kind_urls() {
+    let repo = Repo::new();
+    let path = fake_gh_for_topic_pr(&repo);
+    let gh = repo.root.join("bin/gh");
+    let script = fs::read_to_string(&gh).unwrap();
+    fs::write(
+        &gh,
+        script.replace(
+            "#!/bin/sh\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$MABO_REVIEW10_GH_LOG\"\n",
+        ),
+    )
+    .unwrap();
+    let log = repo.root.join("gh.log");
+    for pr in [true, false] {
+        let kind = if pr { "pull" } else { "issues" };
+        let wrong_kind = if pr { "issues" } else { "pull" };
+        for url in [
+            format!("https://github.com/other/demo/{kind}/7"),
+            format!("https://github.com/acme/other/{kind}/7"),
+            format!("https://other.example/acme/demo/{kind}/7"),
+            format!("https://github.com/acme/demo/{wrong_kind}/7"),
+            format!(
+                "https://github.com/acme/demo/{}/7",
+                if pr { "pulls" } else { "issue" }
+            ),
+            format!("http://github.com/acme/demo/{kind}/7"),
+        ] {
+            fs::write(&log, "").unwrap();
+            let out = repo
+                .command(
+                    env!("CARGO_BIN_EXE_mabo"),
+                    &[
+                        "create",
+                        "review",
+                        if pr { "--pr" } else { "--issue" },
+                        &url,
+                        "--json",
+                    ],
+                )
+                .env("PATH", &path)
+                .env("MABO_REVIEW10_GH_LOG", &log)
+                .output()
+                .unwrap();
+            assert_eq!(out.status.code(), Some(2), "{url}: {}", text(&out.stdout));
+            assert_eq!(assert_envelope(&out, "create")["error"]["code"], "usage");
+            assert_eq!(
+                fs::read_to_string(&log).unwrap(),
+                "repo view --json url,owner,name\n"
+            );
+            assert!(!managed(&repo, "review").exists());
+            assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
+        }
+    }
+}
+
+#[test]
+fn unified_create_issue_defaults_and_pr_issue_links() {
+    let repo = Repo::new();
+    let path = fake_gh_for_topic_pr(&repo);
+    let gh = repo.root.join("bin/gh");
+    let script = fs::read_to_string(&gh).unwrap();
+    fs::write(
+        &gh,
+        script.replace("\"pull_request\":{}", "\"title\":\"Fix issue\""),
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+            .env("PATH", &path)
+            .output()
+            .unwrap()
+    };
+    for _ in 0..2 {
+        let out = run(&[
+            "create",
+            "--issue",
+            "https://github.com/acme/demo/issues/7",
+            "--base",
+            "main",
+            "--reuse",
+            "--json",
+        ]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = json_value(&out);
+        assert_eq!(doc["data"]["source"]["kind"], "issue");
+        assert_eq!(doc["data"]["source"]["number"], 7);
+        assert_eq!(doc["data"]["workspace"]["name"], "issues/7");
+        assert_eq!(doc["data"]["workspace"]["purpose"], "Fix issue");
+    }
+    fs::write(&gh, script).unwrap();
+    publish_pr_topic(&repo);
+    for _ in 0..2 {
+        let out = run(&[
+            "create",
+            "review-pr",
+            "--pr",
+            "https://github.com/acme/demo/pull/7",
+            "--issue",
+            "12",
+            "--reuse",
+            "--json",
+        ]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = json_value(&out);
+        assert_eq!(doc["data"]["source"]["kind"], "pr");
+        assert_eq!(doc["data"]["source"]["number"], 7);
+        assert_eq!(doc["data"]["source"]["headRef"], "topic");
+        assert_eq!(doc["data"]["workspace"]["links"]["issue"]["number"], 12);
+    }
+    let conflict = run(&[
+        "create",
+        "review-pr",
+        "--pr",
+        "7",
+        "--issue",
+        "13",
+        "--reuse",
+        "--json",
+    ]);
+    assert_eq!(conflict.status.code(), Some(4));
+    assert_eq!(json_value(&conflict)["error"]["code"], "exists");
+}
+
+#[test]
+fn adopt_and_forget_preserve_git_and_skip_setup() {
+    let repo = Repo::new();
+    let outside = repo.root.join("plain");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic+fix",
+        outside.to_str().unwrap(),
+        "main",
+    ]);
+    fs::write(outside.join("local"), "keep").unwrap();
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        "[hooks]\npost-create = [\"touch setup-ran\"]\npre-delete = [\"exit 23\"]\n",
+    )
+    .unwrap();
+    let adopt = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &[
+                "adopt",
+                outside.to_str().unwrap(),
+                "--name",
+                "adopted",
+                "--base",
+                "main",
+                "--purpose",
+                "existing work",
+                "--pr",
+                "12",
+                "--issue",
+                "34",
+                "--json",
+            ],
+        )
+        .env_remove("MABO_TRUST_ALL")
+        .output()
+        .unwrap();
+    assert!(adopt.status.success(), "{}", text(&adopt.stdout));
+    let doc = assert_envelope(&adopt, "adopt");
+    assert_eq!(doc["data"]["workspace"]["name"], "adopted");
+    assert_eq!(doc["data"]["workspace"]["managed"], true);
+    assert_eq!(
+        doc["data"]["workspace"]["createdAt"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        doc["data"]["workspace"]["createdFrom"],
+        serde_json::Value::Null
+    );
+    assert_eq!(doc["data"]["workspace"]["base"], "refs/heads/main");
+    assert!(!outside.join("setup-ran").exists());
+    let again = repo.mabo(&["adopt", outside.to_str().unwrap(), "--json"]);
+    assert_eq!(again.status.code(), Some(4));
+    assert_eq!(json_value(&again)["error"]["code"], "exists");
+    assert!(repo
+        .mabo(&["set", "main", "--issue", "99"])
+        .status
+        .success());
+    let before = repo
+        .command("git", &["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap()
+        .stdout;
+    let forgotten = repo.mabo(&["forget", "pr:12", "issue:34", ".", "--json"]);
+    assert!(forgotten.status.success(), "{}", text(&forgotten.stdout));
+    let doc = assert_envelope(&forgotten, "forget");
+    let items = doc["data"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    assert!(items.iter().all(|item| item["ok"] == true));
+    assert_eq!(
+        repo.command("git", &["worktree", "list", "--porcelain"])
+            .output()
+            .unwrap()
+            .stdout,
+        before
+    );
+    assert_eq!(fs::read_to_string(outside.join("local")).unwrap(), "keep");
+    assert!(branch_listed(&repo, "topic+fix"));
+    assert!(
+        records::read_to_string(repo.repo.join(".git/maboroshi/workspaces"))
+            .unwrap()
+            .contains("\"worktrees\": []")
+    );
+    let show = repo.mabo(&["show", ".", "--json"]);
+    assert_eq!(
+        json_value(&show)["data"]["workspace"]["purpose"],
+        serde_json::Value::Null
+    );
+}
+
+#[test]
+fn adopt_rejects_foreign_primary_subdirectories_missing_paths_and_name_collisions() {
+    let repo = Repo::new();
+    let foreign = Repo::new();
+    let plain = repo.root.join("plain");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "existing",
+        plain.to_str().unwrap(),
+        "main",
+    ]);
+    fs::create_dir_all(plain.join("subdir")).unwrap();
+    for path in [
+        &repo.repo,
+        &foreign.repo,
+        &plain.join("subdir"),
+        &repo.root.join("missing"),
+    ] {
+        let out = repo.mabo(&["adopt", path.to_str().unwrap(), "--base", "main", "--json"]);
+        assert_eq!(out.status.code(), Some(3), "{}", text(&out.stdout));
+        assert_eq!(json_value(&out)["error"]["code"], "not_found");
+    }
+    assert!(repo.mabo(&["create", "taken"]).status.success());
+    let out = repo.mabo(&[
+        "adopt",
+        plain.to_str().unwrap(),
+        "--name",
+        "taken",
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(4));
+    let out = repo.mabo(&[
+        "adopt",
+        plain.to_str().unwrap(),
+        "--base",
+        "missing",
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(repo
+        .mabo(&["adopt", plain.to_str().unwrap()])
+        .status
+        .success());
+    assert!(repo.mabo(&["forget", "existing"]).status.success());
+    assert!(plain.exists());
+    assert!(branch_listed(&repo, "existing"));
+}
+
+#[test]
+fn unified_create_rejects_removed_commands_and_conflicting_sources_in_text_and_json() {
+    let repo = Repo::new();
+    for (args, hint) in [
+        (vec!["attach", "feature"], "create --branch"),
+        (vec!["github", "checkout", "7"], "create --pr"),
+        (vec!["gh", "checkout", "7"], "create --issue"),
+        (
+            vec!["create", "feature", "--exec", "true"],
+            "exec SEL -- COMMAND",
+        ),
+        (vec!["create", "feature", "-xtrue"], "exec SEL -- COMMAND"),
+    ] {
+        for json in [false, true] {
+            let mut args = args.clone();
+            if json {
+                args.push("--json");
+            }
+            let out = repo.mabo(&args);
+            assert_eq!(out.status.code(), Some(2));
+            let message = if json {
+                let doc = json_value(&out);
+                assert_eq!(doc["error"]["code"], "usage");
+                doc["error"]["message"].as_str().unwrap().to_owned()
+            } else {
+                text(&out.stderr)
+            };
+            assert!(message.contains(hint), "{message}");
+            assert!(!managed(&repo, "feature").exists());
+        }
+    }
+    for args in [
+        vec!["--base", "main", "--branch", "existing"],
+        vec!["--base", "main", "--pr", "7"],
+        vec!["--branch", "existing", "--pr", "7"],
+        vec!["--detach", "--branch", "existing"],
+        vec!["--detach", "--pr", "7"],
+    ] {
+        let args = [vec!["create", "feature", "--json"], args].concat();
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(2), "{}", text(&out.stdout));
+        assert_eq!(json_value(&out)["error"]["code"], "usage");
+    }
+}
+
+#[test]
+fn unified_create_branch_accepts_git_only_names_with_an_explicit_workspace_name() {
+    let repo = Repo::new();
+    repo.git(&["branch", "topic+fix"]);
+    let out = repo.mabo(&["create", "review", "--branch", "topic+fix", "--json"]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    let doc = json_value(&out);
+    assert_eq!(doc["data"]["workspace"]["name"], "review");
+    assert_eq!(doc["data"]["workspace"]["branch"], "topic+fix");
+    let out = repo.mabo(&[
+        "create",
+        "review",
+        "--branch",
+        "topic+fix",
+        "--reuse",
+        "--json",
+    ]);
+    assert!(out.status.success());
+    assert_eq!(json_value(&out)["data"]["source"]["reused"], true);
+}
+
+#[test]
+fn create_reuse_and_adopt_do_not_treat_a_missing_directory_as_a_live_workspace() {
+    let repo = Repo::new();
+    repo.git(&["branch", "existing"]);
+    let out = repo.mabo(&["create", "--branch", "existing", "--json"]);
+    assert!(out.status.success());
+    let directory = managed(&repo, "existing");
+    fs::remove_dir_all(&directory).unwrap();
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        "[hooks]\npost-create = [\"true\"]\n",
+    )
+    .unwrap();
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["create", "--branch", "existing", "--reuse", "--json"],
+        )
+        .env_remove("MABO_TRUST_ALL")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(4));
+    assert_eq!(json_value(&out)["error"]["code"], "untrusted");
+    let out = repo.mabo(&["adopt", directory.to_str().unwrap(), "--json"]);
+    assert_eq!(out.status.code(), Some(3));
+    assert_eq!(json_value(&out)["error"]["code"], "not_found");
+}
+
+#[test]
+fn adopt_forget_and_create_escape_control_characters_in_paths() {
+    let repo = Repo::new();
+    let outside = repo.root.join("existing\n\u{1b}[31m");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "plain",
+        outside.to_str().unwrap(),
+        "main",
+    ]);
+    let out = repo.mabo(&["adopt", outside.to_str().unwrap(), "--name", "review"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains("existing\\u{a}\\u{1b}[31m"));
+    assert!(!text(&out.stdout).contains('\u{1b}'));
+    let out = repo.mabo(&["forget", "review"]);
+    assert!(out.status.success());
+    assert_eq!(text(&out.stdout), "Forgot workspace 'review'");
+    let root = repo.root.join("new\n\u{1b}[31m");
+    assert!(repo
+        .mabo(&["config", "set", "workspace-root", root.to_str().unwrap()])
+        .status
+        .success());
+    let out = repo.mabo(&["create", "escaped"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains("new\\u{a}\\u{1b}[31m"));
+    assert!(!text(&out.stdout).contains('\u{1b}'));
+}
+
+#[test]
+fn create_reuse_propagates_corrupt_record_errors() {
+    let repo = Repo::new();
+    repo.git(&["branch", "existing"]);
+    let created = repo.mabo(&["create", "--branch", "existing", "--json"]);
+    assert!(created.status.success());
+    let id = json_value(&created)["data"]["workspace"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let file = repo
+        .repo
+        .join(format!(".git/maboroshi/workspaces/{id}.json"));
+    fs::write(&file, "{invalid").unwrap();
+    let out = repo.mabo(&["create", "--branch", "existing", "--reuse", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json_value(&out)["error"]["code"], "failed");
+    assert_eq!(fs::read_to_string(file).unwrap(), "{invalid");
+    assert!(managed(&repo, "existing").exists());
+}
+
+#[test]
+fn review2_branch_usage_compares_branches_when_workspace_names_cross() {
+    for reuse in [false, true] {
+        let repo = Repo::new();
+        repo.git(&["branch", "feature"]);
+        repo.git(&["branch", "review"]);
+        let first = repo.mabo(&["create", "review", "--branch", "feature", "--json"]);
+        assert!(first.status.success(), "{}", text(&first.stdout));
+        let mut args = vec!["create", "second", "--branch", "review", "--json"];
+        if reuse {
+            args.push("--reuse");
+        }
+        let second = repo.mabo(&args);
+        assert!(second.status.success(), "{}", text(&second.stdout));
+        let doc = assert_envelope(&second, "create");
+        assert_eq!(doc["data"]["workspace"]["name"], "second");
+        assert_eq!(doc["data"]["workspace"]["branch"], "review");
+        assert_eq!(doc["data"]["source"]["reused"], false);
+        for branch in ["feature", "review", "main"] {
+            let out = repo.mabo(&["create", "third", "--branch", branch, "--json"]);
+            assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
+            assert_eq!(json_value(&out)["error"]["code"], "exists");
+        }
+        assert!(!managed(&repo, "third").exists());
+    }
+}
+
+#[test]
+fn review2_pr_usage_compares_branches_when_workspace_names_cross() {
+    for reuse in [false, true] {
+        let repo = Repo::new();
+        let path = fake_gh_for_topic_pr(&repo);
+        publish_pr_topic(&repo);
+        repo.git(&["branch", "feature"]);
+        let first = repo.mabo(&["create", "topic", "--branch", "feature", "--json"]);
+        assert!(first.status.success(), "{}", text(&first.stdout));
+        let mut args = vec!["create", "second", "--pr", "7", "--json"];
+        if reuse {
+            args.push("--reuse");
+        }
+        let run = |args: &[&str]| {
+            repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+                .env("PATH", &path)
+                .output()
+                .expect("mabo")
+        };
+        let second = run(&args);
+        assert!(second.status.success(), "{}", text(&second.stdout));
+        let doc = assert_envelope(&second, "create");
+        assert_eq!(doc["data"]["workspace"]["name"], "second");
+        assert_eq!(doc["data"]["workspace"]["branch"], "topic");
+        assert_eq!(doc["data"]["source"]["reused"], false);
+        assert!(managed(&repo, "second/topic.txt").is_file());
+        let out = run(&["create", "third", "--pr", "7", "--json"]);
+        assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
+        assert_eq!(json_value(&out)["error"]["code"], "exists");
+        assert!(!managed(&repo, "third").exists());
+    }
+}
+
+#[test]
+fn review2_reuse_with_an_explicit_name_does_not_reuse_a_branch_alias() {
+    for pr in [false, true] {
+        let repo = Repo::new();
+        let path = fake_gh_for_topic_pr(&repo);
+        publish_pr_topic(&repo);
+        let first = repo.mabo(&["create", "review", "--branch", "origin/topic", "--json"]);
+        assert!(first.status.success(), "{}", text(&first.stdout));
+        let out = repo
+            .command(
+                env!("CARGO_BIN_EXE_mabo"),
+                &[
+                    "create",
+                    "topic",
+                    if pr { "--pr" } else { "--branch" },
+                    if pr { "7" } else { "topic" },
+                    "--reuse",
+                    "--json",
+                ],
+            )
+            .env("PATH", &path)
+            .output()
+            .expect("mabo");
+        assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
+        assert_eq!(json_value(&out)["error"]["code"], "exists");
+        assert!(!managed(&repo, "topic").exists());
+        let reused = repo.mabo(&["create", "review", "--branch", "topic", "--reuse", "--json"]);
+        assert!(reused.status.success(), "{}", text(&reused.stdout));
+        assert_eq!(json_value(&reused)["data"]["source"]["reused"], true);
+    }
+}
+
+#[test]
+fn review2_explicit_detached_name_can_match_another_workspaces_branch() {
+    let repo = Repo::new();
+    repo.git(&["branch", "feature"]);
+    let first = repo.mabo(&["create", "review", "--branch", "feature", "--json"]);
+    assert!(first.status.success(), "{}", text(&first.stdout));
+    let new = repo.mabo(&["create", "feature", "--json"]);
+    assert_eq!(new.status.code(), Some(4));
+    assert_eq!(json_value(&new)["error"]["code"], "exists_remote");
+    for reused in [false, true] {
+        let out = repo.mabo(&["create", "feature", "--detach", "--reuse", "--json"]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = assert_envelope(&out, "create");
+        assert_eq!(doc["data"]["workspace"]["name"], "feature");
+        assert_eq!(doc["data"]["workspace"]["detached"], true);
+        assert_eq!(doc["data"]["source"]["reused"], reused);
+    }
+}
+
+#[test]
+fn review1_create_rejects_names_outside_the_workspace_root_for_every_source() {
+    for source in [
+        vec![],
+        vec!["--detach"],
+        vec!["--branch", "existing"],
+        vec!["--pr", "7"],
+        vec!["--issue", "7"],
+    ] {
+        for spelling in ["absolute", "parent", "nested-parent"] {
+            let repo = Repo::new();
+            publish_pr_topic(&repo);
+            repo.git(&["branch", "existing"]);
+            let path = fake_gh_for_topic_pr(&repo);
+            if source == ["--issue", "7"] {
+                let gh = repo.root.join("bin/gh");
+                let script = fs::read_to_string(&gh).unwrap();
+                fs::write(
+                    gh,
+                    script.replace("\"pull_request\":{}", "\"title\":\"Issue\""),
+                )
+                .unwrap();
+            }
+            let outside = repo.root.join("escaped");
+            let name = match spelling {
+                "absolute" => outside.to_str().unwrap(),
+                "parent" => "../escaped",
+                _ => "nested/../../escaped",
+            };
+            let before = repo
+                .command("git", &["worktree", "list", "--porcelain"])
+                .output()
+                .unwrap()
+                .stdout;
+            let args = [
+                vec!["create", name],
+                source.clone(),
+                vec!["--no-hooks", "--json"],
+            ]
+            .concat();
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .env("PATH", &path)
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "{args:?}: {}",
+                text(&out.stdout)
+            );
+            assert_eq!(json_value(&out)["error"]["code"], "usage");
+            assert!(!outside.exists());
+            assert_eq!(
+                repo.command("git", &["worktree", "list", "--porcelain"])
+                    .output()
+                    .unwrap()
+                    .stdout,
+                before
+            );
+        }
+    }
+}
+
+#[test]
+fn review1_create_rejects_destination_escaping_through_a_parent_symlink() {
+    use std::os::unix::fs::symlink;
+    for source in [
+        vec![],
+        vec!["--detach"],
+        vec!["--branch", "existing"],
+        vec!["--pr", "7"],
+        vec!["--issue", "7"],
+    ] {
+        let repo = Repo::new();
+        publish_pr_topic(&repo);
+        repo.git(&["branch", "existing"]);
+        let gh_path = fake_gh_for_topic_pr(&repo);
+        if source == ["--issue", "7"] {
+            let gh = repo.root.join("bin/gh");
+            let script = fs::read_to_string(&gh).unwrap();
+            fs::write(
+                gh,
+                script.replace("\"pull_request\":{}", "\"title\":\"Issue\""),
+            )
+            .unwrap();
+        }
+        let root = repo.root.join("workspaces");
+        let outside = repo.root.join("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, root.join("escape")).unwrap();
+        assert!(repo
+            .mabo(&["config", "set", "workspace-root", root.to_str().unwrap()])
+            .status
+            .success());
+        let args = [
+            vec!["create", "escape/missing/review"],
+            source,
+            vec!["--no-hooks", "--json"],
+        ]
+        .concat();
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("PATH", gh_path)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{args:?}: {}",
+            text(&out.stdout)
+        );
+        assert_eq!(json_value(&out)["error"]["code"], "usage");
+        assert!(!outside.join("missing").exists());
+    }
+}
+
+#[test]
+fn review1_reuse_links_resolve_bare_numbers_in_the_selected_repository() {
+    let repo = Repo::new();
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/acme/demo.git",
+    ]);
+    repo.git(&["branch", "existing"]);
+    let run = |issue: &str| {
+        repo.mabo(&[
+            "create", "review", "--branch", "existing", "--issue", issue, "--reuse", "--json",
+        ])
+    };
+    assert!(run("12").status.success());
+    for url in [
+        "https://github.com/other/demo/issues/12",
+        "https://github.com/acme/other/issues/12",
+        "https://other.example/acme/demo/issues/12",
+    ] {
+        let out = run(url);
+        assert_eq!(out.status.code(), Some(4), "{url}: {}", text(&out.stdout));
+        assert_eq!(json_value(&out)["error"]["code"], "exists");
+    }
+    for reference in [
+        "#12",
+        "https://github.com/acme/demo/issues/12",
+        "https://github.com/acme/demo/issues/12/?plain=1#details",
+    ] {
+        let out = run(reference);
+        assert!(out.status.success(), "{reference}: {}", text(&out.stdout));
+    }
+    assert!(repo
+        .mabo(&[
+            "set",
+            "review",
+            "--issue",
+            "https://github.com/other/demo/issues/12"
+        ])
+        .status
+        .success());
+    let out = run("12");
+    assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
+}
+
+#[test]
+fn review1_reuse_links_share_terminal_url_normalization_with_selectors() {
+    let repo = Repo::new();
+    repo.git(&["branch", "existing"]);
+    // The earlier /pull/123 belongs to owner/repo, not the subject number.
+    let url = "https://git.example.com/pull/123/issues/42";
+    let out = repo.mabo(&[
+        "create", "review", "--branch", "existing", "--issue", url, "--json",
+    ]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    for url in [
+        "https://git.example.com/pull/123/issues/42/?plain=1#details",
+        "https://git.example.com/pull/123/issue/42#details",
+    ] {
+        let show = repo.mabo(&["show", url, "--json"]);
+        assert!(show.status.success(), "{}", text(&show.stdout));
+        let out = repo.mabo(&[
+            "create", "review", "--branch", "existing", "--issue", url, "--reuse", "--json",
+        ]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        assert_eq!(json_value(&out)["data"]["source"]["reused"], true);
+    }
+}
+
+#[test]
+fn review1_adopt_name_is_used_inside_the_workspace_root() {
+    let repo = Repo::new();
+    let tree = managed(&repo, "directory-name");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic",
+        tree.to_str().unwrap(),
+        "main",
+    ]);
+    let out = repo.mabo(&[
+        "adopt",
+        tree.to_str().unwrap(),
+        "--name",
+        "review",
+        "--json",
+    ]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert_eq!(json_value(&out)["data"]["workspace"]["name"], "review");
+    for command in ["show", "path", "forget"] {
+        let out = repo.mabo(&[command, "review", "--json"]);
+        assert!(out.status.success(), "{command}: {}", text(&out.stdout));
+    }
+    assert!(tree.is_dir());
+}
+
+#[test]
+fn review1_existing_branch_creation_does_not_require_a_default_or_source_head() {
+    let repo = Repo::new();
+    repo.git(&["branch", "-m", "develop"]);
+    repo.git(&["checkout", "--orphan", "unborn"]);
+    let out = repo.mabo(&["create", "review", "--branch", "develop", "--json"]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    let doc = json_value(&out);
+    assert_eq!(doc["data"]["workspace"]["branch"], "develop");
+    assert_eq!(doc["data"]["source"]["base"], "refs/heads/develop");
+    assert_eq!(doc["data"]["workspace"]["base"], serde_json::Value::Null);
+}
+
+#[test]
+fn review9_pr_unknown_base_stays_unknown_after_default_returns() {
+    let repo = Repo::new();
+    publish_pr_topic(&repo);
+    let path = fake_gh_for_topic_pr(&repo);
+    repo.git(&["checkout", "--orphan", "unborn"]);
+    repo.git(&["branch", "-D", "main"]);
+    repo.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["create", "--pr", "7", "--json"],
+        )
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    let doc = json_value(&out);
+    assert!(doc["data"]["source"]["base"].is_null());
+    let tree = PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap());
+    let head = || {
+        let out = repo
+            .command("git", &["rev-parse", "HEAD"])
+            .current_dir(&tree)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        text(&out.stdout)
+    };
+    let head_before = head();
+    repo.git(&["checkout", "-b", "main", "topic"]);
+    fs::write(repo.repo.join("new-default"), "new default\n").unwrap();
+    repo.git(&["add", "new-default"]);
+    repo.git(&["commit", "-m", "advance default"]);
+    // Keep sync local so the PR's former remote default cannot hide the fallback.
+    repo.git(&["remote", "remove", "origin"]);
+    let store = repo.repo.join(".git/maboroshi/workspaces");
+    let record_before = records::read(&store).unwrap();
+    for selector in ["topic", "--all"] {
+        let out = repo.mabo(&["sync", selector, "--no-default", "--json"]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = json_value(&out);
+        assert_eq!(
+            doc["data"]["workspaces"][0]["status"], "base-unknown",
+            "{doc}"
+        );
+        assert_eq!(head(), head_before);
+        assert_eq!(records::read(&store).unwrap(), record_before);
+    }
+    let record: serde_json::Value = serde_json::from_slice(&record_before).unwrap();
+    assert_eq!(record["worktrees"][0]["baseCleared"], true);
+}
+
+#[test]
+fn review1_pr_creation_does_not_require_a_default_or_source_head() {
+    let repo = Repo::new();
+    publish_pr_topic(&repo);
+    let path = fake_gh_for_topic_pr(&repo);
+    repo.git(&["checkout", "--orphan", "unborn"]);
+    repo.git(&["branch", "-D", "main"]);
+    repo.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["create", "--pr", "7", "--json"],
+        )
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert_eq!(json_value(&out)["data"]["workspace"]["branch"], "topic");
+    assert_eq!(
+        json_value(&out)["data"]["source"]["base"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        json_value(&out)["data"]["workspace"]["base"],
+        serde_json::Value::Null
+    );
+}
+
+#[test]
+fn review3_reuse_rejects_a_prunable_checkout_with_a_missing_git_file() {
+    for source in ["branch", "new", "detach"] {
+        let repo = Repo::new();
+        let mut create = vec!["create", "review", "--json"];
+        if source == "branch" {
+            repo.git(&["branch", "topic"]);
+            create.extend(["--branch", "topic"]);
+        } else if source == "detach" {
+            create.push("--detach");
+        }
+        let out = repo.mabo(&create);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let directory = managed(&repo, "review");
+        fs::remove_file(directory.join(".git")).unwrap();
+        assert!(directory.is_dir());
+        let listed = repo
+            .command("git", &["worktree", "list", "--porcelain"])
+            .output()
+            .unwrap();
+        assert!(text(&listed.stdout).contains("prunable"));
+        let records_before =
+            records::read_to_string(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+        create.push("--reuse");
+        let out = repo.mabo(&create);
+        assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+        let doc = assert_envelope(&out, "create");
+        assert_eq!(doc["error"]["code"], "failed");
+        let message = doc["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("Cannot reuse workspace 'review'"),
+            "{message}"
+        );
+        assert!(message.contains(".git"), "{message}");
+        assert_eq!(
+            records::read_to_string(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+            records_before
+        );
+        assert!(directory.is_dir());
+        assert!(!directory.join(".git").exists());
+    }
+}
+
+#[test]
+fn review3_reuse_rejects_git_discovery_falling_back_to_the_parent_checkout() {
+    let repo = Repo::new();
+    assert!(repo
+        .mabo(&["config", "set", "workspace-root", "workspaces"])
+        .status
+        .success());
+    assert!(repo.mabo(&["create", "review"]).status.success());
+    let directory = repo.repo.join("workspaces/review");
+    fs::remove_file(directory.join(".git")).unwrap();
+    let observed = repo
+        .command("git", &["rev-parse", "--show-toplevel"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(observed.status.success());
+    assert_eq!(Path::new(&text(&observed.stdout)), repo.repo);
+    let out = repo.mabo(&["create", "review", "--reuse", "--json"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    assert_eq!(assert_envelope(&out, "create")["error"]["code"], "failed");
+}
+
+#[test]
+fn review3_reuse_rejects_a_checkout_pointing_to_a_foreign_common_directory() {
+    let repo = Repo::new();
+    let foreign = Repo::new();
+    assert!(repo.mabo(&["create", "review"]).status.success());
+    assert!(foreign.mabo(&["create", "other"]).status.success());
+    let directory = managed(&repo, "review");
+    fs::copy(
+        managed(&foreign, "other").join(".git"),
+        directory.join(".git"),
+    )
+    .unwrap();
+    let observed = repo
+        .command("git", &["rev-parse", "--show-toplevel"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(observed.status.success());
+    assert_eq!(Path::new(&text(&observed.stdout)), directory);
+    let out = repo.mabo(&["create", "review", "--reuse", "--json"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    assert_eq!(assert_envelope(&out, "create")["error"]["code"], "failed");
+}
+
+fn assert_reuse_rejects_swapped_git_dir(primary: bool) {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "review"]).status.success());
+    let directory = managed(&repo, "review");
+    if primary {
+        fs::write(
+            directory.join(".git"),
+            format!("gitdir: {}\n", repo.repo.join(".git").display()),
+        )
+        .unwrap();
+    } else {
+        assert!(repo.mabo(&["create", "other"]).status.success());
+        fs::copy(managed(&repo, "other").join(".git"), directory.join(".git")).unwrap();
+    }
+    let observed = repo
+        .command("git", &["rev-parse", "--show-toplevel"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(observed.status.success());
+    assert_eq!(Path::new(&text(&observed.stdout)), directory);
+    let actual_branch = repo
+        .command("git", &["branch", "--show-current"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(actual_branch.status.success());
+    assert_eq!(
+        text(&actual_branch.stdout),
+        if primary { "main" } else { "other" }
+    );
+    let records_before = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    let gitfile_before = fs::read(directory.join(".git")).unwrap();
+    for source in [vec![], vec!["--branch", "review"]] {
+        let mut args = vec!["create", "review", "--reuse", "--json"];
+        args.extend(source);
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+        let doc = assert_envelope(&out, "create");
+        assert_eq!(doc["error"]["code"], "failed");
+        assert!(doc["error"]["message"].as_str().unwrap().contains(".git"));
+        assert_eq!(
+            records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+            records_before
+        );
+        assert_eq!(fs::read(directory.join(".git")).unwrap(), gitfile_before);
+    }
+}
+
+#[test]
+fn review5_reuse_rejects_a_git_file_pointing_to_primary() {
+    assert_reuse_rejects_swapped_git_dir(true);
+}
+
+#[test]
+fn review5_reuse_rejects_a_git_file_pointing_to_another_workspace() {
+    assert_reuse_rejects_swapped_git_dir(false);
+}
+
+#[test]
+fn review5_user_names_reject_reserved_selectors_without_records() {
+    for command in ["adopt", "create"] {
+        for name in [
+            ".",
+            "pr:7",
+            "pr:topic",
+            "issue:12",
+            "issue:topic",
+            "https://github.com/owner/repo/pull/7",
+            "http://github.com/owner/repo/issues/12",
+        ] {
+            let repo = Repo::new();
+            let directory = repo.root.join("directory-name");
+            repo.git(&[
+                "worktree",
+                "add",
+                "-b",
+                "topic",
+                directory.to_str().unwrap(),
+            ]);
+            let args = if command == "adopt" {
+                vec![
+                    "adopt",
+                    directory.to_str().unwrap(),
+                    "--name",
+                    name,
+                    "--json",
+                ]
+            } else {
+                vec!["create", name, "--detach", "--json"]
+            };
+            let out = repo.mabo(&args);
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "{command} {name}: {}",
+                text(&out.stdout)
+            );
+            assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
+            assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
+            assert!(directory.join(".git").is_file());
+        }
+    }
+}
+
+#[test]
+fn review3_forget_matches_show_and_list_after_record_removal() {
+    for location in [
+        "inside",
+        "outside",
+        "primary",
+        "inside-alias",
+        "outside-alias",
+    ] {
+        let repo = Repo::new();
+        let (selector, after_selector, expected_managed) = match location {
+            "inside" => {
+                assert!(repo.mabo(&["create", "review"]).status.success());
+                ("review", "review", true)
+            }
+            "outside" => {
+                let outside = repo.root.join("plain");
+                repo.git(&["worktree", "add", "-b", "review", outside.to_str().unwrap()]);
+                assert!(repo
+                    .mabo(&["adopt", outside.to_str().unwrap()])
+                    .status
+                    .success());
+                ("review", "review", false)
+            }
+            "inside-alias" | "outside-alias" => {
+                let inside = location == "inside-alias";
+                let directory = if inside {
+                    managed(&repo, "directory-name")
+                } else {
+                    repo.root.join("directory-name")
+                };
+                repo.git(&[
+                    "worktree",
+                    "add",
+                    "-b",
+                    "topic",
+                    directory.to_str().unwrap(),
+                ]);
+                assert!(repo
+                    .mabo(&["adopt", directory.to_str().unwrap(), "--name", "review"])
+                    .status
+                    .success());
+                (
+                    "review",
+                    if inside { "directory-name" } else { "topic" },
+                    inside,
+                )
+            }
+            _ => (".", ".", false),
+        };
+        assert!(repo
+            .mabo(&[
+                "set",
+                selector,
+                "--purpose",
+                "work",
+                "--base",
+                "main",
+                "--pr",
+                "34",
+                "--issue",
+                "12"
+            ])
+            .status
+            .success());
+        let out = repo.mabo(&["forget", selector, "issue:12", "--json"]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let forgotten = assert_envelope(&out, "forget");
+        let show = repo.mabo(&["show", after_selector, "--json"]);
+        assert!(show.status.success(), "{}", text(&show.stdout));
+        let shown = assert_envelope(&show, "show");
+        let list = repo.mabo(&["list", "--json"]);
+        assert!(list.status.success(), "{}", text(&list.stdout));
+        let listed = assert_envelope(&list, "list");
+        let tree = &shown["data"]["workspace"];
+        assert_eq!(tree["managed"], expected_managed);
+        for item in forgotten["data"]["items"].as_array().unwrap() {
+            assert_eq!(item["ok"], true);
+            assert_eq!(&item["workspace"], tree, "{location}");
+        }
+        assert!(listed["data"]["workspaces"]
+            .as_array()
+            .unwrap()
+            .contains(tree));
+        for field in [
+            "id",
+            "base",
+            "purpose",
+            "createdAt",
+            "createdFrom",
+            "updatedAt",
+        ] {
+            assert_eq!(tree[field], serde_json::Value::Null, "{field}: {tree}");
+        }
+        assert_eq!(tree["links"]["pr"], serde_json::Value::Null);
+        assert_eq!(tree["links"]["issue"], serde_json::Value::Null);
+    }
+}
+
+#[test]
+fn review1_forget_returns_the_workspace_after_removing_its_record() {
+    let repo = Repo::new();
+    let out = repo.create_recorded(&[
+        "create",
+        "review",
+        "--base",
+        "main",
+        "--purpose",
+        "work",
+        "--issue",
+        "12",
+        "--pr",
+        "34",
+        "--json",
+    ]);
+    assert!(out.status.success());
+    let out = repo.mabo(&["forget", "review", "issue:12", "--json"]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    let doc = json_value(&out);
+    for item in doc["data"]["items"].as_array().unwrap() {
+        assert_eq!(item["ok"], true);
+        let tree = &item["workspace"];
+        let shown = repo.mabo(&["show", "review", "--json"]);
+        assert!(shown.status.success());
+        assert_eq!(tree, &json_value(&shown)["data"]["workspace"]);
+        for field in [
+            "id",
+            "base",
+            "purpose",
+            "createdAt",
+            "createdFrom",
+            "updatedAt",
+        ] {
+            assert_eq!(tree[field], serde_json::Value::Null, "{field}: {tree}");
+        }
+        assert_eq!(tree["links"]["pr"], serde_json::Value::Null);
+        assert_eq!(tree["links"]["issue"], serde_json::Value::Null);
+        assert_eq!(tree["branch"], "review");
+        assert!(tree["head"].is_string());
+        assert!(Path::new(tree["path"].as_str().unwrap()).is_dir());
+    }
+}
+
+fn assert_adopt_rejects_swapped_git_dir(primary: bool) {
+    let repo = Repo::new();
+    let directory = repo.root.join("review");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic",
+        directory.to_str().unwrap(),
+    ]);
+    if primary {
+        fs::write(
+            directory.join(".git"),
+            format!("gitdir: {}\n", repo.repo.join(".git").display()),
+        )
+        .unwrap();
+    } else {
+        let other = repo.root.join("other");
+        repo.git(&["worktree", "add", "-b", "other", other.to_str().unwrap()]);
+        fs::copy(other.join(".git"), directory.join(".git")).unwrap();
+    }
+    // Both pre-existing checks pass, despite Git operating on the wrong branch.
+    let observed = repo
+        .command("git", &["rev-parse", "--show-toplevel"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(observed.status.success());
+    assert_eq!(Path::new(&text(&observed.stdout)), directory);
+    assert_eq!(
+        maboroshi::git::canonical_common_dir(&directory).unwrap(),
+        repo.repo.join(".git")
+    );
+    let branch = repo
+        .command("git", &["branch", "--show-current"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(branch.status.success());
+    assert_eq!(text(&branch.stdout), if primary { "main" } else { "other" });
+    let gitfile = fs::read(directory.join(".git")).unwrap();
+    let out = repo.mabo(&[
+        "adopt",
+        directory.to_str().unwrap(),
+        "--name",
+        "review",
+        "--json",
+    ]);
+    assert!(!out.status.success(), "{}", text(&out.stdout));
+    assert_eq!(assert_envelope(&out, "adopt")["error"]["code"], "not_found");
+    assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
+    assert_eq!(fs::read(directory.join(".git")).unwrap(), gitfile);
+}
+
+#[test]
+fn review6_adopt_rejects_a_git_file_pointing_to_primary() {
+    assert_adopt_rejects_swapped_git_dir(true);
+}
+
+#[test]
+fn review6_adopt_rejects_a_git_file_pointing_to_another_workspace() {
+    assert_adopt_rejects_swapped_git_dir(false);
+}
+
+#[test]
+fn review11_branch_reuse_refuses_primary_checkout() {
+    assert_review11_primary_refused(false, false);
+}
+
+#[test]
+fn review11_named_branch_reuse_refuses_primary_checkout() {
+    assert_review11_primary_refused(false, true);
+}
+
+#[test]
+fn review11_pr_reuse_refuses_primary_checkout() {
+    assert_review11_primary_refused(true, false);
+}
+
+#[test]
+fn review11_named_pr_reuse_refuses_primary_checkout() {
+    assert_review11_primary_refused(true, true);
+}
+
+fn assert_review11_primary_refused(pr: bool, named: bool) {
+    for recorded in [false, true] {
+        let repo = Repo::new();
+        let path = fake_gh_for_topic_pr(&repo);
+        if pr {
+            publish_pr_topic(&repo);
+            repo.git(&["checkout", "-b", "topic", "origin/topic"]);
+        }
+        if recorded {
+            let out = repo.mabo(&["set", ".", "--purpose", "Primary intent", "--json"]);
+            assert!(out.status.success(), "{}", text(&out.stdout));
+        }
+        let before = json_value(&repo.mabo(&["show", ".", "--json"]));
+        let primary_name = before["data"]["workspace"]["name"].as_str().unwrap();
+        let record_path = repo.repo.join(".git/maboroshi/workspaces");
+        let records_before = records::read(&record_path).ok();
+        let mut args = vec!["create"];
+        if named {
+            args.push(primary_name);
+        }
+        args.extend([
+            if pr { "--pr" } else { "--branch" },
+            if pr { "7" } else { "main" },
+            "--json",
+        ]);
+        let run = |args: &[&str]| {
+            repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+                .env("PATH", &path)
+                .output()
+                .unwrap()
+        };
+        let refused = run(&args);
+        assert_eq!(refused.status.code(), Some(4), "{}", text(&refused.stdout));
+        let refused_doc = assert_envelope(&refused, "create");
+        assert_eq!(refused_doc["error"]["code"], "exists");
+        args.push("--reuse");
+        let reuse = run(&args);
+        assert_eq!(
+            records::read(&record_path).ok(),
+            records_before,
+            "Primary metadata changed: {}",
+            text(&reuse.stdout)
+        );
+        assert_eq!(
+            reuse.status.code(),
+            refused.status.code(),
+            "{}",
+            text(&reuse.stdout)
+        );
+        assert_eq!(
+            assert_envelope(&reuse, "create")["error"],
+            refused_doc["error"]
+        );
+        assert_eq!(json_value(&repo.mabo(&["show", ".", "--json"])), before);
+        assert!(!managed(&repo, primary_name).exists());
+    }
+}
+
+#[test]
+fn review11_adopt_skips_worktree_lock_files() {
+    assert_review11_stale_registration_skipped(true, false);
+}
+
+#[test]
+fn review11_reuse_skips_worktree_lock_files() {
+    assert_review11_stale_registration_skipped(false, false);
+}
+
+#[test]
+fn review11_adopt_skips_admin_directories_without_gitdir() {
+    assert_review11_stale_registration_skipped(true, true);
+}
+
+#[test]
+fn review11_reuse_skips_admin_directories_without_gitdir() {
+    assert_review11_stale_registration_skipped(false, true);
+}
+
+fn assert_review11_stale_registration_skipped(adopt: bool, directory: bool) {
+    let repo = Repo::new();
+    let registrations = repo.repo.join(".git/worktrees");
+    fs::create_dir_all(&registrations).unwrap();
+    let stale = registrations.join(if directory { "broken" } else { "pending.lock" });
+    if directory {
+        fs::create_dir(&stale).unwrap();
+    } else {
+        fs::write(&stale, "").unwrap();
+    }
+    let checkout = repo.root.join("review");
+    repo.git(&["worktree", "add", "-b", "topic", checkout.to_str().unwrap()]);
+    let gitfile = fs::read(checkout.join(".git")).unwrap();
+    let args = if adopt {
+        vec![
+            "adopt",
+            checkout.to_str().unwrap(),
+            "--name",
+            "review",
+            "--json",
+        ]
+    } else {
+        vec!["create", "--branch", "topic", "--reuse", "--json"]
+    };
+    let out = repo.mabo(&args);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    let doc = assert_envelope(&out, if adopt { "adopt" } else { "create" });
+    let tree = &doc["data"]["workspace"];
+    assert_eq!(tree["path"], checkout.to_str().unwrap());
+    assert_eq!(tree["branch"], "topic");
+    if adopt {
+        assert!(tree["id"].is_string());
+        assert_eq!(tree["name"], "review");
+        assert_eq!(tree["createdAt"], serde_json::Value::Null);
+    } else {
+        assert_eq!(doc["data"]["source"]["reused"], true);
+        assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
+    }
+    assert_eq!(fs::read(checkout.join(".git")).unwrap(), gitfile);
+    assert!(stale.exists());
 }

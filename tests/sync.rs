@@ -114,7 +114,10 @@ impl Repo {
             String::from_utf8_lossy(&out.stderr)
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(doc["data"]["workspace"]["base"], "HEAD");
+        assert_eq!(
+            doc["data"]["workspace"]["base"],
+            doc["data"]["source"]["base"]
+        );
         PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap())
     }
     fn write_commit(&self, path: &Path, file: &str, text: &str) {
@@ -1597,7 +1600,7 @@ exit "$result"
         fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
         for args in [
             vec!["create", "topic", "--json"],
-            vec!["attach", "existing", "--json"],
+            vec!["create", "--branch", "existing", "--json"],
             vec!["delete", "topic", "--force", "--json"],
         ] {
             let out = r.mabo(&r.main, &args);
@@ -1619,7 +1622,7 @@ exit "$result"
 }
 
 #[test]
-fn git_hook_can_run_mabo_exec_and_create_with_project_hooks_and_exec() {
+fn git_hook_can_run_create_with_project_hooks_and_standalone_exec() {
     use std::os::unix::fs::PermissionsExt;
     let r = Repo::new();
     r.create("victim");
@@ -1647,7 +1650,8 @@ fn git_hook_can_run_mabo_exec_and_create_with_project_hooks_and_exec() {
 touch '{gate}'
 cd '{main}'
 '{bin}' exec victim -- sh -c "touch '{standalone}'" &&
-'{bin}' create nested --exec "touch '{create_exec}'"
+'{bin}' create nested &&
+'{bin}' exec nested -- sh -c "touch '{create_exec}'"
 echo $? > '{status}'
 "#,
             gate = gate.display(),
@@ -1723,7 +1727,7 @@ fn post_create_hook_can_list_and_create_and_pre_delete_hook_can_create() {
 }
 
 #[test]
-fn other_commands_can_run_while_create_exec_is_running() {
+fn other_commands_can_run_while_standalone_exec_is_running() {
     let r = Repo::new();
     let other = r.create("other");
     let gate = r.root.join("exec-gate");
@@ -1738,11 +1742,12 @@ fn other_commands_can_run_while_create_exec_is_running() {
         marker.display(),
         gate.display()
     );
+    r.create("agent");
     let mut create = r
         .command(
             env!("CARGO_BIN_EXE_mabo"),
             &r.main,
-            &["create", "agent", "--exec", &command],
+            &["exec", "agent", "--", "sh", "-c", &command],
         )
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1783,7 +1788,7 @@ fn other_commands_can_run_while_create_exec_is_running() {
 }
 
 #[test]
-fn attach_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
+fn create_branch_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
     let r = Repo::new();
     let bin = env!("CARGO_BIN_EXE_mabo");
     r.git(&r.main, &["branch", "existing"]);
@@ -1793,7 +1798,7 @@ fn attach_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
     )
     .unwrap();
     let child = r
-        .command(bin, &r.main, &["attach", "existing"])
+        .command(bin, &r.main, &["create", "--branch", "existing"])
         .env("MABO_TRUST_ALL", "1")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -2391,6 +2396,7 @@ fn default_reserved_by_rebase_in_main_or_linked_checkout() {
         };
         let before = r.git(&r.main, &["rev-parse", "main"]);
         pause_root_rebase(&r, &path, false);
+        let topic = r.create("topic");
         r.advance();
         let doc = r.sync(&r.main, &[], 1);
         assert_eq!(doc["data"]["default"]["status"], "dirty");
@@ -2399,7 +2405,6 @@ fn default_reserved_by_rebase_in_main_or_linked_checkout() {
             .unwrap()
             .contains("being rebased"));
         assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
-        let topic = r.create("topic");
         let doc = r.sync(&r.main, &["topic"], 0);
         assert_eq!(doc["data"]["default"]["status"], "dirty");
         assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
@@ -2903,7 +2908,10 @@ fn gc_protects_linked_default_with_a_remapped_tracking_namespace() {
         r.git(&r.main, &["push", "origin", "main"]);
         r.git(&r.upstream, &["pull", "--ff-only"]);
         r.git(&r.main, &["checkout", "-b", "other"]);
-        assert!(r.mabo(&r.main, &["attach", "main"]).status.success());
+        assert!(r
+            .mabo(&r.main, &["create", "--branch", "main"])
+            .status
+            .success());
         // main has moved since creation, so only the default-branch guard protects it.
         r.advance();
         let doc = r.sync(&r.main, &[], 0);
@@ -2969,7 +2977,7 @@ fn gc_local_branch_named_like_a_remapped_default_is_not_the_default() {
         r.git(&r.main, &["push", "origin", "main"]);
         r.git(&r.main, &["fetch", "origin"]);
         r.git(&r.main, &["checkout", "-b", "other"]);
-        let out = r.mabo(&r.main, &["attach", "main", "--json"]);
+        let out = r.mabo(&r.main, &["create", "--branch", "main", "--json"]);
         assert!(out.status.success());
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
         let default_path = PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap());
@@ -3096,9 +3104,23 @@ fn unresolved_default_does_not_block_recorded_bases() {
     let created: Value = serde_json::from_slice(&out.stdout).unwrap();
     let tree = PathBuf::from(created["data"]["workspace"]["path"].as_str().unwrap());
     r.write_commit(&tree, "own", "own\n");
-    // attach deliberately leaves the recorded base null, exercising fallback errors.
+    // Older records without an explicit unknown marker still exercise fallback errors.
     r.git(&clone, &["branch", "legacy"]);
-    assert!(r.mabo(&clone, &["attach", "legacy"]).status.success());
+    assert!(r
+        .mabo(&clone, &["create", "--branch", "legacy"])
+        .status
+        .success());
+    let store = clone.join(".git/maboroshi/workspaces");
+    let mut legacy: Value = serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
+    let record = legacy["worktrees"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|record| record["name"] == "legacy")
+        .unwrap();
+    assert_eq!(record["baseCleared"], true);
+    record.as_object_mut().unwrap().remove("baseCleared");
+    records::write(&store, serde_json::to_vec(&legacy).unwrap()).unwrap();
     r.write_commit(&r.upstream, "incoming-develop", "incoming\n");
     r.git(&r.upstream, &["push", "origin", "develop"]);
     let doc = r.sync(&clone, &["legacy", "topic"], 6);
@@ -3369,7 +3391,10 @@ fn gc_default_uses_local_branch_when_a_same_name_tag_exists() {
         }
         r.write_commit(&r.main, "local-default", "keep default\n");
         r.git(&r.main, &["checkout", "-b", "other"]);
-        assert!(r.mabo(&r.main, &["attach", "main"]).status.success());
+        assert!(r
+            .mabo(&r.main, &["create", "--branch", "main"])
+            .status
+            .success());
         let default_path = PathBuf::from(
             r.git(&r.main, &["worktree", "list", "--porcelain"])
                 .lines()
@@ -3593,6 +3618,118 @@ fn rebase_keeps_own_commits_after_upstream_rewind_with_forkpoint_config() {
         );
         assert_eq!(fs::read_to_string(tree.join("own")).unwrap(), "own\n");
     }
+}
+
+#[test]
+fn review9_adopt_without_base_skips_sync() {
+    check_adopted_sync_base(false);
+}
+
+#[test]
+fn review9_adopt_with_base_syncs_normally() {
+    check_adopted_sync_base(true);
+}
+
+fn check_adopted_sync_base(explicit_base: bool) {
+    for selector in ["topic", "--all"] {
+        for no_default in [false, true] {
+            let r = Repo::new();
+            let tree = r.root.join("adopted");
+            r.git(
+                &r.main,
+                &["worktree", "add", "-b", "topic", tree.to_str().unwrap()],
+            );
+            let mut args = vec!["adopt", tree.to_str().unwrap(), "--name", "topic", "--json"];
+            if explicit_base {
+                args.extend(["--base", "origin/main"]);
+            }
+            let adopted = r.mabo(&r.main, &args);
+            assert!(adopted.status.success(), "{adopted:?}");
+            let store = r.main.join(".git/maboroshi/workspaces");
+            let record_before = records::read(&store).unwrap();
+            r.advance();
+            let before = r.snapshot(&tree);
+            let mut args = vec![selector];
+            if no_default {
+                args.push("--no-default");
+            }
+            let doc = r.sync(&r.main, &args, 0);
+            let items = doc["data"]["workspaces"].as_array().unwrap();
+            assert_eq!(items.len(), 1, "{doc}");
+            let item = &items[0];
+            if explicit_base {
+                assert_eq!(item["status"], "updated", "{doc}");
+                assert_eq!(item["base"], "refs/remotes/origin/main");
+                assert_eq!(
+                    r.git(&tree, &["rev-parse", "HEAD"]),
+                    r.git(&r.upstream, &["rev-parse", "HEAD"])
+                );
+            } else {
+                assert_eq!(item["status"], "base-unknown", "{doc}");
+                assert!(item["base"].is_null());
+                assert_eq!(r.snapshot(&tree), before);
+                assert_eq!(records::read(&store).unwrap(), record_before);
+                let record: Value = serde_json::from_slice(&record_before).unwrap();
+                assert_eq!(record["worktrees"][0]["baseCleared"], true);
+                assert!(record["worktrees"][0]["base"].is_null());
+            }
+        }
+    }
+}
+
+#[test]
+fn review9_branch_with_unknown_default_stays_unknown_after_default_returns() {
+    for selector in ["review", "--all"] {
+        let r = Repo::new();
+        r.git(&r.main, &["remote", "remove", "origin"]);
+        r.git(&r.main, &["branch", "-m", "topic"]);
+        r.git(&r.main, &["checkout", "--orphan", "unborn"]);
+        let out = r.mabo(
+            &r.main,
+            &["create", "review", "--branch", "topic", "--json"],
+        );
+        assert!(out.status.success(), "{out:?}");
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(doc["data"]["workspace"]["base"].is_null());
+        let tree = PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap());
+        // A newly available default must not silently replace the unknown intent.
+        r.git(&r.main, &["checkout", "-b", "main", "topic"]);
+        r.write_commit(&r.main, "new-default", "new default\n");
+        let before = r.snapshot(&tree);
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let record_before = records::read(&store).unwrap();
+        let doc = r.sync(&r.main, &[selector, "--no-default"], 0);
+        assert_eq!(
+            doc["data"]["workspaces"][0]["status"], "base-unknown",
+            "{doc}"
+        );
+        assert_eq!(r.snapshot(&tree), before);
+        assert_eq!(records::read(&store).unwrap(), record_before);
+        let record: Value = serde_json::from_slice(&record_before).unwrap();
+        assert_eq!(record["worktrees"][0]["baseCleared"], true);
+        assert!(r
+            .mabo(&r.main, &["set", "review", "--base", "main"])
+            .status
+            .success());
+        let doc = r.sync(&r.main, &[selector, "--no-default"], 0);
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "updated", "{doc}");
+    }
+}
+
+#[test]
+fn review9_branch_with_known_default_preserves_sync_fallback() {
+    let r = Repo::new();
+    r.git(&r.main, &["branch", "topic"]);
+    let out = r.mabo(
+        &r.main,
+        &["create", "review", "--branch", "topic", "--json"],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(doc["data"]["workspace"]["base"].is_null());
+    r.advance();
+    let doc = r.sync(&r.main, &["review", "--no-default"], 0);
+    assert_eq!(doc["data"]["workspaces"][0]["status"], "updated", "{doc}");
 }
 
 #[test]
