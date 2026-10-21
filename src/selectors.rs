@@ -198,7 +198,8 @@ pub struct UpstreamJson {
 }
 
 pub(crate) fn upstream(tree: &WorktreeInfo) -> Option<UpstreamJson> {
-    if tree.detached || tree.orphaned {
+    let path = Path::new(&tree.path);
+    if tree.detached || tree.orphaned || !path.is_dir() {
         return None;
     }
     let branch_ref = format!("refs/heads/{}", tree.branch);
@@ -208,7 +209,7 @@ pub(crate) fn upstream(tree: &WorktreeInfo) -> Option<UpstreamJson> {
             "--format=%(refname)%00%(upstream)",
             &branch_ref,
         ],
-        Some(&tree.repo_root),
+        Some(path),
         true,
     )
     .ok()?;
@@ -221,12 +222,9 @@ pub(crate) fn upstream(tree: &WorktreeInfo) -> Option<UpstreamJson> {
     if reference.is_empty() {
         return None;
     }
-    let gone = match git::raw_git(
-        &tree.repo_root,
-        &["show-ref", "--verify", "--quiet", &reference],
-    )
-    .ok()?
-    .code
+    let gone = match git::raw_git(path, &["show-ref", "--verify", "--quiet", &reference])
+        .ok()?
+        .code
     {
         0 => false,
         1 => true,
@@ -242,7 +240,7 @@ pub(crate) fn upstream(tree: &WorktreeInfo) -> Option<UpstreamJson> {
                 "--count",
                 &format!("HEAD...{reference}"),
             ],
-            Some(Path::new(&tree.path)),
+            Some(path),
             true,
         )
         .ok()

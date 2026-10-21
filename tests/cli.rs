@@ -12823,6 +12823,200 @@ fn removed_inspection_interfaces_and_usage_keep_stdout_clean() {
 }
 
 #[test]
+fn inspection_leaves_orphaned_checkout_observations_null() {
+    let repo = Repo::new();
+    let created = repo.mabo(&["create", "gone", "--base", "main"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    repo.git(&["branch", "--set-upstream-to=main", "gone"]);
+    let path = managed(&repo, "gone");
+    repo.git(&["worktree", "remove", path.to_str().unwrap()]);
+    let trace = repo.root.join("git-trace.json");
+    for command in ["show", "list"] {
+        let args = if command == "show" {
+            vec!["show", "gone", "--json"]
+        } else {
+            vec!["list", "--json"]
+        };
+        fs::write(&trace, "").unwrap();
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("GIT_TRACE2_EVENT", &trace)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        let value = assert_envelope(&out, command);
+        let workspace = if command == "show" {
+            &value["data"]["workspace"]
+        } else {
+            value["data"]["workspaces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["name"] == "gone")
+                .unwrap()
+        };
+        assert_eq!(workspace["orphaned"], true);
+        for field in ["upstream", "branch", "head", "dirty", "detached"] {
+            assert!(workspace[field].is_null(), "{command}: {field}");
+        }
+        let events = fs::read_to_string(&trace).unwrap();
+        for line in events.lines() {
+            let event: serde_json::Value = serde_json::from_str(line).unwrap();
+            if let Some(argv) = event["argv"].as_array() {
+                assert!(
+                    !argv
+                        .iter()
+                        .any(|arg| arg == "refs/heads/gone" || arg == path.to_str().unwrap()),
+                    "{line}"
+                );
+            }
+            assert_ne!(event["worktree"], path.to_string_lossy().as_ref(), "{line}");
+        }
+    }
+}
+
+#[test]
+fn inspection_uses_worktree_config_for_upstream() {
+    assert_inspection_uses_checkout_config(false);
+}
+
+#[test]
+fn inspection_uses_gitdir_include_for_upstream() {
+    assert_inspection_uses_checkout_config(true);
+}
+
+fn assert_inspection_uses_checkout_config(include: bool) {
+    let repo = Repo::new();
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://example.invalid/repo.git",
+    ]);
+    repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    repo.git(&[
+        "update-ref",
+        "refs/remotes/origin/checkout-upstream",
+        "HEAD",
+    ]);
+    let created = repo.mabo(&["create", "local", "--base", "main", "--json"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let path = managed(&repo, "local");
+    repo.git(&["config", "branch.local.remote", "origin"]);
+    repo.git(&[
+        "config",
+        "branch.local.merge",
+        "refs/heads/checkout-upstream",
+    ]);
+    repo.git(&["config", "branch.main.remote", "origin"]);
+    repo.git(&["config", "branch.main.merge", "refs/heads/main"]);
+    let git = |args: &[&str]| {
+        let out = repo
+            .command("git", args)
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        text(&out.stdout)
+    };
+    fs::write(path.join("local"), "local\n").unwrap();
+    git(&["add", "local"]);
+    git(&["commit", "-m", "local change"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    fs::write(repo.repo.join("primary"), "primary\n").unwrap();
+    repo.git(&["add", "primary"]);
+    repo.git(&["commit", "-m", "primary change"]);
+    repo.git(&["branch", "checkout-upstream", "main"]);
+    if include {
+        let config = repo.root.join("checkout.gitconfig");
+        fs::write(
+            &config,
+            "[branch \"local\"]\nremote = .\nmerge = refs/heads/checkout-upstream\n[status]\nshowUntrackedFiles = no\n",
+        ).unwrap();
+        let git_dir = git(&["rev-parse", "--absolute-git-dir"]);
+        repo.git(&[
+            "config",
+            &format!("includeIf.gitdir:{git_dir}.path"),
+            config.to_str().unwrap(),
+        ]);
+    } else {
+        repo.git(&["config", "extensions.worktreeConfig", "true"]);
+        git(&["config", "--worktree", "branch.local.remote", "."]);
+        git(&[
+            "config",
+            "--worktree",
+            "branch.local.merge",
+            "refs/heads/checkout-upstream",
+        ]);
+        git(&["config", "--worktree", "status.showUntrackedFiles", "no"]);
+    }
+    fs::write(
+        path.join("untracked"),
+        "ignored by checkout status config\n",
+    )
+    .unwrap();
+    assert_eq!(
+        git(&["rev-parse", "--symbolic-full-name", "local@{upstream}"]),
+        "refs/heads/checkout-upstream"
+    );
+    assert_eq!(upstream_name(&repo, "local"), "origin/checkout-upstream");
+    let store = repo.repo.join(".git/maboroshi/workspaces");
+    let before = records::read(&store).unwrap();
+    for gone in [false, true] {
+        if gone {
+            repo.git(&["branch", "-D", "checkout-upstream"]);
+        }
+        for cwd in [&repo.repo, &path] {
+            for command in ["show", "list"] {
+                let args = if command == "show" {
+                    vec!["show", "local", "--json"]
+                } else {
+                    vec!["list", "--json"]
+                };
+                let out = repo
+                    .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                    .current_dir(cwd)
+                    .output()
+                    .unwrap();
+                assert!(out.status.success(), "{}", text(&out.stderr));
+                let value = assert_envelope(&out, command);
+                let workspace = if command == "show" {
+                    &value["data"]["workspace"]
+                } else {
+                    let entries = value["data"]["workspaces"].as_array().unwrap();
+                    let primary = entries
+                        .iter()
+                        .find(|entry| entry["kind"] == "primary")
+                        .unwrap();
+                    assert_eq!(
+                        primary["upstream"],
+                        serde_json::json!({"ref":"refs/remotes/origin/main", "ahead":1, "behind":0, "gone":false})
+                    );
+                    entries
+                        .iter()
+                        .find(|entry| entry["name"] == "local")
+                        .unwrap()
+                };
+                let expected = if gone {
+                    serde_json::json!({"ref":"refs/heads/checkout-upstream", "ahead":null, "behind":null, "gone":true})
+                } else {
+                    serde_json::json!({"ref":"refs/heads/checkout-upstream", "ahead":1, "behind":1, "gone":false})
+                };
+                assert_eq!(
+                    workspace["upstream"], expected,
+                    "{command}, include={include}, gone={gone}, cwd={cwd:?}"
+                );
+                assert_eq!(workspace["branch"], "local");
+                assert_eq!(workspace["head"], head);
+                assert_eq!(workspace["dirty"], false);
+                assert_eq!(workspace["detached"], false);
+            }
+        }
+    }
+    assert_eq!(records::read(&store).unwrap(), before);
+}
+
+#[test]
 fn list_filters_current_links_upstream_and_all_known_repositories() {
     let repo = Repo::new();
     let second = repo.root.join("second");
