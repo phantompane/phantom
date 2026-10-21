@@ -884,7 +884,7 @@ fn all_mine_ownership_no_default_explicit_and_forced_merge() {
 #[test]
 fn json_schema_snapshot_and_project_selection() {
     let r = Repo::new();
-    let mut doc = r.sync(&r.main, &["--project", r.main.to_str().unwrap()], 0);
+    let mut doc = r.sync(&r.main, &["--repo", r.main.to_str().unwrap()], 0);
     doc["data"]["default"]["path"] = json!("<path>");
     doc["data"]["default"]["before"] = json!("<sha>");
     doc["data"]["default"]["after"] = json!("<sha>");
@@ -895,7 +895,7 @@ fn json_schema_snapshot_and_project_selection() {
     let tree = r.create("topic");
     r.write_commit(&tree, "own", "own\n");
     assert_eq!(
-        r.sync(&r.main, &["topic", "-p", r.main.to_str().unwrap()], 0)["data"]["workspaces"][0]
+        r.sync(&r.main, &["topic", "-R", r.main.to_str().unwrap()], 0)["data"]["workspaces"][0]
             ["name"],
         "topic"
     );
@@ -2435,8 +2435,8 @@ fn missing_default_checkout_and_broken_target_do_not_block_live_target() {
 fn context_errors_use_shared_exit_codes() {
     let r = Repo::new();
     for args in [
-        vec!["sync", "--project", "missing-project", "--json"],
-        vec!["list", "--project", "missing-project", "--json"],
+        vec!["sync", "--repo", "missing-project", "--json"],
+        vec!["list", "--repo", "missing-project", "--json"],
     ] {
         assert_eq!(r.mabo(&r.main, &args).status.code(), Some(3));
     }

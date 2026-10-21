@@ -220,7 +220,7 @@ pub enum ProjectListEntry {
         /// `host/owner/repo` when the checkout or its `origin` URL identifies one.
         #[serde(rename = "canonicalName")]
         canonical_name: String,
-        /// Every name `--project` may match. The first is `canonical_name`.
+        /// Every name `--repo` may match. The first is `canonical_name`.
         #[serde(skip)]
         match_names: Vec<String>,
         #[serde(rename = "rootPath")]
@@ -295,7 +295,7 @@ fn clone_root_for_names(include_ghq: bool, warnings: &mut Vec<String>) -> Option
         Ok((root, root_warnings)) => {
             if include_ghq {
                 for warning in root_warnings {
-                    crate::output::warning("project_discovery", format!("Warning: {warning}"));
+                    crate::output::warning("repo_discovery", format!("Warning: {warning}"));
                 }
             }
             Some(root)
@@ -354,12 +354,18 @@ fn entry_path(entry: &ProjectListEntry) -> &str {
 }
 
 pub fn resolve_project_root(input: &Path) -> Result<PathBuf> {
-    let resolved = fs::canonicalize(input).map_err(|error| Error::Projects(error.to_string()))?;
+    let resolved = fs::canonicalize(input).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            Error::PathNotFound(input.to_string_lossy().into_owned())
+        } else {
+            Error::Projects(error.to_string())
+        }
+    })?;
     let git_root = git::git_root(&resolved)?;
     fs::canonicalize(git_root).map_err(|error| Error::Projects(error.to_string()))
 }
 
-/// Repository selected by `--project <ref>`.
+/// Repository selected by `--repo <ref>`.
 ///
 /// A ref that starts with `/`, `.`, or `~` is a directory anywhere inside a
 /// repository, including a linked worktree, and resolves to the main checkout.
@@ -371,12 +377,12 @@ pub fn resolve_project_ref(reference: &str) -> Result<PathBuf> {
     let reference = reference.trim();
     if reference.is_empty() {
         return Err(Error::validation(
-            "Option '--project <value>' requires a project name or path".to_string(),
+            "Option '--repo <value>' requires a repo name or path".to_string(),
         ));
     }
     if reference.starts_with('-') {
         return Err(Error::validation(format!(
-            "Option '--project <value>' received '{reference}', which looks like an option"
+            "Option '--repo <value>' received '{reference}', which looks like an option"
         )));
     }
     if is_path_reference(reference) {
@@ -387,7 +393,7 @@ pub fn resolve_project_ref(reference: &str) -> Result<PathBuf> {
     let include_ghq = preferences_include_discovery()?;
     let catalog = list_catalog(include_ghq)?;
     for warning in &catalog.warnings {
-        crate::output::warning("project_discovery", format!("Warning: {warning}"));
+        crate::output::warning("repo_discovery", format!("Warning: {warning}"));
     }
     select_named_project(reference, &candidates(&catalog))
 }
@@ -426,7 +432,7 @@ fn resolve_directory_reference(reference: &str, cwd: &Path, home: &Path) -> Resu
             return resolve_checkout_path(&checkout, reference, false);
         }
         return Err(Error::validation(format!(
-            "Project path '{reference}' is not a directory"
+            "Repository path '{reference}' is not a directory"
         )));
     }
     resolve_checkout_path(&path, reference, true)
@@ -452,7 +458,7 @@ fn resolve_checkout_path(path: &Path, reference: &str, walk_git_dir: bool) -> Re
             Some(checkout) => match git::git_root(&checkout) {
                 Ok(root) => Ok(fs::canonicalize(&root).unwrap_or(root)),
                 Err(_) => Err(Error::validation(format!(
-                    "Project path '{reference}' is inside a Git directory, not a checkout"
+                    "Repository path '{reference}' is inside a Git directory, not a checkout"
                 ))),
             },
             None => Err(error),
@@ -486,7 +492,7 @@ fn expand_tilde(reference: &str, home: &Path) -> Result<PathBuf> {
     }
     if reference.starts_with('~') {
         return Err(Error::validation(format!(
-            "Project path '{reference}' must be an absolute path, a relative path starting with ., or start with ~/."
+            "Repository path '{reference}' must be an absolute path, a relative path starting with ., or start with ~/."
         )));
     }
     Ok(PathBuf::from(reference))
@@ -508,7 +514,10 @@ fn candidates(catalog: &ProjectCatalog) -> Vec<ProjectCandidate> {
         if !seen.insert(key) {
             continue;
         }
-        let names = entry_match_names(entry);
+        let mut names = entry_match_names(entry);
+        if let ProjectListEntry::Registry { id, .. } = entry {
+            names.push(id.clone());
+        }
         projects.push(ProjectCandidate {
             root,
             canonical_name: entry_canonical_name(entry).to_string(),
@@ -544,12 +553,15 @@ fn select_named_project(reference: &str, projects: &[ProjectCandidate]) -> Resul
 }
 
 fn ambiguous_project_message(reference: &str, matches: &[&ProjectCandidate]) -> String {
-    let mut lines = vec![format!("Project '{reference}' matches multiple projects:")];
+    let mut lines = vec![format!(
+        "Repository '{}' matches multiple repos:",
+        crate::output::diagnostic_value(reference)
+    )];
     for project in matches {
         lines.push(format!(
             "  {} ({})",
-            project.canonical_name,
-            project.root.display()
+            crate::output::diagnostic_value(&project.canonical_name),
+            crate::output::diagnostic_value(&project.root.to_string_lossy())
         ));
     }
     lines.join("\n")
@@ -593,13 +605,13 @@ fn entry_match_names(entry: &ProjectListEntry) -> Vec<String> {
     }
 }
 
-/// Names `--project` matches for this checkout.
+/// Names `--repo` matches for this checkout.
 ///
 /// The first name is canonical: the `origin` URL when it parses as
 /// `host/owner/repo`, otherwise the `<root>/<host>/<owner>/<repo>` location,
 /// otherwise the directory name. A location that differs from the remote is
 /// kept as an additional name, and so is the directory name shown by
-/// `project list`.
+/// `repo list`.
 fn names_for_root(root: &Path, clone_root: Option<&Path>) -> Vec<String> {
     let mut names = Vec::new();
     if let Some(remote) = crate::repository::canonical_name_from_origin(root) {
@@ -1152,7 +1164,7 @@ mod tests {
         ));
         assert_eq!(error.exit_code(), crate::error::VALIDATION);
         let message = error.to_string();
-        assert!(message.starts_with("Project 'widget' matches multiple projects:\n"));
+        assert!(message.starts_with("Repository 'widget' matches multiple repos:\n"));
         let acme = message.find("github.com/acme/widget").expect("acme");
         let other = message.find("github.com/other/widget").expect("other");
         assert!(acme < other, "{message}");

@@ -217,11 +217,11 @@ fn no_hooks_creates_the_worktree_and_does_not_trust_it() {
 fn trust_untrust_and_list_round_trip() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
-    let refused = repo.mabo(&["trust"]);
-    assert_eq!(refused.status.code(), Some(4), "{}", text(&refused.stderr));
+    let refused = repo.mabo(&["trust", "--yes"]);
+    assert_eq!(refused.status.code(), Some(2), "{}", text(&refused.stderr));
     assert!(!trust_file(&repo).exists());
 
-    let trusted = repo.mabo(&["trust", "--yes"]);
+    let trusted = repo.mabo(&["trust", "add"]);
     assert!(trusted.status.success(), "{}", text(&trusted.stderr));
     let key = common_dir(&repo);
     assert!(
@@ -233,7 +233,7 @@ fn trust_untrust_and_list_round_trip() {
     assert!(stored.contains(&key), "{stored}");
     assert!(stored.contains("trustedAt"), "{stored}");
 
-    let listed = repo.mabo(&["trust", "--list"]);
+    let listed = repo.mabo(&["trust", "list"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     assert!(
         text(&listed.stdout).contains(&key),
@@ -241,10 +241,10 @@ fn trust_untrust_and_list_round_trip() {
         text(&listed.stdout)
     );
 
-    let json = repo.mabo(&["trust", "--list", "--json"]);
+    let json = repo.mabo(&["trust", "list", "--json"]);
     assert!(json.status.success(), "{}", text(&json.stderr));
     let document: serde_json::Value = serde_json::from_slice(&json.stdout).expect("json");
-    assert_eq!(document["data"]["projects"][0]["path"], key);
+    assert_eq!(document["data"]["repos"][0]["path"], key);
 
     let created = repo.mabo(&["create", "topic"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
@@ -260,16 +260,16 @@ fn trust_untrust_and_list_round_trip() {
     );
     assert!(worktree(&repo, "other").join("changed-hook.txt").is_file());
 
-    let removed = repo.mabo(&["untrust"]);
+    let removed = repo.mabo(&["trust", "remove"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
     assert!(
         text(&removed.stdout).contains("Removed trust"),
         "{}",
         text(&removed.stdout)
     );
-    let empty = repo.mabo(&["trust", "--list"]);
-    assert_eq!(text(&empty.stdout), "No trusted projects");
-    let missing = repo.mabo(&["untrust"]);
+    let empty = repo.mabo(&["trust", "list"]);
+    assert_eq!(text(&empty.stdout), "No trusted repos");
+    let missing = repo.mabo(&["trust", "remove"]);
     assert!(missing.status.success(), "{}", text(&missing.stderr));
     assert!(
         text(&missing.stdout).contains("Not trusted"),
@@ -441,16 +441,18 @@ fn ci_still_honors_no_hooks_and_trust_all() {
 }
 
 #[test]
-fn ci_does_not_prompt_for_mabo_trust() {
+fn ci_trust_add_records_the_grant_without_prompting() {
     let repo = Repo::new();
-    let output = pty_env(&repo, &["trust"], Some("y\n"), &[("CI", "1")]);
-    assert_eq!(output.status.code(), Some(4), "{}", text(&output.stdout));
+    hooks(&repo, "\"echo shown-hook\"", "\"true\"");
+    let output = pty_env(&repo, &["trust", "add"], None, &[("CI", "1")]);
+    assert_eq!(output.status.code(), Some(0), "{}", text(&output.stdout));
     assert!(
-        !text(&output.stdout).contains("Trust this project?"),
+        !text(&output.stdout).contains("[y/N]"),
         "{}",
         text(&output.stdout)
     );
-    assert!(!trust_file(&repo).exists());
+    assert!(text(&output.stdout).contains("echo shown-hook"));
+    assert!(trust_file(&repo).exists());
 }
 
 #[test]

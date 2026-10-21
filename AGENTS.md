@@ -6,7 +6,9 @@
 - Development happens on `next`. `main` stays the previous TypeScript version.
 - Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `github`, `help`.
 - Command help text is generated from `help-data.json`.
-- Project hooks live in `.mabo.toml` in the source checkout, the checkout where the command runs (`[hooks] post-create` and `pre-delete`). `MABO_REPO_PATH` always points to the primary checkout. Hooks and exec also receive `MABO=1`, `MABO_WORKSPACE`, `MABO_WORKSPACE_ID` (empty when unrecorded), and `MABO_WORKSPACE_PATH`. Hooks run only after that git common directory is trusted (`mabo trust --yes` or `MABO_TRUST_ALL=1`). mabo does not ask with nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or when stdin or stderr is not a terminal. `MABO_AGENT_ID` sets the default owner but does not suppress prompts. `--no-hooks` skips them. `mabo gc` skips an untrusted repository that has pre-delete hooks and does not ask. Trust is the common-dir path, so a re-clone at the same path stays trusted until `mabo untrust`.
+- Project hooks live in `.mabo.toml` in the source checkout, the checkout where the command runs (`[hooks] post-create` and `pre-delete`). `MABO_REPO_PATH` always points to the primary checkout. Hooks and exec also receive `MABO=1`, `MABO_WORKSPACE`, `MABO_WORKSPACE_ID` (empty when unrecorded), and `MABO_WORKSPACE_PATH`. Hooks run only after that git common directory is trusted (`mabo trust add` or `MABO_TRUST_ALL=1`). mabo does not ask with nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or when stdin or stderr is not a terminal. `MABO_AGENT_ID` sets the default owner but does not suppress prompts. `--no-hooks` skips them. `mabo gc` skips an untrusted repository that has pre-delete hooks and does not ask. Trust is the common-dir path, so a re-clone at the same path stays trusted until `mabo trust remove`.
+- Outer commands are `repo add/list/show/forget`, `config get/set/unset/list` (`--sources` for reads), `trust add/remove/list`, `help [COMMAND...] [--json]`, and `--version`/`-v`. `trust add` shows hooks and records trust without prompting. Global `-R/--repo REF` selects a repository; exec requires it before the workspace name. Removed commands and flags return usage exit 2 with migration hints.
+- User config keys are `workspace-root`, `clone-root`, `discover-ghq`, and `keep-branch` (until P7). Old worktrees-directory/root/ghq-discovery keys warn, take effect under the new names, and are rewritten on the next config write. New keys take precedence when both exist. directory-name-separator warns and is ignored. Clone-root keeps ghq.root -> GHQ_ROOT -> ~/ghq defaults. `help --json` includes help-data.json and its schemaVersion/exitCodes/errorCodes contract; `--version --json` keeps the application version in data.version.
 - Principles: single responsibility, a centralized git executor, and `Result` for every fallible path.
 
 ## Build, Test, and Development Commands
@@ -25,7 +27,7 @@
 - Rust 2021. `rustfmt` is the formatter.
 - Non-test code must not use `unwrap()`, `expect()`, or `panic!`. Propagate errors with `Result` and `thiserror`. The crate denies `clippy::unwrap_used`, `clippy::expect_used`, and `clippy::panic` outside tests.
 - Use PascalCase for types, camelCase for functions and variables, and snake_case for modules.
-- Keep CLI flags and config keys consistent with `.mabo.toml` and `mabo preferences`.
+- Keep CLI flags and config keys consistent with `.mabo.toml` and `mabo config`.
 - All files, issues, and pull requests must be written in English. Follow existing patterns.
 
 ## Testing Guidelines
@@ -43,7 +45,7 @@
 ## Security & Configuration Tips
 
 - Never commit tokens or GitHub credentials. `github checkout` uses the `gh` CLI (`GH_TOKEN` / `GH_HOST`).
-- New workspaces go under `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash>/` (`~/.local/share/maboroshi/workspaces/...` when `XDG_DATA_HOME` is unset, empty, or relative) unless overridden with the `worktrees-directory` preference, which stays relative to the repository root. `delete` and `gc` may also remove a workspace recorded in `maboroshi/workspaces/<id>.json` when it sits outside that directory. Existing workspaces under `maboroshi/worktrees/` are not moved. An unrecorded workspace outside the resolved directory is left alone. Avoid leaking local paths in logs.
+- New workspaces go under `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash>/` (`~/.local/share/maboroshi/workspaces/...` when `XDG_DATA_HOME` is unset, empty, or relative) unless overridden with the `workspace-root` config key, which accepts absolute paths, ~/, or paths relative to the repository root. `delete` and `gc` may also remove a workspace recorded in `maboroshi/workspaces/<id>.json` when it sits outside that directory. Existing workspaces under `maboroshi/worktrees/` are not moved. An unrecorded workspace outside the resolved directory is left alone. Avoid leaking local paths in logs.
 - Workspace metadata uses `<git-common-dir>/maboroshi/workspaces/ws_<uuid v4>.json` (schema 2); project registrations use `$XDG_STATE_HOME/maboroshi/repos/proj_<uuid>.json`. Legacy `worktrees.json` and `projects.json` stay readable until the first write imports all records and renames the source to `*.json.imported`. Use the shared atomic writer for state files; mabo has no internal file locks. Different-record additions preserve both records; same-record concurrent updates use the last write. Project readers deduplicate roots by oldest `createdAt`.
 - Reuse `validate_worktree_name` rather than re-implementing name parsing.
 

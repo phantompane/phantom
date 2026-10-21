@@ -40,6 +40,10 @@ pub(crate) struct Prepared {
     pub error: Option<Error>,
 }
 
+pub(crate) fn is_removed_repo_option(arg: &str) -> bool {
+    arg.split('=').next() == Some("--project") || (arg.starts_with("-p") && !arg.starts_with("--"))
+}
+
 pub(crate) fn prepare(
     args: &[String],
     supports_json: bool,
@@ -93,10 +97,20 @@ pub(crate) fn prepare(
             }
             "--help" | "-h" if inline.is_none() && help_available => help = true,
             _ => {
+                if is_removed_repo_option(arg) {
+                    error.get_or_insert_with(|| {
+                        Error::validation(format!("Option '{arg}' was removed. Use -R/--repo REF."))
+                    });
+                }
+                if matches!(key, "trust" | "trust add" | "trust remove" | "trust list")
+                    && matches!(name, "--yes" | "-y" | "--list")
+                {
+                    error.get_or_insert_with(|| Error::validation("Old trust flags were removed. Use `mabo trust add` or `mabo trust list`."));
+                }
                 if inline.is_none()
                     && matches!(
                         (key, name),
-                        ("list", "--names") | ("project list", "--names" | "--paths")
+                        ("list", "--names") | ("repo list", "--names" | "--paths")
                     )
                 {
                     text_listing = true;

@@ -62,6 +62,19 @@ fn data() -> Result<&'static HelpFile> {
     }
 }
 
+pub fn json_help(key: &str) -> Result<serde_json::Value> {
+    let mut value: serde_json::Value = serde_json::from_str(include_str!("../help-data.json"))
+        .map_err(|error| Error::msg(error.to_string()))?;
+    if !key.is_empty() {
+        let selected = value["helps"]
+            .get(key)
+            .cloned()
+            .ok_or_else(|| Error::validation(format!("Unknown command '{key}'")))?;
+        value["selected"] = selected;
+    }
+    Ok(value)
+}
+
 #[allow(clippy::vec_init_then_push)]
 pub fn main_help() -> Result<String> {
     let file = data()?;
@@ -91,17 +104,6 @@ pub fn main_help() -> Result<String> {
     }
     lines.push(String::new());
     lines.push(bold("GLOBAL OPTIONS"));
-    let help_option = "-h, --help";
-    let version_option = "-v, --version";
-    let width = help_option.len().max(version_option.len()) + 2;
-    lines.push(format!(
-        "  {}Show help",
-        cyan(&format!("{help_option:width$}"))
-    ));
-    lines.push(format!(
-        "  {}Show version",
-        cyan(&format!("{version_option:width$}"))
-    ));
     for option in &file.global_options {
         lines.push(format!(
             "  {}  {}",
@@ -286,12 +288,12 @@ mod tests {
         assert!(list.contains("--names"));
         assert!(list.contains("--no-default"));
         assert!(list.contains("--json"));
-        assert!(list.contains("-p, --project <value>"));
+        assert!(list.contains("-R, --repo <value>"));
         assert!(!list.contains("Put this before the workspace name"));
         let exec = command_help("exec").expect("help").expect("exec");
-        assert!(exec.contains("--project <value>"));
+        assert!(exec.contains("--repo <value>"));
         assert!(exec.contains("Put this before the workspace name"));
-        assert!(exec.contains("pwd --project y"));
+        assert!(exec.contains("pwd --repo y"));
         let where_help = command_help("where").expect("help").expect("where");
         assert!(!where_help.contains("Put this before the workspace name"));
         assert!(where_help.contains("may appear with the other options"));
@@ -367,9 +369,9 @@ mod tests {
             "where",
             "delete",
             "exec",
-            "preferences",
+            "config",
             "version",
-            "project",
+            "repo",
             "clone",
             "github",
             "gh",
