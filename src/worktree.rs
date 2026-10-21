@@ -559,14 +559,6 @@ pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
             .warn("post_create", &failure.warning(&created.path));
     }
     let exec = run_action(&context, &name, &created.path, action, &request.logger)?;
-    if exec.is_some() {
-        if let Err(error) = touch_after_action(&context, &created.path) {
-            request.logger.warn(
-                "last_used_update",
-                &format!("Warning: Failed to update lastUsedAt: {error}"),
-            );
-        }
-    }
     let hook_code = created.hook_failure.as_ref().map(|failure| failure.code);
     let action_code = exec.as_ref().map(|item| item.exit_code);
     let metadata_code = created.metadata_error.as_ref().map(|_| error::GENERAL);
@@ -636,15 +628,6 @@ impl HookFailure {
             paths::canonical_location(path).display()
         )
     }
-}
-
-fn touch_after_action(context: &Context, path: &Path) -> Result<()> {
-    // The command may have deleted this worktree. Never recreate its record.
-    if metadata::records_path(&context.git_root, path)? {
-        worktree_at_path(context, path)?;
-        metadata::touch(&context.git_root, path)?;
-    }
-    Ok(())
 }
 
 pub fn create_worktree(
@@ -762,14 +745,6 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
         action,
         &request.logger,
     )?;
-    if exec.is_some() {
-        if let Err(error) = touch_after_action(&context, &attached.path) {
-            request.logger.warn(
-                "last_used_update",
-                &format!("Warning: Failed to update lastUsedAt: {error}"),
-            );
-        }
-    }
     let hook_code = attached.hook_failure.as_ref().map(|failure| failure.code);
     let action_code = exec
         .as_ref()
@@ -1286,11 +1261,11 @@ pub fn exec_in_worktree(
     env: &[(&str, &str)],
     redirect_stdout_to_stderr: bool,
 ) -> Result<i32> {
+    if let Some(warning) = metadata::read_problem(&context.git_root) {
+        crate::output::warning("metadata_read", format!("Warning: {warning}"));
+    }
     let worktree = find_worktree(context, name, false, None)?;
     let path = PathBuf::from(&worktree.path);
-    if let Err(error) = metadata::touch(&context.git_root, &path) {
-        crate::output::warning("last_used_update", format!("Warning: {error}"));
-    }
     let owned = workspace_env(context, &worktree.name, &path);
     let mut pairs = owned
         .iter()
@@ -1386,7 +1361,6 @@ fn run_action(
 }
 
 fn workspace_env(context: &Context, name: &str, path: &Path) -> Vec<(String, String)> {
-    // A preceding touch may have imported legacy metadata and allocated an ID.
     let stored = metadata::load(&context.git_root).unwrap_or_default();
     let id = metadata::find_in(&stored, path).and_then(|(_, record)| record.id.as_deref());
     mabo_env(name, path, id, &context.git_root)
@@ -1662,8 +1636,8 @@ fn copy_error(relative: &Path, error: impl std::fmt::Display) -> Error {
 ///
 /// `base` is set when the command that produced the object knows the starting
 /// commit-ish (create, and GitHub issue/PR checkout). List, where, attach, and
-/// delete leave it null. `owner`, `purpose`, `createdAt`, `createdFrom`,
-/// `lastUsedAt`, and `links` come from the repository metadata store.
+/// delete leave it null. `purpose`, `createdAt`, `createdFrom`, and `links`
+/// come from the repository metadata store.
 /// `createdFrom` is the full creation commit, or null when the record has
 /// none. Cleanup fields such as
 /// `prunable` and `locked` can be added later without a version bump. Parsers
@@ -1930,10 +1904,10 @@ mod tests {
         assert_eq!(value["base"], "HEAD");
         assert_eq!(value["dirty"], false);
         assert_eq!(value["detached"], false);
-        assert!(value["owner"].is_null());
+        assert!(value.get("owner").is_none());
         assert!(value["purpose"].is_null());
         assert!(value["createdAt"].is_null());
-        assert!(value["lastUsedAt"].is_null());
+        assert!(value.get("lastUsedAt").is_none());
         assert!(value["links"]["pr"].is_null());
         assert!(value["links"]["issue"].is_null());
         assert!(value.get("metadata").is_none());

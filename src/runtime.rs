@@ -97,6 +97,9 @@ pub(crate) fn prepare(
             }
             "--help" | "-h" if inline.is_none() && help_available => help = true,
             _ => {
+                if let Some(hint) = crate::args::removed_option_hint(arg) {
+                    error.get_or_insert_with(|| Error::validation(hint));
+                }
                 if is_removed_repo_option(arg) {
                     error.get_or_insert_with(|| {
                         Error::validation(format!("Option '{arg}' was removed. Use -R/--repo REF."))
