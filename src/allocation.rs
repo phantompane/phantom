@@ -34,36 +34,6 @@ fn is_live_checkout(tree: &worktree::WorktreeInfo) -> Result<bool> {
     }
 }
 
-fn validate_reuse_checkout(context: &Context, tree: &worktree::WorktreeInfo) -> Result<()> {
-    let invalid = |reason: &str| {
-        Error::msg(format!(
-            "Cannot reuse workspace '{}': {reason}. Check its .git entry and repair or remove the stale Git worktree registration before retrying.",
-            visible_text(&tree.name)
-        ))
-    };
-    let path = Path::new(&tree.path);
-    let observed = git::top_level(path)
-        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?;
-    if !paths::same_location(path, &observed) {
-        return Err(invalid(
-            "checkout top-level does not match its registered path",
-        ));
-    }
-    let common_dir = git::canonical_common_dir(path)
-        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?;
-    if common_dir != git::canonical_common_dir(&context.git_root)? {
-        return Err(invalid("checkout does not belong to this repository"));
-    }
-    if !git::matches_registered_git_dir(&context.git_root, path)
-        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?
-    {
-        return Err(invalid(
-            "checkout Git directory does not match its registered Git directory",
-        ));
-    }
-    Ok(())
-}
-
 // An explicit NAME identifies a workspace, not another workspace's branch.
 // Inferred names retain the branch fallback for unnamed checkout/reuse.
 fn existing(
@@ -290,7 +260,7 @@ pub(crate) fn create(
         {
             return Err(Error::WorktreeAlreadyExists(name));
         }
-        validate_reuse_checkout(context, &tree)?;
+        worktree::validate_checkout(context, &tree, "reuse")?;
         let tree = if tree.metadata.links.pr.is_none() && request.metadata.pr.is_some() {
             metadata::write(
                 &context.git_root,

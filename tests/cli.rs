@@ -15463,6 +15463,158 @@ fn assert_review11_stale_registration_skipped(adopt: bool, directory: bool) {
 }
 
 #[test]
+fn setup_rejects_checkout_replaced_by_foreign_repository() {
+    assert_setup_rejects_replaced_checkout("foreign");
+}
+
+#[test]
+fn setup_rejects_checkout_replaced_by_symlink() {
+    assert_setup_rejects_replaced_checkout("symlink");
+}
+
+#[test]
+fn setup_rejects_git_file_pointing_to_primary() {
+    assert_setup_rejects_replaced_checkout("primary-admin");
+}
+
+#[test]
+fn setup_rejects_git_discovery_falling_back_to_parent() {
+    assert_setup_rejects_replaced_checkout("parent");
+}
+
+fn assert_setup_rejects_replaced_checkout(replacement: &str) {
+    for recorded in [true, false] {
+        for no_hooks in [true, false] {
+            let repo = Repo::new();
+            let foreign = Repo::new();
+            assert!(repo
+                .mabo(&["config", "set", "workspace-root", "workspaces"])
+                .status
+                .success());
+            assert!(repo
+                .mabo(&["create", "target", "--no-setup"])
+                .status
+                .success());
+            if !recorded {
+                assert!(repo.mabo(&["forget", "target"]).status.success());
+            }
+            fs::write(repo.repo.join(".gitignore"), "*.env\n").unwrap();
+            fs::write(repo.repo.join(".worktreeinclude"), "*.env\n").unwrap();
+            fs::write(repo.repo.join("secret.env"), "primary secret").unwrap();
+            fs::write(
+                repo.repo.join(".mabo.toml"),
+                "[hooks]\nsetup = ['git add README.md; touch hook-ran']\n",
+            )
+            .unwrap();
+            let target = repo.repo.join("workspaces/target");
+            match replacement {
+                "foreign" => {
+                    fs::remove_dir_all(&target).unwrap();
+                    fs::rename(&foreign.repo, &target).unwrap();
+                }
+                "symlink" => {
+                    fs::remove_dir_all(&target).unwrap();
+                    std::os::unix::fs::symlink(&foreign.repo, &target).unwrap();
+                }
+                "primary-admin" => fs::write(
+                    target.join(".git"),
+                    format!("gitdir: {}\n", repo.repo.join(".git").display()),
+                )
+                .unwrap(),
+                "parent" => fs::remove_file(target.join(".git")).unwrap(),
+                _ => panic!("Unknown replacement"),
+            }
+            fs::write(target.join("README.md"), "changed in target\n").unwrap();
+            let records_path = repo.repo.join(".git/maboroshi/workspaces");
+            let records_before = records::read(&records_path).unwrap();
+            let head_before = fs::read(repo.repo.join(".git/HEAD")).unwrap();
+            let index_before = fs::read(repo.repo.join(".git/index")).unwrap();
+            let gitfile_before = fs::read(target.join(".git")).ok();
+            let mut args = vec!["setup", "target", "--json"];
+            if no_hooks {
+                args.push("--no-hooks");
+            }
+            let out = repo.mabo(&args);
+            assert_eq!(
+                out.status.code(),
+                Some(1),
+                "{replacement}, recorded={recorded}, no_hooks={no_hooks}: {}",
+                text(&out.stdout)
+            );
+            let doc = assert_envelope(&out, "setup");
+            assert_eq!(doc["error"]["code"], "failed");
+            let message = doc["error"]["message"].as_str().unwrap();
+            assert!(message.contains(".git"), "{message}");
+            assert!(message.contains("repair"), "{message}");
+            assert!(!target.join("secret.env").exists());
+            assert!(!target.join("hook-ran").exists());
+            assert_eq!(records::read(&records_path).unwrap(), records_before);
+            assert_eq!(fs::read(repo.repo.join(".git/HEAD")).unwrap(), head_before);
+            assert_eq!(
+                fs::read(repo.repo.join(".git/index")).unwrap(),
+                index_before
+            );
+            assert_eq!(fs::read(target.join(".git")).ok(), gitfile_before);
+        }
+    }
+}
+
+#[test]
+fn setup_and_create_escape_copy_failure_diagnostics() {
+    for command in ["setup", "create"] {
+        for json in [false, true] {
+            let repo = Repo::new();
+            let directory = "private\u{1b}[31m\t";
+            let filename = "secret\u{7}.env";
+            let outside = repo.root.join("outside");
+            fs::create_dir(&outside).unwrap();
+            std::os::unix::fs::symlink(&outside, repo.repo.join(directory)).unwrap();
+            fs::write(repo.repo.join(".gitignore"), "*.env\n").unwrap();
+            fs::write(repo.repo.join(".worktreeinclude"), "*.env\n").unwrap();
+            repo.git(&["add", ".gitignore", ".worktreeinclude", directory]);
+            repo.git(&["commit", "-m", "copy failure fixture"]);
+            fs::remove_file(repo.repo.join(directory)).unwrap();
+            fs::create_dir(repo.repo.join(directory)).unwrap();
+            fs::write(repo.repo.join(directory).join(filename), "secret").unwrap();
+            if command == "setup" {
+                assert!(repo
+                    .mabo(&["create", "target", "--no-setup"])
+                    .status
+                    .success());
+            }
+            let mut args = vec![command, "target"];
+            if json {
+                args.push("--json");
+            }
+            let out = repo.mabo(&args);
+            assert_eq!(
+                out.status.code(),
+                Some(if command == "setup" { 1 } else { 6 })
+            );
+            let stderr = text(&out.stderr);
+            assert!(!stderr.contains(['\u{1b}', '\t', '\u{7}']), "{stderr:?}");
+            assert!(
+                stderr.contains("private\\u{1b}[31m\\u{9}/secret\\u{7}.env"),
+                "{stderr:?}"
+            );
+            if command == "setup" && !json {
+                assert!(stderr
+                    .lines()
+                    .any(|line| line.starts_with("Failed to copy ")));
+            }
+            if json {
+                let doc = assert_envelope(&out, command);
+                assert!(doc["data"]["copy"]["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&format!("{directory}/{filename}")));
+            }
+            assert!(!outside.join(filename).exists());
+        }
+    }
+}
+
+#[test]
 fn setup_lifecycle_failure_retry_and_shared_state() {
     let repo = Repo::new();
     fs::write(

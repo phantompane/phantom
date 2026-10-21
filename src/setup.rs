@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::metadata::{self, MetadataInput};
+use crate::output::visible_text;
 use crate::{config, process, trust, worktree};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,7 +218,10 @@ pub(crate) fn run(
     if let Some(error) = &copy_error {
         logger.warn(
             "copy_files",
-            &format!("Warning: Failed to copy some files: {error}"),
+            &format!(
+                "Warning: Failed to copy some files: {}",
+                visible_text(error)
+            ),
         );
     }
     if let Some(failure) = failure {
@@ -246,6 +250,7 @@ pub(crate) fn execute(
             message: "Cannot set up the primary checkout: it is the copy source".into(),
         });
     }
+    worktree::validate_checkout(context, &tree, "set up")?;
     metadata::load_strict(&context.git_root)?;
     let commands = authorize(context, control)?;
     // Preparing an unrecorded checkout records no invented creation details.

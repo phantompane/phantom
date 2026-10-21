@@ -98,7 +98,10 @@ fn failure_with(error: JsonErrorBody, report: impl FnOnce(&str)) {
                 // Ambiguity reports escape each value where their list is built,
                 // so their intentional line breaks can remain readable.
                 if (is_outer_command(&out.command) && error.code != "ambiguous")
-                    || matches!(out.command.as_str(), "create" | "adopt" | "forget")
+                    || matches!(
+                        out.command.as_str(),
+                        "create" | "adopt" | "forget" | "setup"
+                    )
                 {
                     report(&visible_text(&message));
                 } else {

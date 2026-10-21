@@ -434,6 +434,41 @@ fn select_worktree(mut worktrees: Vec<WorktreeInfo>, name: &str) -> Result<Workt
     }
 }
 
+/// Validate the checkout against Git's independent registration before mutations.
+pub(crate) fn validate_checkout(
+    context: &Context,
+    tree: &WorktreeInfo,
+    action: &str,
+) -> Result<()> {
+    let invalid = |reason: &str| {
+        Error::msg(format!(
+            "Cannot {action} workspace '{}': {reason}. Check its .git entry and repair or remove the stale Git worktree registration before retrying.",
+            crate::output::visible_text(&tree.name)
+        ))
+    };
+    let path = Path::new(&tree.path);
+    let observed = git::top_level(path)
+        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?;
+    if !paths::same_location(path, &observed) {
+        return Err(invalid(
+            "checkout top-level does not match its registered path",
+        ));
+    }
+    let common_dir = git::canonical_common_dir(path)
+        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?;
+    if common_dir != git::canonical_common_dir(&context.git_root)? {
+        return Err(invalid("checkout does not belong to this repository"));
+    }
+    if !git::matches_registered_git_dir(&context.git_root, path)
+        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?
+    {
+        return Err(invalid(
+            "checkout Git directory does not match its registered Git directory",
+        ));
+    }
+    Ok(())
+}
+
 /// The worktree Git has registered at `path`, independent of its branch or directory name.
 pub fn worktree_at_path(context: &Context, path: &Path) -> Result<WorktreeInfo> {
     list_worktrees(context, false, true)?
