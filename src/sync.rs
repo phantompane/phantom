@@ -663,7 +663,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             if let (Some(reference), Some(after)) = (&item.branch, &item.after) {
                 // Execution integrates primary first. Plan later workspaces
                 // against that same tip without writing a temporary ref.
-                planned_refs.insert(reference.clone(), after.clone());
+                planned_refs.insert(reference.clone(), Some(after.clone()));
             }
         }
     }
@@ -703,13 +703,14 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             }
         };
         if request.dry_run && item.status == "updated" {
-            if let (Some(branch), Some(after)) = (&item.branch, &item.after) {
+            if let Some(branch) = &item.branch {
                 let reference = if branch.starts_with("refs/heads/") {
                     branch.clone()
                 } else {
                     format!("refs/heads/{branch}")
                 };
-                planned_refs.insert(reference, after.clone());
+                // None records a planned update whose future tip is unknown.
+                planned_refs.insert(reference, item.after.clone());
             }
         }
         report.worktrees.push(item);
@@ -1125,7 +1126,7 @@ fn sync_tree(
     request: &Request,
     default_base: &str,
     default_name: Option<&str>,
-    planned_refs: &BTreeMap<String, String>,
+    planned_refs: &BTreeMap<String, Option<String>>,
 ) -> Result<Item> {
     // Keep this guard at the integration boundary, regardless of selector/strategy.
     if !tree.detached && default_name == Some(tree.branch.as_str()) {
@@ -1134,10 +1135,6 @@ fn sync_tree(
         return Ok(item);
     }
     let mut item = tree_item(tree, base_ref);
-    let base = planned_refs
-        .get(base_ref)
-        .map(String::as_str)
-        .unwrap_or(base_ref);
     let path = Path::new(&tree.path);
     if !path.is_dir() || tree.orphaned {
         item.status(
@@ -1171,6 +1168,20 @@ fn sync_tree(
         item.status("dirty", None);
         return Ok(item);
     }
+    let base = match planned_refs.get(base_ref) {
+        Some(Some(tip)) => tip.as_str(),
+        Some(None) => {
+            // The earlier integration has no commit ID yet. Do not decide
+            // reachability, strategy or publication against its obsolete tip.
+            item.status(
+                "updated",
+                Some(format!("Integration depends on planned update of {base_ref}; resulting tip and strategy are unknown")),
+            );
+            item.after = None;
+            return Ok(item);
+        }
+        None => base_ref,
+    };
     let base_exists = commit(path, base)?.is_some();
     if !base_exists {
         item.status(
@@ -1209,13 +1220,27 @@ fn sync_tree(
     common_base(path, "HEAD", base)?;
     let own = checked_output(&["rev-list", &format!("{base}..HEAD"), "--"], path, true)?;
     let specs = fetch_refspecs(path)?;
-    let refs = checked_output(&["for-each-ref", "--format=%(refname)"], path, true)?;
+    let refs = checked_output(
+        &["for-each-ref", "--format=%(refname)%09%(upstream)"],
+        path,
+        false,
+    )?;
+    let current_ref = format!("refs/heads/{}", tree.branch);
+    let observed: Vec<_> = refs
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .collect();
+    let upstream = observed.iter().find_map(|(reference, upstream)| {
+        (*reference == current_ref && !upstream.is_empty()).then_some(*upstream)
+    });
     let mut unpublished_args = vec!["rev-list", "HEAD", "--not", base, "--remotes"];
-    unpublished_args.extend(
-        refs.lines()
-            .filter(|reference| !reference.starts_with("refs/heads/"))
-            .filter(|reference| source_for(reference, &specs).is_some()),
-    );
+    // A configured destination or upstream is publication evidence even in
+    // refs/heads/. Only the current branch itself cannot prove publication.
+    unpublished_args.extend(observed.iter().filter_map(|(reference, _)| {
+        (*reference != current_ref
+            && (source_for(reference, &specs).is_some() || Some(*reference) == upstream))
+            .then_some(*reference)
+    }));
     unpublished_args.push("--");
     let unpublished = checked_output(&unpublished_args, path, true)?;
     let unpublished: BTreeSet<&str> = unpublished.lines().collect();

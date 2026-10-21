@@ -3566,19 +3566,41 @@ fn merge_own_changes_refuse_rebase_and_survive_explicit_merge() {
 }
 
 #[test]
-fn published_commits_in_fetch_destinations_outside_remotes_are_protected() {
-    for refspec in [
-        "+refs/heads/*:refs/tags/cache/*",
-        "+refs/heads/topic:refs/tags/cache/topic",
-        "+refs/heads/to*ic:refs/tags/cache/to*ic",
+fn review3_published_commits_in_independent_fetch_destinations_are_protected() {
+    for (source, destination) in [
+        ("refs/heads/*", "refs/heads/published/*"),
+        ("refs/heads/topic", "refs/heads/published/topic"),
+        ("refs/heads/to*ic", "refs/heads/published/to*ic"),
+        ("refs/heads/*", "refs/tags/cache/*"),
+        ("refs/heads/topic", "refs/tags/cache/topic"),
+        ("refs/heads/to*ic", "refs/tags/cache/to*ic"),
+        ("refs/heads/*", "refs/cache/*"),
     ] {
         for explicit in [false, true] {
             let r = Repo::new();
             let tree = r.create("topic");
             r.write_commit(&tree, "published", "published\n");
             r.git(&tree, &["push", "origin", "topic"]);
-            // Keep standard main tracking for the recorded base, but store the
-            // published topic only in the configured cache destination.
+            // The base uses origin; archive is not fetched by sync, so its
+            // independent destinations remain evidence even outside remotes/.
+            r.git(
+                &r.main,
+                &[
+                    "remote",
+                    "add",
+                    "archive",
+                    r.root.join("remote.git").to_str().unwrap(),
+                ],
+            );
+            r.git(
+                &r.main,
+                &[
+                    "config",
+                    "remote.archive.fetch",
+                    &format!("+{source}:{destination}"),
+                ],
+            );
+            r.git(&r.main, &["fetch", "archive"]);
             r.git(
                 &r.main,
                 &[
@@ -3587,28 +3609,40 @@ fn published_commits_in_fetch_destinations_outside_remotes_are_protected() {
                     "+refs/heads/main:refs/remotes/origin/main",
                 ],
             );
-            r.git(
-                &r.main,
-                &["config", "--add", "remote.origin.fetch", refspec],
-            );
             r.git(&r.main, &["update-ref", "-d", "refs/remotes/origin/topic"]);
-            r.git(&r.main, &["fetch", "origin"]);
             r.advance();
             let before = r.snapshot(&tree);
-            let doc = r.sync(
-                &tree,
-                if explicit { &["--rebase"] } else { &[] },
-                if explicit { 4 } else { 0 },
-            );
-            let item = &doc["data"]["items"][0];
-            if explicit {
-                assert_eq!(item["code"], "published");
-                assert_eq!(r.snapshot(&tree), before);
-            } else {
-                assert_eq!(item["strategy"], "merge", "{doc}");
-                assert_eq!(item["status"], "updated");
-                let published = before["head"].as_str().unwrap();
-                r.git(&tree, &["merge-base", "--is-ancestor", published, "HEAD"]);
+            for dry_run in [true, false] {
+                let mut args = Vec::new();
+                if explicit {
+                    args.push("--rebase");
+                }
+                if dry_run {
+                    args.push("--dry-run");
+                }
+                let doc = r.sync(&tree, &args, if explicit { 4 } else { 0 });
+                let item = &doc["data"]["items"][0];
+                if explicit {
+                    assert_eq!(item["code"], "published", "{doc}");
+                    assert_eq!(r.snapshot(&tree), before);
+                } else {
+                    assert_eq!(item["strategy"], "merge", "{doc}");
+                    assert_eq!(item["status"], "updated");
+                    if dry_run {
+                        assert!(item["after"].is_null());
+                        assert_eq!(r.snapshot(&tree), before);
+                    } else {
+                        r.git(
+                            &tree,
+                            &[
+                                "merge-base",
+                                "--is-ancestor",
+                                before["head"].as_str().unwrap(),
+                                "HEAD",
+                            ],
+                        );
+                    }
+                }
             }
         }
     }
@@ -4386,6 +4420,8 @@ fn conservative_fetch_refuses_destinations_outside_tracking_namespaces() {
             "refs/cache/*",
             "refs/remotes-other/*",
             "refs/tags-other/*",
+            "refs/tags/cache/*",
+            "refs/tags/cache/main",
             "release",
         ] {
             let r = Repo::new();
@@ -5146,4 +5182,196 @@ fn p8_invalid_scopes_and_strategies_are_usage_without_repository_context() {
         let doc = r.sync(&r.root, &args, 2);
         assert_eq!(doc["error"]["code"], "usage");
     }
+}
+
+#[test]
+fn review3_fetch_refuses_explicit_tag_destinations() {
+    for dry_run in [true, false] {
+        for destination in ["refs/tags/cache/*", "refs/tags/cache/release"] {
+            let r = Repo::new();
+            let source = if destination.contains('*') {
+                "refs/heads/*"
+            } else {
+                "refs/heads/release"
+            };
+            let spec = format!("+{source}:{destination}");
+            r.git(&r.main, &["branch", "release"]);
+            r.git(
+                &r.main,
+                &[
+                    "symbolic-ref",
+                    "refs/tags/cache/release",
+                    "refs/heads/release",
+                ],
+            );
+            r.git(&r.main, &["config", "--add", "remote.origin.fetch", &spec]);
+            r.advance();
+            r.git(&r.upstream, &["push", "origin", "HEAD:release"]);
+            assert_fetch_refused(&r, &r.main, dry_run, &[], &["origin", &spec, "Configure"]);
+        }
+    }
+}
+
+#[test]
+fn review3_fetch_refuses_visible_tag_symrefs_without_explicit_tag_refspecs() {
+    for dry_run in [true, false] {
+        for target in [
+            "refs/heads/release",
+            "refs/tags/existing",
+            "refs/cache/existing",
+        ] {
+            let r = Repo::new();
+            r.git(&r.main, &["update-ref", target, "HEAD"]);
+            r.git(&r.main, &["symbolic-ref", "refs/tags/alias", target]);
+            r.advance();
+            r.git(&r.upstream, &["tag", "alias"]);
+            r.git(&r.upstream, &["push", "origin", "refs/tags/alias"]);
+            assert_fetch_refused(
+                &r,
+                &r.main,
+                dry_run,
+                &[],
+                &["refs/tags/alias", target, "Repair"],
+            );
+        }
+    }
+}
+
+#[test]
+fn review3_unknown_planned_tips_propagate_through_workspace_dependencies() {
+    for strategy in ["--rebase", "--merge"] {
+        let r = Repo::new();
+        let a = r.create("a");
+        r.write_commit(&a, "a-file", "a\n");
+        let b = r.create("b");
+        r.git(&b, &["reset", "--hard", "a"]);
+        assert!(r.mabo(&b, &["set", "--base", "a"]).status.success());
+        r.write_commit(&b, "b-file", "b\n");
+        let c = r.create("c");
+        r.git(&c, &["reset", "--hard", "b"]);
+        assert!(r.mabo(&c, &["set", "--base", "b"]).status.success());
+        r.write_commit(&c, "c-file", "c\n");
+        let before = [r.snapshot(&a), r.snapshot(&b), r.snapshot(&c)];
+        let refs = r.git(&r.main, &["for-each-ref", "refs/heads"]);
+        let reflogs = file_contents(&r.main.join(".git/logs"));
+        let records = file_contents(&r.main.join(".git/maboroshi/workspaces"));
+        r.advance();
+        let plan = r.sync(&r.main, &["a", "b", "c", strategy, "--dry-run"], 0);
+        assert_eq!([r.snapshot(&a), r.snapshot(&b), r.snapshot(&c)], before);
+        assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), refs);
+        // Fetch may update tracking reflogs, but never local branch reflogs.
+        let after_logs = file_contents(&r.main.join(".git/logs"));
+        for (path, content) in &reflogs {
+            if path.contains("refs/heads/") || path == "HEAD" {
+                assert_eq!(&after_logs[path], content);
+            }
+        }
+        assert_eq!(
+            file_contents(&r.main.join(".git/maboroshi/workspaces")),
+            records
+        );
+        for i in 0..3 {
+            let item = &plan["data"]["items"][i];
+            assert_eq!(item["status"], "updated", "{plan}");
+            assert!(item["after"].is_null(), "{plan}");
+            if i > 0 {
+                let dependency = if i == 1 {
+                    "refs/heads/a"
+                } else {
+                    "refs/heads/b"
+                };
+                assert!(
+                    item["detail"]
+                        .as_str()
+                        .unwrap()
+                        .contains(&format!("depends on planned update of {dependency}")),
+                    "{plan}"
+                );
+                assert!(item["strategy"].is_null(), "{plan}");
+            }
+        }
+        let actual = r.sync(&r.main, &["a", "b", "c", strategy], 0);
+        for i in 0..3 {
+            assert_eq!(actual["data"]["items"][i]["status"], "updated", "{actual}");
+            assert_ne!(actual["data"]["items"][i]["after"], before[i]["head"]);
+        }
+    }
+}
+
+#[test]
+fn review3_current_branch_fetch_destination_is_not_publication_evidence() {
+    let r = Repo::new();
+    let tree = r.create("topic");
+    r.write_commit(&tree, "own", "unpublished\n");
+    r.git(&r.main, &["remote", "add", "archive", "unused"]);
+    r.git(
+        &r.main,
+        &[
+            "config",
+            "remote.archive.fetch",
+            "+refs/heads/topic:refs/heads/topic",
+        ],
+    );
+    r.advance();
+    let doc = r.sync(&tree, &[], 0);
+    assert_eq!(doc["data"]["items"][0]["strategy"], "rebase", "{doc}");
+    assert_eq!(doc["data"]["items"][0]["status"], "updated", "{doc}");
+}
+
+#[test]
+fn review3_independent_local_upstream_is_publication_evidence() {
+    for explicit in [true, false] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        r.write_commit(&tree, "published", "published\n");
+        r.git(&tree, &["branch", "published-copy"]);
+        r.git(&tree, &["branch", "--set-upstream-to=published-copy"]);
+        r.advance();
+        let before = r.snapshot(&tree);
+        let doc = r.sync(
+            &tree,
+            if explicit { &["--rebase"] } else { &[] },
+            if explicit { 4 } else { 0 },
+        );
+        if explicit {
+            assert_eq!(doc["data"]["items"][0]["code"], "published", "{doc}");
+            assert_eq!(r.snapshot(&tree), before);
+        } else {
+            assert_eq!(doc["data"]["items"][0]["strategy"], "merge", "{doc}");
+            r.git(
+                &tree,
+                &[
+                    "merge-base",
+                    "--is-ancestor",
+                    before["head"].as_str().unwrap(),
+                    "HEAD",
+                ],
+            );
+        }
+    }
+}
+
+#[test]
+fn review3_tag_symref_into_remote_tracking_namespace_is_allowed() {
+    let r = Repo::new();
+    r.git(
+        &r.main,
+        &[
+            "symbolic-ref",
+            "refs/tags/alias",
+            "refs/remotes/origin/main",
+        ],
+    );
+    r.advance();
+    let plan = r.sync(&r.main, &["--dry-run"], 0);
+    assert_eq!(plan["data"]["main"]["status"], "updated");
+    assert_eq!(
+        r.git(&r.main, &["symbolic-ref", "refs/tags/alias"]),
+        "refs/remotes/origin/main"
+    );
+    let actual = r.sync(&r.main, &[], 0);
+    assert_eq!(
+        actual["data"]["main"]["after"],
+        plan["data"]["main"]["after"]
+    );
 }

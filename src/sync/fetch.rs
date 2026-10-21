@@ -40,12 +40,9 @@ pub(super) fn check(root: &Path, involved: &BTreeSet<String>) -> Result<()> {
             // A missing or empty destination only writes FETCH_HEAD. Leave
             // refspec validity and all other fetch semantics to Git.
             if let Some((_, destination)) = positive.split_once(':') {
-                if !destination.is_empty()
-                    && !destination.starts_with("refs/remotes/")
-                    && !destination.starts_with("refs/tags/")
-                {
+                if !destination.is_empty() && !destination.starts_with("refs/remotes/") {
                     return Err(Error::status(REFUSED, format!(
-                        "Unsafe remote.{remote}.fetch refspec '{spec}'; sync requires destinations under refs/remotes/ or refs/tags/. Configure safe tracking destinations before retrying (negative refspec exclusions do not relax this check)"
+                        "Unsafe remote.{remote}.fetch refspec '{spec}'; sync requires destinations under refs/remotes/ (explicit refs/tags/ destinations are refused). Configure safe tracking destinations before retrying (negative refspec exclusions do not relax this check)"
                     )));
                 }
             }
@@ -58,6 +55,7 @@ pub(super) fn check(root: &Path, involved: &BTreeSet<String>) -> Result<()> {
             "for-each-ref",
             "--format=%(refname)%09%(symref)",
             "refs/remotes/",
+            "refs/tags/",
         ],
         root,
         true,
@@ -65,7 +63,7 @@ pub(super) fn check(root: &Path, involved: &BTreeSet<String>) -> Result<()> {
     for (name, target) in symbols.lines().filter_map(|line| line.split_once('\t')) {
         if !target.is_empty() && !target.starts_with("refs/remotes/") {
             return Err(Error::status(REFUSED, format!(
-                "Unsafe remote-tracking symbolic ref '{name}' points outside refs/remotes/ to '{target}'. Repair or remove this symbolic ref before retrying sync"
+                "Unsafe tracking/tag symbolic ref '{name}' points outside refs/remotes/ to '{target}'. Repair or remove this symbolic ref before retrying sync"
             )));
         }
     }
