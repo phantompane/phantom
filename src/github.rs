@@ -230,8 +230,8 @@ fn checkout_pull_request(
         pull.head_ref.clone()
     };
     metadata.pr = Some(subject_link(repo, pull.number, "pull"));
-    if let Ok(existing) = worktree::find_worktree(&context, &worktree_name, false, None) {
-        if existing.branch == worktree_name {
+    match worktree::find_worktree(&context, &worktree_name, false, None) {
+        Ok(existing) if existing.branch == worktree_name => {
             let info = record_existing_checkout(&context, Path::new(&existing.path), &metadata)?;
             let path = info.path.clone().into();
             return Ok(Checkout {
@@ -252,6 +252,8 @@ fn checkout_pull_request(
                 },
             });
         }
+        Ok(_) | Err(Error::WorktreeNotFound(_)) => {}
+        Err(error) => return Err(error),
     }
     let post = post_commands(&context);
     let commands = crate::trust::authorize(
@@ -361,22 +363,26 @@ fn checkout_issue(
     let context = context::open(repository)?;
     let name = format!("issues/{number}");
     metadata.issue = Some(subject_link(repo, number, "issues"));
-    if let Ok(existing) = worktree::find_worktree(&context, &name, false, None) {
-        let info = record_existing_checkout(&context, Path::new(&existing.path), &metadata)?;
-        let path = info.path.clone().into();
-        return Ok(Checkout {
-            message: format!("Issue #{number} is already checked out"),
-            worktree: name,
-            path,
-            already_exists: true,
-            hook_failure: None,
-            copy_error: None,
-            hooks_ran: false,
-            metadata_error: None,
-            info,
-            base: None,
-            subject: GithubSubject::Issue { number },
-        });
+    match worktree::find_worktree(&context, &name, false, None) {
+        Ok(existing) => {
+            let info = record_existing_checkout(&context, Path::new(&existing.path), &metadata)?;
+            let path = info.path.clone().into();
+            return Ok(Checkout {
+                message: format!("Issue #{number} is already checked out"),
+                worktree: name,
+                path,
+                already_exists: true,
+                hook_failure: None,
+                copy_error: None,
+                hooks_ran: false,
+                metadata_error: None,
+                info,
+                base: None,
+                subject: GithubSubject::Issue { number },
+            });
+        }
+        Err(Error::WorktreeNotFound(_)) => {}
+        Err(error) => return Err(error),
     }
     let post = post_commands(&context);
     let commands = crate::trust::authorize(

@@ -483,7 +483,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         targets = listed;
     } else if !request.names.is_empty() {
         for name in &request.names {
-            let tree = worktree::find_worktree(context, name, false, None)?;
+            let tree = crate::selectors::resolve(context, name, false, None)?;
             if name != "." && paths::same_location(Path::new(&tree.path), &context.git_root) {
                 return Err(Error::validation("Sync targets must be linked workspaces"));
             }

@@ -459,7 +459,7 @@ fn inspect(args: &[String], path_only: bool) -> Result<i32> {
     if let Some(warning) = metadata::read_problem(&context.git_root) {
         crate::output::warning("metadata_read", format!("Warning: {warning}"));
     }
-    let tree = worktree::find_including_orphaned(
+    let tree = crate::selectors::resolve_including_orphaned(
         &context,
         parsed
             .positionals
@@ -1402,7 +1402,7 @@ fn set(args: &[String]) -> Result<i32> {
         .first()
         .map(String::as_str)
         .unwrap_or(".");
-    let worktree = match worktree::find_worktree(&context, name, false, None) {
+    let worktree = match crate::selectors::resolve(&context, name, false, None) {
         Ok(worktree) => worktree,
         Err(error @ Error::WorktreeNotFound(_)) => return fail_with(&error, NOT_FOUND),
         Err(error) => return fail_with(&error, error.exit_code()),

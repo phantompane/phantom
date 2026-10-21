@@ -446,6 +446,7 @@ pub fn worktree_at_path(context: &Context, path: &Path) -> Result<WorktreeInfo> 
         })
 }
 
+/// Look up an observed name or Git branch literally, without parsing user selectors.
 pub fn find_worktree(
     context: &Context,
     name: &str,
@@ -453,6 +454,10 @@ pub fn find_worktree(
     expected_path: Option<&Path>,
 ) -> Result<WorktreeInfo> {
     let found = find_including_orphaned(context, name, exclude_default, expected_path)?;
+    require_live(found, name)
+}
+
+pub(crate) fn require_live(found: WorktreeInfo, name: &str) -> Result<WorktreeInfo> {
     if found.orphaned {
         return Err(Error::msg(format!(
             "Workspace '{name}' is orphaned: its directory is gone. Use mabo delete to remove the stale record."
@@ -461,6 +466,7 @@ pub fn find_worktree(
     Ok(found)
 }
 
+/// Literal internal lookup, including stale records; no input validation.
 pub fn find_including_orphaned(
     context: &Context,
     name: &str,
@@ -468,32 +474,6 @@ pub fn find_including_orphaned(
     expected_path: Option<&Path>,
 ) -> Result<WorktreeInfo> {
     let listed = list_worktrees(context, false, true)?;
-    if name == "."
-        || name.starts_with("pr:")
-        || name.starts_with("issue:")
-        || name.starts_with("https://")
-        || name.starts_with("http://")
-    {
-        let mut matches = crate::selectors::matches(context, &listed, name)?;
-        matches.retain(|tree| {
-            expected_path.is_none_or(|path| paths::same_location(Path::new(&tree.path), path))
-        });
-        return match matches.as_slice() {
-            [found] if exclude_default && found.is_default => Err(Error::Status {
-                code: "primary",
-                message: "The primary checkout cannot be selected for this operation".into(),
-            }),
-            [found] => Ok(found.clone()),
-            [] => Err(Error::WorktreeNotFound(name.into())),
-            _ => Err(Error::Status {
-                code: "ambiguous",
-                message: format!(
-                    "Selector '{name}' matches multiple workspaces; use a workspace name"
-                ),
-            }),
-        };
-    }
-    validate_worktree_name(name)?;
     let live_match = listed
         .iter()
         .any(|worktree| !worktree.orphaned && same_worktree(worktree, name));
@@ -559,6 +539,7 @@ pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
             )?
         }
     };
+    validate_worktree_name(&name)?;
     request.metadata.base = Some(crate::sync::creation_base(&context.git_root, request.base)?);
     let base = request.base.unwrap_or("HEAD");
     let commands = trust::authorize(
@@ -678,6 +659,7 @@ pub fn create_worktree(
     logger: &Logger,
     metadata: &MetadataInput,
 ) -> Result<CreatedWorktree> {
+    validate_worktree_name(name)?;
     create_worktree_inner(context, name, base, copy_files, commands, logger, metadata)
 }
 
@@ -692,7 +674,6 @@ pub(crate) fn create_worktree_inner(
     logger: &Logger,
     metadata: &MetadataInput,
 ) -> Result<CreatedWorktree> {
-    validate_worktree_name(name)?;
     metadata::prepare(&context.git_root)?;
     let path = paths::worktree_path(
         &context.worktrees_directory,
@@ -755,6 +736,7 @@ pub struct AttachRequest<'a> {
 pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
     let action = resolve_action(&request.action)?;
     let context = context::open(request.repository)?;
+    let lookup = crate::tracking::parse_attach_name(&context.git_root, request.name)?;
     let commands = trust::authorize(
         &context.git_root,
         config::post_create_commands(context.config.as_ref()),
@@ -762,9 +744,9 @@ pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
         trust::HookKind::PostCreate,
         request.hooks,
     )?;
-    let attached = attach_worktree_inner(
+    let attached = attach_worktree_lookup(
         &context,
-        request.name,
+        lookup,
         request.copy_files,
         &commands,
         &request.logger,
@@ -816,7 +798,8 @@ pub fn attach_worktree(
     logger: &Logger,
     metadata: &MetadataInput,
 ) -> Result<AttachedWorktree> {
-    attach_worktree_inner(context, name, copy_files, commands, logger, metadata)
+    let lookup = crate::tracking::parse_attach_name(&context.git_root, name)?;
+    attach_worktree_lookup(context, lookup, copy_files, commands, logger, metadata)
 }
 
 // Branch preparation is complete before creating the worktree.
@@ -830,7 +813,17 @@ pub(crate) fn attach_worktree_inner(
     metadata: &MetadataInput,
 ) -> Result<AttachedWorktree> {
     let lookup = crate::tracking::lookup_attach(&context.git_root, name)?;
-    validate_worktree_name(&lookup.directory)?;
+    attach_worktree_lookup(context, lookup, copy_files, commands, logger, metadata)
+}
+
+fn attach_worktree_lookup(
+    context: &Context,
+    lookup: crate::tracking::AttachLookup,
+    copy_files: &[String],
+    commands: &[String],
+    logger: &Logger,
+    metadata: &MetadataInput,
+) -> Result<AttachedWorktree> {
     metadata::prepare(&context.git_root)?;
     let path = paths::worktree_path(
         &context.worktrees_directory,
@@ -949,6 +942,7 @@ impl DeleteError {
 
 pub struct DeletePlan {
     name: String,
+    selector: crate::selectors::Selector,
     worktree: WorktreeInfo,
     path: PathBuf,
     inside: bool,
@@ -981,10 +975,37 @@ pub fn preflight_delete(
     options: &DeleteOptions,
     expected_path: Option<&Path>,
 ) -> std::result::Result<DeletePlan, DeleteError> {
+    let selector = crate::selectors::Selector::parse(name).map_err(DeleteError::bare)?;
+    preflight_delete_selected(context, &selector, options, expected_path)
+}
+
+/// Garbage collection already obtained this name from Git or metadata.
+pub(crate) fn preflight_delete_named(
+    context: &Context,
+    name: &str,
+    options: &DeleteOptions,
+    expected_path: Option<&Path>,
+) -> std::result::Result<DeletePlan, DeleteError> {
+    preflight_delete_selected(
+        context,
+        &crate::selectors::Selector::Name(name.to_owned()),
+        options,
+        expected_path,
+    )
+}
+
+fn preflight_delete_selected(
+    context: &Context,
+    selector: &crate::selectors::Selector,
+    options: &DeleteOptions,
+    expected_path: Option<&Path>,
+) -> std::result::Result<DeletePlan, DeleteError> {
+    let name = selector.as_str();
     let force = options.force;
     let keep_branch = options.keep_branch;
-    let worktree =
-        find_including_orphaned(context, name, true, expected_path).map_err(DeleteError::bare)?;
+    let worktree = selector
+        .resolve_including_orphaned(context, true, expected_path)
+        .map_err(DeleteError::bare)?;
     let label = if options.allow_current && name == "." {
         worktree.name.as_str()
     } else {
@@ -1008,6 +1029,7 @@ pub fn preflight_delete(
             .map_err(|error| DeleteError::kept(error, &worktree))?;
         return Ok(DeletePlan {
             name: name.to_string(),
+            selector: selector.clone(),
             worktree,
             path,
             inside,
@@ -1061,6 +1083,7 @@ pub fn preflight_delete(
     }
     Ok(DeletePlan {
         name: name.to_string(),
+        selector: selector.clone(),
         worktree,
         path,
         inside,
@@ -1095,7 +1118,7 @@ fn unique_delete_names(context: &Context, names: &[String]) -> Vec<String> {
     let mut seen_unresolved = Vec::new();
     let mut unique = Vec::new();
     for name in names {
-        match find_including_orphaned(context, name, true, None) {
+        match crate::selectors::resolve_including_orphaned(context, name, true, None) {
             Ok(worktree) => {
                 let path = PathBuf::from(&worktree.path);
                 if seen_paths
@@ -1150,6 +1173,7 @@ pub(crate) fn commit_delete_checked(
 ) -> std::result::Result<DeleteOutcome, DeleteError> {
     let DeletePlan {
         name,
+        selector,
         worktree,
         path,
         ..
@@ -1197,7 +1221,7 @@ pub(crate) fn commit_delete_checked(
             metadata_error: None,
         });
     }
-    let fresh = preflight_delete(context, &name, options, Some(&path))?;
+    let fresh = preflight_delete_selected(context, &selector, options, Some(&path))?;
     if fresh.worktree.head != worktree.head || fresh.worktree.branch != worktree.branch {
         return Err(DeleteError::kept(
             Error::msg("Workspace changed while running pre-delete commands"),
@@ -1326,7 +1350,7 @@ pub fn exec_in_worktree(
     if let Some(warning) = metadata::read_problem(&context.git_root) {
         crate::output::warning("metadata_read", format!("Warning: {warning}"));
     }
-    let worktree = find_worktree(context, name, false, None)?;
+    let worktree = crate::selectors::resolve(context, name, false, None)?;
     exec_in_resolved_worktree(
         context,
         &worktree,

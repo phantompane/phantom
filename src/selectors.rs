@@ -5,6 +5,92 @@ use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::{git, metadata, paths, worktree::WorktreeInfo};
 
+/// Parsed user input can be resolved again without revalidating observed names.
+/// Internal callers construct `Name` directly for names obtained from Git or metadata.
+#[derive(Debug, Clone)]
+pub(crate) enum Selector {
+    Name(String),
+    Special(String),
+}
+
+impl Selector {
+    pub(crate) fn parse(input: &str) -> Result<Self> {
+        if input == "."
+            || input.starts_with("pr:")
+            || input.starts_with("issue:")
+            || input.starts_with("https://")
+            || input.starts_with("http://")
+        {
+            Ok(Self::Special(input.to_owned()))
+        } else {
+            crate::worktree::validate_worktree_name(input)?;
+            Ok(Self::Name(input.to_owned()))
+        }
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        match self {
+            Self::Name(value) | Self::Special(value) => value,
+        }
+    }
+
+    pub(crate) fn resolve_including_orphaned(
+        &self,
+        context: &Context,
+        exclude_default: bool,
+        expected_path: Option<&Path>,
+    ) -> Result<WorktreeInfo> {
+        if let Self::Name(name) = self {
+            return crate::worktree::find_including_orphaned(
+                context,
+                name,
+                exclude_default,
+                expected_path,
+            );
+        }
+        let input = self.as_str();
+        let listed = crate::worktree::list_worktrees(context, false, true)?;
+        let mut found = matches(context, &listed, input)?;
+        found.retain(|tree| {
+            expected_path.is_none_or(|path| paths::same_location(Path::new(&tree.path), path))
+        });
+        match found.as_slice() {
+            [tree] if exclude_default && tree.is_default => Err(Error::Status {
+                code: "primary",
+                message: "The primary checkout cannot be selected for this operation".into(),
+            }),
+            [tree] => Ok(tree.clone()),
+            [] => Err(Error::WorktreeNotFound(input.into())),
+            _ => Err(Error::Status {
+                code: "ambiguous",
+                message: format!(
+                    "Selector '{input}' matches multiple workspaces; use a workspace name"
+                ),
+            }),
+        }
+    }
+}
+
+/// Interpret a user selector at the command boundary, then resolve it.
+pub(crate) fn resolve_including_orphaned(
+    context: &Context,
+    input: &str,
+    exclude_default: bool,
+    expected_path: Option<&Path>,
+) -> Result<WorktreeInfo> {
+    Selector::parse(input)?.resolve_including_orphaned(context, exclude_default, expected_path)
+}
+
+pub(crate) fn resolve(
+    context: &Context,
+    input: &str,
+    exclude_default: bool,
+    expected_path: Option<&Path>,
+) -> Result<WorktreeInfo> {
+    let found = resolve_including_orphaned(context, input, exclude_default, expected_path)?;
+    crate::worktree::require_live(found, input)
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RepoJson {
     pub root: String,

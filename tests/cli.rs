@@ -13449,3 +13449,218 @@ fn delete_current_does_not_revalidate_the_resolved_branch_name() {
     assert!(!tree.exists());
     assert!(!branch_listed(&repo, "topic+fix"));
 }
+
+#[test]
+fn github_reuses_plain_git_checkout_with_a_git_only_branch_name() {
+    let repo = Repo::new();
+    let path = fake_gh_for_topic_pr(&repo);
+    let gh = repo.root.join("bin/gh");
+    let script = fs::read_to_string(&gh).expect("gh script");
+    fs::write(&gh, script.replace("\"topic\"", "\"topic+fix\"")).expect("PR head");
+    let checkout = repo.root.join("plain-checkout");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic+fix",
+        checkout.to_str().expect("path"),
+        "HEAD",
+    ]);
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        "[hooks]\npost-create = [\"touch should-not-run\"]\n",
+    )
+    .expect("hooks");
+    let before = repo
+        .command("git", &["worktree", "list", "--porcelain"])
+        .output()
+        .expect("list");
+    let result = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["github", "checkout", "7", "--json"],
+        )
+        .env("PATH", &path)
+        .env_remove("MABO_TRUST_ALL")
+        .output()
+        .expect("checkout");
+    assert!(
+        result.status.success(),
+        "{}\n{}",
+        text(&result.stdout),
+        text(&result.stderr)
+    );
+    let value = json_value(&result);
+    assert_eq!(value["schema"], 2);
+    assert_eq!(value["data"]["github"]["alreadyExists"], true);
+    assert_eq!(value["data"]["workspace"]["branch"], "topic+fix");
+    assert!(paths_match(
+        value["data"]["workspace"]["path"].as_str().expect("path"),
+        &checkout
+    ));
+    assert_eq!(value["data"]["workspace"]["links"]["pr"]["number"], 7);
+    assert_eq!(value["data"]["postCreate"]["ran"], false);
+    assert!(!checkout.join("should-not-run").exists());
+    let after = repo
+        .command("git", &["worktree", "list", "--porcelain"])
+        .output()
+        .expect("list");
+    assert_eq!(before.stdout, after.stdout);
+    assert!(!managed(&repo, "topic+fix").exists());
+    let linked = repo.mabo(&["path", "pr:7"]);
+    assert!(linked.status.success(), "{}", text(&linked.stderr));
+    assert!(paths_match(&text(&linked.stdout), &checkout));
+}
+
+#[test]
+fn github_propagates_ambiguous_internal_lookups() {
+    for issue in [false, true] {
+        let repo = Repo::new();
+        let path = fake_gh_for_topic_pr(&repo);
+        let branch = if issue { "issues/7" } else { "topic" };
+        if issue {
+            let gh = repo.root.join("bin/gh");
+            let script = fs::read_to_string(&gh).expect("gh script");
+            fs::write(
+                &gh,
+                script.replace("\"pull_request\":{}", "\"title\":\"issue\""),
+            )
+            .expect("issue");
+        }
+        repo.git(&["branch", branch]);
+        for directory in ["first", "second"] {
+            let checkout = repo.root.join(directory);
+            repo.git(&[
+                "worktree",
+                "add",
+                "--force",
+                checkout.to_str().expect("path"),
+                branch,
+            ]);
+        }
+        fs::write(
+            repo.repo.join(".mabo.toml"),
+            "[hooks]\npost-create = [\"touch should-not-run\"]\n",
+        )
+        .expect("hooks");
+        let result = repo
+            .command(
+                env!("CARGO_BIN_EXE_mabo"),
+                &["github", "checkout", "7", "--json"],
+            )
+            .env("PATH", &path)
+            .env_remove("MABO_TRUST_ALL")
+            .output()
+            .expect("checkout");
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{}\n{}",
+            text(&result.stdout),
+            text(&result.stderr)
+        );
+        assert_eq!(json_value(&result)["error"]["code"], "ambiguous");
+        assert!(!repo.repo.join(".git/maboroshi").exists());
+    }
+}
+
+#[test]
+fn gc_removes_a_recorded_git_only_branch_name() {
+    let repo = Repo::new();
+    let checkout = managed(&repo, "topic+fix");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic+fix",
+        checkout.to_str().expect("path"),
+        "HEAD",
+    ]);
+    let recorded = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["set", "--purpose", "internal lookup"],
+        )
+        .current_dir(&checkout)
+        .output()
+        .expect("record");
+    assert!(recorded.status.success(), "{}", text(&recorded.stderr));
+    land_branch(&repo, "topic+fix");
+    let result = repo.mabo(&["gc", "--apply"]);
+    assert!(
+        result.status.success(),
+        "{}\n{}",
+        text(&result.stdout),
+        text(&result.stderr)
+    );
+    assert!(
+        text(&result.stdout).contains("removed topic+fix [merged]"),
+        "{}",
+        text(&result.stdout)
+    );
+    assert!(!checkout.exists());
+    assert!(!branch_listed(&repo, "topic+fix"));
+}
+
+#[test]
+fn user_selectors_still_reject_git_only_branch_names() {
+    let repo = Repo::new();
+    for args in [
+        vec!["create", "topic+fix", "--json"],
+        vec!["attach", "topic+fix", "--json"],
+        vec!["show", "topic+fix", "--json"],
+        vec!["path", "topic+fix", "--json"],
+        vec!["set", "topic+fix", "--purpose", "task", "--json"],
+        vec!["sync", "topic+fix", "--json"],
+        vec!["delete", "topic+fix", "--json"],
+        vec!["exec", "topic+fix", "--", "true"],
+    ] {
+        let result = repo.mabo(&args);
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{args:?}: {}\n{}",
+            text(&result.stdout),
+            text(&result.stderr)
+        );
+        if args.contains(&"--json") {
+            assert_eq!(json_value(&result)["error"]["code"], "usage", "{args:?}");
+        } else {
+            assert!(text(&result.stderr).contains("Workspace name can only contain"));
+        }
+    }
+}
+
+#[test]
+fn github_attaches_a_git_only_head_branch_without_user_name_validation() {
+    let repo = Repo::new();
+    publish_pr_topic(&repo);
+    repo.git(&[
+        "push",
+        "origin",
+        "refs/remotes/origin/topic:refs/heads/topic+fix",
+    ]);
+    let path = fake_gh_for_topic_pr(&repo);
+    let gh = repo.root.join("bin/gh");
+    let script = fs::read_to_string(&gh).expect("gh script");
+    fs::write(&gh, script.replace("\"topic\"", "\"topic+fix\"")).expect("PR head");
+    let result = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["github", "checkout", "7", "--json"],
+        )
+        .env("PATH", &path)
+        .output()
+        .expect("checkout");
+    assert!(
+        result.status.success(),
+        "{}\n{}",
+        text(&result.stdout),
+        text(&result.stderr)
+    );
+    let value = json_value(&result);
+    assert_eq!(value["data"]["github"]["alreadyExists"], false);
+    assert_eq!(value["data"]["workspace"]["branch"], "topic+fix");
+    assert!(managed(&repo, "topic+fix").join("topic.txt").is_file());
+    assert_eq!(upstream_name(&repo, "topic+fix"), "origin/topic+fix");
+}
