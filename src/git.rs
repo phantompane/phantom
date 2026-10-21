@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
@@ -683,8 +683,10 @@ pub(crate) fn retirement_upstream_matches(root: &Path, branch: Option<&str>) -> 
 // Prove preservation through exact tree-entry transitions, never textual patches.
 // Each transition includes the path, modes and full before/after object IDs, so
 // repeated contexts, whitespace, binary data and gitlinks cannot compare equal
-// unless the complete entries match. Checking base history also recognizes work
-// that landed before later base edits. All commands are read-only: merge-tree
+// unless the complete entries match. Use one first-parent base lineage in
+// ancestor-to-tip order, consuming each commit at most once. Checking base
+// history also recognizes work that landed before later base edits.
+// All commands are read-only: merge-tree
 // --write-tree can refresh existing object mtimes, even with an alternate store.
 fn retirement_changes_landed(root: &Path, tip: &str, base: &str) -> bool {
     let Ok(ancestor) = raw_git(root, &["merge-base", "--all", base, tip]) else {
@@ -703,19 +705,22 @@ fn retirement_changes_landed(root: &Path, tip: &str, base: &str) -> bool {
     let Some(landed) = retirement_history_trees(root, &format!("{ancestor}..{base}"), false) else {
         return false;
     };
-    let landed: HashSet<_> = landed.into_iter().collect();
     // A complete squash must preserve every changed entry in one base commit.
     if landed.contains(&delta) {
         return true;
     }
-    // Rebased history must preserve every commit's complete tree transition.
+    // Rebased history must preserve every commit's complete tree transition,
+    // in order and in distinct base commits. A forward-only iterator cannot
+    // reuse an earlier addition to prove a later reapplication. Greedily taking
+    // the first match leaves all later evidence available for the next commit.
     // Merges outside the base require the complete-squash proof above: checking
     // just their non-merge ancestors would omit unique conflict resolutions.
     retirement_history_trees(root, &format!("{base}..{tip}"), true).is_some_and(|commits| {
+        let mut remaining = landed.iter();
         !commits.is_empty()
             && commits
                 .iter()
-                .all(|delta| !delta.is_empty() && landed.contains(delta))
+                .all(|delta| !delta.is_empty() && remaining.any(|landed| landed == delta))
     })
 }
 
@@ -725,17 +730,21 @@ fn retirement_history_trees(
     require_linear: bool,
 ) -> Option<Vec<Vec<u8>>> {
     // One process emits the parent list and raw tree entries for the whole
-    // range. Base merges are not evidence; workspace merges must be observed
-    // and rejected rather than silently omitting their conflict resolutions.
+    // range. Topological order ignores clock skew. First-parent base traversal
+    // prevents stitching together transitions from unrelated merge parents.
+    // Base merges are not evidence; workspace merges must be observed and
+    // rejected rather than silently omitting their conflict resolutions.
     let mut args = vec![
         "log",
+        "--topo-order",
+        "--reverse",
         "--format=%x00%P",
         "--no-notes",
         "--no-show-signature",
     ];
     args.extend_from_slice(RETIREMENT_DIFF_OPTIONS);
     if !require_linear {
-        args.push("--no-merges");
+        args.extend_from_slice(&["--first-parent", "--no-merges"]);
     }
     args.extend_from_slice(&[range, "--"]);
     let history = raw_git_bytes(root, &args).ok()?;

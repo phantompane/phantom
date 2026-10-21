@@ -17157,6 +17157,158 @@ fn retirement_review6_gc_default_uses_full_remote_ref_with_same_named_tag() {
 }
 
 #[test]
+fn retirement_review7_keeps_reapplied_branch_without_distinct_evidence() {
+    assert_retirement_reapplication(false, false);
+}
+
+#[test]
+fn retirement_review7_keeps_reapplied_detached_without_distinct_evidence() {
+    assert_retirement_reapplication(true, false);
+}
+
+#[test]
+fn retirement_review7_accepts_reapplication_with_distinct_ordered_evidence() {
+    assert_retirement_reapplication(false, true);
+    assert_retirement_reapplication(true, true);
+}
+
+fn assert_retirement_reapplication(detached: bool, preserved: bool) {
+    let repo = Repo::new();
+    let path = retirement_replay_workspace(&repo, detached);
+    for (directory, reapply, message) in [(&path, true, "topic"), (&repo.repo, preserved, "base")] {
+        retirement_replay_file(&repo, directory, "a", Some("a\n"), message);
+        retirement_replay_file(&repo, directory, "a", None, message);
+        if reapply {
+            retirement_replay_file(&repo, directory, "a", Some("a\n"), message);
+        }
+        retirement_replay_file(&repo, directory, "b", Some("b\n"), message);
+    }
+    // All base commits have different SHAs; exact ancestry cannot prove this.
+    let head = retirement_head_at(&repo, &path);
+    let ancestor = repo
+        .command(
+            "git",
+            &["merge-base", "--is-ancestor", &head, "refs/heads/main"],
+        )
+        .output()
+        .unwrap();
+    assert_eq!(ancestor.status.code(), Some(1));
+    if preserved {
+        // Keep the existing contract: ordered rebase evidence survives later
+        // base edits, even when the complete squash and base-tip checks fail.
+        retirement_replay_file(&repo, &repo.repo, "a", Some("later\n"), "later edit");
+        let plan = repo.mabo(&["gc", "--merged", "--json"]);
+        assert!(plan.status.success(), "{}", text(&plan.stdout));
+        assert_eq!(
+            json_value(&plan)["data"]["items"][0]["action"],
+            "wouldRemove"
+        );
+        let removed = repo.mabo(&["remove", "replay", "--json"]);
+        assert!(removed.status.success(), "{}", text(&removed.stdout));
+        assert!(!path.exists());
+        assert!(!worktree_registered(&repo, "replay"));
+        assert!(!branch_listed(&repo, "replay"));
+    } else {
+        assert_retirement_replay_is_unpreserved(&repo, detached);
+    }
+}
+
+#[test]
+fn retirement_review7_keeps_commits_landed_in_different_order() {
+    for detached in [false, true] {
+        let repo = Repo::new();
+        let path = retirement_replay_workspace(&repo, detached);
+        retirement_replay_file(&repo, &path, "a", Some("a\n"), "topic a");
+        retirement_replay_file(&repo, &path, "b", Some("b\n"), "topic b");
+        retirement_replay_file(&repo, &repo.repo, "b", Some("b\n"), "base b");
+        retirement_replay_file(&repo, &repo.repo, "a", Some("a\n"), "base a");
+        retirement_replay_file(&repo, &repo.repo, "a", None, "base removes a");
+        assert_retirement_replay_is_unpreserved(&repo, detached);
+    }
+}
+
+#[test]
+fn retirement_review7_keeps_evidence_from_discarded_side_history() {
+    for detached in [false, true] {
+        let repo = Repo::new();
+        let path = retirement_replay_workspace(&repo, detached);
+        let ancestor = retirement_head_at(&repo, &repo.repo);
+        retirement_replay_file(&repo, &path, "a", Some("a\n"), "topic a");
+        retirement_replay_file(&repo, &path, "b", Some("b\n"), "topic b");
+        retirement_replay_file(&repo, &repo.repo, "a", Some("a\n"), "base a");
+        repo.git(&["checkout", "-b", "side", &ancestor]);
+        retirement_replay_file(&repo, &repo.repo, "b", Some("b\n"), "side b");
+        repo.git(&["checkout", "main"]);
+        repo.git(&[
+            "merge",
+            "--no-ff",
+            "-s",
+            "ours",
+            "side",
+            "-m",
+            "discard side tree",
+        ]);
+        assert!(!repo.repo.join("b").exists());
+        assert_retirement_replay_is_unpreserved(&repo, detached);
+    }
+}
+
+fn retirement_replay_workspace(repo: &Repo, detached: bool) -> PathBuf {
+    let mut args = vec!["create", "replay", "--no-setup"];
+    if detached {
+        args.push("--detach");
+    }
+    let created = repo.mabo(&args);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    managed(repo, "replay")
+}
+
+fn retirement_replay_file(
+    repo: &Repo,
+    directory: &Path,
+    file: &str,
+    body: Option<&str>,
+    message: &str,
+) {
+    if let Some(body) = body {
+        fs::write(directory.join(file), body).unwrap();
+        git_at(repo, directory, &["add", "--", file]);
+    } else {
+        git_at(repo, directory, &["rm", "--", file]);
+    }
+    git_at(repo, directory, &["commit", "-m", message]);
+}
+
+fn assert_retirement_replay_is_unpreserved(repo: &Repo, detached: bool) {
+    let head = retirement_head_at(repo, &managed(repo, "replay"));
+    let records = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    for apply in [false, true] {
+        let mut args = vec!["gc", "--merged", "--json"];
+        if apply {
+            args.push("--apply");
+        }
+        let out = repo.mabo(&args);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        assert_eq!(json_value(&out)["data"]["items"], serde_json::json!([]));
+        assert!(worktree_registered(repo, "replay"));
+        assert_eq!(retirement_head_at(repo, &managed(repo, "replay")), head);
+        assert_eq!(
+            records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+            records
+        );
+    }
+    assert_retirement_review3_keeps_workspace(repo, "replay", detached);
+    if !detached {
+        let tip = repo
+            .command("git", &["rev-parse", "refs/heads/replay"])
+            .output()
+            .unwrap();
+        assert!(tip.status.success());
+        assert_eq!(text(&tip.stdout), head);
+    }
+}
+
+#[test]
 fn retirement_review5_remove_batches_long_base_history() {
     assert_retirement_batches_long_history(false);
 }
