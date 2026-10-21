@@ -352,6 +352,107 @@ fn default_upstream_precedes_other_remote_heads_without_origin_head() {
 }
 
 #[test]
+fn custom_namespace_origin_head_precedes_other_remote_heads() {
+    for (refspec, destination) in [
+        (
+            "+refs/heads/*:refs/remotes/cache/*",
+            "refs/remotes/cache/main",
+        ),
+        ("+refs/heads/*:refs/cache/*", "refs/cache/main"),
+    ] {
+        let r = Repo::new();
+        r.git(&r.main, &["config", "remote.origin.fetch", refspec]);
+        r.git(&r.main, &["fetch", "origin"]);
+        r.git(
+            &r.main,
+            &["symbolic-ref", "refs/remotes/origin/HEAD", destination],
+        );
+        r.git(
+            &r.main,
+            &[
+                "remote",
+                "add",
+                "fork",
+                r.root.join("remote.git").to_str().unwrap(),
+            ],
+        );
+        r.git(&r.main, &["fetch", "fork"]);
+        // Explicitly create the HEAD on Git < 2.48 too.
+        r.git(&r.main, &["remote", "set-head", "fork", "main"]);
+        assert_eq!(r.git(&r.main, &["remote"]), "fork\norigin");
+        let fork_before = r.git(&r.main, &["for-each-ref", "refs/remotes/fork"]);
+        r.advance();
+        let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+
+        let doc = r.sync(&r.main, &[], 0);
+        assert_eq!(doc["data"]["default"]["base"], destination, "{doc}");
+        assert_eq!(doc["data"]["default"]["status"], "updated");
+        assert_eq!(doc["data"]["default"]["branch"], "refs/heads/main");
+        assert_eq!(r.git(&r.main, &["rev-parse", "main"]), expected);
+        assert_eq!(r.git(&r.main, &["rev-parse", destination]), expected);
+        assert_eq!(
+            r.git(&r.main, &["symbolic-ref", "refs/remotes/origin/HEAD"]),
+            destination
+        );
+        assert_eq!(
+            r.git(&r.main, &["for-each-ref", "refs/remotes/fork"]),
+            fork_before
+        );
+    }
+}
+
+#[test]
+fn remote_head_fallback_preserves_remaining_remote_order() {
+    for origin in ["absent", "missing-head", "dangling-head"] {
+        let r = Repo::new();
+        match origin {
+            "absent" => {
+                r.git(&r.main, &["remote", "remove", "origin"]);
+            }
+            "missing-head" => r.keep_remote_head_absent("origin"),
+            "dangling-head" => {
+                r.git(
+                    &r.main,
+                    &[
+                        "symbolic-ref",
+                        "refs/remotes/origin/HEAD",
+                        "refs/remotes/origin/missing",
+                    ],
+                );
+            }
+            _ => unreachable!(),
+        }
+        for remote in ["fork", "healthy"] {
+            r.git(
+                &r.main,
+                &[
+                    "remote",
+                    "add",
+                    remote,
+                    r.root.join("remote.git").to_str().unwrap(),
+                ],
+            );
+            r.git(&r.main, &["fetch", remote]);
+            r.git(&r.main, &["remote", "set-head", remote, "main"]);
+        }
+        let healthy_before = r.git(&r.main, &["for-each-ref", "refs/remotes/healthy"]);
+        r.advance();
+        let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+        let doc = r.sync(&r.main, &[], 0);
+        assert_eq!(
+            doc["data"]["default"]["base"], "refs/remotes/fork/main",
+            "{origin}: {doc}"
+        );
+        assert_eq!(doc["data"]["default"]["status"], "updated");
+        assert_eq!(r.git(&r.main, &["rev-parse", "main"]), expected);
+        assert_eq!(
+            r.git(&r.main, &["for-each-ref", "refs/remotes/healthy"]),
+            healthy_before
+        );
+    }
+}
+
+#[test]
 fn other_remote_head_remains_a_fallback_for_unresolved_default_upstream() {
     let r = Repo::new();
     let before = r.git(&r.main, &["rev-parse", "main"]);
@@ -2886,11 +2987,9 @@ fn failed_default_remote_does_not_block_a_healthy_base_remote() {
             r.root.join("remote.git").to_str().unwrap(),
         ],
     );
-    // A healthy/HEAD would precede origin/HEAD in the fallback's remote scan:
-    // origin's HEAD uses a custom namespace rather than an origin/* target.
-    r.keep_remote_head_absent("healthy");
     r.git(&r.main, &["fetch", "healthy"]);
-    r.assert_no_remote_head("healthy");
+    // Git >= 2.48 creates this on fetch; exercise the same state on older Git.
+    r.git(&r.main, &["remote", "set-head", "healthy", "main"]);
     assert!(r
         .mabo(&r.main, &["set", "healthy", "--base", "healthy/main"])
         .status
@@ -2900,7 +2999,10 @@ fn failed_default_remote_does_not_block_a_healthy_base_remote() {
     let default_before = r.snapshot(&r.main);
     let stale_before = r.snapshot(&stale);
     let doc = r.sync(&r.main, &["healthy", "stale"], 6);
-    r.assert_no_remote_head("healthy");
+    assert_eq!(
+        r.git(&r.main, &["symbolic-ref", "refs/remotes/healthy/HEAD"]),
+        "refs/remotes/healthy/main"
+    );
     assert_eq!(doc["data"]["default"]["status"], "failed");
     assert_eq!(doc["data"]["workspaces"][0]["status"], "updated", "{doc}");
     assert_eq!(doc["data"]["workspaces"][1]["status"], "failed");

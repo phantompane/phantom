@@ -116,7 +116,10 @@ pub fn fallback_base(root: &Path) -> Result<String> {
     }
     let specs = fetch_refspecs(root)?;
     let remotes = checked_output(&["remote"], root, true)?;
-    for remote in remotes.lines() {
+    // Prefer origin even when its HEAD points into a custom fetch namespace.
+    let origin = remotes.lines().filter(|remote| *remote == "origin");
+    let others = remotes.lines().filter(|remote| *remote != "origin");
+    for remote in origin.chain(others) {
         let head = git::raw_git(
             root,
             &[
