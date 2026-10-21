@@ -15001,3 +15001,67 @@ fn review1_forget_returns_the_workspace_after_removing_its_record() {
         assert!(Path::new(tree["path"].as_str().unwrap()).is_dir());
     }
 }
+
+fn assert_adopt_rejects_swapped_git_dir(primary: bool) {
+    let repo = Repo::new();
+    let directory = repo.root.join("review");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic",
+        directory.to_str().unwrap(),
+    ]);
+    if primary {
+        fs::write(
+            directory.join(".git"),
+            format!("gitdir: {}\n", repo.repo.join(".git").display()),
+        )
+        .unwrap();
+    } else {
+        let other = repo.root.join("other");
+        repo.git(&["worktree", "add", "-b", "other", other.to_str().unwrap()]);
+        fs::copy(other.join(".git"), directory.join(".git")).unwrap();
+    }
+    // Both pre-existing checks pass, despite Git operating on the wrong branch.
+    let observed = repo
+        .command("git", &["rev-parse", "--show-toplevel"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(observed.status.success());
+    assert_eq!(Path::new(&text(&observed.stdout)), directory);
+    assert_eq!(
+        maboroshi::git::canonical_common_dir(&directory).unwrap(),
+        repo.repo.join(".git")
+    );
+    let branch = repo
+        .command("git", &["branch", "--show-current"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(branch.status.success());
+    assert_eq!(text(&branch.stdout), if primary { "main" } else { "other" });
+    let gitfile = fs::read(directory.join(".git")).unwrap();
+    let out = repo.mabo(&[
+        "adopt",
+        directory.to_str().unwrap(),
+        "--name",
+        "review",
+        "--json",
+    ]);
+    assert!(!out.status.success(), "{}", text(&out.stdout));
+    assert_eq!(assert_envelope(&out, "adopt")["error"]["code"], "not_found");
+    assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
+    assert_eq!(fs::read(directory.join(".git")).unwrap(), gitfile);
+}
+
+#[test]
+fn review6_adopt_rejects_a_git_file_pointing_to_primary() {
+    assert_adopt_rejects_swapped_git_dir(true);
+}
+
+#[test]
+fn review6_adopt_rejects_a_git_file_pointing_to_another_workspace() {
+    assert_adopt_rejects_swapped_git_dir(false);
+}

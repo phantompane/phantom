@@ -275,43 +275,60 @@ fn forget(args: &[String]) -> Result<i32> {
             crate::selectors::resolve_including_orphaned(&context, selector, false, None)
         })
         .collect::<Result<Vec<_>>>()?;
+    let (items, error) = forget_resolved(&context, trees, worktree::worktree_at_path);
+    emit_json(&serde_json::json!({"items":items}))?;
+    match error {
+        Some(error) => fail_with(&error, error.exit_code()),
+        None => Ok(0),
+    }
+}
+
+fn forget_resolved(
+    context: &crate::context::Context,
+    trees: Vec<worktree::WorktreeInfo>,
+    mut refresh: impl FnMut(&crate::context::Context, &Path) -> Result<worktree::WorktreeInfo>,
+) -> (Vec<serde_json::Value>, Option<Error>) {
     let mut items = Vec::new();
     for tree in trees {
-        let forgotten = metadata::remove(&context.git_root, Path::new(&tree.path)).and_then(|()| {
-            if tree.orphaned {
-                // Orphaned records have no Git checkout to resolve after removal.
-                let mut forgotten = tree.clone();
-                forgotten.managed = worktree::is_managed(&context, Path::new(&tree.path), false);
-                forgotten.metadata = metadata::WorktreeMetadata::default();
-                Ok(forgotten)
+        if let Err(error) = metadata::remove(&context.git_root, Path::new(&tree.path)) {
+            let partial = !items.is_empty();
+            items.push(serde_json::json!({"workspace":tree.to_json(None),"ok":false,"error":error.to_json(error.exit_code()).error}));
+            let error = if partial {
+                Error::status(PARTIAL, error.to_string())
             } else {
-                worktree::worktree_at_path(&context, Path::new(&tree.path))
-            }
-        });
+                error
+            };
+            return (items, Some(error));
+        }
+        // Removal has completed. A failed read must not mark this item as unforgotten.
+        let forgotten = if tree.orphaned {
+            // Orphaned records have no Git checkout to resolve after removal.
+            let mut forgotten = tree.clone();
+            forgotten.managed = worktree::is_managed(context, Path::new(&tree.path), false);
+            forgotten.metadata = metadata::WorktreeMetadata::default();
+            Ok(forgotten)
+        } else {
+            refresh(context, Path::new(&tree.path))
+        };
+        if !crate::output::json() {
+            println!("Forgot workspace '{}'", visible_text(&tree.name));
+        }
         match forgotten {
             Ok(forgotten) => {
-                if !crate::output::json() {
-                    println!("Forgot workspace '{}'", visible_text(&tree.name));
-                }
                 items.push(serde_json::json!({"workspace":forgotten.to_json(None),"ok":true}));
             }
             Err(error) => {
-                let code = if items.is_empty() {
-                    error.exit_code()
-                } else {
-                    PARTIAL
-                };
-                items.push(serde_json::json!({"workspace":tree.to_json(None),"ok":false,"error":error.to_json(error.exit_code()).error}));
-                emit_json(&serde_json::json!({"items":items}))?;
-                return if code == PARTIAL {
-                    fail_with(&Error::status(PARTIAL, error.to_string()), PARTIAL)
-                } else {
-                    fail_with(&error, code)
-                };
+                // Keep only known identity fields; intent was removed and Git state is unknown.
+                items.push(serde_json::json!({
+                    "workspace": {"path":tree.path,"kind":if tree.is_default {"primary"} else {"workspace"}},
+                    "ok":true,
+                    "error":error.to_json(error.exit_code()).error,
+                }));
+                return (items, Some(Error::status(PARTIAL, error.to_string())));
             }
         }
     }
-    emit_json(&serde_json::json!({"items":items}))
+    (items, None)
 }
 
 fn list(args: &[String]) -> Result<i32> {
@@ -2098,5 +2115,176 @@ mod contract_tests {
         ] {
             assert!(contract["helps"].get(removed).is_none(), "{removed}");
         }
+    }
+}
+
+#[cfg(test)]
+mod forget_tests {
+    use super::*;
+    use crate::context::Context;
+    use crate::git;
+    use std::fs;
+    use std::path::PathBuf;
+
+    struct Fixture {
+        root: PathBuf,
+        context: Context,
+        trees: Vec<worktree::WorktreeInfo>,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("mabo-forget-{}", uuid::Uuid::new_v4()));
+            let repo = root.join("repo");
+            fs::create_dir_all(&repo).unwrap();
+            git::run(&["init", "--template=", "-b", "main"], Some(&repo)).unwrap();
+            git::run(
+                &[
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    "initial",
+                ],
+                Some(&repo),
+            )
+            .unwrap();
+            let context = Context {
+                git_root: repo.clone(),
+                source_checkout: repo.clone(),
+                worktrees_directory: root.join("workspaces"),
+                project_common_dir: None,
+                directory_name_separator: "/".into(),
+                config: None,
+                preferences: preferences::Preferences::default(),
+            };
+            let mut trees = Vec::new();
+            for name in ["first", "second"] {
+                let path = root.join(name);
+                git::run(
+                    &["worktree", "add", "-b", name, path.to_str().unwrap()],
+                    Some(&repo),
+                )
+                .unwrap();
+                metadata::replace(
+                    &repo,
+                    &path,
+                    &MetadataInput {
+                        name: Some(format!("alias-{name}")),
+                        purpose: Some("old purpose".into()),
+                        pr: Some(metadata::WorktreeLink {
+                            number: Some(7),
+                            url: None,
+                        }),
+                        ..MetadataInput::default()
+                    },
+                    metadata::BranchOrigin::Adopted,
+                )
+                .unwrap();
+                trees.push(worktree::worktree_at_path(&context, &path).unwrap());
+            }
+            Self {
+                root,
+                context,
+                trees,
+            }
+        }
+
+        fn record_path(&self, index: usize) -> PathBuf {
+            self.context
+                .git_root
+                .join(".git/maboroshi/workspaces")
+                .join(format!(
+                    "{}.json",
+                    self.trees[index].metadata.id.as_ref().unwrap()
+                ))
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn assert_refresh_failure(fail_at: usize) {
+        let fixture = Fixture::new();
+        let mut calls = 0;
+        let (items, error) =
+            forget_resolved(&fixture.context, fixture.trees.clone(), |context, path| {
+                // The fault occurs after the real persistent removal, including its PR link.
+                assert!(!metadata::records_path(&context.git_root, path).unwrap());
+                let call = calls;
+                calls += 1;
+                if call == fail_at {
+                    Err(Error::msg("injected refresh failure"))
+                } else {
+                    worktree::worktree_at_path(context, path)
+                }
+            });
+        assert_eq!(error.unwrap().exit_code(), PARTIAL);
+        assert_eq!(items.len(), fail_at + 1);
+        for (index, item) in items.iter().enumerate() {
+            assert_eq!(item["ok"], true);
+            assert_eq!(item["workspace"]["path"], fixture.trees[index].path);
+            assert!(item["workspace"]["id"].is_null());
+            assert!(item["workspace"]["purpose"].is_null());
+            assert!(item["workspace"]["links"]["pr"].is_null());
+            assert!(!fixture.record_path(index).exists());
+            assert!(Path::new(&fixture.trees[index].path).join(".git").is_file());
+        }
+        assert_eq!(items[fail_at]["error"]["code"], "failed");
+        assert_eq!(
+            items[fail_at]["error"]["message"],
+            "injected refresh failure"
+        );
+        if fail_at == 0 {
+            assert!(fixture.record_path(1).exists());
+        }
+    }
+
+    #[test]
+    fn review6_forget_first_refresh_failure_keeps_deleted_item_ok_and_returns_partial() {
+        assert_refresh_failure(0);
+    }
+
+    #[test]
+    fn review6_forget_later_refresh_failure_keeps_deleted_items_ok_and_returns_partial() {
+        assert_refresh_failure(1);
+    }
+
+    #[test]
+    fn review6_forget_removal_failure_after_an_earlier_removal_is_partial() {
+        let fixture = Fixture::new();
+        let (items, error) =
+            forget_resolved(&fixture.context, fixture.trees.clone(), |context, path| {
+                let refreshed = worktree::worktree_at_path(context, path)?;
+                // Make the next metadata read fail after the first removal completed.
+                fs::write(fixture.record_path(1), "{").unwrap();
+                Ok(refreshed)
+            });
+        assert_eq!(error.unwrap().exit_code(), PARTIAL);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["ok"], true);
+        assert_eq!(items[1]["ok"], false);
+        assert!(!fixture.record_path(0).exists());
+        assert!(fixture.record_path(1).exists());
+    }
+
+    #[test]
+    fn review6_forget_failure_before_removal_preserves_the_original_exit() {
+        let fixture = Fixture::new();
+        fs::write(fixture.record_path(0), "{").unwrap();
+        let (items, error) = forget_resolved(&fixture.context, fixture.trees.clone(), |_, _| {
+            panic!("refresh must not run when removal failed")
+        });
+        assert_eq!(error.unwrap().exit_code(), GENERAL);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["ok"], false);
+        assert!(fixture.record_path(0).exists());
+        assert!(fixture.record_path(1).exists());
     }
 }

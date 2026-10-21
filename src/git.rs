@@ -88,6 +88,13 @@ pub(crate) fn registered_git_dir(repo: &Path, checkout: &Path) -> Result<PathBuf
     ))
 }
 
+/// Check the checkout's actual admin directory against Git's independent registration.
+pub(crate) fn matches_registered_git_dir(repo: &Path, checkout: &Path) -> Result<bool> {
+    let actual = output(&["rev-parse", "--absolute-git-dir"], Some(checkout), true)?;
+    let registered = registered_git_dir(repo, checkout)?;
+    Ok(crate::paths::same_location(Path::new(&actual), &registered))
+}
+
 pub fn git_root(cwd: &Path) -> Result<PathBuf> {
     let common = git_common_dir_text(cwd)?;
     let common_dir = normalize(&cwd.join(&common));
