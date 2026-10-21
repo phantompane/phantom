@@ -84,7 +84,7 @@ Maboroshi が担わない役割は次のとおりです。
 JSON の結果キーは `workspace` / `workspaces` です。共有オブジェクトの `default` 真偽値は `kind` に変わり、primary checkout は `primary`、ほかは `workspace` です。schema 2、終了コード、旧メタデータの移行方法は変わりません。
 
 
-## リポジトリ・設定・信頼・ヘルプのコマンド（P2b）
+## リポジトリ・設定・信頼・ヘルプのコマンド
 
 コマンドの前、またはオプションの間に `-R/--repo REF` を指定すると、対象のリポジトリを選べます。旧インターフェースの `-p/--project`、`project`、`preferences`、`untrust`、`version`、`trust --yes/--list` は、移行先のヒントを出して終了コード 2 を返します。
 
@@ -108,6 +108,6 @@ mabo --version --json
 
 ユーザー設定のキーは `workspace-root`（絶対パス、`~/`、またはリポジトリルートからの相対パス）、`clone-root`、`discover-ghq`、`keep-branch` です。旧キーの `worktrees-directory`、`root`、`ghq-discovery` は `config_key_renamed` の警告を出して読み込みます。新しい名前の値が優先され、次に設定の書き込みが成功した際に旧キーを新しい名前へ書き換えます。`directory-name-separator` は `config_key_removed` の警告を出して無視し、書き込み時に削除します。`--sources` は各設定の有効な値、取得元、詳細を含みます。`clone-root` の既定値は従来どおり ghq.root → GHQ_ROOT → ~/ghq の順で決まります。
 
-JSON は schema 2 の envelope を使います。リポジトリの結果キーは `repo` / `repos` で、clone は `data: {repo: {root, name, remoteUrl}, cloned, updated}` を返します。`help --json` は help-data.json の仕様全体を含み、すべてのコマンドとフラグ、終了コードとエラーコード、`schemaVersion: 2` を返します。`--version --json` はアプリケーションのバージョンを `data.version` に入れます。詳しい例は英語の README を参照してください。状態の保存先、旧レコードの取り込み、アトミックな書き込み、環境変数、ワークスペースのコマンドは P2b では変わりません。
+JSON は schema 2 の envelope を使います。リポジトリの結果キーは `repo` / `repos` で、clone は `data: {repo: {root, name, remoteUrl}, cloned, updated}` を返します。`help --json` は help-data.json の仕様全体を含み、すべてのコマンドとフラグ、終了コードとエラーコード、`schemaVersion: 2` を返します。`--version --json` はアプリケーションのバージョンを `data.version` に入れます。詳しい例は英語の README を参照してください。
 
-Workspace ownership and `lastUsedAt` have been removed. `--owner` exits 2 with guidance to use `--purpose`, PR links, and workspace names. `sync --mine` exits 2 with guidance to use explicit names or `--all`. `MABO_AGENT_ID` is ignored. Old records remain readable and lose these fields on the next metadata write. `where` and `exec` leave records unchanged; `gc --older-than` uses `createdAt`.
+ワークスペースの所有者（owner）と `lastUsedAt` は廃止しました。`--owner` は終了コード 2 で、`--purpose`・PR リンク・ワークスペース名を使うよう案内します。`sync --mine` は終了コード 2 で、名前の明示か `--all` を案内します。`MABO_AGENT_ID` は使われなくなりました。古いレコードはそのまま読め、次にメタデータを書き込むときにこれらのフィールドは削除されます。`where` と `exec` はレコードを変更しません。`gc --older-than` は `createdAt` を使います。

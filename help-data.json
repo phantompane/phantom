@@ -1088,14 +1088,14 @@
         "owner/repo uses github.com. host/owner/repo uses that host.",
         "https URLs, http URLs, ssh:// URLs, and scp-style git@host:owner/repo paths are accepted. A trailing .git suffix is optional.",
         "The repository is placed at <root>/<host>/<owner>/<repo>. The host is lowercased, and a URL port is part of that directory (example.net:9443).",
-        "The root is the root key in $XDG_CONFIG_HOME/maboroshi/config.toml, otherwise the first git config ghq.root value, otherwise $GHQ_ROOT, otherwise ~/ghq. A configured root is used without reading git config. A git config read failure warns and falls through to $GHQ_ROOT or ~/ghq.",
+        "The root is the clone-root key in $XDG_CONFIG_HOME/maboroshi/config.toml, otherwise the first git config ghq.root value, otherwise $GHQ_ROOT, otherwise ~/ghq. A configured root is used without reading git config. A git config read failure warns and falls through to $GHQ_ROOT or ~/ghq.",
         "When that path is already the same repository root, mabo registers it and prints the path instead of cloning again. --update fetches origin in that case.",
         "remoteUrl omits http and https userinfo, including a token used as the username. ssh and scp-style URLs keep the login name. file:// URLs and absolute scp-style paths are rejected.",
         "--branch and --depth apply only when cloning. updated is true only when an existing repository was fetched.",
         "If the path exists but is not that repository, the command exits 2 with a usage error.",
         "After clone or fetch, mabo registers the repository. Registration failure exits 6 (partial) if a checkout was created or fetched, retaining repo.root, cloned, and updated in data; otherwise it exits 1. Retrying can register the existing checkout. New workspaces for that repository are created under $XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash> unless workspace-root is set.",
         "Authentication is left to Git. mabo does not call gh.",
-        "Git progress is written to stderr. With --json, stdout is the schema 2 envelope; data contains: path, host, owner, repo, remoteUrl, cloned, and updated.",
+        "Git progress is written to stderr. With --json, stdout is the schema 2 envelope; data contains: repo {root, name, remoteUrl}, cloned, and updated.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
