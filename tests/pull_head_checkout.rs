@@ -419,42 +419,126 @@ fn failed_worktree_attachment_only_removes_a_new_branch() {
         let tree = TempTree::new();
         let (clone, commit) = live_branch(&tree.path, "live-feature");
         if preexisting {
-            git(&clone, &["branch", "live-feature", &commit]);
+            git(
+                &clone,
+                &["branch", "--track", "live-feature", "origin/live-feature"],
+            );
         }
+        let main = git_text(&clone, &["rev-parse", "refs/heads/main"]);
+        let main_config = git_text(&clone, &["config", "--get-regexp", "^branch\\.main\\."]);
+        // Require the PR fetch to restore the remote ref before attachment fails.
+        git(
+            &clone,
+            &["update-ref", "-d", "refs/remotes/origin/live-feature"],
+        );
         let bin = tree.path.join("bin");
         install_gh(&bin, &same_repo_pull("754", "live-feature"));
         let preference = mabo(
             &clone,
             &bin,
-            &["config", "set", "workspace-root", "../blocked"],
+            &["config", "set", "workspace-root", "../spaces"],
         );
         assert!(
             preference.status.success(),
             "{}",
             String::from_utf8_lossy(&preference.stderr)
         );
-        let blocked = tree.path.join("blocked/live-feature");
-        fs::create_dir_all(&blocked).expect("block workspace path");
-        let output = mabo(&clone, &bin, &["create", "--pr", "754", "--no-hooks"]);
-        assert!(!output.status.success());
+        let real_git = std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
+            .map(|directory| directory.join("git"))
+            .find(|path| path.is_file())
+            .expect("real git");
+        let shim = bin.join("git");
+        fs::write(
+            &shim,
+            r#"#!/bin/sh
+set -eu
+if [ "$1" = "fetch" ]; then
+  "$REAL_GIT" "$@"
+  printf '%s\n' 'fetch succeeded' >> "$CHECKOUT_STATE"
+  exit 0
+fi
+if [ "$1" = "worktree" ] && [ "${2-}" = "add" ]; then
+  "$REAL_GIT" rev-parse --verify refs/heads/live-feature >> "$CHECKOUT_STATE"
+  "$REAL_GIT" config --get branch.live-feature.remote >> "$CHECKOUT_STATE"
+  "$REAL_GIT" config --get branch.live-feature.merge >> "$CHECKOUT_STATE"
+  echo 'injected worktree add failure after fetch' >&2
+  exit 1
+fi
+exec "$REAL_GIT" "$@"
+"#,
+        )
+        .expect("git shim");
+        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).expect("chmod");
+        let state = tree.path.join("checkout-state");
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
+        let output = Command::new(env!("CARGO_BIN_EXE_mabo"))
+            .args(["create", "--pr", "754", "--no-hooks"])
+            .current_dir(&clone)
+            .env("PATH", path)
+            .env("HOME", tree.path.join("home"))
+            .env("XDG_DATA_HOME", tree.path.join("data"))
+            .env("XDG_CONFIG_HOME", tree.path.join("config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("REAL_GIT", real_git)
+            .env("CHECKOUT_STATE", &state)
+            .output()
+            .expect("mabo");
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("injected worktree add failure after fetch"),
+            "{stderr}"
+        );
+        assert_eq!(
+            fs::read_to_string(&state).expect("state before failure"),
+            format!("fetch succeeded\n{commit}\norigin\nrefs/heads/live-feature\n")
+        );
         assert_eq!(
             git_output(&clone, &["show-ref", "--verify", "refs/heads/live-feature"])
                 .status
                 .success(),
             preexisting
         );
-        if !preexisting {
-            assert!(branch_config(&clone, "live-feature", "remote").is_none());
-            assert!(branch_config(&clone, "live-feature", "merge").is_none());
+        if preexisting {
+            assert_eq!(
+                git_text(&clone, &["rev-parse", "refs/heads/live-feature"]),
+                commit
+            );
+            assert_eq!(
+                branch_config(&clone, "live-feature", "remote").as_deref(),
+                Some("origin")
+            );
+            assert_eq!(
+                branch_config(&clone, "live-feature", "merge").as_deref(),
+                Some("refs/heads/live-feature")
+            );
+        } else {
+            let config = git_output(
+                &clone,
+                &["config", "--get-regexp", "^branch\\.live-feature\\."],
+            );
+            assert_eq!(config.status.code(), Some(1));
+            assert!(config.stdout.is_empty());
         }
-        fs::remove_dir(&blocked).expect("unblock workspace path");
+        assert_eq!(git_text(&clone, &["rev-parse", "refs/heads/main"]), main);
+        assert_eq!(
+            git_text(&clone, &["config", "--get-regexp", "^branch\\.main\\."]),
+            main_config
+        );
+        assert_eq!(
+            git_text(&clone, &["rev-parse", "refs/remotes/origin/live-feature"]),
+            commit
+        );
+        let destination = tree.path.join("spaces/live-feature");
+        assert!(!destination.exists());
+        fs::remove_file(&shim).expect("remove failing shim");
         let retry = mabo(&clone, &bin, &["create", "--pr", "754", "--no-hooks"]);
         assert!(
             retry.status.success(),
             "{}",
             String::from_utf8_lossy(&retry.stderr)
         );
-        assert!(blocked.is_dir());
+        assert!(destination.is_dir());
     }
 }
 

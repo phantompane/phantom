@@ -2591,6 +2591,76 @@ fn detached_exec_resolves_the_created_path_with_a_configured_root() {
 }
 
 #[test]
+fn create_issue_refreshes_the_workspace_after_a_hook_detaches_head() {
+    let repo = Repo::new();
+    let set = repo.mabo(&["config", "set", "workspace-root", "../spaces"]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        "[hooks]\npost-create = [\"test \\\"$(git branch --show-current)\\\" = issues/7 && git checkout -q --detach\"]\n",
+    )
+    .expect("detach hook");
+    let bin = repo.root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let gh = bin.join("gh");
+    fs::write(
+        &gh,
+        r#"#!/bin/sh
+set -eu
+if [ "$1" = "repo" ]; then
+  printf '%s\n' '{"url":"https://github.com/acme/demo","owner":{"login":"acme"},"name":"demo"}'
+elif [ "$1" = "api" ] && [ "$2" = "repos/acme/demo/issues/7" ]; then
+  printf '%s\n' '{"number":7,"title":"Issue with a detached checkout"}'
+else
+  echo "unexpected gh invocation: $*" >&2
+  exit 1
+fi
+"#,
+    )
+    .expect("gh");
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
+    let checkout = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["create", "--issue", "7", "--json"],
+        )
+        .env("PATH", path)
+        .output()
+        .expect("create issue");
+    assert!(
+        checkout.status.success(),
+        "{}\n{}",
+        text(&checkout.stdout),
+        text(&checkout.stderr)
+    );
+    let document = json_value(&checkout);
+    assert!(document["error"].is_null(), "{document}");
+    assert_eq!(document["data"]["source"]["kind"], "issue");
+    assert_eq!(document["data"]["source"]["number"], 7);
+    assert_eq!(document["data"]["setup"]["ran"], true);
+    assert_eq!(document["data"]["setup"]["ok"], true);
+    let directory = repo.root.join("spaces/issues/7");
+    let workspace = &document["data"]["workspace"];
+    assert_worktree_object(workspace, "issues/7", &directory);
+    assert_eq!(workspace["detached"], true);
+    assert!(workspace["branch"].is_null());
+    assert_eq!(workspace["links"]["issue"]["number"], 7);
+    assert!(directory.join("README.md").is_file());
+    let head = repo
+        .command("git", &["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&directory)
+        .output()
+        .expect("detached HEAD");
+    assert!(head.status.success(), "{}", text(&head.stderr));
+    assert_eq!(text(&head.stdout), "HEAD");
+    let ran = repo.mabo(&["exec", "issues/7", "--", "pwd"]);
+    assert!(ran.status.success(), "{}", text(&ran.stderr));
+    assert!(paths_match(&text(&ran.stdout), &directory));
+}
+
+#[test]
 fn github_checkout_json_reports_issue_and_existing_pull_request() {
     let repo = Repo::new();
     let bin = repo.root.join("bin");
