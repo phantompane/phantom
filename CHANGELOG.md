@@ -1,0 +1,116 @@
+# Changelog
+
+## Unreleased
+
+### Breaking changes
+
+This release redesigns the Rust `mabo` CLI around workspaces. Update scripts written for alpha.6 before upgrading. The installed binary remains `mabo`.
+
+- Creation is unified under `create --branch`, `--pr`, `--issue`, and `--detach`. The old `attach`, `github`/`gh`, and create-time `--exec` interfaces are removed. `create --pr` and `--issue` now resolve GitHub sources using authenticated `gh`.
+- Use `show`, `path`, and `set` for inspection and intent; use `repo`, `config`, and `trust add|remove|list` for the outer commands. `-R/--repo` replaces `-p/--project`. Removed commands and flags exit 2 with migration hints rather than acting as aliases.
+- `remove` replaces `delete`. Working-file loss (`--discard-changes`) and deleting unpreserved history (`--delete-unpreserved-branch`) are separate permissions. Branches are deleted only when preservation is proven; otherwise they stay with a warning. Ignored files are clean and are deleted with the checkout, including nested Git repositories inside ignored directories. Populated submodules or retained submodule data still require `--discard-changes`.
+- `sync` selects the current workspace by default. Advancing primary is explicit with `--main`; `--all` selects every workspace. Auto rebases unpublished work and merges published work; `--rewrite-published` permits a published rebase without selecting that strategy. Sync checks fetch destinations before any fetch or integration, including in dry runs.
+- Machine output uses the schema 2 envelope and the shared exit table below. Workspace keys and exported environment variables use workspace vocabulary. Ownership, `lastUsedAt`, internal locks, and `MABO_OPERATION_LOCK` are removed.
+- Hooks are `[hooks] setup` and `pre-remove`. Copy sources are always the primary checkout. `create --no-setup` skips copying and hooks; rerun preparation with `setup`. State is imported on the first write, and new workspace directories use `workspaces/`; existing directories stay in place.
+
+### Migration from alpha.6
+
+`B` marks an incompatible change. “Migrated” describes automatic state/config migration; “new” is additive. Unchanged flags listed under a renamed command still require changing the command name. See [README.md](README.md) for current examples and the full JSON contract.
+
+| Old (alpha.6) | New | Breaking |
+|---|---|---|
+| `create [name]` | `create [NAME]` | B: flags change |
+| `create --base REF` | `create --base REF` | — |
+| `create --owner X` / `attach --owner` / `gh checkout --owner` | Removed (record intent with `--purpose`) | B |
+| `create --purpose/--pr/--issue` | `--purpose` still records intent; `--pr` selects the PR head; `--issue` looks up the issue, deriving `issues/N` and its title when used alone | B: PR/issue flags now resolve GitHub sources through `gh` |
+| `create --copy-file P` | `create --copy-file P` (passed through to setup) | — |
+| `create --no-hooks` | `create --no-setup` | B |
+| `create -x/--exec CMD` | `create …` then `exec -- CMD` | B (removed) |
+| `create --json` | `--json` (envelope schema 2) | B |
+| `attach B` / `attach remote/B` | `create --branch B` / `create --branch remote/B` | B |
+| `github checkout N` (PR) / `gh checkout N` | `create --pr N` | B |
+| `github checkout N` (issue) | `create --issue N` | B |
+| `github checkout N --base X` | `create --issue N --base X` | B |
+| `list` | `list` (primary checkout included, `kind`) | B (output) |
+| `list --no-default` | `list --kind workspace` | B |
+| `list --names` | `list --names` | — |
+| `list --owner X` | Removed | B |
+| (none) | `list --all-repos`, `list --paths`, `list --kind` | new |
+| `where NAME` | `path NAME` | B |
+| `where NAME --json` | `show NAME --json` | B |
+| `delete N…` | `remove N…` | B |
+| `delete -f` | `remove --discard-changes` and/or `--delete-unpreserved-branch` | B |
+| `delete --current` | `remove .` | B |
+| `delete --keep-branch` | `remove --keep-branch` | B: command renamed; flag retained |
+| `delete --no-hooks` | `remove --no-hooks` | B: command renamed; flag retained |
+| `sync` (in the main checkout) | `sync` (same as `--main`) | — |
+| `sync` (in a workspace: also ff'd the default branch) | `sync` (that workspace only); `sync . --main` advances the primary too | B |
+| `sync N…` | Same | — |
+| `sync --mine` | Removed (`sync` in the workspace, or name it) | B |
+| `sync --all` (ownership-based scope) | `sync --all` (every workspace) | B |
+| `sync --no-default` | (default) | B |
+| `sync --rebase / --merge` | Same (+ `--auto`) | — |
+| `sync --rebase --force` | `sync --rebase --rewrite-published` | B |
+| `sync --keep-conflicts` | Same | — |
+| `sync --json` (`schema:1`) | Envelope schema 2 | B |
+| `gc` | `gc` (plan) | — |
+| `gc --apply` | `gc --apply` | — |
+| `gc -f/--force` | `remove … --discard-changes` per target | B (removed) |
+| `gc --merged / --orphaned` | Same | — |
+| `gc --pr` | `gc --closed-pr` | B |
+| `gc --older-than D` (lastUsedAt, a criterion) | `gc --older-than D` (createdAt, a narrowing filter) | B (meaning) |
+| `gc --owner X` | Removed | B |
+| `gc --keep-branch` / `gc --no-hooks` | Same | — |
+| `trust [path]` / `trust --yes` | `trust add [REPO]` | B |
+| `trust --list` | `trust list` | B |
+| `untrust [path]` | `trust remove [REPO]` | B |
+| `exec NAME CMD…` | `exec NAME -- CMD…` (`--` required, NAME optional) | B |
+| `meta set N --owner X` | Removed | B |
+| `meta set N --purpose/--pr/--issue/--base` | `set N …` | B |
+| `preferences get/set/remove K` | `config get/set/unset K` | B |
+| config keys `worktrees-directory` / `root` / `ghq-discovery` | `workspace-root` / `clone-root` / `discover-ghq` | Migrated: old file keys warn and still work; rewritten on the next config write; new names win |
+| config keys `keep-branch` / `directory-name-separator` | Ignored with warnings and removed on the next config write; use the `--keep-branch` flag for retirement | B |
+| `version` command / `-v` | `--version` / `-v` (only the command is dropped) | B |
+| `clone …` | Same | output only |
+| `project add/list/remove` | `repo add/list/forget` (+ `repo show`) | B |
+| `project list --json` (v2) | `repo list --json` (envelope) | B |
+| `-p/--project` | `-R/--repo` | B |
+| env `MABO_NAME` / `MABO_PATH` / `MABO_ROOT_PATH` | `MABO_WORKSPACE` / `MABO_WORKSPACE_PATH` / `MABO_REPO_PATH` | B |
+| env `MABO_AGENT_ID` | Removed (no longer sets an owner or non-interactive mode; agents use `--no-input` / `MABO_NO_INPUT=1`, or run without a stdin/stderr TTY) | B |
+| env `MABO_TRUST_ALL` / `CI` | Same | — |
+| (none) | `MABO_OUTPUT`, `MABO_NO_INPUT`, `MABO_WORKSPACE_ID` | new |
+| `.mabo.toml [hooks] post-create` / `pre-delete` | `[hooks] setup` / `pre-remove` (the old keys give an error with a rename hint) | B |
+| `.worktreeinclude` (copied from where the command runs) | Same file (copied from the primary checkout) | B (source) |
+| `worktrees.json` v1 | `workspaces/<id>.json` schema 2 (imported automatically) | Migrated |
+| `$XDG_DATA_HOME/maboroshi/worktrees/` | `…/workspaces/` for new workspaces only | — |
+| Exit codes 2 = not found, 3 = validation/unpushed, 4 = not a repo | 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not a repo, 4 safety refusal, 5 conflict, 6 partial | B |
+| Repo operation lock (infinite wait), metadata lock, registry lock, `MABO_OPERATION_LOCK` | Removed; atomic per-record writes (same-record concurrent updates use the last write) | B (behavior) |
+
+### Additional behavior and commands
+
+- `show [SEL]`, `path [SEL]`, `set [SEL]`, `setup [SEL]`, and `exec [SEL] -- COMMAND` default to `.`. Selectors also accept absolute paths or paths starting with `./` or `../`, plus recorded `pr:N`, `issue:N`, and PR/issue URLs. Ambiguous selectors exit 2; missing selectors exit 3. Inspection and exec do not rewrite or import records.
+- `setup` copies ignored matches without overwriting target files, then runs trusted setup hooks. Setup state is shared across workspace results: pending, running, ok, failed, skipped, unknown, or observed interrupted. Failed create preparation leaves the checkout and exits 6 with a retry hint preserving the source checkout and copy patterns. `--reuse` never retries setup. `setup/remove --source-checkout PATH` preserves hook configuration when retrying from another checkout of the same repository.
+- `adopt PATH` records an existing linked checkout without copying or hooks, with unknown creation details. `forget SEL...` drops only records and preserves checkout files, branches, and Git registrations.
+- `remove --dry-run` is read-only and runs no hooks. All selectors are preflighted: one unknown selector aborts the entire removal with exit 3 `not_found`, including dry runs. A completed removal drops its record, so repeating the original command can exit 3. `alreadyGone:true` requires a record and/or an eligible Git registration; a branch alone is insufficient.
+- A partial removal exits 6 and returns one exact `error.details.retryCommand` (also printed as “Retry with”). Fix the cause and run that command in bash or zsh: it selects only unfinished paths and preserves permission flags, output mode, and hook source. A branch deletion failure after checkout removal keeps the branch with `branchKeptReason:"delete_failed"`, a warning, and Git's error in `detail`; this alone exits 0 and is not retried.
+- Branch preservation requires an independent common-directory ref. Squash/rebase checks compare complete tree-entry transitions (paths, modes, full before/after object IDs) against non-merge commits on the base first-parent history, with distinct evidence in order for rebased commits. Textual patch IDs, a retiring branch's own ref, detached HEAD, and bare commit IDs are insufficient. Uncertain history stays.
+- `gc` plans by default and requires `--apply` to mutate. With no criteria, it enables merged, closed-PR, and orphaned checks; age only narrows by `createdAt` and excludes unknown creation times. Dirty/unpreserved candidates are skipped with targeted remove hints. Ignored files follow the same clean rule as remove/list/show. Repeating `gc --apply` is safe.
+- `sync --dry-run` fetches involved remotes, but changes no checkout, index, local branch, or workspace record. Unknown future commit IDs are null. Combined plans use the tips planned for primary and earlier workspaces; unknown planned bases propagate a dependency explanation. JSON is `{plan,items,main}`; `integrated` replaces `merged`, and items expose strategy and rewrite permission sources separately.
+- Before fetching, sync refuses positive fetch refspecs writing outside `refs/remotes/`, including explicit tag destinations and mirrors (exit 4 `refused`). Missing/empty destinations are allowed; negative exclusions do not override the refusal. Visible symbolic refs under `refs/remotes/` or `refs/tags/` pointing outside `refs/remotes/` are also refused. Dangling symbolic refs omitted by Git enumeration are a known detection limit. Normal Git pruning, automatic tag following, and configured remote HEAD behavior remain in effect.
+- Publication checks include observed remote-tracking refs, configured fetch destinations, and upstreams, including independent local refs and destinations of remotes not fetched by this sync. Personal `sync.strategy` and `sync.rewrite-published` belong in user config, never `.mabo.toml`.
+- `completions bash|zsh|fish` generates commands and flags from `help-data.json`, querying `command mabo list --names` for workspace selectors. `shell-init bash|zsh|fish` defines only the `mabo cd [SEL] [-R REF]` helper. Load completions separately; zsh requires `compinit`. Both commands emit raw scripts, ignore `MABO_OUTPUT`, and reject explicit JSON or missing/unknown shells with exit 2.
+- `help --json` exposes the complete help contract under `data`, including `schemaVersion:2`, exit codes and error codes. `--version --json` keeps the application version in `data.version`. `exec` keeps the child's output, stdin and exit status; script-producing commands and exec ignore `MABO_OUTPUT` and reject explicit JSON.
+
+### Exit codes
+
+| Exit | Meaning |
+|---|---|
+| 0 | Success (including gc plans with protected candidates) |
+| 1 | Operational failure |
+| 2 | Usage error or ambiguous selector |
+| 3 | Target or repository context not found |
+| 4 | Safety refusal |
+| 5 | Sync conflict (restored by default; retained with `--keep-conflicts`) |
+| 6 | Partial completion after persistent changes |
+
+The JSON envelope remains `{schema:2,command,ok,data,warnings,error}`. Failures retain partial data; `error` has `code`, `message`, and optional `details`. Standalone exec preserves child statuses.
