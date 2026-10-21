@@ -161,6 +161,24 @@ jobs:
           sha256sum "${files[@]}" > SHA256SUMS
           sha256sum -c SHA256SUMS
 
+      # Install from the assembled assets exactly as users will, through a
+      # local file:// mirror: checksum verification, extraction, the version
+      # check and the atomic install must all pass before anything is published.
+      - name: Install with install.sh from the assembled assets
+        shell: bash
+        run: |
+          version=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
+          if [[ ! -f release-assets/install.sh ]]; then
+            echo "::notice::install.sh is absent; skipping the installer check for this PR dry run only"
+            exit 0
+          fi
+          mirror="$RUNNER_TEMP/mirror/v${version}"
+          mkdir -p "$mirror"
+          cp release-assets/* "$mirror/"
+          MABO_RELEASE_BASE_URL="file://$RUNNER_TEMP/mirror" MABO_INSTALL_DIR="$RUNNER_TEMP/bin" \
+            sh release-assets/install.sh --version "v${version}" </dev/null
+          "$RUNNER_TEMP/bin/mabo" --version
+
       - name: Attest release assets
         if: github.event_name == 'release'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
