@@ -40,7 +40,12 @@ pub struct CloneRequest<'a> {
     pub update: bool,
 }
 
-pub fn clone_repository(request: &CloneRequest<'_>) -> Result<CloneResult> {
+pub struct CloneOutcome {
+    pub result: CloneResult,
+    pub registration_error: Option<Error>,
+}
+
+pub fn clone_repository(request: &CloneRequest<'_>) -> Result<CloneOutcome> {
     let spec = parse_clone_source(request.source)?;
     let branch = normalize_branch(request.branch)?;
     let depth = parse_depth(request.depth)?;
@@ -48,16 +53,31 @@ pub fn clone_repository(request: &CloneRequest<'_>) -> Result<CloneResult> {
     let destination = root.join(&spec.host).join(&spec.owner).join(&spec.repo);
     let (cloned, updated) = place_clone(&destination, &spec, branch, depth, request.update)?;
 
-    let registered = register_repository(&destination)?;
-    Ok(CloneResult {
+    // Preserve the completed checkout/fetch even if registry access fails.
+    let path = fs::canonicalize(&destination).unwrap_or(destination);
+    let mut result = CloneResult {
         version: JSON_VERSION,
-        path: registered,
+        path: path.to_string_lossy().into_owned(),
         host: spec.host,
         owner: spec.owner,
         repo: spec.repo,
         remote_url: spec.remote_url,
         cloned,
         updated,
+    };
+    let registration_error = match register_repository(&path) {
+        Ok(registered) => {
+            result.path = registered;
+            None
+        }
+        Err(error) => Some(Error::msg(format!(
+            "Failed to register repository at {}: {error}",
+            result.path
+        ))),
+    };
+    Ok(CloneOutcome {
+        result,
+        registration_error,
     })
 }
 
@@ -78,7 +98,7 @@ pub fn human_clone_message(result: &CloneResult) -> String {
 pub fn resolve_repository_root() -> Result<PathBuf> {
     let (root, warnings) = resolve_repository_root_quiet()?;
     for warning in warnings {
-        eprintln!("Warning: {warning}");
+        crate::output::warning("project_discovery", format!("Warning: {warning}"));
     }
     Ok(root)
 }
@@ -1723,7 +1743,7 @@ mod tests {
             .join("widget");
         let error = create_missing_parents(&destination).expect_err("mkdir");
         assert!(matches!(error, Error::Validation(_)), "{error}");
-        assert_eq!(error.exit_code(), 3, "{error}");
+        assert_eq!(error.exit_code(), crate::error::VALIDATION, "{error}");
         assert!(error.to_string().contains("example.com"), "{error}");
         assert!(
             !root.join("example.com").exists(),
@@ -1812,7 +1832,7 @@ mod tests {
         let reserved = format!("example.com/acme/.maboroshi-clone-9-{}", uuid::Uuid::nil());
         let error = parse_clone_source(&reserved).expect_err("reserved");
         assert!(matches!(error, Error::Validation(_)), "{error}");
-        assert_eq!(error.exit_code(), 3, "{error}");
+        assert_eq!(error.exit_code(), crate::error::VALIDATION, "{error}");
         assert!(error.to_string().contains("reserved"), "{error}");
         let kept = spec("example.com/acme/.maboroshi-clone-notes");
         assert_eq!(kept.repo, ".maboroshi-clone-notes");

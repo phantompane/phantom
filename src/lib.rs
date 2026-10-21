@@ -11,6 +11,7 @@
 )]
 
 pub mod args;
+pub(crate) mod atomic;
 pub mod cli;
 pub mod config;
 pub mod context;
@@ -21,12 +22,13 @@ pub mod github;
 pub mod help;
 pub mod metadata;
 pub mod names;
-pub mod operation;
+mod output;
 pub mod paths;
 pub mod preferences;
 pub mod process;
 pub mod projects;
 pub mod repository;
+mod runtime;
 pub mod sync;
 mod tracking;
 pub mod trust;

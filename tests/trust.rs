@@ -56,6 +56,8 @@ impl Repo {
             .env_remove("MABO_TRUST_ALL")
             .env_remove("CI")
             .env_remove("GHQ_ROOT")
+            .env_remove("MABO_OUTPUT")
+            .env_remove("MABO_NO_INPUT")
             .env_remove("MABO_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM");
@@ -152,7 +154,7 @@ fn non_tty_refusal_creates_nothing() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"touch pre-delete.txt\"");
     let created = repo.mabo(&["create", "topic"]);
-    assert_eq!(created.status.code(), Some(1));
+    assert_eq!(created.status.code(), Some(4));
     let stderr = text(&created.stderr);
     assert!(stderr.contains("mabo trust"), "{stderr}");
     assert!(stderr.contains("--no-hooks"), "{stderr}");
@@ -184,16 +186,16 @@ fn json_refusal_keeps_stdout_to_one_document() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
     let created = repo.mabo(&["create", "topic", "--json"]);
-    assert_eq!(created.status.code(), Some(1));
+    assert_eq!(created.status.code(), Some(4));
     assert!(
         text(&created.stderr).is_empty(),
         "{}",
         text(&created.stderr)
     );
     let document: serde_json::Value = serde_json::from_slice(&created.stdout).expect("json");
-    assert_eq!(document["version"], 1);
+    assert_eq!(document["schema"], 2);
     assert_eq!(document["error"]["code"], "untrusted");
-    assert_eq!(document["error"]["exitCode"], 1);
+    assert!(document["error"].get("exitCode").is_none());
     let message = document["error"]["message"].as_str().expect("message");
     assert!(message.contains("mabo trust"), "{message}");
     assert!(message.contains("--no-hooks"), "{message}");
@@ -216,7 +218,7 @@ fn trust_untrust_and_list_round_trip() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
     let refused = repo.mabo(&["trust"]);
-    assert_eq!(refused.status.code(), Some(1), "{}", text(&refused.stderr));
+    assert_eq!(refused.status.code(), Some(4), "{}", text(&refused.stderr));
     assert!(!trust_file(&repo).exists());
 
     let trusted = repo.mabo(&["trust", "--yes"]);
@@ -242,7 +244,7 @@ fn trust_untrust_and_list_round_trip() {
     let json = repo.mabo(&["trust", "--list", "--json"]);
     assert!(json.status.success(), "{}", text(&json.stderr));
     let document: serde_json::Value = serde_json::from_slice(&json.stdout).expect("json");
-    assert_eq!(document["projects"][0]["path"], key);
+    assert_eq!(document["data"]["projects"][0]["path"], key);
 
     let created = repo.mabo(&["create", "topic"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
@@ -276,7 +278,7 @@ fn trust_untrust_and_list_round_trip() {
     );
 
     let blocked = repo.mabo(&["create", "third"]);
-    assert_eq!(blocked.status.code(), Some(1));
+    assert_eq!(blocked.status.code(), Some(4));
     assert!(!worktree(&repo, "third").exists());
 }
 
@@ -300,7 +302,7 @@ fn delete_without_a_terminal_keeps_the_worktree() {
     assert!(repo.mabo(&["create", "topic"]).status.success());
     hooks(&repo, "\"true\"", "\"touch pre-delete.txt\"");
     let deleted = repo.mabo(&["delete", "topic"]);
-    assert_eq!(deleted.status.code(), Some(1));
+    assert_eq!(deleted.status.code(), Some(4));
     assert!(
         text(&deleted.stderr).contains("--no-hooks"),
         "{}",
@@ -334,8 +336,11 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
     let plan = repo.mabo(&["gc", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let document: serde_json::Value = serde_json::from_slice(&plan.stdout).expect("json");
-    assert_eq!(document["candidates"][0]["action"], "skipped");
-    assert_eq!(document["candidates"][0]["detail"], "untrusted hooks");
+    assert_eq!(document["data"]["candidates"][0]["action"], "skipped");
+    assert_eq!(
+        document["data"]["candidates"][0]["detail"],
+        "untrusted hooks"
+    );
     assert!(
         !text(&plan.stdout).contains("Trust this project and run its hooks?"),
         "{}",
@@ -350,8 +355,11 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
     let applied = repo.mabo(&["gc", "--apply", "--json"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let applied_doc: serde_json::Value = serde_json::from_slice(&applied.stdout).expect("json");
-    assert_eq!(applied_doc["candidates"][0]["action"], "skipped");
-    assert_eq!(applied_doc["candidates"][0]["detail"], "untrusted hooks");
+    assert_eq!(applied_doc["data"]["candidates"][0]["action"], "skipped");
+    assert_eq!(
+        applied_doc["data"]["candidates"][0]["detail"],
+        "untrusted hooks"
+    );
     assert!(dir.is_dir());
     assert!(!repo.repo.join("pre-delete.txt").exists());
     assert!(!dir.join("pre-delete.txt").exists());
@@ -378,7 +386,7 @@ fn an_agent_environment_does_not_prompt_on_a_terminal(name: &str, value: &str, j
     let output = pty_env(&repo, args, Some("y\n"), &[(name, value)]);
     assert_eq!(
         output.status.code(),
-        Some(1),
+        Some(4),
         "stdout {}\nstderr {}",
         text(&output.stdout),
         text(&output.stderr)
@@ -391,7 +399,7 @@ fn an_agent_environment_does_not_prompt_on_a_terminal(name: &str, value: &str, j
     if json {
         let document: serde_json::Value = serde_json::from_str(&shown).expect(&shown);
         assert_eq!(document["error"]["code"], "untrusted");
-        assert_eq!(document["error"]["exitCode"], 1);
+        assert!(document["error"].get("exitCode").is_none());
     } else {
         assert!(shown.contains("Untrusted project"), "{shown}");
         assert!(shown.contains("--no-hooks"), "{shown}");
@@ -402,7 +410,7 @@ fn an_agent_environment_does_not_prompt_on_a_terminal(name: &str, value: &str, j
 
 #[test]
 fn ci_on_a_terminal_does_not_prompt_or_create() {
-    an_agent_environment_does_not_prompt_on_a_terminal("CI", "true", true);
+    an_agent_environment_does_not_prompt_on_a_terminal("CI", "true", false);
 }
 
 #[test]
@@ -436,7 +444,7 @@ fn ci_still_honors_no_hooks_and_trust_all() {
 fn ci_does_not_prompt_for_mabo_trust() {
     let repo = Repo::new();
     let output = pty_env(&repo, &["trust"], Some("y\n"), &[("CI", "1")]);
-    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    assert_eq!(output.status.code(), Some(4), "{}", text(&output.stdout));
     assert!(
         !text(&output.stdout).contains("Trust this project?"),
         "{}",
@@ -446,8 +454,18 @@ fn ci_does_not_prompt_for_mabo_trust() {
 }
 
 #[test]
-fn agent_id_on_a_terminal_does_not_prompt_or_create() {
-    an_agent_environment_does_not_prompt_on_a_terminal("MABO_AGENT_ID", "grok", false);
+fn agent_id_alone_on_a_terminal_still_prompts() {
+    let repo = Repo::new();
+    hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
+    let output = pty_env(
+        &repo,
+        &["create", "topic"],
+        Some("y\n"),
+        &[("MABO_AGENT_ID", "grok")],
+    );
+    assert!(output.status.success(), "{}", text(&output.stdout));
+    assert!(text(&output.stdout).contains("Trust this project and run its hooks?"));
+    assert!(worktree(&repo, "topic").join("hook-ran.txt").exists());
 }
 
 #[test]
@@ -478,7 +496,7 @@ fn a_terminal_no_creates_nothing() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
     let output = pty(&repo, &["create", "topic"], Some("n\n"));
-    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    assert_eq!(output.status.code(), Some(4), "{}", text(&output.stdout));
     assert!(
         text(&output.stdout).contains("Trust this project and run its hooks? [y/N]"),
         "{}",
@@ -610,4 +628,24 @@ raise SystemExit(code if code is not None else 1)
         command.env(key, value);
     }
     command.output().expect("python pty")
+}
+
+#[test]
+fn explicit_no_input_and_environment_no_input_refuse_at_a_tty() {
+    an_agent_environment_does_not_prompt_on_a_terminal("MABO_NO_INPUT", "1", false);
+    an_agent_environment_does_not_prompt_on_a_terminal("MABO_NO_INPUT", "yes", false);
+    let repo = Repo::new();
+    hooks(&repo, "\"true\"", "\"true\"");
+    let out = pty(&repo, &["create", "topic", "--no-input"], Some("y\n"));
+    assert_eq!(out.status.code(), Some(4));
+    assert!(!text(&out.stdout).contains("Trust this project and run its hooks?"));
+    assert!(!worktree(&repo, "topic").exists());
+    let out = pty_env(
+        &repo,
+        &["create", "topic"],
+        Some("y\n"),
+        &[("MABO_NO_INPUT", "0")],
+    );
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert!(text(&out.stdout).contains("Trust this project and run its hooks?"));
 }

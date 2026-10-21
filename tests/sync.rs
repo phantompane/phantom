@@ -1,3 +1,5 @@
+#[path = "common/records.rs"]
+mod records;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -68,6 +70,8 @@ impl Repo {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_TEMPLATE_DIR", self.root.join("template"))
+            .env_remove("MABO_OUTPUT")
+            .env_remove("MABO_NO_INPUT")
             .env_remove("MABO_AGENT_ID")
             .env_remove("GIT_CONFIG_COUNT")
             .env_remove("GIT_CONFIG_PARAMETERS");
@@ -110,8 +114,8 @@ impl Repo {
             String::from_utf8_lossy(&out.stderr)
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(doc["worktree"]["base"], "HEAD");
-        PathBuf::from(doc["worktree"]["path"].as_str().unwrap())
+        assert_eq!(doc["data"]["worktree"]["base"], "HEAD");
+        PathBuf::from(doc["data"]["worktree"]["path"].as_str().unwrap())
     }
     fn write_commit(&self, path: &Path, file: &str, text: &str) {
         fs::write(path.join(file), text).unwrap();
@@ -193,9 +197,9 @@ fn default_upstream_precedes_other_remote_heads_without_origin_head() {
         r.advance();
         let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
         let doc = r.sync(&r.main, &[], 0);
-        assert_eq!(doc["default"]["status"], "updated", "{doc}");
-        assert_eq!(doc["default"]["branch"], "refs/heads/main");
-        assert_eq!(doc["default"]["base"], "refs/remotes/origin/main");
+        assert_eq!(doc["data"]["default"]["status"], "updated", "{doc}");
+        assert_eq!(doc["data"]["default"]["branch"], "refs/heads/main");
+        assert_eq!(doc["data"]["default"]["base"], "refs/remotes/origin/main");
         assert_eq!(r.git(&r.main, &["rev-parse", "main"]), expected);
         assert_eq!(r.git(&r.main, &["rev-parse", "origin/main"]), expected);
         assert_eq!(
@@ -207,7 +211,10 @@ fn default_upstream_precedes_other_remote_heads_without_origin_head() {
             second_before
         );
         assert_eq!(r.git(&r.main, &["rev-parse", "main@{upstream}"]), expected);
-        assert_eq!(r.sync(&r.main, &[], 0)["default"]["status"], "up-to-date");
+        assert_eq!(
+            r.sync(&r.main, &[], 0)["data"]["default"]["status"],
+            "up-to-date"
+        );
     }
 }
 
@@ -237,8 +244,11 @@ fn other_remote_head_remains_a_fallback_for_unresolved_default_upstream() {
     r.git(&r.upstream, &["push", "origin", "main:trunk"]);
     let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
     let doc = r.sync(&r.main, &[], 0);
-    assert_eq!(doc["default"]["status"], "updated", "{doc}");
-    assert_eq!(doc["default"]["base"], "refs/remotes/upstream/trunk");
+    assert_eq!(doc["data"]["default"]["status"], "updated", "{doc}");
+    assert_eq!(
+        doc["data"]["default"]["base"],
+        "refs/remotes/upstream/trunk"
+    );
     assert_eq!(r.git(&r.main, &["rev-parse", "trunk"]), expected);
     assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
     assert_eq!(
@@ -301,9 +311,9 @@ fn default_upstream_ignores_child_branch_without_remote_head() {
             child_tip
         );
         let doc = r.sync(&r.main, &[], 0);
-        assert_eq!(doc["default"]["status"], "up-to-date");
+        assert_eq!(doc["data"]["default"]["status"], "up-to-date");
         assert_eq!(
-            doc["default"]["base"],
+            doc["data"]["default"]["base"],
             if has_upstream {
                 "refs/remotes/origin/trunk"
             } else {
@@ -346,7 +356,7 @@ fn default_without_remote_head_uses_differently_named_upstream() {
             // Neither a missing nor a stale origin/main may override the upstream.
             let tree = r.create("topic");
             let doc = r.sync(&tree, &["--no-default"], 0);
-            assert_eq!(doc["worktrees"][0]["base"], tracking);
+            assert_eq!(doc["data"]["worktrees"][0]["base"], tracking);
             if !checked_out {
                 r.git(&r.main, &["checkout", "-b", "other"]);
             }
@@ -355,13 +365,16 @@ fn default_without_remote_head_uses_differently_named_upstream() {
             let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
             assert_ne!(r.git(&r.main, &["rev-parse", tracking]), expected);
             let doc = r.sync(&r.main, &[], 0);
-            assert_eq!(doc["default"]["status"], "updated");
-            assert_eq!(doc["default"]["branch"], "refs/heads/main");
-            assert_eq!(doc["default"]["base"], tracking);
+            assert_eq!(doc["data"]["default"]["status"], "updated");
+            assert_eq!(doc["data"]["default"]["branch"], "refs/heads/main");
+            assert_eq!(doc["data"]["default"]["base"], tracking);
             assert_eq!(r.git(&r.main, &["rev-parse", "main"]), expected);
             assert_eq!(r.git(&r.main, &["rev-parse", tracking]), expected);
             assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads/trunk"]), "");
-            assert_eq!(r.sync(&r.main, &[], 0)["default"]["status"], "up-to-date");
+            assert_eq!(
+                r.sync(&r.main, &[], 0)["data"]["default"]["status"],
+                "up-to-date"
+            );
         }
     }
 }
@@ -374,19 +387,22 @@ fn default_only_and_linked_implicit_including_subdirectory_and_detached() {
     let before = r.git(&tree, &["rev-parse", "HEAD"]);
     r.advance();
     let doc = r.sync(&r.main, &[], 0);
-    assert_eq!(doc["default"]["status"], "updated");
-    assert_eq!(doc["worktrees"], json!([]));
+    assert_eq!(doc["data"]["default"]["status"], "updated");
+    assert_eq!(doc["data"]["worktrees"], json!([]));
     assert_eq!(r.git(&tree, &["rev-parse", "HEAD"]), before);
     fs::create_dir(tree.join("sub")).unwrap();
     let doc = r.sync(&tree.join("sub"), &[], 0);
-    assert_eq!(doc["worktrees"][0]["status"], "updated");
-    assert_eq!(doc["worktrees"][0]["strategy"], "rebase");
+    assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
+    assert_eq!(doc["data"]["worktrees"][0]["strategy"], "rebase");
     assert_eq!(
-        r.sync(&tree, &[], 0)["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
         "up-to-date"
     );
     r.git(&tree, &["checkout", "--detach"]);
-    assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "detached");
+    assert_eq!(
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        "detached"
+    );
 }
 
 #[test]
@@ -418,8 +434,8 @@ fn linked_default_is_only_integrated_fast_forward_once() {
         let other = r.git(&r.main, &["rev-parse", "HEAD"]);
         for args in [vec!["--no-default"], vec!["--no-default", "--all"]] {
             let doc = r.sync(&tree, &args, 0);
-            assert!(doc["default"].is_null());
-            assert_eq!(doc["worktrees"], json!([]));
+            assert!(doc["data"]["default"].is_null());
+            assert_eq!(doc["data"]["worktrees"], json!([]));
             assert_eq!(r.snapshot(&tree), before);
         }
         let mut cmd = r.command(
@@ -430,14 +446,14 @@ fn linked_default_is_only_integrated_fast_forward_once() {
         let out = cmd.env("MABO_AGENT_ID", "tester").output().unwrap();
         assert!(out.status.success());
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(doc["worktrees"], json!([]));
+        assert_eq!(doc["data"]["worktrees"], json!([]));
         assert_eq!(r.snapshot(&tree), before);
         let status = if diverged { "diverged" } else { "updated" };
         let doc = r.sync(&tree, &["main", "--no-default", "--rebase", "--force"], 0);
-        assert!(doc["default"].is_null());
-        assert_eq!(doc["worktrees"].as_array().unwrap().len(), 1);
-        assert_eq!(doc["worktrees"][0]["status"], status);
-        assert_eq!(doc["worktrees"][0]["strategy"], "ff-only");
+        assert!(doc["data"]["default"].is_null());
+        assert_eq!(doc["data"]["worktrees"].as_array().unwrap().len(), 1);
+        assert_eq!(doc["data"]["worktrees"][0]["status"], status);
+        assert_eq!(doc["data"]["worktrees"][0]["strategy"], "ff-only");
         if diverged {
             assert_eq!(r.snapshot(&tree), before);
         } else {
@@ -449,9 +465,9 @@ fn linked_default_is_only_integrated_fast_forward_once() {
             .enumerate()
         {
             let doc = r.sync(&tree, args, if diverged { 1 } else { 0 });
-            assert_eq!(doc["worktrees"], json!([]));
+            assert_eq!(doc["data"]["worktrees"], json!([]));
             assert_eq!(
-                doc["default"]["status"],
+                doc["data"]["default"]["status"],
                 if diverged {
                     "diverged"
                 } else if i == 0 {
@@ -460,7 +476,7 @@ fn linked_default_is_only_integrated_fast_forward_once() {
                     "up-to-date"
                 }
             );
-            assert_eq!(doc["default"]["path"], tree.to_str().unwrap());
+            assert_eq!(doc["data"]["default"]["path"], tree.to_str().unwrap());
             if diverged {
                 assert_eq!(r.snapshot(&tree), before);
             }
@@ -476,7 +492,7 @@ fn linked_default_is_only_integrated_fast_forward_once() {
             .unwrap();
         assert_eq!(out.status.code(), Some(if diverged { 1 } else { 0 }));
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(doc["worktrees"], json!([]));
+        assert_eq!(doc["data"]["worktrees"], json!([]));
         assert_eq!(r.git(&r.main, &["rev-parse", "HEAD"]), other);
     }
 }
@@ -487,7 +503,10 @@ fn default_ref_update_linked_checkout_diverged_and_dirty() {
     r.git(&r.main, &["checkout", "-b", "other"]);
     r.advance();
     let before = r.git(&r.main, &["rev-parse", "HEAD"]);
-    assert_eq!(r.sync(&r.main, &[], 0)["default"]["status"], "updated");
+    assert_eq!(
+        r.sync(&r.main, &[], 0)["data"]["default"]["status"],
+        "updated"
+    );
     assert_eq!(r.git(&r.main, &["rev-parse", "HEAD"]), before);
     let linked = r.root.join("default-tree");
     r.git(
@@ -496,16 +515,22 @@ fn default_ref_update_linked_checkout_diverged_and_dirty() {
     );
     r.write_commit(&r.upstream, "remote-two", "two\n");
     r.git(&r.upstream, &["push", "origin", "main"]);
-    assert_eq!(r.sync(&r.main, &[], 0)["default"]["status"], "updated");
+    assert_eq!(
+        r.sync(&r.main, &[], 0)["data"]["default"]["status"],
+        "updated"
+    );
     assert!(linked.join("remote-two").exists());
     r.write_commit(&linked, "own-main", "local\n");
     let before = r.snapshot(&linked);
-    assert_eq!(r.sync(&r.main, &[], 1)["default"]["status"], "diverged");
+    assert_eq!(
+        r.sync(&r.main, &[], 1)["data"]["default"]["status"],
+        "diverged"
+    );
     assert_eq!(r.snapshot(&linked), before);
     let tree = r.create("topic");
     r.write_commit(&tree, "topic-file", "topic\n");
     assert_eq!(
-        r.sync(&r.main, &["topic"], 0)["default"]["status"],
+        r.sync(&r.main, &["topic"], 0)["data"]["default"]["status"],
         "diverged"
     );
     let dirty = Repo::new();
@@ -514,7 +539,7 @@ fn default_ref_update_linked_checkout_diverged_and_dirty() {
     fs::write(dirty.main.join("file"), "dirty edit\n").unwrap();
     let before = dirty.snapshot(&dirty.main);
     assert_eq!(
-        dirty.sync(&dirty.main, &[], 1)["default"]["status"],
+        dirty.sync(&dirty.main, &[], 1)["data"]["default"]["status"],
         "dirty"
     );
     assert_eq!(dirty.snapshot(&dirty.main), before);
@@ -534,13 +559,147 @@ fn pushed_branch_containing_base_is_up_to_date_without_force() {
         (vec!["topic", "--merge"], "merge"),
     ] {
         let doc = r.sync(&r.main, &args, 0);
-        let item = &doc["worktrees"][0];
+        let item = &doc["data"]["worktrees"][0];
         assert_eq!(item["status"], "up-to-date");
         assert_eq!(item["strategy"], strategy);
         assert_eq!(item["before"], head);
         assert_eq!(item["after"], head);
         assert_eq!(item["code"], Value::Null);
         assert_eq!(r.snapshot(&tree), before);
+    }
+}
+
+#[test]
+fn corrupt_custom_base_metadata_refuses_sync_before_fetch_or_updates() {
+    let r = Repo::new();
+    let tree = r.create("topic");
+    r.create("healthy");
+    r.git(&r.main, &["branch", "stack"]);
+    r.write_commit(&tree, "own", "own commit\n");
+    assert!(r
+        .mabo(&r.main, &["meta", "set", "topic", "--base", "stack"])
+        .status
+        .success());
+    let dir = r.main.join(".git/maboroshi/workspaces");
+    let record = fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|file| {
+            let record: Value = serde_json::from_slice(&fs::read(file).unwrap()).unwrap();
+            record["path"] == tree.to_str().unwrap()
+        })
+        .unwrap();
+    let mut body: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
+    assert_eq!(body["base"], "refs/heads/stack");
+    body["owner"] = json!({"invalid": "shape"});
+    let corrupt = serde_json::to_vec(&body).unwrap();
+    fs::write(&record, &corrupt).unwrap();
+    r.advance();
+    let refs = r.git(&r.main, &["for-each-ref"]);
+    let before = r.snapshot(&tree);
+    let main_before = r.snapshot(&r.main);
+    let doc = r.sync(&r.main, &["topic", "healthy"], 1);
+    assert_eq!(doc["error"]["code"], "failed");
+    assert!(doc["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("invalid JSON or shape"));
+    assert!(doc["data"].is_null());
+    assert_eq!(r.git(&r.main, &["for-each-ref"]), refs);
+    assert_eq!(r.snapshot(&tree), before);
+    assert_eq!(r.snapshot(&r.main), main_before);
+    assert_eq!(fs::read(&record).unwrap(), corrupt);
+    let listed = r.mabo(&r.main, &["list", "--json"]);
+    assert!(listed.status.success());
+    let doc: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert!(!doc["warnings"].as_array().unwrap().is_empty());
+    assert!(doc["data"]["worktrees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["name"] == "healthy" && item["id"].is_string()));
+}
+
+#[test]
+fn updates_with_failures_conflicts_or_published_refusals_exit_partial() {
+    for update_default in [true, false] {
+        for outcome in ["conflict", "kept-conflict", "published", "failure"] {
+            let r = Repo::new();
+            let tree = r.create("topic");
+            r.write_commit(&tree, "file", "topic edit\n");
+            if outcome == "published" {
+                r.git(&tree, &["push", "origin", "topic"]);
+            }
+            if outcome == "failure" {
+                r.git(
+                    &r.main,
+                    &[
+                        "remote",
+                        "add",
+                        "broken",
+                        r.root.join("remote.git").to_str().unwrap(),
+                    ],
+                );
+                r.git(&r.main, &["fetch", "broken"]);
+                assert!(r
+                    .mabo(&r.main, &["meta", "set", "topic", "--base", "broken/main"])
+                    .status
+                    .success());
+                r.git(
+                    &r.main,
+                    &[
+                        "remote",
+                        "set-url",
+                        "broken",
+                        r.root.join("absent.git").to_str().unwrap(),
+                    ],
+                );
+            }
+            let good = r.create("good");
+            r.write_commit(&good, "own", "independent edit\n");
+            r.write_commit(&r.upstream, "file", "remote edit\n");
+            r.git(&r.upstream, &["push", "origin", "main"]);
+            let before = r.snapshot(&tree);
+            let mut args = vec!["topic", "--rebase"];
+            if !update_default {
+                // Deliberately update the other item before visiting topic.
+                args = vec!["good", "topic", "--rebase", "--no-default"];
+            }
+            if outcome == "kept-conflict" {
+                args.push("--keep-conflicts");
+                // keep-conflicts requires exactly one worktree target.
+                if !update_default {
+                    continue;
+                }
+            }
+            let doc = r.sync(&r.main, &args, 6);
+            assert_eq!(doc["error"]["code"], "partial");
+            let topic = doc["data"]["worktrees"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["name"] == "topic")
+                .unwrap();
+            if outcome == "published" {
+                assert_eq!(topic["code"], "published");
+            } else if outcome == "failure" {
+                assert_eq!(topic["status"], "failed");
+            } else {
+                assert_eq!(topic["status"], "conflict");
+            }
+            if outcome != "kept-conflict" {
+                assert_eq!(r.snapshot(&tree), before);
+            } else {
+                assert!(r.git(&tree, &["status", "--porcelain=v2"]).contains("u "));
+            }
+            let updated = if update_default {
+                &doc["data"]["default"]
+            } else {
+                &doc["data"]["worktrees"][0]
+            };
+            assert_eq!(updated["status"], "updated");
+            assert_ne!(updated["before"], updated["after"]);
+        }
     }
 }
 
@@ -552,11 +711,12 @@ fn pushed_auto_merge_and_rebase_refusal_force_preserve_upstream() {
     let before = r.git(&tree, &["rev-parse", "HEAD"]);
     r.git(&tree, &["push", "-u", "origin", "topic"]);
     r.advance();
-    let refused = r.sync(&r.main, &["topic", "--rebase"], 3);
-    assert_eq!(refused["worktrees"][0]["code"], "pushed");
+    let refused = r.sync(&r.main, &["topic", "--rebase", "--no-default"], 4);
+    assert_eq!(refused["error"]["code"], "published");
+    assert_eq!(refused["data"]["worktrees"][0]["code"], "published");
     assert_eq!(r.git(&tree, &["rev-parse", "HEAD"]), before);
     let forced = r.sync(&r.main, &["topic", "--rebase", "--force"], 0);
-    assert_eq!(forced["worktrees"][0]["strategy"], "rebase");
+    assert_eq!(forced["data"]["worktrees"][0]["strategy"], "rebase");
     assert_ne!(r.git(&tree, &["rev-parse", "HEAD"]), before);
     assert_eq!(
         r.git(&tree, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
@@ -568,7 +728,7 @@ fn pushed_auto_merge_and_rebase_refusal_force_preserve_upstream() {
     s.git(&tree, &["push", "origin", "pushed"]);
     s.advance();
     let doc = s.sync(&s.main, &["pushed"], 0);
-    assert_eq!(doc["worktrees"][0]["strategy"], "merge");
+    assert_eq!(doc["data"]["worktrees"][0]["strategy"], "merge");
     assert_eq!(
         s.git(&tree, &["log", "-1", "--format=%s"]),
         "Merge origin/main into pushed"
@@ -600,16 +760,16 @@ fn conflicts_restore_everything_and_keep_conflicts_is_single_target_only() {
         );
         fs::write(r.root.join("ignore"), "ignored\n").unwrap();
         let before = r.snapshot(&tree);
-        let doc = r.sync(&tree, &[strategy], 1);
-        assert_eq!(doc["worktrees"][0]["status"], "conflict");
-        assert_eq!(doc["worktrees"][0]["conflicts"], json!(["file"]));
+        let doc = r.sync(&tree, &[strategy, "--no-default"], 5);
+        assert_eq!(doc["data"]["worktrees"][0]["status"], "conflict");
+        assert_eq!(doc["data"]["worktrees"][0]["conflicts"], json!(["file"]));
         assert_eq!(r.snapshot(&tree), before);
         assert_eq!(
             fs::read(tree.join("ignored")).unwrap(),
             b"ignored contents\n"
         );
-        let doc = r.sync(&tree, &[strategy, "--keep-conflicts"], 1);
-        assert_eq!(doc["worktrees"][0]["status"], "conflict");
+        let doc = r.sync(&tree, &[strategy, "--keep-conflicts", "--no-default"], 5);
+        assert_eq!(doc["data"]["worktrees"][0]["status"], "conflict");
         assert!(r.git(&tree, &["status", "--porcelain=v2"]).contains("u "));
         r.git(
             &tree,
@@ -633,12 +793,18 @@ fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
     let tree = r.create("topic");
     r.write_commit(&tree, "topic-file", "topic\n");
     fs::write(tree.join("untracked"), "untracked\n").unwrap();
-    assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "dirty");
+    assert_eq!(
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        "dirty"
+    );
     fs::remove_file(tree.join("untracked")).unwrap();
     r.git(&r.main, &["merge", "--squash", "topic"]);
     r.git(&r.main, &["commit", "-m", "squash"]);
     r.git(&r.main, &["push", "origin", "main"]);
-    assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "merged");
+    assert_eq!(
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        "merged"
+    );
     r.git(&r.main, &["branch", "stack"]);
     let out = r.mabo(
         &r.main,
@@ -646,20 +812,23 @@ fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
     );
     assert!(out.status.success());
     let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(doc["worktree"]["base"], "refs/heads/stack");
+    assert_eq!(doc["data"]["worktree"]["base"], "refs/heads/stack");
     let invalid = r.mabo(&r.main, &["meta", "set", "topic", "--base", "nonexistent"]);
     assert!(!invalid.status.success());
     r.git(&r.main, &["branch", "-D", "stack"]);
-    assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "base-gone");
-    let file = r.main.join(".git/maboroshi/worktrees.json");
-    let mut stored: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    assert_eq!(
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        "base-gone"
+    );
+    let file = r.main.join(".git/maboroshi/workspaces");
+    let mut stored: Value = serde_json::from_slice(&records::read(&file).unwrap()).unwrap();
     stored["worktrees"][0]
         .as_object_mut()
         .unwrap()
         .remove("base");
-    fs::write(&file, serde_json::to_vec(&stored).unwrap()).unwrap();
+    records::write(&file, serde_json::to_vec(&stored).unwrap()).unwrap();
     assert_eq!(
-        r.sync(&tree, &[], 0)["worktrees"][0]["base"],
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["base"],
         "refs/remotes/origin/main"
     );
 }
@@ -687,7 +856,7 @@ fn all_mine_ownership_no_default_explicit_and_forced_merge() {
             "{}",
             String::from_utf8_lossy(&out.stdout)
         );
-        serde_json::from_slice::<Value>(&out.stdout).unwrap()
+        serde_json::from_slice::<Value>(&out.stdout).unwrap()["data"].clone()
     };
     let doc = run(&["sync", "--all", "--no-default", "--json"]);
     assert!(doc["default"].is_null());
@@ -708,7 +877,7 @@ fn all_mine_ownership_no_default_explicit_and_forced_merge() {
         "merge"
     );
     let doc = r.sync(&r.main, &["--all"], 0);
-    assert_eq!(doc["worktrees"].as_array().unwrap().len(), 2);
+    assert_eq!(doc["data"]["worktrees"].as_array().unwrap().len(), 2);
     r.sync(&r.main, &["--mine"], 2);
 }
 
@@ -716,118 +885,20 @@ fn all_mine_ownership_no_default_explicit_and_forced_merge() {
 fn json_schema_snapshot_and_project_selection() {
     let r = Repo::new();
     let mut doc = r.sync(&r.main, &["--project", r.main.to_str().unwrap()], 0);
-    doc["default"]["path"] = json!("<path>");
-    doc["default"]["before"] = json!("<sha>");
-    doc["default"]["after"] = json!("<sha>");
+    doc["data"]["default"]["path"] = json!("<path>");
+    doc["data"]["default"]["before"] = json!("<sha>");
+    doc["data"]["default"]["after"] = json!("<sha>");
     assert_eq!(
         doc,
-        json!({"schema":1,"default":{"name":"main","path":"<path>","branch":"refs/heads/main","base":"refs/remotes/origin/main","status":"up-to-date","strategy":"ff-only","before":"<sha>","after":"<sha>","conflicts":[],"detail":null,"code":null},"worktrees":[]})
+        json!({"schema":2,"command":"sync","ok":true,"warnings":[],"error":null,"data":{"default":{"name":"main","path":"<path>","branch":"refs/heads/main","base":"refs/remotes/origin/main","status":"up-to-date","strategy":"ff-only","before":"<sha>","after":"<sha>","conflicts":[],"detail":null,"code":null},"worktrees":[]}})
     );
     let tree = r.create("topic");
     r.write_commit(&tree, "own", "own\n");
     assert_eq!(
-        r.sync(&r.main, &["topic", "-p", r.main.to_str().unwrap()], 0)["worktrees"][0]["name"],
+        r.sync(&r.main, &["topic", "-p", r.main.to_str().unwrap()], 0)["data"]["worktrees"][0]
+            ["name"],
         "topic"
     );
-}
-
-#[test]
-fn sync_and_delete_serialize_during_fetch() {
-    use std::os::unix::fs::PermissionsExt;
-    use std::sync::mpsc;
-    use std::time::{Duration, Instant};
-    let r = Repo::new();
-    let tree = r.create("topic");
-    r.write_commit(&tree, "local", "local\n");
-    r.advance();
-    let gate = r.root.join("gate");
-    assert!(Command::new("mkfifo")
-        .arg(&gate)
-        .status()
-        .unwrap()
-        .success());
-    let entered = r.root.join("entered");
-    let script = r.root.join("upload-pack");
-    fs::write(
-        &script,
-        format!(
-            "#!/bin/sh\nprintf ready > '{}'\nread release < '{}'\nexec git-upload-pack \"$@\"\n",
-            entered.display(),
-            gate.display()
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
-    r.git(
-        &r.main,
-        &[
-            "config",
-            "remote.origin.uploadpack",
-            script.to_str().unwrap(),
-        ],
-    );
-    let mut sync = r
-        .command(
-            env!("CARGO_BIN_EXE_mabo"),
-            &r.main,
-            &["sync", "topic", "--json"],
-        )
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !entered.exists() {
-        assert!(
-            sync.try_wait().unwrap().is_none(),
-            "sync exited before fetch"
-        );
-        assert!(Instant::now() < deadline, "fetch did not start");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    let mut delete = r.command(
-        env!("CARGO_BIN_EXE_mabo"),
-        &r.main,
-        &["delete", "topic", "--force", "--no-hooks", "--json"],
-    );
-    let (tx, rx) = mpsc::channel();
-    let mut child = delete
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let (waiting_tx, waiting_rx) = mpsc::channel();
-    let diagnostic = std::thread::spawn(move || {
-        use std::io::BufRead;
-        let mut lines = std::io::BufReader::new(stderr).lines();
-        waiting_tx.send(lines.next().unwrap().unwrap()).unwrap();
-        assert!(
-            lines.next().is_none(),
-            "only one lock waiting line is allowed"
-        );
-    });
-    let waiter = std::thread::spawn(move || {
-        tx.send(child.wait_with_output().unwrap()).unwrap();
-    });
-    let waiting = waiting_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(waiting.starts_with("Waiting for another mabo operation to finish ("));
-    assert!(
-        rx.try_recv().is_err(),
-        "delete passed the lock during sync fetch"
-    );
-    assert!(tree.exists());
-    fs::write(&gate, "release\n").unwrap();
-    let synced = sync.wait_with_output().unwrap();
-    assert!(
-        synced.status.success(),
-        "{}",
-        String::from_utf8_lossy(&synced.stdout)
-    );
-    let deleted = rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(deleted.status.success());
-    waiter.join().unwrap();
-    diagnostic.join().unwrap();
-    assert!(!tree.exists());
 }
 
 #[test]
@@ -863,7 +934,7 @@ fn fetch_only_involved_remotes_once_and_failed_fetch_cannot_update_stale_base() 
     r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
     let before = r.snapshot(&tree);
     let doc = r.sync(&tree, &[], 1);
-    assert_eq!(doc["worktrees"][0]["status"], "failed");
+    assert_eq!(doc["data"]["worktrees"][0]["status"], "failed");
     assert_eq!(r.snapshot(&tree), before);
 }
 
@@ -895,7 +966,10 @@ fn sync_runs_no_git_hooks_and_does_not_update_other_refs() {
     );
     r.git(&r.main, &["config", "rebase.updateRefs", "true"]);
     r.advance();
-    assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "updated");
+    assert_eq!(
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        "updated"
+    );
     assert!(!marker.exists());
     assert_eq!(r.git(&tree, &["rev-parse", "other-ref"]), old);
     r.git(&r.main, &["checkout", "-b", "non-default"]);
@@ -943,7 +1017,7 @@ fn ignored_collisions_follow_core_ignorecase() {
                 let doc = r.sync(&tree, &[strategy, "--no-default"], 0);
                 let collision = ignorecase;
                 assert_eq!(
-                    doc["worktrees"][0]["status"],
+                    doc["data"]["worktrees"][0]["status"],
                     if collision { "dirty" } else { "updated" },
                     "ignorecase={ignorecase}, {strategy}, {ignored}, {incoming}"
                 );
@@ -971,7 +1045,10 @@ fn ignored_files_are_preserved_when_base_would_overwrite_them() {
     r.write_commit(&r.upstream, "valuable", "remote tracked data\n");
     r.git(&r.upstream, &["push", "origin", "main"]);
     let before = r.snapshot(&tree);
-    assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "dirty");
+    assert_eq!(
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        "dirty"
+    );
     assert_eq!(r.snapshot(&tree), before);
     assert_eq!(
         fs::read(tree.join("valuable")).unwrap(),
@@ -1030,7 +1107,10 @@ fn multiple_bases_fetch_each_involved_remote_and_respect_no_default() {
         .success());
     r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
     let doc = r.sync(&tree, &["--no-default"], 0);
-    assert_eq!(doc["worktrees"][0]["base"], "refs/remotes/stack/main");
+    assert_eq!(
+        doc["data"]["worktrees"][0]["base"],
+        "refs/remotes/stack/main"
+    );
     r.git(
         &r.main,
         &[
@@ -1078,7 +1158,10 @@ fn dirty_staged_and_unstaged_worktrees_are_untouched() {
             r.git(&tree, &["add", "file"]);
         }
         let before = r.snapshot(&tree);
-        assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "dirty");
+        assert_eq!(
+            r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+            "dirty"
+        );
         assert_eq!(r.snapshot(&tree), before);
     }
 }
@@ -1093,7 +1176,10 @@ fn separate_git_directory_default_checkout_and_published_squash_are_supported() 
     r.git(&r.upstream, &["merge", "--squash", "origin/topic"]);
     r.git(&r.upstream, &["commit", "-m", "squash"]);
     r.git(&r.upstream, &["push", "origin", "main"]);
-    assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "merged");
+    assert_eq!(
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        "merged"
+    );
     // Use a fresh repository: Git does not relocate linked-worktree gitfiles on re-init.
     let s = Repo::new();
     s.git(
@@ -1105,7 +1191,10 @@ fn separate_git_directory_default_checkout_and_published_squash_are_supported() 
         ],
     );
     s.advance();
-    assert_eq!(s.sync(&s.main, &[], 0)["default"]["status"], "updated");
+    assert_eq!(
+        s.sync(&s.main, &[], 0)["data"]["default"]["status"],
+        "updated"
+    );
 }
 
 #[test]
@@ -1134,17 +1223,20 @@ fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
     let r = Repo::new();
     let tree = r.create("fresh");
     assert_eq!(
-        r.sync(&tree, &[], 0)["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
         "up-to-date"
     );
     r.advance();
-    assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "updated");
+    assert_eq!(
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        "updated"
+    );
     assert_eq!(
         r.git(&tree, &["rev-parse", "HEAD"]),
         r.git(&r.main, &["rev-parse", "origin/main"])
     );
     assert_eq!(
-        r.sync(&tree, &[], 0)["worktrees"][0]["status"],
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
         "up-to-date"
     );
     let gc = r.mabo(&r.main, &["gc", "--json"]);
@@ -1155,19 +1247,25 @@ fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
     r.write_commit(&landed, "work", "work\n");
     r.git(&r.main, &["merge", "--ff-only", "landed"]);
     r.git(&r.main, &["push", "origin", "main"]);
-    assert_eq!(r.sync(&landed, &[], 0)["worktrees"][0]["status"], "merged");
+    assert_eq!(
+        r.sync(&landed, &[], 0)["data"]["worktrees"][0]["status"],
+        "merged"
+    );
     // Legacy metadata uses the very same reflog fallback as gc.
     let legacy = r.create("legacy");
-    let file = r.main.join(".git/maboroshi/worktrees.json");
-    let mut stored: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    let file = r.main.join(".git/maboroshi/workspaces");
+    let mut stored: Value = serde_json::from_slice(&records::read(&file).unwrap()).unwrap();
     for record in stored["worktrees"].as_array_mut().unwrap() {
         record.as_object_mut().unwrap().remove("createdFrom");
     }
-    fs::write(file, serde_json::to_vec(&stored).unwrap()).unwrap();
+    records::write(file, serde_json::to_vec(&stored).unwrap()).unwrap();
     r.write_commit(&r.upstream, "more", "more\n");
     r.git(&r.upstream, &["pull", "--no-rebase", "origin", "main"]);
     r.git(&r.upstream, &["push", "origin", "main"]);
-    assert_eq!(r.sync(&legacy, &[], 0)["worktrees"][0]["status"], "updated");
+    assert_eq!(
+        r.sync(&legacy, &[], 0)["data"]["worktrees"][0]["status"],
+        "updated"
+    );
 }
 
 #[test]
@@ -1191,35 +1289,35 @@ fn unrecorded_fresh_syncs_keep_null_metadata_and_gc_keeps_them() {
                 "origin/main",
             ],
         );
-        let store = r.main.join(".git/maboroshi/worktrees.json");
-        let before = fs::read(&store).unwrap();
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let before = records::read(&store).unwrap();
         r.advance();
         assert_eq!(
-            r.sync(&r.main, &["topic"], 0)["worktrees"][0]["status"],
+            r.sync(&r.main, &["topic"], 0)["data"]["worktrees"][0]["status"],
             "updated"
         );
         r.write_commit(&r.upstream, "second", "second\n");
         r.git(&r.upstream, &["push", "origin", "main"]);
         assert_eq!(
-            r.sync(&r.main, &["topic"], 0)["worktrees"][0]["status"],
+            r.sync(&r.main, &["topic"], 0)["data"]["worktrees"][0]["status"],
             "updated"
         );
         assert_eq!(
-            r.sync(&r.main, &["topic"], 0)["worktrees"][0]["status"],
+            r.sync(&r.main, &["topic"], 0)["data"]["worktrees"][0]["status"],
             "up-to-date"
         );
         let gc = r.mabo(&r.main, &["gc", "--json"]);
         assert!(gc.status.success());
         let doc: Value = serde_json::from_slice(&gc.stdout).unwrap();
         assert!(!doc.to_string().contains("topic"), "{doc}");
-        assert_eq!(fs::read(store).unwrap(), before);
+        assert_eq!(records::read(store).unwrap(), before);
         if !no_reflog {
             r.write_commit(&r.upstream, "third", "third\n");
             r.git(&r.upstream, &["push", "origin", "main"]);
             r.git(&r.main, &["fetch", "origin"]);
             r.git(&tree, &["reset", "--hard", "origin/main"]);
             assert_eq!(
-                r.sync(&r.main, &["topic"], 0)["worktrees"][0]["status"],
+                r.sync(&r.main, &["topic"], 0)["data"]["worktrees"][0]["status"],
                 "merged"
             );
             let gc = r.mabo(&r.main, &["gc", "--json"]);
@@ -1252,7 +1350,7 @@ fn ignored_directories_collapse_and_only_incoming_paths_block_sync() {
         r.git(&r.upstream, &["push", "origin", "main"]);
         let doc = r.sync(&tree, &[], 0);
         assert_eq!(
-            doc["worktrees"][0]["status"],
+            doc["data"]["worktrees"][0]["status"],
             if collision { "dirty" } else { "updated" }
         );
         assert_eq!(
@@ -1271,16 +1369,16 @@ fn conflict_output_is_short_in_human_and_json_formats() {
         r.write_commit(&r.upstream, "file", "remote\n");
         r.git(&r.upstream, &["push", "origin", "main"]);
         let flag = format!("--{strategy}");
-        let doc = r.sync(&tree, &[&flag], 1);
+        let doc = r.sync(&tree, &[&flag, "--no-default"], 5);
         assert_eq!(
-            doc["worktrees"][0]["detail"],
+            doc["data"]["worktrees"][0]["detail"],
             format!("{strategy} aborted; worktree unchanged")
         );
         let out = r.mabo(&tree, &["sync", &flag, "--no-default"]);
-        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(out.status.code(), Some(5));
         assert_eq!(String::from_utf8(out.stdout).unwrap(), format!("topic  conflict  file ({strategy} aborted; worktree unchanged)\nSync complete: 1 conflict\n"));
         let out = r.mabo(&tree, &["sync", &flag, "--no-default", "--keep-conflicts"]);
-        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(out.status.code(), Some(5));
         assert_eq!(
             String::from_utf8(out.stdout).unwrap(),
             format!(
@@ -1310,7 +1408,7 @@ fn finish_child(mut child: std::process::Child) -> Output {
 }
 
 #[test]
-fn git_hooks_can_reenter_the_operation_lock() {
+fn git_hooks_can_run_mabo() {
     use std::os::unix::fs::PermissionsExt;
     for hook_name in ["post-checkout", "reference-transaction"] {
         let r = Repo::new();
@@ -1323,7 +1421,7 @@ fn git_hooks_can_reenter_the_operation_lock() {
             &hook,
             format!(
                 r#"#!/bin/sh
-# Bound the nested command so a regression cannot leave orphaned lock waiters.
+# Bound the nested command so a regression cannot leave orphaned child processes.
 '{bin}' gc --json > '{output}' 2>&1 &
 nested=$!
 (sleep 3; kill "$nested" 2>/dev/null) >/dev/null 2>&1 &
@@ -1366,34 +1464,67 @@ exit "$result"
 }
 
 #[test]
-fn operation_lock_token_is_not_exported_to_project_hooks_or_exec() {
+fn git_hook_can_run_mabo_exec_and_create_with_project_hooks_and_exec() {
+    use std::os::unix::fs::PermissionsExt;
     let r = Repo::new();
+    r.create("victim");
+    let bin = env!("CARGO_BIN_EXE_mabo");
+    let gate = r.root.join("hook-entered");
+    let status = r.root.join("hook-status");
+    let standalone = r.root.join("standalone-exec");
+    let post_create = r.root.join("post-create");
+    let create_exec = r.root.join("create-exec");
     fs::write(
         r.main.join(".mabo.toml"),
-        "[hooks]\npost-create = ['test -z \"${MABO_OPERATION_LOCK+x}\"']\npre-delete = ['test -z \"${MABO_OPERATION_LOCK+x}\"']\n",
-    ).unwrap();
-    for args in [
-        vec![
-            "create",
-            "topic",
-            "--json",
-            "--exec",
-            "test -z \"${MABO_OPERATION_LOCK+x}\"",
-        ],
-        vec!["delete", "topic", "--force", "--json"],
-    ] {
-        let out = r
-            .command(env!("CARGO_BIN_EXE_mabo"), &r.main, &args)
-            .env("MABO_TRUST_ALL", "1")
-            .env("MABO_OPERATION_LOCK", "stale-inherited-token")
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{} {}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+        format!(
+            "[hooks]\npost-create = [\"touch '{}'\"]\n",
+            post_create.display()
+        ),
+    )
+    .unwrap();
+    let hook = r.main.join(".git/hooks/post-checkout");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(
+        &hook,
+        format!(
+            r#"#!/bin/sh
+[ -e '{gate}' ] && exit 0
+touch '{gate}'
+cd '{main}'
+'{bin}' exec victim sh -c "touch '{standalone}'" &&
+'{bin}' create nested --exec "touch '{create_exec}'"
+echo $? > '{status}'
+"#,
+            gate = gate.display(),
+            main = r.main.display(),
+            standalone = standalone.display(),
+            create_exec = create_exec.display(),
+            status = status.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    let child = r
+        .command(bin, &r.main, &["create", "outer", "--no-hooks"])
+        .env("MABO_TRUST_ALL", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = finish_child(child);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(status).unwrap().trim(),
+        "0",
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for marker in [standalone, post_create, create_exec] {
+        assert!(marker.is_file(), "{}", marker.display());
     }
 }
 
@@ -1437,7 +1568,7 @@ fn post_create_hook_can_list_and_create_and_pre_delete_hook_can_create() {
 }
 
 #[test]
-fn create_exec_releases_lock_while_command_is_running() {
+fn other_commands_can_run_while_create_exec_is_running() {
     let r = Repo::new();
     let other = r.create("other");
     let gate = r.root.join("exec-gate");
@@ -1545,7 +1676,7 @@ fn attach_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
     );
     assert!(!tree.exists());
     assert!(r.mabo(&r.main, &["where", "from-gc"]).status.success());
-    // A hook can change the target while unlocked; the old preflight is stale.
+    // A hook can change the target; the old preflight is stale.
     fs::write(
         r.main.join(".mabo.toml"),
         "[hooks]\npre-delete = [\"git commit --allow-empty -m changed-by-hook\"]\n",
@@ -1578,7 +1709,10 @@ fn rebase_checkout_preserves_ignored_paths_deleted_by_local_commits() {
     );
     fs::write(tree.join("file"), "precious\n").unwrap();
     r.advance();
-    assert_eq!(r.sync(&tree, &[], 0)["worktrees"][0]["status"], "dirty");
+    assert_eq!(
+        r.sync(&tree, &[], 0)["data"]["worktrees"][0]["status"],
+        "dirty"
+    );
     assert_eq!(fs::read_to_string(tree.join("file")).unwrap(), "precious\n");
 }
 
@@ -1592,8 +1726,8 @@ fn unrelated_default_history_fails_without_changing_the_checkout() {
     let before = r.snapshot(&r.main);
     let refs = r.git(&r.main, &["show-ref"]);
     let doc = r.sync(&r.main, &[], 1);
-    assert_eq!(doc["default"]["status"], "failed");
-    assert!(doc["default"]["detail"]
+    assert_eq!(doc["data"]["default"]["status"], "failed");
+    assert!(doc["data"]["default"]["detail"]
         .as_str()
         .unwrap()
         .contains("no common history with refs/remotes/origin/main"));
@@ -1661,9 +1795,9 @@ fn silent_git_failures_are_checked_before_sync_mutations() {
         assert_eq!(out.status.code(), Some(1), "{command}: {out:?}");
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
         let item = if default_only {
-            &doc["default"]
+            &doc["data"]["default"]
         } else {
-            &doc["worktrees"][0]
+            &doc["data"]["worktrees"][0]
         };
         assert_eq!(item["status"], "failed", "{command}: {doc}");
         assert!(item["detail"].as_str().unwrap().contains("exit 2"), "{doc}");
@@ -1703,7 +1837,7 @@ fn unrelated_histories_fail_without_touching_worktree_or_ignored_files() {
             let mut args = vec!["--no-default"];
             args.extend(strategy);
             let doc = r.sync(&tree, &args, 1);
-            let item = &doc["worktrees"][0];
+            let item = &doc["data"]["worktrees"][0];
             assert_eq!(item["status"], "failed", "{doc}");
             assert!(
                 item["detail"]
@@ -1774,7 +1908,7 @@ fn ignored_paths_touched_by_intermediate_commits_are_preserved() {
                 let before = r.git(&tree, &["rev-parse", "HEAD"]);
                 let flag = format!("--{strategy}");
                 assert_eq!(
-                    r.sync(&tree, &[&flag], 0)["worktrees"][0]["status"],
+                    r.sync(&tree, &[&flag], 0)["data"]["worktrees"][0]["status"],
                     "dirty",
                     "{side} {shape} {strategy}"
                 );
@@ -1809,8 +1943,11 @@ fn merge_ignores_user_options_and_signing_configuration() {
         r.git(&tree, &["config", "commit.gpgSign", "true"]);
         r.git(&tree, &["config", "gpg.program", "/does/not/exist"]);
         let doc = r.sync(&tree, &["--no-default"], 0);
-        assert_eq!(doc["worktrees"][0]["status"], "updated", "{options}");
-        assert_eq!(doc["worktrees"][0]["strategy"], "merge");
+        assert_eq!(
+            doc["data"]["worktrees"][0]["status"], "updated",
+            "{options}"
+        );
+        assert_eq!(doc["data"]["worktrees"][0]["strategy"], "merge");
         assert_eq!(r.git(&tree, &["rev-parse", "HEAD^1"]), before);
         assert_eq!(
             r.git(&tree, &["rev-parse", "HEAD^2"]),
@@ -1847,7 +1984,7 @@ fn rebase_preserves_fixup_commits_and_disables_user_rebase_configuration() {
     r.git(&tree, &["config", "gpg.program", "/does/not/exist"]);
     r.advance();
     let doc = r.sync(&tree, &["--no-default"], 0);
-    assert_eq!(doc["worktrees"][0]["status"], "updated");
+    assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
     assert_eq!(
         r.git(&tree, &["log", "--format=%s", "origin/main..HEAD"]),
         subjects
@@ -1933,7 +2070,7 @@ exec "$REAL_GIT" "$@"
             String::from_utf8_lossy(&out.stderr)
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(doc["worktrees"][0]["status"], "failed");
+        assert_eq!(doc["data"]["worktrees"][0]["status"], "failed");
         assert!(
             !fsmonitor.exists(),
             "fsmonitor ran during incomplete integration rollback"
@@ -1961,7 +2098,7 @@ fn rebase_does_not_preserve_merges_from_user_config() {
     r.git(&tree, &["config", "rebase.rebaseMerges", "true"]);
     r.advance();
     assert_eq!(
-        r.sync(&tree, &["--no-default"], 0)["worktrees"][0]["status"],
+        r.sync(&tree, &["--no-default"], 0)["data"]["worktrees"][0]["status"],
         "updated"
     );
     for file in ["own", "side", "other"] {
@@ -2006,7 +2143,7 @@ fn slash_remote_default_and_explicit_bases_fetch_and_integrate_main() {
                 String::from_utf8_lossy(&out.stderr)
             );
             let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-            let tree = PathBuf::from(doc["worktree"]["path"].as_str().unwrap());
+            let tree = PathBuf::from(doc["data"]["worktree"]["path"].as_str().unwrap());
             let out = r.mabo(
                 &r.main,
                 &["meta", "set", &name, "--base", "team/origin/main"],
@@ -2020,16 +2157,19 @@ fn slash_remote_default_and_explicit_bases_fetch_and_integrate_main() {
             r.git(&r.upstream, &["push", "origin", "main"]);
             let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
             let doc = r.sync(&r.main, &[], 0);
-            assert_eq!(doc["default"]["name"], "main");
-            assert_eq!(doc["default"]["status"], "updated");
+            assert_eq!(doc["data"]["default"]["name"], "main");
+            assert_eq!(doc["data"]["default"]["status"], "updated");
             assert_eq!(r.git(&r.main, &["rev-parse", "main"]), expected);
             assert_eq!(r.git(&r.main, &["branch", "--list", "origin/main"]), "");
             r.write_commit(&r.upstream, &format!("{name}-next"), "next\n");
             r.git(&r.upstream, &["push", "origin", "main"]);
             let expected = r.git(&r.upstream, &["rev-parse", "HEAD"]);
             let doc = r.sync(&tree, &["--no-default"], 0);
-            assert_eq!(doc["worktrees"][0]["base"], "refs/remotes/team/origin/main");
-            assert_eq!(doc["worktrees"][0]["status"], "updated");
+            assert_eq!(
+                doc["data"]["worktrees"][0]["base"],
+                "refs/remotes/team/origin/main"
+            );
+            assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
             assert_eq!(r.git(&tree, &["rev-parse", "HEAD"]), expected);
         }
     }
@@ -2051,16 +2191,16 @@ fn unmatched_default_remote_fails_without_creating_a_branch() {
     );
     let before = r.git(&r.main, &["for-each-ref", "refs/heads"]);
     let doc = r.sync(&r.main, &[], 1);
-    assert_eq!(doc["default"]["status"], "failed");
-    assert!(doc["default"]["detail"]
+    assert_eq!(doc["data"]["default"]["status"], "failed");
+    assert!(doc["data"]["default"]["detail"]
         .as_str()
         .unwrap()
         .contains("No configured remote matches"));
     assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), before);
     r.advance();
-    let doc = r.sync(&r.main, &["topic"], 1);
-    assert_eq!(doc["default"]["status"], "failed");
-    assert_eq!(doc["worktrees"][0]["status"], "updated", "{doc}");
+    let doc = r.sync(&r.main, &["topic"], 6);
+    assert_eq!(doc["data"]["default"]["status"], "failed");
+    assert_eq!(doc["data"]["worktrees"][0]["status"], "updated", "{doc}");
     assert!(tree.join("remote-file").exists());
 }
 
@@ -2101,16 +2241,16 @@ fn default_reserved_by_rebase_in_main_or_linked_checkout() {
         pause_root_rebase(&r, &path, false);
         r.advance();
         let doc = r.sync(&r.main, &[], 1);
-        assert_eq!(doc["default"]["status"], "dirty");
-        assert!(doc["default"]["detail"]
+        assert_eq!(doc["data"]["default"]["status"], "dirty");
+        assert!(doc["data"]["default"]["detail"]
             .as_str()
             .unwrap()
             .contains("being rebased"));
         assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
         let topic = r.create("topic");
         let doc = r.sync(&r.main, &["topic"], 0);
-        assert_eq!(doc["default"]["status"], "dirty");
-        assert_eq!(doc["worktrees"][0]["status"], "updated");
+        assert_eq!(doc["data"]["default"]["status"], "dirty");
+        assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
         assert!(topic.exists());
         r.git(&path, &["rebase", "--continue"]);
         assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
@@ -2134,7 +2274,7 @@ fn default_reserved_by_update_refs_and_bisect() {
         let before = r.git(&r.main, &["rev-parse", "main"]);
         r.advance();
         let doc = r.sync(&r.main, &[], 1);
-        assert_eq!(doc["default"]["status"], "dirty", "{doc}");
+        assert_eq!(doc["data"]["default"]["status"], "dirty", "{doc}");
         assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
         if operation == "update-refs" {
             r.git(&r.main, &["rebase", "--continue"]);
@@ -2166,14 +2306,14 @@ fn target_operations_are_never_integrated() {
         let before = r.snapshot(&tree);
         let doc = r.sync(&r.main, &["topic", "--no-default"], 0);
         assert_eq!(
-            doc["worktrees"][0]["status"],
+            doc["data"]["worktrees"][0]["status"],
             if operation == "rebase" {
                 "detached"
             } else {
                 "dirty"
             }
         );
-        assert!(doc["worktrees"][0]["detail"]
+        assert!(doc["data"]["worktrees"][0]["detail"]
             .as_str()
             .unwrap()
             .contains(&format!("{operation} in progress")));
@@ -2194,7 +2334,7 @@ fn target_reserved_by_another_worktrees_update_refs_is_dirty() {
     r.advance();
     let before = r.snapshot(&tree);
     let doc = r.sync(&r.main, &["topic", "--no-default"], 0);
-    assert_eq!(doc["worktrees"][0]["status"], "dirty");
+    assert_eq!(doc["data"]["worktrees"][0]["status"], "dirty");
     assert_eq!(r.snapshot(&tree), before);
     r.git(&r.main, &["rebase", "--continue"]);
 }
@@ -2210,8 +2350,8 @@ fn prunable_worktree_is_skipped_without_blocking_live_sync() {
     let live = r.create("live");
     r.advance();
     let doc = r.sync(&r.main, &["--all"], 0);
-    assert_eq!(doc["default"]["status"], "updated");
-    let items = doc["worktrees"].as_array().unwrap();
+    assert_eq!(doc["data"]["default"]["status"], "updated");
+    let items = doc["data"]["worktrees"].as_array().unwrap();
     assert_eq!(
         items.iter().find(|v| v["name"] == "gone").unwrap()["status"],
         "dirty"
@@ -2246,12 +2386,12 @@ fn missing_linked_checkout_still_reserves_default_during_rebase() {
     let live = r.create("live");
     r.advance();
     let doc = r.sync(&r.main, &["live"], 0);
-    assert_eq!(doc["default"]["status"], "dirty");
-    assert!(doc["default"]["detail"]
+    assert_eq!(doc["data"]["default"]["status"], "dirty");
+    assert!(doc["data"]["default"]["detail"]
         .as_str()
         .unwrap()
         .contains("being rebased"));
-    assert_eq!(doc["worktrees"][0]["status"], "updated");
+    assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
     assert!(live.is_dir());
     assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
     assert_eq!(file_contents(&admin), state);
@@ -2273,9 +2413,9 @@ fn missing_default_checkout_and_broken_target_do_not_block_live_target() {
     fs::remove_dir_all(&missing).unwrap();
     let before = r.git(&r.main, &["rev-parse", "main"]);
     r.advance();
-    let doc = r.sync(&r.main, &["--all"], 1);
-    assert_eq!(doc["default"]["status"], "dirty");
-    let items = doc["worktrees"].as_array().unwrap();
+    let doc = r.sync(&r.main, &["--all"], 6);
+    assert_eq!(doc["data"]["default"]["status"], "dirty");
+    let items = doc["data"]["worktrees"].as_array().unwrap();
     assert_eq!(
         items.iter().find(|v| v["name"] == "bad").unwrap()["status"],
         "failed"
@@ -2298,9 +2438,9 @@ fn context_errors_use_shared_exit_codes() {
         vec!["sync", "--project", "missing-project", "--json"],
         vec!["list", "--project", "missing-project", "--json"],
     ] {
-        assert_eq!(r.mabo(&r.main, &args).status.code(), Some(2));
+        assert_eq!(r.mabo(&r.main, &args).status.code(), Some(3));
     }
-    assert_eq!(r.mabo(&r.root, &["sync", "--json"]).status.code(), Some(4));
+    assert_eq!(r.mabo(&r.root, &["sync", "--json"]).status.code(), Some(3));
 }
 
 #[test]
@@ -2313,8 +2453,8 @@ fn metadata_failure_after_fast_forward_restores_worktree() {
     for fail_rollback in ["0", "1", "silent"] {
         let r = Repo::new();
         let tree = r.create("topic");
-        let store = r.main.join(".git/maboroshi/worktrees.json");
-        let original_store = fs::read(&store).unwrap();
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let original_store = records::read(&store).unwrap();
         r.advance();
         let before = r.snapshot(&tree);
         let fsmonitor = r.install_fsmonitor();
@@ -2336,7 +2476,7 @@ done
 for arg do
     if [ "$arg" = merge ]; then
         "$REAL_GIT" "$@" || exit $?
-        printf 'invalid json' > "$STORE"
+        for record in "$STORE"/*.json; do printf 'invalid json' > "$record"; done
         exit 0
     fi
 done
@@ -2359,9 +2499,13 @@ exec "$REAL_GIT" "$@"
             .env("FAIL_ROLLBACK", fail_rollback)
             .output()
             .unwrap();
-        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        assert_eq!(
+            out.status.code(),
+            Some(if fail_rollback == "0" { 1 } else { 6 }),
+            "{out:?}"
+        );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        let item = &doc["worktrees"][0];
+        let item = &doc["data"]["worktrees"][0];
         assert_eq!(item["status"], "failed");
         assert!(
             !fsmonitor.exists(),
@@ -2376,13 +2520,13 @@ exec "$REAL_GIT" "$@"
             assert!(detail.contains("worktree restored"), "{detail}");
             assert_eq!(item["before"], item["after"]);
             assert_eq!(r.snapshot(&tree), before);
-            fs::write(&store, &original_store).unwrap();
+            records::write(&store, &original_store).unwrap();
             assert_eq!(
-                r.sync(&tree, &["--no-default"], 0)["worktrees"][0]["status"],
+                r.sync(&tree, &["--no-default"], 0)["data"]["worktrees"][0]["status"],
                 "updated"
             );
             assert_eq!(
-                r.sync(&tree, &["--no-default"], 0)["worktrees"][0]["status"],
+                r.sync(&tree, &["--no-default"], 0)["data"]["worktrees"][0]["status"],
                 "up-to-date"
             );
             let out = r.mabo(&r.main, &["gc", "--json"]);
@@ -2405,7 +2549,7 @@ fn default_branch_merge_options_cannot_autostash_local_edits() {
     let stash = r.git(&r.main, &["stash", "list"]);
     let out = r.mabo(&r.main, &["sync", "--json"]);
     let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(doc["default"]["status"], "dirty", "{doc}");
+    assert_eq!(doc["data"]["default"]["status"], "dirty", "{doc}");
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(r.snapshot(&r.main), before);
     assert_eq!(r.git(&r.main, &["stash", "list"]), stash);
@@ -2457,11 +2601,11 @@ fn failed_default_remote_does_not_block_a_healthy_base_remote() {
     r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
     let default_before = r.snapshot(&r.main);
     let stale_before = r.snapshot(&stale);
-    let doc = r.sync(&r.main, &["healthy", "stale"], 1);
-    assert_eq!(doc["default"]["status"], "failed");
-    assert_eq!(doc["worktrees"][0]["status"], "updated", "{doc}");
-    assert_eq!(doc["worktrees"][1]["status"], "failed");
-    for item in [&doc["default"], &doc["worktrees"][1]] {
+    let doc = r.sync(&r.main, &["healthy", "stale"], 6);
+    assert_eq!(doc["data"]["default"]["status"], "failed");
+    assert_eq!(doc["data"]["worktrees"][0]["status"], "updated", "{doc}");
+    assert_eq!(doc["data"]["worktrees"][1]["status"], "failed");
+    for item in [&doc["data"]["default"], &doc["data"]["worktrees"][1]] {
         assert!(item["detail"]
             .as_str()
             .unwrap()
@@ -2505,18 +2649,18 @@ fn fetch_failures_exit_one_even_with_a_published_rebase_refusal() {
         vec!["--no-default", "stale", "published", "--rebase"],
     ] {
         let doc = r.sync(&r.main, &args, 1);
-        assert!(doc["worktrees"]
+        assert!(doc["data"]["worktrees"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|item| item["code"] == "pushed"));
+            .any(|item| item["code"] == "published"));
         assert_eq!(r.snapshot(&tree), before);
         assert!(!stale.join("remote-file").exists());
     }
 }
 
 #[test]
-fn git_hook_read_only_intermediary_preserves_lock_reentry() {
+fn git_hook_read_only_intermediary_can_run_nested_mabo() {
     use std::os::unix::{fs::PermissionsExt, process::CommandExt};
     let r = Repo::new();
     r.create("existing");
@@ -2590,157 +2734,6 @@ printf 'token\000/\000'
 }
 
 #[test]
-fn borrowed_lock_actions_and_project_hooks_are_refused_before_changes() {
-    use std::os::unix::{fs::PermissionsExt, process::CommandExt};
-    for action in [
-        "gh-child",
-        "standalone-exec",
-        "standalone-shell",
-        "standalone-git",
-        "create-exec",
-        "attach-exec",
-        "create-hook",
-        "attach-hook",
-        "delete-hook",
-        "gc-hook",
-    ] {
-        let r = Repo::new();
-        let victim = r.create("victim");
-        r.write_commit(&victim, "landed", "landed\n");
-        r.git(&r.main, &["merge", "--ff-only", "victim"]);
-        r.git(&r.main, &["push", "origin", "main"]);
-        r.git(&r.main, &["branch", "existing"]);
-        let bin = env!("CARGO_BIN_EXE_mabo");
-        let marker = r.root.join("hook-entered");
-        let output = r.root.join("nested-output");
-        let status = r.root.join("nested-status");
-        let hook = r.main.join(".git/hooks/post-checkout");
-        fs::create_dir_all(hook.parent().unwrap()).unwrap();
-        let nested = match action {
-            "gh-child" => {
-                let gh = r.root.join("gh");
-                fs::write(&gh, format!("#!/bin/sh\n'{bin}' gc --json\n")).unwrap();
-                fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
-                format!(
-                    "PATH='{}':\"$PATH\" '{bin}' github checkout 7",
-                    r.root.display()
-                )
-            }
-            "standalone-git" => {
-                format!("'{bin}' exec victim git -c \"alias.cleanup=!'{bin}' gc --json\" cleanup")
-            }
-            "standalone-exec" => format!("'{bin}' exec victim '{bin}' gc --json"),
-            "standalone-shell" => format!("'{bin}' exec victim sh -c \"'{bin}' gc --json\""),
-            "create-exec" => {
-                format!("'{bin}' create nested --no-hooks --exec \"'{bin}' gc --json\"")
-            }
-            "attach-exec" => {
-                format!("'{bin}' attach existing --no-hooks --exec \"'{bin}' gc --json\"")
-            }
-            _ => {
-                fs::write(r.main.join(".mabo.toml"), format!("[hooks]\npost-create = [\"'{bin}' gc --json\"]\npre-delete = [\"'{bin}' gc --json\"]\n")).unwrap();
-                match action {
-                    "create-hook" => format!("'{bin}' create nested"),
-                    "attach-hook" => format!("'{bin}' attach existing"),
-                    "delete-hook" => format!("'{bin}' delete victim"),
-                    "gc-hook" => format!("'{bin}' gc --apply --json"),
-                    _ => unreachable!(),
-                }
-            }
-        };
-        fs::write(&hook, format!("#!/bin/sh\n[ -e '{marker}' ] && exit 0\ntouch '{marker}'\ncd '{main}'\n{nested} > '{output}' 2>&1\necho $? > '{status}'\nexit 0\n", marker=marker.display(), main=r.main.display(), output=output.display(), status=status.display())).unwrap();
-        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
-        let mut child = r
-            .command(bin, &r.main, &["create", "outer", "--no-hooks"])
-            .env("MABO_TRUST_ALL", "1")
-            .process_group(0)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let timed_out = loop {
-            if child.try_wait().unwrap().is_some() {
-                break false;
-            }
-            if std::time::Instant::now() >= deadline {
-                Command::new("kill")
-                    .args(["-KILL", "--", &format!("-{}", child.id())])
-                    .status()
-                    .unwrap();
-                break true;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        };
-        let out = child.wait_with_output().unwrap();
-        let nested_output = fs::read_to_string(output).unwrap();
-        assert!(!timed_out, "{action} deadlocked: {nested_output}");
-        assert!(
-            out.status.success(),
-            "{action}: {} {nested_output}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(
-            fs::read_to_string(status).unwrap().trim(),
-            "1",
-            "{action}: {nested_output}"
-        );
-        assert!(
-            nested_output.contains("Cannot run project hooks or --exec while borrowing"),
-            "{action}: {nested_output}"
-        );
-        assert!(victim.exists());
-        assert_eq!(r.git(&r.main, &["branch", "--list", "nested"]), "");
-        let listed: Value =
-            serde_json::from_slice(&r.mabo(&r.main, &["list", "--json"]).stdout).unwrap();
-        assert!(!listed["worktrees"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|tree| tree["name"] == "nested" || tree["name"] == "existing"));
-    }
-}
-
-#[test]
-fn operation_lock_token_is_not_exported_to_gh() {
-    use std::os::unix::fs::PermissionsExt;
-    let r = Repo::new();
-    let out = r.mabo(
-        &r.main,
-        &[
-            "create",
-            "topic",
-            "--pr",
-            "https://github.com/acme/demo/pull/7",
-        ],
-    );
-    assert!(out.status.success());
-    let bin = r.root.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let observed = r.root.join("gh-token");
-    let gh = bin.join("gh");
-    fs::write(&gh, format!("#!/bin/sh\nprintf '%s' \"${{MABO_OPERATION_LOCK-unset}}\" > '{}'\nprintf '%s\\n' '{{\"state\":\"MERGED\"}}'\n", observed.display())).unwrap();
-    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
-    let out = r
-        .command(
-            env!("CARGO_BIN_EXE_mabo"),
-            &r.main,
-            &["gc", "--pr", "--json"],
-        )
-        .env(
-            "PATH",
-            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
-        )
-        .env("MABO_OPERATION_LOCK", "stale-inherited-token")
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(doc["candidates"][0]["action"], "wouldRemove", "{doc}");
-    assert_eq!(fs::read_to_string(observed).unwrap(), "unset");
-}
-
-#[test]
 fn gc_protects_linked_default_with_a_remapped_tracking_namespace() {
     for (refspec, destination) in [
         (
@@ -2768,7 +2761,7 @@ fn gc_protects_linked_default_with_a_remapped_tracking_namespace() {
         // main has moved since creation, so only the default-branch guard protects it.
         r.advance();
         let doc = r.sync(&r.main, &[], 0);
-        let tree = PathBuf::from(doc["default"]["path"].as_str().unwrap());
+        let tree = PathBuf::from(doc["data"]["default"]["path"].as_str().unwrap());
         let before = r.snapshot(&tree);
         let out = r.mabo(&r.main, &["gc", "--merged", "--apply", "--json"]);
         assert!(
@@ -2780,7 +2773,7 @@ fn gc_protects_linked_default_with_a_remapped_tracking_namespace() {
         assert!(tree.exists(), "default worktree removed: {doc}");
         assert_eq!(r.snapshot(&tree), before);
         assert!(
-            !doc["candidates"]
+            !doc["data"]["candidates"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -2788,7 +2781,7 @@ fn gc_protects_linked_default_with_a_remapped_tracking_namespace() {
             "{doc}"
         );
         assert!(
-            doc["candidates"]
+            doc["data"]["candidates"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -2833,13 +2826,13 @@ fn gc_local_branch_named_like_a_remapped_default_is_not_the_default() {
         let out = r.mabo(&r.main, &["attach", "main", "--json"]);
         assert!(out.status.success());
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        let default_path = PathBuf::from(doc["worktree"]["path"].as_str().unwrap());
+        let default_path = PathBuf::from(doc["data"]["worktree"]["path"].as_str().unwrap());
         let before = r.snapshot(&default_path);
         let out = r.mabo(&r.main, &["gc", "--merged", "--json"]);
         assert!(out.status.success());
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert!(
-            doc["candidates"]
+            doc["data"]["candidates"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -2847,7 +2840,7 @@ fn gc_local_branch_named_like_a_remapped_default_is_not_the_default() {
             "local cache/main was mistaken for the default: {doc}"
         );
         assert!(
-            !doc["candidates"]
+            !doc["data"]["candidates"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -2863,7 +2856,7 @@ fn gc_local_branch_named_like_a_remapped_default_is_not_the_default() {
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert!(
-            doc["candidates"]
+            doc["data"]["candidates"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -2912,9 +2905,9 @@ fn fetch_refspec_namespace_determines_remote_and_default_local_name() {
         r.advance();
         let tip = r.git(&r.upstream, &["rev-parse", "HEAD"]);
         let doc = r.sync(&r.main, &["topic"], 0);
-        assert_eq!(doc["default"]["status"], "updated", "{doc}");
-        assert_eq!(doc["default"]["branch"], "refs/heads/main");
-        assert_eq!(doc["worktrees"][0]["status"], "updated", "{doc}");
+        assert_eq!(doc["data"]["default"]["status"], "updated", "{doc}");
+        assert_eq!(doc["data"]["default"]["branch"], "refs/heads/main");
+        assert_eq!(doc["data"]["worktrees"][0]["status"], "updated", "{doc}");
         assert_eq!(r.git(&r.main, &["rev-parse", "main"]), tip);
         assert_eq!(
             r.git(&r.main, &["rev-parse", "refs/remotes/cache/main"]),
@@ -2955,17 +2948,17 @@ fn unresolved_default_does_not_block_recorded_bases() {
         String::from_utf8_lossy(&out.stderr)
     );
     let created: Value = serde_json::from_slice(&out.stdout).unwrap();
-    let tree = PathBuf::from(created["worktree"]["path"].as_str().unwrap());
+    let tree = PathBuf::from(created["data"]["worktree"]["path"].as_str().unwrap());
     r.write_commit(&tree, "own", "own\n");
     // attach deliberately leaves the recorded base null, exercising fallback errors.
     r.git(&clone, &["branch", "legacy"]);
     assert!(r.mabo(&clone, &["attach", "legacy"]).status.success());
     r.write_commit(&r.upstream, "incoming-develop", "incoming\n");
     r.git(&r.upstream, &["push", "origin", "develop"]);
-    let doc = r.sync(&clone, &["legacy", "topic"], 1);
-    assert_eq!(doc["default"]["status"], "failed", "{doc}");
-    assert_eq!(doc["worktrees"][0]["status"], "failed", "{doc}");
-    for item in [&doc["default"], &doc["worktrees"][0]] {
+    let doc = r.sync(&clone, &["legacy", "topic"], 6);
+    assert_eq!(doc["data"]["default"]["status"], "failed", "{doc}");
+    assert_eq!(doc["data"]["worktrees"][0]["status"], "failed", "{doc}");
+    for item in [&doc["data"]["default"], &doc["data"]["worktrees"][0]] {
         assert!(
             item["detail"]
                 .as_str()
@@ -2974,15 +2967,15 @@ fn unresolved_default_does_not_block_recorded_bases() {
             "{doc}"
         );
     }
-    assert_eq!(doc["worktrees"][1]["status"], "updated", "{doc}");
+    assert_eq!(doc["data"]["worktrees"][1]["status"], "updated", "{doc}");
     assert!(tree.join("incoming-develop").exists());
     let doc = r.sync(&clone, &["topic", "--no-default"], 0);
-    assert!(doc["default"].is_null());
-    assert_eq!(doc["worktrees"][0]["status"], "up-to-date");
+    assert!(doc["data"]["default"].is_null());
+    assert_eq!(doc["data"]["worktrees"][0]["status"], "up-to-date");
     let doc = r.sync(&clone, &["legacy", "topic", "--no-default"], 1);
-    assert!(doc["default"].is_null());
-    assert_eq!(doc["worktrees"][0]["status"], "failed");
-    assert_eq!(doc["worktrees"][1]["status"], "up-to-date");
+    assert!(doc["data"]["default"].is_null());
+    assert_eq!(doc["data"]["worktrees"][0]["status"], "failed");
+    assert_eq!(doc["data"]["worktrees"][1]["status"], "up-to-date");
 }
 
 #[test]
@@ -3000,18 +2993,21 @@ fn ordinary_failures_take_precedence_over_pushed_refusals() {
         let doc = r.sync(
             &r.main,
             &[names[0], names[1], "--no-default", "--rebase"],
-            1,
+            5,
         );
-        let items = doc["worktrees"].as_array().unwrap();
+        let items = doc["data"]["worktrees"].as_array().unwrap();
         assert!(
             items.iter().any(|item| item["status"] == "conflict"),
             "{doc}"
         );
-        assert!(items.iter().any(|item| item["code"] == "pushed"), "{doc}");
+        assert!(
+            items.iter().any(|item| item["code"] == "published"),
+            "{doc}"
+        );
         assert_eq!(r.snapshot(&conflict), before);
     }
-    let doc = r.sync(&r.main, &["published", "--no-default", "--rebase"], 3);
-    assert_eq!(doc["worktrees"][0]["code"], "pushed");
+    let doc = r.sync(&r.main, &["published", "--no-default", "--rebase"], 4);
+    assert_eq!(doc["data"]["worktrees"][0]["code"], "published");
 
     // A default failure is ordinary too, even alongside a sole refusal.
     r.git(&r.main, &["update-ref", "refs/remotes/stale/main", "HEAD"]);
@@ -3024,8 +3020,8 @@ fn ordinary_failures_take_precedence_over_pushed_refusals() {
         ],
     );
     let doc = r.sync(&r.main, &["published", "--rebase"], 1);
-    assert_eq!(doc["default"]["status"], "failed");
-    assert_eq!(doc["worktrees"][0]["code"], "pushed");
+    assert_eq!(doc["data"]["default"]["status"], "failed");
+    assert_eq!(doc["data"]["worktrees"][0]["code"], "published");
 
     // A target inspection failure must also survive either ordering.
     fs::write(conflict.join(".git"), "gitdir: /does/not/exist\n").unwrap();
@@ -3035,14 +3031,17 @@ fn ordinary_failures_take_precedence_over_pushed_refusals() {
             &[names[0], names[1], "--no-default", "--rebase"],
             1,
         );
-        let items = doc["worktrees"].as_array().unwrap();
+        let items = doc["data"]["worktrees"].as_array().unwrap();
         assert!(
             items
                 .iter()
                 .any(|item| item["status"] == "failed" && item["code"].is_null()),
             "{doc}"
         );
-        assert!(items.iter().any(|item| item["code"] == "pushed"), "{doc}");
+        assert!(
+            items.iter().any(|item| item["code"] == "published"),
+            "{doc}"
+        );
     }
 }
 
@@ -3064,8 +3063,8 @@ fn rebase_reapplies_upstream_cherry_pick_that_was_reverted() {
             vec!["--no-default"]
         };
         let doc = r.sync(&tree, &args, 0);
-        assert_eq!(doc["worktrees"][0]["strategy"], "rebase");
-        assert_eq!(doc["worktrees"][0]["status"], "updated");
+        assert_eq!(doc["data"]["worktrees"][0]["strategy"], "rebase");
+        assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
         assert_eq!(
             fs::read_to_string(tree.join("local-change")).unwrap(),
             "must survive\n"
@@ -3094,7 +3093,7 @@ fn rebase_preserves_intentionally_empty_and_newly_empty_commits() {
             vec!["--no-default"]
         };
         let doc = r.sync(&tree, &args, 0);
-        assert_eq!(doc["worktrees"][0]["status"], "updated");
+        assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
         assert_eq!(
             r.git(&tree, &["rev-list", "--count", "origin/main..HEAD"]),
             "3"
@@ -3134,7 +3133,7 @@ fn merge_own_changes_refuse_rebase_and_survive_explicit_merge() {
                 args.push(strategy);
             }
             let doc = r.sync(&tree, &args, if strategy == "--merge" { 0 } else { 1 });
-            let item = &doc["worktrees"][0];
+            let item = &doc["data"]["worktrees"][0];
             if strategy == "--merge" {
                 assert_eq!(item["status"], "updated");
                 assert_eq!(item["strategy"], "merge");
@@ -3195,11 +3194,11 @@ fn published_commits_in_fetch_destinations_outside_remotes_are_protected() {
                 } else {
                     &["--no-default"]
                 },
-                if explicit { 3 } else { 0 },
+                if explicit { 4 } else { 0 },
             );
-            let item = &doc["worktrees"][0];
+            let item = &doc["data"]["worktrees"][0];
             if explicit {
-                assert_eq!(item["code"], "pushed");
+                assert_eq!(item["code"], "published");
                 assert_eq!(r.snapshot(&tree), before);
             } else {
                 assert_eq!(item["strategy"], "merge", "{doc}");
@@ -3255,7 +3254,7 @@ fn gc_default_uses_local_branch_when_a_same_name_tag_exists() {
             assert_eq!(r.snapshot(&default_path), before);
             if args.contains(&"--orphaned") {
                 assert!(
-                    doc["candidates"]
+                    doc["data"]["candidates"]
                         .as_array()
                         .unwrap()
                         .iter()
@@ -3294,8 +3293,8 @@ fn gc_orphaned_survives_unresolvable_default_mapping() {
         String::from_utf8_lossy(&out.stdout)
     );
     let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(doc["candidates"][0]["name"], "gone");
-    assert_eq!(doc["candidates"][0]["action"], "removed");
+    assert_eq!(doc["data"]["candidates"][0]["name"], "gone");
+    assert_eq!(doc["data"]["candidates"][0]["action"], "removed");
 }
 
 #[test]
@@ -3325,12 +3324,12 @@ fn gc_unresolved_default_keeps_branch_worktrees_even_with_force() {
                 ],
             );
         }
-        let store = r.main.join(".git/maboroshi/worktrees.json");
-        let mut doc: Value = serde_json::from_slice(&fs::read(&store).unwrap()).unwrap();
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let mut doc: Value = serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
         for record in doc["worktrees"].as_array_mut().unwrap() {
             record["lastUsedAt"] = json!("2000-01-01T00:00:00.000Z");
         }
-        fs::write(&store, serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
+        records::write(&store, serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
         let before = r.snapshot(&tree);
         let out = r.mabo(
             &r.main,
@@ -3355,7 +3354,7 @@ fn gc_unresolved_default_keeps_branch_worktrees_even_with_force() {
             String::from_utf8_lossy(&out.stderr)
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        let candidates = doc["candidates"].as_array().unwrap();
+        let candidates = doc["data"]["candidates"].as_array().unwrap();
         assert!(
             candidates
                 .iter()
@@ -3399,9 +3398,9 @@ fn sync_never_runs_fsmonitor_for_noop_update_or_conflict_abort() {
         if mode.starts_with("merge") {
             args.push("--merge");
         }
-        let doc = r.sync(&r.main, &args, if conflict { 1 } else { 0 });
+        let doc = r.sync(&r.main, &args, if conflict { 6 } else { 0 });
         assert_eq!(
-            doc["worktrees"][0]["status"],
+            doc["data"]["worktrees"][0]["status"],
             if conflict {
                 "conflict"
             } else if mode == "noop" {
@@ -3441,7 +3440,7 @@ fn rebase_keeps_own_commits_after_upstream_rewind_with_forkpoint_config() {
             vec!["--no-default"]
         };
         let doc = r.sync(&tree, &args, 0);
-        assert_eq!(doc["worktrees"][0]["status"], "updated");
+        assert_eq!(doc["data"]["worktrees"][0]["status"], "updated");
         assert_eq!(
             fs::read_to_string(tree.join("old-upstream")).unwrap(),
             "must survive rewind\n"

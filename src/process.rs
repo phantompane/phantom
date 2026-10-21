@@ -37,6 +37,14 @@ fn command(program: &str) -> Command {
             "core.fsmonitor=false",
         ]);
     }
+    if crate::runtime::non_interactive() {
+        if program == "git" {
+            cmd.env("GIT_TERMINAL_PROMPT", "0");
+        }
+        if program == "gh" || crate::runtime::is_hook() {
+            cmd.stdin(Stdio::null());
+        }
+    }
     cmd
 }
 
@@ -65,7 +73,6 @@ pub fn raw_with_env(
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
-    crate::operation::configure_command(&mut cmd, command, cwd)?;
     let output = cmd.output().map_err(|error| spawn_error(command, &error))?;
     Ok(Captured {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -85,7 +92,6 @@ pub fn capture(
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
-    crate::operation::configure_command(&mut cmd, command, cwd)?;
     let output = cmd.output().map_err(|error| spawn_error(command, &error))?;
     let stdout_raw = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr_raw = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -124,7 +130,13 @@ pub fn inherit(
 ) -> Result<i32> {
     let mut cmd = self::command(command);
     cmd.args(args)
-        .stdin(Stdio::inherit())
+        .stdin(
+            if crate::runtime::non_interactive() && crate::runtime::is_hook() {
+                Stdio::null()
+            } else {
+                Stdio::inherit()
+            },
+        )
         .stderr(Stdio::inherit());
     if redirect_stdout_to_stderr {
         cmd.stdout(Stdio::from(std::io::stderr()));
@@ -137,7 +149,6 @@ pub fn inherit(
     for (key, value) in env {
         cmd.env(key, value);
     }
-    crate::operation::configure_command(&mut cmd, command, cwd)?;
     let status = cmd.status().map_err(|error| spawn_error(command, &error))?;
     exit_code(command, status)
 }
@@ -145,7 +156,6 @@ pub fn inherit(
 pub fn run_with_timeout(command: &str, args: &[&str], timeout: Duration) -> Result<Captured> {
     let mut cmd = self::command(command);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
-    crate::operation::configure_command(&mut cmd, command, None)?;
     let mut child = cmd.spawn().map_err(|error| spawn_error(command, &error))?;
     let started = std::time::Instant::now();
     loop {

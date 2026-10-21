@@ -139,7 +139,7 @@ fn write_document(path: &Path, document: &DocumentMut, prepend_header: bool) -> 
     } else {
         body
     };
-    fs::write(path, contents)
+    crate::atomic::write(path, contents.as_bytes())
         .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))
 }
 

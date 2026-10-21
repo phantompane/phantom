@@ -6,7 +6,7 @@
 - Development happens on `next`. `main` stays the previous TypeScript version.
 - Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `github`, `help`.
 - Command help text is generated from `help-data.json`.
-- Project hooks live in `.mabo.toml` in the source checkout, the checkout where the command runs (`[hooks] post-create` and `pre-delete`). `MABO_ROOT_PATH` is that checkout. Hooks run only after that git common directory is trusted (`mabo trust --yes` or `MABO_TRUST_ALL=1`). mabo does not ask when `CI` or `MABO_AGENT_ID` is set, or when stdin or stderr is not a terminal. `--no-hooks` skips them. `mabo gc` skips an untrusted repository that has pre-delete hooks and does not ask. Trust is the common-dir path, so a re-clone at the same path stays trusted until `mabo untrust`.
+- Project hooks live in `.mabo.toml` in the source checkout, the checkout where the command runs (`[hooks] post-create` and `pre-delete`). `MABO_ROOT_PATH` is that checkout. Hooks run only after that git common directory is trusted (`mabo trust --yes` or `MABO_TRUST_ALL=1`). mabo does not ask with nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or when stdin or stderr is not a terminal. `MABO_AGENT_ID` sets the default owner but does not suppress prompts. `--no-hooks` skips them. `mabo gc` skips an untrusted repository that has pre-delete hooks and does not ask. Trust is the common-dir path, so a re-clone at the same path stays trusted until `mabo untrust`.
 - Principles: single responsibility, a centralized git executor, and `Result` for every fallible path.
 
 ## Build, Test, and Development Commands
@@ -43,7 +43,8 @@
 ## Security & Configuration Tips
 
 - Never commit tokens or GitHub credentials. `github checkout` uses the `gh` CLI (`GH_TOKEN` / `GH_HOST`).
-- New worktrees go under `$XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash>/` (`~/.local/share/maboroshi/worktrees/...` when `XDG_DATA_HOME` is unset, empty, or relative) unless overridden with the `worktrees-directory` preference, which stays relative to the repository root. `delete` and `gc` may also remove a worktree recorded in `maboroshi/worktrees.json` when it sits outside that directory. An unrecorded worktree outside it is left alone. Avoid leaking local paths in logs.
+- New worktrees go under `$XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash>/` (`~/.local/share/maboroshi/worktrees/...` when `XDG_DATA_HOME` is unset, empty, or relative) unless overridden with the `worktrees-directory` preference, which stays relative to the repository root. `delete` and `gc` may also remove a worktree recorded in `maboroshi/workspaces/<id>.json` when it sits outside that directory. An unrecorded worktree outside it is left alone. Avoid leaking local paths in logs.
+- Workspace metadata uses `<git-common-dir>/maboroshi/workspaces/ws_<uuid v4>.json` (schema 2); project registrations use `$XDG_STATE_HOME/maboroshi/repos/proj_<uuid>.json`. Legacy `worktrees.json` and `projects.json` stay readable until the first write imports all records and renames the source to `*.json.imported`. Use the shared atomic writer for state files; mabo has no internal file locks. Different-record additions preserve both records; same-record concurrent updates use the last write. Project readers deduplicate roots by oldest `createdAt`.
 - Reuse `validate_worktree_name` rather than re-implementing name parsing.
 
 ## Releases
