@@ -12697,6 +12697,67 @@ fn primary_and_unmanaged_checkout_inspection_and_default_exec() {
 }
 
 #[test]
+fn set_unset_takes_one_field_and_preserves_the_following_selector() {
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "feature/auth"]).status.success());
+    for args in [
+        vec!["set", "--unset", "purpose", "feature/auth", "--json"],
+        vec!["set", "--unset=purpose", "feature/auth", "--json"],
+        vec![
+            "set",
+            "--unset",
+            "purpose",
+            "--unset",
+            "base",
+            "feature/auth",
+            "--json",
+        ],
+        vec![
+            "set",
+            "--unset",
+            "purpose",
+            "feature/auth",
+            "--unset",
+            "base",
+            "--json",
+        ],
+    ] {
+        assert!(repo
+            .mabo(&[
+                "set",
+                "feature/auth",
+                "--purpose",
+                "task",
+                "--base",
+                "main",
+                "--pr",
+                "42"
+            ])
+            .status
+            .success());
+        let out = repo.mabo(&args);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            text(&out.stdout)
+        );
+        let value = assert_envelope(&out, "set");
+        let workspace = &value["data"]["workspace"];
+        assert_eq!(workspace["name"], "feature/auth");
+        assert!(workspace["purpose"].is_null());
+        if args.contains(&"base") {
+            assert!(workspace["base"].is_null());
+        } else {
+            assert_eq!(workspace["base"], "refs/heads/main");
+        }
+        assert_eq!(workspace["links"]["pr"]["number"], 42);
+        let primary = assert_envelope(&repo.mabo(&["show", "--json"]), "show");
+        assert!(primary["data"]["workspace"]["id"].is_null());
+    }
+}
+
+#[test]
 fn set_updates_and_unsets_every_intent_field_atomically() {
     let repo = Repo::new();
     let created = json_value(&repo.mabo(&["create", "intent", "--json"]));
@@ -12760,7 +12821,10 @@ fn set_updates_and_unsets_every_intent_field_atomically() {
         }
         .is_null());
     }
-    let out = run(&["set", "--unset", "purpose", "base", "pr", "issue", "--json"]);
+    let out = run(&[
+        "set", "--unset", "purpose", "--unset", "base", "--unset", "pr", "--unset", "issue",
+        "--json",
+    ]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
 }
 

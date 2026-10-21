@@ -155,6 +155,103 @@ impl Drop for Repo {
     }
 }
 
+fn check_primary_sync_selectors(default_branch: bool, no_default: bool) {
+    for strategy in [None, Some("--rebase"), Some("--merge")] {
+        for named in [false, true] {
+            let r = Repo::new();
+            if !default_branch {
+                r.git(&r.main, &["checkout", "-b", "primary-topic"]);
+                r.write_commit(&r.main, "local-file", "local\n");
+            }
+            let shown = r.mabo(&r.main, &["show", "--json"]);
+            assert!(shown.status.success());
+            let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
+            let name = shown["data"]["workspace"]["name"].as_str().unwrap();
+            let before = r.snapshot(&r.main);
+            let default_before = r.git(&r.main, &["rev-parse", "refs/heads/main"]);
+            r.advance();
+            let remote_tip = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+            let mut args = vec![if named { name } else { "." }];
+            if no_default {
+                args.push("--no-default");
+            }
+            if let Some(strategy) = strategy {
+                args.push(strategy);
+            }
+            let doc = r.sync(&r.main, &args, 0);
+            assert_eq!(doc["schema"], 2);
+            assert_eq!(doc["data"]["workspaces"], json!([]), "{args:?}: {doc}");
+            if no_default {
+                assert!(doc["data"]["default"].is_null(), "{doc}");
+                assert_eq!(r.snapshot(&r.main), before, "{args:?}");
+                assert_eq!(
+                    r.git(&r.main, &["rev-parse", "refs/heads/main"]),
+                    default_before
+                );
+            } else {
+                assert_eq!(doc["data"]["default"]["strategy"], "ff-only");
+                assert_eq!(doc["data"]["default"]["status"], "updated");
+                assert_eq!(
+                    r.git(&r.main, &["rev-parse", "refs/heads/main"]),
+                    remote_tip
+                );
+                if default_branch {
+                    assert_eq!(r.git(&r.main, &["rev-parse", "HEAD"]), remote_tip);
+                } else {
+                    assert_eq!(r.snapshot(&r.main), before, "{args:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn primary_nondefault_sync_selectors_skip_integration() {
+    check_primary_sync_selectors(false, false);
+}
+
+#[test]
+fn primary_nondefault_sync_selectors_skip_integration_with_no_default() {
+    check_primary_sync_selectors(false, true);
+}
+
+#[test]
+fn primary_default_sync_selectors_only_fast_forward() {
+    check_primary_sync_selectors(true, false);
+}
+
+#[test]
+fn primary_default_sync_selectors_skip_with_no_default() {
+    check_primary_sync_selectors(true, true);
+}
+
+#[test]
+fn primary_default_sync_selectors_never_integrate_divergence() {
+    for no_default in [false, true] {
+        for selector in [".", "main"] {
+            for strategy in ["--rebase", "--merge"] {
+                let r = Repo::new();
+                r.write_commit(&r.main, "local-file", "local\n");
+                let before = r.snapshot(&r.main);
+                r.advance();
+                let mut args = vec![selector, strategy];
+                if no_default {
+                    args.push("--no-default");
+                }
+                let doc = r.sync(&r.main, &args, if no_default { 0 } else { 1 });
+                assert_eq!(r.snapshot(&r.main), before, "{args:?}");
+                assert_eq!(doc["data"]["workspaces"], json!([]), "{doc}");
+                if no_default {
+                    assert!(doc["data"]["default"].is_null());
+                } else {
+                    assert_eq!(doc["data"]["default"]["strategy"], "ff-only");
+                    assert_eq!(doc["data"]["default"]["status"], "diverged");
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn default_upstream_precedes_other_remote_heads_without_origin_head() {
     for existing_trunk in [false, true] {

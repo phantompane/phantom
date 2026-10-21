@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::context::Context;
 use crate::error::{Error, Result};
-use crate::{git, metadata, paths, worktree};
+use crate::{git, metadata, worktree};
 
 #[derive(Default)]
 pub struct Request {
@@ -488,8 +488,10 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
     } else if !request.names.is_empty() {
         for name in &request.names {
             let tree = crate::selectors::resolve(context, name, false, None)?;
-            if name != "." && paths::same_location(Path::new(&tree.path), &context.git_root) {
-                return Err(Error::validation("Sync targets must be linked workspaces"));
+            // Primary selections use only the default branch's ff-only path,
+            // just like an implicit sync from the primary checkout.
+            if tree.is_default {
+                continue;
             }
             if !targets
                 .iter()

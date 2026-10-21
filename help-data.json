@@ -1837,7 +1837,8 @@
         {
           "name": "unset",
           "type": "string",
-          "description": "Clear purpose, base, pr or issue. Supply several fields or repeat the flag to clear several fields. Cannot set and unset the same field."
+          "description": "--unset FIELD clears one of purpose, base, pr or issue per occurrence. Repeat the flag to clear several fields. Cannot set and unset the same field.",
+          "example": "--unset purpose --unset base"
         }
       ],
       "examples": [

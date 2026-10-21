@@ -122,7 +122,7 @@ JSON は schema 2 の envelope を使います。リポジトリの結果キー�
 mabo show pr:774 --json
 cd "$(mabo path feature/auth)"
 mabo set --purpose 'fix checkout' --base origin/main --pr 774
-mabo set feature/auth --unset purpose base pr issue
+mabo set feature/auth --unset purpose --unset base --unset pr --unset issue
 mabo exec -- git status
 mabo exec feature/auth -- npm test
 mabo list --kind workspace --paths
@@ -131,7 +131,7 @@ mabo list --all-repos --json
 
 `path` のテキスト出力は絶対パスと改行だけ、JSON は `data: {path}` です。`show` と `set` は `data.workspace` を返します。共有オブジェクトには `id`、`name`、`kind`、`path`、`current`、`repo:{root,name}`、`managed`、`orphaned`、`branch`、`head`、`detached`、`dirty`、`base`、`createdFrom`、`upstream`、`purpose`、`links`、`createdAt`、`updatedAt` が入り、不明な値は null です。`upstream` は未設定なら null、設定時は `{ref,ahead,behind,gone}` です。削除済みなら `gone:true`、件数は null になります。
 
-`show`・`path`・`list`・`exec` は記録の内容・mtime を変えず、旧ファイルの移行もしません。`set` は指定フィールドだけを一度の atomic write で更新します。`--unset` は purpose/base/pr/issue を削除し、複数フィールドやフラグの繰り返しを受け付けます。不正なフィールドや同じフィールドの設定と削除の併用は終了コード 2 です。`--base` は参照を検証して full ref 化し、コミット指定も引き続き使えます。`--unset base` は既定値を補わず、不明として記録します。`mabo set <name> --base REF` で再設定するまで sync は `base-unknown` でスキップします。base フィールドが無い旧記録には従来どおり既定ベースを使います。
+`show`・`path`・`list`・`exec` は記録の内容・mtime を変えず、旧ファイルの移行もしません。`set` は指定フィールドだけを一度の atomic write で更新します。`--unset FIELD` は1回に purpose/base/pr/issue のいずれか1つを削除し、複数フィールドを削除するにはフラグを繰り返します。不正なフィールドや同じフィールドの設定と削除の併用は終了コード 2 です。`--base` は参照を検証して full ref 化し、コミット指定も引き続き使えます。`--unset base` は既定値を補わず、不明として記録します。`mabo set <name> --base REF` で再設定するまで sync は `base-unknown` でスキップします。base フィールドが無い旧記録には従来どおり既定ベースを使います。
 
 `list --kind workspace|primary` は種類を絞り、`--names` と `--paths` は1行1件のテキストを出します。`--all-repos` は `repo list` が把握する登録済み・検出済みリポジトリを一覧にし、JSON には `data.repos` と全ワークスペースの `data.workspaces` が入ります。`-R` とは併用できません。人間向け出力にはリポジトリ見出し、現在位置の `*`、名前、ブランチ、upstream の進み・遅れ（`↑a ↓b`）、dirty、PR/issue（`#12` / `issue #34`）、目的を表示し、削除済み upstream は `upstream:gone` と表示します。
 
