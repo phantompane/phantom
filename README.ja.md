@@ -45,7 +45,7 @@ Maboroshi が担わない役割は次のとおりです。
 
 ## JSON 出力と終了コード
 
-`--json` は `--output json` の別名です。`--output text` は人間向け出力を選びます。`MABO_OUTPUT=text|json` で既定値を設定でき、明示したフラグが優先されます。環境変数を無視するのは `exec` と `--help` によるテキストヘルプだけです。`--version` と `help` は出力モードに従い JSON を返せます。`exec --json` は使用方法エラーになります。
+`--json` は `--output json` の別名です。`--output text` は人間向け出力を選びます。`MABO_OUTPUT=text|json` で既定値を設定でき、明示したフラグが優先されます。`exec`、`completions`、`shell-init` と `--help` によるテキストヘルプは、この環境変数を無視します。`--version` と `help` は出力モードに従い JSON を返せます。`exec`、`completions`、`shell-init` への明示的な `--json` / `--output json` は使用方法エラーになります。
 
 ```json
 {"schema":2,"command":"list","ok":true,"data":{"workspaces":[]},"warnings":[],"error":null}
@@ -163,6 +163,36 @@ create の JSON は `data.workspace`、`data.source`、`data.setup`、`data.copy
 `forget SEL...` は記録だけを消し、チェックアウト・ブランチ・Git 登録を残します。primary の記録も対象にできます。名前・`.`・pr:N・issue:N・PR/issue URL を複数指定でき、全セレクタを解決してから記録を削除します。JSON は `{items:[{workspace,ok}]}` で、workspace は記録削除後の状態を返します。
 
 移行: attach BRANCH は create --branch BRANCH、github/gh checkout は create --pr REF または create --issue REF に変わりました。create -x/--exec は create の後に exec SEL -- COMMAND を実行してください。旧構文は text・JSON ともに終了コード 2 と移行ヒントを返します。
+
+## Shell conveniences
+
+Load the directory helper and completions separately in your shell startup file:
+
+```bash
+# ~/.bashrc
+eval "$(mabo shell-init bash)"
+eval "$(mabo completions bash)"
+```
+
+```zsh
+# ~/.zshrc (run compinit before loading completions)
+autoload -Uz compinit
+compinit
+eval "$(mabo shell-init zsh)"
+eval "$(mabo completions zsh)"
+```
+
+```fish
+# ~/.config/fish/config.fish
+mabo shell-init fish | source
+mabo completions fish | source
+```
+
+The helper defines only a `mabo` function. `mabo cd [SEL] [-R REF]` resolves `command mabo path` in text mode and changes directory only on success; a lookup failure preserves the current directory, diagnostic and exit status. Repository options may also precede `cd`: `mabo -R owner/repo cd feature`. Use `mabo cd -- -leading-name` for a selector starting with a hyphen. Paths containing spaces stay one argument, for example `mabo cd './workspace with spaces'`. Other invocations pass every argument to `command mabo` unchanged. There are no sessions or panes, and shell-init does not load completions.
+
+Completions derive commands, subcommands and flags from `help-data.json`. Workspace selector candidates are queried with `command mabo list --names` when completing; query failures silently produce no workspace candidates. `-R`/`--repo` selects the repository for that query. Fish and zsh also show descriptions. These are minimal completions: they do not complete arbitrary Git refs, child commands after `exec --`, or every option value.
+
+Both script commands require `bash`, `zsh` or `fish`; missing or unknown shells exit 2 with a usage hint. They ignore `MABO_OUTPUT` and reject explicit `--json` / `--output json` with exit 2. `mabo help completions`, `mabo help shell-init` and `mabo help --json` describe the contract.
 
 ## Setup lifecycle
 

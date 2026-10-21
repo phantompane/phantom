@@ -6,26 +6,26 @@ use serde::Deserialize;
 use crate::error::{Error, Result};
 
 #[derive(Debug, Deserialize)]
-struct HelpFile {
-    commands: Vec<CommandSummary>,
+pub(crate) struct HelpFile {
+    pub(crate) commands: Vec<CommandSummary>,
     #[serde(rename = "globalOptions")]
-    global_options: Vec<CommandOption>,
-    helps: std::collections::BTreeMap<String, CommandHelp>,
+    pub(crate) global_options: Vec<CommandOption>,
+    pub(crate) helps: std::collections::BTreeMap<String, CommandHelp>,
 }
 
 #[derive(Debug, Deserialize)]
-struct CommandSummary {
-    name: String,
-    description: String,
+pub(crate) struct CommandSummary {
+    pub(crate) name: String,
+    pub(crate) description: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct CommandHelp {
+pub(crate) struct CommandHelp {
     name: String,
-    description: String,
-    usage: String,
+    pub(crate) description: String,
+    pub(crate) usage: String,
     #[serde(default)]
-    options: Vec<CommandOption>,
+    pub(crate) options: Vec<CommandOption>,
     #[serde(default)]
     examples: Vec<CommandExample>,
     #[serde(default)]
@@ -33,14 +33,14 @@ struct CommandHelp {
 }
 
 #[derive(Debug, Deserialize)]
-struct CommandOption {
-    name: String,
-    short: Option<String>,
+pub(crate) struct CommandOption {
+    pub(crate) name: String,
+    pub(crate) short: Option<String>,
     #[serde(default)]
-    aliases: Vec<String>,
+    pub(crate) aliases: Vec<String>,
     #[serde(rename = "type")]
-    kind: String,
-    description: String,
+    pub(crate) kind: String,
+    pub(crate) description: String,
     #[serde(default)]
     multiple: bool,
     example: Option<String>,
@@ -52,7 +52,7 @@ struct CommandExample {
     command: String,
 }
 
-fn data() -> Result<&'static HelpFile> {
+pub(crate) fn data() -> Result<&'static HelpFile> {
     static DATA: OnceLock<std::result::Result<HelpFile, String>> = OnceLock::new();
     match DATA.get_or_init(|| {
         serde_json::from_str(include_str!("../help-data.json")).map_err(|error| error.to_string())

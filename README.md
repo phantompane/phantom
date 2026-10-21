@@ -137,6 +137,36 @@ mabo sync pr:774
 
 The removed `where` command exits 2 with a `path` / `show --json` hint. `meta` and `meta set` exit 2 with a `set` / `show` hint. `list --no-default` exits 2 with `--kind workspace` guidance. An exec invocation without the required `--` exits 2 with the new syntax. Exec preserves child output and exit status, ignores `MABO_OUTPUT`, and refuses explicit JSON output. Usage diagnostics and any accompanying help go to stderr, leaving text stdout empty.
 
+## Shell conveniences
+
+Load the directory helper and completions separately in your shell startup file:
+
+```bash
+# ~/.bashrc
+eval "$(mabo shell-init bash)"
+eval "$(mabo completions bash)"
+```
+
+```zsh
+# ~/.zshrc (run compinit before loading completions)
+autoload -Uz compinit
+compinit
+eval "$(mabo shell-init zsh)"
+eval "$(mabo completions zsh)"
+```
+
+```fish
+# ~/.config/fish/config.fish
+mabo shell-init fish | source
+mabo completions fish | source
+```
+
+The helper defines only a `mabo` function. `mabo cd [SEL] [-R REF]` resolves `command mabo path` in text mode and changes directory only on success; a lookup failure preserves the current directory, diagnostic and exit status. Repository options may also precede `cd`: `mabo -R owner/repo cd feature`. Use `mabo cd -- -leading-name` for a selector starting with a hyphen. Paths containing spaces stay one argument, for example `mabo cd './workspace with spaces'`. Other invocations pass every argument to `command mabo` unchanged. There are no sessions or panes, and shell-init does not load completions.
+
+Completions derive commands, subcommands and flags from `help-data.json`. Workspace selector candidates are queried with `command mabo list --names` when completing; query failures silently produce no workspace candidates. `-R`/`--repo` selects the repository for that query. Fish and zsh also show descriptions. These are minimal completions: they do not complete arbitrary Git refs, child commands after `exec --`, or every option value.
+
+Both script commands require `bash`, `zsh` or `fish`; missing or unknown shells exit 2 with a usage hint. They ignore `MABO_OUTPUT` and reject explicit `--json` / `--output json` with exit 2. `mabo help completions`, `mabo help shell-init` and `mabo help --json` describe the contract.
+
 ## Copying gitignored files
 
 `mabo create` and `mabo setup` read `.worktreeinclude` and copy files from the **primary checkout**, even when run in a subdirectory or another workspace. The file uses gitignore syntax. A file is copied only when a pattern matches it and Git ignores it, so tracked files are never duplicated.
@@ -230,7 +260,7 @@ The old `MABO_NAME`, `MABO_PATH`, and `MABO_ROOT_PATH` variables are removed fro
 
 `refused` is the fallback when a safety refusal has no more specific cause. The same statuses apply to text output. Standalone `exec` preserves its child's exit status, including 128+signal. Create setup failures exit 6 and retain the workspace plus hook status in `data.setup.exitCode`. Metadata save and copy failures after creation also exit 6. Remove checks every selector and safety guard before removing anything. A later failure exits 6 after persistent removal, otherwise the cause exit code. Per-item results remain available for retries. Remove reports unknown selectors as exit 3 before any hooks or removal, including with `--dry-run`. After exit 6, use `error.details.retryCommand` (also shown in text) to retry only unfinished work; repeating the original command may exit 3 for completed targets.
 
-`MABO_OUTPUT=json|text` sets the default; empty means unset and other values exit 2. Explicit output flags override it. Unknown commands and missing commands after common options also return a usage envelope when JSON is selected. `list --names`/`--paths` (and repo `--names`/`--paths`) select text even with `MABO_OUTPUT=json`; explicitly combining it with JSON is a usage error. `exec` and text help through `--help` ignore `MABO_OUTPUT`. `--version` and `help` support JSON and honor the output mode. Explicit `exec --json` or `exec --output json` is a usage error; arguments after the required `--` belong to the child.
+`MABO_OUTPUT=json|text` sets the default; empty means unset and other values exit 2. Explicit output flags override it. Unknown commands and missing commands after common options also return a usage envelope when JSON is selected. `list --names`/`--paths` (and repo `--names`/`--paths`) select text even with `MABO_OUTPUT=json`; explicitly combining it with JSON is a usage error. `exec`, `completions`, `shell-init` and text help through `--help` ignore `MABO_OUTPUT`. `--version` and `help` support JSON and honor the output mode. Explicit JSON output for `exec`, `completions` or `shell-init` is a usage error; arguments after the required `--` belong to the child.
 
 Mabo never prompts in non-interactive mode: nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or stdin/stderr without a TTY. Untrusted hooks refuse before changes with exit 4 and a `mabo trust add` / `create --no-setup` / `setup --no-hooks` hint. Network Git operations receive `GIT_TERMINAL_PROMPT=0`; repository hooks and gh read stdin from `/dev/null`. User commands (Standalone `exec`) inherit stdin.
 

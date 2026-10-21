@@ -20252,3 +20252,343 @@ fn retirement_remove_review_dot_resolves_record_after_registration_disappears() 
         }
     }
 }
+
+#[test]
+fn shell_commands_output_and_usage_contract() {
+    let repo = Repo::new();
+    for command in ["completions", "shell-init"] {
+        for shell in ["bash", "zsh", "fish"] {
+            let normal = repo.mabo(&[command, shell]);
+            assert!(
+                normal.status.success(),
+                "{command} {shell}: {}",
+                text(&normal.stderr)
+            );
+            assert!(!normal.stdout.is_empty());
+            for mode in ["json", "invalid"] {
+                let output = repo
+                    .command(env!("CARGO_BIN_EXE_mabo"), &[command, shell])
+                    .env("MABO_OUTPUT", mode)
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "{}", text(&output.stderr));
+                assert_eq!(output.stdout, normal.stdout);
+            }
+            for flags in [
+                vec!["--json"],
+                vec!["--output", "json"],
+                vec!["--output=json"],
+                vec!["--json", "--help"],
+            ] {
+                let mut args = vec![command, shell];
+                args.extend(flags);
+                let output = repo.mabo(&args);
+                assert_eq!(output.status.code(), Some(2), "{args:?}");
+                assert!(output.stdout.is_empty());
+                assert!(text(&output.stderr).contains("JSON"));
+            }
+            assert_closed_stdout(&repo, &[command, shell], 0);
+        }
+        for args in [
+            vec![command],
+            vec![command, "powershell"],
+            vec![command, "bash", "extra"],
+        ] {
+            let output = repo.mabo(&args);
+            assert_eq!(output.status.code(), Some(2));
+            assert!(output.stdout.is_empty());
+            let error = text(&output.stderr);
+            assert!(
+                error.contains("bash") && error.contains("zsh") && error.contains("fish"),
+                "{error}"
+            );
+        }
+        let help = repo.mabo(&["help", command]);
+        assert!(help.status.success());
+        assert!(text(&help.stdout).contains("bash|zsh|fish"));
+        let help = repo.mabo(&["help", command, "--json"]);
+        let value: serde_json::Value = serde_json::from_slice(&help.stdout).unwrap();
+        assert_eq!(value["schema"], 2);
+        assert_eq!(value["data"]["selected"]["name"], command);
+    }
+}
+
+#[test]
+fn bash_shell_smoke() {
+    shell_smoke("bash");
+}
+#[test]
+fn zsh_shell_smoke() {
+    shell_smoke("zsh");
+}
+#[test]
+fn fish_shell_smoke() {
+    shell_smoke("fish");
+}
+
+fn shell_smoke(shell: &str) {
+    match Command::new(shell).arg("--version").output() {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            maboroshi::output::stderr(format_args!(
+                "SKIP {shell} shell smoke: {shell} is not installed\n"
+            ));
+            return;
+        }
+        other => assert!(other.unwrap().status.success()),
+    }
+    let repo = Repo::new();
+    let parent = repo.root.join("parent with ' spaces");
+    fs::create_dir(&parent).unwrap();
+    let target = parent.join("-workspace");
+    let name = "-workspace";
+    let config = repo.mabo(&["config", "set", "workspace-root", parent.to_str().unwrap()]);
+    assert!(config.status.success(), "{}", text(&config.stderr));
+    let output = repo.mabo(&["create", "--detach", "--no-setup", "--", name]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let ordinary = repo.mabo(&["create", "ordinary", "--detach", "--no-setup"]);
+    assert!(ordinary.status.success(), "{}", text(&ordinary.stderr));
+    let bin = repo.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_mabo"), bin.join("mabo")).unwrap();
+    for command in ["shell-init", "completions"] {
+        let output = repo.mabo(&[command, shell]);
+        assert!(output.status.success(), "{}", text(&output.stderr));
+        let file = repo.root.join(format!("{command}.{shell}"));
+        fs::write(&file, output.stdout).unwrap();
+        let syntax = repo
+            .command(
+                shell,
+                &[
+                    if shell == "fish" {
+                        "--no-execute"
+                    } else {
+                        "-n"
+                    },
+                    file.to_str().unwrap(),
+                ],
+            )
+            .output()
+            .unwrap();
+        assert!(syntax.status.success(), "{shell}: {}", text(&syntax.stderr));
+    }
+    let script = if shell == "fish" {
+        r#"
+source "$MABO_TEST_INIT"
+source "$MABO_TEST_COMPLETIONS"
+set -l start "$PWD"
+mabo cd missing 2> "$MABO_TEST_ERROR"
+set -l result $status
+test $result -eq 3; or exit 11
+test "$PWD" = "$start"; or exit 12
+mabo -R "$MABO_TEST_REPO" cd -- "$MABO_TEST_NAME"; or exit 13
+test "$PWD" = "$MABO_TEST_TARGET"; or exit 14
+builtin cd -- "$start"
+mabo cd --repo="$MABO_TEST_REPO" -- "$MABO_TEST_NAME"; or exit 15
+test "$PWD" = "$MABO_TEST_TARGET"; or exit 16
+builtin cd -- "$start"
+mabo cd; or exit 19
+test "$PWD" = "$start"; or exit 20
+mabo exec -- sh -c 'exit 23'
+test $status -eq 23; or exit 21
+mabo exec -- printf '%s\n' 'space argument' '' '-leading' > "$MABO_TEST_ARGS"; or exit 17
+complete -C 'mabo ' > "$MABO_TEST_COMMANDS"
+complete -C 'mabo path ' > "$MABO_TEST_NAMES"
+complete -C 'mabo repo ' > "$MABO_TEST_CHILDREN"
+complete -C 'mabo sync --' > "$MABO_TEST_FLAGS"
+"#
+    } else {
+        r#"
+if [ -n "$ZSH_VERSION" ]; then autoload -Uz compinit; compinit -D; fi
+source "$MABO_TEST_INIT"
+source "$MABO_TEST_COMPLETIONS"
+start=$PWD
+mabo cd missing 2> "$MABO_TEST_ERROR"
+result=$?
+[ "$result" -eq 3 ] || exit 11
+[ "$PWD" = "$start" ] || exit 12
+mabo -R "$MABO_TEST_REPO" cd -- "$MABO_TEST_NAME" || exit 13
+[ "$PWD" = "$MABO_TEST_TARGET" ] || exit 14
+builtin cd -- "$start"
+mabo cd --repo="$MABO_TEST_REPO" -- "$MABO_TEST_NAME" || exit 15
+[ "$PWD" = "$MABO_TEST_TARGET" ] || exit 16
+builtin cd -- "$start"
+mabo cd || exit 19
+[ "$PWD" = "$start" ] || exit 20
+mabo exec -- sh -c 'exit 23'
+[ "$?" -eq 23 ] || exit 21
+mabo exec -- printf '%s\n' 'space argument' '' '-leading' > "$MABO_TEST_ARGS" || exit 17
+if [ -n "$ZSH_VERSION" ]; then
+    [ "${_comps[mabo]}" = _mabo ] || exit 18
+    # Stub only the ZLE presentation; exercise the registered adapter.
+    _describe() { print -rl -- "${mabo_entries[@]}"; }
+    words=(mabo ''); CURRENT=2; _mabo > "$MABO_TEST_COMMANDS"
+    words=(mabo path ''); CURRENT=3; _mabo > "$MABO_TEST_NAMES"
+    words=(mabo repo ''); CURRENT=3; _mabo > "$MABO_TEST_CHILDREN"
+    words=(mabo sync --); CURRENT=3; _mabo > "$MABO_TEST_FLAGS"
+else
+    complete -p mabo || exit 18
+    COMP_WORDS=(mabo ''); COMP_CWORD=1; _mabo
+    printf '%s\n' "${COMPREPLY[@]}" > "$MABO_TEST_COMMANDS"
+    COMP_WORDS=(mabo path ''); COMP_CWORD=2; _mabo
+    printf '%s\n' "${COMPREPLY[@]}" > "$MABO_TEST_NAMES"
+    COMP_WORDS=(mabo repo ''); COMP_CWORD=2; _mabo
+    printf '%s\n' "${COMPREPLY[@]}" > "$MABO_TEST_CHILDREN"
+    COMP_WORDS=(mabo sync --); COMP_CWORD=2; _mabo
+    printf '%s\n' "${COMPREPLY[@]}" > "$MABO_TEST_FLAGS"
+fi
+"#
+    };
+    let mut script = script.to_string();
+    script.push_str(r#"
+mabo cd ordinary || exit 29
+test "$PWD" = "$MABO_TEST_ORDINARY" || exit 30
+builtin cd -- "$MABO_TEST_REPO"
+mabo "-R$MABO_TEST_REPO" cd -- "$MABO_TEST_NAME" || exit 22
+test "$PWD" = "$MABO_TEST_TARGET" || exit 24
+builtin cd -- "$MABO_TEST_REPO"
+mabo --repo="$MABO_TEST_REPO" cd -- "$MABO_TEST_NAME" || exit 25
+test "$PWD" = "$MABO_TEST_TARGET" || exit 26
+builtin cd -- "$MABO_TEST_REPO"
+mabo cd "$MABO_TEST_TARGET" || exit 27
+test "$PWD" = "$MABO_TEST_TARGET" || exit 28
+builtin cd -- "$HOME"
+_mabo_candidates -R "$MABO_TEST_REPO" path -- > "$MABO_TEST_RESULTS/repo-short"
+_mabo_candidates --repo="$MABO_TEST_REPO" path -- > "$MABO_TEST_RESULTS/repo-long"
+_mabo_candidates "-R$MABO_TEST_REPO" path -- > "$MABO_TEST_RESULTS/repo-attached"
+_mabo_candidates --repo "$HOME/missing-repo" path -- > "$MABO_TEST_RESULTS/failed-query"
+_mabo_candidates exec -- > "$MABO_TEST_RESULTS/exec-boundary"
+_mabo_candidates exec workspace > "$MABO_TEST_RESULTS/exec-selector"
+_mabo_candidates path -- "$MABO_TEST_NAME" > "$MABO_TEST_RESULTS/single-selector"
+_mabo_candidates -R "$MABO_TEST_REPO" remove -- "$MABO_TEST_NAME" > "$MABO_TEST_RESULTS/multiple-selectors"
+_mabo_candidates -R "$MABO_TEST_REPO" setup --copy-file pattern -- > "$MABO_TEST_RESULTS/value-consumed"
+_mabo_candidates setup --copy-file > "$MABO_TEST_RESULTS/value-pending"
+"#);
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../help-data.json")).unwrap();
+    for (index, key) in contract["helps"].as_object().unwrap().keys().enumerate() {
+        script.push_str(&format!(
+            "_mabo_candidates {key} > \"$MABO_TEST_RESULTS/contract-{index}\"\n"
+        ));
+    }
+    let path = std::env::join_paths(
+        std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let mut command = repo.command(
+        shell,
+        &[
+            if shell == "fish" {
+                "--no-config"
+            } else {
+                "--norc"
+            },
+            "-c",
+            &script,
+        ],
+    );
+    // zsh uses -f to skip startup files.
+    if shell == "zsh" {
+        command = repo.command(shell, &["-f", "-c", &script]);
+    }
+    let output = command
+        .env("PATH", path)
+        .env("MABO_OUTPUT", "json")
+        .env(
+            "MABO_TEST_INIT",
+            repo.root.join(format!("shell-init.{shell}")),
+        )
+        .env(
+            "MABO_TEST_COMPLETIONS",
+            repo.root.join(format!("completions.{shell}")),
+        )
+        .env("MABO_TEST_RESULTS", &repo.root)
+        .env("MABO_TEST_REPO", &repo.repo)
+        .env("MABO_TEST_TARGET", &target)
+        .env("MABO_TEST_ORDINARY", parent.join("ordinary"))
+        .env("MABO_TEST_NAME", name)
+        .env("MABO_TEST_ERROR", repo.root.join("error"))
+        .env("MABO_TEST_ARGS", repo.root.join("args"))
+        .env("MABO_TEST_COMMANDS", repo.root.join("commands"))
+        .env("MABO_TEST_NAMES", repo.root.join("names"))
+        .env("MABO_TEST_CHILDREN", repo.root.join("children"))
+        .env("MABO_TEST_FLAGS", repo.root.join("flags"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{shell} {:?}: {}\n{}",
+        output.status.code(),
+        text(&output.stderr),
+        text(&output.stdout)
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root.join("args")).unwrap(),
+        "space argument\n\n-leading\n"
+    );
+    let lookup_failure = repo.mabo(&["path", "--output", "text", "missing"]);
+    assert_eq!(lookup_failure.status.code(), Some(3));
+    assert_eq!(
+        fs::read(repo.root.join("error")).unwrap(),
+        lookup_failure.stderr
+    );
+    for (file, candidate) in [
+        ("commands", "create"),
+        ("names", name),
+        ("children", "add"),
+        ("flags", "--rewrite-published"),
+    ] {
+        let candidates = fs::read_to_string(repo.root.join(file)).unwrap();
+        assert!(
+            candidates.contains(candidate),
+            "{shell} {file}: {candidates}"
+        );
+    }
+    for file in [
+        "repo-short",
+        "repo-long",
+        "repo-attached",
+        "multiple-selectors",
+        "value-consumed",
+    ] {
+        let candidates = fs::read_to_string(repo.root.join(file)).unwrap();
+        assert!(
+            candidates.lines().any(|line| line == name),
+            "{shell} {file}: {candidates}"
+        );
+    }
+    for file in [
+        "failed-query",
+        "exec-boundary",
+        "exec-selector",
+        "single-selector",
+        "value-pending",
+    ] {
+        assert_eq!(
+            fs::read_to_string(repo.root.join(file)).unwrap(),
+            "",
+            "{shell} {file}"
+        );
+    }
+    for (index, (key, help)) in contract["helps"].as_object().unwrap().iter().enumerate() {
+        let candidates = fs::read_to_string(repo.root.join(format!("contract-{index}"))).unwrap();
+        for option in help["options"].as_array().unwrap() {
+            let long = format!("--{}", option["name"].as_str().unwrap());
+            assert!(
+                candidates
+                    .lines()
+                    .any(|line| line.split('\t').next() == Some(long.as_str())),
+                "{shell} {key} {long}: {candidates}"
+            );
+            if let Some(short) = option["short"].as_str() {
+                let short = format!("-{short}");
+                assert!(
+                    candidates
+                        .lines()
+                        .any(|line| line.split('\t').next() == Some(short.as_str())),
+                    "{shell} {key} {short}"
+                );
+            }
+        }
+    }
+}

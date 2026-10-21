@@ -67,6 +67,14 @@
     {
       "name": "setup",
       "description": "Prepare a workspace again: copy ignored files from the primary checkout, then run trusted setup hooks"
+    },
+    {
+      "name": "completions",
+      "description": "Output a completion script for bash, zsh or fish"
+    },
+    {
+      "name": "shell-init",
+      "description": "Output a shell function for mabo cd in bash, zsh or fish"
     }
   ],
   "helps": {
@@ -1741,6 +1749,84 @@
         "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
         "pre-remove hooks run only after the repository is trusted. On a terminal, mabo asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, nonempty CI, --no-input or MABO_NO_INPUT being enabled, or --json fails before deleting. An empty value counts as unset. Run mabo trust add or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+      ]
+    },
+    "completions": {
+      "name": "completions",
+      "description": "Output a completion script for bash, zsh or fish",
+      "usage": "mabo completions bash|zsh|fish",
+      "options": [
+        {
+          "name": "repo",
+          "short": "R",
+          "type": "string",
+          "description": "Select a repository by path, registered ID, canonical host/owner/repo name, or an unambiguous name suffix. May precede the command. For exec, put it before the workspace name."
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt; also enabled by CI, JSON, MABO_NO_INPUT, or no stdin/stderr TTY"
+        },
+        {
+          "name": "help",
+          "short": "h",
+          "type": "boolean",
+          "description": "Show text help"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Only text output is supported. Explicit --json or --output json exits 2. MABO_OUTPUT is ignored"
+        }
+      ],
+      "notes": [
+        "Writes a raw shell script to stdout. Missing or unknown shells exit 2; choose bash, zsh or fish. MABO_OUTPUT is ignored; explicit --json or --output json exits 2.",
+        "Commands, subcommands and flags are generated from this help contract. Workspace selector candidates come from command mabo list --names; query failures silently produce no candidates. -R/--repo selects the repository for workspace candidates. In zsh, run compinit before loading completions."
+      ],
+      "examples": [
+        {
+          "description": "Load the generated script in bash",
+          "command": "eval \"$(mabo completions bash)\""
+        }
+      ]
+    },
+    "shell-init": {
+      "name": "shell-init",
+      "description": "Output a shell function for mabo cd in bash, zsh or fish",
+      "usage": "mabo shell-init bash|zsh|fish",
+      "options": [
+        {
+          "name": "repo",
+          "short": "R",
+          "type": "string",
+          "description": "Select a repository by path, registered ID, canonical host/owner/repo name, or an unambiguous name suffix. May precede the command. For exec, put it before the workspace name."
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt; also enabled by CI, JSON, MABO_NO_INPUT, or no stdin/stderr TTY"
+        },
+        {
+          "name": "help",
+          "short": "h",
+          "type": "boolean",
+          "description": "Show text help"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Only text output is supported. Explicit --json or --output json exits 2. MABO_OUTPUT is ignored"
+        }
+      ],
+      "notes": [
+        "Writes a raw shell script to stdout. Missing or unknown shells exit 2; choose bash, zsh or fish. MABO_OUTPUT is ignored; explicit --json or --output json exits 2.",
+        "Defines only the mabo shell function: mabo cd [SEL] [-R REF] resolves command mabo path, then changes directory only on success. Repository options may also precede cd. Use -- before a selector beginning with a hyphen. Other commands pass their arguments through unchanged. Completions must be loaded separately; no sessions or panes are created."
+      ],
+      "examples": [
+        {
+          "description": "Load the generated script in bash",
+          "command": "eval \"$(mabo shell-init bash)\""
+        }
       ]
     }
   },
