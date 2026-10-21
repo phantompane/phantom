@@ -59,6 +59,14 @@ pub(crate) fn data(value: &impl Serialize) -> Result<i32> {
     Ok(0)
 }
 
+pub(crate) fn app_version(version: String) -> Result<i32> {
+    OUTPUT.with_borrow_mut(|out| {
+        out.data =
+            Some(serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "display": version}))
+    });
+    Ok(0)
+}
+
 pub(crate) fn failure(error: JsonErrorBody) {
     failure_with(error, |message| eprintln!("{message}"));
 }
@@ -81,7 +89,14 @@ fn failure_with(error: JsonErrorBody, report: impl FnOnce(&str)) {
                 } else {
                     error.message.clone()
                 };
-                report(&message);
+                // Outer commands may report opaque IO/Git errors containing paths.
+                // Ambiguity reports escape each value where their list is built,
+                // so their intentional line breaks can remain readable.
+                if is_outer_command(&out.command) && error.code != "ambiguous" {
+                    report(&visible_text(&message));
+                } else {
+                    report(&message);
+                }
             }
             out.reported_errors.push(error.message.clone());
         }
@@ -91,13 +106,30 @@ fn failure_with(error: JsonErrorBody, report: impl FnOnce(&str)) {
 
 pub(crate) fn warning(code: &str, message: impl Into<String>) {
     let message = message.into();
-    eprintln!("{message}");
+    if code == "repo_discovery" {
+        eprintln!("{}", visible_text(&message));
+    } else {
+        eprintln!("{message}");
+    }
     OUTPUT.with_borrow_mut(|out| {
         out.warnings.push(Warning {
             code: code.into(),
             message,
         })
     });
+}
+
+/// Report a diagnostic only once in the invocation begun by `begin`.
+pub(crate) fn warning_once(code: &str, message: impl Into<String>) {
+    let message = message.into();
+    let reported = OUTPUT.with_borrow(|out| {
+        out.warnings
+            .iter()
+            .any(|warning| warning.code == code && warning.message == message)
+    });
+    if !reported {
+        warning(code, message);
+    }
 }
 
 pub(crate) fn finish(exit: i32) -> Result<()> {
@@ -128,10 +160,71 @@ pub(crate) fn finish(exit: i32) -> Result<()> {
     })
 }
 
+fn is_outer_command(command: &str) -> bool {
+    matches!(
+        command.split_whitespace().next(),
+        Some("repo" | "trust" | "config" | "help" | "--version")
+    )
+}
+
+/// Values in diagnostics that provide their own trusted multiline layout.
+pub(crate) fn diagnostic_value(value: &str) -> String {
+    if json() {
+        value.to_owned()
+    } else {
+        visible_text(value)
+    }
+}
+
+/// Escape untrusted values before interpolating them into terminal output.
+pub(crate) fn visible_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if hides_the_prompt(ch) {
+            out.push_str(&format!("\\u{{{:x}}}", u32::from(ch)));
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn hides_the_prompt(ch: char) -> bool {
+    ch.is_control()
+        || matches!(
+            ch,
+            '\u{00ad}'
+                | '\u{061c}'
+                | '\u{180e}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{feff}'
+                | '\u{fff9}'..='\u{fffb}'
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::{GENERAL, PARTIAL, REFUSED};
+
+    #[test]
+    fn warning_once_distinguishes_diagnostics_and_resets_per_invocation() {
+        for json in [false, true] {
+            for _ in 0..2 {
+                begin("config list", json);
+                warning_once("renamed", "Warning: first key");
+                warning_once("renamed", "Warning: first key");
+                warning_once("renamed", "Warning: second key");
+                warning_once("removed", "Warning: first key");
+                OUTPUT.with_borrow(|out| assert_eq!(out.warnings.len(), 3));
+            }
+        }
+    }
 
     #[test]
     fn recorded_failures_are_reported_once_in_text_and_retained_in_json() {

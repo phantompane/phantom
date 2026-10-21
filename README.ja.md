@@ -28,7 +28,7 @@ Maboroshi はワークスペースを作成し、既存の作業を引き継い�
 - **マージ済み、所有者なし、古い、という状態は判断材料であり、削除してよいという許可ではありません。** `gc` は `--apply` または `--force` を指定するまで、削除予定を表示するだけです（`--force` は適用も兼ねます）。`--force` がなければ、未コミットの変更がある作業や、公開済みまたは取り込み済みと確認できないコミットを保護します。デフォルトブランチのワークスペース、実行中のカレントディレクトリがあるワークスペース、Git でロックされたワークスペースは、`--force` があっても保護します。
 - **所有者は情報であって、アクセス制御ではありません。** `MABO_AGENT_ID` に空白以外の文字が含まれていれば、`sync --mine` はそのエージェントのワークスペースだけを選び、`sync --all` は他のエージェントのワークスペースをスキップします（どちらも `--no-default` がなければデフォルトブランチの更新も試みます）。名前を明示すれば、所有者にかかわらず `sync` で同期できます。`gc` は他のエージェントのものでも、マージ済み、PR がクローズ済み、または孤立したワークスペースを対象にすることがあります。
 - **push 済みの履歴は既定で保ちます。** 変更の取り込みが必要な場合、`sync` は公開済みの作業にベースをマージします。リベースには `--rebase --force` が必要です。ベースに含まれないコミットがひとつでも、既知のリモート追跡参照または fetch 先として設定された参照から到達可能なら、公開済みとして扱います。
-- **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。`MABO_AGENT_ID` は所有者の既定値を設定するだけで、プロンプトを抑制しません。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust --yes` で信頼を記録するか、`--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。`--exec` と単体 `exec` は標準入力を引き継ぎます。
+- **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。`MABO_AGENT_ID` は所有者の既定値を設定するだけで、プロンプトを抑制しません。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust add` で信頼を記録するか、`--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。`--exec` と単体 `exec` は標準入力を引き継ぎます。
 
 ## 目指さないこと
 
@@ -45,13 +45,13 @@ Maboroshi が担わない役割は次のとおりです。
 
 ## JSON 出力と終了コード
 
-`--json` は `--output json` の別名です。`--output text` は人間向け出力を選びます。`MABO_OUTPUT=text|json` で既定値を設定でき、明示したフラグが優先されます。`exec`、`version`、ヘルプは環境変数を無視し、`exec --json` は使用方法エラーになります。
+`--json` は `--output json` の別名です。`--output text` は人間向け出力を選びます。`MABO_OUTPUT=text|json` で既定値を設定でき、明示したフラグが優先されます。環境変数を無視するのは `exec` と `--help` によるテキストヘルプだけです。`--version` と `help` は出力モードに従い JSON を返せます。`exec --json` は使用方法エラーになります。
 
 ```json
 {"schema":2,"command":"list","ok":true,"data":{"workspaces":[]},"warnings":[],"error":null}
 ```
 
-標準出力には envelope を1件だけ出し、進捗・フック・Git・`--exec` の出力は標準エラー出力へ出します。`data` は既存のコマンド結果を含み、最上位の `version` / `schema` は含みません。`command` は `meta set` のような空白区切りの名前です。エラーは `{code,message,details?}`、警告は `{code,message}` です。部分的な結果は `data` に残り、gc の dry-run では `data.plan: true` を返します。パーサーは未知のフィールドを無視してください。
+標準出力には envelope を1件だけ出し、進捗・フック・Git・`--exec` の出力は標準エラー出力へ出します。`data` はコマンド結果を含み、最上位の `schema` は含みません。アプリケーションのバージョンを示す `data.version` を持つのは `--version` だけです。`command` は `meta set` のような空白区切りの名前です。エラーは `{code,message,details?}`、警告は `{code,message}` です。部分的な結果は `data` に残り、gc の dry-run では `data.plan: true` を返します。パーサーは未知のフィールドを無視してください。
 
 | 終了コード | 意味 | 主な error.code |
 | --- | --- | --- |
@@ -71,14 +71,41 @@ Maboroshi が担わない役割は次のとおりです。
 
 ワークスペースのメタデータは `<git-common-dir>/maboroshi/workspaces/<id>.json` に1件ずつ保存します。`id` は `ws_<uuid v4>`、各ファイルには `schema: 2`、`id`、`path`、任意の `name` と、既存の `owner`、`base`、`purpose`、`createdAt`、`createdFrom`、`lastUsedAt`、`links` が入ります。JSON 出力の ワークスペースオブジェクトにも `id` が入り、未記録なら null です。検索・置き換え・削除は従来どおり path で行い、削除はそのファイルだけを消します。破損したレコードは警告と null メタデータになり、ほかのレコードは読み続けられます。変更するコマンドは破損があれば拒否して元のファイルを保ちます。`sync` も fetch や対象の更新前にメタデータを厳密に検証します。同じ path の初回同時登録で重複ができた場合は、`createdAt` が古いレコード、同時刻なら `id` の辞書順で小さいレコードに読み取り時にまとめます。全フィールドはそのレコードを採用し、次のメタデータ書き込みで余分なファイルを削除します。`delete` と `gc` はこのメタデータに記録されていれば、設定した保存先の外にあるワークスペース も削除対象にできます。
 
-project registry は `$XDG_STATE_HOME/maboroshi/repos/<id>.json`（既定は `~/.local/state/maboroshi/repos/<id>.json`）に1件ずつ保存し、既存の `proj_<uuid>` ID を引き継ぎます。同じ root の重複は、読み込み時に `createdAt` が古い方へまとめます。同時刻なら ID の辞書順で決めます。
+リポジトリの登録情報は `$XDG_STATE_HOME/maboroshi/repos/<id>.json`（既定は `~/.local/state/maboroshi/repos/<id>.json`）に1件ずつ保存し、既存の `proj_<uuid>` ID を引き継ぎます。同じ root の重複は、読み込み時に `createdAt` が古い方へまとめます。同時刻なら ID の辞書順で決めます。
 
 旧 `maboroshi/worktrees.json` と `$XDG_STATE_HOME/maboroshi/projects.json` は読み取り専用コマンドでも読めます。最初の書き込みで全件を個別ファイルへ移し、旧ファイルを `*.json.imported` に改名します。移行に失敗した場合は旧ファイルを保ちます。mabo 内部のファイルロックはありません。各レコードと、単一ファイルの `trust.toml`・ユーザー設定 `config.toml` は、同じディレクトリの一時ファイルへの書き込み、fsync、rename でアトミックに置き換えます。別レコードの同時追加は両方残り、同じレコードの同時更新は後勝ちです。
 
-## Workspace paths and environment
+## ワークスペースのパスと環境変数
 
-新規ワークスペースの既定パスは `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash8>/<name>` です。`XDG_DATA_HOME` が未設定・空・相対パスの場合は `~/.local/share/maboroshi/workspaces/...` を使います。`worktrees-directory` 設定は引き続き使えます。既存の `maboroshi/worktrees/` 以下は移動せず、`list`、`where`、`delete`、`sync`、`gc` で引き続き扱えます。
+新規ワークスペースの既定パスは `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash8>/<name>` です。`XDG_DATA_HOME` が未設定・空・相対パスの場合は `~/.local/share/maboroshi/workspaces/...` を使います。`workspace-root` 設定は引き続き使えます。既存の `maboroshi/worktrees/` 以下は移動せず、`list`、`where`、`delete`、`sync`、`gc` で引き続き扱えます。
 
 フック（`post-create`、`pre-delete`）、`exec`、`create`/`attach --exec` には、`MABO=1`、名前の `MABO_WORKSPACE`、記録済み ID の `MABO_WORKSPACE_ID`（未記録なら空）、絶対パスの `MABO_WORKSPACE_PATH`、primary checkout の絶対パスの `MABO_REPO_PATH` を渡します。フック設定を読む場所は実行元チェックアウトのままです。旧 `MABO_NAME`、`MABO_PATH`、`MABO_ROOT_PATH` は子プロセスから取り除くため、スクリプトを更新してください。
 
 JSON の結果キーは `workspace` / `workspaces` です。共有オブジェクトの `default` 真偽値は `kind` に変わり、primary checkout は `primary`、ほかは `workspace` です。`owner`、schema 2、終了コード、旧メタデータの移行方法は変わりません。
+
+
+## リポジトリ・設定・信頼・ヘルプのコマンド（P2b）
+
+コマンドの前、またはオプションの間に `-R/--repo REF` を指定すると、対象のリポジトリを選べます。旧インターフェースの `-p/--project`、`project`、`preferences`、`untrust`、`version`、`trust --yes/--list` は、移行先のヒントを出して終了コード 2 を返します。
+
+```sh
+mabo repo add [PATH]
+mabo repo list [--registered | --discovered] [--names | --paths]
+mabo repo show [REF]
+mabo repo forget REF
+mabo config get KEY [--sources]
+mabo config set KEY VALUE
+mabo config unset KEY
+mabo config list [--sources]
+mabo trust add [REPO]
+mabo trust remove [REPO]
+mabo trust list
+mabo help [COMMAND...] [--json]
+mabo --version --json
+```
+
+`repo forget` は登録情報だけを削除します。`repo show` は primary checkout、既定ブランチ、`.mabo.toml` の有無、信頼状態、ワークスペースの保存先を表示します。登録済みリポジトリは検出結果より優先され、`--discovered` は検出した未登録のルートだけを一覧表示します。`trust add` はフックを表示し、確認を求めずに信頼を記録します。作成時に人間向けの端末で信頼を確認する挙動は変わりません。非対話モードで未信頼のフックを実行しようとすると、終了コード 4 を返します。
+
+ユーザー設定のキーは `workspace-root`（絶対パス、`~/`、またはリポジトリルートからの相対パス）、`clone-root`、`discover-ghq`、`keep-branch` です。旧キーの `worktrees-directory`、`root`、`ghq-discovery` は `config_key_renamed` の警告を出して読み込みます。新しい名前の値が優先され、次に設定の書き込みが成功した際に旧キーを新しい名前へ書き換えます。`directory-name-separator` は `config_key_removed` の警告を出して無視し、書き込み時に削除します。`--sources` は各設定の有効な値、取得元、詳細を含みます。`clone-root` の既定値は従来どおり ghq.root → GHQ_ROOT → ~/ghq の順で決まります。
+
+JSON は schema 2 の envelope を使います。リポジトリの結果キーは `repo` / `repos` で、clone は `data: {repo: {root, name, remoteUrl}, cloned, updated}` を返します。`help --json` は help-data.json の仕様全体を含み、すべてのコマンドとフラグ、終了コードとエラーコード、`schemaVersion: 2` を返します。`--version --json` はアプリケーションのバージョンを `data.version` に入れます。詳しい例は英語の README を参照してください。状態の保存先、旧レコードの取り込み、アトミックな書き込み、環境変数、ワークスペースのコマンドは P2b では変わりません。

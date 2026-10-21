@@ -59,7 +59,7 @@ pub fn relative(from: &Path, to: &Path) -> String {
 /// `project_common_dir` is set only for the default XDG layout. It is the
 /// canonical git common dir used to claim the directory with a marker.
 /// The directory and marker stay in place after the last workspace is deleted.
-/// A `worktrees-directory` preference leaves it unset.
+/// A `workspace-root` preference leaves it unset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreesLocation {
     pub path: PathBuf,

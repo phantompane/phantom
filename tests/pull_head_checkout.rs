@@ -429,7 +429,7 @@ fn failed_worktree_attachment_only_removes_a_new_branch() {
         let preference = mabo(
             &clone,
             &bin,
-            &["preferences", "set", "worktrees-directory", "../blocked"],
+            &["config", "set", "workspace-root", "../blocked"],
         );
         assert!(
             preference.status.success(),

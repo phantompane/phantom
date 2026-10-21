@@ -8,6 +8,7 @@ use toml_edit::{ArrayOfTables, DocumentMut, Item, Table};
 use crate::config;
 use crate::error::{Error, Result};
 use crate::git;
+use crate::output::visible_text;
 
 pub const RUN_PROMPT: &str = "Trust this project and run its hooks? [y/N]";
 pub const TRUST_PROMPT: &str = "Trust this project? [y/N]";
@@ -219,7 +220,7 @@ pub fn format_hooks(post_create: &[String], pre_delete: &[String]) -> String {
 
 pub fn refusal_message(project: &str, post_create: &[String], pre_delete: &[String]) -> String {
     format!(
-        "Untrusted project: {}\n{}\nRefusing to run project hooks. Run `mabo trust --yes` or pass `--no-hooks`.",
+        "Untrusted project: {}\n{}\nRefusing to run project hooks. Run `mabo trust add` or pass `--no-hooks`.",
         visible_text(project),
         format_hooks(post_create, pre_delete)
     )
@@ -276,7 +277,7 @@ fn update(body: impl FnOnce(&mut BTreeMap<String, String>) -> bool) -> Result<bo
     Ok(dirty)
 }
 
-fn is_trusted_root(git_root: &Path) -> Result<bool> {
+pub(crate) fn is_trusted_root(git_root: &Path) -> Result<bool> {
     let path = common_dir_key(git_root)?;
     let records = load()?;
     Ok(records.contains_key(&path.to_string_lossy().to_string()))
@@ -394,36 +395,6 @@ fn format_list(name: &str, commands: &[String]) -> String {
 
 fn visible_command(command: &str) -> String {
     visible_text(command)
-}
-
-fn visible_text(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        if hides_the_prompt(ch) {
-            out.push_str(&format!("\\u{{{:x}}}", u32::from(ch)));
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
-fn hides_the_prompt(ch: char) -> bool {
-    ch.is_control()
-        || matches!(
-            ch,
-            '\u{00ad}'
-                | '\u{061c}'
-                | '\u{180e}'
-                | '\u{200b}'..='\u{200f}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202a}'..='\u{202e}'
-                | '\u{2060}'..='\u{2064}'
-                | '\u{2066}'..='\u{2069}'
-                | '\u{feff}'
-                | '\u{fff9}'..='\u{fffb}'
-        )
 }
 
 fn trusted_at_now() -> String {
