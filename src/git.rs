@@ -394,19 +394,13 @@ pub fn head_commit(worktree: &Path) -> Option<String> {
 /// An existing branch can already have moved, and storing its tip would hide
 /// a merged branch from gc.
 pub fn reflog_creation_commit(worktree: &Path) -> Option<String> {
-    let branch = output(
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-        Some(worktree),
-        true,
-    )
-    .ok()?;
-    let branch = branch.trim();
-    if branch.is_empty() {
+    let reference = output(&["symbolic-ref", "--quiet", "HEAD"], Some(worktree), true).ok()?;
+    let reference = reference.trim();
+    if !reference.starts_with("refs/heads/") {
         return None;
     }
-    let spec = format!("refs/heads/{branch}");
     let reflog = output(
-        &["reflog", "show", "--format=%H", &spec],
+        &["reflog", "show", "--format=%H", reference],
         Some(worktree),
         true,
     )
@@ -526,16 +520,12 @@ pub fn delete_branch(git_root: &Path, branch: &str) -> Result<()> {
 pub(crate) fn default_branch(git_root: &Path) -> Result<Option<String>> {
     let symbolic = raw_git(
         git_root,
-        &[
-            "symbolic-ref",
-            "--quiet",
-            "--short",
-            "refs/remotes/origin/HEAD",
-        ],
+        &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
     )?;
     if symbolic.code == 0 {
-        let name = symbolic.stdout.trim();
-        if !name.is_empty() && verify_commit(git_root, name)? {
+        let reference = symbolic.stdout.trim();
+        if !reference.is_empty() && verify_commit(git_root, reference)? {
+            let name = reference.strip_prefix("refs/remotes/").unwrap_or(reference);
             return Ok(Some(name.to_string()));
         }
     }
@@ -549,10 +539,6 @@ pub(crate) fn default_branch(git_root: &Path) -> Result<Option<String>> {
 }
 
 pub(crate) struct TipReachability {
-    /// `Some(true)` means commits on the tip are outside the default branch and
-    /// outside every remote-tracking ref. `Some(false)` means those commits are
-    /// safe to drop. `None` means the reachability query did not run.
-    pub unpushed: Option<bool>,
     /// The upstream ref is gone, the tip differs from the merge base, and a
     /// clean merge into the default branch leaves that branch's tree unchanged.
     pub landed: bool,
@@ -565,38 +551,279 @@ pub(crate) fn tip_reachability(
     base: &Option<String>,
 ) -> TipReachability {
     let Some(base) = base.as_deref() else {
-        return TipReachability {
-            unpushed: None,
-            landed: false,
-        };
+        return TipReachability { landed: false };
     };
     // A bare name prefers `refs/tags` over `refs/heads`, so a tag with the
     // branch's name hides the branch tip and those commits look pushed.
     let Some(tip) = branch_tip_spec(branch, head) else {
-        return TipReachability {
-            unpushed: None,
-            landed: false,
-        };
+        return TipReachability { landed: false };
     };
     let Some(unpushed) = commits_outside_base_and_remotes(git_root, &tip, base) else {
-        return TipReachability {
-            unpushed: None,
-            landed: false,
-        };
+        return TipReachability { landed: false };
     };
     if !unpushed {
-        return TipReachability {
-            unpushed: Some(false),
-            landed: false,
-        };
+        return TipReachability { landed: false };
     }
     let landed = branch.is_some_and(|name| {
         upstream_missing(git_root, name) && changes_landed(git_root, &tip, base)
     });
-    TipReachability {
-        unpushed: Some(!landed),
-        landed,
+    TipReachability { landed }
+}
+
+/// Retirement uses the selected base and the branch's own upstream only.
+/// Unlike sync's publication check, an unrelated remote is not preservation.
+pub(crate) fn retirement_integrated(root: &Path, tip: &str, base: &str) -> bool {
+    let Some(base) = retirement_destination(root, tip, base) else {
+        return false;
+    };
+    if raw_git(root, &["merge-base", "--is-ancestor", tip, &base])
+        .is_ok_and(|result| result.code == 0)
+    {
+        return true;
     }
+    retirement_changes_landed(root, tip, &base)
+}
+
+// Evidence must survive deleting the checkout and its branch. Object IDs and
+// detached/pseudo refs prove reachability now, but do not provide a retained ref.
+// Require the resolved ref to live in the common Git directory, so removing a
+// linked checkout cannot remove it. Custom fetch namespaces are valid too.
+fn retirement_destination(root: &Path, tip: &str, destination: &str) -> Option<String> {
+    fn shared_ref(root: &Path, spec: &str) -> Option<String> {
+        let full = raw_git(
+            root,
+            &["rev-parse", "--symbolic-full-name", "--verify", spec],
+        )
+        .ok()?;
+        if full.code != 0 || full.stdout.lines().count() != 1 {
+            return None;
+        }
+        let full = full.stdout.trim();
+        let symbolic = raw_git(root, &["symbolic-ref", "--quiet", full]).ok()?;
+        let reference = match symbolic.code {
+            0 => symbolic.stdout.trim(),
+            1 => full,
+            _ => return None,
+        };
+        if !reference.starts_with("refs/") {
+            return None;
+        }
+        let location = raw_git(root, &["rev-parse", "--git-path", reference]).ok()?;
+        if location.code != 0 || location.stdout.lines().count() != 1 {
+            return None;
+        }
+        let common = git_common_dir(root).ok()?;
+        (normalize(&root.join(location.stdout.trim())) == normalize(&common.join(reference)))
+            .then(|| reference.to_owned())
+    }
+    let destination = shared_ref(root, destination)?;
+    if tip.starts_with("refs/") && shared_ref(root, tip)? == destination {
+        return None;
+    }
+    Some(destination)
+}
+
+pub(crate) fn retirement_preserved(
+    root: &Path,
+    branch: Option<&str>,
+    head: Option<&str>,
+    base: Option<&str>,
+) -> bool {
+    let Some(tip) = branch_tip_spec(branch, head) else {
+        return false;
+    };
+    if base.is_some_and(|base| retirement_integrated(root, &tip, base)) {
+        return true;
+    }
+    retirement_upstream_matches(root, branch)
+}
+
+// Keep the upstream proof separate so a GC observation can reuse its integration
+// result, including a negative result, without scanning the same history twice.
+pub(crate) fn retirement_upstream_matches(root: &Path, branch: Option<&str>) -> bool {
+    let Some(branch) = branch else {
+        return false;
+    };
+    let reference = format!("refs/heads/{branch}");
+    let Ok(refs) = raw_git(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname)%00%(upstream)",
+            &reference,
+        ],
+    ) else {
+        return false;
+    };
+    let Some(upstream) = refs
+        .stdout
+        .lines()
+        .filter_map(|line| line.split_once('\0'))
+        .find_map(|(name, upstream)| {
+            (name == reference && !upstream.is_empty()).then_some(upstream)
+        })
+    else {
+        return false;
+    };
+    let Some(upstream) = retirement_destination(root, &reference, upstream) else {
+        return false;
+    };
+    let resolve = |spec: &str| {
+        raw_git(root, &["rev-parse", "--verify", "--quiet", spec])
+            .ok()
+            .filter(|result| result.code == 0)
+            .map(|result| result.stdout.trim().to_string())
+    };
+    match (resolve(&reference), resolve(&upstream)) {
+        (Some(tip), Some(upstream)) => tip == upstream,
+        _ => false,
+    }
+}
+
+// Prove preservation through exact tree-entry transitions, never textual patches.
+// Each transition includes the path, modes and full before/after object IDs, so
+// repeated contexts, whitespace, binary data and gitlinks cannot compare equal
+// unless the complete entries match. Use one first-parent base lineage in
+// ancestor-to-tip order, consuming each commit at most once. Checking base
+// history also recognizes work that landed before later base edits.
+// All commands are read-only: merge-tree
+// --write-tree can refresh existing object mtimes, even with an alternate store.
+fn retirement_changes_landed(root: &Path, tip: &str, base: &str) -> bool {
+    let Ok(ancestor) = raw_git(root, &["merge-base", "--all", base, tip]) else {
+        return false;
+    };
+    if ancestor.code != 0 || ancestor.stdout.split_whitespace().count() != 1 {
+        return false;
+    }
+    let ancestor = ancestor.stdout.trim();
+    let Some(delta) = retirement_tree_delta(root, ancestor, tip) else {
+        return false;
+    };
+    if delta.is_empty() {
+        return false;
+    }
+    let Some(landed) = retirement_history_trees(root, &format!("{ancestor}..{base}"), false) else {
+        return false;
+    };
+    // A complete squash must preserve every changed entry in one base commit.
+    if landed.contains(&delta) {
+        return true;
+    }
+    // Rebased history must preserve every commit's complete tree transition,
+    // in order and in distinct base commits. A forward-only iterator cannot
+    // reuse an earlier addition to prove a later reapplication. Greedily taking
+    // the first match leaves all later evidence available for the next commit.
+    // Merges outside the base require the complete-squash proof above: checking
+    // just their non-merge ancestors would omit unique conflict resolutions.
+    retirement_history_trees(root, &format!("{base}..{tip}"), true).is_some_and(|commits| {
+        let mut remaining = landed.iter();
+        !commits.is_empty()
+            && commits
+                .iter()
+                .all(|delta| !delta.is_empty() && remaining.any(|landed| landed == delta))
+    })
+}
+
+fn retirement_history_trees(
+    root: &Path,
+    range: &str,
+    require_linear: bool,
+) -> Option<Vec<Vec<u8>>> {
+    // One process emits the parent list and raw tree entries for the whole
+    // range. Topological order ignores clock skew. First-parent base traversal
+    // prevents stitching together transitions from unrelated merge parents.
+    // Base merges are not evidence; workspace merges must be observed and
+    // rejected rather than silently omitting their conflict resolutions.
+    let mut args = vec![
+        "log",
+        "--topo-order",
+        "--reverse",
+        "--format=%x00%P",
+        "--no-notes",
+        "--no-show-signature",
+    ];
+    args.extend_from_slice(RETIREMENT_DIFF_OPTIONS);
+    if !require_linear {
+        args.extend_from_slice(&["--first-parent", "--no-merges"]);
+    }
+    args.extend_from_slice(&[range, "--"]);
+    let history = raw_git_bytes(root, &args).ok()?;
+    if !history.status.success() {
+        return None;
+    }
+    retirement_parse_history(&history.stdout)
+}
+
+fn retirement_parse_history(mut bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
+    fn field<'a>(bytes: &mut &'a [u8]) -> Option<&'a [u8]> {
+        let end = bytes.iter().position(|byte| *byte == 0)?;
+        let value = &bytes[..end];
+        *bytes = &bytes[end + 1..];
+        Some(value)
+    }
+
+    let mut deltas = Vec::new();
+    while !bytes.is_empty() {
+        bytes = bytes.strip_prefix(b"\0")?;
+        let parents = field(&mut bytes)?;
+        if parents.split(|byte| *byte == b' ').count() != 1 || parents.is_empty() {
+            // Neither roots nor workspace merges supply a linear transition.
+            return None;
+        }
+        // Git inserts a newline before a nonempty raw diff, but not an empty
+        // commit. Consume paths as fields, never as lines or commit markers:
+        // paths may contain newlines, colons and non-UTF-8 bytes.
+        bytes = bytes.strip_prefix(b"\n").unwrap_or(bytes);
+        let start = bytes;
+        while bytes.starts_with(b":") {
+            field(&mut bytes)?;
+            if field(&mut bytes)?.is_empty() {
+                return None;
+            }
+        }
+        deltas.push(start[..start.len() - bytes.len()].to_vec());
+    }
+    Some(deltas)
+}
+
+const RETIREMENT_DIFF_OPTIONS: &[&str] = &[
+    "-r",
+    "--raw",
+    "-z",
+    "--no-abbrev",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+    "--no-renames",
+    "--no-relative",
+    "--ignore-submodules=none",
+    "--submodule=short",
+    "-O/dev/null",
+];
+
+fn retirement_tree_delta(root: &Path, before: &str, after: &str) -> Option<Vec<u8>> {
+    let mut args = vec!["diff-tree", "--no-commit-id"];
+    args.extend_from_slice(RETIREMENT_DIFF_OPTIONS);
+    args.extend_from_slice(&[before, after, "--"]);
+    let diff = raw_git_bytes(root, &args).ok()?;
+    diff.status.success().then_some(diff.stdout)
+}
+
+/// Count all content a checkout removal would lose, including ignored files.
+pub(crate) fn retirement_status_count(cwd: &Path) -> Result<usize> {
+    let stdout = output(
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain",
+            "-z",
+            "--ignored",
+            "--untracked-files=all",
+        ],
+        Some(cwd),
+        false,
+    )?;
+    Ok(stdout.split('\0').filter(|entry| !entry.is_empty()).count())
 }
 
 fn branch_tip_spec(branch: Option<&str>, head: Option<&str>) -> Option<String> {
@@ -679,6 +906,10 @@ fn verify_commit(git_root: &Path, name: &str) -> Result<bool> {
     Ok(captured.code == 0)
 }
 
+fn raw_git_bytes(root: &Path, args: &[&str]) -> Result<std::process::Output> {
+    process::raw_bytes("git", args, Some(root), &[], None)
+}
+
 pub(crate) fn raw_git(git_root: &Path, args: &[&str]) -> Result<process::Captured> {
     process::raw("git", args, Some(git_root))
 }
@@ -692,7 +923,11 @@ pub(crate) fn raw_git_with_env(
 }
 
 pub fn status_count(cwd: &Path) -> Result<usize> {
-    let stdout = output(&["status", "--porcelain"], Some(cwd), false)?;
+    let stdout = output(
+        &["--no-optional-locks", "status", "--porcelain"],
+        Some(cwd),
+        false,
+    )?;
     Ok(stdout.lines().filter(|line| !line.is_empty()).count())
 }
 
@@ -728,21 +963,6 @@ pub fn remote_has_branch(git_root: &Path, remote: &str, branch: &str) -> Result<
             .nth(1)
             .is_some_and(|name| name == wanted)
     }))
-}
-
-/// SHA advertised as `refs/pull/<number>/head`, when the remote answers.
-pub(crate) fn remote_pull_head(git_root: &Path, number: u64) -> Option<String> {
-    let spec = format!("refs/pull/{number}/head");
-    let captured = raw_git(git_root, &["ls-remote", "origin", &spec]).ok()?;
-    if captured.code != 0 {
-        return None;
-    }
-    captured.stdout.lines().find_map(|line| {
-        let mut parts = line.split_whitespace();
-        let sha = parts.next()?;
-        let name = parts.next()?;
-        (name == spec).then(|| sha.to_string())
-    })
 }
 
 /// Create `name` at `start`, or fast-forward it there.
@@ -866,6 +1086,43 @@ fn normalize(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retirement_history_preserves_raw_paths_and_empty_commits() {
+        let parent = "a".repeat(40);
+        let header = format!(":100644 100644 {} {} M\0", "b".repeat(40), "c".repeat(40));
+        // Paths that resemble headers or contain line breaks must remain part
+        // of their own diff, including non-UTF-8 bytes and a trailing newline.
+        let mut delta = header.as_bytes().to_vec();
+        delta.extend_from_slice(b"\n:commit-like\xff\n\0");
+        delta.extend_from_slice(header.as_bytes());
+        delta.extend_from_slice(b"ordinary\0");
+        let mut bytes = format!("\0{parent}\0\0{parent}\0\n").into_bytes();
+        bytes.extend_from_slice(&delta);
+        bytes.extend_from_slice(format!("\0{parent}\0").as_bytes());
+        assert_eq!(
+            retirement_parse_history(&bytes),
+            Some(vec![vec![], delta, vec![]])
+        );
+        assert_eq!(retirement_parse_history(b""), Some(vec![]));
+    }
+
+    #[test]
+    fn retirement_history_rejects_merges_roots_and_truncated_entries() {
+        let parent = "a".repeat(40);
+        let header = format!(":100644 100644 {} {} M\0", "b".repeat(40), "c".repeat(40));
+        for bytes in [
+            b"\0\0".to_vec(),
+            format!("\0{parent} {parent}\0").into_bytes(),
+            format!("\0{parent}").into_bytes(),
+            format!("\0{parent}\0\n{header}").into_bytes(),
+            format!("\0{parent}\0\n{header}path").into_bytes(),
+            format!("\0{parent}\0\n{header}\0").into_bytes(),
+            format!("\0{parent}\0unexpected").into_bytes(),
+        ] {
+            assert_eq!(retirement_parse_history(&bytes), None, "{bytes:?}");
+        }
+    }
 
     #[test]
     fn review11_registration_scan_still_refuses_an_unregistered_checkout() {

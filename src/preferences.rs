@@ -6,19 +6,13 @@ use toml_edit::{DocumentMut, Item, Value};
 use crate::error::{Error, Result};
 use crate::paths;
 
-pub const SUPPORTED_KEYS: &[&str] = &[
-    "workspace-root",
-    "keep-branch",
-    "discover-ghq",
-    "clone-root",
-];
+pub const SUPPORTED_KEYS: &[&str] = &["workspace-root", "discover-ghq", "clone-root"];
 
 const NEW_FILE_COMMENT: &str = "# mabo user config. `mabo config` reads and writes this file.\n";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Preferences {
     pub worktrees_directory: Option<String>,
-    pub keep_branch: Option<bool>,
     pub ghq_discovery: Option<bool>,
     pub root: Option<String>,
 }
@@ -30,7 +24,6 @@ pub fn is_preference_key(value: &str) -> bool {
 pub fn preference_value(preferences: &Preferences, key: &str) -> Option<String> {
     match key {
         "workspace-root" => preferences.worktrees_directory.clone(),
-        "keep-branch" => preferences.keep_branch.map(|value| value.to_string()),
         "discover-ghq" => preferences.ghq_discovery.map(|value| value.to_string()),
         "clone-root" => preferences.root.clone(),
         _ => None,
@@ -64,7 +57,6 @@ pub fn effective_value(preferences: &Preferences, key: &str) -> Result<Effective
     let value = match key {
         "workspace-root" => serde_json::json!(configured),
         "discover-ghq" => serde_json::json!(preferences.ghq_discovery.unwrap_or(true)),
-        "keep-branch" => serde_json::json!(preferences.keep_branch.unwrap_or(false)),
         _ => return Err(Error::validation(unknown_key_message(key))),
     };
     Ok(EffectiveValue {
@@ -194,7 +186,6 @@ fn preferences_from(document: &DocumentMut, path: &Path) -> Result<Preferences> 
             "workspace-root" => {
                 preferences.worktrees_directory = Some(require_string(path, key, item)?);
             }
-            "keep-branch" => preferences.keep_branch = Some(require_bool(path, key, item)?),
             "discover-ghq" => preferences.ghq_discovery = Some(require_bool(path, key, item)?),
             "clone-root" => preferences.root = Some(require_string(path, key, item)?),
             _ => return Err(unknown_file_key(path, key)),
@@ -226,6 +217,9 @@ fn migrate_keys(document: &mut DocumentMut) {
                 }
             }
         }
+    }
+    if document.remove("keep-branch").is_some() {
+        crate::output::warning_once("config_key_removed", "Warning: config key 'keep-branch' was removed and is ignored. Use remove --keep-branch explicitly. The next config write removes this key.");
     }
     if document.remove("directory-name-separator").is_some() {
         crate::output::warning_once("config_key_removed", "Warning: config key 'directory-name-separator' was removed and is ignored. Workspace names use '/'. The next config write removes this key.");
@@ -262,7 +256,7 @@ fn toml_value(key: &str, value: &str) -> Value {
 }
 
 fn is_bool_key(key: &str) -> bool {
-    matches!(key, "keep-branch" | "discover-ghq")
+    matches!(key, "discover-ghq")
 }
 
 fn unknown_file_key(path: &Path, key: &str) -> Error {
@@ -323,10 +317,10 @@ mod tests {
         let path = xdg.join("maboroshi").join("config.toml");
         assert!(!path.exists());
 
-        set_preference_at(&path, "keep-branch", "true").expect("set");
+        set_preference_at(&path, "discover-ghq", "true").expect("set");
         let created = fs::read_to_string(&path).expect("created");
         assert!(created.starts_with("# mabo user config"), "{created}");
-        assert!(created.contains("keep-branch = true\n"), "{created}");
+        assert!(created.contains("discover-ghq = true\n"), "{created}");
         assert!(!created.contains("keepBranch"), "{created}");
         assert!(!created.contains("\"true\""), "{created}");
 
@@ -334,49 +328,49 @@ mod tests {
 # header stays
 
 # keep the branch
-keep-branch = true # inline
+discover-ghq = true # inline
 
 # separator
-discover-ghq = true
+clone-root = \"~/clones\"
 ";
         fs::write(&path, commented).expect("seed");
-        set_preference_at(&path, "keep-branch", "false").expect("update");
+        set_preference_at(&path, "discover-ghq", "false").expect("update");
         set_preference_at(&path, "workspace-root", "../phantom-worktrees").expect("directory");
         let updated = fs::read_to_string(&path).expect("updated");
         assert!(updated.contains("# header stays"), "{updated}");
         assert!(updated.contains("# keep the branch"), "{updated}");
         assert!(updated.contains("# inline"), "{updated}");
         assert!(updated.contains("# separator"), "{updated}");
-        assert!(updated.contains("keep-branch = false"), "{updated}");
-        assert!(updated.contains("discover-ghq = true"), "{updated}");
+        assert!(updated.contains("discover-ghq = false"), "{updated}");
+        assert!(updated.contains("clone-root = \"~/clones\""), "{updated}");
         assert!(
             updated.contains("workspace-root = \"../phantom-worktrees\""),
             "{updated}"
         );
 
         let loaded = load_preferences_from(&path).expect("load");
-        assert_eq!(loaded.keep_branch, Some(false));
-        assert_eq!(loaded.ghq_discovery, Some(true));
+        assert_eq!(loaded.ghq_discovery, Some(false));
+        assert_eq!(loaded.root.as_deref(), Some("~/clones"));
         assert_eq!(
             loaded.worktrees_directory.as_deref(),
             Some("../phantom-worktrees")
         );
         assert_eq!(
-            preference_value(&loaded, "keep-branch").as_deref(),
+            preference_value(&loaded, "discover-ghq").as_deref(),
             Some("false")
         );
 
-        remove_preference_at(&path, "keep-branch").expect("remove");
+        remove_preference_at(&path, "discover-ghq").expect("remove");
         let removed = fs::read_to_string(&path).expect("removed");
-        assert!(!removed.contains("keep-branch"), "{removed}");
+        assert!(!removed.contains("discover-ghq"), "{removed}");
         assert!(removed.contains("# separator"), "{removed}");
-        assert!(removed.contains("discover-ghq = true"), "{removed}");
+        assert!(removed.contains("clone-root"), "{removed}");
         assert!(
             removed.contains("workspace-root = \"../phantom-worktrees\""),
             "{removed}"
         );
         let loaded = load_preferences_from(&path).expect("load after remove");
-        assert_eq!(loaded.keep_branch, None);
+        assert_eq!(loaded.ghq_discovery, None);
 
         let _ = fs::remove_dir_all(xdg);
     }
@@ -403,10 +397,10 @@ discover-ghq = true
         assert!(message.contains(&path.display().to_string()), "{message}");
         assert!(message.contains("workspace-root"), "{message}");
 
-        fs::write(&path, "keep-branch = \"yes\"\n").expect("type");
+        fs::write(&path, "discover-ghq = \"yes\"\n").expect("type");
         let error = load_preferences_from(&path).expect_err("type");
         let message = error.to_string();
-        assert!(message.contains("keep-branch"), "{message}");
+        assert!(message.contains("discover-ghq"), "{message}");
         assert!(message.contains("boolean"), "{message}");
         assert!(message.contains(&path.display().to_string()), "{message}");
 
@@ -426,13 +420,13 @@ discover-ghq = true
         assert!(message.contains("keepBranch"), "{message}");
         assert!(message.contains(&path.display().to_string()), "{message}");
 
-        fs::write(&path, "keep-branch = true\n").expect("valid");
-        let missing = remove_preference_at(&path, "discover-ghq").expect_err("missing key");
+        fs::write(&path, "discover-ghq = true\n").expect("valid");
+        let missing = remove_preference_at(&path, "workspace-root").expect_err("missing key");
         let message = missing.to_string();
         assert!(message.contains("not set"), "{message}");
         assert!(message.contains(&path.display().to_string()), "{message}");
         let still = fs::read_to_string(&path).expect("still");
-        assert!(still.contains("keep-branch = true"), "{still}");
+        assert!(still.contains("discover-ghq = true"), "{still}");
 
         let _ = fs::remove_dir_all(xdg);
     }
@@ -443,13 +437,13 @@ discover-ghq = true
         let path = xdg.join("maboroshi").join("config.toml");
         let loaded = load_preferences_from(&path).expect("missing");
         assert_eq!(loaded, Preferences::default());
-        let error = remove_preference_at(&path, "keep-branch").expect_err("remove");
+        let error = remove_preference_at(&path, "discover-ghq").expect_err("remove");
         assert!(
             error.to_string().contains(&path.display().to_string()),
             "{error}"
         );
         assert!(!path.exists());
-        let error = set_preference_at(&path, "keep-branch", "yes").expect_err("bool");
+        let error = set_preference_at(&path, "discover-ghq", "yes").expect_err("bool");
         assert!(error.to_string().contains("true"), "{error}");
         assert!(!path.exists());
         let _ = fs::remove_dir_all(xdg);
@@ -460,7 +454,7 @@ discover-ghq = true
         let error = require_key("keepBranch").expect_err("legacy");
         let message = error.to_string();
         assert!(message.contains("keepBranch"), "{message}");
-        assert!(message.contains("keep-branch"), "{message}");
+        assert!(message.contains("discover-ghq"), "{message}");
         assert!(message.contains("workspace-root"), "{message}");
     }
 

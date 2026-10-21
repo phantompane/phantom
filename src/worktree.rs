@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::config;
 use crate::context::Context;
-use crate::error::{Error, JsonErrorBody, Result};
+use crate::error::{Error, Result};
 use crate::git::{self, GitWorktree};
 use crate::metadata;
 use crate::output::{errln, outln};
@@ -142,32 +142,42 @@ pub fn list_worktrees(
         {
             continue;
         }
-        infos.push(WorktreeInfo {
-            repo_root: context.git_root.clone(),
-            managed: true,
-            recorded: true,
-            name: resolve_worktree_name(
-                path,
-                &context.worktrees_directory,
-                Some(path),
-                record.name.as_deref(),
-                &canonical_common,
-                None,
-                "HEAD",
-            ),
-            path: key.clone(),
-            registered_path: path.to_path_buf(),
-            path_to_display: paths::list_path(path),
-            branch: "(detached HEAD)".to_string(),
-            is_clean: true,
-            head: None,
-            is_default: false,
-            detached: false,
-            orphaned: true,
-            metadata: record.clone(),
-        });
+        infos.push(orphaned_info(context, path, record, &canonical_common));
     }
+
     Ok(infos)
+}
+
+pub(crate) fn orphaned_info(
+    context: &Context,
+    path: &Path,
+    record: &metadata::WorktreeMetadata,
+    canonical_common: &Path,
+) -> WorktreeInfo {
+    WorktreeInfo {
+        repo_root: context.git_root.clone(),
+        managed: true,
+        recorded: true,
+        name: resolve_worktree_name(
+            path,
+            &context.worktrees_directory,
+            Some(path),
+            record.name.as_deref(),
+            canonical_common,
+            None,
+            "HEAD",
+        ),
+        path: path.to_string_lossy().into_owned(),
+        registered_path: path.to_path_buf(),
+        path_to_display: paths::list_path(path),
+        branch: "(detached HEAD)".to_string(),
+        is_clean: true,
+        head: None,
+        is_default: false,
+        detached: false,
+        orphaned: true,
+        metadata: record.clone(),
+    }
 }
 
 /// `git worktree list` reports the git dir as the main worktree for a separate
@@ -523,7 +533,7 @@ pub fn find_worktree(
 pub(crate) fn require_live(found: WorktreeInfo, name: &str) -> Result<WorktreeInfo> {
     if found.orphaned {
         return Err(Error::msg(format!(
-            "Workspace '{name}' is orphaned: its directory is gone. Use mabo delete to remove the stale record."
+            "Workspace '{name}' is orphaned: its directory is gone. Use mabo remove to remove the stale record."
         )));
     }
     Ok(found)
@@ -599,34 +609,34 @@ impl HookFailure {
     }
 }
 
-pub struct DeleteOptions {
-    pub force: bool,
+pub struct RemoveOptions {
+    pub discard_changes: bool,
     pub keep_branch: bool,
-    pub allow_current: bool,
-    /// Tip that gc already matched to a merged `refs/pull/<n>/head`.
-    /// A worktree still at this commit is not treated as unpushed.
-    pub published_tip: Option<String>,
+    pub delete_unpreserved_branch: bool,
 }
 
-pub struct DeleteOutcome {
+pub struct RemoveOutcome {
     pub message: String,
     pub worktree: WorktreeInfo,
     pub branch_deleted: bool,
     pub branch_error: Option<String>,
+    pub branch_kept_reason: Option<String>,
     /// Set when Git already removed the worktree and the metadata record could not.
     pub metadata_error: Option<String>,
 }
 
-pub struct DeleteError {
+pub struct RemoveError {
     pub error: Error,
     pub worktree: Option<Box<WorktreeInfo>>,
+    pub changed: bool,
 }
 
-impl DeleteError {
+impl RemoveError {
     fn bare(error: Error) -> Self {
         Self {
             error,
             worktree: None,
+            changed: false,
         }
     }
 
@@ -634,57 +644,49 @@ impl DeleteError {
         Self {
             error,
             worktree: Some(Box::new(worktree.clone())),
+            changed: false,
         }
     }
 }
 
-pub struct DeletePlan {
+pub struct RemovePlan {
     name: String,
     selector: crate::selectors::Selector,
-    worktree: WorktreeInfo,
+    pub worktree: WorktreeInfo,
     path: PathBuf,
     inside: bool,
     changed: usize,
+    pub branch_kept_reason: Option<String>,
 }
 
-fn published_tip_matches(options: &DeleteOptions, worktree: &WorktreeInfo) -> bool {
-    let Some(published) = options.published_tip.as_deref() else {
-        return false;
-    };
-    let Some(head) = worktree.head.as_deref() else {
-        return false;
-    };
-    let published = published.trim();
-    let head = head.trim();
-    published.eq_ignore_ascii_case(head)
-        || (published.len() >= 7
-            && head
-                .to_ascii_lowercase()
-                .starts_with(&published.to_ascii_lowercase()))
-        || (head.len() >= 7
-            && published
-                .to_ascii_lowercase()
-                .starts_with(&head.to_ascii_lowercase()))
+pub(crate) fn preserved(context: &Context, worktree: &WorktreeInfo) -> bool {
+    let fallback = crate::sync::fallback_base(&context.git_root).ok();
+    git::retirement_preserved(
+        &context.git_root,
+        (!worktree.detached).then_some(worktree.branch.as_str()),
+        worktree.head.as_deref(),
+        worktree.metadata.base.as_deref().or(fallback.as_deref()),
+    )
 }
 
-pub fn preflight_delete(
+pub fn preflight_remove(
     context: &Context,
     name: &str,
-    options: &DeleteOptions,
+    options: &RemoveOptions,
     expected_path: Option<&Path>,
-) -> std::result::Result<DeletePlan, DeleteError> {
-    let selector = crate::selectors::Selector::parse(name).map_err(DeleteError::bare)?;
-    preflight_delete_selected(context, &selector, options, expected_path)
+) -> std::result::Result<RemovePlan, RemoveError> {
+    let selector = crate::selectors::Selector::parse(name).map_err(RemoveError::bare)?;
+    preflight_remove_selected(context, &selector, options, expected_path)
 }
 
 /// Garbage collection already obtained this name from Git or metadata.
-pub(crate) fn preflight_delete_named(
+pub(crate) fn preflight_remove_named(
     context: &Context,
     name: &str,
-    options: &DeleteOptions,
+    options: &RemoveOptions,
     expected_path: Option<&Path>,
-) -> std::result::Result<DeletePlan, DeleteError> {
-    preflight_delete_selected(
+) -> std::result::Result<RemovePlan, RemoveError> {
+    preflight_remove_selected(
         context,
         &crate::selectors::Selector::Name(name.to_owned()),
         options,
@@ -692,19 +694,32 @@ pub(crate) fn preflight_delete_named(
     )
 }
 
-fn preflight_delete_selected(
+fn preflight_remove_selected(
     context: &Context,
     selector: &crate::selectors::Selector,
-    options: &DeleteOptions,
+    options: &RemoveOptions,
     expected_path: Option<&Path>,
-) -> std::result::Result<DeletePlan, DeleteError> {
+) -> std::result::Result<RemovePlan, RemoveError> {
     let name = selector.as_str();
-    let force = options.force;
-    let keep_branch = options.keep_branch;
-    let worktree = selector
-        .resolve_including_orphaned(context, true, expected_path)
-        .map_err(DeleteError::bare)?;
-    let label = if options.allow_current && name == "." {
+    let force = options.discard_changes;
+    let mut worktree = selector
+        .resolve_including_orphaned(context, false, expected_path)
+        .map_err(RemoveError::bare)?;
+    if worktree.is_default {
+        return Err(RemoveError::kept(
+            Error::Status {
+                code: "primary",
+                message: "The primary checkout cannot be removed".into(),
+            },
+            &worktree,
+        ));
+    }
+    if std::fs::symlink_metadata(&worktree.path)
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    {
+        worktree.orphaned = true;
+    }
+    let label = if name == "." {
         worktree.name.as_str()
     } else {
         name
@@ -712,9 +727,9 @@ fn preflight_delete_selected(
     let path = PathBuf::from(&worktree.path);
     let inside = paths::is_strictly_inside(&path, &context.worktrees_directory);
     let recorded = metadata::records_path(&context.git_root, &path)
-        .map_err(|error| DeleteError::kept(error, &worktree))?;
+        .map_err(|error| RemoveError::kept(error, &worktree))?;
     if !inside && !recorded {
-        return Err(DeleteError::kept(
+        return Err(RemoveError::kept(
             Error::msg(format!(
                 "Workspace '{label}' was not created by mabo (for example, it was made by plain git or an older tool). Remove it with `git worktree remove {}`.",
                 path.display()
@@ -723,20 +738,21 @@ fn preflight_delete_selected(
         ));
     }
     if worktree.orphaned {
-        metadata::prepare(&context.git_root)
-            .map_err(|error| DeleteError::kept(error, &worktree))?;
-        return Ok(DeletePlan {
+        check_detached_preserved(context, &worktree, options, label)?;
+        return Ok(RemovePlan {
             name: name.to_string(),
             selector: selector.clone(),
             worktree,
             path,
             inside,
             changed: 0,
+            branch_kept_reason: None,
         });
     }
-    let changed = git::status_count(&path).unwrap_or(0);
+    let changed =
+        git::retirement_status_count(&path).map_err(|error| RemoveError::kept(error, &worktree))?;
     if changed > 0 && !force {
-        return Err(DeleteError::kept(
+        return Err(RemoveError::kept(
             Error::Uncommitted {
                 name: label.to_string(),
                 files: changed,
@@ -744,140 +760,69 @@ fn preflight_delete_selected(
             &worktree,
         ));
     }
-    if !force && !options.allow_current && command_is_inside(&path) {
-        return Err(DeleteError::kept(
-            Error::Status {
-                code: "refused",
-                message: format!(
-                "Workspace '{name}' is the current directory. Use --current or --force to delete it."
-            ),
-            },
-            &worktree,
-        ));
-    }
-    if !force && (worktree.detached || !keep_branch) {
-        let base = git::default_branch(&context.git_root)
-            .map_err(|error| DeleteError::kept(error, &worktree))?;
-        let branch = (!worktree.detached).then_some(worktree.branch.as_str());
-        let unpushed =
-            git::tip_reachability(&context.git_root, branch, worktree.head.as_deref(), &base)
-                .unpushed;
-        let unpushed = if unpushed == Some(true) && published_tip_matches(options, &worktree) {
-            Some(false)
-        } else {
-            unpushed
-        };
-        let refusal = match unpushed {
-            Some(false) => None,
-            Some(true) => Some(false),
-            None => Some(true),
-        };
-        if let Some(unknown) = refusal {
-            return Err(DeleteError::kept(
-                Error::unpushed_delete(label, worktree.detached, unknown),
-                &worktree,
-            ));
-        }
-    }
-    Ok(DeletePlan {
+    let preserved = preserved(context, &worktree);
+    check_detached_preserved(context, &worktree, options, label)?;
+    let branch_kept_reason = if worktree.detached {
+        None
+    } else if options.keep_branch {
+        Some("keep-branch".to_string())
+    } else if !preserved && !options.delete_unpreserved_branch {
+        Some("unpreserved".to_string())
+    } else {
+        None
+    };
+    Ok(RemovePlan {
         name: name.to_string(),
         selector: selector.clone(),
         worktree,
         path,
         inside,
         changed,
+        branch_kept_reason,
     })
 }
 
-/// Preflight every requested name. A repeated name, or a second spelling of a
-/// worktree already requested, is skipped. The first spelling is the one deleted.
-pub fn preflight_deletes(
+fn check_detached_preserved(
     context: &Context,
-    names: &[String],
-    options: &DeleteOptions,
-) -> std::result::Result<Vec<DeletePlan>, Vec<DeleteError>> {
-    let mut plans = Vec::new();
-    let mut refusals = Vec::new();
-    for name in unique_delete_names(context, names) {
-        match preflight_delete(context, &name, options, None) {
-            Ok(plan) => plans.push(plan),
-            Err(failure) => refusals.push(failure),
-        }
+    worktree: &WorktreeInfo,
+    options: &RemoveOptions,
+    label: &str,
+) -> std::result::Result<(), RemoveError> {
+    if worktree.detached && !options.delete_unpreserved_branch && !preserved(context, worktree) {
+        return Err(RemoveError::kept(
+            Error::Status { code: "unpreserved", message: format!(
+                "Workspace '{label}' has unpreserved detached commits. Use --delete-unpreserved-branch to remove it."
+            ) }, worktree));
     }
-    if refusals.is_empty() {
-        Ok(plans)
-    } else {
-        Err(refusals)
-    }
+    Ok(())
 }
 
-fn unique_delete_names(context: &Context, names: &[String]) -> Vec<String> {
-    let mut seen_paths: Vec<PathBuf> = Vec::new();
-    let mut seen_unresolved = Vec::new();
-    let mut unique = Vec::new();
-    for name in names {
-        match crate::selectors::resolve_including_orphaned(context, name, true, None) {
-            Ok(worktree) => {
-                let path = PathBuf::from(&worktree.path);
-                if seen_paths
-                    .iter()
-                    .any(|seen| paths::same_location(seen, &path))
-                {
-                    continue;
-                }
-                seen_paths.push(path);
-            }
-            Err(_) => {
-                if seen_unresolved.iter().any(|seen| seen == name) {
-                    continue;
-                }
-                seen_unresolved.push(name.clone());
-            }
-        }
-        unique.push(name.clone());
-    }
-    unique
-}
-
-pub fn delete_worktree(
+pub fn commit_remove(
     context: &Context,
-    name: &str,
-    options: &DeleteOptions,
-    expected_path: Option<&Path>,
+    plan: RemovePlan,
+    options: &RemoveOptions,
     logger: &Logger,
     hooks: HookControl,
-) -> std::result::Result<DeleteOutcome, DeleteError> {
-    let plan = preflight_delete(context, name, options, expected_path)?;
-    commit_delete(context, plan, options, logger, hooks)
+) -> std::result::Result<RemoveOutcome, RemoveError> {
+    commit_remove_checked(context, plan, options, logger, hooks, || Ok(()))
 }
 
-pub fn commit_delete(
+pub(crate) fn commit_remove_checked(
     context: &Context,
-    plan: DeletePlan,
-    options: &DeleteOptions,
-    logger: &Logger,
-    hooks: HookControl,
-) -> std::result::Result<DeleteOutcome, DeleteError> {
-    commit_delete_checked(context, plan, options, logger, hooks, || Ok(()))
-}
-
-pub(crate) fn commit_delete_checked(
-    context: &Context,
-    plan: DeletePlan,
-    options: &DeleteOptions,
+    plan: RemovePlan,
+    options: &RemoveOptions,
     logger: &Logger,
     hooks: HookControl,
     check: impl FnOnce() -> Result<()>,
-) -> std::result::Result<DeleteOutcome, DeleteError> {
-    let DeletePlan {
+) -> std::result::Result<RemoveOutcome, RemoveError> {
+    let RemovePlan {
         name,
         selector,
         worktree,
         path,
         ..
     } = plan;
-    let force = options.force;
-    let keep_branch = options.keep_branch;
+    let force = options.discard_changes;
     let commands = if worktree.orphaned {
         Vec::new()
     } else {
@@ -888,55 +833,84 @@ pub(crate) fn commit_delete_checked(
             trust::HookKind::PreRemove,
             hooks,
         )
-        .map_err(|error| DeleteError::kept(error, &worktree))?
+        .map_err(|error| RemoveError::kept(error, &worktree))?
     };
-    metadata::prepare(&context.git_root).map_err(|error| DeleteError::kept(error, &worktree))?;
+    metadata::prepare(&context.git_root).map_err(|error| RemoveError::kept(error, &worktree))?;
     if !commands.is_empty() {
         logger.log("\nRunning pre-remove commands...");
         if let Err(error) = run_hook_commands(context, &worktree, &commands, false, logger) {
-            return Err(DeleteError::kept(error, &worktree));
+            return Err(RemoveError::kept(error, &worktree));
         }
     }
-    check().map_err(|error| DeleteError::kept(error, &worktree))?;
+    check().map_err(|error| RemoveError::kept(error, &worktree))?;
     if worktree.orphaned {
         let listed = git::list_worktrees(&context.git_root)
-            .map_err(|error| DeleteError::kept(error, &worktree))?;
-        if !crate::gc::orphaned_record(&path, &listed) {
-            return Err(DeleteError::kept(
+            .map_err(|error| RemoveError::kept(error, &worktree))?;
+        let registered = listed
+            .iter()
+            .find(|tree| paths::same_location(Path::new(&tree.path), &path));
+        let missing = std::fs::symlink_metadata(&path)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+        let changed_registration = registered.is_some_and(|tree| {
+            tree.head != worktree.head || tree.branch.as_deref() != Some(worktree.branch.as_str())
+        });
+        if !missing || changed_registration {
+            return Err(RemoveError::kept(
                 Error::msg(format!(
                     "Workspace '{name}' is no longer orphaned; refusing to remove its record."
                 )),
                 &worktree,
             ));
         }
-        metadata::remove(&context.git_root, &path)
-            .map_err(|error| DeleteError::kept(error, &worktree))?;
-        return Ok(DeleteOutcome {
+        if registered.is_some() {
+            // Losing a directory does not preserve the registered detached HEAD.
+            // Recheck immediately before removing its last Git registration.
+            check_detached_preserved(context, &worktree, options, &name)?;
+            git::remove_worktree(&context.git_root, &path, true)
+                .map_err(|error| RemoveError::kept(error, &worktree))?;
+        }
+        metadata::remove(&context.git_root, &path).map_err(|error| {
+            let mut failure = RemoveError::kept(error, &worktree);
+            failure.changed = registered.is_some();
+            failure
+        })?;
+        return Ok(RemoveOutcome {
             message: format!("Workspace '{name}' was already gone; removed only the stale record."),
             worktree,
             branch_deleted: false,
             branch_error: None,
+            branch_kept_reason: None,
             metadata_error: None,
         });
     }
-    let fresh = preflight_delete_selected(context, &selector, options, Some(&path))?;
+    let fresh = preflight_remove_selected(context, &selector, options, Some(&path))?;
+    if fresh.worktree.orphaned {
+        // A hook may delete or move the checkout. The orphan plan does not
+        // authorize branch deletion; leave its registration and record for a
+        // later orphan cleanup instead of continuing with normal removal.
+        return Err(RemoveError::kept(
+            Error::msg("Workspace directory disappeared while running pre-remove commands; refusing further removal"),
+            &fresh.worktree,
+        ));
+    }
     if fresh.worktree.head != worktree.head || fresh.worktree.branch != worktree.branch {
-        return Err(DeleteError::kept(
+        return Err(RemoveError::kept(
             Error::msg("Workspace changed while running pre-remove commands"),
             &fresh.worktree,
         ));
     }
-    let DeletePlan {
+    let RemovePlan {
         worktree,
         path,
         inside,
         changed,
+        branch_kept_reason,
         ..
     } = fresh;
     let recorded_path = metadata::matching_path(&context.git_root, &path)
-        .map_err(|error| DeleteError::kept(error, &worktree))?;
+        .map_err(|error| RemoveError::kept(error, &worktree))?;
     if let Err(error) = git::remove_worktree(&context.git_root, &path, force) {
-        return Err(DeleteError::kept(error, &worktree));
+        return Err(RemoveError::kept(error, &worktree));
     }
     let metadata_error = metadata::remove(
         &context.git_root,
@@ -952,15 +926,14 @@ pub(crate) fn commit_delete_checked(
     } else {
         None
     };
-    // --current resolves through '.', but keeps the workspace name in messages.
-    let name = if options.allow_current && name == "." {
+    let name = if name == "." {
         worktree.name.as_str()
     } else {
         &name
     };
     let (message, branch_deleted, branch_error) = if worktree.branch == "(detached HEAD)" {
         (format!("Deleted workspace '{name}'"), false, None)
-    } else if keep_branch {
+    } else if branch_kept_reason.is_some() {
         (
             format!(
                 "Deleted workspace '{name}' and kept its branch '{}'",
@@ -1002,23 +975,14 @@ pub(crate) fn commit_delete_checked(
     } else {
         message
     };
-    Ok(DeleteOutcome {
+    Ok(RemoveOutcome {
         message,
         worktree,
         branch_deleted,
         branch_error,
+        branch_kept_reason,
         metadata_error,
     })
-}
-
-fn command_is_inside(path: &Path) -> bool {
-    let Ok(cwd) = std::env::current_dir() else {
-        return false;
-    };
-    let Ok(top) = git::top_level(&cwd) else {
-        return false;
-    };
-    paths::same_location(&top, path)
 }
 
 pub fn current_worktree_name(context: &Context) -> Result<Option<String>> {
@@ -1465,24 +1429,6 @@ pub struct WorktreeRefOutput {
     pub version: u32,
     #[serde(rename = "workspace")]
     pub worktree: WorktreeJson,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeletedEntry {
-    #[serde(rename = "workspace")]
-    pub worktree: Option<WorktreeJson>,
-    pub branch_deleted: bool,
-    pub branch_error: Option<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeleteOutput {
-    pub version: u32,
-    pub deleted: Vec<DeletedEntry>,
-    pub error: Option<JsonErrorBody>,
 }
 
 impl WorktreeInfo {

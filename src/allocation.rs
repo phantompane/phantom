@@ -462,7 +462,7 @@ fn report(
     Ok(0)
 }
 
-fn shell_quote(value: impl AsRef<std::ffi::OsStr>) -> String {
+pub(crate) fn shell_quote(value: impl AsRef<std::ffi::OsStr>) -> String {
     let value = value.as_ref();
     if let Some(text) = value.to_str().filter(|text| visible_text(text) == *text) {
         return format!("'{}'", text.replace('\'', "'\\''"));

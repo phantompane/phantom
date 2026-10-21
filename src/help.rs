@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn long_options_use_two_dashes() {
-        for key in ["list", "create", "adopt", "exec", "delete", "path"] {
+        for key in ["list", "create", "adopt", "exec", "remove", "path"] {
             let help = command_help(key).expect("help data").expect(key);
             assert!(
                 !help.contains("----"),
@@ -330,9 +330,9 @@ mod tests {
         let main = main_help().expect("main help");
         assert!(main.contains("Create a workspace"));
         assert!(main.contains("List all workspaces"));
-        assert!(main.contains("Delete a workspace"));
+        assert!(main.contains("Retire workspaces"));
         assert!(main.contains("Drop workspace records"));
-        for key in ["create", "delete", "exec"] {
+        for key in ["create", "remove", "exec"] {
             let help = command_help(key).expect("render").expect(key);
             for variable in [
                 "MABO=1",
@@ -358,7 +358,7 @@ mod tests {
             "attach",
             "list",
             "path",
-            "delete",
+            "remove",
             "exec",
             "config",
             "version",

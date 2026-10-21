@@ -1832,7 +1832,13 @@ exit "$result"
         for args in [
             vec!["create", "topic", "--json"],
             vec!["create", "--branch", "existing", "--json"],
-            vec!["delete", "topic", "--force", "--json"],
+            vec![
+                "remove",
+                "topic",
+                "--discard-changes",
+                "--delete-unpreserved-branch",
+                "--json",
+            ],
         ] {
             let out = r.mabo(&r.main, &args);
             assert!(
@@ -1945,7 +1951,16 @@ fn post_create_hook_can_list_and_create_and_pre_delete_hook_can_create() {
     )
     .unwrap();
     let child = r
-        .command(bin, &r.main, &["delete", "outer", "--force"])
+        .command(
+            bin,
+            &r.main,
+            &[
+                "remove",
+                "outer",
+                "--discard-changes",
+                "--delete-unpreserved-branch",
+            ],
+        )
         .env("MABO_TRUST_ALL", "1")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -2000,7 +2015,14 @@ fn other_commands_can_run_while_standalone_exec_is_running() {
         .command(
             env!("CARGO_BIN_EXE_mabo"),
             &r.main,
-            &["delete", "other", "--force", "--no-hooks", "--json"],
+            &[
+                "remove",
+                "other",
+                "--discard-changes",
+                "--delete-unpreserved-branch",
+                "--no-hooks",
+                "--json",
+            ],
         )
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -2077,7 +2099,16 @@ fn create_branch_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
     )
     .unwrap();
     let child = r
-        .command(bin, &r.main, &["delete", "from-attach", "--force"])
+        .command(
+            bin,
+            &r.main,
+            &[
+                "remove",
+                "from-attach",
+                "--discard-changes",
+                "--delete-unpreserved-branch",
+            ],
+        )
         .env("MABO_TRUST_ALL", "1")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -3181,7 +3212,7 @@ fn gc_protects_linked_default_with_a_remapped_tracking_namespace() {
         assert!(tree.exists(), "primary checkout removed: {doc}");
         assert_eq!(r.snapshot(&tree), before);
         assert!(
-            !doc["data"]["candidates"]
+            !doc["data"]["items"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -3189,7 +3220,7 @@ fn gc_protects_linked_default_with_a_remapped_tracking_namespace() {
             "{doc}"
         );
         assert!(
-            doc["data"]["candidates"]
+            doc["data"]["items"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -3240,7 +3271,7 @@ fn gc_local_branch_named_like_a_remapped_default_is_not_the_default() {
         assert!(out.status.success());
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert!(
-            doc["data"]["candidates"]
+            doc["data"]["items"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -3248,7 +3279,7 @@ fn gc_local_branch_named_like_a_remapped_default_is_not_the_default() {
             "local cache/main was mistaken for the default: {doc}"
         );
         assert!(
-            !doc["data"]["candidates"]
+            !doc["data"]["items"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -3264,7 +3295,7 @@ fn gc_local_branch_named_like_a_remapped_default_is_not_the_default() {
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert!(
-            doc["data"]["candidates"]
+            doc["data"]["items"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -3679,7 +3710,7 @@ fn gc_default_uses_local_branch_when_a_same_name_tag_exists() {
             assert_eq!(r.snapshot(&default_path), before);
             if args.contains(&"--orphaned") {
                 assert!(
-                    doc["data"]["candidates"]
+                    doc["data"]["items"]
                         .as_array()
                         .unwrap()
                         .iter()
@@ -3718,12 +3749,12 @@ fn gc_orphaned_survives_unresolvable_default_mapping() {
         String::from_utf8_lossy(&out.stdout)
     );
     let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(doc["data"]["candidates"][0]["name"], "gone");
-    assert_eq!(doc["data"]["candidates"][0]["action"], "removed");
+    assert_eq!(doc["data"]["items"][0]["name"], "gone");
+    assert_eq!(doc["data"]["items"][0]["action"], "removed");
 }
 
 #[test]
-fn gc_unresolved_default_keeps_branch_worktrees_even_with_force() {
+fn gc_unresolved_default_keeps_branch_worktrees_and_only_cleans_orphans() {
     for missing_base in [false, true] {
         let r = Repo::new();
         let tree = r.create("possibly-default");
@@ -3763,7 +3794,7 @@ fn gc_unresolved_default_keeps_branch_worktrees_even_with_force() {
                 "--older-than",
                 "1d",
                 "--orphaned",
-                "--force",
+                "--apply",
                 "--json",
             ],
         );
@@ -3779,12 +3810,12 @@ fn gc_unresolved_default_keeps_branch_worktrees_even_with_force() {
             String::from_utf8_lossy(&out.stderr)
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        let candidates = doc["data"]["candidates"].as_array().unwrap();
+        let candidates = doc["data"]["items"].as_array().unwrap();
         assert!(
             candidates
                 .iter()
-                .any(|item| item["name"] == "possibly-default" && item["action"] == "skipped"),
-            "{doc}"
+                .all(|item| item["name"] != "possibly-default"),
+            "age alone is not evidence: {doc}"
         );
         assert!(
             candidates
