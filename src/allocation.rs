@@ -276,7 +276,9 @@ pub(crate) fn create(
                 && (request.detach || tree.branch == name)
                 && tree.metadata.base == base
         };
-        if !request.reuse
+        // Primary checkout collisions are refused even when the source matches.
+        if tree.is_default
+            || !request.reuse
             || !source_matches
             || !matches_link(
                 context,

@@ -15321,3 +15321,143 @@ fn review6_adopt_rejects_a_git_file_pointing_to_primary() {
 fn review6_adopt_rejects_a_git_file_pointing_to_another_workspace() {
     assert_adopt_rejects_swapped_git_dir(false);
 }
+
+#[test]
+fn review11_branch_reuse_refuses_primary_checkout() {
+    assert_review11_primary_refused(false, false);
+}
+
+#[test]
+fn review11_named_branch_reuse_refuses_primary_checkout() {
+    assert_review11_primary_refused(false, true);
+}
+
+#[test]
+fn review11_pr_reuse_refuses_primary_checkout() {
+    assert_review11_primary_refused(true, false);
+}
+
+#[test]
+fn review11_named_pr_reuse_refuses_primary_checkout() {
+    assert_review11_primary_refused(true, true);
+}
+
+fn assert_review11_primary_refused(pr: bool, named: bool) {
+    for recorded in [false, true] {
+        let repo = Repo::new();
+        let path = fake_gh_for_topic_pr(&repo);
+        if pr {
+            publish_pr_topic(&repo);
+            repo.git(&["checkout", "-b", "topic", "origin/topic"]);
+        }
+        if recorded {
+            let out = repo.mabo(&["set", ".", "--purpose", "Primary intent", "--json"]);
+            assert!(out.status.success(), "{}", text(&out.stdout));
+        }
+        let before = json_value(&repo.mabo(&["show", ".", "--json"]));
+        let primary_name = before["data"]["workspace"]["name"].as_str().unwrap();
+        let record_path = repo.repo.join(".git/maboroshi/workspaces");
+        let records_before = records::read(&record_path).ok();
+        let mut args = vec!["create"];
+        if named {
+            args.push(primary_name);
+        }
+        args.extend([
+            if pr { "--pr" } else { "--branch" },
+            if pr { "7" } else { "main" },
+            "--json",
+        ]);
+        let run = |args: &[&str]| {
+            repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+                .env("PATH", &path)
+                .output()
+                .unwrap()
+        };
+        let refused = run(&args);
+        assert_eq!(refused.status.code(), Some(4), "{}", text(&refused.stdout));
+        let refused_doc = assert_envelope(&refused, "create");
+        assert_eq!(refused_doc["error"]["code"], "exists");
+        args.push("--reuse");
+        let reuse = run(&args);
+        assert_eq!(
+            records::read(&record_path).ok(),
+            records_before,
+            "Primary metadata changed: {}",
+            text(&reuse.stdout)
+        );
+        assert_eq!(
+            reuse.status.code(),
+            refused.status.code(),
+            "{}",
+            text(&reuse.stdout)
+        );
+        assert_eq!(
+            assert_envelope(&reuse, "create")["error"],
+            refused_doc["error"]
+        );
+        assert_eq!(json_value(&repo.mabo(&["show", ".", "--json"])), before);
+        assert!(!managed(&repo, primary_name).exists());
+    }
+}
+
+#[test]
+fn review11_adopt_skips_worktree_lock_files() {
+    assert_review11_stale_registration_skipped(true, false);
+}
+
+#[test]
+fn review11_reuse_skips_worktree_lock_files() {
+    assert_review11_stale_registration_skipped(false, false);
+}
+
+#[test]
+fn review11_adopt_skips_admin_directories_without_gitdir() {
+    assert_review11_stale_registration_skipped(true, true);
+}
+
+#[test]
+fn review11_reuse_skips_admin_directories_without_gitdir() {
+    assert_review11_stale_registration_skipped(false, true);
+}
+
+fn assert_review11_stale_registration_skipped(adopt: bool, directory: bool) {
+    let repo = Repo::new();
+    let registrations = repo.repo.join(".git/worktrees");
+    fs::create_dir_all(&registrations).unwrap();
+    let stale = registrations.join(if directory { "broken" } else { "pending.lock" });
+    if directory {
+        fs::create_dir(&stale).unwrap();
+    } else {
+        fs::write(&stale, "").unwrap();
+    }
+    let checkout = repo.root.join("review");
+    repo.git(&["worktree", "add", "-b", "topic", checkout.to_str().unwrap()]);
+    let gitfile = fs::read(checkout.join(".git")).unwrap();
+    let args = if adopt {
+        vec![
+            "adopt",
+            checkout.to_str().unwrap(),
+            "--name",
+            "review",
+            "--json",
+        ]
+    } else {
+        vec!["create", "--branch", "topic", "--reuse", "--json"]
+    };
+    let out = repo.mabo(&args);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    let doc = assert_envelope(&out, if adopt { "adopt" } else { "create" });
+    let tree = &doc["data"]["workspace"];
+    assert_eq!(tree["path"], checkout.to_str().unwrap());
+    assert_eq!(tree["branch"], "topic");
+    if adopt {
+        assert!(tree["id"].is_string());
+        assert_eq!(tree["name"], "review");
+        assert_eq!(tree["createdAt"], serde_json::Value::Null);
+    } else {
+        assert_eq!(doc["data"]["source"]["reused"], true);
+        assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
+    }
+    assert_eq!(fs::read(checkout.join(".git")).unwrap(), gitfile);
+    assert!(stale.exists());
+}

@@ -77,7 +77,12 @@ pub(crate) fn registered_git_dir(repo: &Path, checkout: &Path) -> Result<PathBuf
     let gitfile = checkout.join(".git");
     for entry in entries {
         let admin = entry.map_err(inspect_error)?.path();
-        let backlink = std::fs::read_to_string(admin.join("gitdir")).map_err(inspect_error)?;
+        if !admin.is_dir() {
+            continue;
+        }
+        let Ok(backlink) = std::fs::read_to_string(admin.join("gitdir")) else {
+            continue;
+        };
         let backlink = backlink.strip_suffix('\n').unwrap_or(&backlink);
         if same_path(&admin.join(backlink), &gitfile) {
             return Ok(admin);
@@ -840,6 +845,41 @@ fn normalize(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review11_registration_scan_still_refuses_an_unregistered_checkout() {
+        let root =
+            std::env::temp_dir().join(format!("mabo-git-registration-{}", uuid::Uuid::new_v4()));
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        run(&["init", "--template=", "-b", "main"], Some(&repo)).unwrap();
+        let registrations = git_common_dir(&repo).unwrap().join("worktrees");
+        std::fs::create_dir_all(registrations.join("broken")).unwrap();
+        std::fs::write(registrations.join("pending.lock"), "").unwrap();
+        std::fs::create_dir_all(registrations.join("unreadable/gitdir")).unwrap();
+        let other_admin = registrations.join("other");
+        std::fs::create_dir(&other_admin).unwrap();
+        std::fs::write(
+            other_admin.join("gitdir"),
+            format!("{}\n", root.join("other/.git").display()),
+        )
+        .unwrap();
+        let checkout = root.join("unregistered");
+        std::fs::create_dir(&checkout).unwrap();
+        // A checkout's own gitfile cannot substitute for a matching backlink.
+        std::fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", other_admin.display()),
+        )
+        .unwrap();
+        let error = registered_git_dir(&repo, &checkout).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "No Git admin directory is registered for this workspace"
+        );
+        assert_eq!(error.exit_code(), crate::error::GENERAL);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn rewrites_missing_repository_errors() {
