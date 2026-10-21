@@ -7,7 +7,7 @@ use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::metadata::{self, BranchOrigin, MetadataInput};
 use crate::output::visible_text;
-use crate::{config, git, github, names, paths, sync, tracking, trust, worktree};
+use crate::{git, github, names, paths, sync, tracking, trust, worktree};
 
 pub(crate) struct Request<'a> {
     pub name: Option<&'a str>,
@@ -20,6 +20,7 @@ pub(crate) struct Request<'a> {
     pub copy_files: &'a [String],
     pub metadata: MetadataInput,
     pub hooks: trust::HookControl,
+    pub no_setup: bool,
 }
 
 fn is_live_checkout(tree: &worktree::WorktreeInfo) -> Result<bool> {
@@ -31,36 +32,6 @@ fn is_live_checkout(tree: &worktree::WorktreeInfo) -> Result<bool> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(Error::msg(format!("Failed to inspect workspace: {error}"))),
     }
-}
-
-fn validate_reuse_checkout(context: &Context, tree: &worktree::WorktreeInfo) -> Result<()> {
-    let invalid = |reason: &str| {
-        Error::msg(format!(
-            "Cannot reuse workspace '{}': {reason}. Check its .git entry and repair or remove the stale Git worktree registration before retrying.",
-            visible_text(&tree.name)
-        ))
-    };
-    let path = Path::new(&tree.path);
-    let observed = git::top_level(path)
-        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?;
-    if !paths::same_location(path, &observed) {
-        return Err(invalid(
-            "checkout top-level does not match its registered path",
-        ));
-    }
-    let common_dir = git::canonical_common_dir(path)
-        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?;
-    if common_dir != git::canonical_common_dir(&context.git_root)? {
-        return Err(invalid("checkout does not belong to this repository"));
-    }
-    if !git::matches_registered_git_dir(&context.git_root, path)
-        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?
-    {
-        return Err(invalid(
-            "checkout Git directory does not match its registered Git directory",
-        ));
-    }
-    Ok(())
 }
 
 // An explicit NAME identifies a workspace, not another workspace's branch.
@@ -289,7 +260,7 @@ pub(crate) fn create(
         {
             return Err(Error::WorktreeAlreadyExists(name));
         }
-        validate_reuse_checkout(context, &tree)?;
+        worktree::validate_checkout(context, &tree, "reuse")?;
         let tree = if tree.metadata.links.pr.is_none() && request.metadata.pr.is_some() {
             metadata::write(
                 &context.git_root,
@@ -305,7 +276,15 @@ pub(crate) fn create(
             tree
         };
         source["reused"] = json!(true);
-        return report(&tree, source, None, false, None, None, &[], logger);
+        return report(
+            context,
+            &tree,
+            source,
+            None,
+            &crate::setup::Report::skipped(),
+            request.copy_files,
+            logger,
+        );
     }
     let path = paths::worktree_path(
         &context.worktrees_directory,
@@ -337,13 +316,11 @@ pub(crate) fn create(
             }
         }
     }
-    let commands = trust::authorize(
-        &context.git_root,
-        config::post_create_commands(context.config.as_ref()),
-        config::pre_delete_commands(context.config.as_ref()),
-        trust::HookKind::PostCreate,
-        request.hooks,
-    )?;
+    let commands = if request.no_setup {
+        Vec::new()
+    } else {
+        crate::setup::authorize(context, request.hooks)?
+    };
     metadata::prepare(&context.git_root)?;
     let branch_existed = branch
         .as_deref()
@@ -403,7 +380,12 @@ pub(crate) fn create(
         }
         return Err(error);
     }
-    let metadata_error = metadata::replace(
+    request.metadata.setup = Some(crate::setup::Status::new(if request.no_setup {
+        crate::setup::State::Skipped
+    } else {
+        crate::setup::State::Pending
+    }));
+    let mut metadata_error = metadata::replace(
         &context.git_root,
         &path,
         &request.metadata,
@@ -415,49 +397,38 @@ pub(crate) fn create(
     )
     .err()
     .map(|error| error.to_string());
-    let mut copied = Vec::new();
-    let copy_error = worktree::copy_files_recorded(
-        &context.source_checkout,
-        &path,
-        request.copy_files,
-        &mut copied,
-    )
-    .err()
-    .map(|error| error.to_string());
-    let failure = if commands.is_empty() {
-        None
+    let tree = worktree::worktree_at_path(context, &path)?;
+    let setup = if request.no_setup {
+        let mut skipped = crate::setup::Report::skipped();
+        if let Some(status) = &tree.metadata.setup {
+            skipped.status = status.clone();
+        }
+        skipped
     } else {
-        logger.log("\nRunning post-create commands...");
-        worktree::run_hook_commands(
-            context,
-            &worktree::worktree_at_path(context, &path)?,
-            &commands,
-            true,
-            logger,
-        )?
+        crate::setup::run(context, &tree, request.copy_files, &commands, logger, true)?
     };
+    if metadata_error.is_none() {
+        metadata_error = setup.metadata_error.clone();
+    }
     source["reused"] = json!(false);
     report(
+        context,
         &worktree::worktree_at_path(context, &path)?,
         source,
         metadata_error.as_deref(),
-        !commands.is_empty(),
-        failure.as_ref(),
-        copy_error.as_deref(),
-        &copied,
+        &setup,
+        request.copy_files,
         logger,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn report(
+    context: &Context,
     tree: &worktree::WorktreeInfo,
     source: Value,
     metadata_error: Option<&str>,
-    ran: bool,
-    failure: Option<&worktree::HookFailure>,
-    copy_error: Option<&str>,
-    copied: &[String],
+    setup: &crate::setup::Report,
+    copy_files: &[String],
     logger: &worktree::Logger,
 ) -> Result<i32> {
     logger.log(&format!(
@@ -476,28 +447,83 @@ fn report(
             &format!("Warning: {}", visible_text(error)),
         );
     }
-    if let Some(error) = copy_error {
-        logger.warn(
-            "copy_files",
-            &format!(
-                "Warning: Failed to copy some files: {}",
-                visible_text(error)
-            ),
-        );
-    }
-    if let Some(failure) = failure {
-        logger.warn("post_create", &failure.warning(Path::new(&tree.path)));
-    }
     crate::output::data(
-        &json!({"workspace":tree.to_json(None), "source":source, "setup":worktree::post_create_outcome(ran, failure), "copy":{"copied":copied,"error":copy_error}, "metadata":worktree::metadata_save_outcome(metadata_error)}),
+        &json!({"workspace":tree.to_json(None), "source":source, "setup":setup.outcome(), "copy":setup.copy(), "metadata":worktree::metadata_save_outcome(metadata_error)}),
     )?;
-    if metadata_error.is_some() || copy_error.is_some() || failure.is_some() {
+    if metadata_error.is_some() || setup.failed() {
         return Err(Error::status(
             crate::error::PARTIAL,
-            "Workspace created but setup did not complete",
+            format!(
+                "Workspace created but setup did not complete. Retry with `{}`.",
+                setup_retry_command(context, tree, copy_files)
+            ),
         ));
     }
     Ok(0)
+}
+
+fn shell_quote(value: impl AsRef<std::ffi::OsStr>) -> String {
+    let value = value.as_ref();
+    if let Some(text) = value.to_str().filter(|text| visible_text(text) == *text) {
+        return format!("'{}'", text.replace('\'', "'\\''"));
+    }
+    // ANSI-C quoting is understood by bash and zsh. Encode bytes rather than
+    // lossy Unicode so paths and control characters round-trip exactly.
+    let mut quoted = String::from("$'");
+    for byte in value.as_encoded_bytes() {
+        match byte {
+            b'\t' => quoted.push_str("\\t"),
+            b'\n' => quoted.push_str("\\n"),
+            b'\r' => quoted.push_str("\\r"),
+            b'\\' => quoted.push_str("\\\\"),
+            b'\'' => quoted.push_str("\\'"),
+            0x20..=0x7e => quoted.push(char::from(*byte)),
+            _ => quoted.push_str(&format!("\\x{byte:02x}")),
+        }
+    }
+    quoted.push('\'');
+    quoted
+}
+
+fn setup_retry_command(
+    context: &Context,
+    tree: &worktree::WorktreeInfo,
+    copy_files: &[String],
+) -> String {
+    let command = format!("cd {} && mabo setup", shell_quote(&context.source_checkout));
+    let copy_options: String = copy_files
+        .iter()
+        .map(|pattern| format!(" --copy-file {}", shell_quote(pattern)))
+        .collect();
+    let candidates = std::iter::once(tree.name.clone()).chain(
+        [
+            ("pr", &tree.metadata.links.pr),
+            ("issue", &tree.metadata.links.issue),
+        ]
+        .into_iter()
+        .filter_map(|(kind, link)| {
+            link.as_ref()?
+                .number
+                .map(|number| format!("{kind}:{number}"))
+        }),
+    );
+    for selector in candidates {
+        if !selector.starts_with('-')
+            && crate::selectors::resolve(context, &selector, false, None).is_ok_and(|resolved| {
+                paths::same_location(Path::new(&resolved.path), Path::new(&tree.path))
+            })
+        {
+            return format!("{command} {}{copy_options}", shell_quote(&selector));
+        }
+    }
+    // Paths are not selectors. Dot resolves this checkout even when links were
+    // not saved or match several workspaces. Keep the original hook source even
+    // though dot requires changing into the target checkout.
+    format!(
+        "(cd {} && mabo setup . --source-checkout {}{copy_options})",
+        shell_quote(&tree.path),
+        shell_quote(&context.source_checkout)
+    )
 }
 
 pub(crate) fn adopt(
@@ -514,21 +540,27 @@ fn adopt_with_refresh(
     mut input: MetadataInput,
     refresh: impl FnOnce(&Context, &Path) -> Result<worktree::WorktreeInfo>,
 ) -> Result<worktree::WorktreeInfo> {
+    let registration_path = git::checkout_registration_path(path);
     let path = paths::canonical_location(path);
     let trees = worktree::list_worktrees(context, false, true)?;
-    let tree = trees
-        .iter()
-        .find(|tree| {
-            !tree.orphaned && !tree.is_default && paths::same_location(Path::new(&tree.path), &path)
-        })
+    let live = || {
+        trees
+            .iter()
+            .filter(|tree| !tree.orphaned && !tree.is_default)
+    };
+    // Prefer the requested registration before considering canonical aliases.
+    let tree = live()
+        .find(|tree| git::checkout_registration_path(&tree.registered_path) == registration_path)
+        .or_else(|| live().find(|tree| paths::same_location(Path::new(&tree.path), &path)))
         .ok_or_else(|| Error::WorktreeNotFound(visible_text(&path.to_string_lossy())))?;
     if !path.is_dir() || !path.join(".git").is_file() {
         return Err(Error::WorktreeNotFound(path.to_string_lossy().into_owned()));
     }
+    worktree::validate_registered_path(tree, "adopt")?;
     let observed = git::top_level(&path)?;
     if !paths::same_location(&path, &observed)
         || git::canonical_common_dir(&path)? != git::canonical_common_dir(&context.git_root)?
-        || !git::matches_registered_git_dir(&context.git_root, &path)?
+        || !git::matches_registered_git_dir(&context.git_root, &tree.registered_path)?
     {
         return Err(Error::WorktreeNotFound(path.to_string_lossy().into_owned()));
     }
@@ -557,6 +589,7 @@ fn adopt_with_refresh(
                 "id": saved.id, "base": saved.base, "purpose": saved.purpose,
                 "links": saved.links, "createdAt": saved.created_at,
                 "createdFrom": saved.created_from, "updatedAt": saved.updated_at,
+                "setup": crate::setup::display(true, saved.setup.as_ref()),
             }}))?;
             Err(Error::status(
                 crate::error::PARTIAL,
@@ -571,6 +604,35 @@ mod adopt_tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
+
+    #[test]
+    fn retry_shell_arguments_round_trip_bytes_without_terminal_controls() {
+        use std::os::unix::ffi::OsStrExt;
+        let controls: Vec<u8> = (1..=31).chain([127, 128, 255]).collect();
+        let values: Vec<&[u8]> = vec![
+            b"",
+            b"printable's $data `literal` * ? \\ end",
+            "Unicode 日本語".as_bytes(),
+            b"tabs\tnewlines\n\r\x1b[31m'\\a\n",
+            "C1 \u{85}".as_bytes(),
+            "format \u{202e}".as_bytes(),
+            &controls,
+        ];
+        for bytes in values {
+            let quoted = shell_quote(std::ffi::OsStr::from_bytes(bytes));
+            assert!(!quoted.chars().any(char::is_control), "{quoted:?}");
+            assert_eq!(
+                quoted.starts_with("$'"),
+                std::str::from_utf8(bytes).map_or(true, |text| visible_text(text) != text)
+            );
+            let output = std::process::Command::new("bash")
+                .args(["-c", &format!("printf '%s' {quoted}")])
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{quoted}");
+            assert_eq!(output.stdout, bytes, "{quoted}");
+        }
+    }
 
     struct Fixture {
         root: PathBuf,
@@ -664,6 +726,7 @@ mod adopt_tests {
                 "id": saved.id, "base": saved.base, "purpose": saved.purpose,
                 "links": saved.links, "createdAt": null, "createdFrom": null,
                 "updatedAt": saved.updated_at,
+                "setup": {"state":"unknown", "at":null, "error":null},
             }})
         );
         assert!(saved.id.is_some());

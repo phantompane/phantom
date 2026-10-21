@@ -170,7 +170,7 @@ pub fn run(context: &Context, request: &Request, logger: &Logger) -> Result<Repo
     let verdicts = classify(&facts, &request.policy);
     let skip_untrusted = crate::trust::blocks_gc(
         &context.git_root,
-        crate::config::pre_delete_commands(context.config.as_ref()),
+        crate::config::pre_remove_commands(context.config.as_ref()),
         request.no_hooks,
     )?;
     let mut candidates = Vec::with_capacity(verdicts.len());
@@ -982,7 +982,7 @@ fn apply_delete(
                 Verdict::Remove(Removal::Delete { subject: current, .. }) if current.path == subject.path)) {
                 Ok(())
             } else {
-                Err(Error::msg("Workspace no longer qualifies for gc after pre-delete commands"))
+                Err(Error::msg("Workspace no longer qualifies for gc after pre-remove commands"))
             }
         },
     ) {
