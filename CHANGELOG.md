@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- `remove` and `gc --merged` now accept GitHub merged PR evidence after local preservation checks fail. Linked PRs require a verified repository and a merged head equal to or containing the local tip; ancestry uses existing objects only. Partial clones (`extensions.partialClone` configured or any remote with `promisor=true`) require an exact tip match and skip PR object and ancestry probes on every Git version. Unlinked branches require exactly one merged PR with the same head name and exact tip. Bounded, non-prompting `gh` queries are cached per command; uncertainty keeps the local verdict. Plans use the same checks, and item `preservationReason` plus text details identify merged PR proof. GitHub Enterprise hosts on plain HTTP or a non-default port cannot prove a merged PR yet; their branches are kept.
+
 ### Breaking changes
 
 This release redesigns the Rust `mabo` CLI around workspaces. Update scripts written for alpha.6 before upgrading. The installed binary remains `mabo`.

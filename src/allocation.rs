@@ -669,6 +669,7 @@ mod adopt_tests {
             .unwrap();
             Self {
                 context: Context {
+                    retirement_queries: Default::default(),
                     git_root: repo.clone(),
                     source_checkout: repo,
                     worktrees_directory: root.join("workspaces"),

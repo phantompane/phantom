@@ -621,6 +621,7 @@ pub struct RemoveOutcome {
     pub branch_deleted: bool,
     pub branch_error: Option<String>,
     pub branch_kept_reason: Option<String>,
+    pub preservation_reason: Option<String>,
     /// Set when Git already removed the worktree and the metadata record could not.
     pub metadata_error: Option<String>,
 }
@@ -657,16 +658,30 @@ pub struct RemovePlan {
     inside: bool,
     changed: usize,
     pub branch_kept_reason: Option<String>,
+    pub preservation_reason: Option<String>,
 }
 
 pub(crate) fn preserved(context: &Context, worktree: &WorktreeInfo) -> bool {
+    preservation_reason(context, worktree).is_some()
+}
+
+fn preservation_reason(context: &Context, worktree: &WorktreeInfo) -> Option<String> {
     let fallback = crate::sync::fallback_base(&context.git_root).ok();
-    git::retirement_preserved(
+    if git::retirement_preserved(
         &context.git_root,
         (!worktree.detached).then_some(worktree.branch.as_str()),
         worktree.head.as_deref(),
         worktree.metadata.base.as_deref().or(fallback.as_deref()),
-    )
+    ) {
+        return Some("local".to_string());
+    }
+    (!worktree.detached
+        && context.retirement_queries.borrow_mut().merged_contains(
+            &context.git_root,
+            &worktree.branch,
+            worktree.metadata.links.pr.as_ref(),
+        ))
+    .then(|| "merged_pr".to_string())
 }
 
 pub fn preflight_remove(
@@ -758,6 +773,7 @@ fn preflight_remove_selected(
             inside,
             changed: 0,
             branch_kept_reason: None,
+            preservation_reason: None,
         });
     }
     if !force
@@ -782,7 +798,8 @@ fn preflight_remove_selected(
             &worktree,
         ));
     }
-    let preserved = preserved(context, &worktree);
+    let preservation_reason = preservation_reason(context, &worktree);
+    let preserved = preservation_reason.is_some();
     check_detached_preserved(context, &worktree, options, label)?;
     let branch_kept_reason = if worktree.detached {
         None
@@ -801,6 +818,7 @@ fn preflight_remove_selected(
         inside,
         changed,
         branch_kept_reason,
+        preservation_reason,
     })
 }
 
@@ -906,6 +924,7 @@ pub(crate) fn commit_remove_checked(
             branch_deleted: false,
             branch_error: None,
             branch_kept_reason: None,
+            preservation_reason: None,
             metadata_error: None,
         });
     }
@@ -931,6 +950,7 @@ pub(crate) fn commit_remove_checked(
         inside,
         changed,
         branch_kept_reason,
+        preservation_reason,
         ..
     } = fresh;
     let recorded_path = metadata::matching_path(&context.git_root, &path)
@@ -990,6 +1010,11 @@ pub(crate) fn commit_remove_checked(
             }
         }
     };
+    let message = if preservation_reason.as_deref() == Some("merged_pr") {
+        format!("{message} (preserved by merged PR)")
+    } else {
+        message
+    };
     let message = if changed > 0 {
         format!("Warning: Workspace '{name}' had uncommitted changes ({changed} files)\n{message}")
     } else {
@@ -1006,6 +1031,7 @@ pub(crate) fn commit_remove_checked(
         branch_deleted,
         branch_error,
         branch_kept_reason,
+        preservation_reason,
         metadata_error,
     })
 }
