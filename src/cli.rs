@@ -24,11 +24,21 @@ pub fn run(args: &[String]) -> Result<i32> {
     let mut prefix = 0;
     while let Some(arg) = args.get(prefix) {
         let name = arg.split('=').next().unwrap_or(arg);
-        if !matches!(name, "--json" | "--output" | "--no-input") {
+        if arg.starts_with("-R") && arg != "-R" {
+            prefix += 1;
+            continue;
+        }
+        if !matches!(
+            name,
+            "--json" | "--output" | "--no-input" | "--repo" | "-R" | "--project" | "-p"
+        ) {
             break;
         }
         prefix += 1;
-        if matches!(name, "--output") && !arg.contains('=') && prefix < args.len() {
+        if matches!(name, "--output" | "--repo" | "-R" | "--project" | "-p")
+            && !arg.contains('=')
+            && prefix < args.len()
+        {
             prefix += 1;
         }
     }
@@ -46,40 +56,23 @@ pub fn run(args: &[String]) -> Result<i32> {
         return run(&reordered);
     }
     if args.is_empty() || args[0] == "-h" || args[0] == "--help" {
+        let prepared = crate::runtime::prepare(args, true, "", &command_options(""), true);
+        if let Some(error) = prepared.error {
+            return unresolved_usage(args, "", &error.to_string());
+        }
         println!("{}", help::main_help()?);
-        return Ok(SUCCESS);
-    }
-    if args[0] == "-v" || args[0] == "--version" {
-        println!("{}", crate::version_line());
         return Ok(SUCCESS);
     }
     match find(args, COMMANDS) {
         Some((command, remaining)) => {
             let key = command.help_key;
-            let supports_json = matches!(
-                key,
-                "create"
-                    | "attach"
-                    | "list"
-                    | "where"
-                    | "delete"
-                    | "sync"
-                    | "gc"
-                    | "trust"
-                    | "untrust"
-                    | "meta set"
-                    | "clone"
-                    | "project add"
-                    | "project list"
-                    | "project remove"
-                    | "github checkout"
-            );
+            let supports_json = key != "exec";
             let prepared = crate::runtime::prepare(
                 remaining,
                 supports_json || (!command.children.is_empty() && !remaining.is_empty()),
                 key,
                 &command_options(key),
-                true,
+                key != "help",
             );
             if prepared.error.is_none()
                 && (prepared.help || (!command.children.is_empty() && prepared.args.is_empty()))
@@ -105,7 +98,13 @@ pub fn run(args: &[String]) -> Result<i32> {
         None => unresolved_usage(
             args,
             &args[0],
-            &format!("Unknown command '{}'", args.join(" ")),
+            &removed_command_hint(&args[0]).unwrap_or_else(|| {
+                if args[0].starts_with("-p") && !args[0].starts_with("--") {
+                    format!("Option '{}' was removed. Use -R/--repo REF.", args[0])
+                } else {
+                    format!("Unknown command '{}'", args.join(" "))
+                }
+            }),
         ),
     }
 }
@@ -612,98 +611,176 @@ fn exec(args: &[String]) -> Result<i32> {
     }
 }
 
-fn preferences_root(args: &[String]) -> Result<i32> {
-    if args.is_empty() {
-        if let Some(text) = help::command_help("preferences")? {
-            println!("{text}");
-        }
-        return Ok(SUCCESS);
-    }
+fn config_root(args: &[String]) -> Result<i32> {
     Err(Error::validation(format!(
-        "Unknown preferences subcommand: {}",
-        args[0]
+        "Unknown config subcommand: {}",
+        args.join(" ")
     )))
 }
 
-fn preferences_get(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &[], true)?;
-    if parsed.positionals.len() != 1 {
-        return fail(&Error::msg("Usage: mabo preferences get <key>"), VALIDATION);
+fn config_get(args: &[String]) -> Result<i32> {
+    config_read(args, false)
+}
+
+fn config_list(args: &[String]) -> Result<i32> {
+    config_read(args, true)
+}
+
+fn config_read(args: &[String], list: bool) -> Result<i32> {
+    let key = if list { "config list" } else { "config get" };
+    let parsed = args::parse(args, &command_options(key), true)?;
+    selected_repository(&parsed)?;
+    if parsed.positionals.len() != usize::from(!list) {
+        return Err(Error::validation(if list {
+            "Usage: mabo config list [--sources]"
+        } else {
+            "Usage: mabo config get KEY [--sources]"
+        }));
     }
-    let key = &parsed.positionals[0];
-    if let Err(error) = preferences::require_key(key) {
-        return fail(&error, VALIDATION);
-    }
-    let loaded = match preferences::load_preferences() {
-        Ok(preferences) => preferences,
-        Err(error) => return fail(&error, GENERAL),
+    let keys = if list {
+        preferences::SUPPORTED_KEYS.to_vec()
+    } else {
+        preferences::require_key(&parsed.positionals[0])?;
+        vec![parsed.positionals[0].as_str()]
     };
-    match preferences::preference_value(&loaded, key) {
-        Some(value) => println!("{value}"),
-        None => {
-            let path = match preferences::config_path() {
-                Ok(path) => path,
-                Err(error) => return fail(&error, GENERAL),
+    let loaded = preferences::load_preferences()?;
+    let mut values = serde_json::Map::new();
+    for key in keys {
+        let effective = preferences::effective_value(&loaded, key)?;
+        if crate::output::json() {
+            values.insert(
+                key.into(),
+                if parsed.flag("sources") {
+                    serde_json::to_value(effective)
+                        .map_err(|error| Error::msg(error.to_string()))?
+                } else {
+                    effective.value
+                },
+            );
+        } else {
+            let value = match &effective.value {
+                serde_json::Value::String(value) => value.clone(),
+                value => value.to_string(),
             };
-            println!("Preference '{key}' is not set ({})", path.display());
+            let label = if list {
+                format!("{key} = ")
+            } else {
+                String::new()
+            };
+            if parsed.flag("sources") {
+                println!(
+                    "{label}{value}\t{} ({})",
+                    effective.source, effective.detail
+                );
+            } else {
+                println!("{label}{value}");
+            }
         }
     }
-    Ok(SUCCESS)
+    if crate::output::json() {
+        emit_json(&serde_json::json!({"config": values}))
+    } else {
+        Ok(SUCCESS)
+    }
 }
 
-fn preferences_set(args: &[String]) -> Result<i32> {
-    if args.len() < 2 {
-        return fail(
-            &Error::msg("Usage: mabo preferences set <key> <value>"),
-            VALIDATION,
-        );
-    }
-    let key = &args[0];
-    if let Err(error) = preferences::require_key(key) {
-        return fail(&error, VALIDATION);
-    }
-    let value = args[1..].join(" ");
-    if value.is_empty() {
-        return fail(
-            &Error::msg(format!("Preference '{key}' requires a value")),
-            VALIDATION,
-        );
-    }
-    if let Some(message) = preferences::validate_preference_value(key, &value) {
-        return fail(&Error::msg(message), VALIDATION);
-    }
-    let path = match preferences::set_preference(key, &value) {
-        Ok(path) => path,
-        Err(error) => return fail(&error, GENERAL),
-    };
-    println!("Set {key} to '{value}' in {}", path.display());
-    Ok(SUCCESS)
-}
-
-fn preferences_remove(args: &[String]) -> Result<i32> {
-    let parsed = args::parse(args, &[], true)?;
-    if parsed.positionals.len() != 1 {
-        return fail(
-            &Error::msg("Usage: mabo preferences remove <key>"),
-            VALIDATION,
-        );
+fn config_set(args: &[String]) -> Result<i32> {
+    let parsed = args::parse(args, &command_options("config set"), true)?;
+    selected_repository(&parsed)?;
+    if parsed.positionals.len() != 2 {
+        return Err(Error::validation("Usage: mabo config set KEY VALUE"));
     }
     let key = &parsed.positionals[0];
-    if let Err(error) = preferences::require_key(key) {
-        return fail(&error, VALIDATION);
+    let value = &parsed.positionals[1];
+    preferences::require_key(key)?;
+    if value.is_empty() {
+        return Err(Error::validation(format!(
+            "Config key '{key}' requires a value"
+        )));
     }
-    let path = match preferences::remove_preference(key) {
-        Ok(path) => path,
-        Err(error) => return fail(&error, GENERAL),
-    };
-    println!("Removed {key} from {}", path.display());
-    Ok(SUCCESS)
+    if let Some(message) = preferences::validate_preference_value(key, value) {
+        return Err(Error::validation(message));
+    }
+    let path = preferences::set_preference(key, value)?;
+    if crate::output::json() {
+        let value = if matches!(key.as_str(), "keep-branch" | "discover-ghq") {
+            serde_json::json!(value == "true")
+        } else {
+            serde_json::json!(value)
+        };
+        emit_json(&serde_json::json!({"key": key, "value": value}))
+    } else {
+        println!("Set {key} to '{value}' in {}", path.display());
+        Ok(SUCCESS)
+    }
+}
+
+fn config_unset(args: &[String]) -> Result<i32> {
+    let parsed = args::parse(args, &command_options("config unset"), true)?;
+    selected_repository(&parsed)?;
+    if parsed.positionals.len() != 1 {
+        return Err(Error::validation("Usage: mabo config unset KEY"));
+    }
+    let key = &parsed.positionals[0];
+    preferences::require_key(key)?;
+    let path = preferences::remove_preference(key)?;
+    if crate::output::json() {
+        emit_json(&serde_json::json!({"key": key, "unset": true}))
+    } else {
+        println!("Unset {key} in {}", path.display());
+        Ok(SUCCESS)
+    }
 }
 
 fn version(args: &[String]) -> Result<i32> {
-    args::parse(args, &[], false)?;
-    println!("{}", crate::version_line());
-    Ok(SUCCESS)
+    let parsed = args::parse(args, &command_options("--version"), false)?;
+    selected_repository(&parsed)?;
+    if crate::output::json() {
+        // `version` is application data here, distinct from the envelope schema.
+        crate::output::app_version(crate::version_line())
+    } else {
+        println!("{}", crate::version_line());
+        Ok(SUCCESS)
+    }
+}
+
+fn help_cmd(args: &[String]) -> Result<i32> {
+    let parsed = args::parse(args, &command_options("help"), true)?;
+    selected_repository(&parsed)?;
+    let key = parsed.positionals.join(" ");
+    if !key.is_empty() && help::command_help(&key)?.is_none() {
+        return Err(Error::validation(
+            removed_command_hint(&key).unwrap_or_else(|| format!("Unknown command '{key}'")),
+        ));
+    }
+    if crate::output::json() {
+        emit_json(&help::json_help(&key)?)
+    } else {
+        println!(
+            "{}",
+            if key.is_empty() && parsed.flag("help") {
+                help::command_help("help")?.unwrap_or_default()
+            } else if key.is_empty() {
+                help::main_help()?
+            } else {
+                help::command_help(&key)?.unwrap_or_default()
+            }
+        );
+        Ok(SUCCESS)
+    }
+}
+
+fn removed_command_hint(command: &str) -> Option<String> {
+    let replacement = match command.split_whitespace().next()? {
+        "project" => "mabo repo add/list/show/forget",
+        "preferences" => "mabo config get/set/unset/list",
+        "untrust" => "mabo trust remove",
+        "version" => "mabo --version",
+        _ => return None,
+    };
+    Some(format!(
+        "Command '{command}' was removed. Use `{replacement}`."
+    ))
 }
 
 fn clone_cmd(args: &[String]) -> Result<i32> {
@@ -717,6 +794,7 @@ fn clone_cmd(args: &[String]) -> Result<i32> {
                 "Usage: mabo clone <url|host/owner/repo|owner/repo> [--branch <branch>] [--depth <n>] [--update] [--json]",
             ), VALIDATION);
     }
+    selected_repository(&parsed)?;
     match repository::clone_repository(&repository::CloneRequest {
         source: &parsed.positionals[0],
         branch: parsed.value("branch"),
@@ -726,7 +804,10 @@ fn clone_cmd(args: &[String]) -> Result<i32> {
         Ok(outcome) => {
             let result = outcome.result;
             if json {
-                emit_json(&result)?;
+                emit_json(&serde_json::json!({
+                    "repo": {"root": result.path, "name": format!("{}/{}/{}", result.host, result.owner, result.repo), "remoteUrl": result.remote_url},
+                    "cloned": result.cloned, "updated": result.updated,
+                }))?;
             } else {
                 println!("{}", repository::human_clone_message(&result));
             }
@@ -746,26 +827,26 @@ fn clone_cmd(args: &[String]) -> Result<i32> {
 
 fn project_root(args: &[String]) -> Result<i32> {
     if args.is_empty() {
-        if let Some(text) = help::command_help("project")? {
+        if let Some(text) = help::command_help("repo")? {
             println!("{text}");
         }
         return Ok(SUCCESS);
     }
     Err(Error::validation(format!(
-        "Unknown project subcommand: {}",
+        "Unknown repo subcommand: {}",
         args[0]
     )))
 }
 
 fn project_add(args: &[String]) -> Result<i32> {
     let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("project add"), true) {
+    let parsed = match args::parse(args, &command_options("repo add"), true) {
         Ok(parsed) => parsed,
         Err(error) => return fail_with(&error, VALIDATION),
     };
     if parsed.positionals.len() > 1 {
         return fail_with(
-            &Error::msg("Usage: mabo project add [path] [--json]"),
+            &Error::msg("Usage: mabo repo add [path] [--json]"),
             VALIDATION,
         );
     }
@@ -773,11 +854,12 @@ fn project_add(args: &[String]) -> Result<i32> {
         Ok(cwd) => cwd,
         Err(error) => return bubble(Error::msg(error.to_string()), json),
     };
+    let selected = selected_repository(&parsed)?;
     let input = parsed
         .positionals
         .first()
         .map(Path::new)
-        .unwrap_or(cwd.as_path());
+        .unwrap_or(selected.as_deref().unwrap_or(cwd.as_path()));
     let root = match projects::resolve_project_root(input) {
         Ok(root) => root,
         Err(error) => return bubble(error, json),
@@ -793,10 +875,10 @@ fn project_add(args: &[String]) -> Result<i32> {
     if json {
         return emit_json(&project_add_json(added, &project));
     } else if added {
-        println!("Added project '{}' ({})", project.name, project.root_path);
+        println!("Added repo '{}' ({})", project.name, project.root_path);
     } else {
         println!(
-            "Project '{}' is already registered ({})",
+            "Repository '{}' is already registered ({})",
             project.name, project.root_path
         );
     }
@@ -805,7 +887,7 @@ fn project_add(args: &[String]) -> Result<i32> {
 
 fn project_list(args: &[String]) -> Result<i32> {
     let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("project list"), false) {
+    let parsed = match args::parse(args, &command_options("repo list"), false) {
         Ok(parsed) => parsed,
         Err(error) => return fail_with(&error, VALIDATION),
     };
@@ -823,19 +905,32 @@ fn project_list(args: &[String]) -> Result<i32> {
         Ok(preferences) => preferences,
         Err(error) => return fail_with(&error, GENERAL),
     };
-    let catalog = match projects::list_catalog(loaded.ghq_discovery != Some(false)) {
+    if parsed.flag("registered") && parsed.flag("discovered") {
+        return Err(Error::validation(
+            "Use only one of --registered or --discovered",
+        ));
+    }
+    selected_repository(&parsed)?;
+    let mut catalog = match projects::list_catalog(
+        !parsed.flag("registered") && loaded.ghq_discovery != Some(false),
+    ) {
         Ok(catalog) => catalog,
         Err(error) => return bubble(error, json),
     };
+    if parsed.flag("discovered") {
+        catalog
+            .projects
+            .retain(|entry| matches!(entry, ProjectListEntry::Ghq { .. }));
+    }
     for warning in &catalog.warnings {
-        crate::output::warning("project_discovery", format!("Warning: {warning}"));
+        crate::output::warning("repo_discovery", format!("Warning: {warning}"));
     }
     if json {
         return emit_json(&catalog_json(&catalog.projects, catalog.version));
     }
     if catalog.projects.is_empty() {
         if !parsed.flag("names") && !parsed.flag("paths") {
-            println!("No projects found.");
+            println!("No repos found.");
         }
         return Ok(SUCCESS);
     }
@@ -872,16 +967,17 @@ fn project_list(args: &[String]) -> Result<i32> {
 
 fn project_remove(args: &[String]) -> Result<i32> {
     let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("project remove"), true) {
+    let parsed = match args::parse(args, &command_options("repo forget"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, VALIDATION),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     if parsed.positionals.len() != 1 {
         return fail_with(
-            &Error::msg("Usage: mabo project remove <id|name|path> [--json]"),
+            &Error::msg("Usage: mabo repo remove <id|name|path> [--json]"),
             VALIDATION,
         );
     }
+    selected_repository(&parsed)?;
     let identifier = &parsed.positionals[0];
     let store = match ProjectRegistryStore::default_store() {
         Ok(store) => store,
@@ -895,17 +991,17 @@ fn project_remove(args: &[String]) -> Result<i32> {
         Ok(Some(project)) => project,
         Ok(None) => {
             return fail_with(
-                &Error::msg(format!("Project '{identifier}' not found")),
+                &Error::msg(format!("Repository '{identifier}' not found")),
                 NOT_FOUND,
             )
         }
-        Err(error) => return fail_with(&error, VALIDATION),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let removed = match store.remove(&project.id) {
         Ok(Some(removed)) => removed,
         Ok(None) => {
             return fail_with(
-                &Error::msg(format!("Project '{identifier}' not found")),
+                &Error::msg(format!("Repository '{identifier}' not found")),
                 NOT_FOUND,
             )
         }
@@ -914,12 +1010,44 @@ fn project_remove(args: &[String]) -> Result<i32> {
     if json {
         return emit_json(&serde_json::json!({
             "status": "removed",
-            "project": removed,
+            "repo": removed,
         }));
     } else {
-        println!("Removed project '{}' ({})", removed.name, removed.root_path);
+        println!("Removed repo '{}' ({})", removed.name, removed.root_path);
     }
     Ok(SUCCESS)
+}
+
+fn repo_show(args: &[String]) -> Result<i32> {
+    let parsed = args::parse(args, &command_options("repo show"), true)?;
+    if parsed.positionals.len() > 1 {
+        return Err(Error::validation("Usage: mabo repo show [REF]"));
+    }
+    let selected = selected_repository(&parsed)?;
+    let root = match parsed.positionals.first() {
+        Some(reference) => projects::resolve_project_ref(reference)?,
+        None => crate::context::open(selected.as_deref())?.git_root,
+    };
+    let context = crate::context::create_at(&root)?;
+    let name = repository::canonical_name_from_origin(&root).unwrap_or_else(|| {
+        root.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned()
+    });
+    let default_branch = crate::git::default_branch(&root)?;
+    let trusted = trust::trust_all() || trust::is_trusted_root(&root)?;
+    let value = serde_json::json!({"repo": {
+        "root": root, "name": name, "defaultBranch": default_branch,
+        "configPresent": root.join(".mabo.toml").is_file(), "trusted": trusted,
+        "workspaceRoot": context.worktrees_directory,
+    }});
+    if crate::output::json() {
+        emit_json(&value)
+    } else {
+        println!("{name}\nPrimary checkout: {}\nDefault branch: {}\n.mabo.toml: {}\nTrusted: {trusted}\nWorkspace root: {}", root.display(), default_branch.as_deref().unwrap_or("unknown"), root.join(".mabo.toml").is_file(), context.worktrees_directory.display());
+        Ok(SUCCESS)
+    }
 }
 
 fn find_project(projects: &[ProjectRecord], identifier: &str) -> Result<Option<ProjectRecord>> {
@@ -942,17 +1070,20 @@ fn find_project(projects: &[ProjectRecord], identifier: &str) -> Result<Option<P
     if name_matches.len() > 1 {
         return Err(Error::Status {
             code: "ambiguous",
-            message: format!("Project '{identifier}' is ambiguous; use its id or path"),
+            message: format!("Repository '{identifier}' is ambiguous; use its id or path"),
         });
     }
-    if let Ok(root) = projects::resolve_project_root(Path::new(identifier)) {
-        let root = root.to_string_lossy().to_string();
-        return Ok(projects
-            .iter()
-            .find(|project| project.root_path == root)
-            .cloned());
+    match projects::resolve_project_ref(identifier) {
+        Ok(root) => {
+            let root = root.to_string_lossy().to_string();
+            Ok(projects
+                .iter()
+                .find(|project| project.root_path == root)
+                .cloned())
+        }
+        Err(Error::ProjectNotFound(_) | Error::PathNotFound(_) | Error::NotARepository) => Ok(None),
+        Err(error) => Err(error),
     }
-    Ok(None)
 }
 
 fn github_root(args: &[String]) -> Result<i32> {
@@ -1029,14 +1160,14 @@ fn github_checkout(args: &[String]) -> Result<i32> {
 fn project_add_json(added: bool, project: &ProjectRecord) -> serde_json::Value {
     serde_json::json!({
         "status": if added { "added" } else { "existing" },
-        "project": project,
+        "repo": project,
     })
 }
 
 fn catalog_json(projects: &[ProjectListEntry], version: u32) -> serde_json::Value {
     serde_json::json!({
         "version": version,
-        "projects": projects,
+        "repos": projects,
     })
 }
 
@@ -1133,9 +1264,9 @@ fn action_from(parsed: &Parsed) -> Result<ActionRequest> {
 
 /// Shared by common-option extraction and command validation.
 fn command_options(key: &str) -> Vec<Opt> {
-    match key {
+    let mut options = match key {
         "sync" => vec![
-            project_flag(),
+            repo_flag(),
             flag("all", None),
             flag("mine", None),
             flag("no-default", None),
@@ -1146,7 +1277,7 @@ fn command_options(key: &str) -> Vec<Opt> {
         ],
         "create" => {
             let mut options = vec![
-                project_flag(),
+                repo_flag(),
                 remainder_flag("exec", Some('x')),
                 Opt {
                     name: "copy-file",
@@ -1163,7 +1294,7 @@ fn command_options(key: &str) -> Vec<Opt> {
         }
         "attach" => {
             let mut options = vec![
-                project_flag(),
+                repo_flag(),
                 remainder_flag("exec", Some('x')),
                 Opt {
                     name: "copy-file",
@@ -1178,42 +1309,49 @@ fn command_options(key: &str) -> Vec<Opt> {
             options
         }
         "list" => vec![
-            project_flag(),
+            repo_flag(),
             flag("no-default", None),
             flag("names", None),
             value_flag("owner", None),
         ],
-        "where" => vec![project_flag()],
+        "where" => vec![repo_flag()],
         "delete" => vec![
-            project_flag(),
+            repo_flag(),
             flag("force", Some('f')),
             flag("keep-branch", None),
             flag("current", None),
             flag("no-hooks", None),
         ],
-        "exec" => vec![project_flag()],
+        "exec" => vec![repo_flag()],
         "clone" => vec![
             value_flag("branch", None),
             value_flag("depth", None),
             flag("update", None),
         ],
-        "project add" => vec![],
-        "project list" => vec![flag("names", None), flag("paths", None)],
-        "project remove" => vec![],
+        "repo add" => vec![],
+        "repo list" => vec![
+            flag("names", None),
+            flag("paths", None),
+            flag("registered", None),
+            flag("discovered", None),
+        ],
+        "config get" | "config list" => vec![flag("sources", None)],
+        "help" => vec![flag("help", Some('h'))],
+        "repo forget" => vec![],
         "github checkout" => vec![
-            project_flag(),
+            repo_flag(),
             value_flag("base", None),
             flag("no-hooks", None),
             value_flag("owner", None),
             value_flag("purpose", None),
         ],
         "meta set" => {
-            let mut options = vec![project_flag(), value_flag("base", None)];
+            let mut options = vec![repo_flag(), value_flag("base", None)];
             options.extend(metadata_options());
             options
         }
         "gc" => vec![
-            project_flag(),
+            repo_flag(),
             flag("apply", None),
             flag("force", Some('f')),
             flag("merged", None),
@@ -1224,14 +1362,17 @@ fn command_options(key: &str) -> Vec<Opt> {
             flag("keep-branch", None),
             flag("no-hooks", None),
         ],
-        "trust" => vec![flag("yes", Some('y')), flag("list", None)],
-        "untrust" => vec![],
+
         _ => vec![],
+    };
+    if !options.iter().any(|option| option.name == "repo") {
+        options.push(repo_flag());
     }
+    options
 }
 
-fn project_flag() -> Opt {
-    value_flag("project", Some('p'))
+fn repo_flag() -> Opt {
+    value_flag("repo", Some('R'))
 }
 
 fn metadata_options() -> [Opt; 4] {
@@ -1284,12 +1425,12 @@ fn single_value<'a>(parsed: &'a Parsed, name: &str) -> Result<Option<&'a str>> {
 }
 
 fn selected_repository(parsed: &Parsed) -> Result<Option<std::path::PathBuf>> {
-    if parsed.occurrences("project") > 1 {
+    if parsed.occurrences("repo") > 1 {
         return Err(Error::validation(
-            "The --project option can only be specified once".to_string(),
+            "The --repo option can only be specified once".to_string(),
         ));
     }
-    match parsed.value("project") {
+    match parsed.value("repo") {
         Some(reference) => projects::resolve_project_ref(reference).map(Some),
         None => Ok(None),
     }
@@ -1370,23 +1511,17 @@ fn hook_control(parsed: &Parsed, json: bool, prompt: bool) -> HookControl {
 
 fn trust_cmd(args: &[String]) -> Result<i32> {
     let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("trust"), true) {
+    let parsed = match args::parse(args, &command_options("trust add"), true) {
         Ok(parsed) => parsed,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
-    if parsed.flag("list") {
-        if parsed.flag("yes") || !parsed.positionals.is_empty() {
-            return fail_with(
-                &Error::validation("mabo trust --list does not take a path or --yes"),
-                VALIDATION,
-            );
-        }
-        return print_trust_list(json);
-    }
     if parsed.positionals.len() > 1 {
-        return fail_with(&Error::validation("Usage: mabo trust [path]"), VALIDATION);
+        return fail_with(
+            &Error::validation("Usage: mabo trust add [REPO]"),
+            VALIDATION,
+        );
     }
-    let start = match trust_start(parsed.positionals.first().map(String::as_str)) {
+    let start = match trust_start(&parsed) {
         Ok(start) => start,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
@@ -1394,26 +1529,11 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
         Ok(project) => project,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
-    if !parsed.flag("yes") {
-        if json || !trust::prompts() {
-            return fail_with(
-                &Error::Untrusted(
-                    "mabo will not ask for trust in this environment. Re-run with --yes to trust this project.".into(),
-                ),
-                GENERAL,
-            );
-        }
-        let accepted = match trust::ask(&project, trust::TRUST_PROMPT) {
-            Ok(accepted) => accepted,
-            Err(error) => return fail_with(&error, error.exit_code()),
-        };
-        if !accepted {
-            return fail_with(
-                &Error::Untrusted(format!("Did not trust {}", project.project)),
-                GENERAL,
-            );
-        }
-    }
+    eprintln!(
+        "{}\n{}",
+        project.project,
+        trust::format_hooks(&project.post_create, &project.pre_delete)
+    );
     match trust::trust_root(Path::new(&project.git_root)) {
         Ok(record) => {
             if json {
@@ -1433,14 +1553,17 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
 
 fn untrust_cmd(args: &[String]) -> Result<i32> {
     let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("untrust"), true) {
+    let parsed = match args::parse(args, &command_options("trust remove"), true) {
         Ok(parsed) => parsed,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
     if parsed.positionals.len() > 1 {
-        return fail_with(&Error::validation("Usage: mabo untrust [path]"), VALIDATION);
+        return fail_with(
+            &Error::validation("Usage: mabo trust remove [REPO]"),
+            VALIDATION,
+        );
     }
-    let start = match trust_start(parsed.positionals.first().map(String::as_str)) {
+    let start = match trust_start(&parsed) {
         Ok(start) => start,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
@@ -1489,11 +1612,11 @@ fn print_trust_list(json: bool) -> Result<i32> {
             .collect::<Vec<_>>();
         return emit_json(&serde_json::json!({
             "version": crate::error::JSON_VERSION,
-            "projects": projects,
+            "repos": projects,
         }));
     }
     if projects.is_empty() {
-        println!("No trusted projects");
+        println!("No trusted repos");
         return Ok(SUCCESS);
     }
     for project in projects {
@@ -1502,21 +1625,31 @@ fn print_trust_list(json: bool) -> Result<i32> {
     Ok(SUCCESS)
 }
 
-fn trust_start(path: Option<&str>) -> Result<std::path::PathBuf> {
-    match path {
-        None => std::env::current_dir().map_err(|error| Error::msg(error.to_string())),
-        Some(value) => {
-            let path = std::path::PathBuf::from(value);
-            if !path.exists() {
-                return Err(Error::PathNotFound(value.to_string()));
-            }
-            if !path.is_dir() {
-                return Err(Error::validation(format!(
-                    "Path '{value}' is not a directory"
-                )));
-            }
-            Ok(path)
-        }
+fn trust_root_cmd(args: &[String]) -> Result<i32> {
+    let hint = if args.iter().any(|arg| arg == "--list") {
+        "mabo trust list"
+    } else {
+        "mabo trust add [REPO] or mabo trust remove [REPO]"
+    };
+    Err(Error::validation(format!(
+        "Use `{hint}`. The old trust syntax (--yes/--list) was removed."
+    )))
+}
+
+fn trust_list_cmd(args: &[String]) -> Result<i32> {
+    let parsed = args::parse(args, &command_options("trust list"), false)?;
+    selected_repository(&parsed)?;
+    print_trust_list(crate::output::json())
+}
+
+fn trust_start(parsed: &Parsed) -> Result<std::path::PathBuf> {
+    let selected = selected_repository(parsed)?;
+    match parsed.positionals.first() {
+        Some(reference) => projects::resolve_project_ref(reference),
+        None => match selected {
+            Some(root) => Ok(root),
+            None => std::env::current_dir().map_err(|error| Error::msg(error.to_string())),
+        },
     }
 }
 
@@ -1684,41 +1817,53 @@ static META_COMMANDS: &[Command] = &[Command {
 
 static PREFERENCE_COMMANDS: &[Command] = &[
     Command {
+        name: "list",
+        help_key: "config list",
+        run: config_list,
+        children: &[],
+    },
+    Command {
         name: "get",
-        help_key: "preferences get",
-        run: preferences_get,
+        help_key: "config get",
+        run: config_get,
         children: &[],
     },
     Command {
         name: "set",
-        help_key: "preferences set",
-        run: preferences_set,
+        help_key: "config set",
+        run: config_set,
         children: &[],
     },
     Command {
-        name: "remove",
-        help_key: "preferences remove",
-        run: preferences_remove,
+        name: "unset",
+        help_key: "config unset",
+        run: config_unset,
         children: &[],
     },
 ];
 
 static PROJECT_COMMANDS: &[Command] = &[
     Command {
+        name: "show",
+        help_key: "repo show",
+        run: repo_show,
+        children: &[],
+    },
+    Command {
         name: "add",
-        help_key: "project add",
+        help_key: "repo add",
         run: project_add,
         children: &[],
     },
     Command {
         name: "list",
-        help_key: "project list",
+        help_key: "repo list",
         run: project_list,
         children: &[],
     },
     Command {
-        name: "remove",
-        help_key: "project remove",
+        name: "forget",
+        help_key: "repo forget",
         run: project_remove,
         children: &[],
     },
@@ -1731,7 +1876,40 @@ static GITHUB_COMMANDS: &[Command] = &[Command {
     children: &[],
 }];
 
+static TRUST_COMMANDS: &[Command] = &[
+    Command {
+        name: "add",
+        help_key: "trust add",
+        run: trust_cmd,
+        children: &[],
+    },
+    Command {
+        name: "remove",
+        help_key: "trust remove",
+        run: untrust_cmd,
+        children: &[],
+    },
+    Command {
+        name: "list",
+        help_key: "trust list",
+        run: trust_list_cmd,
+        children: &[],
+    },
+];
+
 static COMMANDS: &[Command] = &[
+    Command {
+        name: "-v",
+        help_key: "--version",
+        run: version,
+        children: &[],
+    },
+    Command {
+        name: "help",
+        help_key: "help",
+        run: help_cmd,
+        children: &[],
+    },
     Command {
         name: "sync",
         help_key: "sync",
@@ -1777,14 +1955,8 @@ static COMMANDS: &[Command] = &[
     Command {
         name: "trust",
         help_key: "trust",
-        run: trust_cmd,
-        children: &[],
-    },
-    Command {
-        name: "untrust",
-        help_key: "untrust",
-        run: untrust_cmd,
-        children: &[],
+        run: trust_root_cmd,
+        children: TRUST_COMMANDS,
     },
     Command {
         name: "exec",
@@ -1799,14 +1971,14 @@ static COMMANDS: &[Command] = &[
         children: META_COMMANDS,
     },
     Command {
-        name: "preferences",
-        help_key: "preferences",
-        run: preferences_root,
+        name: "config",
+        help_key: "config",
+        run: config_root,
         children: PREFERENCE_COMMANDS,
     },
     Command {
-        name: "version",
-        help_key: "version",
+        name: "--version",
+        help_key: "--version",
         run: version,
         children: &[],
     },
@@ -1817,8 +1989,8 @@ static COMMANDS: &[Command] = &[
         children: &[],
     },
     Command {
-        name: "project",
-        help_key: "project",
+        name: "repo",
+        help_key: "repo",
         run: project_root,
         children: PROJECT_COMMANDS,
     },
@@ -1835,3 +2007,79 @@ static COMMANDS: &[Command] = &[
         children: GITHUB_COMMANDS,
     },
 ];
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn collect_commands(commands: &[Command], keys: &mut BTreeSet<String>) {
+        for command in commands {
+            keys.insert(command.help_key.into());
+            collect_commands(command.children, keys);
+        }
+    }
+
+    #[test]
+    fn help_contract_covers_every_command_and_exact_parser_flags() {
+        let contract: serde_json::Value =
+            serde_json::from_str(include_str!("../help-data.json")).unwrap();
+        let mut commands = BTreeSet::new();
+        collect_commands(COMMANDS, &mut commands);
+        for key in commands {
+            let entry = &contract["helps"][&key];
+            assert!(entry.is_object(), "missing command {key}");
+            let actual = command_options(&key)
+                .iter()
+                .map(|opt| (opt.name.to_string(), opt.short))
+                .collect::<BTreeSet<_>>();
+            let documented = entry["options"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|opt| {
+                    let name = opt["name"].as_str().unwrap();
+                    (!matches!(name, "json" | "output" | "no-input" | "help")).then(|| {
+                        (
+                            name.to_string(),
+                            opt["short"].as_str().and_then(|short| short.chars().next()),
+                        )
+                    })
+                })
+                .collect::<BTreeSet<_>>();
+            let actual = actual
+                .into_iter()
+                .filter(|(name, _)| name != "help")
+                .collect::<BTreeSet<_>>();
+            assert_eq!(documented, actual, "flags for {key}");
+        }
+        for (key, entry) in contract["helps"].as_object().unwrap() {
+            assert!(
+                matches!(key.as_str(), "gh" | "gh checkout")
+                    || find(
+                        &key.split_whitespace()
+                            .map(str::to_string)
+                            .collect::<Vec<_>>(),
+                        COMMANDS
+                    )
+                    .is_some(),
+                "unknown documented command {key}"
+            );
+            for option in entry["options"].as_array().unwrap() {
+                assert!(
+                    !matches!(option["name"].as_str(), Some("project")),
+                    "removed flag in {key}"
+                );
+                if key.starts_with("trust") {
+                    assert!(
+                        !matches!(option["name"].as_str(), Some("yes" | "list")),
+                        "removed trust flag in {key}"
+                    );
+                }
+            }
+        }
+        for removed in ["project", "preferences", "untrust", "version"] {
+            assert!(contract["helps"].get(removed).is_none(), "{removed}");
+        }
+    }
+}

@@ -94,11 +94,11 @@ pub fn human_clone_message(result: &CloneResult) -> String {
 /// Root used for `<root>/<host>/<owner>/<repo>`.
 ///
 /// Order: `root` in the user config, the first `git config ghq.root` value,
-/// `$GHQ_ROOT`, then `~/ghq`. `project list` scans this same directory.
+/// `$GHQ_ROOT`, then `~/ghq`. `repo list` scans this same directory.
 pub fn resolve_repository_root() -> Result<PathBuf> {
     let (root, warnings) = resolve_repository_root_quiet()?;
     for warning in warnings {
-        crate::output::warning("project_discovery", format!("Warning: {warning}"));
+        crate::output::warning("repo_discovery", format!("Warning: {warning}"));
     }
     Ok(root)
 }
@@ -109,7 +109,7 @@ pub(crate) fn resolve_repository_root_quiet() -> Result<(PathBuf, Vec<String>)> 
     let config_root = preferences::load_preferences()?.root;
     let ghq_root = std::env::var("GHQ_ROOT").ok();
     let mut warnings = Vec::new();
-    let root = resolve_repository_root_from(
+    let (root, _, _) = resolve_root_with_source(
         config_root.as_deref(),
         read_git_ghq_roots,
         ghq_root.as_deref(),
@@ -117,6 +117,25 @@ pub(crate) fn resolve_repository_root_quiet() -> Result<(PathBuf, Vec<String>)> 
         &mut warnings,
     )?;
     Ok((root, warnings))
+}
+
+pub(crate) fn clone_root_with_source(
+    config_root: Option<&str>,
+) -> Result<(PathBuf, &'static str, &'static str)> {
+    let home = home_dir()?;
+    let env_root = std::env::var("GHQ_ROOT").ok();
+    let mut warnings = Vec::new();
+    let value = resolve_root_with_source(
+        config_root,
+        read_git_ghq_roots,
+        env_root.as_deref(),
+        &home,
+        &mut warnings,
+    )?;
+    for warning in warnings {
+        crate::output::warning("repo_discovery", format!("Warning: {warning}"));
+    }
+    Ok(value)
 }
 
 /// `host/owner/repo` for an `origin` URL this command understands.
@@ -190,6 +209,7 @@ pub fn scan_repository_root(root: &Path) -> Vec<String> {
     found
 }
 
+#[cfg(test)]
 fn resolve_repository_root_from(
     config_root: Option<&str>,
     git_roots: impl FnOnce() -> Result<Vec<String>>,
@@ -197,8 +217,22 @@ fn resolve_repository_root_from(
     home: &Path,
     warnings: &mut Vec<String>,
 ) -> Result<PathBuf> {
+    Ok(resolve_root_with_source(config_root, git_roots, ghq_root, home, warnings)?.0)
+}
+
+fn resolve_root_with_source(
+    config_root: Option<&str>,
+    git_roots: impl FnOnce() -> Result<Vec<String>>,
+    ghq_root: Option<&str>,
+    home: &Path,
+    warnings: &mut Vec<String>,
+) -> Result<(PathBuf, &'static str, &'static str)> {
     if let Some(value) = nonempty(config_root) {
-        return expand_absolute_path(value, home, "root");
+        return Ok((
+            expand_absolute_path(value, home, "clone-root")?,
+            "config",
+            "clone-root",
+        ));
     }
     match git_roots() {
         Ok(roots) => {
@@ -206,15 +240,27 @@ fn resolve_repository_root_from(
                 .iter()
                 .find_map(|value| nonempty(Some(value.as_str())))
             {
-                return expand_absolute_path(value, home, "git config ghq.root");
+                return Ok((
+                    expand_absolute_path(value, home, "git config ghq.root")?,
+                    "default",
+                    "ghq.root",
+                ));
             }
         }
         Err(error) => warnings.push(format!("{error} Continuing with $GHQ_ROOT or ~/ghq.")),
     }
     if let Some(value) = nonempty(ghq_root) {
-        return expand_absolute_path(value, home, "GHQ_ROOT");
+        return Ok((
+            expand_absolute_path(value, home, "GHQ_ROOT")?,
+            "env",
+            "GHQ_ROOT",
+        ));
     }
-    Ok(crate::paths::normalize(&home.join("ghq")))
+    Ok((
+        crate::paths::normalize(&home.join("ghq")),
+        "default",
+        "~/ghq",
+    ))
 }
 
 fn read_git_ghq_roots() -> Result<Vec<String>> {

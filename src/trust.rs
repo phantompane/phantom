@@ -219,7 +219,7 @@ pub fn format_hooks(post_create: &[String], pre_delete: &[String]) -> String {
 
 pub fn refusal_message(project: &str, post_create: &[String], pre_delete: &[String]) -> String {
     format!(
-        "Untrusted project: {}\n{}\nRefusing to run project hooks. Run `mabo trust --yes` or pass `--no-hooks`.",
+        "Untrusted project: {}\n{}\nRefusing to run project hooks. Run `mabo trust add` or pass `--no-hooks`.",
         visible_text(project),
         format_hooks(post_create, pre_delete)
     )
@@ -276,7 +276,7 @@ fn update(body: impl FnOnce(&mut BTreeMap<String, String>) -> bool) -> Result<bo
     Ok(dirty)
 }
 
-fn is_trusted_root(git_root: &Path) -> Result<bool> {
+pub(crate) fn is_trusted_root(git_root: &Path) -> Result<bool> {
     let path = common_dir_key(git_root)?;
     let records = load()?;
     Ok(records.contains_key(&path.to_string_lossy().to_string()))

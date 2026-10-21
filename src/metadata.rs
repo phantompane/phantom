@@ -458,7 +458,7 @@ fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
     }
 }
 
-/// `maboroshi/` inside the Git common directory. A custom `worktrees-directory` does
+/// `maboroshi/` inside the Git common directory. A custom `workspace-root` does
 /// not move this file, and a checkout whose `.git` is a file still shares it.
 fn metadata_dir(git_root: &Path) -> Result<PathBuf> {
     Ok(crate::git::git_common_dir(git_root)?.join("maboroshi"))

@@ -226,6 +226,17 @@ fn push_positional(parsed: &mut Parsed, arg: &str, allow_positionals: bool) -> R
 }
 
 fn unknown_option(option: &str) -> String {
+    if option == "--project"
+        || option.starts_with("--project=")
+        || (option.starts_with("-p") && !option.starts_with("--"))
+    {
+        return format!("Option '{option}' was removed. Use -R/--repo REF.");
+    }
+    if matches!(option, "--yes" | "-y" | "--list") {
+        return format!(
+            "Unknown option '{option}'. For trust, use `mabo trust add` or `mabo trust list`."
+        );
+    }
     format!(
         "Unknown option '{option}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"{option}\"'"
     )

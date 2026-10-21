@@ -24,7 +24,7 @@ pub enum Error {
     WorktreeAlreadyExists(String),
     #[error("Branch '{0}' not found")]
     BranchNotFound(String),
-    #[error("Project '{0}' not found")]
+    #[error("Repository '{0}' not found")]
     ProjectNotFound(String),
     #[error("Path '{0}' does not exist")]
     PathNotFound(String),
@@ -149,7 +149,7 @@ pub fn exit_for_code(code: &str) -> i32 {
         "usage" | "ambiguous" => VALIDATION,
         "not_found" | "branch_not_found" | "not_repository" => NOT_FOUND,
         "dirty" | "unpreserved" | "published" | "exists" | "exists_remote" | "untrusted"
-        | "refused" => REFUSED,
+        | "primary" | "refused" => REFUSED,
         "conflict" => CONFLICT,
         "partial" => PARTIAL,
         _ => GENERAL,

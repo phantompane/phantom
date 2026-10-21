@@ -28,7 +28,7 @@ Maboroshi はワークスペースを作成し、既存の作業を引き継い�
 - **マージ済み、所有者なし、古い、という状態は判断材料であり、削除してよいという許可ではありません。** `gc` は `--apply` または `--force` を指定するまで、削除予定を表示するだけです（`--force` は適用も兼ねます）。`--force` がなければ、未コミットの変更がある作業や、公開済みまたは取り込み済みと確認できないコミットを保護します。デフォルトブランチのワークスペース、実行中のカレントディレクトリがあるワークスペース、Git でロックされたワークスペースは、`--force` があっても保護します。
 - **所有者は情報であって、アクセス制御ではありません。** `MABO_AGENT_ID` に空白以外の文字が含まれていれば、`sync --mine` はそのエージェントのワークスペースだけを選び、`sync --all` は他のエージェントのワークスペースをスキップします（どちらも `--no-default` がなければデフォルトブランチの更新も試みます）。名前を明示すれば、所有者にかかわらず `sync` で同期できます。`gc` は他のエージェントのものでも、マージ済み、PR がクローズ済み、または孤立したワークスペースを対象にすることがあります。
 - **push 済みの履歴は既定で保ちます。** 変更の取り込みが必要な場合、`sync` は公開済みの作業にベースをマージします。リベースには `--rebase --force` が必要です。ベースに含まれないコミットがひとつでも、既知のリモート追跡参照または fetch 先として設定された参照から到達可能なら、公開済みとして扱います。
-- **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。`MABO_AGENT_ID` は所有者の既定値を設定するだけで、プロンプトを抑制しません。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust --yes` で信頼を記録するか、`--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。`--exec` と単体 `exec` は標準入力を引き継ぎます。
+- **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。`MABO_AGENT_ID` は所有者の既定値を設定するだけで、プロンプトを抑制しません。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust add` で信頼を記録するか、`--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。`--exec` と単体 `exec` は標準入力を引き継ぎます。
 
 ## 目指さないこと
 
@@ -77,8 +77,35 @@ project registry は `$XDG_STATE_HOME/maboroshi/repos/<id>.json`（既定は `~/
 
 ## Workspace paths and environment
 
-新規ワークスペースの既定パスは `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash8>/<name>` です。`XDG_DATA_HOME` が未設定・空・相対パスの場合は `~/.local/share/maboroshi/workspaces/...` を使います。`worktrees-directory` 設定は引き続き使えます。既存の `maboroshi/worktrees/` 以下は移動せず、`list`、`where`、`delete`、`sync`、`gc` で引き続き扱えます。
+新規ワークスペースの既定パスは `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash8>/<name>` です。`XDG_DATA_HOME` が未設定・空・相対パスの場合は `~/.local/share/maboroshi/workspaces/...` を使います。`workspace-root` 設定は引き続き使えます。既存の `maboroshi/worktrees/` 以下は移動せず、`list`、`where`、`delete`、`sync`、`gc` で引き続き扱えます。
 
 フック（`post-create`、`pre-delete`）、`exec`、`create`/`attach --exec` には、`MABO=1`、名前の `MABO_WORKSPACE`、記録済み ID の `MABO_WORKSPACE_ID`（未記録なら空）、絶対パスの `MABO_WORKSPACE_PATH`、primary checkout の絶対パスの `MABO_REPO_PATH` を渡します。フック設定を読む場所は実行元チェックアウトのままです。旧 `MABO_NAME`、`MABO_PATH`、`MABO_ROOT_PATH` は子プロセスから取り除くため、スクリプトを更新してください。
 
 JSON の結果キーは `workspace` / `workspaces` です。共有オブジェクトの `default` 真偽値は `kind` に変わり、primary checkout は `primary`、ほかは `workspace` です。`owner`、schema 2、終了コード、旧メタデータの移行方法は変わりません。
+
+
+## Outer command layer (P2b)
+
+Use `-R/--repo REF` before a command or among its options to select a repository. The old `-p/--project`, `project`, `preferences`, `untrust`, `version`, and `trust --yes/--list` interfaces exit 2 with migration hints.
+
+```sh
+mabo repo add [PATH]
+mabo repo list [--registered | --discovered] [--names | --paths]
+mabo repo show [REF]
+mabo repo forget REF
+mabo config get KEY [--sources]
+mabo config set KEY VALUE
+mabo config unset KEY
+mabo config list [--sources]
+mabo trust add [REPO]
+mabo trust remove [REPO]
+mabo trust list
+mabo help [COMMAND...] [--json]
+mabo --version --json
+```
+
+`repo forget` removes only registrations. `repo show` reports the primary checkout, default branch, `.mabo.toml` presence, trust state and workspace directory. Registered repositories take precedence over discovery; `--discovered` lists only unregistered discovered roots. `trust add` shows hooks and records trust without prompting. Human TTY trust prompts during create remain; noninteractive untrusted hooks exit 4.
+
+User config keys are `workspace-root` (absolute, `~/`, or relative to the repository root), `clone-root`, `discover-ghq`, and `keep-branch`. Old keys `worktrees-directory`, `root`, and `ghq-discovery` are read with `config_key_renamed` warnings; new names take precedence, and the next successful config write rewrites old names. `directory-name-separator` is ignored with `config_key_removed` and removed on write. `--sources` includes each effective value, source and detail. Clone-root keeps the existing fallback chain: ghq.root → GHQ_ROOT → ~/ghq.
+
+JSON uses the schema 2 envelope. Repository payload keys are `repo`/`repos`; clone returns `data: {repo: {root, name, remoteUrl}, cloned, updated}`. `help --json` includes the entire help-data.json contract, all commands and flags, exit/error codes and `schemaVersion: 2`. `--version --json` returns the application version under `data.version`. See the English README for complete examples. State locations, legacy record imports, atomic writes, environment variables, and workspace commands remain unchanged in P2b.

@@ -59,6 +59,14 @@ pub(crate) fn data(value: &impl Serialize) -> Result<i32> {
     Ok(0)
 }
 
+pub(crate) fn app_version(version: String) -> Result<i32> {
+    OUTPUT.with_borrow_mut(|out| {
+        out.data =
+            Some(serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "display": version}))
+    });
+    Ok(0)
+}
+
 pub(crate) fn failure(error: JsonErrorBody) {
     failure_with(error, |message| eprintln!("{message}"));
 }

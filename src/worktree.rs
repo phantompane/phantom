@@ -486,7 +486,7 @@ pub struct CreateRequest<'a> {
     pub copy_files: &'a [String],
     pub action: ActionRequest,
     pub logger: Logger,
-    /// Main checkout selected with `--project`. `None` uses the current directory.
+    /// Main checkout selected with `--repo`. `None` uses the current directory.
     pub repository: Option<&'a Path>,
     pub metadata: MetadataInput,
     pub hooks: HookControl,
@@ -718,7 +718,7 @@ pub struct AttachRequest<'a> {
     pub copy_files: &'a [String],
     pub action: ActionRequest,
     pub logger: Logger,
-    /// Main checkout selected with `--project`. `None` uses the current directory.
+    /// Main checkout selected with `--repo`. `None` uses the current directory.
     pub repository: Option<&'a Path>,
     pub metadata: MetadataInput,
     pub hooks: HookControl,
@@ -1658,7 +1658,7 @@ fn copy_error(relative: &Path, error: impl std::fmt::Display) -> Error {
     Error::msg(format!("Failed to copy {}: {error}", relative.display()))
 }
 
-/// Machine-readable workspace. Field names are camelCase, matching `project list --json`.
+/// Machine-readable workspace. Field names are camelCase, matching `repo list --json`.
 ///
 /// `base` is set when the command that produced the object knows the starting
 /// commit-ish (create, and GitHub issue/PR checkout). List, where, attach, and
