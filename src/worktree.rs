@@ -19,8 +19,12 @@ use crate::trust::{self, HookControl};
 pub struct WorktreeInfo {
     pub repo_root: PathBuf,
     pub managed: bool,
+    /// A record exists, independently of whether this directory is managed.
+    pub recorded: bool,
     pub name: String,
     pub path: String,
+    /// Original Git registration path, before resolving the checkout itself.
+    pub(crate) registered_path: PathBuf,
     pub path_to_display: String,
     pub branch: String,
     pub is_clean: bool,
@@ -142,6 +146,7 @@ pub fn list_worktrees(
         infos.push(WorktreeInfo {
             repo_root: context.git_root.clone(),
             managed: true,
+            recorded: true,
             name: resolve_worktree_name(
                 path,
                 &context.worktrees_directory,
@@ -152,6 +157,7 @@ pub fn list_worktrees(
                 "HEAD",
             ),
             path: key.clone(),
+            registered_path: path.to_path_buf(),
             path_to_display: paths::list_path(path),
             branch: "(detached HEAD)".to_string(),
             is_clean: true,
@@ -208,8 +214,10 @@ fn info_from_git(
     WorktreeInfo {
         repo_root: context.git_root.clone(),
         managed: is_managed(context, &path, recorded_path.is_some()),
+        recorded: recorded_path.is_some(),
         name,
         path: path.to_string_lossy().into_owned(),
+        registered_path: original.clone(),
         path_to_display: paths::list_path(&path),
         branch,
         is_clean: path.is_dir() && git::is_clean(&path),
@@ -430,6 +438,63 @@ fn select_worktree(mut worktrees: Vec<WorktreeInfo>, name: &str) -> Result<Workt
     }
 }
 
+fn invalid_checkout(tree: &WorktreeInfo, action: &str, reason: &str) -> Error {
+    Error::msg(format!(
+        "Cannot {action} workspace '{}': {reason}. Check its .git entry and repair or remove the stale Git worktree registration before retrying.",
+        crate::output::visible_text(&tree.name)
+    ))
+}
+
+/// Parent directory symlinks are valid; the registered checkout itself must not be a symlink.
+pub(crate) fn validate_registered_path(tree: &WorktreeInfo, action: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(&tree.registered_path).map_err(|error| {
+        invalid_checkout(
+            tree,
+            action,
+            &format!("failed to inspect checkout ({error})"),
+        )
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(invalid_checkout(
+            tree,
+            action,
+            "registered checkout path is a symlink",
+        ));
+    }
+    Ok(())
+}
+
+/// Validate the checkout against Git's independent registration before mutations.
+pub(crate) fn validate_checkout(
+    context: &Context,
+    tree: &WorktreeInfo,
+    action: &str,
+) -> Result<()> {
+    validate_registered_path(tree, action)?;
+    let invalid = |reason: &str| invalid_checkout(tree, action, reason);
+    let path = &tree.registered_path;
+    let observed = git::top_level(path)
+        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?;
+    if !paths::same_location(path, &observed) {
+        return Err(invalid(
+            "checkout top-level does not match its registered path",
+        ));
+    }
+    let common_dir = git::canonical_common_dir(path)
+        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?;
+    if common_dir != git::canonical_common_dir(&context.git_root)? {
+        return Err(invalid("checkout does not belong to this repository"));
+    }
+    if !git::matches_registered_git_dir(&context.git_root, path)
+        .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?
+    {
+        return Err(invalid(
+            "checkout Git directory does not match its registered Git directory",
+        ));
+    }
+    Ok(())
+}
+
 /// The worktree Git has registered at `path`, independent of its branch or directory name.
 pub fn worktree_at_path(context: &Context, path: &Path) -> Result<WorktreeInfo> {
     list_worktrees(context, false, true)?
@@ -528,7 +593,7 @@ impl HookFailure {
             format!("failed with exit code {}", self.code)
         };
         format!(
-            "Warning: Post-create command {reason}: {}\nThe workspace was created at {}",
+            "Warning: Setup command {reason}: {}\nWorkspace path: {}",
             crate::output::visible_text(&self.command),
             crate::output::visible_text(&paths::canonical_location(path).to_string_lossy())
         )
@@ -819,16 +884,16 @@ pub(crate) fn commit_delete_checked(
     } else {
         trust::authorize(
             &context.git_root,
-            config::post_create_commands(context.config.as_ref()),
-            config::pre_delete_commands(context.config.as_ref()),
-            trust::HookKind::PreDelete,
+            config::setup_commands(context.config.as_ref()),
+            config::pre_remove_commands(context.config.as_ref()),
+            trust::HookKind::PreRemove,
             hooks,
         )
         .map_err(|error| DeleteError::kept(error, &worktree))?
     };
     metadata::prepare(&context.git_root).map_err(|error| DeleteError::kept(error, &worktree))?;
     if !commands.is_empty() {
-        logger.log("\nRunning pre-delete commands...");
+        logger.log("\nRunning pre-remove commands...");
         if let Err(error) = run_hook_commands(context, &worktree, &commands, false, logger) {
             return Err(DeleteError::kept(error, &worktree));
         }
@@ -858,7 +923,7 @@ pub(crate) fn commit_delete_checked(
     let fresh = preflight_delete_selected(context, &selector, options, Some(&path))?;
     if fresh.worktree.head != worktree.head || fresh.worktree.branch != worktree.branch {
         return Err(DeleteError::kept(
-            Error::msg("Workspace changed while running pre-delete commands"),
+            Error::msg("Workspace changed while running pre-remove commands"),
             &fresh.worktree,
         ));
     }
@@ -1077,7 +1142,7 @@ pub(crate) fn run_hook_commands(
         if post {
             logger.log(&format!("Executing: {command}"));
         } else {
-            logger.log(&format!("Executing pre-delete command: {command}"));
+            logger.log(&format!("Executing pre-remove command: {command}"));
         }
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let mut run = || {
@@ -1378,7 +1443,7 @@ pub struct CopyFilesOutcome {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PostCreateOutcome {
+pub struct HookOutcome {
     pub ran: bool,
     pub ok: bool,
     pub command: Option<String>,
@@ -1448,6 +1513,7 @@ impl WorktreeInfo {
             metadata: metadata::WorktreeMetadata {
                 base: None,
                 base_cleared: false,
+                setup: crate::setup::display(self.recorded, self.metadata.setup.as_ref()),
                 ..self.metadata.clone()
             },
         }
@@ -1468,9 +1534,9 @@ pub fn copy_files_outcome(error: Option<&str>) -> CopyFilesOutcome {
     }
 }
 
-pub fn post_create_outcome(ran: bool, failure: Option<&HookFailure>) -> PostCreateOutcome {
+pub fn hook_outcome(ran: bool, failure: Option<&HookFailure>) -> HookOutcome {
     if let Some(failure) = failure {
-        PostCreateOutcome {
+        HookOutcome {
             ran: true,
             ok: false,
             command: Some(failure.command.clone()),
@@ -1479,7 +1545,7 @@ pub fn post_create_outcome(ran: bool, failure: Option<&HookFailure>) -> PostCrea
             error: failure.error.clone(),
         }
     } else {
-        PostCreateOutcome {
+        HookOutcome {
             ran,
             ok: true,
             command: None,
@@ -1512,8 +1578,10 @@ mod tests {
         WorktreeInfo {
             repo_root: PathBuf::from("/repo"),
             managed: false,
+            recorded: false,
             name: name.to_string(),
             path: format!("/worktrees/{name}"),
+            registered_path: PathBuf::from(format!("/worktrees/{name}")),
             path_to_display: name.to_string(),
             branch: branch.to_string(),
             is_clean: true,

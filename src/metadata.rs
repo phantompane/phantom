@@ -36,6 +36,8 @@ pub struct WorktreeMetadata {
     pub created_from: Option<String>,
     #[serde(default)]
     pub links: WorktreeLinks,
+    #[serde(default)]
+    pub setup: Option<crate::setup::Status>,
     /// Saved workspace name, taking precedence over the directory name.
     ///
     /// Command JSON already has `name`, so this stays out of that flatten.
@@ -77,6 +79,7 @@ pub enum BranchOrigin {
 #[derive(Debug, Clone, Default)]
 pub struct MetadataInput {
     pub base: Option<String>,
+    pub setup: Option<crate::setup::Status>,
     /// Preserve an unknown sync target instead of using the legacy fallback.
     pub base_cleared: bool,
     pub purpose: Option<String>,
@@ -251,6 +254,7 @@ fn fresh_metadata(path: &Path, input: &MetadataInput, origin: BranchOrigin) -> W
         created_at: (origin != BranchOrigin::Adopted).then(iso_now),
         updated_at: Some(iso_now()),
         created_from: recorded_creation(path, origin),
+        setup: Some(crate::setup::Status::new(crate::setup::State::Unknown)),
         ..WorktreeMetadata::default()
     };
     apply_input(&mut metadata, input);
@@ -430,6 +434,9 @@ fn stored_worktree(path: String, metadata: WorktreeMetadata) -> StoredWorktree {
 }
 
 fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
+    if input.setup.is_some() {
+        metadata.setup = input.setup.clone();
+    }
     if input.base_cleared {
         metadata.base = None;
         metadata.base_cleared = true;
@@ -735,7 +742,7 @@ fn empty_store() -> Store {
     }
 }
 
-fn iso_now() -> String {
+pub(crate) fn iso_now() -> String {
     let now = chrono::Utc::now();
     format!("{}Z", now.format("%Y-%m-%dT%H:%M:%S%.3f"))
 }

@@ -26,7 +26,7 @@ pub fn create(git_root: &Path) -> Result<Context> {
 
 /// Context for a repository selected with `--repo`.
 ///
-/// Hooks and included files are read from that repository's main checkout.
+/// Hooks are read from that repository's main checkout. Copies always use the primary.
 pub fn create_at(git_root: &Path) -> Result<Context> {
     assemble(git_root, git_root.to_path_buf())
 }
@@ -39,6 +39,23 @@ pub fn open(repository: Option<&Path>) -> Result<Context> {
     let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
     let git_root = git::git_root(&cwd)?;
     create(&git_root)
+}
+
+/// Select setup hooks independently of the target checkout used by dot.
+/// The source must belong to the selected repository; copies still use primary.
+pub(crate) fn open_for_setup(repository: Option<&Path>, source: &Path) -> Result<Context> {
+    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
+    let git_root = match repository {
+        Some(root) => root.to_path_buf(),
+        None => git::git_root(&cwd)?,
+    };
+    let source_checkout = git::top_level(source)?;
+    if !paths::same_location(&git::git_root(&source_checkout)?, &git_root) {
+        return Err(Error::validation(
+            "--source-checkout must belong to the selected repository",
+        ));
+    }
+    assemble(&git_root, source_checkout)
 }
 
 fn assemble(git_root: &Path, source_checkout: PathBuf) -> Result<Context> {

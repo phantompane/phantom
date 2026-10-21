@@ -28,7 +28,7 @@ Maboroshi はワークスペースを作成し、既存の作業を引き継い�
 - **マージ済み、クローズ済み、古い、という状態は判断材料であり、削除してよいという許可ではありません。** `gc` は `--apply` または `--force` を指定するまで、削除予定を表示するだけです（`--force` は適用も兼ねます）。`--force` がなければ、未コミットの変更がある作業や、公開済みまたは取り込み済みと確認できないコミットを保護します。デフォルトブランチのワークスペース、実行中のカレントディレクトリがあるワークスペース、Git でロックされたワークスペースは、`--force` があっても保護します。
 - **一括操作はすべてのワークスペースが対象です。** `sync --all` はリポジトリ内の全ワークスペースを選び、`--no-default` がなければデフォルトブランチも更新します。対象を絞るには名前を明示してください。`gc` は根拠と経過時間で候補を選び、未コミットの変更や保存されていないコミットの保護は維持します。
 - **push 済みの履歴は既定で保ちます。** 変更の取り込みが必要な場合、`sync` は公開済みの作業にベースをマージします。リベースには `--rebase --force` が必要です。ベースに含まれないコミットがひとつでも、既知のリモート追跡参照または fetch 先として設定された参照から到達可能なら、公開済みとして扱います。
-- **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust add` で信頼を記録するか、`--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。単体 `exec` は標準入力を引き継ぎます。
+- **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust add` で信頼を記録するか、create では `--no-setup`、setup/delete/gc では `--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。単体 `exec` は標準入力を引き継ぎます。
 
 ## 目指さないこと
 
@@ -59,7 +59,7 @@ Maboroshi が担わない役割は次のとおりです。
 | 1 | 操作の失敗 | `failed` |
 | 2 | 使用方法・曖昧な指定 | `usage`, `ambiguous` |
 | 3 | 見つからない・Git リポジトリでない | `not_found`, `branch_not_found`, `not_repository` |
-| 4 | 安全判定による拒否 | `dirty`, `unpreserved`, `published`, `exists`, `exists_remote`, `untrusted` |
+| 4 | 安全判定による拒否 | `dirty`, `unpreserved`, `published`, `exists`, `exists_remote`, `untrusted`, `primary` |
 | 5 | sync の競合 | `conflict` |
 | 6 | 永続的な変更後の部分失敗 | `partial` |
 
@@ -79,7 +79,7 @@ Maboroshi が担わない役割は次のとおりです。
 
 新規ワークスペースの既定パスは `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash8>/<name>` です。`XDG_DATA_HOME` が未設定・空・相対パスの場合は `~/.local/share/maboroshi/workspaces/...` を使います。`workspace-root` 設定は引き続き使えます。既存の `maboroshi/worktrees/` 以下は移動せず、`list`、`show`、`delete`、`sync`、`gc` で引き続き扱えます。
 
-フック（`post-create`、`pre-delete`）と `exec` には、`MABO=1`、名前の `MABO_WORKSPACE`、記録済み ID の `MABO_WORKSPACE_ID`（未記録なら空）、絶対パスの `MABO_WORKSPACE_PATH`、primary checkout の絶対パスの `MABO_REPO_PATH` を渡します。フック設定を読む場所は実行元チェックアウトのままです。旧 `MABO_NAME`、`MABO_PATH`、`MABO_ROOT_PATH` は子プロセスから取り除くため、スクリプトを更新してください。
+フック（`setup`、`pre-remove`）と `exec` には、`MABO=1`、名前の `MABO_WORKSPACE`、記録済み ID の `MABO_WORKSPACE_ID`（未記録なら空）、絶対パスの `MABO_WORKSPACE_PATH`、primary checkout の絶対パスの `MABO_REPO_PATH` を渡します。フック設定を読む場所は実行元チェックアウトのままです。旧 `MABO_NAME`、`MABO_PATH`、`MABO_ROOT_PATH` は子プロセスから取り除くため、スクリプトを更新してください。
 
 JSON の結果キーは `workspace` / `workspaces` です。共有オブジェクトの `default` 真偽値は `kind` に変わり、primary checkout は `primary`、ほかは `workspace` です。schema 2、終了コード、旧メタデータの移行方法は変わりません。
 
@@ -116,7 +116,7 @@ JSON は schema 2 の envelope を使います。リポジトリの結果キー�
 
 `SEL` には名前、`.`（現在のディレクトリを含むチェックアウト）、`pr:N`、`issue:N`、PR/issue の URL を指定できます。PR/issue は記録済みのリンクだけを検索し、新規作成しません。該当なしは終了コード 3（`not_found`）、複数一致は 2（`ambiguous`）です。`.` と別リポジトリの `-R` の併用は 2、リポジトリ外での現在位置の選択は 3 になります。
 
-`show [SEL]`・`path [SEL]`・`set [SEL]`・`exec [SEL] -- COMMAND [ARG...]` は SEL 省略時に `.` を選びます。primary 内では primary checkout が対象です。`show` は primary や管理外の未記録チェックアウトを `managed:false` として表示します。`sync` と `delete` の位置引数にも同じセレクタを使えます。引数なしの `sync` の対象と `delete` のフラグ・安全判定は従来どおりです。
+`show [SEL]`・`path [SEL]`・`set [SEL]`・`setup [SEL]`・`exec [SEL] -- COMMAND [ARG...]` は SEL 省略時に `.` を選びます。primary 内では primary checkout が対象です。`show` は primary や管理外の未記録チェックアウトを `managed:false` として表示します。`sync` と `delete` の位置引数にも同じセレクタを使えます。引数なしの `sync` の対象と `delete` のフラグ・安全判定は従来どおりです。
 
 ```sh
 mabo show pr:774 --json
@@ -154,12 +154,32 @@ mabo forget review pr:123
 
 `--pr 番号|URL` は PR の head ブランチを使い、fork では owner/branch を名前にします。fork や head 削除済み PR は pull/N/head から取得し、upstream を設定しません。`--issue 番号|URL` 単独では issues/N を作り、目的の既定値を issue のタイトルにします。`--pr`・`--branch` と一緒ならリンクだけを追加します。明示した NAME はワークスペース名を変更し、既存ブランチの名前は維持します。`--base`・`--branch`・`--pr` は排他的です。`--detach` は `--base`・`--issue` と組み合わせられます。
 
-既存ワークスペースは終了コード 4（`exists`）です。`--reuse` を付けると、要求した base・branch・PR と指定した issue が一致する場合だけ成功し、コピーもフックも再実行しません。不一致は同じく 4 です。繰り返しても作成情報や既存の目的を保持します。`--no-hooks`・`--copy-file` は引き続き使えます。
+既存ワークスペースは終了コード 4（`exists`）です。`--reuse` を付けると、要求した base・branch・PR と指定した issue が一致する場合だけ成功し、コピーもフックも再実行しません。不一致は同じく 4 です。繰り返しても作成情報や既存の目的を保持します。create の `--no-setup` はコピーとフックを両方省略し、`--copy-file` とは併用できません。旧 `create --no-hooks` は終了コード 2 で移行方法を案内します。
 
-create の JSON は `data.workspace`、`data.source`、`data.setup`、`data.copy`、`data.metadata` を返します。source.kind は new/branch/pr/issue/detach、base は正規化済み ref、reused は再利用の有無です。branch は branch/ref、PR は number/url/headRef/headRepository/branch/checkout、issue は number/url/issue を含みます。checkout は作成時の branch または pullHead です。copy は copied（コピーした相対パスの配列）と error、setup は ran/ok/command/exitCode/signal/error を持ちます。作成後のコピー・フック・記録の失敗は部分完了の 6 です。
+create の JSON は `data.workspace`、`data.source`、`data.setup`、`data.copy`、`data.metadata` を返します。source.kind は new/branch/pr/issue/detach、base は正規化済み ref、reused は再利用の有無です。branch は branch/ref、PR は number/url/headRef/headRepository/branch/checkout、issue は number/url/issue を含みます。checkout は作成時の branch または pullHead です。copy は copied（コピーした相対パスの配列）と error、setup は state/at/error と ran/ok/command/exitCode/signal を持ちます。作成後のコピー・フック・記録の失敗は部分完了の 6 です。
 
 `adopt PATH` は同一リポジトリの既存 linked worktree を管理下に入れます。`--name`・`--base`・`--purpose`・`--pr`・`--issue` を指定でき、setup は実行せず、createdAt と createdFrom は null です。`--base` は既存チェックアウトの同期先を任意で記録し、省略時は不明（`null`）です。既に記録済みなら 4、対象リポジトリの linked checkout でないパスは 3 です。JSON は workspace を返します。記録保存後にワークスペースの再取得が失敗した場合は 6（`partial`）を返し、保存済みの登録情報を `data.workspace` に残します。
 
 `forget SEL...` は記録だけを消し、チェックアウト・ブランチ・Git 登録を残します。primary の記録も対象にできます。名前・`.`・pr:N・issue:N・PR/issue URL を複数指定でき、全セレクタを解決してから記録を削除します。JSON は `{items:[{workspace,ok}]}` で、workspace は記録削除後の状態を返します。
 
 移行: attach BRANCH は create --branch BRANCH、github/gh checkout は create --pr REF または create --issue REF に変わりました。create -x/--exec は create の後に exec SEL -- COMMAND を実行してください。旧構文は text・JSON ともに終了コード 2 と移行ヒントを返します。
+
+## Setup lifecycle
+
+```sh
+mabo setup feature-auth
+mabo setup --no-hooks --copy-file '*.env'
+mabo create feature-auth --no-setup
+```
+
+`setup [SEL]` は省略時に `.` を選び、共通セレクタを使います。`.worktreeinclude` と `--copy-file` に一致する Git の無視対象ファイルを、常に primary checkout からコピーします。サブディレクトリや別ワークスペースで実行してもコピー元は変わりません。既存ファイルは上書きせず、symlink はスキップします。コピー後に `[hooks] setup` を実行し、コピーの失敗時にはフックを実行しません。`setup --no-hooks` はコピーだけを実行します。
+
+`.mabo.toml` は実行元チェックアウトから読みます。フック名は `[hooks] setup` と `pre-remove` です。旧 `post-create` / `pre-delete` キーは終了コード 1（`failed`）となり、新しい名前への変更を案内します。未知キーも拒否します。`delete` と `gc` は `pre-remove` を実行します。
+
+setup の成功は 0、コピーやフックの失敗は 1、対象なしは 3 です。未信頼フックはコピーや記録更新の前に 4（`untrusted`）で拒否します。`mabo trust add` または `MABO_TRUST_ALL=1` で許可できます。primary checkout はコピー元と同じなので 4（`primary`）で拒否します。create の setup 失敗は 6 のままで、`cd '/absolute/source/checkout' && mabo setup 'SELECTOR'` で再試行します。`create --reuse` は setup を再実行しません。setup フックは何度実行してもよいように書いてください。
+
+Run retry hints in bash or zsh. The hint preserves the original hook configuration and every `--copy-file` pattern, using ANSI-C quoting (`$'...'`) for control characters. If no name or PR/issue selector resolves uniquely, it uses `(cd WORKSPACE && mabo setup . --source-checkout SOURCE)`. `--source-checkout` must belong to the same repository.
+
+共有ワークスペース JSON の `setup` は `{state, at, error}` です。新規作成では pending → running → ok / failed と遷移し、`--no-setup` は skipped を記録します。古いレコード・移行済みレコード・adopt は unknown（at/error は null）、未記録や forget 後は setup 自体が null です。成功した再実行で error を消します。人間向け list は ok 以外で `setup:failed` などを表示します。setup の JSON は `data: {workspace, setup, copy}` で、setup には実行したフックの ran/ok/command/exitCode/signal も含みます。
+
+running には内部的に pid とホストを記録します。同じホストでその pid が存在しなければ、表示時だけ interrupted とします。読み取りでレコードは書き換えず、別ホストやホスト不明なら running のままです。この情報はロックや使用中検出ではなく、操作や再実行をブロックしません。同一レコードへの同時書き込みは従来どおり後勝ちです。

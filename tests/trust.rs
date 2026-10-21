@@ -91,7 +91,7 @@ fn text(bytes: &[u8]) -> String {
 fn hooks(repo: &Repo, post: &str, pre: &str) {
     fs::write(
         repo.repo.join(".mabo.toml"),
-        format!("[hooks]\npost-create = [{post}]\npre-delete = [{pre}]\n"),
+        format!("[hooks]\nsetup = [{post}]\npre-remove = [{pre}]\n"),
     )
     .expect("hooks");
 }
@@ -154,7 +154,7 @@ fn a_repository_with_no_hooks_never_prompts() {
 #[test]
 fn non_tty_refusal_creates_nothing() {
     let repo = Repo::new();
-    hooks(&repo, "\"touch hook-ran.txt\"", "\"touch pre-delete.txt\"");
+    hooks(&repo, "\"touch hook-ran.txt\"", "\"touch pre-remove.txt\"");
     let created = repo.mabo(&["create", "topic"]);
     assert_eq!(created.status.code(), Some(4));
     let stderr = text(&created.stderr);
@@ -208,7 +208,7 @@ fn json_refusal_keeps_stdout_to_one_document() {
 fn no_hooks_creates_the_worktree_and_does_not_trust_it() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
-    let created = repo.mabo(&["create", "topic", "--no-hooks"]);
+    let created = repo.mabo(&["create", "topic", "--no-setup"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(worktree(&repo, "topic").is_dir());
     assert!(!worktree(&repo, "topic").join("hook-ran.txt").exists());
@@ -302,7 +302,7 @@ fn trust_all_runs_hooks_without_writing_trust() {
 fn delete_without_a_terminal_keeps_the_worktree() {
     let repo = Repo::new();
     assert!(repo.mabo(&["create", "topic"]).status.success());
-    hooks(&repo, "\"true\"", "\"touch pre-delete.txt\"");
+    hooks(&repo, "\"true\"", "\"touch pre-remove.txt\"");
     let deleted = repo.mabo(&["delete", "topic"]);
     assert_eq!(deleted.status.code(), Some(4));
     assert!(
@@ -311,11 +311,11 @@ fn delete_without_a_terminal_keeps_the_worktree() {
         text(&deleted.stderr)
     );
     assert!(worktree(&repo, "topic").is_dir());
-    assert!(!repo.repo.join("pre-delete.txt").exists());
+    assert!(!repo.repo.join("pre-remove.txt").exists());
     let skipped = repo.mabo(&["delete", "topic", "--no-hooks"]);
     assert!(skipped.status.success(), "{}", text(&skipped.stderr));
     assert!(!worktree(&repo, "topic").exists());
-    assert!(!repo.repo.join("pre-delete.txt").exists());
+    assert!(!repo.repo.join("pre-remove.txt").exists());
 }
 
 #[test]
@@ -333,7 +333,7 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
         assert!(output.status.success(), "{}", text(&output.stderr));
     }
     repo.git(&["merge", "--ff-only", "feature"]);
-    hooks(&repo, "\"true\"", "\"touch pre-delete.txt\"");
+    hooks(&repo, "\"true\"", "\"touch pre-remove.txt\"");
 
     let plan = repo.mabo(&["gc", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
@@ -363,8 +363,8 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
         "untrusted hooks"
     );
     assert!(dir.is_dir());
-    assert!(!repo.repo.join("pre-delete.txt").exists());
-    assert!(!dir.join("pre-delete.txt").exists());
+    assert!(!repo.repo.join("pre-remove.txt").exists());
+    assert!(!dir.join("pre-remove.txt").exists());
 
     let removed = repo.mabo(&["gc", "--apply", "--no-hooks"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
@@ -374,7 +374,7 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
         text(&removed.stdout)
     );
     assert!(!dir.exists());
-    assert!(!repo.repo.join("pre-delete.txt").exists());
+    assert!(!repo.repo.join("pre-remove.txt").exists());
 }
 
 fn an_agent_environment_does_not_prompt_on_a_terminal(name: &str, value: &str, json: bool) {
@@ -422,7 +422,7 @@ fn ci_still_honors_no_hooks_and_trust_all() {
     let skipped = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
-            &["create", "skipped", "--no-hooks"],
+            &["create", "skipped", "--no-setup"],
         )
         .env("CI", "1")
         .output()
@@ -525,7 +525,7 @@ fn gc_on_a_terminal_does_not_ask() {
         assert!(output.status.success(), "{}", text(&output.stderr));
     }
     repo.git(&["merge", "--ff-only", "feature"]);
-    hooks(&repo, "\"true\"", "\"touch pre-delete.txt\"");
+    hooks(&repo, "\"true\"", "\"touch pre-remove.txt\"");
     let output = pty(&repo, &["gc", "--apply"], None);
     assert!(
         output.status.success(),
@@ -549,7 +549,7 @@ fn a_broken_trust_file_still_allows_skip_paths() {
     assert!(plain.status.success(), "{}", text(&plain.stderr));
 
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
-    let skipped = repo.mabo(&["create", "skipped", "--no-hooks"]);
+    let skipped = repo.mabo(&["create", "skipped", "--no-setup"]);
     assert!(skipped.status.success(), "{}", text(&skipped.stderr));
     assert!(!worktree(&repo, "skipped").join("hook-ran.txt").exists());
 

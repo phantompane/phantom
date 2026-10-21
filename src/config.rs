@@ -16,8 +16,8 @@ pub struct MaboConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Hooks {
-    pub post_create: Vec<String>,
-    pub pre_delete: Vec<String>,
+    pub setup: Vec<String>,
+    pub pre_remove: Vec<String>,
 }
 
 pub fn load_config(git_root: &Path) -> Result<Option<MaboConfig>> {
@@ -37,21 +37,40 @@ pub fn load_config(git_root: &Path) -> Result<Option<MaboConfig>> {
         .map_err(|error| Error::msg(format!("{}: {error}", path.display())))
 }
 
-pub fn post_create_commands(config: Option<&MaboConfig>) -> &[String] {
+pub fn setup_commands(config: Option<&MaboConfig>) -> &[String] {
     match config {
-        Some(config) => &config.hooks.post_create,
+        Some(config) => &config.hooks.setup,
         None => &[],
     }
 }
 
-pub fn pre_delete_commands(config: Option<&MaboConfig>) -> &[String] {
+pub fn pre_remove_commands(config: Option<&MaboConfig>) -> &[String] {
     match config {
-        Some(config) => &config.hooks.pre_delete,
+        Some(config) => &config.hooks.pre_remove,
         None => &[],
     }
 }
 
 fn parse_config(content: &str) -> Result<MaboConfig> {
+    let document = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|error| Error::msg(format!("Invalid {FILE_NAME}: {error}")))?;
+    if let Some(hooks) = document
+        .get("hooks")
+        .and_then(toml_edit::Item::as_table_like)
+    {
+        let renamed = [("post-create", "setup"), ("pre-delete", "pre-remove")]
+            .into_iter()
+            .filter(|(old, _)| hooks.contains_key(old))
+            .map(|(old, new)| format!("rename [hooks] {old} to {new}"))
+            .collect::<Vec<_>>();
+        if !renamed.is_empty() {
+            return Err(Error::msg(format!(
+                "Invalid {FILE_NAME}: {}",
+                renamed.join("; ")
+            )));
+        }
+    }
     toml_edit::de::from_str(content)
         .map_err(|error| Error::msg(format!("Invalid {FILE_NAME}: {error}")))
 }
@@ -66,14 +85,14 @@ mod tests {
             r#"
 # repository hooks
 [hooks]
-post-create = ["pnpm install"]
-pre-delete = ["./scripts/teardown.sh"]
+setup = ["pnpm install"]
+pre-remove = ["./scripts/teardown.sh"]
 "#,
         )
         .expect("config");
-        assert_eq!(config.hooks.post_create, vec!["pnpm install".to_string()]);
+        assert_eq!(config.hooks.setup, vec!["pnpm install".to_string()]);
         assert_eq!(
-            config.hooks.pre_delete,
+            config.hooks.pre_remove,
             vec!["./scripts/teardown.sh".to_string()]
         );
     }
@@ -81,14 +100,14 @@ pre-delete = ["./scripts/teardown.sh"]
     #[test]
     fn missing_hooks_are_empty() {
         let config = parse_config("").expect("empty");
-        assert!(config.hooks.post_create.is_empty());
-        assert!(config.hooks.pre_delete.is_empty());
+        assert!(config.hooks.setup.is_empty());
+        assert!(config.hooks.pre_remove.is_empty());
 
-        let config = parse_config("[hooks]\npost-create = [\"pnpm install\"]\n").expect("partial");
-        assert_eq!(config.hooks.post_create, vec!["pnpm install".to_string()]);
-        assert!(config.hooks.pre_delete.is_empty());
-        assert!(post_create_commands(None).is_empty());
-        assert!(pre_delete_commands(None).is_empty());
+        let config = parse_config("[hooks]\nsetup = [\"pnpm install\"]\n").expect("partial");
+        assert_eq!(config.hooks.setup, vec!["pnpm install".to_string()]);
+        assert!(config.hooks.pre_remove.is_empty());
+        assert!(setup_commands(None).is_empty());
+        assert!(pre_remove_commands(None).is_empty());
     }
 
     #[test]
@@ -110,10 +129,10 @@ pre-delete = ["./scripts/teardown.sh"]
         let message = error.to_string();
         assert!(message.contains("copy-files"), "{message}");
 
-        let error = parse_config("[hooks]\npost-create = \"pnpm install\"\n").expect_err("type");
+        let error = parse_config("[hooks]\nsetup = \"pnpm install\"\n").expect_err("type");
         let message = error.to_string();
         assert!(
-            message.contains("invalid type") || message.contains("post-create"),
+            message.contains("invalid type") || message.contains("setup"),
             "{message}"
         );
     }

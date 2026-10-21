@@ -110,6 +110,9 @@ pub(crate) fn prepare(
                 {
                     error.get_or_insert_with(|| Error::validation("create -x/--exec was removed. Use `mabo create [NAME]` then `mabo exec SEL -- COMMAND`."));
                 }
+                if key == "create" && name == "--no-hooks" {
+                    error.get_or_insert_with(|| Error::validation("create --no-hooks was removed. Use `mabo create --no-setup` to skip copying and hooks, or `mabo setup --no-hooks` for copying only."));
+                }
                 if key == "list" && name == "--no-default" {
                     error.get_or_insert_with(|| {
                         Error::validation(
