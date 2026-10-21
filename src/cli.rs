@@ -54,13 +54,6 @@ pub fn run(args: &[String]) -> Result<i32> {
         return Ok(SUCCESS);
     }
     match find(args, COMMANDS) {
-        Some((command, remaining)) if requests_help(command, remaining) => {
-            match help::command_help(command.help_key)? {
-                Some(text) => println!("{text}"),
-                None => println!("Help not available for command '{}'", command.name),
-            }
-            Ok(SUCCESS)
-        }
         Some((command, remaining)) => {
             let key = command.help_key;
             let supports_json = matches!(
@@ -81,15 +74,30 @@ pub fn run(args: &[String]) -> Result<i32> {
                     | "project remove"
                     | "github checkout"
             );
-            crate::output::begin(
+            let prepared = crate::runtime::prepare(
+                remaining,
+                supports_json || (!command.children.is_empty() && !remaining.is_empty()),
                 key,
-                supports_json && std::env::var("MABO_OUTPUT").ok().as_deref() == Some("json"),
+                &command_options(key),
+                true,
             );
-            let result = crate::runtime::prepare(remaining, supports_json, key)
-                .and_then(|args| (command.run)(&args));
+            if prepared.error.is_none()
+                && (prepared.help || (!command.children.is_empty() && prepared.args.is_empty()))
+            {
+                match help::command_help(key)? {
+                    Some(text) => println!("{text}"),
+                    None => println!("Help not available for command '{}'", command.name),
+                }
+                return Ok(SUCCESS);
+            }
+            crate::output::begin(key, prepared.json);
+            let result = match prepared.error {
+                Some(error) => Err(error),
+                None => (command.run)(&prepared.args),
+            };
             let exit = match result {
                 Ok(exit) => exit,
-                Err(error) => fail_with(&error, error.exit_code(), crate::output::json())?,
+                Err(error) => fail_with(&error, error.exit_code())?,
             };
             crate::output::finish(exit)?;
             Ok(exit)
@@ -103,14 +111,10 @@ pub fn run(args: &[String]) -> Result<i32> {
 }
 
 fn unresolved_usage(args: &[String], command: &str, message: &str) -> Result<i32> {
-    crate::output::begin(
-        command,
-        std::env::var("MABO_OUTPUT").ok().as_deref() == Some("json"),
-    );
-    let error = crate::runtime::prepare(args, true, command)
-        .err()
-        .unwrap_or_else(|| Error::validation(message));
-    let exit = fail_with(&error, VALIDATION, crate::output::json())?;
+    let prepared = crate::runtime::prepare(args, true, command, &command_options(command), false);
+    crate::output::begin(command, prepared.json);
+    let error = prepared.error.unwrap_or_else(|| Error::validation(message));
+    let exit = fail_with(&error, VALIDATION)?;
     if !crate::output::json() {
         println!("{}", help::main_help()?);
     }
@@ -131,28 +135,14 @@ fn find<'a>(args: &'a [String], commands: &'a [Command]) -> Option<(&'a Command,
 
 fn sync(args: &[String]) -> Result<i32> {
     let _hooks = crate::process::suppress_git_hooks();
-    let json = wants_json(args);
-    let parsed = match args::parse(
-        args,
-        &[
-            project_flag(),
-            flag("all", None),
-            flag("mine", None),
-            flag("no-default", None),
-            flag("rebase", None),
-            flag("merge", None),
-            flag("force", Some('f')),
-            flag("keep-conflicts", None),
-            flag("json", None),
-        ],
-        true,
-    ) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("sync"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, 2, json),
+        Err(error) => return fail_with(&error, 2),
     };
     let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_project(&error, args, &parsed, json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let request = crate::sync::Request {
         names: parsed.positionals.clone(),
@@ -170,7 +160,7 @@ fn sync(args: &[String]) -> Result<i32> {
     };
     let report = match crate::sync::run(&context, &request) {
         Ok(report) => report,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     if json {
         emit_json(&report)?;
@@ -221,38 +211,22 @@ fn sync(args: &[String]) -> Result<i32> {
 }
 
 fn create(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let mut options = vec![
-        project_flag(),
-        remainder_flag("exec", Some('x')),
-        Opt {
-            name: "copy-file",
-            short: None,
-            value: true,
-            multiple: true,
-            remainder: false,
-        },
-        value_flag("base", None),
-        flag("no-hooks", None),
-        flag("json", None),
-    ];
-    options.extend(metadata_options());
-    let parsed = match args::parse(args, &options, true) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("create"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let json = parsed.flag("json") || wants_json(args);
     let action = match action_from(&parsed) {
         Ok(action) => action,
-        Err(error) => return fail_with(&error, VALIDATION, json),
+        Err(error) => return fail_with(&error, VALIDATION),
     };
     let metadata = match metadata_input(&parsed, true) {
         Ok(metadata) => metadata,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let repository = match selected_repository(&parsed) {
         Ok(repository) => repository,
-        Err(error) => return fail_project(&error, args, &parsed, json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     match worktree::run_create(worktree::CreateRequest {
         name: parsed.positionals.first().map(String::as_str),
@@ -265,7 +239,7 @@ fn create(args: &[String]) -> Result<i32> {
         hooks: hook_control(&parsed, json, true),
     }) {
         Ok(outcome) => finish_change(json, &outcome),
-        Err(error) => fail_with(&error, create_code(&error), json),
+        Err(error) => fail_with(&error, create_code(&error)),
     }
 }
 
@@ -287,44 +261,28 @@ fn finish_change(json: bool, outcome: &worktree::CreateOutcome) -> Result<i32> {
 }
 
 fn attach(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let mut options = vec![
-        project_flag(),
-        remainder_flag("exec", Some('x')),
-        Opt {
-            name: "copy-file",
-            short: None,
-            value: true,
-            multiple: true,
-            remainder: false,
-        },
-        flag("no-hooks", None),
-        flag("json", None),
-    ];
-    options.extend(metadata_options());
-    let parsed = match args::parse(args, &options, true) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("attach"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let json = parsed.flag("json") || wants_json(args);
     let Some(name) = parsed.positionals.first() else {
         return fail_with(
             &Error::msg("Missing required argument: branch name"),
             VALIDATION,
-            json,
         );
     };
     let action = match action_from(&parsed) {
         Ok(action) => action,
-        Err(error) => return fail_with(&error, VALIDATION, json),
+        Err(error) => return fail_with(&error, VALIDATION),
     };
     let metadata = match metadata_input(&parsed, true) {
         Ok(metadata) => metadata,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let repository = match selected_repository(&parsed) {
         Ok(repository) => repository,
-        Err(error) => return fail_project(&error, args, &parsed, json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     match worktree::run_attach(worktree::AttachRequest {
         name,
@@ -349,41 +307,29 @@ fn attach(args: &[String]) -> Result<i32> {
             outcome.exec.as_ref(),
             outcome.exit_code,
         ),
-        Err(error) => fail_with(&error, attach_code(&error), json),
+        Err(error) => fail_with(&error, attach_code(&error)),
     }
 }
 
 fn list(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let parsed = match args::parse(
-        args,
-        &[
-            project_flag(),
-            flag("no-default", None),
-            flag("names", None),
-            flag("json", None),
-            value_flag("owner", None),
-        ],
-        false,
-    ) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("list"), false) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let json = parsed.flag("json") || wants_json(args);
     let owner = match list_owner(&parsed) {
         Ok(owner) => owner,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     if json && parsed.flag("names") {
         return fail_with(
             &Error::msg("Only one of --json or --names can be specified"),
             VALIDATION,
-            true,
         );
     }
     let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_project(&error, args, &parsed, json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let exclude_default = parsed.flag("no-default");
     if let Some(warning) = metadata::read_problem(&context.git_root) {
@@ -391,7 +337,7 @@ fn list(args: &[String]) -> Result<i32> {
     }
     let worktrees = match worktree::list_worktrees(&context, exclude_default, false) {
         Ok(worktrees) => worktrees,
-        Err(error) => return fail_with(&error, GENERAL, json),
+        Err(error) => return fail_with(&error, GENERAL),
     };
     let worktrees = match owner.as_deref() {
         Some(owner) => worktrees
@@ -440,22 +386,17 @@ fn list(args: &[String]) -> Result<i32> {
 }
 
 fn where_cmd(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let parsed = match args::parse(args, &[project_flag(), flag("json", None)], true) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("where"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let json = parsed.flag("json") || wants_json(args);
     if parsed.positionals.is_empty() {
-        return fail_with(
-            &Error::msg("Usage: mabo where <worktree-name>"),
-            VALIDATION,
-            json,
-        );
+        return fail_with(&Error::msg("Usage: mabo where <worktree-name>"), VALIDATION);
     }
     let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_project(&error, args, &parsed, json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let name = &parsed.positionals[0];
     match worktree::find_worktree(&context, name, false, None) {
@@ -477,29 +418,17 @@ fn where_cmd(args: &[String]) -> Result<i32> {
                 Ok(SUCCESS)
             }
         }
-        Err(error @ Error::WorktreeNotFound(_)) => fail_with(&error, NOT_FOUND, json),
-        Err(error) => fail_with(&error, GENERAL, json),
+        Err(error @ Error::WorktreeNotFound(_)) => fail_with(&error, NOT_FOUND),
+        Err(error) => fail_with(&error, GENERAL),
     }
 }
 
 fn delete(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let parsed = match args::parse(
-        args,
-        &[
-            project_flag(),
-            flag("force", Some('f')),
-            flag("keep-branch", None),
-            flag("current", None),
-            flag("no-hooks", None),
-            flag("json", None),
-        ],
-        true,
-    ) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("delete"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let json = parsed.flag("json") || wants_json(args);
     let delete_current = parsed.flag("current");
     if parsed.positionals.is_empty() && !delete_current {
         return fail_with(
@@ -507,19 +436,17 @@ fn delete(args: &[String]) -> Result<i32> {
                 "Please provide at least one worktree name to delete, or use --current to delete the current worktree",
             ),
             VALIDATION,
-            json,
         );
     }
     if !parsed.positionals.is_empty() && delete_current {
         return fail_with(
             &Error::msg("Cannot specify --current with a worktree name"),
             VALIDATION,
-            json,
         );
     }
     let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_project(&error, args, &parsed, json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let keep_branch =
         parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false);
@@ -532,10 +459,9 @@ fn delete(args: &[String]) -> Result<i32> {
                         "Not in a worktree directory. The --current option can only be used from within a worktree.",
                     ),
                     VALIDATION,
-                    json,
                 );
             }
-            Err(error) => return fail_with(&error, GENERAL, json),
+            Err(error) => return fail_with(&error, GENERAL),
         }
     } else {
         parsed.positionals.clone()
@@ -637,7 +563,7 @@ fn delete(args: &[String]) -> Result<i32> {
 }
 
 fn exec(args: &[String]) -> Result<i32> {
-    let parsed = args::parse_with(args, &[project_flag()], true, Some(1))?;
+    let parsed = args::parse_with(args, &command_options("exec"), true, Some(1))?;
     if parsed.positionals.len() < 2 {
         return fail(
             &Error::msg("Usage: mabo exec <worktree-name> <command> [args...]"),
@@ -647,7 +573,7 @@ fn exec(args: &[String]) -> Result<i32> {
     let command_args = parsed.positionals[1..].to_vec();
     let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_project(&error, args, &parsed, false),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let name = parsed.positionals[0].clone();
     if let Err(error) = worktree::find_worktree(&context, &name, false, None) {
@@ -778,29 +704,15 @@ fn version(args: &[String]) -> Result<i32> {
 }
 
 fn clone_cmd(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let parsed = match args::parse(
-        args,
-        &[
-            value_flag("branch", None),
-            value_flag("depth", None),
-            flag("update", None),
-            flag("json", None),
-        ],
-        true,
-    ) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("clone"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let json = parsed.flag("json") || wants_json(args);
     if parsed.positionals.len() != 1 {
-        return fail_with(
-            &Error::validation(
+        return fail_with(&Error::validation(
                 "Usage: mabo clone <url|host/owner/repo|owner/repo> [--branch <branch>] [--depth <n>] [--update] [--json]",
-            ),
-            VALIDATION,
-            json,
-        );
+            ), VALIDATION);
     }
     match repository::clone_repository(&repository::CloneRequest {
         source: &parsed.positionals[0],
@@ -816,7 +728,7 @@ fn clone_cmd(args: &[String]) -> Result<i32> {
                 Ok(SUCCESS)
             }
         }
-        Err(error) => fail_with(&error, error.exit_code(), json),
+        Err(error) => fail_with(&error, error.exit_code()),
     }
 }
 
@@ -834,17 +746,15 @@ fn project_root(args: &[String]) -> Result<i32> {
 }
 
 fn project_add(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let parsed = match args::parse(args, &[flag("json", None)], true) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("project add"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, VALIDATION, json),
+        Err(error) => return fail_with(&error, VALIDATION),
     };
-    let json = parsed.flag("json") || wants_json(args);
     if parsed.positionals.len() > 1 {
         return fail_with(
             &Error::msg("Usage: mabo project add [path] [--json]"),
             VALIDATION,
-            json,
         );
     }
     let cwd = match std::env::current_dir() {
@@ -882,34 +792,24 @@ fn project_add(args: &[String]) -> Result<i32> {
 }
 
 fn project_list(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let parsed = match args::parse(
-        args,
-        &[flag("json", None), flag("names", None), flag("paths", None)],
-        false,
-    ) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("project list"), false) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, VALIDATION, json),
+        Err(error) => return fail_with(&error, VALIDATION),
     };
-    let json = parsed.flag("json") || wants_json(args);
-    let modes = [
-        parsed.flag("json"),
-        parsed.flag("names"),
-        parsed.flag("paths"),
-    ]
-    .iter()
-    .filter(|enabled| **enabled)
-    .count();
+    let modes = [json, parsed.flag("names"), parsed.flag("paths")]
+        .iter()
+        .filter(|enabled| **enabled)
+        .count();
     if modes > 1 {
         return fail_with(
             &Error::msg("Only one of --json, --names, or --paths can be specified"),
             VALIDATION,
-            json,
         );
     }
     let loaded = match preferences::load_preferences() {
         Ok(preferences) => preferences,
-        Err(error) => return fail_with(&error, GENERAL, json),
+        Err(error) => return fail_with(&error, GENERAL),
     };
     let catalog = match projects::list_catalog(loaded.ghq_discovery != Some(false)) {
         Ok(catalog) => catalog,
@@ -959,17 +859,15 @@ fn project_list(args: &[String]) -> Result<i32> {
 }
 
 fn project_remove(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let parsed = match args::parse(args, &[flag("json", None)], true) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("project remove"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, VALIDATION, json),
+        Err(error) => return fail_with(&error, VALIDATION),
     };
-    let json = parsed.flag("json") || wants_json(args);
     if parsed.positionals.len() != 1 {
         return fail_with(
             &Error::msg("Usage: mabo project remove <id|name|path> [--json]"),
             VALIDATION,
-            json,
         );
     }
     let identifier = &parsed.positionals[0];
@@ -987,10 +885,9 @@ fn project_remove(args: &[String]) -> Result<i32> {
             return fail_with(
                 &Error::msg(format!("Project '{identifier}' not found")),
                 NOT_FOUND,
-                json,
             )
         }
-        Err(error) => return fail_with(&error, VALIDATION, json),
+        Err(error) => return fail_with(&error, VALIDATION),
     };
     let removed = match store.remove(&project.id) {
         Ok(Some(removed)) => removed,
@@ -998,7 +895,6 @@ fn project_remove(args: &[String]) -> Result<i32> {
             return fail_with(
                 &Error::msg(format!("Project '{identifier}' not found")),
                 NOT_FOUND,
-                json,
             )
         }
         Err(error) => return bubble(error, json),
@@ -1061,34 +957,24 @@ fn github_root(args: &[String]) -> Result<i32> {
 }
 
 fn github_checkout(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let options = vec![
-        project_flag(),
-        value_flag("base", None),
-        flag("no-hooks", None),
-        flag("json", None),
-        value_flag("owner", None),
-        value_flag("purpose", None),
-    ];
-    let parsed = match args::parse(args, &options, true) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("github checkout"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let json = parsed.flag("json") || wants_json(args);
     let Some(number) = parsed.positionals.first() else {
         return fail_with(
             &Error::msg("Please specify a PR or issue number"),
             VALIDATION,
-            json,
         );
     };
     let repository = match selected_repository(&parsed) {
         Ok(repository) => repository,
-        Err(error) => return fail_project(&error, args, &parsed, json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let metadata = match metadata_input(&parsed, true) {
         Ok(metadata) => metadata,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let checkout = match github::checkout(
         number,
@@ -1099,7 +985,7 @@ fn github_checkout(args: &[String]) -> Result<i32> {
         hook_control(&parsed, json, true),
     ) {
         Ok(checkout) => checkout,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let partial = checkout.hook_failure.is_some()
         || checkout.metadata_error.is_some()
@@ -1107,7 +993,7 @@ fn github_checkout(args: &[String]) -> Result<i32> {
     if json {
         let document = match checkout.to_json() {
             Ok(document) => document,
-            Err(error) => return fail_with(&error, GENERAL, true),
+            Err(error) => return fail_with(&error, GENERAL),
         };
         emit_json(&document)?;
     } else {
@@ -1156,24 +1042,20 @@ fn meta_root(args: &[String]) -> Result<i32> {
 }
 
 fn meta_set(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let mut options = vec![project_flag(), flag("json", None), value_flag("base", None)];
-    options.extend(metadata_options());
-    let parsed = match args::parse(args, &options, true) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("meta set"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let json = parsed.flag("json") || wants_json(args);
     if parsed.positionals.len() != 1 {
         return fail_with(
             &Error::msg("Usage: mabo meta set <worktree-name> [options]"),
             VALIDATION,
-            json,
         );
     }
     let mut input = match metadata_input(&parsed, false) {
         Ok(input) => input,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     if parsed.value("base").is_none()
         && input.owner.is_none()
@@ -1184,39 +1066,38 @@ fn meta_set(args: &[String]) -> Result<i32> {
         return fail_with(
             &Error::msg("Specify at least one of --owner, --purpose, --pr, --issue, or --base"),
             VALIDATION,
-            json,
         );
     }
     let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_project(&error, args, &parsed, json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let base = match single_value(&parsed, "base") {
         Ok(base) => base,
-        Err(error) => return fail_with(&error, VALIDATION, json),
+        Err(error) => return fail_with(&error, VALIDATION),
     };
     if let Some(base) = base {
         input.base = match crate::sync::normalize_base(&context.git_root, base) {
             Ok(base) => Some(base),
-            Err(error) => return fail_with(&error, VALIDATION, json),
+            Err(error) => return fail_with(&error, VALIDATION),
         };
     }
     let name = &parsed.positionals[0];
     let worktree = match worktree::find_worktree(&context, name, false, None) {
         Ok(worktree) => worktree,
-        Err(error @ Error::WorktreeNotFound(_)) => return fail_with(&error, NOT_FOUND, json),
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error @ Error::WorktreeNotFound(_)) => return fail_with(&error, NOT_FOUND),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let input = match worktree::outside_name_to_store(&context, Path::new(&worktree.path)) {
         Ok(name) => metadata::MetadataInput { name, ..input },
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     if let Err(error) = metadata::write(&context.git_root, Path::new(&worktree.path), &input) {
-        return fail_with(&error, GENERAL, json);
+        return fail_with(&error, GENERAL);
     }
     let worktree = match worktree::worktree_at_path(&context, Path::new(&worktree.path)) {
         Ok(worktree) => worktree,
-        Err(error) => return fail_with(&error, GENERAL, json),
+        Err(error) => return fail_with(&error, GENERAL),
     };
     if json {
         return emit_json(&worktree::WorktreeRefOutput {
@@ -1238,61 +1119,103 @@ fn action_from(parsed: &Parsed) -> Result<ActionRequest> {
     })
 }
 
-fn requests_help(command: &Command, args: &[String]) -> bool {
-    match command.name {
-        // `mabo exec <name> <command> [args...]`: help flags after the name
-        // belong to the command.
-        "exec" => help_before_positionals(args, 1),
-        // `create`/`attach --exec <command> [args...]`: help flags after
-        // `--exec` belong to the command.
-        "create" | "attach" => help_before_trailing_exec(args),
-        _ => args.iter().any(|arg| is_help_flag(arg)),
+/// Shared by common-option extraction and command validation.
+fn command_options(key: &str) -> Vec<Opt> {
+    match key {
+        "sync" => vec![
+            project_flag(),
+            flag("all", None),
+            flag("mine", None),
+            flag("no-default", None),
+            flag("rebase", None),
+            flag("merge", None),
+            flag("force", Some('f')),
+            flag("keep-conflicts", None),
+        ],
+        "create" => {
+            let mut options = vec![
+                project_flag(),
+                remainder_flag("exec", Some('x')),
+                Opt {
+                    name: "copy-file",
+                    short: None,
+                    value: true,
+                    multiple: true,
+                    remainder: false,
+                },
+                value_flag("base", None),
+                flag("no-hooks", None),
+            ];
+            options.extend(metadata_options());
+            options
+        }
+        "attach" => {
+            let mut options = vec![
+                project_flag(),
+                remainder_flag("exec", Some('x')),
+                Opt {
+                    name: "copy-file",
+                    short: None,
+                    value: true,
+                    multiple: true,
+                    remainder: false,
+                },
+                flag("no-hooks", None),
+            ];
+            options.extend(metadata_options());
+            options
+        }
+        "list" => vec![
+            project_flag(),
+            flag("no-default", None),
+            flag("names", None),
+            value_flag("owner", None),
+        ],
+        "where" => vec![project_flag()],
+        "delete" => vec![
+            project_flag(),
+            flag("force", Some('f')),
+            flag("keep-branch", None),
+            flag("current", None),
+            flag("no-hooks", None),
+        ],
+        "exec" => vec![project_flag()],
+        "clone" => vec![
+            value_flag("branch", None),
+            value_flag("depth", None),
+            flag("update", None),
+        ],
+        "project add" => vec![],
+        "project list" => vec![flag("names", None), flag("paths", None)],
+        "project remove" => vec![],
+        "github checkout" => vec![
+            project_flag(),
+            value_flag("base", None),
+            flag("no-hooks", None),
+            value_flag("owner", None),
+            value_flag("purpose", None),
+        ],
+        "meta set" => {
+            let mut options = vec![project_flag(), value_flag("base", None)];
+            options.extend(metadata_options());
+            options
+        }
+        "gc" => vec![
+            project_flag(),
+            flag("apply", None),
+            flag("force", Some('f')),
+            flag("merged", None),
+            flag("pr", None),
+            flag("orphaned", None),
+            value_flag("older-than", None),
+            value_flag("owner", None),
+            flag("keep-branch", None),
+            flag("no-hooks", None),
+        ],
+        "trust" => vec![flag("yes", Some('y')), flag("list", None)],
+        "untrust" => vec![],
+        _ => vec![],
     }
-}
-
-fn help_before_positionals(args: &[String], limit: usize) -> bool {
-    let mut positionals = 0usize;
-    let mut skip_value = false;
-    for arg in args {
-        if positionals >= limit || arg == "--" {
-            return false;
-        }
-        if skip_value {
-            // Option values are not worktree names, even when they are `--help`.
-            skip_value = false;
-            continue;
-        }
-        if is_help_flag(arg) {
-            return true;
-        }
-        if matches!(arg.as_str(), "--project" | "-p" | "--output") {
-            skip_value = true;
-            continue;
-        }
-        if arg.starts_with("--project=") || (arg.starts_with("-p") && arg.len() > 2) {
-            continue;
-        }
-        if !arg.starts_with('-') {
-            positionals += 1;
-        }
-    }
-    false
-}
-
-fn help_before_trailing_exec(args: &[String]) -> bool {
-    for arg in args {
-        if arg == "--" || arg == "--exec" || arg == "-x" {
-            return false;
-        }
-        if is_help_flag(arg) {
-            return true;
-        }
-    }
-    false
-}
-
-fn is_help_flag(arg: &str) -> bool {
-    arg == "-h" || arg == "--help"
 }
 
 fn project_flag() -> Opt {
@@ -1361,45 +1284,28 @@ fn selected_repository(parsed: &Parsed) -> Result<Option<std::path::PathBuf>> {
 }
 
 fn gc(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let parsed = match args::parse(
-        args,
-        &[
-            project_flag(),
-            flag("apply", None),
-            flag("force", Some('f')),
-            flag("merged", None),
-            flag("pr", None),
-            flag("orphaned", None),
-            value_flag("older-than", None),
-            value_flag("owner", None),
-            flag("keep-branch", None),
-            flag("no-hooks", None),
-            flag("json", None),
-        ],
-        false,
-    ) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("gc"), false) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let json = parsed.flag("json") || wants_json(args);
     let older_than = match parsed.value("older-than") {
         Some(value) => match crate::gc::parse_duration(value) {
             Ok(duration) => Some(duration),
-            Err(error) => return fail_with(&error, error.exit_code(), json),
+            Err(error) => return fail_with(&error, error.exit_code()),
         },
         None => None,
     };
     let owner_filter = match parsed.value("owner") {
         Some(value) => match metadata::parse_owner(value) {
             Ok(owner) => Some(owner),
-            Err(error) => return fail_with(&error, error.exit_code(), json),
+            Err(error) => return fail_with(&error, error.exit_code()),
         },
         None => None,
     };
     let context = match command_context(&parsed) {
         Ok(context) => context,
-        Err(error) => return fail_project(&error, args, &parsed, json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let agent_id = std::env::var("MABO_AGENT_ID")
         .ok()
@@ -1425,7 +1331,7 @@ fn gc(args: &[String]) -> Result<i32> {
     };
     let report = match crate::gc::run(&context, &request, &logger_for(json)) {
         Ok(report) => report,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     if json {
         emit_json(&report)?;
@@ -1442,18 +1348,6 @@ fn command_context(parsed: &Parsed) -> Result<crate::context::Context> {
     crate::context::open(repository.as_deref())
 }
 
-/// `--project --json` consumes `--json` as the value, but the user still asked for JSON.
-fn fail_project(error: &Error, args: &[String], parsed: &Parsed, json: bool) -> Result<i32> {
-    let option_like = parsed
-        .value("project")
-        .is_some_and(|value| value.starts_with('-'));
-    fail_with(
-        error,
-        error.exit_code(),
-        json || (option_like && wants_json(args)),
-    )
-}
-
 fn hook_control(parsed: &Parsed, json: bool, prompt: bool) -> HookControl {
     HookControl {
         no_hooks: parsed.flag("no-hooks"),
@@ -1463,44 +1357,30 @@ fn hook_control(parsed: &Parsed, json: bool, prompt: bool) -> HookControl {
 }
 
 fn trust_cmd(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let parsed = match args::parse(
-        args,
-        &[
-            flag("yes", Some('y')),
-            flag("list", None),
-            flag("json", None),
-        ],
-        true,
-    ) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("trust"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let json = parsed.flag("json") || wants_json(args);
     if parsed.flag("list") {
         if parsed.flag("yes") || !parsed.positionals.is_empty() {
             return fail_with(
                 &Error::validation("mabo trust --list does not take a path or --yes"),
                 VALIDATION,
-                json,
             );
         }
         return print_trust_list(json);
     }
     if parsed.positionals.len() > 1 {
-        return fail_with(
-            &Error::validation("Usage: mabo trust [path]"),
-            VALIDATION,
-            json,
-        );
+        return fail_with(&Error::validation("Usage: mabo trust [path]"), VALIDATION);
     }
     let start = match trust_start(parsed.positionals.first().map(String::as_str)) {
         Ok(start) => start,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let project = match trust::load_hooks(&start) {
         Ok(project) => project,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     if !parsed.flag("yes") {
         if json || !trust::prompts() {
@@ -1509,18 +1389,16 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
                     "mabo will not ask for trust in this environment. Re-run with --yes to trust this project.".into(),
                 ),
                 GENERAL,
-                json,
             );
         }
         let accepted = match trust::ask(&project, trust::TRUST_PROMPT) {
             Ok(accepted) => accepted,
-            Err(error) => return fail_with(&error, error.exit_code(), json),
+            Err(error) => return fail_with(&error, error.exit_code()),
         };
         if !accepted {
             return fail_with(
                 &Error::Untrusted(format!("Did not trust {}", project.project)),
                 GENERAL,
-                json,
             );
         }
     }
@@ -1537,35 +1415,30 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
                 Ok(SUCCESS)
             }
         }
-        Err(error) => fail_with(&error, error.exit_code(), json),
+        Err(error) => fail_with(&error, error.exit_code()),
     }
 }
 
 fn untrust_cmd(args: &[String]) -> Result<i32> {
-    let json = wants_json(args);
-    let parsed = match args::parse(args, &[flag("json", None)], true) {
+    let json = crate::output::json();
+    let parsed = match args::parse(args, &command_options("untrust"), true) {
         Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
-    let json = parsed.flag("json") || wants_json(args);
     if parsed.positionals.len() > 1 {
-        return fail_with(
-            &Error::validation("Usage: mabo untrust [path]"),
-            VALIDATION,
-            json,
-        );
+        return fail_with(&Error::validation("Usage: mabo untrust [path]"), VALIDATION);
     }
     let start = match trust_start(parsed.positionals.first().map(String::as_str)) {
         Ok(start) => start,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let git_root = match crate::git::git_root(&start) {
         Ok(git_root) => git_root,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     let key = match trust::common_dir_key(&git_root) {
         Ok(key) => key.to_string_lossy().to_string(),
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     match trust::untrust_root(&git_root) {
         Ok(removed) => {
@@ -1583,14 +1456,14 @@ fn untrust_cmd(args: &[String]) -> Result<i32> {
                 Ok(SUCCESS)
             }
         }
-        Err(error) => fail_with(&error, error.exit_code(), json),
+        Err(error) => fail_with(&error, error.exit_code()),
     }
 }
 
 fn print_trust_list(json: bool) -> Result<i32> {
     let projects = match trust::list_trusted() {
         Ok(projects) => projects,
-        Err(error) => return fail_with(&error, error.exit_code(), json),
+        Err(error) => return fail_with(&error, error.exit_code()),
     };
     if json {
         let projects = projects
@@ -1704,14 +1577,12 @@ fn delete_status(error: &Error) -> i32 {
 }
 
 fn fail(error: &Error, code: i32) -> Result<i32> {
-    fail_with(error, code, false)
+    fail_with(error, code)
 }
 
-fn fail_with(error: &Error, requested: i32, json: bool) -> Result<i32> {
-    let code = if matches!(error, Error::CommandFailed { .. } | Error::Signaled(_))
-        && !json
-        && !crate::output::json()
-    {
+fn fail_with(error: &Error, requested: i32) -> Result<i32> {
+    let json = crate::output::json();
+    let code = if matches!(error, Error::CommandFailed { .. } | Error::Signaled(_)) && !json {
         // Child status transparency belongs only to standalone exec.
         if crate::output::command_is_exec() {
             error.child_exit_code()
@@ -1722,7 +1593,6 @@ fn fail_with(error: &Error, requested: i32, json: bool) -> Result<i32> {
         crate::error::exit_for_code(error.json_code(requested))
     };
     if json {
-        crate::output::set_json(true);
         crate::output::failure(error.to_json(requested).error);
     } else {
         eprintln!("{error}");
@@ -1779,21 +1649,10 @@ fn finish_mutation(
 fn bubble(error: Error, json: bool) -> Result<i32> {
     if json {
         let code = error.exit_code();
-        fail_with(&error, code, true)
+        fail_with(&error, code)
     } else {
         Err(error)
     }
-}
-
-fn wants_json(args: &[String]) -> bool {
-    args.iter()
-        .take_while(|arg| {
-            let arg = arg.as_str();
-            // `--exec` / `-x` are remainder options. Everything after them,
-            // including `--json`, belongs to the command.
-            arg != "--" && arg != "--exec" && arg != "-x"
-        })
-        .any(|arg| arg == "--json")
 }
 
 fn logger_for(json: bool) -> Logger {

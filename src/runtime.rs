@@ -2,7 +2,7 @@
 use std::cell::Cell;
 use std::io::IsTerminal;
 
-use crate::error::{Error, Result};
+use crate::error::Error;
 
 thread_local! {
     static NO_INPUT: Cell<bool> = const { Cell::new(false) };
@@ -31,18 +31,32 @@ impl Drop for HookScope {
     }
 }
 
-/// Extract common options without consuming option values or user command argv.
-/// Existing command parsers still validate their own options and positionals.
-pub(crate) fn prepare(args: &[String], supports_json: bool, key: &str) -> Result<Vec<String>> {
+/// One common-option scan resolves output and help before command validation.
+/// Value/remainder arity comes from the same definitions as the command parser.
+pub(crate) struct Prepared {
+    pub args: Vec<String>,
+    pub json: bool,
+    pub help: bool,
+    pub error: Option<Error>,
+}
+
+pub(crate) fn prepare(
+    args: &[String],
+    supports_json: bool,
+    key: &str,
+    options: &[crate::args::Opt],
+    help_available: bool,
+) -> Prepared {
     NO_INPUT.set(false);
     let mut remaining = Vec::new();
     let mut explicit = None;
     let mut text_listing = false;
+    let mut help = false;
     let mut error = None;
     let mut index = 0;
     while index < args.len() {
         let arg = &args[index];
-        if arg == "--" || arg == "--exec" || arg == "-x" {
+        if arg == "--" {
             remaining.extend_from_slice(&args[index..]);
             break;
         }
@@ -52,10 +66,7 @@ pub(crate) fn prepare(args: &[String], supports_json: bool, key: &str) -> Result
             .unwrap_or((arg.as_str(), None));
         match name {
             "--no-input" if inline.is_none() => NO_INPUT.set(true),
-            "--json" if inline.is_none() => {
-                explicit = Some(true);
-                crate::output::set_json(supports_json);
-            }
+            "--json" if inline.is_none() => explicit = Some(true),
             "--output" => {
                 let value = match inline {
                     Some(value) => value,
@@ -80,7 +91,7 @@ pub(crate) fn prepare(args: &[String], supports_json: bool, key: &str) -> Result
                     }
                 }
             }
-
+            "--help" | "-h" if inline.is_none() && help_available => help = true,
             _ => {
                 if inline.is_none()
                     && matches!(
@@ -91,12 +102,46 @@ pub(crate) fn prepare(args: &[String], supports_json: bool, key: &str) -> Result
                     text_listing = true;
                 }
                 remaining.push(arg.clone());
-                if takes_value(name) && !(key == "gc" && name == "--pr") && inline.is_none() {
-                    if let Some(value) = args.get(index + 1) {
-                        remaining.push(value.clone());
-                        index += 1;
+                let spec = options.iter().find_map(|spec| {
+                    if let Some(long) = name.strip_prefix("--") {
+                        (long == spec.name).then_some((spec, inline.is_some()))
+                    } else {
+                        let short = arg.strip_prefix('-')?;
+                        short
+                            .chars()
+                            .next()
+                            .is_some_and(|ch| spec.short == Some(ch))
+                            .then_some((spec, short.len() > 1))
+                    }
+                });
+                if let Some((spec, attached)) = spec {
+                    if spec.value && !attached {
+                        if spec.remainder {
+                            // Only create/attach define --exec/-x as remainder options.
+                            let values = &args[index + 1..];
+                            if values.is_empty() || (values.len() == 1 && values[0] == "--") {
+                                error.get_or_insert_with(|| {
+                                    Error::validation(format!(
+                                        "Option '{name} <value>' argument missing"
+                                    ))
+                                });
+                            }
+                            remaining.extend_from_slice(values);
+                            break;
+                        }
+                        if let Some(value) = args.get(index + 1) {
+                            remaining.push(value.clone());
+                            index += 1;
+                        } else {
+                            error.get_or_insert_with(|| {
+                                Error::validation(format!(
+                                    "Option '{name} <value>' argument missing"
+                                ))
+                            });
+                        }
                     }
                 } else if key == "exec" && !arg.starts_with('-') {
+                    // After the worktree name, even help/output flags are child argv.
                     remaining.extend_from_slice(&args[index + 1..]);
                     break;
                 }
@@ -104,13 +149,12 @@ pub(crate) fn prepare(args: &[String], supports_json: bool, key: &str) -> Result
         }
         index += 1;
     }
-    if !supports_json && explicit == Some(true) {
-        return Err(Error::validation(
-            "This command does not support JSON output",
-        ));
+    // Help ignores output defaults and unsupported JSON requests. Invalid or
+    // missing option values still take precedence over a help request.
+    if !supports_json && explicit == Some(true) && !help {
+        error.get_or_insert_with(|| Error::validation("This command does not support JSON output"));
     }
-    // Validate the environment even when an explicit flag overrides its default.
-    let env_json = if supports_json {
+    let env_json = if supports_json && (!help || error.is_some()) {
         match std::env::var("MABO_OUTPUT").ok().as_deref() {
             None | Some("") | Some("text") => false,
             Some("json") => true,
@@ -124,30 +168,13 @@ pub(crate) fn prepare(args: &[String], supports_json: bool, key: &str) -> Result
     } else {
         false
     };
-    let json = supports_json && explicit.unwrap_or(env_json && !text_listing);
-    crate::output::set_json(json);
-    if let Some(error) = error {
-        return Err(error);
+    let json = supports_json
+        && (!help || error.is_some())
+        && explicit.unwrap_or(env_json && !text_listing);
+    Prepared {
+        args: remaining,
+        json,
+        help,
+        error,
     }
-    if json {
-        remaining.insert(0, "--json".into());
-    }
-    Ok(remaining)
-}
-
-fn takes_value(name: &str) -> bool {
-    matches!(
-        name,
-        "--project"
-            | "-p"
-            | "--base"
-            | "--copy-file"
-            | "--owner"
-            | "--purpose"
-            | "--pr"
-            | "--issue"
-            | "--older-than"
-            | "--branch"
-            | "--depth"
-    )
 }

@@ -35,10 +35,6 @@ pub(crate) fn begin(command: &str, json: bool) {
     });
 }
 
-pub(crate) fn set_json(json: bool) {
-    OUTPUT.with_borrow_mut(|out| out.json = json);
-}
-
 pub(crate) fn command_is_exec() -> bool {
     OUTPUT.with_borrow(|out| out.command == "exec")
 }

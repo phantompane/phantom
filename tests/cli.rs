@@ -4426,7 +4426,11 @@ fn project_option_ignores_the_callers_config_and_matches_directory_names() {
     assert!(by_suffix.status.success(), "{}", text(&by_suffix.stderr));
     assert!(same_dir(&text(&by_suffix.stdout), &localname));
 
-    let option_json = run(&["list", "-p", "--json"]);
+    let option_value = run(&["list", "-p", "--json"]);
+    assert_eq!(option_value.status.code(), Some(2));
+    assert!(option_value.stdout.is_empty());
+    assert!(text(&option_value.stderr).contains("looks like an option"));
+    let option_json = run(&["list", "--json", "-p", "--json"]);
     assert_eq!(
         option_json.status.code(),
         Some(2),
@@ -5336,7 +5340,11 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
 #[test]
 fn owner_flag_rejects_a_value_that_looks_like_an_option() {
     let repo = Repo::new();
-    let listed = repo.mabo(&["list", "--owner", "--json"]);
+    let value = repo.mabo(&["list", "--owner", "--json"]);
+    assert_eq!(value.status.code(), Some(2));
+    assert!(value.stdout.is_empty());
+    assert!(text(&value.stderr).contains("looks like an option"));
+    let listed = repo.mabo(&["list", "--json", "--owner", "--json"]);
     assert_eq!(listed.status.code(), Some(2), "{}", text(&listed.stdout));
     let listed_json = json_value(&listed);
     assert_eq!(listed_json["error"]["code"], "usage");
@@ -5351,7 +5359,11 @@ fn owner_flag_rejects_a_value_that_looks_like_an_option() {
         .contains("--json"));
     assert!(text(&listed.stderr).is_empty(), "{}", text(&listed.stderr));
 
-    let created = repo.mabo(&["create", "feature", "--purpose", "--json"]);
+    let value = repo.mabo(&["create", "feature", "--purpose", "--json"]);
+    assert_eq!(value.status.code(), Some(2));
+    assert!(value.stdout.is_empty());
+    assert!(text(&value.stderr).contains("looks like an option"));
+    let created = repo.mabo(&["create", "feature", "--json", "--purpose", "--json"]);
     assert_eq!(created.status.code(), Some(2));
     assert_eq!(json_value(&created)["error"]["code"], "usage");
     assert!(!managed(&repo, "feature").exists());
@@ -9960,6 +9972,8 @@ fn unresolved_usage_errors_honor_json_output_and_explicit_text() {
         (vec!["frobnicate", "--output", "json"], "text", "frobnicate"),
         (vec!["frobnicate", "--output=json"], "text", "frobnicate"),
         (vec!["frobnicate"], "json", "frobnicate"),
+        (vec!["frobnicate", "--help"], "json", "frobnicate"),
+        (vec!["frobnicate", "--help", "--json"], "text", "frobnicate"),
         (vec!["--json", "frobnicate"], "text", "frobnicate"),
         (vec!["--json"], "text", ""),
         (vec!["--output", "json"], "text", ""),
@@ -10349,4 +10363,220 @@ fn common_options_can_precede_the_command_path() {
     let out = repo.mabo(&["--no-input", "exec", "main", "printf", "%s", "--json"]);
     assert!(out.status.success());
     assert_eq!(text(&out.stdout), "--json");
+}
+
+#[test]
+fn unsupported_exec_options_do_not_hide_json_usage_requests() {
+    let repo = Repo::new();
+    for command in ["list", "project list", "frobnicate", "project bogus"] {
+        for exec in ["--exec", "-x"] {
+            let args = command
+                .split_whitespace()
+                .chain([exec, "ignored", "--json"])
+                .collect::<Vec<_>>();
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .env("MABO_OUTPUT", "text")
+                .output()
+                .expect("mabo");
+            assert_eq!(out.status.code(), Some(2), "{args:?}");
+            let key = if command == "project bogus" {
+                "project"
+            } else {
+                command
+            };
+            let value = assert_envelope(&out, key);
+            assert_eq!(value["error"]["code"], "usage");
+            assert!(out.stderr.is_empty(), "{args:?}: {}", text(&out.stderr));
+        }
+    }
+}
+
+#[test]
+fn invalid_usage_preserves_json_across_all_command_groups() {
+    let repo = Repo::new();
+    // Every JSON command, every parent group (including the gh alias), and
+    // unresolved top-level commands must use exactly one usage envelope.
+    for (command, invalid, key) in [
+        ("create", "--bogus", "create"),
+        ("attach", "--bogus", "attach"),
+        ("list", "--bogus", "list"),
+        ("where", "--bogus", "where"),
+        ("delete", "--bogus", "delete"),
+        ("sync", "--bogus", "sync"),
+        ("gc", "--bogus", "gc"),
+        ("trust", "--bogus", "trust"),
+        ("untrust", "--bogus", "untrust"),
+        ("clone", "--bogus", "clone"),
+        ("meta set", "--bogus", "meta set"),
+        ("project add", "--bogus", "project add"),
+        ("project list", "--bogus", "project list"),
+        ("project remove", "--bogus", "project remove"),
+        ("github checkout", "--bogus", "github checkout"),
+        ("gh checkout", "--bogus", "github checkout"),
+        ("project", "bogus", "project"),
+        ("meta", "bogus", "meta"),
+        ("preferences", "bogus", "preferences"),
+        ("github", "bogus", "github"),
+        ("gh", "bogus", "github"),
+        ("project", "--bogus", "project"),
+        ("meta", "--bogus", "meta"),
+        ("preferences", "--bogus", "preferences"),
+        ("github", "--bogus", "github"),
+        ("frobnicate", "--bogus", "frobnicate"),
+    ] {
+        for (output_args, env_mode) in [
+            (vec!["--json"], "text"),
+            (vec!["--output", "json"], "text"),
+            (vec!["--output=json"], "text"),
+            (vec![], "json"),
+        ] {
+            let mut args = command.split_whitespace().collect::<Vec<_>>();
+            args.push(invalid);
+            args.extend(output_args.iter().copied());
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .env("MABO_OUTPUT", env_mode)
+                .output()
+                .expect("mabo");
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "{args:?}: {}",
+                text(&out.stdout)
+            );
+            let value = assert_envelope(&out, key);
+            assert_eq!(value["error"]["code"], "usage", "{args:?}");
+            assert!(value["data"].is_null(), "{args:?}");
+            assert!(out.stderr.is_empty(), "{args:?}: {}", text(&out.stderr));
+        }
+    }
+}
+
+#[test]
+fn resolved_text_usage_errors_never_reenable_json() {
+    let repo = Repo::new();
+    for args in [
+        vec!["list", "--owner", "--json", "--output", "text"],
+        vec!["list", "--json", "--output", "text", "--owner"],
+        vec!["list", "--output=text", "--owner", "--json"],
+        vec!["list", "--project", "--json", "--output", "text"],
+        vec!["list", "--json", "--output=text", "--project"],
+        vec!["project", "bogus", "--json", "--output", "text"],
+    ] {
+        for env_mode in ["text", "json"] {
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .env("MABO_OUTPUT", env_mode)
+                .output()
+                .expect("mabo");
+            assert_eq!(out.status.code(), Some(2), "{args:?}");
+            assert!(out.stdout.is_empty(), "{args:?}: {}", text(&out.stdout));
+            assert!(!out.stderr.is_empty(), "{args:?}");
+        }
+    }
+}
+
+#[test]
+fn help_requests_skip_option_values_and_reject_missing_values() {
+    let repo = Repo::new();
+    for command in [
+        "list",
+        "create",
+        "attach",
+        "project list",
+        "meta set",
+        "gc",
+        "clone",
+    ] {
+        for output in [
+            vec!["--output", "--help"],
+            vec!["--output=--help"],
+            vec!["--help", "--output"],
+        ] {
+            let args = command
+                .split_whitespace()
+                .chain(["--json"])
+                .chain(output)
+                .collect::<Vec<_>>();
+            let out = repo.mabo(&args);
+            assert_eq!(out.status.code(), Some(2), "{args:?}");
+            let value = assert_envelope(&out, command);
+            assert_eq!(value["error"]["code"], "usage");
+            assert!(value["error"]["message"]
+                .as_str()
+                .expect("message")
+                .contains("output"));
+        }
+    }
+    for (command, option) in [
+        ("list", "--owner"),
+        ("create", "--owner"),
+        ("attach", "--owner"),
+        ("meta set", "--owner"),
+    ] {
+        let args = command
+            .split_whitespace()
+            .chain(["--json", option, "--help"])
+            .collect::<Vec<_>>();
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
+    }
+    // A real help request does not hide a missing command-option value either.
+    for (command, option) in [
+        ("list", "--owner"),
+        ("create", "--base"),
+        ("attach", "--exec"),
+        ("gc", "--older-than"),
+        ("clone", "--depth"),
+    ] {
+        let args = command
+            .split_whitespace()
+            .chain(["--help", option])
+            .collect::<Vec<_>>();
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("MABO_OUTPUT", "json")
+            .output()
+            .expect("mabo");
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
+    }
+    assert!(!managed(&repo, "--help").exists());
+}
+
+#[test]
+fn output_and_help_scan_respects_command_option_arity_and_child_boundaries() {
+    let repo = Repo::new();
+    for args in [
+        vec!["list", "--base", "--json"], // --base is not a list option.
+        vec!["project", "list", "--owner", "--json"],
+        vec!["gc", "--pr", "--json", "--bogus"], // --pr is a flag here.
+    ] {
+        let out = repo.mabo(&args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert_eq!(json_value(&out)["error"]["code"], "usage");
+    }
+    for command in ["create", "attach"] {
+        for exec in ["--exec", "-x"] {
+            let out = repo.mabo(&[command, "--bogus", exec, "ignored", "--json", "--help"]);
+            assert_eq!(out.status.code(), Some(2));
+            assert!(out.stdout.is_empty());
+            assert!(text(&out.stderr).contains("Unknown option"));
+        }
+        for exec in ["--exec=ignored", "-xignored"] {
+            let out = repo.mabo(&[command, "--bogus", exec, "--json"]);
+            assert_eq!(out.status.code(), Some(2));
+            assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
+        }
+    }
+    let out = repo.mabo(&["list", "--owner", "alice", "--", "--json", "--help"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(out.stdout.is_empty());
+    assert!(text(&out.stderr).contains("Unexpected argument"));
+    let out = repo.mabo(&["list", "--owner=--help", "--output=text"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(out.stdout.is_empty());
+    assert!(text(&out.stderr).contains("looks like an option"));
 }
