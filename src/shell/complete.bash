@@ -3,7 +3,10 @@ _mabo() {
     COMPREPLY=()
     while IFS= read -r mabo_entry; do
         mabo_name=${mabo_entry%%$'\t'*}
-        [[ "$mabo_name" == "$mabo_current"* ]] && COMPREPLY+=("$mabo_name")
+        if [[ "$mabo_name" == "$mabo_current"* ]]; then
+            printf -v mabo_name '%q' "$mabo_name"
+            COMPREPLY+=("$mabo_name")
+        fi
     done < <(_mabo_candidates "${COMP_WORDS[@]:1:COMP_CWORD-1}")
     return 0
 }

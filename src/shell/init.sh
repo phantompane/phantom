@@ -15,7 +15,10 @@ mabo() {
                 ;;
             cd)
                 shift
-                mabo_destination=$(command mabo "${mabo_prefix[@]}" path --output text "$@") || return $?
+                # Keep path newlines through command substitution, then remove
+                # exactly the output delimiter and the sentinel.
+                mabo_destination=$(command mabo "${mabo_prefix[@]}" path --output text "$@" && printf '.') || return $?
+                mabo_destination=${mabo_destination%$'\n'.}
                 builtin cd -- "$mabo_destination"
                 return $?
                 ;;

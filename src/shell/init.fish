@@ -17,7 +17,9 @@ function mabo
                 command mabo $mabo_prefix path --output text $argv | read --null mabo_destination
                 set -l mabo_result $pipestatus[1]
                 test $mabo_result -eq 0; or return $mabo_result
-                set mabo_destination (string collect -- "$mabo_destination")
+                # string split preserves embedded newlines in its substitution
+                # results. Drop only the final output delimiter, not path bytes.
+                set mabo_destination (string split --right --max 1 \n -- "$mabo_destination")[1]
                 builtin cd -- "$mabo_destination"
                 return $status
             case '*'

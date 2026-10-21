@@ -20326,17 +20326,121 @@ fn fish_shell_smoke() {
     shell_smoke("fish");
 }
 
-fn shell_smoke(shell: &str) {
+fn shell_available(shell: &str) -> bool {
     match Command::new(shell).arg("--version").output() {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             maboroshi::output::stderr(format_args!(
                 "SKIP {shell} shell smoke: {shell} is not installed\n"
             ));
-            return;
+            return false;
         }
         other => assert!(other.unwrap().status.success()),
     }
+    true
+}
+
+#[test]
+fn bash_completion_quotes_shell_input() {
+    if !shell_available("bash") {
+        return;
+    }
     let repo = Repo::new();
+    let completions = repo.root.join("completions.bash");
+    fs::write(&completions, repo.mabo(&["completions", "bash"]).stdout).unwrap();
+    let bin = repo.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_mabo"), bin.join("mabo")).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    // These Git refs reach completion through actual unmanaged checkouts.
+    let names = [
+        "review;>pwned",
+        "$(>pwned)",
+        "single'quote",
+        "double\"quote",
+    ];
+    for (index, name) in names.iter().enumerate() {
+        repo.git(&[
+            "worktree",
+            "add",
+            "-b",
+            name,
+            repo.root
+                .join(format!("checkout-{index}"))
+                .to_str()
+                .unwrap(),
+        ]);
+    }
+    // Git rejects spaces, backslashes and newlines in refs; mock those records.
+    // Newlines delimit candidates, so check both records for safe insertion.
+    for name in names
+        .into_iter()
+        .chain(["space argument", "back\\slash", "line;>pwned\n$(>pwned)"])
+    {
+        for expected in name.split('\n') {
+            let script = r#"
+source "$MABO_TEST_COMPLETIONS"
+if [ "$MABO_TEST_MOCK" = 1 ]; then
+    _mabo_candidates() { printf '%s\n' "$MABO_TEST_NAME"; }
+fi
+COMP_WORDS=(mabo path "$MABO_TEST_EXPECTED"); COMP_CWORD=2; _mabo
+[ "${#COMPREPLY[@]}" = 1 ] || exit 40
+mabo() { printf '%s\0' "$@" > "$MABO_TEST_ARGS"; }
+eval "mabo path ${COMPREPLY[0]}"
+"#;
+            let output = repo
+                .command("bash", &["--noprofile", "--norc", "-c", script])
+                .env("PATH", &path)
+                .env("MABO_TEST_COMPLETIONS", &completions)
+                .env("MABO_TEST_NAME", name)
+                .env("MABO_TEST_EXPECTED", expected)
+                .env(
+                    "MABO_TEST_MOCK",
+                    if names.contains(&name) { "0" } else { "1" },
+                )
+                .env("MABO_TEST_ARGS", repo.root.join("args"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{name:?}: {}",
+                text(&output.stderr)
+            );
+            assert!(
+                !repo.repo.join("pwned").exists(),
+                "candidate executed shell syntax: {name:?}"
+            );
+            assert_eq!(
+                fs::read(repo.root.join("args")).unwrap(),
+                format!("path\0{expected}\0").as_bytes(),
+                "{name:?}"
+            );
+        }
+    }
+}
+
+fn shell_smoke(shell: &str) {
+    if !shell_available(shell) {
+        return;
+    }
+    let repo = Repo::new();
+    // Reproduce compaudit's failure independently of host fpath permissions.
+    let insecure_fpath = repo.root.join("insecure-functions");
+    fs::create_dir(&insecure_fpath).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&insecure_fpath, fs::Permissions::from_mode(0o777)).unwrap();
+    }
+    for suffix in ["\n", "\n\n"] {
+        let target = repo.root.join(format!("trailing{suffix}"));
+        repo.git(&["worktree", "add", "--detach", target.to_str().unwrap()]);
+    }
+    // A trimmed path must never silently select this different directory.
+    fs::create_dir(repo.root.join("trailing")).unwrap();
     let parent = repo.root.join("parent with ' spaces");
     fs::create_dir(&parent).unwrap();
     let target = parent.join("-workspace");
@@ -20399,7 +20503,13 @@ complete -C 'mabo sync --' > "$MABO_TEST_FLAGS"
 "#
     } else {
         r#"
-if [ -n "$ZSH_VERSION" ]; then autoload -Uz compinit; compinit -D; fi
+if [ -n "$ZSH_VERSION" ]; then
+    fpath=("$MABO_TEST_INSECURE_FPATH" $fpath)
+    autoload -Uz compinit compaudit
+    compaudit > "$MABO_TEST_RESULTS/compaudit" 2>&1 && exit 35
+    # Only this test fixture bypasses the host's completion-directory audit.
+    compinit -u -D || exit 10
+fi
 source "$MABO_TEST_INIT"
 source "$MABO_TEST_COMPLETIONS"
 start=$PWD
@@ -20452,6 +20562,11 @@ test "$PWD" = "$MABO_TEST_TARGET" || exit 26
 builtin cd -- "$MABO_TEST_REPO"
 mabo cd "$MABO_TEST_TARGET" || exit 27
 test "$PWD" = "$MABO_TEST_TARGET" || exit 28
+mabo cd "$MABO_TEST_NEWLINE_TARGET" || exit 31
+test "$PWD" = "$MABO_TEST_NEWLINE_TARGET" || exit 32
+builtin cd -- "$MABO_TEST_REPO"
+mabo cd "$MABO_TEST_NEWLINES_TARGET" || exit 33
+test "$PWD" = "$MABO_TEST_NEWLINES_TARGET" || exit 34
 builtin cd -- "$HOME"
 _mabo_candidates -R "$MABO_TEST_REPO" path -- > "$MABO_TEST_RESULTS/repo-short"
 _mabo_candidates --repo="$MABO_TEST_REPO" path -- > "$MABO_TEST_RESULTS/repo-long"
@@ -20493,6 +20608,10 @@ _mabo_candidates setup --copy-file > "$MABO_TEST_RESULTS/value-pending"
     }
     let output = command
         .env("PATH", path)
+        .env("ZDOTDIR", &repo.home)
+        .env("MABO_TEST_INSECURE_FPATH", &insecure_fpath)
+        .env("MABO_TEST_NEWLINE_TARGET", repo.root.join("trailing\n"))
+        .env("MABO_TEST_NEWLINES_TARGET", repo.root.join("trailing\n\n"))
         .env("MABO_OUTPUT", "json")
         .env(
             "MABO_TEST_INIT",
@@ -20522,6 +20641,10 @@ _mabo_candidates setup --copy-file > "$MABO_TEST_RESULTS/value-pending"
         text(&output.stderr),
         text(&output.stdout)
     );
+    if shell == "zsh" {
+        let audit = fs::read_to_string(repo.root.join("compaudit")).unwrap();
+        assert!(audit.contains(insecure_fpath.to_str().unwrap()), "{audit}");
+    }
     assert_eq!(
         fs::read_to_string(repo.root.join("args")).unwrap(),
         "space argument\n\n-leading\n"
