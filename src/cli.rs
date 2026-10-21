@@ -2137,6 +2137,7 @@ mod forget_tests {
             let repo = root.join("repo");
             fs::create_dir_all(&repo).unwrap();
             git::run(&["init", "--template=", "-b", "main"], Some(&repo)).unwrap();
+            crate::test_git::configure_repo(&repo);
             git::run(
                 &[
                     "-c",

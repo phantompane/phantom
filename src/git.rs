@@ -853,6 +853,7 @@ mod tests {
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         run(&["init", "--template=", "-b", "main"], Some(&repo)).unwrap();
+        crate::test_git::configure_repo(&repo);
         let registrations = git_common_dir(&repo).unwrap().join("worktrees");
         std::fs::create_dir_all(registrations.join("broken")).unwrap();
         std::fs::write(registrations.join("pending.lock"), "").unwrap();

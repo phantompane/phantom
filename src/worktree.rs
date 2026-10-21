@@ -1870,6 +1870,7 @@ mod tests {
                     .as_nanos()
             ));
             fs::create_dir_all(root.join(".home")).expect("home");
+            crate::test_git::write_config(&root.join(".home"));
             fs::create_dir_all(root.join(".template")).expect("template");
             let repo = Self { root };
             repo.git(&["init", "-b", "main"]);

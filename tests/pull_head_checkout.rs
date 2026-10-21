@@ -1,7 +1,8 @@
+#[path = "common/git.rs"]
+mod test_git;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 struct TempTree {
     path: PathBuf,
@@ -29,7 +30,7 @@ impl Drop for TempTree {
 }
 
 fn git(cwd: &Path, args: &[&str]) -> std::process::Output {
-    let output = Command::new("git")
+    let output = test_git::command("git")
         .args(args)
         .current_dir(cwd)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -55,7 +56,7 @@ fn git_text(cwd: &Path, args: &[&str]) -> String {
 }
 
 fn git_output(cwd: &Path, args: &[&str]) -> std::process::Output {
-    Command::new("git")
+    test_git::command("git")
         .args(args)
         .current_dir(cwd)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -107,6 +108,7 @@ fn deleted_pr_remote(root: &Path) -> (PathBuf, String) {
             origin.to_str().expect("origin"),
         ],
     );
+    test_git::configure_repo(&origin);
     git(root, &["init", "-b", "main", seed.to_str().expect("seed")]);
     git(&seed, &["commit", "--allow-empty", "-m", "main"]);
     git(
@@ -194,7 +196,7 @@ fn gh_checkout_uses_pull_head_when_the_branch_is_deleted() {
     let config = tree.path.join("config");
     let home = tree.path.join("home");
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
-    let output = Command::new(env!("CARGO_BIN_EXE_mabo"))
+    let output = test_git::command(env!("CARGO_BIN_EXE_mabo"))
         .args(["create", "--pr", "843", "--reuse", "--no-hooks", "--json"])
         .current_dir(&clone)
         .env("PATH", path)
@@ -471,7 +473,7 @@ exec "$REAL_GIT" "$@"
         fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).expect("chmod");
         let state = tree.path.join("checkout-state");
         let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
-        let output = Command::new(env!("CARGO_BIN_EXE_mabo"))
+        let output = test_git::command(env!("CARGO_BIN_EXE_mabo"))
             .args(["create", "--pr", "754", "--no-hooks"])
             .current_dir(&clone)
             .env("PATH", path)
@@ -680,7 +682,7 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
 fn mabo(clone: &Path, bin: &Path, args: &[&str]) -> std::process::Output {
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
     let tree = clone.parent().expect("parent");
-    Command::new(env!("CARGO_BIN_EXE_mabo"))
+    test_git::command(env!("CARGO_BIN_EXE_mabo"))
         .args(args)
         .current_dir(clone)
         .env("PATH", path)
@@ -770,6 +772,7 @@ fn live_branch(root: &Path, branch: &str) -> (PathBuf, String) {
             origin.to_str().expect("origin"),
         ],
     );
+    test_git::configure_repo(&origin);
     git(root, &["init", "-b", "main", seed.to_str().expect("seed")]);
     git(&seed, &["commit", "--allow-empty", "-m", "main"]);
     git(
@@ -807,6 +810,7 @@ fn pull_ref_only(root: &Path, number: u64) -> (PathBuf, String) {
             origin.to_str().expect("origin"),
         ],
     );
+    test_git::configure_repo(&origin);
     git(root, &["init", "-b", "main", seed.to_str().expect("seed")]);
     git(&seed, &["commit", "--allow-empty", "-m", "main"]);
     git(
@@ -849,6 +853,7 @@ fn cloned_before_branch_delete(root: &Path) -> (PathBuf, String) {
             origin.to_str().expect("origin"),
         ],
     );
+    test_git::configure_repo(&origin);
     git(root, &["init", "-b", "main", seed.to_str().expect("seed")]);
     git(&seed, &["commit", "--allow-empty", "-m", "main"]);
     git(

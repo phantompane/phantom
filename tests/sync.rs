@@ -1,5 +1,7 @@
 #[path = "common/records.rs"]
 mod records;
+#[path = "common/git.rs"]
+mod test_git;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,6 +18,8 @@ impl Repo {
         let main = root.join("main");
         let upstream = root.join("upstream");
         fs::create_dir_all(&main).unwrap();
+        fs::create_dir_all(root.join("home")).unwrap();
+        test_git::write_config(&root.join("home"));
         let repo = Self {
             root,
             main,
@@ -68,7 +72,7 @@ impl Repo {
             .env("XDG_CONFIG_HOME", self.root.join("config"))
             .env("XDG_DATA_HOME", self.root.join("data"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_GLOBAL", self.root.join("home/.gitconfig"))
             .env("GIT_TEMPLATE_DIR", self.root.join("template"))
             .env_remove("MABO_OUTPUT")
             .env_remove("MABO_NO_INPUT")
