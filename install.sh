@@ -1,0 +1,298 @@
+#!/bin/sh
+# Official mabo installer. Re-run to update; pin with MABO_VERSION for reproducibility.
+# MABO_RELEASE_BASE_URL and MABO_API_URL are overrides for testing/mirrors;
+# they accept https:// URLs and local file:// URLs (copied without HTTP).
+set -eu
+
+usage() {
+    cat <<'USAGE'
+Usage: sh install.sh [options]
+  --version TAG          Exact release tag, with or without v (MABO_VERSION)
+  --prerelease           Allow prereleases (MABO_PRERELEASE=1)
+  --install-dir DIR      Destination (MABO_INSTALL_DIR; default $HOME/.local/bin)
+  --verify-attestation   Require gh attestation verification (MABO_VERIFY_ATTESTATION=1)
+  -h, --help             Show this help
+Re-run to update. Never prompts, uses sudo, or changes shell profiles.
+USAGE
+}
+
+fail() { printf 'mabo installer: %s\n' "$*" >&2; exit 1; }
+usageError() { printf 'mabo installer: %s\n' "$*" >&2; exit 2; }
+progress() { printf '%s\n' "$*" >&2; }
+
+cleanup() {
+    status=$?
+    if [ -n "$stageDir" ]; then rm -rf "$stageDir"; fi
+    if [ -n "$tmp" ]; then rm -rf "$tmp"; fi
+    if [ "$status" -ne 0 ]; then exit 1; fi
+}
+
+refuseManagedTarget() {
+    if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
+        fail "$target is managed elsewhere (Homebrew, mise, cargo, or another tool). Update with that tool or pass a different --install-dir."
+    fi
+}
+
+# Only this function sends authentication, and only when its third argument is api.
+# Disable user curl/wget config so it cannot enable tracing or add asset credentials.
+download() {
+    case $1 in
+        file://*) cp "${1#file://}" "$2" ;;
+        https://*)
+            if [ "$downloader" = curl ]; then
+                if [ "${3-}" = api ] && [ -n "${GITHUB_TOKEN-}" ]; then
+                    curl --disable -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+                        -H "Authorization: Bearer $GITHUB_TOKEN" -o "$2" "$1"
+                else
+                    curl --disable -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 -o "$2" "$1"
+                fi
+            else
+                downloadWget "$@"
+            fi ;;
+        *) fail 'Download URLs must use https:// (or file:// for testing/mirrors).' ;;
+    esac
+}
+
+# wget HTTPS-only mode alone does not constrain redirects on all versions.
+# Follow redirects explicitly, validating every destination before requesting it.
+downloadWget() (
+    url=$1 destination=$2 requestKind=${3-} redirects=0
+    while [ "$redirects" -le 10 ]; do
+        case $url in https://*) ;; *) exit 1 ;; esac
+        if [ "$requestKind" = api ] && [ -n "${GITHUB_TOKEN-}" ]; then
+            if wget --no-config --no-hsts --quiet --https-only --max-redirect=0 --server-response \
+                --header="Authorization: Bearer $GITHUB_TOKEN" -O "$destination" "$url" 2> "$tmp/headers"; then return; fi
+        else
+            if wget --no-config --no-hsts --quiet --https-only --max-redirect=0 --server-response \
+                -O "$destination" "$url" 2> "$tmp/headers"; then return; fi
+        fi
+        url=$(awk '
+            tolower($1)=="location:" { location=$2; sub(/\r$/, "", location) }
+            END { print location }
+        ' "$tmp/headers")
+        # Authentication belongs exclusively to the original API request.
+        requestKind=
+        redirects=$((redirects+1))
+    done
+    exit 1
+)
+
+# A small structural JSON reader, rather than line/grep matching: ignore nested
+# metadata and strings containing JSON punctuation. Only direct release fields and
+# direct assets[].name values count. Parse the entire response before selecting.
+resolveRelease() {
+    awk -v platform="$os-$arch" -v allow="$prerelease" '
+    function bad() { invalid=1; exit 1 }
+    function hex(s,    i,n,c) {
+        n=0
+        for(i=1;i<=length(s);i++) {
+            c=index("0123456789abcdef",tolower(substr(s,i,1)))-1
+            if(c<0) bad()
+            n=n*16+c
+        }
+        return n
+    }
+    function nextToken(    c,e,h) {
+        while(pos<=length(json) && substr(json,pos,1) ~ /[ \t\r\n]/) pos++
+        c=substr(json,pos++,1); token=c; value=c
+        if(c=="\"") {
+            value=""
+            while(pos<=length(json)) {
+                c=substr(json,pos++,1)
+                if(c=="\"") return
+                if(c=="\\") {
+                    e=substr(json,pos++,1)
+                    if(e=="u") {
+                        h=substr(json,pos,4); if(length(h)!=4) bad()
+                        h=hex(h); pos+=4
+                        # Release tags and asset names are ASCII. Keep other code
+                        # points distinct from their supported ASCII spellings.
+                        c=(h>=32 && h<=126) ? sprintf("%c",h) : "?"
+                    } else if(e=="\"" || e=="\\" || e=="/") c=e
+                    else if(e ~ /^[bfnrt]$/) c="?"
+                    else bad()
+                } else if(c ~ /[[:cntrl:]]/) bad()
+                value=value c
+            }
+            bad()
+        }
+        if(c ~ /[0-9tfn-]/ && c!="") {
+            while(pos<=length(json) && substr(json,pos,1) !~ /[] \t\r\n,}]/)
+                value=value substr(json,pos++,1)
+            token="literal"
+            if(value!="true" && value!="false" && value!="null" &&
+                value !~ /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/) bad()
+        }
+    }
+    function parse(path,    key,child) {
+        if(++depth>100) bad()
+        if(token=="{") {
+            nextToken()
+            if(token!="}") while(1) {
+                if(token!="\"") bad()
+                key=value; nextToken(); if(token!=":") bad()
+                nextToken(); parse(path "/" key)
+                if(token=="}") break
+                if(token!=",") bad()
+                nextToken()
+            }
+            nextToken()
+        } else if(token=="[") {
+            nextToken()
+            if(token!="]") while(1) {
+                child=path "/item"
+                if(path=="") {
+                    tag=""; draft=""; pre=""
+                    for(key in assets) delete assets[key]
+                    if(token!="{") bad()
+                }
+                parse(child)
+                if(path=="" && draft=="false" && (pre=="true" || pre=="false")) {
+                    ver=tag; sub(/^v/,"",ver)
+                    name="maboroshi-v" ver "-" platform ".tar.gz"
+                    if(name in assets) {
+                        if(pre=="true" && firstPre=="") firstPre=tag
+                        if(chosen=="" && (pre=="false" || allow==1)) chosen=tag
+                    }
+                }
+                if(token=="]") break
+                if(token!=",") bad()
+                nextToken()
+            }
+            nextToken()
+        } else if(token=="\"" || token=="literal") {
+            if(path=="/item/tag_name" && token=="\"") tag=value
+            if(path=="/item/draft" && token=="literal") draft=value
+            if(path=="/item/prerelease" && token=="literal") pre=value
+            if(path=="/item/assets/item/name" && token=="\"") assets[value]=1
+            nextToken()
+        } else bad()
+        depth--
+    }
+    { json=json $0 "\n" }
+    END {
+        if(invalid) exit 1
+        pos=1; nextToken(); if(token!="[") bad()
+        parse(""); if(token!="") bad()
+        if(chosen!="") print chosen
+        else if(firstPre!="") print "prerelease:" firstPre
+    }' "$tmp/releases.json"
+}
+
+main() {
+    version=${MABO_VERSION-}
+    prerelease=${MABO_PRERELEASE-0}
+    verify=${MABO_VERIFY_ATTESTATION-0}
+    installDir=${MABO_INSTALL_DIR-}
+    while [ "$#" -gt 0 ]; do
+        case $1 in
+            --version|--install-dir)
+                [ "$#" -ge 2 ] && [ -n "$2" ] || usageError "$1 requires a value"
+                case $1 in --version) version=$2 ;; --install-dir) installDir=$2 ;; esac
+                shift 2 ;;
+            --prerelease) prerelease=1; shift ;;
+            --verify-attestation) verify=1; shift ;;
+            -h|--help) usage; return ;;
+            *) usageError "Unknown option: $1" ;;
+        esac
+    done
+    if [ -z "$installDir" ]; then
+        [ -n "${HOME-}" ] || fail 'HOME is unset; pass --install-dir.'
+        installDir=$HOME/.local/bin
+    fi
+    # Absolute paths also prevent option-like destinations being treated as flags.
+    case $installDir in /*) ;; *) installDir=$PWD/$installDir ;; esac
+    target=$installDir/mabo
+    refuseManagedTarget
+    tmp='' stageDir=''
+    trap cleanup 0
+    trap 'exit 1' HUP INT TERM
+    case $(uname -s) in Linux) os=linux ;; Darwin) os=darwin ;; *) os=unsupported ;; esac
+    case $(uname -m) in x86_64|amd64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; *) arch=unsupported ;; esac
+    if [ "$os" = unsupported ] || [ "$arch" = unsupported ]; then
+        fail "Unsupported platform. See https://github.com/phantompane/phantom/releases or use: cargo install --git https://github.com/phantompane/phantom --tag ${version:-<tag>} --locked maboroshi"
+    fi
+    if command -v curl >/dev/null 2>&1; then downloader=curl
+    elif command -v wget >/dev/null 2>&1; then downloader=wget
+    else fail 'curl or wget is required.'; fi
+    if command -v sha256sum >/dev/null 2>&1; then hasher=sha256sum
+    elif command -v shasum >/dev/null 2>&1; then hasher=shasum
+    else fail 'sha256sum or shasum is required for checksum verification.'; fi
+    if [ "$verify" = 1 ]; then
+        command -v gh >/dev/null 2>&1 || fail '--verify-attestation requires gh on PATH.'
+    fi
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/mabo-install.XXXXXXXX") || fail 'Cannot create temporary directory.'
+    base=${MABO_RELEASE_BASE_URL:-https://github.com/phantompane/phantom/releases/download}
+    api=${MABO_API_URL:-https://api.github.com/repos/phantompane/phantom}
+    if [ -z "$version" ]; then
+        progress 'Resolving mabo release...'
+        download "${api%/}/releases?per_page=100" "$tmp/releases.json" api 2>/dev/null ||
+            fail 'GitHub API request failed. Pin MABO_VERSION or set GITHUB_TOKEN for API access.'
+        version=$(resolveRelease) || fail 'Invalid GitHub API response. Pin MABO_VERSION or set GITHUB_TOKEN.'
+        case $version in
+            prerelease:*)
+                version=${version#prerelease:}
+                fail "No stable mabo release; newest prerelease is $version. Set MABO_VERSION=$version or pass --prerelease." ;;
+            '') fail 'No matching mabo release. Pin MABO_VERSION or use --prerelease.' ;;
+        esac
+    fi
+    ver=${version#v}
+    # Tags must be safe URL/path components; do not interpret arbitrary API text.
+    case $ver in ''|*[!A-Za-z0-9.+-]*) fail "Invalid release tag: $version" ;; esac
+    tag=v$ver
+    archive=maboroshi-$tag-$os-$arch.tar.gz
+    progress "Downloading mabo $tag..."
+    download "${base%/}/$tag/$archive" "$tmp/$archive" 2>/dev/null || fail "Cannot download $archive."
+    download "${base%/}/$tag/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null ||
+        fail "Missing or unavailable SHA256SUMS for $tag; refusing an unverified release."
+    # Compare the complete filename, accept only one well-formed standard entry.
+    expected=$(awk -v name="$archive" '
+        substr($0,67)==name && substr($0,65,2)=="  " {
+            hash=substr($0,1,64)
+            if(length(hash)!=64 || hash ~ /[^0-9a-fA-F]/) exit 1
+            count++; result=tolower(hash)
+        }
+        END { if(count!=1) exit 1; print result }
+    ' "$tmp/SHA256SUMS") || fail "Missing, duplicate, or invalid SHA256SUMS line for $archive."
+    if [ "$hasher" = sha256sum ]; then actual=$(sha256sum "$tmp/$archive")
+    else actual=$(shasum -a 256 "$tmp/$archive"); fi
+    actual=${actual%% *}
+    [ "$actual" = "$expected" ] || fail "Checksum mismatch for $archive."
+    if [ "$verify" = 1 ]; then
+        progress 'Verifying GitHub attestation...'
+        GH_PROMPT_DISABLED=1 gh attestation verify "$tmp/$archive" --repo phantompane/phantom </dev/null >/dev/null 2>&1 ||
+            fail "Attestation verification failed for $archive."
+    fi
+    # Extract only the expected root member, not arbitrary paths from the archive.
+    mkdir "$tmp/extracted"
+    tar -xzf "$tmp/$archive" -C "$tmp/extracted" mabo 2>/dev/null || fail 'Archive is missing a regular mabo executable or cannot be extracted.'
+    binary=$tmp/extracted/mabo
+    [ -f "$binary" ] && [ ! -L "$binary" ] || fail 'Archive must contain a regular mabo executable.'
+    chmod 755 "$binary"
+    reported=$("$binary" --version 2>/dev/null) || fail 'Downloaded mabo --version failed.'
+    case $reported in
+        "mabo v$ver"|"mabo v$ver+"*|"mabo v$ver "*) ;;
+        *) fail "Downloaded mabo version does not match $tag." ;;
+    esac
+    refuseManagedTarget
+    mkdir -p "$installDir" || fail "Cannot create install directory: $installDir"
+    # A private staging directory avoids following pre-existing staging symlinks.
+    stageDir=$(mktemp -d "$installDir/.mabo.install.XXXXXXXX") || fail 'Cannot stage mabo in install directory.'
+    cp "$binary" "$stageDir/mabo"
+    chmod 755 "$stageDir/mabo"
+    refuseManagedTarget
+    mv -f "$stageDir/mabo" "$target" || fail "Cannot replace $target."
+    printf 'Installed mabo v%s to %s\n' "$ver" "$target"
+    case :${PATH-}: in
+        *:"$installDir":*) ;;
+        *) quotedDir=$(printf '%s' "$installDir" | sed "s/'/'\\\\''/g")
+           progress "Add to PATH: export PATH='$quotedDir':\"\$PATH\"" ;;
+    esac
+    resolved=$(command -v mabo || :)
+    if [ -n "$resolved" ] && [ "$resolved" != "$target" ]; then
+        progress "Warning: another mabo at $resolved shadows $target."
+    fi
+}
+
+# Do not consume the script stream when invoked with curl ... | sh.
+main "$@" </dev/null

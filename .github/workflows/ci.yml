@@ -55,3 +55,21 @@ jobs:
           command -v bash zsh fish
       - name: Unit and CLI tests
         run: cargo test --locked --lib --test cli
+
+  installer:
+    name: Installer (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: ShellCheck
+        if: runner.os == 'Linux'
+        run: shellcheck install.sh tests/install/*.sh
+      - name: Installer tests (sh)
+        run: sh tests/install/run.sh
+      - name: Installer tests (dash)
+        if: runner.os == 'Linux'
+        run: dash tests/install/run.sh
