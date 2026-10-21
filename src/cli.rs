@@ -284,7 +284,7 @@ fn forget(args: &[String]) -> Result<i32> {
                 }
                 // Keep the observed checkout snapshot (also for orphaned and
                 // repeated selectors), but remove every record-derived field.
-                tree.managed = false;
+                tree.managed = worktree::is_managed(&context, Path::new(&tree.path), false);
                 tree.metadata = metadata::WorktreeMetadata::default();
                 items.push(serde_json::json!({"workspace":tree.to_json(None),"ok":true}));
             }

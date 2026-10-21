@@ -14583,6 +14583,164 @@ fn review1_pr_creation_does_not_require_a_default_or_source_head() {
 }
 
 #[test]
+fn review3_reuse_rejects_a_prunable_checkout_with_a_missing_git_file() {
+    for source in ["branch", "new", "detach"] {
+        let repo = Repo::new();
+        let mut create = vec!["create", "review", "--json"];
+        if source == "branch" {
+            repo.git(&["branch", "topic"]);
+            create.extend(["--branch", "topic"]);
+        } else if source == "detach" {
+            create.push("--detach");
+        }
+        let out = repo.mabo(&create);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let directory = managed(&repo, "review");
+        fs::remove_file(directory.join(".git")).unwrap();
+        assert!(directory.is_dir());
+        let listed = repo
+            .command("git", &["worktree", "list", "--porcelain"])
+            .output()
+            .unwrap();
+        assert!(text(&listed.stdout).contains("prunable"));
+        let records_before =
+            records::read_to_string(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+        create.push("--reuse");
+        let out = repo.mabo(&create);
+        assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+        let doc = assert_envelope(&out, "create");
+        assert_eq!(doc["error"]["code"], "failed");
+        let message = doc["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("Cannot reuse workspace 'review'"),
+            "{message}"
+        );
+        assert!(message.contains(".git"), "{message}");
+        assert_eq!(
+            records::read_to_string(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+            records_before
+        );
+        assert!(directory.is_dir());
+        assert!(!directory.join(".git").exists());
+    }
+}
+
+#[test]
+fn review3_reuse_rejects_git_discovery_falling_back_to_the_parent_checkout() {
+    let repo = Repo::new();
+    assert!(repo
+        .mabo(&["config", "set", "workspace-root", "workspaces"])
+        .status
+        .success());
+    assert!(repo.mabo(&["create", "review"]).status.success());
+    let directory = repo.repo.join("workspaces/review");
+    fs::remove_file(directory.join(".git")).unwrap();
+    let observed = repo
+        .command("git", &["rev-parse", "--show-toplevel"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(observed.status.success());
+    assert_eq!(Path::new(&text(&observed.stdout)), repo.repo);
+    let out = repo.mabo(&["create", "review", "--reuse", "--json"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    assert_eq!(assert_envelope(&out, "create")["error"]["code"], "failed");
+}
+
+#[test]
+fn review3_reuse_rejects_a_checkout_pointing_to_a_foreign_common_directory() {
+    let repo = Repo::new();
+    let foreign = Repo::new();
+    assert!(repo.mabo(&["create", "review"]).status.success());
+    assert!(foreign.mabo(&["create", "other"]).status.success());
+    let directory = managed(&repo, "review");
+    fs::copy(
+        managed(&foreign, "other").join(".git"),
+        directory.join(".git"),
+    )
+    .unwrap();
+    let observed = repo
+        .command("git", &["rev-parse", "--show-toplevel"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(observed.status.success());
+    assert_eq!(Path::new(&text(&observed.stdout)), directory);
+    let out = repo.mabo(&["create", "review", "--reuse", "--json"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    assert_eq!(assert_envelope(&out, "create")["error"]["code"], "failed");
+}
+
+#[test]
+fn review3_forget_matches_show_and_list_after_record_removal() {
+    for location in ["inside", "outside", "primary"] {
+        let repo = Repo::new();
+        let (selector, expected_managed) = match location {
+            "inside" => {
+                assert!(repo.mabo(&["create", "review"]).status.success());
+                ("review", true)
+            }
+            "outside" => {
+                let outside = repo.root.join("plain");
+                repo.git(&["worktree", "add", "-b", "review", outside.to_str().unwrap()]);
+                assert!(repo
+                    .mabo(&["adopt", outside.to_str().unwrap()])
+                    .status
+                    .success());
+                ("review", false)
+            }
+            _ => (".", false),
+        };
+        assert!(repo
+            .mabo(&[
+                "set",
+                selector,
+                "--purpose",
+                "work",
+                "--base",
+                "main",
+                "--pr",
+                "34",
+                "--issue",
+                "12"
+            ])
+            .status
+            .success());
+        let out = repo.mabo(&["forget", selector, "issue:12", "--json"]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let forgotten = assert_envelope(&out, "forget");
+        let show = repo.mabo(&["show", selector, "--json"]);
+        assert!(show.status.success(), "{}", text(&show.stdout));
+        let shown = assert_envelope(&show, "show");
+        let list = repo.mabo(&["list", "--json"]);
+        assert!(list.status.success(), "{}", text(&list.stdout));
+        let listed = assert_envelope(&list, "list");
+        let tree = &shown["data"]["workspace"];
+        assert_eq!(tree["managed"], expected_managed);
+        for item in forgotten["data"]["items"].as_array().unwrap() {
+            assert_eq!(item["ok"], true);
+            assert_eq!(&item["workspace"], tree, "{location}");
+        }
+        assert!(listed["data"]["workspaces"]
+            .as_array()
+            .unwrap()
+            .contains(tree));
+        for field in [
+            "id",
+            "base",
+            "purpose",
+            "createdAt",
+            "createdFrom",
+            "updatedAt",
+        ] {
+            assert_eq!(tree[field], serde_json::Value::Null, "{field}: {tree}");
+        }
+        assert_eq!(tree["links"]["pr"], serde_json::Value::Null);
+        assert_eq!(tree["links"]["issue"], serde_json::Value::Null);
+    }
+}
+
+#[test]
 fn review1_forget_returns_the_workspace_after_removing_its_record() {
     let repo = Repo::new();
     let out = repo.create_recorded(&[
@@ -14605,7 +14763,9 @@ fn review1_forget_returns_the_workspace_after_removing_its_record() {
     for item in doc["data"]["items"].as_array().unwrap() {
         assert_eq!(item["ok"], true);
         let tree = &item["workspace"];
-        assert_eq!(tree["managed"], false);
+        let shown = repo.mabo(&["show", "review", "--json"]);
+        assert!(shown.status.success());
+        assert_eq!(tree, &json_value(&shown)["data"]["workspace"]);
         for field in [
             "id",
             "base",

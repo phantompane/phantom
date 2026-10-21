@@ -202,9 +202,7 @@ fn info_from_git(
     );
     WorktreeInfo {
         repo_root: context.git_root.clone(),
-        managed: !paths::same_location(&original, &context.git_root)
-            && (recorded_path.is_some()
-                || paths::is_strictly_inside(&path, &context.worktrees_directory)),
+        managed: is_managed(context, &path, recorded_path.is_some()),
         name,
         path: path.to_string_lossy().into_owned(),
         path_to_display: paths::list_path(&path),
@@ -216,6 +214,11 @@ fn info_from_git(
         orphaned: false,
         metadata,
     }
+}
+
+pub(crate) fn is_managed(context: &Context, path: &Path, recorded: bool) -> bool {
+    !paths::same_location(path, &context.git_root)
+        && (recorded || paths::is_strictly_inside(path, &context.worktrees_directory))
 }
 
 /// Git reports an unborn HEAD as an all-zero SHA. That is not a commit.
