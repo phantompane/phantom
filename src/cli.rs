@@ -2,7 +2,6 @@ use std::path::Path;
 
 use crate::args::{self, Opt, Parsed};
 use crate::error::{Error, Result, GENERAL, NOT_FOUND, PARTIAL, SUCCESS, VALIDATION};
-use crate::github;
 use crate::help;
 use crate::metadata::{self, MetadataInput};
 use crate::output::visible_text;
@@ -10,7 +9,7 @@ use crate::preferences;
 use crate::projects::{self, ProjectListEntry, ProjectRecord, ProjectRegistryStore};
 use crate::repository;
 use crate::trust::{self, HookControl};
-use crate::worktree::{self, ActionRequest, Logger};
+use crate::worktree::{self, Logger};
 
 struct Command {
     name: &'static str,
@@ -213,104 +212,95 @@ fn sync(args: &[String]) -> Result<i32> {
 }
 
 fn create(args: &[String]) -> Result<i32> {
-    let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("create"), true) {
-        Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    let action = match action_from(&parsed) {
-        Ok(action) => action,
-        Err(error) => return fail_with(&error, VALIDATION),
-    };
-    let metadata = match metadata_input(&parsed) {
-        Ok(metadata) => metadata,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    let repository = match selected_repository(&parsed) {
-        Ok(repository) => repository,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    match worktree::run_create(worktree::CreateRequest {
-        name: parsed.positionals.first().map(String::as_str),
-        base: parsed.value("base"),
-        copy_files: &parsed.values("copy-file"),
-        action,
-        logger: logger_for(json),
-        repository: repository.as_deref(),
-        metadata,
-        hooks: hook_control(&parsed, json, true),
-    }) {
-        Ok(outcome) => finish_change(json, &outcome),
-        Err(error) => fail_with(&error, create_code(&error)),
+    let parsed = args::parse(args, &command_options("create"), true)?;
+    if parsed.positionals.len() > 1 {
+        return Err(Error::validation("Usage: mabo create [NAME] [options]"));
     }
-}
-
-fn finish_change(json: bool, outcome: &worktree::CreateOutcome) -> Result<i32> {
-    finish_mutation(
-        json,
-        &worktree::change_output(
-            &outcome.worktree,
-            Some(outcome.base.clone()),
-            outcome.copy_error.as_deref(),
-            outcome.hooks_ran,
-            outcome.hook_failure.as_ref(),
-            outcome.metadata_error.as_deref(),
-            outcome.exec.clone(),
-        ),
-        outcome.exec.as_ref(),
-        outcome.exit_code,
+    let context = command_context(&parsed)?;
+    crate::allocation::create(
+        &context,
+        crate::allocation::Request {
+            name: parsed.positionals.first().map(String::as_str),
+            base: single_value(&parsed, "base")?,
+            branch: single_value(&parsed, "branch")?,
+            pr: single_value(&parsed, "pr")?,
+            issue: single_value(&parsed, "issue")?,
+            detach: parsed.flag("detach"),
+            reuse: parsed.flag("reuse"),
+            copy_files: &parsed.values("copy-file"),
+            metadata: metadata_input(&parsed)?,
+            hooks: hook_control(&parsed, crate::output::json(), true),
+        },
+        &logger_for(crate::output::json()),
     )
 }
 
-fn attach(args: &[String]) -> Result<i32> {
-    let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("attach"), true) {
-        Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    let Some(name) = parsed.positionals.first() else {
-        return fail_with(
-            &Error::msg("Missing required argument: branch name"),
-            VALIDATION,
-        );
-    };
-    let action = match action_from(&parsed) {
-        Ok(action) => action,
-        Err(error) => return fail_with(&error, VALIDATION),
-    };
-    let metadata = match metadata_input(&parsed) {
-        Ok(metadata) => metadata,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    let repository = match selected_repository(&parsed) {
-        Ok(repository) => repository,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    match worktree::run_attach(worktree::AttachRequest {
-        name,
-        copy_files: &parsed.values("copy-file"),
-        action,
-        logger: logger_for(json),
-        repository: repository.as_deref(),
-        metadata,
-        hooks: hook_control(&parsed, json, true),
-    }) {
-        Ok(outcome) => finish_mutation(
-            json,
-            &worktree::change_output(
-                &outcome.worktree,
-                None,
-                outcome.copy_error.as_deref(),
-                outcome.hooks_ran,
-                outcome.hook_failure.as_ref(),
-                outcome.metadata_error.as_deref(),
-                outcome.exec.clone(),
-            ),
-            outcome.exec.as_ref(),
-            outcome.exit_code,
-        ),
-        Err(error) => fail_with(&error, attach_code(&error)),
+fn adopt(args: &[String]) -> Result<i32> {
+    let parsed = args::parse(args, &command_options("adopt"), true)?;
+    if parsed.positionals.len() != 1 {
+        return Err(Error::validation("Usage: mabo adopt PATH [options]"));
     }
+    let context = command_context(&parsed)?;
+    let mut input = metadata_input(&parsed)?;
+    input.name = single_value(&parsed, "name")?.map(str::to_owned);
+    if let Some(name) = &input.name {
+        worktree::validate_worktree_name(name)?;
+    }
+    let path = Path::new(&parsed.positionals[0]);
+    if let Some(base) = single_value(&parsed, "base")? {
+        input.base = Some(base.to_owned());
+    }
+    let tree = crate::allocation::adopt(&context, path, input)?;
+    if !crate::output::json() {
+        println!(
+            "Adopted workspace '{}' at {}",
+            visible_text(&tree.name),
+            visible_text(&tree.path)
+        );
+    }
+    emit_json(&serde_json::json!({"workspace":tree.to_json(None)}))
+}
+
+fn forget(args: &[String]) -> Result<i32> {
+    let parsed = args::parse(args, &command_options("forget"), true)?;
+    if parsed.positionals.is_empty() {
+        return Err(Error::validation("Usage: mabo forget SEL..."));
+    }
+    let context = command_context(&parsed)?;
+    // Resolve every selector before dropping links that later selectors might need.
+    let trees = parsed
+        .positionals
+        .iter()
+        .map(|selector| {
+            crate::selectors::resolve_including_orphaned(&context, selector, false, None)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut items = Vec::new();
+    for tree in trees {
+        match metadata::remove(&context.git_root, Path::new(&tree.path)) {
+            Ok(()) => {
+                if !crate::output::json() {
+                    println!("Forgot workspace '{}'", visible_text(&tree.name));
+                }
+                items.push(serde_json::json!({"workspace":tree.to_json(None),"ok":true}));
+            }
+            Err(error) => {
+                let code = if items.is_empty() {
+                    error.exit_code()
+                } else {
+                    PARTIAL
+                };
+                items.push(serde_json::json!({"workspace":tree.to_json(None),"ok":false,"error":error.to_json(error.exit_code()).error}));
+                emit_json(&serde_json::json!({"items":items}))?;
+                return if code == PARTIAL {
+                    fail_with(&Error::status(PARTIAL, error.to_string()), PARTIAL)
+                } else {
+                    fail_with(&error, code)
+                };
+            }
+        }
+    }
+    emit_json(&serde_json::json!({"items":items}))
 }
 
 fn list(args: &[String]) -> Result<i32> {
@@ -926,6 +916,8 @@ fn help_cmd(args: &[String]) -> Result<i32> {
 
 fn removed_command_hint(command: &str) -> Option<String> {
     let replacement = match command.split_whitespace().next()? {
+        "attach" => "`mabo create --branch BRANCH`",
+        "github" | "gh" => "`mabo create --pr REF` or `mabo create --issue REF`",
         "project" => "`mabo repo add/list/show/forget`",
         "preferences" => "`mabo config get/set/unset/list`",
         "untrust" => "`mabo trust remove`",
@@ -1261,77 +1253,6 @@ fn find_project(projects: &[ProjectRecord], identifier: &str) -> Result<Option<P
     }
 }
 
-fn github_root(args: &[String]) -> Result<i32> {
-    if args.is_empty() {
-        if let Some(text) = help::command_help("github")? {
-            println!("{text}");
-        }
-        return Ok(SUCCESS);
-    }
-    Err(Error::validation(format!(
-        "Unknown github subcommand: {}",
-        args[0]
-    )))
-}
-
-fn github_checkout(args: &[String]) -> Result<i32> {
-    let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("github checkout"), true) {
-        Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    let Some(number) = parsed.positionals.first() else {
-        return fail_with(
-            &Error::msg("Please specify a PR or issue number"),
-            VALIDATION,
-        );
-    };
-    let repository = match selected_repository(&parsed) {
-        Ok(repository) => repository,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    let metadata = match metadata_input(&parsed) {
-        Ok(metadata) => metadata,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    let checkout = match github::checkout(
-        number,
-        parsed.value("base"),
-        &logger_for(json),
-        repository.as_deref(),
-        metadata,
-        hook_control(&parsed, json, true),
-    ) {
-        Ok(checkout) => checkout,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    let partial = checkout.hook_failure.is_some()
-        || checkout.metadata_error.is_some()
-        || checkout.copy_error.is_some();
-    if json {
-        let document = match checkout.to_json() {
-            Ok(document) => document,
-            Err(error) => return fail_with(&error, GENERAL),
-        };
-        emit_json(&document)?;
-    } else {
-        println!("{}", checkout.message);
-    }
-    if let Some(error) = &checkout.metadata_error {
-        crate::output::warning("metadata_save", format!("Warning: {error}"));
-    }
-    if let Some(failure) = &checkout.hook_failure {
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-        crate::output::warning("post_create", failure.warning(&checkout.path));
-    }
-    let status = if partial {
-        crate::error::PARTIAL
-    } else {
-        SUCCESS
-    };
-    Ok(status)
-}
-
 fn project_add_json(added: bool, project: &ProjectRecord) -> serde_json::Value {
     serde_json::json!({
         "status": if added { "added" } else { "existing" },
@@ -1430,16 +1351,6 @@ fn set(args: &[String]) -> Result<i32> {
     Ok(SUCCESS)
 }
 
-fn action_from(parsed: &Parsed) -> Result<ActionRequest> {
-    if parsed.occurrences("exec") > 1 {
-        return Err(Error::msg("The --exec option can only be specified once"));
-    }
-    let exec = parsed.values("exec");
-    Ok(ActionRequest {
-        exec: (!exec.is_empty()).then_some(exec),
-    })
-}
-
 /// Shared by common-option extraction and command validation.
 fn command_options(key: &str) -> Vec<Opt> {
     let mut options = match key {
@@ -1455,7 +1366,9 @@ fn command_options(key: &str) -> Vec<Opt> {
         "create" => {
             let mut options = vec![
                 repo_flag(),
-                remainder_flag("exec", Some('x')),
+                value_flag("branch", None),
+                flag("detach", None),
+                flag("reuse", None),
                 Opt {
                     name: "copy-file",
                     short: None,
@@ -1469,22 +1382,16 @@ fn command_options(key: &str) -> Vec<Opt> {
             options.extend(metadata_options());
             options
         }
-        "attach" => {
+        "adopt" => {
             let mut options = vec![
                 repo_flag(),
-                remainder_flag("exec", Some('x')),
-                Opt {
-                    name: "copy-file",
-                    short: None,
-                    value: true,
-                    multiple: true,
-                    remainder: false,
-                },
-                flag("no-hooks", None),
+                value_flag("name", None),
+                value_flag("base", None),
             ];
             options.extend(metadata_options());
             options
         }
+        "forget" => vec![repo_flag()],
         "list" => vec![
             repo_flag(),
             value_flag("kind", None),
@@ -1516,12 +1423,6 @@ fn command_options(key: &str) -> Vec<Opt> {
         "config get" | "config list" => vec![flag("sources", None)],
         "help" => vec![flag("help", Some('h'))],
         "repo forget" => vec![],
-        "github checkout" => vec![
-            repo_flag(),
-            value_flag("base", None),
-            flag("no-hooks", None),
-            value_flag("purpose", None),
-        ],
         "set" => {
             let mut options = vec![
                 repo_flag(),
@@ -1839,16 +1740,6 @@ fn value_flag(name: &'static str, short: Option<char>) -> Opt {
     }
 }
 
-fn remainder_flag(name: &'static str, short: Option<char>) -> Opt {
-    Opt {
-        name,
-        short,
-        value: true,
-        multiple: false,
-        remainder: true,
-    }
-}
-
 fn report_delete_refusals(failures: Vec<worktree::DeleteError>, json: bool) -> Result<i32> {
     let first = failures
         .first()
@@ -1911,45 +1802,6 @@ fn emit_json(value: &impl serde::Serialize) -> Result<i32> {
     crate::output::data(value)
 }
 
-fn finish_mutation(
-    json: bool,
-    document: &worktree::WorktreeChangeOutput,
-    exec: Option<&worktree::ExecOutcome>,
-    exit_code: Option<i32>,
-) -> Result<i32> {
-    let partial = exit_code.is_some_and(|code| code != 0) || !document.copy_files.ok;
-    let status = if partial {
-        crate::error::PARTIAL
-    } else {
-        SUCCESS
-    };
-    if json {
-        emit_json(document)?;
-    }
-    if partial {
-        let mut error = Error::status(status, "Workspace created but setup did not complete")
-            .to_json(status)
-            .error;
-        if let Some(exec) = exec.filter(|exec| !exec.ok) {
-            error.details =
-                Some(serde_json::json!({"exitCode": exec.exit_code, "signal": exec.signal}));
-            error.message = if let Some(signal) = &exec.signal {
-                Error::Signaled(signal.clone()).to_string()
-            } else if let Some(error) = &exec.error {
-                error.clone()
-            } else {
-                Error::CommandFailed {
-                    command: exec.shell.clone(),
-                    code: exec.exit_code,
-                }
-                .to_string()
-            };
-        }
-        crate::output::failure(error);
-    }
-    Ok(status)
-}
-
 fn bubble(error: Error, json: bool) -> Result<i32> {
     if json {
         let code = error.exit_code();
@@ -1965,13 +1817,6 @@ fn logger_for(json: bool) -> Logger {
     } else {
         Logger::on()
     }
-}
-
-fn create_code(error: &Error) -> i32 {
-    error.exit_code()
-}
-fn attach_code(error: &Error) -> i32 {
-    error.exit_code()
 }
 
 static PREFERENCE_COMMANDS: &[Command] = &[
@@ -2028,13 +1873,6 @@ static PROJECT_COMMANDS: &[Command] = &[
     },
 ];
 
-static GITHUB_COMMANDS: &[Command] = &[Command {
-    name: "checkout",
-    help_key: "github checkout",
-    run: github_checkout,
-    children: &[],
-}];
-
 static TRUST_COMMANDS: &[Command] = &[
     Command {
         name: "add",
@@ -2082,9 +1920,15 @@ static COMMANDS: &[Command] = &[
         children: &[],
     },
     Command {
-        name: "attach",
-        help_key: "attach",
-        run: attach,
+        name: "adopt",
+        help_key: "adopt",
+        run: adopt,
+        children: &[],
+    },
+    Command {
+        name: "forget",
+        help_key: "forget",
+        run: forget,
         children: &[],
     },
     Command {
@@ -2159,18 +2003,6 @@ static COMMANDS: &[Command] = &[
         run: project_root,
         children: PROJECT_COMMANDS,
     },
-    Command {
-        name: "github",
-        help_key: "github",
-        run: github_root,
-        children: GITHUB_COMMANDS,
-    },
-    Command {
-        name: "gh",
-        help_key: "github",
-        run: github_root,
-        children: GITHUB_COMMANDS,
-    },
 ];
 
 #[cfg(test)]
@@ -2220,14 +2052,13 @@ mod contract_tests {
         }
         for (key, entry) in contract["helps"].as_object().unwrap() {
             assert!(
-                matches!(key.as_str(), "gh" | "gh checkout")
-                    || find(
-                        &key.split_whitespace()
-                            .map(str::to_string)
-                            .collect::<Vec<_>>(),
-                        COMMANDS
-                    )
-                    .is_some(),
+                find(
+                    &key.split_whitespace()
+                        .map(str::to_string)
+                        .collect::<Vec<_>>(),
+                    COMMANDS
+                )
+                .is_some(),
                 "unknown documented command {key}"
             );
             for option in entry["options"].as_array().unwrap() {
@@ -2243,7 +2074,17 @@ mod contract_tests {
                 }
             }
         }
-        for removed in ["project", "preferences", "untrust", "version"] {
+        for removed in [
+            "project",
+            "preferences",
+            "untrust",
+            "version",
+            "attach",
+            "github",
+            "gh",
+            "github checkout",
+            "gh checkout",
+        ] {
             assert!(contract["helps"].get(removed).is_none(), "{removed}");
         }
     }

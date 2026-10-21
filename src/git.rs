@@ -380,7 +380,22 @@ pub fn branch_exists(git_root: &Path, name: &str) -> Result<bool> {
     Ok(!stdout.trim().is_empty())
 }
 
+/// Check an observed full ref without hiding Git read failures.
+pub(crate) fn reference_exists(root: &Path, reference: &str) -> Result<bool> {
+    let result = raw_git(root, &["for-each-ref", "--format=%(refname)", reference])?;
+    if result.code != 0 {
+        return Err(Error::msg(format!(
+            "Failed to read Git refs: {}",
+            result.stderr.trim()
+        )));
+    }
+    Ok(result.stdout.lines().any(|line| line == reference))
+}
+
 pub enum WorktreeAdd<'a> {
+    Detach {
+        base: &'a str,
+    },
     Existing {
         branch: &'a str,
     },
@@ -401,6 +416,7 @@ pub enum WorktreeAdd<'a> {
 pub fn add_worktree(git_root: &Path, path: &Path, add: WorktreeAdd<'_>) -> Result<()> {
     let path = path.to_string_lossy();
     let args: Vec<&str> = match add {
+        WorktreeAdd::Detach { base } => vec!["worktree", "add", "--detach", path.as_ref(), base],
         WorktreeAdd::Existing { branch } => vec!["worktree", "add", path.as_ref(), branch],
         WorktreeAdd::New { branch, base } => {
             vec![
@@ -625,7 +641,11 @@ pub fn is_clean(cwd: &Path) -> bool {
 }
 
 pub fn list_worktrees(git_root: &Path) -> Result<Vec<GitWorktree>> {
-    let stdout = output(&["worktree", "list", "--porcelain"], Some(git_root), true)?;
+    let stdout = output(
+        &["worktree", "list", "--porcelain", "-z"],
+        Some(git_root),
+        false,
+    )?;
     Ok(parse_worktrees(&stdout))
 }
 
@@ -737,7 +757,12 @@ fn first_output(captured: &process::Captured) -> String {
 pub fn parse_worktrees(stdout: &str) -> Vec<GitWorktree> {
     let mut worktrees = Vec::new();
     let mut current: Option<GitWorktree> = None;
-    for line in stdout.lines().filter(|line| !line.is_empty()) {
+    let fields: Box<dyn Iterator<Item = &str> + '_> = if stdout.contains('\0') {
+        Box::new(stdout.split('\0'))
+    } else {
+        Box::new(stdout.lines())
+    };
+    for line in fields.filter(|line| !line.is_empty()) {
         if let Some(path) = line.strip_prefix("worktree ") {
             if let Some(worktree) = current.take() {
                 worktrees.push(worktree);

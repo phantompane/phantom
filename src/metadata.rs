@@ -65,8 +65,10 @@ pub struct WorktreeLink {
 /// Whether the branch was created with this record or already existed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BranchOrigin {
-    /// `create` just pointed a new branch at HEAD. That commit is the base.
+    /// `create` just allocated this checkout; its initial commit is known.
     New,
+    /// Existing checkout with unknown creation time and creation commit.
+    Adopted,
     /// The branch already existed. The base is its reflog, when one exists.
     Existing,
 }
@@ -159,7 +161,7 @@ pub fn load_strict(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>
         .collect())
 }
 
-/// Replace any record at `path`. Create, attach, and a first checkout use this
+/// Replace any record at `path`. Creation and adoption use this
 /// so a workspace removed outside mabo does not keep its previous intent.
 pub fn replace(
     git_root: &Path,
@@ -243,7 +245,7 @@ fn clear_fields(record: &mut WorktreeMetadata, fields: &[String]) {
 fn fresh_metadata(path: &Path, input: &MetadataInput, origin: BranchOrigin) -> WorktreeMetadata {
     let mut metadata = WorktreeMetadata {
         id: Some(format!("ws_{}", uuid::Uuid::new_v4())),
-        created_at: Some(iso_now()),
+        created_at: (origin != BranchOrigin::Adopted).then(iso_now),
         updated_at: Some(iso_now()),
         created_from: recorded_creation(path, origin),
         ..WorktreeMetadata::default()
@@ -256,6 +258,7 @@ fn recorded_creation(path: &Path, origin: BranchOrigin) -> Option<String> {
     match origin {
         BranchOrigin::New => crate::git::head_commit(path),
         BranchOrigin::Existing => crate::git::reflog_creation_commit(path),
+        BranchOrigin::Adopted => None,
     }
 }
 

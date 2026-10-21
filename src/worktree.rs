@@ -7,11 +7,10 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde::Serialize;
 
 use crate::config;
-use crate::context::{self, Context};
-use crate::error::{self, Error, JsonErrorBody, Result};
+use crate::context::Context;
+use crate::error::{Error, JsonErrorBody, Result};
 use crate::git::{self, GitWorktree};
-use crate::metadata::{self, BranchOrigin, MetadataInput};
-use crate::names;
+use crate::metadata;
 use crate::paths;
 use crate::process;
 use crate::trust::{self, HookControl};
@@ -30,17 +29,6 @@ pub struct WorktreeInfo {
     pub detached: bool,
     pub orphaned: bool,
     pub metadata: metadata::WorktreeMetadata,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ActionKind {
-    /// One string is a shell command (`$SHELL -c`). Several strings are the
-    /// program and its arguments, executed directly.
-    Exec(Vec<String>),
-}
-
-pub struct ActionRequest {
-    pub exec: Option<Vec<String>>,
 }
 
 pub struct Logger {
@@ -64,7 +52,7 @@ impl Logger {
         }
     }
 
-    fn log(&self, message: &str) {
+    pub(crate) fn log(&self, message: &str) {
         if self.enabled {
             if self.json {
                 eprintln!("{message}");
@@ -74,7 +62,7 @@ impl Logger {
         }
     }
 
-    fn warn(&self, code: &str, message: &str) {
+    pub(crate) fn warn(&self, code: &str, message: &str) {
         if self.enabled {
             let _ = std::io::stdout().flush();
             crate::output::warning(code, message);
@@ -499,132 +487,6 @@ pub fn ensure_absent(context: &Context, name: &str) -> Result<()> {
     }
 }
 
-pub struct CreateRequest<'a> {
-    pub name: Option<&'a str>,
-    pub base: Option<&'a str>,
-    pub copy_files: &'a [String],
-    pub action: ActionRequest,
-    pub logger: Logger,
-    /// Main checkout selected with `--repo`. `None` uses the current directory.
-    pub repository: Option<&'a Path>,
-    pub metadata: MetadataInput,
-    pub hooks: HookControl,
-}
-
-pub struct CreateOutcome {
-    pub name: String,
-    pub path: PathBuf,
-    pub exit_code: Option<i32>,
-    pub worktree: WorktreeInfo,
-    pub base: String,
-    pub copy_error: Option<String>,
-    pub hooks_ran: bool,
-    pub hook_failure: Option<HookFailure>,
-    pub metadata_error: Option<String>,
-    pub exec: Option<ExecOutcome>,
-}
-
-pub fn run_create(mut request: CreateRequest<'_>) -> Result<CreateOutcome> {
-    let action = resolve_action(&request.action)?;
-    let context = context::open(request.repository)?;
-    let name = match request.name {
-        Some(name) => name.to_string(),
-        None => {
-            let remote_branches = crate::tracking::remote_tracking_branch_names(&context.git_root)?;
-            names::generate_unique_name(
-                &context.git_root,
-                &context.worktrees_directory,
-                &context.directory_name_separator,
-                &remote_branches,
-            )?
-        }
-    };
-    validate_worktree_name(&name)?;
-    request.metadata.base = Some(crate::sync::creation_base(&context.git_root, request.base)?);
-    let base = request.base.unwrap_or("HEAD");
-    let commands = trust::authorize(
-        &context.git_root,
-        config::post_create_commands(context.config.as_ref()),
-        config::pre_delete_commands(context.config.as_ref()),
-        trust::HookKind::PostCreate,
-        request.hooks,
-    )?;
-    let created = create_worktree_inner(
-        &context,
-        &name,
-        base,
-        request.copy_files,
-        &commands,
-        &request.logger,
-        &request.metadata,
-    )?;
-    request.logger.log(&format!(
-        "Created workspace '{name}' at {}",
-        paths::canonical_location(&created.path).display()
-    ));
-    if let Some(error) = &created.metadata_error {
-        request
-            .logger
-            .warn("metadata_save", &format!("Warning: {error}"));
-    }
-    if let Some(error) = &created.copy_error {
-        request.logger.warn(
-            "copy_files",
-            &format!("\nWarning: Failed to copy some files: {error}"),
-        );
-    }
-    if let Some(failure) = &created.hook_failure {
-        request
-            .logger
-            .warn("post_create", &failure.warning(&created.path));
-    }
-    let exec = run_action(&context, &name, &created.path, action, &request.logger)?;
-    let hook_code = created.hook_failure.as_ref().map(|failure| failure.code);
-    let action_code = exec.as_ref().map(|item| item.exit_code);
-    let metadata_code = created.metadata_error.as_ref().map(|_| error::GENERAL);
-    let worktree = worktree_at_path(&context, &created.path)?;
-    Ok(CreateOutcome {
-        name,
-        path: created.path,
-        exit_code: combine_exit(combine_exit(action_code, hook_code), metadata_code),
-        worktree,
-        base: base.to_string(),
-        copy_error: created.copy_error,
-        hooks_ran: created.hooks_ran,
-        hook_failure: created.hook_failure,
-        metadata_error: created.metadata_error,
-        exec,
-    })
-}
-
-pub struct CreatedWorktree {
-    pub path: PathBuf,
-    pub copy_error: Option<String>,
-    pub hook_failure: Option<HookFailure>,
-    pub hooks_ran: bool,
-    pub metadata_error: Option<String>,
-}
-
-pub struct AttachedWorktree {
-    pub name: String,
-    pub path: PathBuf,
-    pub copy_error: Option<String>,
-    pub hook_failure: Option<HookFailure>,
-    pub hooks_ran: bool,
-    pub metadata_error: Option<String>,
-}
-
-pub struct AttachOutcome {
-    pub path: PathBuf,
-    pub exit_code: Option<i32>,
-    pub worktree: WorktreeInfo,
-    pub copy_error: Option<String>,
-    pub hooks_ran: bool,
-    pub hook_failure: Option<HookFailure>,
-    pub metadata_error: Option<String>,
-    pub exec: Option<ExecOutcome>,
-}
-
 #[derive(Debug, Clone)]
 pub struct HookFailure {
     pub command: String,
@@ -644,261 +506,10 @@ impl HookFailure {
         };
         format!(
             "Warning: Post-create command {reason}: {}\nThe workspace was created at {}",
-            self.command,
-            paths::canonical_location(path).display()
+            crate::output::visible_text(&self.command),
+            crate::output::visible_text(&paths::canonical_location(path).to_string_lossy())
         )
     }
-}
-
-pub fn create_worktree(
-    context: &Context,
-    name: &str,
-    base: &str,
-    copy_files: &[String],
-    commands: &[String],
-    logger: &Logger,
-    metadata: &MetadataInput,
-) -> Result<CreatedWorktree> {
-    validate_worktree_name(name)?;
-    create_worktree_inner(context, name, base, copy_files, commands, logger, metadata)
-}
-
-// Branch preparation is complete before creating the worktree.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn create_worktree_inner(
-    context: &Context,
-    name: &str,
-    base: &str,
-    copy_files: &[String],
-    commands: &[String],
-    logger: &Logger,
-    metadata: &MetadataInput,
-) -> Result<CreatedWorktree> {
-    metadata::prepare(&context.git_root)?;
-    let path = paths::worktree_path(
-        &context.worktrees_directory,
-        name,
-        &context.directory_name_separator,
-    );
-    paths::with_worktrees_directory(
-        &context.worktrees_directory,
-        context.project_common_dir.as_deref(),
-        || {
-            ensure_absent(context, name)?;
-            crate::tracking::reject_remote_create(&context.git_root, name)?;
-            git::add_worktree(
-                &context.git_root,
-                &path,
-                git::WorktreeAdd::New { branch: name, base },
-            )?;
-            Ok(())
-        },
-    )?;
-    let metadata_error = metadata::replace(&context.git_root, &path, metadata, BranchOrigin::New)
-        .err()
-        .map(|error| error.to_string());
-    let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
-        .err()
-        .map(|error| error.to_string());
-    let hooks_ran = !commands.is_empty();
-    let hook_failure = if hooks_ran {
-        logger.log("\nRunning post-create commands...");
-        run_hook_commands(
-            context,
-            &worktree_at_path(context, &path)?,
-            commands,
-            true,
-            logger,
-        )?
-    } else {
-        None
-    };
-    Ok(CreatedWorktree {
-        path,
-        copy_error,
-        hook_failure,
-        hooks_ran,
-        metadata_error,
-    })
-}
-
-pub struct AttachRequest<'a> {
-    pub name: &'a str,
-    pub copy_files: &'a [String],
-    pub action: ActionRequest,
-    pub logger: Logger,
-    /// Main checkout selected with `--repo`. `None` uses the current directory.
-    pub repository: Option<&'a Path>,
-    pub metadata: MetadataInput,
-    pub hooks: HookControl,
-}
-
-pub fn run_attach(request: AttachRequest<'_>) -> Result<AttachOutcome> {
-    let action = resolve_action(&request.action)?;
-    let context = context::open(request.repository)?;
-    let lookup = crate::tracking::parse_attach_name(&context.git_root, request.name)?;
-    let commands = trust::authorize(
-        &context.git_root,
-        config::post_create_commands(context.config.as_ref()),
-        config::pre_delete_commands(context.config.as_ref()),
-        trust::HookKind::PostCreate,
-        request.hooks,
-    )?;
-    let attached = attach_worktree_lookup(
-        &context,
-        lookup,
-        request.copy_files,
-        &commands,
-        &request.logger,
-        &request.metadata,
-    )?;
-    request
-        .logger
-        .log(&format!("Attached workspace: {}", attached.name));
-    if let Some(error) = &attached.metadata_error {
-        request
-            .logger
-            .warn("metadata_save", &format!("Warning: {error}"));
-    }
-    if let Some(failure) = &attached.hook_failure {
-        request
-            .logger
-            .warn("post_create", &failure.warning(&attached.path));
-    }
-    let exec = run_action(
-        &context,
-        &attached.name,
-        &attached.path,
-        action,
-        &request.logger,
-    )?;
-    let hook_code = attached.hook_failure.as_ref().map(|failure| failure.code);
-    let action_code = exec
-        .as_ref()
-        .and_then(|item| (!item.ok).then_some(item.exit_code));
-    let metadata_code = attached.metadata_error.as_ref().map(|_| error::GENERAL);
-    let worktree = worktree_at_path(&context, &attached.path)?;
-    Ok(AttachOutcome {
-        path: attached.path,
-        exit_code: combine_exit(combine_exit(action_code, hook_code), metadata_code),
-        worktree,
-        copy_error: attached.copy_error,
-        hooks_ran: attached.hooks_ran,
-        hook_failure: attached.hook_failure,
-        metadata_error: attached.metadata_error,
-        exec,
-    })
-}
-
-pub fn attach_worktree(
-    context: &Context,
-    name: &str,
-    copy_files: &[String],
-    commands: &[String],
-    logger: &Logger,
-    metadata: &MetadataInput,
-) -> Result<AttachedWorktree> {
-    let lookup = crate::tracking::parse_attach_name(&context.git_root, name)?;
-    attach_worktree_lookup(context, lookup, copy_files, commands, logger, metadata)
-}
-
-// Branch preparation is complete before creating the worktree.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn attach_worktree_inner(
-    context: &Context,
-    name: &str,
-    copy_files: &[String],
-    commands: &[String],
-    logger: &Logger,
-    metadata: &MetadataInput,
-) -> Result<AttachedWorktree> {
-    let lookup = crate::tracking::lookup_attach(&context.git_root, name)?;
-    attach_worktree_lookup(context, lookup, copy_files, commands, logger, metadata)
-}
-
-fn attach_worktree_lookup(
-    context: &Context,
-    lookup: crate::tracking::AttachLookup,
-    copy_files: &[String],
-    commands: &[String],
-    logger: &Logger,
-    metadata: &MetadataInput,
-) -> Result<AttachedWorktree> {
-    metadata::prepare(&context.git_root)?;
-    let path = paths::worktree_path(
-        &context.worktrees_directory,
-        &lookup.directory,
-        &context.directory_name_separator,
-    );
-    if path.exists() {
-        return Err(Error::WorktreeAlreadyExists(lookup.directory));
-    }
-    let plan = lookup.outcome?;
-    let branch = match &plan {
-        crate::tracking::AttachPlan::Existing { branch }
-        | crate::tracking::AttachPlan::Track { branch, .. } => branch.clone(),
-    };
-    paths::with_worktrees_directory(
-        &context.worktrees_directory,
-        context.project_common_dir.as_deref(),
-        || {
-            let add = match &plan {
-                crate::tracking::AttachPlan::Existing { branch } => git::WorktreeAdd::Existing {
-                    branch: branch.as_str(),
-                },
-                crate::tracking::AttachPlan::Track {
-                    branch,
-                    start_point,
-                } => git::WorktreeAdd::Track {
-                    branch: branch.as_str(),
-                    start_point: start_point.as_str(),
-                },
-            };
-            git::add_worktree(&context.git_root, &path, add).map_err(|error| {
-                let message = error.to_string();
-                if let Some(stripped) = message.strip_prefix("workspace add failed: ") {
-                    Error::msg(stripped.to_string())
-                } else {
-                    error
-                }
-            })?;
-            Ok(())
-        },
-    )?;
-    let metadata_error =
-        metadata::replace(&context.git_root, &path, metadata, BranchOrigin::Existing)
-            .err()
-            .map(|error| error.to_string());
-    let copy_error = copy_included_files(&context.source_checkout, &path, copy_files)
-        .err()
-        .map(|error| {
-            logger.warn(
-                "copy_files",
-                &format!("Warning: Failed to copy some files: {error}"),
-            );
-            error.to_string()
-        });
-    let hooks_ran = !commands.is_empty();
-    let hook_failure = if hooks_ran {
-        logger.log("\nRunning post-create commands...");
-        run_hook_commands(
-            context,
-            &worktree_at_path(context, &path)?,
-            commands,
-            true,
-            logger,
-        )?
-    } else {
-        None
-    };
-    Ok(AttachedWorktree {
-        name: branch,
-        path,
-        copy_error,
-        hook_failure,
-        hooks_ran,
-        metadata_error,
-    })
 }
 
 pub struct DeleteOptions {
@@ -1391,79 +1002,6 @@ fn exec_in_resolved_worktree(
     )
 }
 
-pub fn resolve_action(request: &ActionRequest) -> Result<Option<ActionKind>> {
-    let mut actions = Vec::new();
-    if let Some(command) = &request.exec {
-        if !command.is_empty() {
-            actions.push(ActionKind::Exec(command.clone()));
-        }
-    }
-    Ok(actions.into_iter().next())
-}
-
-fn run_action(
-    context: &Context,
-    name: &str,
-    path: &Path,
-    action: Option<ActionKind>,
-    logger: &Logger,
-) -> Result<Option<ExecOutcome>> {
-    let Some(action) = action else {
-        return Ok(None);
-    };
-    match action {
-        ActionKind::Exec(command) => {
-            if command.is_empty() {
-                return Err(Error::msg("No command specified"));
-            }
-            let shown = command.join(" ");
-            logger.log(&format!(
-                "\nExecuting command in workspace '{name}': {shown}"
-            ));
-            let env = workspace_env(context, name, path);
-            let pairs = env
-                .iter()
-                .map(|(key, value)| (key.as_str(), value.as_str()))
-                .collect::<Vec<_>>();
-            let (program, program_args, reported) = if command.len() == 1 {
-                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-                let args = vec!["-c".to_string(), command[0].clone()];
-                (shell.clone(), args, shell)
-            } else {
-                let program = command[0].clone();
-                let args = command[1..].to_vec();
-                (program.clone(), args, program)
-            };
-            let arg_refs = program_args.iter().map(String::as_str).collect::<Vec<_>>();
-            match process::inherit(&program, &arg_refs, Some(path), &pairs, logger.json) {
-                Ok(code) => Ok(Some(ExecOutcome {
-                    ok: code == 0,
-                    command: shown,
-                    exit_code: code,
-                    signal: None,
-                    error: None,
-                    shell: reported,
-                })),
-                Err(error @ (Error::Signaled(_) | Error::Spawn { .. })) => Ok(Some(ExecOutcome {
-                    ok: false,
-                    command: shown,
-                    exit_code: error.child_exit_code(),
-                    signal: match &error {
-                        Error::Signaled(signal) => Some(signal.clone()),
-                        _ => None,
-                    },
-                    error: match &error {
-                        Error::Spawn { .. } => Some(error.to_string()),
-                        _ => None,
-                    },
-                    shell: reported,
-                })),
-                Err(error) => Err(error),
-            }
-        }
-    }
-}
-
 fn workspace_env(context: &Context, name: &str, path: &Path) -> Vec<(String, String)> {
     let stored = metadata::load(&context.git_root).unwrap_or_default();
     let id = metadata::find_in(&stored, path).and_then(|(_, record)| record.id.as_deref());
@@ -1501,15 +1039,7 @@ fn hook_failure_from_start(command: &str, error: &Error) -> HookFailure {
     }
 }
 
-fn combine_exit(action: Option<i32>, hook: Option<i32>) -> Option<i32> {
-    match (action, hook) {
-        (Some(code), _) if code != 0 => Some(code),
-        (_, Some(code)) => Some(code),
-        (action, None) => action,
-    }
-}
-
-fn run_hook_commands(
+pub(crate) fn run_hook_commands(
     context: &Context,
     worktree: &WorktreeInfo,
     commands: &[String],
@@ -1606,7 +1136,17 @@ fn remove_empty_parents(path: &Path, root: &Path) -> Option<String> {
 /// Copy gitignored files matched by `.worktreeinclude` and extra gitignore patterns.
 ///
 /// Existing files are left in place. Symlinks are skipped and are not followed.
+#[cfg(test)]
 fn copy_included_files(source: &Path, target: &Path, extra: &[String]) -> Result<()> {
+    copy_files_recorded(source, target, extra, &mut Vec::new())
+}
+
+pub(crate) fn copy_files_recorded(
+    source: &Path,
+    target: &Path,
+    extra: &[String],
+    copied: &mut Vec<String>,
+) -> Result<()> {
     let Some(matcher) = include_matcher(source, extra)? else {
         return Ok(());
     };
@@ -1620,7 +1160,11 @@ fn copy_included_files(source: &Path, target: &Path, extra: &[String]) -> Result
         {
             continue;
         }
+        let existed = target.join(relative).exists();
         copy_one(source, target, relative)?;
+        if !existed && target.join(relative).is_file() {
+            copied.push(listed);
+        }
     }
     Ok(())
 }
@@ -1820,20 +1364,6 @@ pub struct PostCreateOutcome {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecOutcome {
-    pub ok: bool,
-    pub command: String,
-    pub exit_code: i32,
-    /// Set when the process was terminated by a signal.
-    pub signal: Option<String>,
-    /// Set when the program or shell failed to start.
-    pub error: Option<String>,
-    #[serde(skip)]
-    pub shell: String,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeListOutput {
@@ -1848,18 +1378,6 @@ pub struct WorktreeRefOutput {
     pub version: u32,
     #[serde(rename = "workspace")]
     pub worktree: WorktreeJson,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorktreeChangeOutput {
-    pub version: u32,
-    #[serde(rename = "workspace")]
-    pub worktree: WorktreeJson,
-    pub copy_files: CopyFilesOutcome,
-    pub post_create: PostCreateOutcome,
-    pub metadata: MetadataSaveOutcome,
-    pub exec: Option<ExecOutcome>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1946,25 +1464,6 @@ pub fn post_create_outcome(ran: bool, failure: Option<&HookFailure>) -> PostCrea
             signal: None,
             error: None,
         }
-    }
-}
-
-pub fn change_output(
-    worktree: &WorktreeInfo,
-    base: Option<String>,
-    copy_error: Option<&str>,
-    hooks_ran: bool,
-    hook_failure: Option<&HookFailure>,
-    metadata_error: Option<&str>,
-    exec: Option<ExecOutcome>,
-) -> WorktreeChangeOutput {
-    WorktreeChangeOutput {
-        version: error::JSON_VERSION,
-        worktree: worktree.to_json(base),
-        copy_files: copy_files_outcome(copy_error),
-        post_create: post_create_outcome(hooks_ran, hook_failure),
-        metadata: metadata_save_outcome(metadata_error),
-        exec,
     }
 }
 

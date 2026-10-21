@@ -114,7 +114,10 @@ impl Repo {
             String::from_utf8_lossy(&out.stderr)
         );
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(doc["data"]["workspace"]["base"], "HEAD");
+        assert_eq!(
+            doc["data"]["workspace"]["base"],
+            doc["data"]["source"]["base"]
+        );
         PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap())
     }
     fn write_commit(&self, path: &Path, file: &str, text: &str) {
@@ -1597,7 +1600,7 @@ exit "$result"
         fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
         for args in [
             vec!["create", "topic", "--json"],
-            vec!["attach", "existing", "--json"],
+            vec!["create", "--branch", "existing", "--json"],
             vec!["delete", "topic", "--force", "--json"],
         ] {
             let out = r.mabo(&r.main, &args);
@@ -1619,7 +1622,7 @@ exit "$result"
 }
 
 #[test]
-fn git_hook_can_run_mabo_exec_and_create_with_project_hooks_and_exec() {
+fn git_hook_can_run_create_with_project_hooks_and_standalone_exec() {
     use std::os::unix::fs::PermissionsExt;
     let r = Repo::new();
     r.create("victim");
@@ -1647,7 +1650,8 @@ fn git_hook_can_run_mabo_exec_and_create_with_project_hooks_and_exec() {
 touch '{gate}'
 cd '{main}'
 '{bin}' exec victim -- sh -c "touch '{standalone}'" &&
-'{bin}' create nested --exec "touch '{create_exec}'"
+'{bin}' create nested &&
+'{bin}' exec nested -- sh -c "touch '{create_exec}'"
 echo $? > '{status}'
 "#,
             gate = gate.display(),
@@ -1723,7 +1727,7 @@ fn post_create_hook_can_list_and_create_and_pre_delete_hook_can_create() {
 }
 
 #[test]
-fn other_commands_can_run_while_create_exec_is_running() {
+fn other_commands_can_run_while_standalone_exec_is_running() {
     let r = Repo::new();
     let other = r.create("other");
     let gate = r.root.join("exec-gate");
@@ -1738,11 +1742,12 @@ fn other_commands_can_run_while_create_exec_is_running() {
         marker.display(),
         gate.display()
     );
+    r.create("agent");
     let mut create = r
         .command(
             env!("CARGO_BIN_EXE_mabo"),
             &r.main,
-            &["create", "agent", "--exec", &command],
+            &["exec", "agent", "--", "sh", "-c", &command],
         )
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1783,7 +1788,7 @@ fn other_commands_can_run_while_create_exec_is_running() {
 }
 
 #[test]
-fn attach_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
+fn create_branch_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
     let r = Repo::new();
     let bin = env!("CARGO_BIN_EXE_mabo");
     r.git(&r.main, &["branch", "existing"]);
@@ -1793,7 +1798,7 @@ fn attach_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
     )
     .unwrap();
     let child = r
-        .command(bin, &r.main, &["attach", "existing"])
+        .command(bin, &r.main, &["create", "--branch", "existing"])
         .env("MABO_TRUST_ALL", "1")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -2391,6 +2396,7 @@ fn default_reserved_by_rebase_in_main_or_linked_checkout() {
         };
         let before = r.git(&r.main, &["rev-parse", "main"]);
         pause_root_rebase(&r, &path, false);
+        let topic = r.create("topic");
         r.advance();
         let doc = r.sync(&r.main, &[], 1);
         assert_eq!(doc["data"]["default"]["status"], "dirty");
@@ -2399,7 +2405,6 @@ fn default_reserved_by_rebase_in_main_or_linked_checkout() {
             .unwrap()
             .contains("being rebased"));
         assert_eq!(r.git(&r.main, &["rev-parse", "main"]), before);
-        let topic = r.create("topic");
         let doc = r.sync(&r.main, &["topic"], 0);
         assert_eq!(doc["data"]["default"]["status"], "dirty");
         assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
@@ -2903,7 +2908,10 @@ fn gc_protects_linked_default_with_a_remapped_tracking_namespace() {
         r.git(&r.main, &["push", "origin", "main"]);
         r.git(&r.upstream, &["pull", "--ff-only"]);
         r.git(&r.main, &["checkout", "-b", "other"]);
-        assert!(r.mabo(&r.main, &["attach", "main"]).status.success());
+        assert!(r
+            .mabo(&r.main, &["create", "--branch", "main"])
+            .status
+            .success());
         // main has moved since creation, so only the default-branch guard protects it.
         r.advance();
         let doc = r.sync(&r.main, &[], 0);
@@ -2969,7 +2977,7 @@ fn gc_local_branch_named_like_a_remapped_default_is_not_the_default() {
         r.git(&r.main, &["push", "origin", "main"]);
         r.git(&r.main, &["fetch", "origin"]);
         r.git(&r.main, &["checkout", "-b", "other"]);
-        let out = r.mabo(&r.main, &["attach", "main", "--json"]);
+        let out = r.mabo(&r.main, &["create", "--branch", "main", "--json"]);
         assert!(out.status.success());
         let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
         let default_path = PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap());
@@ -3098,7 +3106,10 @@ fn unresolved_default_does_not_block_recorded_bases() {
     r.write_commit(&tree, "own", "own\n");
     // attach deliberately leaves the recorded base null, exercising fallback errors.
     r.git(&clone, &["branch", "legacy"]);
-    assert!(r.mabo(&clone, &["attach", "legacy"]).status.success());
+    assert!(r
+        .mabo(&clone, &["create", "--branch", "legacy"])
+        .status
+        .success());
     r.write_commit(&r.upstream, "incoming-develop", "incoming\n");
     r.git(&r.upstream, &["push", "origin", "develop"]);
     let doc = r.sync(&clone, &["legacy", "topic"], 6);
@@ -3369,7 +3380,10 @@ fn gc_default_uses_local_branch_when_a_same_name_tag_exists() {
         }
         r.write_commit(&r.main, "local-default", "keep default\n");
         r.git(&r.main, &["checkout", "-b", "other"]);
-        assert!(r.mabo(&r.main, &["attach", "main"]).status.success());
+        assert!(r
+            .mabo(&r.main, &["create", "--branch", "main"])
+            .status
+            .success());
         let default_path = PathBuf::from(
             r.git(&r.main, &["worktree", "list", "--porcelain"])
                 .lines()

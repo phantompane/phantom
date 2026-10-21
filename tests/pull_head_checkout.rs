@@ -195,7 +195,7 @@ fn gh_checkout_uses_pull_head_when_the_branch_is_deleted() {
     let home = tree.path.join("home");
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
     let output = Command::new(env!("CARGO_BIN_EXE_mabo"))
-        .args(["gh", "checkout", "843", "--no-hooks", "--json"])
+        .args(["create", "--pr", "843", "--reuse", "--no-hooks", "--json"])
         .current_dir(&clone)
         .env("PATH", path)
         .env("HOME", &home)
@@ -219,10 +219,10 @@ fn gh_checkout_uses_pull_head_when_the_branch_is_deleted() {
         "deleted branch checkout mentioned upstream\n{stderr}"
     );
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(document["data"]["github"]["kind"], "pullRequest");
-    assert_eq!(document["data"]["github"]["number"], 843);
-    assert_eq!(document["data"]["github"]["headRef"], "deleted-feature");
-    assert_eq!(document["data"]["github"]["source"], "pullHead");
+    assert_eq!(document["data"]["source"]["kind"], "pr");
+    assert_eq!(document["data"]["source"]["number"], 843);
+    assert_eq!(document["data"]["source"]["headRef"], "deleted-feature");
+    assert_eq!(document["data"]["source"]["checkout"], "pullHead");
     assert_eq!(document["data"]["workspace"]["branch"], "deleted-feature");
     assert_eq!(document["data"]["workspace"]["detached"], false);
     assert_eq!(document["data"]["workspace"]["head"], commit);
@@ -244,14 +244,11 @@ fn gh_checkout_names_a_deleted_head_branch() {
     let (clone, _) = deleted_pr_remote(&tree.path);
     let bin = tree.path.join("bin");
     fake_gh(&bin);
-    let output = mabo(&clone, &bin, &["gh", "checkout", "843", "--no-hooks"]);
+    let output = mabo(&clone, &bin, &["create", "--pr", "843", "--no-hooks"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stdout}\n{stderr}");
-    assert_eq!(
-        stdout.trim(),
-        "Checked out PR #843 from pull/843/head (head branch deleted; no upstream)"
-    );
+    assert!(stdout.contains("Created workspace 'deleted-feature'"));
     assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
 }
 
@@ -281,14 +278,14 @@ fn stale_remote_ref_does_not_become_upstream() {
     let output = mabo(
         &clone,
         &bin,
-        &["gh", "checkout", "843", "--no-hooks", "--json"],
+        &["create", "--pr", "843", "--reuse", "--no-hooks", "--json"],
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stdout}\n{stderr}");
     assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(document["data"]["github"]["source"], "pullHead");
+    assert_eq!(document["data"]["source"]["checkout"], "pullHead");
     assert_eq!(document["data"]["workspace"]["head"], commit);
     assert!(branch_config(&clone, "deleted-feature", "merge").is_none());
     assert!(branch_config(&clone, "deleted-feature", "remote").is_none());
@@ -308,15 +305,15 @@ fn unfetched_branch_gets_an_upstream() {
     let output = mabo(
         &clone,
         &bin,
-        &["gh", "checkout", "754", "--no-hooks", "--json"],
+        &["create", "--pr", "754", "--no-hooks", "--json"],
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stdout}\n{stderr}");
     assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(document["data"]["github"]["source"], "branch");
-    assert_eq!(document["data"]["github"]["headRef"], "live-feature");
+    assert_eq!(document["data"]["source"]["checkout"], "branch");
+    assert_eq!(document["data"]["source"]["headRef"], "live-feature");
     assert_eq!(
         upstream(&clone, "live-feature").as_deref(),
         Some("origin/live-feature")
@@ -350,14 +347,14 @@ fn narrow_fetch_refspec_checkout_sets_tracking_and_creates_worktree() {
     let output = mabo(
         &clone,
         &bin,
-        &["gh", "checkout", "754", "--no-hooks", "--json"],
+        &["create", "--pr", "754", "--no-hooks", "--json"],
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stdout}\n{stderr}");
     assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(document["data"]["github"]["source"], "branch");
+    assert_eq!(document["data"]["source"]["checkout"], "branch");
     let worktree = Path::new(
         document["data"]["workspace"]["path"]
             .as_str()
@@ -401,7 +398,7 @@ fn same_named_tag_cannot_hide_unique_local_branch_commits() {
         git(&clone, &["tag", "deleted-feature", "refs/heads/main"]);
         let bin = tree.path.join("bin");
         fake_gh(&bin);
-        let output = mabo(&clone, &bin, &["gh", "checkout", "843", "--no-hooks"]);
+        let output = mabo(&clone, &bin, &["create", "--pr", "843", "--no-hooks"]);
         assert_eq!(
             git_text(&clone, &["rev-parse", "refs/heads/deleted-feature"]),
             unique,
@@ -438,7 +435,7 @@ fn failed_worktree_attachment_only_removes_a_new_branch() {
         );
         let blocked = tree.path.join("blocked/live-feature");
         fs::create_dir_all(&blocked).expect("block workspace path");
-        let output = mabo(&clone, &bin, &["gh", "checkout", "754", "--no-hooks"]);
+        let output = mabo(&clone, &bin, &["create", "--pr", "754", "--no-hooks"]);
         assert!(!output.status.success());
         assert_eq!(
             git_output(&clone, &["show-ref", "--verify", "refs/heads/live-feature"])
@@ -451,7 +448,7 @@ fn failed_worktree_attachment_only_removes_a_new_branch() {
             assert!(branch_config(&clone, "live-feature", "merge").is_none());
         }
         fs::remove_dir(&blocked).expect("unblock workspace path");
-        let retry = mabo(&clone, &bin, &["gh", "checkout", "754", "--no-hooks"]);
+        let retry = mabo(&clone, &bin, &["create", "--pr", "754", "--no-hooks"]);
         assert!(
             retry.status.success(),
             "{}",
@@ -471,14 +468,14 @@ fn already_fetched_branch_keeps_its_remote_tip() {
     let output = mabo(
         &clone,
         &bin,
-        &["gh", "checkout", "754", "--no-hooks", "--json"],
+        &["create", "--pr", "754", "--no-hooks", "--json"],
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stdout}\n{stderr}");
     assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
-    assert_eq!(document["data"]["github"]["source"], "branch");
+    assert_eq!(document["data"]["source"]["checkout"], "branch");
     assert_eq!(
         git_text(&clone, &["rev-parse", "refs/remotes/origin/live-feature"]),
         before
@@ -518,11 +515,11 @@ echo "unexpected gh invocation: $*" >&2
 exit 1
 "#,
     );
-    let output = mabo(&clone, &bin, &["gh", "checkout", "9", "--no-hooks"]);
+    let output = mabo(&clone, &bin, &["create", "--pr", "9", "--no-hooks"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stdout}\n{stderr}");
-    assert_eq!(stdout.trim(), "Checked out PR #9 from fork other/tool");
+    assert!(stdout.contains("Created workspace 'other/feature'"));
     assert!(!stderr.to_ascii_lowercase().contains("warning"), "{stderr}");
     assert!(branch_config(&clone, "other/feature", "merge").is_none());
     assert!(branch_config(&clone, "other/feature", "remote").is_none());
@@ -540,7 +537,7 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
     let checked_out = mabo(
         &clone,
         &bin,
-        &["gh", "checkout", "843", "--no-hooks", "--json"],
+        &["create", "--pr", "843", "--reuse", "--no-hooks", "--json"],
     );
     let stdout = String::from_utf8_lossy(&checked_out.stdout);
     assert!(checked_out.status.success(), "{stdout}");
@@ -557,7 +554,7 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
     let extra_out = mabo(
         &extra_clone,
         &extra_bin,
-        &["gh", "checkout", "843", "--no-hooks", "--json"],
+        &["create", "--pr", "843", "--reuse", "--no-hooks", "--json"],
     );
     let extra_stdout = String::from_utf8_lossy(&extra_out.stdout);
     assert!(extra_out.status.success(), "{extra_stdout}");
@@ -810,7 +807,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
         let out = mabo(
             &clone,
             &bin,
-            &["gh", "checkout", "843", "--no-hooks", "--json"],
+            &["create", "--pr", "843", "--reuse", "--no-hooks", "--json"],
         );
         assert!(
             out.status.success(),
@@ -831,7 +828,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
         let out = mabo(
             &clone,
             &bin,
-            &["gh", "checkout", "843", "--no-hooks", "--json"],
+            &["create", "--pr", "843", "--reuse", "--no-hooks", "--json"],
         );
         assert!(out.status.success());
         let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -849,7 +846,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
                     &format!("{{\"number\":{number}}}"),
                 ),
             );
-            let mut args = vec!["gh", "checkout", number, "--no-hooks", "--json"];
+            let mut args = vec!["create", "--issue", number, "--no-hooks", "--json"];
             if explicit {
                 args.extend(["--base", "HEAD"]);
             }
@@ -881,7 +878,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
         let out = mabo(
             &clone,
             &bin,
-            &["attach", "attached", "--no-hooks", "--json"],
+            &["create", "--branch", "attached", "--no-hooks", "--json"],
         );
         assert!(
             out.status.success(),
