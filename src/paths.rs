@@ -394,6 +394,34 @@ pub fn worktree_path(directory: &Path, name: &str, separator: &str) -> PathBuf {
     normalize(&directory.join(directory_name))
 }
 
+/// Check a destination before creating it, resolving existing symlink parents
+/// even when the destination and some of its parent directories are absent.
+pub(crate) fn validate_worktree_destination(directory: &Path, path: &Path) -> Result<()> {
+    fn resolve_parent(path: &Path) -> Result<PathBuf> {
+        match fs::canonicalize(path) {
+            Ok(path) => Ok(path),
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                let parent = path.parent().ok_or_else(|| Error::msg(error.to_string()))?;
+                let name = path
+                    .file_name()
+                    .ok_or_else(|| Error::msg(error.to_string()))?;
+                Ok(resolve_parent(parent)?.join(name))
+            }
+            Err(error) => Err(Error::msg(format!(
+                "Failed to inspect workspace destination: {error}"
+            ))),
+        }
+    }
+    let root = resolve_parent(directory)?;
+    let destination = resolve_parent(path)?;
+    if destination == root || !destination.starts_with(root) {
+        return Err(Error::validation(
+            "Workspace destination must be inside the workspace root",
+        ));
+    }
+    Ok(())
+}
+
 /// `$XDG_CONFIG_HOME/maboroshi/config.toml`, or `~/.config/maboroshi/config.toml` when
 /// `XDG_CONFIG_HOME` is unset, empty, or relative.
 pub fn user_config_file(home: &Path, xdg_config_home: Option<&Path>) -> PathBuf {

@@ -160,20 +160,8 @@ pub(crate) fn matches(
                 &tree.metadata.links.issue
             };
             stored.as_ref().is_some_and(|stored| {
-                if let Some(url) = &link.url {
-                    if let Some(saved) = &stored.url {
-                        return url_identity(saved) == url_identity(url);
-                    }
-                    // A bare number belongs to this repository, never another repository's URL.
-                    let prefix = url_identity(url)
-                        .rsplit_once('/')
-                        .and_then(|(path, _)| path.rsplit_once('/'))
-                        .map(|(repository, _)| repository)
-                        .unwrap_or("");
-                    let identity = prefix.split_once("://").map(|(_, rest)| rest);
-                    if identity != Some(repo_json(&context.git_root).name.as_str()) {
-                        return false;
-                    }
+                if link.url.is_some() {
+                    return links_equal(context, stored, &link, pr);
                 }
                 stored.number == link.number
             })
@@ -182,11 +170,44 @@ pub(crate) fn matches(
         .collect())
 }
 
-fn url_identity(url: &str) -> &str {
-    url.split(['?', '#'])
+/// Link identity shared by URL selectors and allocation retries. Bare numbers
+/// belong to the selected repository; the terminal pair supplies kind/number.
+pub(crate) fn links_equal(
+    context: &Context,
+    actual: &metadata::WorktreeLink,
+    wanted: &metadata::WorktreeLink,
+    pr: bool,
+) -> bool {
+    let actual = link_identity(context, actual, pr);
+    actual.is_some() && actual == link_identity(context, wanted, pr)
+}
+
+fn link_identity(
+    context: &Context,
+    link: &metadata::WorktreeLink,
+    pr: bool,
+) -> Option<(String, bool, u64)> {
+    match &link.url {
+        Some(url) => url_link_identity(url),
+        None => Some((repo_json(&context.git_root).name, pr, link.number?)),
+    }
+}
+
+fn url_link_identity(url: &str) -> Option<(String, bool, u64)> {
+    let (kind, number) = metadata::link_target(url)?;
+    let clean = url
+        .split(['?', '#'])
         .next()
         .unwrap_or(url)
-        .trim_end_matches('/')
+        .trim_end_matches('/');
+    let (_, path) = clean.split_once("://")?;
+    let (prefix, _) = path.rsplit_once('/')?;
+    let (repository, _) = prefix.rsplit_once('/')?;
+    Some((
+        repository.to_owned(),
+        matches!(kind, "pull" | "pulls"),
+        number,
+    ))
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

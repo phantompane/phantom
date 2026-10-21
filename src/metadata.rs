@@ -36,7 +36,7 @@ pub struct WorktreeMetadata {
     pub created_from: Option<String>,
     #[serde(default)]
     pub links: WorktreeLinks,
-    /// Name saved for a worktree outside `maboroshi/worktrees`.
+    /// Saved workspace name, taking precedence over the directory name.
     ///
     /// Command JSON already has `name`, so this stays out of that flatten.
     /// Older records omit it and keep the folder name.

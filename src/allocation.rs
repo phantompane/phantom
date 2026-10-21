@@ -37,14 +37,13 @@ fn existing(context: &Context, name: &str) -> Result<Option<worktree::WorktreeIn
 }
 
 fn matches_link(
+    context: &Context,
     actual: Option<&metadata::WorktreeLink>,
     requested: Option<&metadata::WorktreeLink>,
+    pr: bool,
 ) -> bool {
     requested.is_none_or(|wanted| {
-        actual.is_some_and(|actual| {
-            actual.number == wanted.number
-                && (actual.url.is_none() || wanted.url.is_none() || actual.url == wanted.url)
-        })
+        actual.is_some_and(|actual| crate::selectors::links_equal(context, actual, wanted, pr))
     })
 }
 
@@ -153,15 +152,23 @@ pub(crate) fn create(
             .as_ref()
             .map(|base| format!("refs/remotes/origin/{base}"));
         match candidate {
-            Some(base) if git::reference_exists(&context.source_checkout, &base)? => base,
-            _ => sync::creation_base(&context.source_checkout, None)?,
+            Some(base) if git::reference_exists(&context.source_checkout, &base)? => Some(base),
+            // PR checkout fetches its own head; an unavailable default/HEAD is
+            // only unknown base metadata, not a prerequisite for checkout.
+            _ => sync::creation_base(&context.source_checkout, None).ok(),
         }
     } else if branch.is_none() {
-        sync::creation_base(&context.source_checkout, request.base)?
+        Some(sync::creation_base(&context.source_checkout, request.base)?)
     } else {
-        sync::creation_base(&context.source_checkout, None)?
+        tracking_ref
+            .clone()
+            .or_else(|| branch.as_ref().map(|branch| format!("refs/heads/{branch}")))
     };
-    request.metadata.base = (branch.is_none() || pull.is_some()).then(|| base.clone());
+    request.metadata.base = if branch.is_none() || pull.is_some() {
+        base.clone()
+    } else {
+        None
+    };
     request.metadata.name = Some(name.clone());
     let kind = if request.detach {
         "detach"
@@ -201,21 +208,25 @@ pub(crate) fn create(
             tree.branch == branch.as_deref().unwrap_or_default()
                 && (tree.metadata.links.pr.is_none()
                     || matches_link(
+                        context,
                         tree.metadata.links.pr.as_ref(),
                         request.metadata.pr.as_ref(),
+                        true,
                     ))
         } else if let Some(branch) = &branch {
             !tree.detached && tree.branch == *branch
         } else {
             tree.detached == request.detach
                 && (request.detach || tree.branch == name)
-                && tree.metadata.base.as_deref() == Some(&base)
+                && tree.metadata.base == base
         };
         if !request.reuse
             || !source_matches
             || !matches_link(
+                context,
                 tree.metadata.links.issue.as_ref(),
                 request.metadata.issue.as_ref(),
+                false,
             )
         {
             return Err(Error::WorktreeAlreadyExists(name));
@@ -242,6 +253,7 @@ pub(crate) fn create(
         &name,
         &context.directory_name_separator,
     );
+    paths::validate_worktree_destination(&context.worktrees_directory, &path)?;
     if path.exists() {
         return Err(Error::WorktreeAlreadyExists(name));
     }
@@ -294,7 +306,11 @@ pub(crate) fn create(
             context.project_common_dir.as_deref(),
             || {
                 let add = if request.detach {
-                    git::WorktreeAdd::Detach { base: &base }
+                    git::WorktreeAdd::Detach {
+                        base: base.as_deref().ok_or_else(|| {
+                            Error::validation("A detached checkout requires a base")
+                        })?,
+                    }
                 } else if let Some(branch) = &branch {
                     if let Some(start_point) = &tracking_ref {
                         git::WorktreeAdd::Track {
@@ -307,7 +323,9 @@ pub(crate) fn create(
                 } else {
                     git::WorktreeAdd::New {
                         branch: &name,
-                        base: &base,
+                        base: base
+                            .as_deref()
+                            .ok_or_else(|| Error::validation("A new branch requires a base"))?,
                     }
                 };
                 git::add_worktree(&context.git_root, &path, add)

@@ -76,6 +76,9 @@ pub fn validate_worktree_name(name: &str) -> Result<()> {
             "Workspace name cannot be empty".to_string(),
         ));
     }
+    if Path::new(name).is_absolute() {
+        return Err(Error::validation("Workspace name must be a relative name"));
+    }
     if !name
         .chars()
         .all(|char| char.is_ascii_alphanumeric() || matches!(char, '-' | '_' | '.' | '/'))
@@ -230,11 +233,11 @@ pub(crate) fn resolve_worktree_name(
     branch: Option<&str>,
     short_head: &str,
 ) -> String {
-    if let Some(name) = directory_name(path, worktrees_directory) {
-        return name;
-    }
     if let Some(name) = stored_name.map(str::trim).filter(|name| !name.is_empty()) {
         return name.to_string();
+    }
+    if let Some(name) = directory_name(path, worktrees_directory) {
+        return name;
     }
     if let Some(recorded) = recorded_path {
         return name_from_recorded_path(recorded, common_dir);

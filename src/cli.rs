@@ -276,12 +276,16 @@ fn forget(args: &[String]) -> Result<i32> {
         })
         .collect::<Result<Vec<_>>>()?;
     let mut items = Vec::new();
-    for tree in trees {
+    for mut tree in trees {
         match metadata::remove(&context.git_root, Path::new(&tree.path)) {
             Ok(()) => {
                 if !crate::output::json() {
                     println!("Forgot workspace '{}'", visible_text(&tree.name));
                 }
+                // Keep the observed checkout snapshot (also for orphaned and
+                // repeated selectors), but remove every record-derived field.
+                tree.managed = false;
+                tree.metadata = metadata::WorktreeMetadata::default();
                 items.push(serde_json::json!({"workspace":tree.to_json(None),"ok":true}));
             }
             Err(error) => {

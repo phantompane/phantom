@@ -4524,6 +4524,13 @@ fn workspace_intent_is_recorded_updated_and_removed() {
 #[test]
 fn github_recheckout_keeps_the_original_intent() {
     let repo = Repo::new();
+    // Bare links must belong to the repository returned by the gh fixture.
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/acme/demo.git",
+    ]);
     let created = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
@@ -8114,6 +8121,13 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
 #[test]
 fn recheckout_through_a_symlink_keeps_intent_and_creation_details() {
     let repo = Repo::new();
+    // Bare links must belong to the repository returned by the gh fixture.
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/acme/demo.git",
+    ]);
     let created = repo.mabo(&["create", "issues/7", "--purpose", "keep me", "--json"]);
     assert!(
         created.status.success(),
@@ -14198,4 +14212,303 @@ fn create_reuse_propagates_corrupt_record_errors() {
     assert_eq!(json_value(&out)["error"]["code"], "failed");
     assert_eq!(fs::read_to_string(file).unwrap(), "{invalid");
     assert!(managed(&repo, "existing").exists());
+}
+
+#[test]
+fn review1_create_rejects_names_outside_the_workspace_root_for_every_source() {
+    for source in [
+        vec![],
+        vec!["--detach"],
+        vec!["--branch", "existing"],
+        vec!["--pr", "7"],
+        vec!["--issue", "7"],
+    ] {
+        for spelling in ["absolute", "parent", "nested-parent"] {
+            let repo = Repo::new();
+            publish_pr_topic(&repo);
+            repo.git(&["branch", "existing"]);
+            let path = fake_gh_for_topic_pr(&repo);
+            if source == ["--issue", "7"] {
+                let gh = repo.root.join("bin/gh");
+                let script = fs::read_to_string(&gh).unwrap();
+                fs::write(
+                    gh,
+                    script.replace("\"pull_request\":{}", "\"title\":\"Issue\""),
+                )
+                .unwrap();
+            }
+            let outside = repo.root.join("escaped");
+            let name = match spelling {
+                "absolute" => outside.to_str().unwrap(),
+                "parent" => "../escaped",
+                _ => "nested/../../escaped",
+            };
+            let before = repo
+                .command("git", &["worktree", "list", "--porcelain"])
+                .output()
+                .unwrap()
+                .stdout;
+            let args = [
+                vec!["create", name],
+                source.clone(),
+                vec!["--no-hooks", "--json"],
+            ]
+            .concat();
+            let out = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .env("PATH", &path)
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "{args:?}: {}",
+                text(&out.stdout)
+            );
+            assert_eq!(json_value(&out)["error"]["code"], "usage");
+            assert!(!outside.exists());
+            assert_eq!(
+                repo.command("git", &["worktree", "list", "--porcelain"])
+                    .output()
+                    .unwrap()
+                    .stdout,
+                before
+            );
+        }
+    }
+}
+
+#[test]
+fn review1_create_rejects_destination_escaping_through_a_parent_symlink() {
+    use std::os::unix::fs::symlink;
+    for source in [
+        vec![],
+        vec!["--detach"],
+        vec!["--branch", "existing"],
+        vec!["--pr", "7"],
+        vec!["--issue", "7"],
+    ] {
+        let repo = Repo::new();
+        publish_pr_topic(&repo);
+        repo.git(&["branch", "existing"]);
+        let gh_path = fake_gh_for_topic_pr(&repo);
+        if source == ["--issue", "7"] {
+            let gh = repo.root.join("bin/gh");
+            let script = fs::read_to_string(&gh).unwrap();
+            fs::write(
+                gh,
+                script.replace("\"pull_request\":{}", "\"title\":\"Issue\""),
+            )
+            .unwrap();
+        }
+        let root = repo.root.join("workspaces");
+        let outside = repo.root.join("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, root.join("escape")).unwrap();
+        assert!(repo
+            .mabo(&["config", "set", "workspace-root", root.to_str().unwrap()])
+            .status
+            .success());
+        let args = [
+            vec!["create", "escape/missing/review"],
+            source,
+            vec!["--no-hooks", "--json"],
+        ]
+        .concat();
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("PATH", gh_path)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{args:?}: {}",
+            text(&out.stdout)
+        );
+        assert_eq!(json_value(&out)["error"]["code"], "usage");
+        assert!(!outside.join("missing").exists());
+    }
+}
+
+#[test]
+fn review1_reuse_links_resolve_bare_numbers_in_the_selected_repository() {
+    let repo = Repo::new();
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/acme/demo.git",
+    ]);
+    repo.git(&["branch", "existing"]);
+    let run = |issue: &str| {
+        repo.mabo(&[
+            "create", "review", "--branch", "existing", "--issue", issue, "--reuse", "--json",
+        ])
+    };
+    assert!(run("12").status.success());
+    for url in [
+        "https://github.com/other/demo/issues/12",
+        "https://github.com/acme/other/issues/12",
+        "https://other.example/acme/demo/issues/12",
+    ] {
+        let out = run(url);
+        assert_eq!(out.status.code(), Some(4), "{url}: {}", text(&out.stdout));
+        assert_eq!(json_value(&out)["error"]["code"], "exists");
+    }
+    for reference in [
+        "#12",
+        "https://github.com/acme/demo/issues/12",
+        "https://github.com/acme/demo/issues/12/?plain=1#details",
+    ] {
+        let out = run(reference);
+        assert!(out.status.success(), "{reference}: {}", text(&out.stdout));
+    }
+    assert!(repo
+        .mabo(&[
+            "set",
+            "review",
+            "--issue",
+            "https://github.com/other/demo/issues/12"
+        ])
+        .status
+        .success());
+    let out = run("12");
+    assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
+}
+
+#[test]
+fn review1_reuse_links_share_terminal_url_normalization_with_selectors() {
+    let repo = Repo::new();
+    repo.git(&["branch", "existing"]);
+    // The earlier /pull/123 belongs to owner/repo, not the subject number.
+    let url = "https://git.example.com/pull/123/issues/42";
+    let out = repo.mabo(&[
+        "create", "review", "--branch", "existing", "--issue", url, "--json",
+    ]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    for url in [
+        "https://git.example.com/pull/123/issues/42/?plain=1#details",
+        "https://git.example.com/pull/123/issue/42#details",
+    ] {
+        let show = repo.mabo(&["show", url, "--json"]);
+        assert!(show.status.success(), "{}", text(&show.stdout));
+        let out = repo.mabo(&[
+            "create", "review", "--branch", "existing", "--issue", url, "--reuse", "--json",
+        ]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        assert_eq!(json_value(&out)["data"]["source"]["reused"], true);
+    }
+}
+
+#[test]
+fn review1_adopt_name_is_used_inside_the_workspace_root() {
+    let repo = Repo::new();
+    let tree = managed(&repo, "directory-name");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic",
+        tree.to_str().unwrap(),
+        "main",
+    ]);
+    let out = repo.mabo(&[
+        "adopt",
+        tree.to_str().unwrap(),
+        "--name",
+        "review",
+        "--json",
+    ]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert_eq!(json_value(&out)["data"]["workspace"]["name"], "review");
+    for command in ["show", "path", "forget"] {
+        let out = repo.mabo(&[command, "review", "--json"]);
+        assert!(out.status.success(), "{command}: {}", text(&out.stdout));
+    }
+    assert!(tree.is_dir());
+}
+
+#[test]
+fn review1_existing_branch_creation_does_not_require_a_default_or_source_head() {
+    let repo = Repo::new();
+    repo.git(&["branch", "-m", "develop"]);
+    repo.git(&["checkout", "--orphan", "unborn"]);
+    let out = repo.mabo(&["create", "review", "--branch", "develop", "--json"]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    let doc = json_value(&out);
+    assert_eq!(doc["data"]["workspace"]["branch"], "develop");
+    assert_eq!(doc["data"]["source"]["base"], "refs/heads/develop");
+    assert_eq!(doc["data"]["workspace"]["base"], serde_json::Value::Null);
+}
+
+#[test]
+fn review1_pr_creation_does_not_require_a_default_or_source_head() {
+    let repo = Repo::new();
+    publish_pr_topic(&repo);
+    let path = fake_gh_for_topic_pr(&repo);
+    repo.git(&["checkout", "--orphan", "unborn"]);
+    repo.git(&["branch", "-D", "main"]);
+    repo.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["create", "--pr", "7", "--json"],
+        )
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert_eq!(json_value(&out)["data"]["workspace"]["branch"], "topic");
+    assert_eq!(
+        json_value(&out)["data"]["source"]["base"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        json_value(&out)["data"]["workspace"]["base"],
+        serde_json::Value::Null
+    );
+}
+
+#[test]
+fn review1_forget_returns_the_workspace_after_removing_its_record() {
+    let repo = Repo::new();
+    let out = repo.create_recorded(&[
+        "create",
+        "review",
+        "--base",
+        "main",
+        "--purpose",
+        "work",
+        "--issue",
+        "12",
+        "--pr",
+        "34",
+        "--json",
+    ]);
+    assert!(out.status.success());
+    let out = repo.mabo(&["forget", "review", "issue:12", "--json"]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    let doc = json_value(&out);
+    for item in doc["data"]["items"].as_array().unwrap() {
+        assert_eq!(item["ok"], true);
+        let tree = &item["workspace"];
+        assert_eq!(tree["managed"], false);
+        for field in [
+            "id",
+            "base",
+            "purpose",
+            "createdAt",
+            "createdFrom",
+            "updatedAt",
+        ] {
+            assert_eq!(tree[field], serde_json::Value::Null, "{field}: {tree}");
+        }
+        assert_eq!(tree["links"]["pr"], serde_json::Value::Null);
+        assert_eq!(tree["links"]["issue"], serde_json::Value::Null);
+        assert_eq!(tree["branch"], "review");
+        assert!(tree["head"].is_string());
+        assert!(Path::new(tree["path"].as_str().unwrap()).is_dir());
+    }
 }
