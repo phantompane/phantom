@@ -418,7 +418,13 @@ fn linked_default_is_only_integrated_fast_forward_once() {
         let out = r.mabo(
             &r.main,
             &[
-                "meta", "set", "main", "--owner", "tester", "--base", "other",
+                "meta",
+                "set",
+                "main",
+                "--purpose",
+                "tester",
+                "--base",
+                "other",
             ],
         );
         assert!(
@@ -441,7 +447,7 @@ fn linked_default_is_only_integrated_fast_forward_once() {
         let mut cmd = r.command(
             env!("CARGO_BIN_EXE_mabo"),
             &tree,
-            &["sync", "--mine", "--no-default", "--json"],
+            &["sync", "--all", "--no-default", "--json"],
         );
         let out = cmd.env("MABO_AGENT_ID", "tester").output().unwrap();
         assert!(out.status.success());
@@ -485,7 +491,7 @@ fn linked_default_is_only_integrated_fast_forward_once() {
             .command(
                 env!("CARGO_BIN_EXE_mabo"),
                 &tree,
-                &["sync", "--mine", "--json"],
+                &["sync", "--all", "--json"],
             )
             .env("MABO_AGENT_ID", "tester")
             .output()
@@ -591,7 +597,7 @@ fn corrupt_custom_base_metadata_refuses_sync_before_fetch_or_updates() {
         .unwrap();
     let mut body: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
     assert_eq!(body["base"], "refs/heads/stack");
-    body["owner"] = json!({"invalid": "shape"});
+    body["purpose"] = json!({"invalid": "shape"});
     let corrupt = serde_json::to_vec(&body).unwrap();
     fs::write(&record, &corrupt).unwrap();
     r.advance();
@@ -834,51 +840,71 @@ fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
 }
 
 #[test]
-fn all_mine_ownership_no_default_explicit_and_forced_merge() {
+fn all_syncs_legacy_owners_and_unrecorded_workspaces() {
     let r = Repo::new();
-    for (name, owner) in [("mine", "agent"), ("other", "someone")] {
+    for (name, owner) in [("first", "agent"), ("other", "someone")] {
         let tree = r.create(name);
         r.write_commit(&tree, name, "work\n");
-        assert!(r
-            .mabo(&r.main, &["meta", "set", name, "--owner", owner])
-            .status
-            .success());
-    }
-    r.advance();
-    let run = |args: &[&str]| {
-        let out = r
-            .command(env!("CARGO_BIN_EXE_mabo"), &r.main, args)
-            .env("MABO_AGENT_ID", "agent")
-            .output()
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let mut body: Value = serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
+        let row = body["worktrees"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["path"] == tree.to_str().unwrap())
             .unwrap();
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stdout)
-        );
-        serde_json::from_slice::<Value>(&out.stdout).unwrap()["data"].clone()
-    };
-    let doc = run(&["sync", "--all", "--no-default", "--json"]);
-    assert!(doc["default"].is_null());
+        row["owner"] = json!(owner);
+        row["lastUsedAt"] = json!("2000-01-01T00:00:00.000Z");
+        records::write(&store, serde_json::to_vec(&body).unwrap()).unwrap();
+    }
+    let unrecorded = r.root.join("unrecorded");
+    r.git(
+        &r.main,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "unrecorded",
+            unrecorded.to_str().unwrap(),
+        ],
+    );
+    r.write_commit(&unrecorded, "unrecorded", "work\n");
+    r.advance();
+    let out = r
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &r.main,
+            &["sync", "--all", "--no-default", "--json"],
+        )
+        .env("MABO_AGENT_ID", "agent")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(doc["data"]["default"].is_null());
+    let trees = doc["data"]["workspaces"].as_array().unwrap();
+    assert_eq!(trees.len(), 3);
+    for name in ["first", "other", "unrecorded"] {
+        let tree = trees.iter().find(|tree| tree["name"] == name).unwrap();
+        assert_eq!(tree["status"], "updated", "{tree}");
+        assert!(tree.get("owner").is_none());
+        assert!(tree.get("lastUsedAt").is_none());
+    }
+    r.write_commit(&r.upstream, "second-remote-file", "second remote change\n");
+    r.git(&r.upstream, &["push", "origin", "main"]);
+    let doc = r.sync(&r.main, &["other", "--merge"], 0);
+    assert_eq!(doc["data"]["workspaces"][0]["strategy"], "merge");
     assert_eq!(
-        doc["workspaces"]
+        r.sync(&r.main, &["--all"], 0)["data"]["workspaces"]
             .as_array()
             .unwrap()
-            .iter()
-            .find(|v| v["name"] == "other")
-            .unwrap()["status"],
-        "owned"
+            .len(),
+        3
     );
-    let doc = run(&["sync", "--mine", "--json"]);
-    assert_eq!(doc["workspaces"].as_array().unwrap().len(), 1);
-    assert_eq!(doc["workspaces"][0]["name"], "mine");
-    assert_eq!(
-        run(&["sync", "other", "--merge", "--json"])["workspaces"][0]["strategy"],
-        "merge"
-    );
-    let doc = r.sync(&r.main, &["--all"], 0);
-    assert_eq!(doc["data"]["workspaces"].as_array().unwrap().len(), 2);
-    r.sync(&r.main, &["--mine"], 2);
 }
 
 #[test]
@@ -3327,7 +3353,7 @@ fn gc_unresolved_default_keeps_branch_worktrees_even_with_force() {
         let store = r.main.join(".git/maboroshi/workspaces");
         let mut doc: Value = serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
         for record in doc["worktrees"].as_array_mut().unwrap() {
-            record["lastUsedAt"] = json!("2000-01-01T00:00:00.000Z");
+            record["createdAt"] = json!("2000-01-01T00:00:00.000Z");
         }
         records::write(&store, serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
         let before = r.snapshot(&tree);

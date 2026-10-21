@@ -11,19 +11,14 @@ use crate::paths;
 const FILE_NAME: &str = "worktrees.json";
 const RECORDS_DIR: &str = "workspaces";
 const STORE_VERSION: u32 = 1;
-const OWNER_MAX: usize = 256;
 const PURPOSE_MAX: usize = 1024;
 
-/// Ownership and purpose recorded for one worktree.
-///
-/// Absent fields stay null. There is no placeholder owner.
+/// Intent and creation details recorded for one workspace.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeMetadata {
     #[serde(default)]
     pub id: Option<String>,
-    #[serde(default)]
-    pub owner: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
     #[serde(default)]
@@ -34,8 +29,6 @@ pub struct WorktreeMetadata {
     /// a new branch has no HEAD, and when an existing branch has no reflog.
     #[serde(default)]
     pub created_from: Option<String>,
-    #[serde(default)]
-    pub last_used_at: Option<String>,
     #[serde(default)]
     pub links: WorktreeLinks,
     /// Name saved for a worktree outside `maboroshi/worktrees`.
@@ -76,7 +69,6 @@ pub enum BranchOrigin {
 /// Fields supplied at a boundary. `None` leaves the stored value alone.
 #[derive(Debug, Clone, Default)]
 pub struct MetadataInput {
-    pub owner: Option<String>,
     pub base: Option<String>,
     pub purpose: Option<String>,
     pub pr: Option<WorktreeLink>,
@@ -159,7 +151,7 @@ pub fn load_strict(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>
 }
 
 /// Replace any record at `path`. Create, attach, and a first checkout use this
-/// so a worktree removed outside mabo does not keep the previous owner.
+/// so a workspace removed outside mabo does not keep its previous intent.
 pub fn replace(
     git_root: &Path,
     path: &Path,
@@ -172,7 +164,7 @@ pub fn replace(
         ));
     }
     let key = path_key(path);
-    with_store(git_root, |store| {
+    with_store(git_root, Some(path), |store| {
         let previous_id = store
             .worktrees
             .iter()
@@ -191,11 +183,11 @@ pub fn replace(
 }
 
 /// Insert or patch the record for `path`. `meta set` and re-checkout use this.
-/// A new record gets both timestamps and `createdFrom`. An existing record
+/// A new record gets `createdAt` and `createdFrom`. An existing record
 /// keeps omitted fields, including `createdFrom`.
 pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<WorktreeMetadata> {
     let key = path_key(path);
-    with_store(git_root, |store| {
+    with_store(git_root, Some(path), |store| {
         if let Some(record) = store
             .worktrees
             .iter_mut()
@@ -212,11 +204,9 @@ pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<Work
 }
 
 fn fresh_metadata(path: &Path, input: &MetadataInput, origin: BranchOrigin) -> WorktreeMetadata {
-    let now = iso_now();
     let mut metadata = WorktreeMetadata {
         id: Some(format!("ws_{}", uuid::Uuid::new_v4())),
-        created_at: Some(now.clone()),
-        last_used_at: Some(now),
+        created_at: Some(iso_now()),
         created_from: recorded_creation(path, origin),
         ..WorktreeMetadata::default()
     };
@@ -233,7 +223,7 @@ fn recorded_creation(path: &Path, origin: BranchOrigin) -> Option<String> {
 
 /// Record the tip sync integrated while the branch had no commits of its own.
 pub fn record_sync_tip(git_root: &Path, path: &Path, tip: &str) -> Result<()> {
-    with_store(git_root, |store| {
+    with_store(git_root, Some(path), |store| {
         let Some(record) = store
             .worktrees
             .iter_mut()
@@ -243,25 +233,6 @@ pub fn record_sync_tip(git_root: &Path, path: &Path, tip: &str) -> Result<()> {
         };
         record.metadata.created_from = Some(tip.to_string());
         Ok(((), true))
-    })
-}
-
-/// Bump `lastUsedAt` when a record exists. A worktree with no record is left alone.
-pub fn touch(git_root: &Path, path: &Path) -> Result<Option<WorktreeMetadata>> {
-    if !metadata_file(git_root)?.exists() && !records_dir(git_root)?.exists() {
-        return Ok(None);
-    }
-    with_store(git_root, |store| {
-        let Some(record) = store
-            .worktrees
-            .iter_mut()
-            .find(|record| paths::same_location(Path::new(&record.path), path))
-        else {
-            return Ok((None, false));
-        };
-        record.metadata.last_used_at = Some(iso_now());
-        record.metadata.name = record.name.clone();
-        Ok((Some(record.metadata.clone()), true))
     })
 }
 
@@ -308,27 +279,13 @@ pub fn remove(git_root: &Path, path: &Path) -> Result<()> {
     if !metadata_file(git_root)?.exists() && !records_dir(git_root)?.exists() {
         return Ok(());
     }
-    with_store(git_root, |store| {
+    with_store(git_root, None, |store| {
         let before = store.worktrees.len();
         store
             .worktrees
             .retain(|record| !paths::same_location(Path::new(&record.path), path));
         Ok(((), store.worktrees.len() != before))
     })
-}
-
-pub fn resolve_owner(flag: Option<&str>, env: Option<&str>) -> Result<Option<String>> {
-    if let Some(value) = flag {
-        return Ok(Some(parse_owner(value)?));
-    }
-    match env.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(value) => Ok(Some(parse_owner(value)?)),
-        None => Ok(None),
-    }
-}
-
-pub fn parse_owner(value: &str) -> Result<String> {
-    parse_text(value, "Owner", OWNER_MAX)
 }
 
 pub fn parse_purpose(value: &str) -> Result<String> {
@@ -364,12 +321,11 @@ pub fn parse_link(value: &str) -> Result<WorktreeLink> {
 }
 
 pub fn list_suffix(metadata: &WorktreeMetadata) -> String {
-    match (&metadata.owner, &metadata.purpose) {
-        (Some(owner), Some(purpose)) => format!(" [{owner}] {purpose}"),
-        (Some(owner), None) => format!(" [{owner}]"),
-        (None, Some(purpose)) => format!(" {purpose}"),
-        (None, None) => String::new(),
-    }
+    metadata
+        .purpose
+        .as_ref()
+        .map(|purpose| format!(" {purpose}"))
+        .unwrap_or_default()
 }
 
 fn parse_text(value: &str, label: &str, max: usize) -> Result<String> {
@@ -440,9 +396,6 @@ fn stored_worktree(path: String, metadata: WorktreeMetadata) -> StoredWorktree {
 fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
     if input.base.is_some() {
         metadata.base = input.base.clone();
-    }
-    if input.owner.is_some() {
-        metadata.owner = input.owner.clone();
     }
     if input.name.is_some() {
         metadata.name = input.name.clone();
@@ -627,7 +580,11 @@ fn save_record(dir: &Path, record: &StoredWorktree) -> Result<()> {
         .map_err(|error| Error::msg(format!("Failed to save workspace metadata: {error}")))
 }
 
-fn with_store<T>(git_root: &Path, body: impl FnOnce(&mut Store) -> Result<(T, bool)>) -> Result<T> {
+fn with_store<T>(
+    git_root: &Path,
+    rewrite: Option<&Path>,
+    body: impl FnOnce(&mut Store) -> Result<(T, bool)>,
+) -> Result<T> {
     ensure_records(git_root)?;
     let (mut store, _) = read_all_records(git_root, true)?;
     let before = store.worktrees.clone();
@@ -637,7 +594,11 @@ fn with_store<T>(git_root: &Path, body: impl FnOnce(&mut Store) -> Result<(T, bo
     if dirty || duplicates {
         let dir = records_dir(git_root)?;
         for record in &store.worktrees {
-            if !before.contains(record) {
+            // Explicit updates normalize the target to the current schema even
+            // when supplied values match. Other records retain their files.
+            if !before.contains(record)
+                || rewrite.is_some_and(|path| paths::same_location(Path::new(&record.path), path))
+            {
                 save_record(&dir, record)?;
             }
         }
@@ -780,7 +741,6 @@ mod tests {
             &root,
             &path,
             &MetadataInput {
-                owner: Some("grok".to_string()),
                 purpose: Some("fix the flake".to_string()),
                 pr: Some(WorktreeLink {
                     number: Some(774),
@@ -790,8 +750,7 @@ mod tests {
             },
         )
         .expect("create");
-        assert_eq!(created.owner.as_deref(), Some("grok"));
-        assert_eq!(created.created_at, created.last_used_at);
+        assert!(created.created_at.is_some());
 
         let updated = write(
             &root,
@@ -802,7 +761,6 @@ mod tests {
             },
         )
         .expect("update");
-        assert_eq!(updated.owner.as_deref(), Some("grok"));
         assert_eq!(updated.purpose.as_deref(), Some("land the fix"));
         assert_eq!(
             updated.links.pr.as_ref().and_then(|link| link.number),
@@ -813,34 +771,11 @@ mod tests {
     }
 
     #[test]
-    fn touch_and_remove_are_idempotent() {
+    fn remove_is_idempotent() {
         let root = root();
         let path = root.join("worktrees/feature");
-        assert!(touch(&root, &path).expect("missing").is_none());
-        assert!(!metadata_file(&root).expect("file").exists());
         remove(&root, &path).expect("missing remove");
-
-        let created = write(&root, &path, &MetadataInput::default()).expect("write");
-        let file = records_dir(&root)
-            .unwrap()
-            .join(format!("{}.json", created.id.as_deref().unwrap()));
-        let mut document: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&file).expect("file")).expect("json");
-        document["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
-        fs::write(
-            &file,
-            format!(
-                "{}\n",
-                serde_json::to_string_pretty(&document).expect("encode")
-            ),
-        )
-        .expect("rewrite");
-        let touched = touch(&root, &path).expect("touch").expect("record");
-        assert_eq!(touched.created_at, created.created_at);
-        assert_ne!(
-            touched.last_used_at.as_deref(),
-            Some("2000-01-01T00:00:00.000Z")
-        );
+        write(&root, &path, &MetadataInput::default()).expect("write");
         remove(&root, &path).expect("remove");
         remove(&root, &path).expect("remove again");
         assert!(load(&root).expect("load").is_empty());
@@ -892,14 +827,13 @@ mod tests {
                 let barrier = Arc::clone(&barrier);
                 let path = path.clone();
                 handles.push(thread::spawn(move || {
-                    with_store(&root, |store| {
+                    with_store(&root, None, |store| {
                         assert!(store.worktrees.is_empty());
                         // Both writers have read the empty store before either
                         // publishes a file, just like competing first meta sets.
                         barrier.wait();
                         let metadata = WorktreeMetadata {
                             id: Some(format!("ws_00000000-0000-4000-8000-{index:012}")),
-                            owner: Some(format!("owner-{index}")),
                             purpose: Some(format!("purpose-{index}")),
                             base: Some(format!("base-{index}")),
                             created_at: Some(date.into()),
@@ -949,7 +883,6 @@ mod tests {
             )
             .unwrap();
             assert_eq!(patched.id, winner.id);
-            assert_eq!(patched.owner, winner.owner);
             assert_eq!(patched.base, winner.base);
             assert_eq!(patched.purpose.as_deref(), Some("patched"));
             remove(&root, &path).unwrap();
@@ -974,7 +907,7 @@ mod tests {
                     &root,
                     &root.join(&name),
                     &MetadataInput {
-                        owner: Some(name),
+                        purpose: Some(name),
                         ..MetadataInput::default()
                     },
                 )
@@ -989,13 +922,13 @@ mod tests {
         assert_eq!(
             records
                 .get(&path_key(&root.join("one")))
-                .and_then(|item| item.owner.as_deref()),
+                .and_then(|item| item.purpose.as_deref()),
             Some("one")
         );
         assert_eq!(
             records
                 .get(&path_key(&root.join("two")))
-                .and_then(|item| item.owner.as_deref()),
+                .and_then(|item| item.purpose.as_deref()),
             Some("two")
         );
     }
@@ -1104,7 +1037,7 @@ mod tests {
                                     record.path = path_key(&root.join("concurrent"));
                                     record.metadata.id =
                                         Some(format!("ws_{}", uuid::Uuid::new_v4()));
-                                    record.metadata.owner = Some("concurrent".into());
+                                    record.metadata.purpose = Some("concurrent".into());
                                     save_record(&target, &record).unwrap();
                                 }
                             })
@@ -1123,7 +1056,9 @@ mod tests {
             }
             if addition {
                 assert_eq!(
-                    after[&path_key(&root.join("concurrent"))].owner.as_deref(),
+                    after[&path_key(&root.join("concurrent"))]
+                        .purpose
+                        .as_deref(),
                     Some("concurrent")
                 );
             }
@@ -1135,7 +1070,7 @@ mod tests {
     }
 
     #[test]
-    fn imports_alpha6_on_first_write_and_preserves_all_fields() {
+    fn imports_alpha6_on_first_write_and_preserves_intent_and_creation() {
         let root = root();
         let legacy = metadata_file(&root).unwrap();
         fs::create_dir_all(legacy.parent().unwrap()).unwrap();
@@ -1153,6 +1088,15 @@ mod tests {
             fs::read_to_string(legacy.with_extension("json.imported")).unwrap(),
             fixture
         );
+        for entry in fs::read_dir(records_dir(&root).unwrap()).unwrap() {
+            let file = entry.unwrap().path();
+            if file.extension().is_some_and(|ext| ext == "json") {
+                let record: serde_json::Value =
+                    serde_json::from_slice(&fs::read(file).unwrap()).unwrap();
+                assert!(record.get("owner").is_none());
+                assert!(record.get("lastUsedAt").is_none());
+            }
+        }
         let after = load(&root).unwrap();
         assert_eq!(after.len(), 3);
         for (path, old) in before {
@@ -1174,7 +1118,7 @@ mod tests {
             &root,
             &root.join("one"),
             &MetadataInput {
-                owner: Some("one".into()),
+                purpose: Some("one".into()),
                 ..MetadataInput::default()
             },
         )
@@ -1183,7 +1127,7 @@ mod tests {
             &root,
             &root.join("two"),
             &MetadataInput {
-                owner: Some("two".into()),
+                purpose: Some("two".into()),
                 ..MetadataInput::default()
             },
         )
@@ -1195,7 +1139,7 @@ mod tests {
         let records = load(&root).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(
-            records[&path_key(&root.join("two"))].owner.as_deref(),
+            records[&path_key(&root.join("two"))].purpose.as_deref(),
             Some("two")
         );
         assert!(read_problem(&root)
@@ -1240,10 +1184,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_owner_purpose_and_links() {
-        assert_eq!(parse_owner("  grok  ").expect("owner"), "grok");
-        assert!(parse_owner(" ").is_err());
-        assert!(parse_owner("a\nb").is_err());
+    fn parses_purpose_and_links() {
+        assert_eq!(parse_purpose("  grok  ").expect("purpose"), "grok");
+        assert!(parse_purpose(" ").is_err());
+        assert!(parse_purpose("a\nb").is_err());
         assert!(parse_purpose("fix the flake").is_ok());
         let number = parse_link("#774").expect("number");
         assert_eq!(number.number, Some(774));
@@ -1256,15 +1200,5 @@ mod tests {
         assert_eq!(issue.number, Some(12));
         assert!(parse_link("0").is_err());
         assert!(parse_link("not a link").is_err());
-        assert_eq!(
-            resolve_owner(Some("flag"), Some("env")).expect("flag"),
-            Some("flag".to_string())
-        );
-        assert_eq!(
-            resolve_owner(None, Some("  env  ")).expect("env"),
-            Some("env".to_string())
-        );
-        assert_eq!(resolve_owner(None, Some("  ")).expect("blank"), None);
-        assert_eq!(resolve_owner(None, None).expect("none"), None);
     }
 }

@@ -12,13 +12,11 @@ use crate::{git, metadata, paths, worktree};
 pub struct Request {
     pub names: Vec<String>,
     pub all: bool,
-    pub mine: bool,
     pub no_default: bool,
     pub rebase: bool,
     pub merge: bool,
     pub force: bool,
     pub keep_conflicts: bool,
-    pub agent: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -476,28 +474,16 @@ fn unsafe_merge(path: &Path, base: &str) -> Result<Option<String>> {
 
 pub fn run(context: &Context, request: &Request) -> Result<Report> {
     let _hooks = crate::process::suppress_git_hooks();
-    if (request.all && request.mine)
-        || ((request.all || request.mine) && !request.names.is_empty())
-        || (request.rebase && request.merge)
-    {
+    if (request.all && !request.names.is_empty()) || (request.rebase && request.merge) {
         return Err(Error::validation(
             "Conflicting sync selectors or strategies",
         ));
     }
-    if request.mine && request.agent.is_none() {
-        return Err(Error::validation("--mine requires MABO_AGENT_ID"));
-    }
-    let stored = metadata::load_strict(&context.git_root)?;
+    metadata::load_strict(&context.git_root)?;
     let listed = worktree::list_worktrees(context, true, true)?;
     let mut targets = Vec::new();
-    if request.all || request.mine {
-        for tree in listed {
-            if metadata::find_in(&stored, Path::new(&tree.path)).is_some()
-                && (!request.mine || tree.metadata.owner == request.agent)
-            {
-                targets.push(tree);
-            }
-        }
+    if request.all {
+        targets = listed;
     } else if !request.names.is_empty() {
         for name in &request.names {
             worktree::validate_worktree_name(name)?;
@@ -977,14 +963,6 @@ fn sync_tree(
         return Ok(item);
     }
     let base_exists = commit(path, base)?.is_some();
-    let other_owner = request.all
-        && request.agent.is_some()
-        && tree.metadata.owner.is_some()
-        && tree.metadata.owner != request.agent;
-    if !base_exists && other_owner {
-        item.status("owned", None);
-        return Ok(item);
-    }
     if !base_exists {
         item.status(
             "base-gone",
@@ -1017,14 +995,6 @@ fn sync_tree(
             "merged",
             Some("Use mabo gc to remove landed workspaces".into()),
         );
-        return Ok(item);
-    }
-    if request.all
-        && request.agent.is_some()
-        && tree.metadata.owner.is_some()
-        && tree.metadata.owner != request.agent
-    {
-        item.status("owned", None);
         return Ok(item);
     }
     common_base(path, "HEAD", base)?;

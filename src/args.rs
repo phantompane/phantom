@@ -226,6 +226,9 @@ fn push_positional(parsed: &mut Parsed, arg: &str, allow_positionals: bool) -> R
 }
 
 fn unknown_option(option: &str) -> String {
+    if let Some(hint) = removed_option_hint(option) {
+        return hint;
+    }
     if option == "--project"
         || option.starts_with("--project=")
         || (option.starts_with("-p") && !option.starts_with("--"))
@@ -235,6 +238,18 @@ fn unknown_option(option: &str) -> String {
     format!(
         "Unknown option '{option}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"{option}\"'"
     )
+}
+
+/// Removed identity selectors remain errors, with guidance for old scripts.
+pub(crate) fn removed_option_hint(option: &str) -> Option<String> {
+    let hint = match option.split('=').next()? {
+        "--owner" | "--actor" => {
+            "Ownership was removed; use --purpose, PR links, and workspace names."
+        }
+        "--mine" => "Use explicit workspace names or --all.",
+        _ => return None,
+    };
+    Some(format!("Option '{option}' was removed. {hint}"))
 }
 
 #[cfg(test)]
