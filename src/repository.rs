@@ -40,7 +40,12 @@ pub struct CloneRequest<'a> {
     pub update: bool,
 }
 
-pub fn clone_repository(request: &CloneRequest<'_>) -> Result<CloneResult> {
+pub struct CloneOutcome {
+    pub result: CloneResult,
+    pub registration_error: Option<Error>,
+}
+
+pub fn clone_repository(request: &CloneRequest<'_>) -> Result<CloneOutcome> {
     let spec = parse_clone_source(request.source)?;
     let branch = normalize_branch(request.branch)?;
     let depth = parse_depth(request.depth)?;
@@ -48,16 +53,31 @@ pub fn clone_repository(request: &CloneRequest<'_>) -> Result<CloneResult> {
     let destination = root.join(&spec.host).join(&spec.owner).join(&spec.repo);
     let (cloned, updated) = place_clone(&destination, &spec, branch, depth, request.update)?;
 
-    let registered = register_repository(&destination)?;
-    Ok(CloneResult {
+    // Preserve the completed checkout/fetch even if registry access fails.
+    let path = fs::canonicalize(&destination).unwrap_or(destination);
+    let mut result = CloneResult {
         version: JSON_VERSION,
-        path: registered,
+        path: path.to_string_lossy().into_owned(),
         host: spec.host,
         owner: spec.owner,
         repo: spec.repo,
         remote_url: spec.remote_url,
         cloned,
         updated,
+    };
+    let registration_error = match register_repository(&path) {
+        Ok(registered) => {
+            result.path = registered;
+            None
+        }
+        Err(error) => Some(Error::msg(format!(
+            "Failed to register repository at {}: {error}",
+            result.path
+        ))),
+    };
+    Ok(CloneOutcome {
+        result,
+        registration_error,
     })
 }
 

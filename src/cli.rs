@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::args::{self, Opt, Parsed};
-use crate::error::{Error, Result, GENERAL, NOT_FOUND, SUCCESS, VALIDATION};
+use crate::error::{Error, Result, GENERAL, NOT_FOUND, PARTIAL, SUCCESS, VALIDATION};
 use crate::github;
 use crate::help;
 use crate::metadata::{self, MetadataInput};
@@ -720,13 +720,22 @@ fn clone_cmd(args: &[String]) -> Result<i32> {
         depth: parsed.value("depth"),
         update: parsed.flag("update"),
     }) {
-        Ok(result) => {
+        Ok(outcome) => {
+            let result = outcome.result;
             if json {
-                emit_json(&result)
+                emit_json(&result)?;
             } else {
                 println!("{}", repository::human_clone_message(&result));
-                Ok(SUCCESS)
             }
+            if let Some(error) = outcome.registration_error {
+                let status = if result.cloned || result.updated {
+                    PARTIAL
+                } else {
+                    GENERAL
+                };
+                return fail_with(&Error::status(status, error.to_string()), status);
+            }
+            Ok(SUCCESS)
         }
         Err(error) => fail_with(&error, error.exit_code()),
     }

@@ -1189,11 +1189,7 @@ pub(crate) fn commit_delete_checked(
     .err()
     .map(|error| error.to_string());
     let cleanup_warning = if inside {
-        remove_empty_parents(
-            &path,
-            &context.worktrees_directory,
-            context.project_common_dir.as_deref(),
-        )
+        remove_empty_parents(&path, &context.worktrees_directory)
     } else {
         None
     };
@@ -1462,11 +1458,9 @@ fn run_hook_commands(
     Ok(None)
 }
 
-fn remove_empty_parents(
-    path: &Path,
-    root: &Path,
-    project_common_dir: Option<&Path>,
-) -> Option<String> {
+// Keep the project directory and its marker: another creator may have claimed
+// it and still be waiting to run git worktree add.
+fn remove_empty_parents(path: &Path, root: &Path) -> Option<String> {
     let mut current = path.parent().map(Path::to_path_buf);
     while let Some(dir) = current {
         if !paths::is_strictly_inside(&dir, root) {
@@ -1484,11 +1478,7 @@ fn remove_empty_parents(
             }
         }
     }
-    let common_dir = project_common_dir?;
-    match paths::remove_project_directory_if_empty(root, common_dir) {
-        Ok(removal) => removal.warning,
-        Err(error) => Some(error.to_string()),
-    }
+    None
 }
 
 /// Copy gitignored files matched by `.worktreeinclude` and extra gitignore patterns.

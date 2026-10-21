@@ -497,7 +497,7 @@
         ".mabo.toml is read from the source checkout, the checkout where the command runs. [hooks] pre-delete commands run in the worktree before it is removed, in order, and stop at the first failure",
         "Pre-delete hooks receive MABO=1, MABO_NAME (the worktree name), MABO_PATH (the absolute worktree path), and MABO_ROOT_PATH (the source checkout path)",
         "pre-delete hooks run only after the repository is trusted. On a terminal, mabo asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, nonempty CI, --no-input or MABO_NO_INPUT being enabled, or --json fails before deleting. An empty value counts as unset. Run mabo trust --yes or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
-        "delete removes a linked worktree inside the resolved worktrees directory, or one recorded in maboroshi/workspaces/<id>.json. An unrecorded worktree outside that directory is refused. Parent directories are removed only when the worktree is inside the resolved directory",
+        "delete removes a linked worktree inside the resolved worktrees directory, or one recorded in maboroshi/workspaces/<id>.json. An unrecorded worktree outside that directory is refused. Empty parent directories below the project directory are removed only when the worktree is inside the resolved directory. The project directory and its repository marker stay in place, including after the last worktree is deleted",
         "--json reports each deleted worktree, whether its branch was deleted, and per-item errors. The schema is documented in the README",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
@@ -598,6 +598,7 @@
       ],
       "notes": [
         "gc is a dry run until --apply or --force. A second apply removes nothing",
+        "Removing the last worktree keeps the project directory and its repository marker so concurrent and subsequent creates can reuse it safely",
         "gc selects linked worktrees inside the resolved worktrees directory and worktrees recorded in maboroshi/workspaces/<id>.json. An unrecorded worktree outside that directory is ignored",
         "The current worktree, the primary checkout, and any worktree checked out on the default branch are never removed. The default branch is origin/HEAD when that ref exists, otherwise main, otherwise master",
         "A branch that still points at the commit it was created from is not merged. It can still match --older-than or --orphaned",
@@ -1067,7 +1068,7 @@
         "remoteUrl omits http and https userinfo, including a token used as the username. ssh and scp-style URLs keep the login name. file:// URLs and absolute scp-style paths are rejected.",
         "--branch and --depth apply only when cloning. updated is true only when an existing repository was fetched.",
         "If the path exists but is not that repository, the command exits 2 with a usage error.",
-        "The project is always registered. New worktrees for that repository are created under $XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash> unless worktrees-directory is set.",
+        "After clone or fetch, mabo registers the project. Registration failure exits 6 (partial) if a checkout was created or fetched, retaining path, cloned, updated, and the other result fields in data; otherwise it exits 1. Retrying can register the existing checkout. New worktrees for that repository are created under $XDG_DATA_HOME/maboroshi/worktrees/<checkout>-<hash> unless worktrees-directory is set.",
         "Authentication is left to Git. mabo does not call gh.",
         "Git progress is written to stderr. With --json, stdout is the schema 2 envelope; data contains: path, host, owner, repo, remoteUrl, cloned, and updated.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal, 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"

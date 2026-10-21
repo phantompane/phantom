@@ -1593,11 +1593,13 @@ fn removed_mcp_command_is_unknown() {
 }
 
 #[test]
-fn delete_removes_empty_parent_directories() {
+fn delete_removes_empty_parents_but_keeps_the_project_directory_and_marker() {
     let repo = Repo::new();
     let created = repo.mabo(&["create", "cursor/foo"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let project = managed_root(&repo);
+    let marker_path = project.join(maboroshi::paths::PROJECT_MARKER);
+    let marker = fs::read(&marker_path).expect("marker");
     let ceiling = project.parent().expect("maboroshi/worktrees");
     let parent = project.join("cursor");
     assert!(parent.join("foo").is_dir());
@@ -1605,10 +1607,8 @@ fn delete_removes_empty_parent_directories() {
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     assert!(!parent.join("foo").exists());
     assert!(!parent.exists(), "empty parent directory should be removed");
-    assert!(
-        !project.exists(),
-        "empty project directory should be removed"
-    );
+    assert!(project.is_dir(), "empty project directory should stay");
+    assert_eq!(fs::read(&marker_path).expect("retained marker"), marker);
     assert!(ceiling.is_dir(), "maboroshi/worktrees should stay");
 
     assert!(repo.mabo(&["create", "cursor/foo"]).status.success());
@@ -1619,7 +1619,8 @@ fn delete_removes_empty_parent_directories() {
     assert!(project.is_dir(), "project directory still holds a worktree");
     assert!(repo.mabo(&["delete", "cursor/bar"]).status.success());
     assert!(!parent.exists());
-    assert!(!project.exists());
+    assert!(project.is_dir());
+    assert_eq!(fs::read(&marker_path).expect("retained marker"), marker);
     assert!(ceiling.is_dir());
 
     assert!(repo.mabo(&["create", "a/b/c"]).status.success());
@@ -3225,6 +3226,113 @@ fn exec_preserves_the_child_exit_code() {
     let output = repo.mabo(&["exec", "feature/exec", "--", "sh", "-c", "exit 4"]);
     assert_eq!(output.status.code(), Some(4));
     assert!(text(&output.stderr).contains("failed with exit code 4"));
+}
+
+#[test]
+fn clone_registration_failure_preserves_completed_clone_and_fetch_results() {
+    for json in [false, true] {
+        let repo = Repo::new();
+        let bare = repo.root.join("bare.git");
+        repo.git(&[
+            "clone",
+            "--bare",
+            repo.repo.to_str().expect("repo"),
+            bare.to_str().expect("bare"),
+        ]);
+        let root = repo.root.join("clones");
+        assert!(repo
+            .mabo(&["preferences", "set", "root", root.to_str().expect("root")])
+            .status
+            .success());
+        append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
+
+        // A file at the records-directory path prevents registration writes,
+        // including when tests run as a user that can bypass Unix permissions.
+        let registry = repo.root.join("state/maboroshi/repos");
+        fs::create_dir_all(registry.parent().expect("state dir")).expect("state dir");
+        fs::write(&registry, "blocked registry\n").expect("block registry");
+        let destination = root.join("github.com/example/widget");
+        for (update, cloned, updated, status) in [
+            (false, true, false, 6),
+            (true, false, true, 6),
+            (false, false, false, 1),
+        ] {
+            if update {
+                repo.git(&["commit", "--allow-empty", "-m", "advance origin"]);
+                repo.git(&["push", bare.to_str().expect("bare"), "main"]);
+            }
+            let mut args = vec!["clone", "example/widget"];
+            if update {
+                args.push("--update");
+            }
+            if json {
+                args.push("--json");
+            }
+            let output = repo.mabo(&args);
+            assert_eq!(
+                output.status.code(),
+                Some(status),
+                "{} {}",
+                text(&output.stdout),
+                text(&output.stderr)
+            );
+            assert!(destination.join(".git").is_dir());
+            assert_eq!(
+                fs::read_to_string(&registry).expect("registry"),
+                "blocked registry\n"
+            );
+            if json {
+                let value = json_value(&output);
+                assert_eq!(value["schema"], 2);
+                assert_eq!(value["command"], "clone");
+                assert_eq!(value["ok"], false);
+                assert_eq!(
+                    value["error"]["code"],
+                    if status == 6 { "partial" } else { "failed" }
+                );
+                assert!(value["error"]["message"]
+                    .as_str()
+                    .expect("message")
+                    .contains("register"));
+                assert_eq!(
+                    value["data"]["path"],
+                    canonical(&destination).to_string_lossy().as_ref()
+                );
+                assert_eq!(value["data"]["host"], "github.com");
+                assert_eq!(value["data"]["owner"], "example");
+                assert_eq!(value["data"]["repo"], "widget");
+                assert_eq!(
+                    value["data"]["remoteUrl"],
+                    "https://github.com/example/widget.git"
+                );
+                assert_eq!(value["data"]["cloned"], cloned);
+                assert_eq!(value["data"]["updated"], updated);
+            } else {
+                assert!(text(&output.stdout).contains(destination.to_str().expect("path")));
+                assert!(text(&output.stderr).contains("register"));
+            }
+            if update {
+                let fetched = repo
+                    .command("git", &["rev-parse", "refs/remotes/origin/main"])
+                    .current_dir(&destination)
+                    .output()
+                    .expect("fetched ref");
+                let origin = repo
+                    .command("git", &["rev-parse", "HEAD"])
+                    .output()
+                    .expect("origin ref");
+                assert!(fetched.status.success());
+                assert_eq!(text(&fetched.stdout), text(&origin.stdout));
+            }
+        }
+        fs::remove_file(&registry).expect("unblock registry");
+        let retried = repo.mabo(&["clone", "example/widget", "--json"]);
+        assert!(retried.status.success(), "{}", text(&retried.stderr));
+        let value = json_value(&retried);
+        assert_eq!(value["data"]["cloned"], false);
+        assert_eq!(value["data"]["updated"], false);
+        assert_eq!(fs::read_dir(&registry).expect("registered").count(), 1);
+    }
 }
 
 #[test]
@@ -7593,6 +7701,113 @@ fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
 }
 
 #[test]
+fn removing_the_last_worktree_keeps_the_project_marker_for_the_next_create() {
+    for gc in [false, true] {
+        let repo = Repo::new();
+        assert!(repo.mabo(&["create", "feature/last"]).status.success());
+        let project = managed_root(&repo);
+        let marker_path = project.join(maboroshi::paths::PROJECT_MARKER);
+        let marker = fs::read(&marker_path).expect("marker");
+        let removed = if gc {
+            commit_file(&repo, "feature/last", "landed.txt", "landed\n");
+            repo.git(&["merge", "--ff-only", "feature/last"]);
+            repo.mabo(&["gc", "--apply", "--merged", "--json"])
+        } else {
+            repo.mabo(&["delete", "feature/last", "--json"])
+        };
+        assert!(
+            removed.status.success(),
+            "{} {}",
+            text(&removed.stdout),
+            text(&removed.stderr)
+        );
+        assert!(!managed(&repo, "feature/last").exists());
+        assert!(
+            !project.join("feature").exists(),
+            "empty name parents are still removed"
+        );
+        assert!(project.is_dir());
+        assert_eq!(fs::read(&marker_path).expect("retained marker"), marker);
+        assert_eq!(fs::read_dir(&project).expect("project dir").count(), 1);
+        let created = repo.mabo(&["create", "next", "--json"]);
+        assert!(
+            created.status.success(),
+            "{} {}",
+            text(&created.stdout),
+            text(&created.stderr)
+        );
+        assert!(managed(&repo, "next").join("README.md").is_file());
+        assert_eq!(fs::read(&marker_path).expect("reused marker"), marker);
+    }
+}
+
+#[test]
+fn deleting_the_last_worktree_between_directory_claim_and_git_add_keeps_the_marker() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    assert!(repo.mabo(&["create", "last"]).status.success());
+    let marker_path = managed_root(&repo).join(maboroshi::paths::PROJECT_MARKER);
+    let marker = fs::read(&marker_path).expect("marker");
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
+        .map(|dir| dir.join("git"))
+        .find(|file| file.is_file())
+        .expect("git");
+    let bin = repo.root.join("bin");
+    fs::create_dir(&bin).expect("bin");
+    let wrapper = bin.join("git");
+    // The outer create has claimed the project directory but has not added
+    // its checkout yet. Finish deletion in that exact window, without sleeps.
+    fs::write(
+        &wrapper,
+        r#"#!/bin/sh
+case " $* " in
+  *" worktree add "*)
+    "$MABO_BIN" delete last --json > "$DELETE_RESULT" || exit $?
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+"#,
+    )
+    .expect("wrapper");
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").expect("PATH"),
+    ));
+    let delete_result = repo.root.join("delete.json");
+    let created = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["create", "replacement", "--json"],
+        )
+        .env("PATH", std::env::join_paths(paths).expect("paths"))
+        .env("REAL_GIT", real_git)
+        .env("MABO_BIN", env!("CARGO_BIN_EXE_mabo"))
+        .env("DELETE_RESULT", &delete_result)
+        .output()
+        .expect("create");
+    assert!(
+        created.status.success(),
+        "{} {}",
+        text(&created.stdout),
+        text(&created.stderr)
+    );
+    let deleted: serde_json::Value =
+        serde_json::from_slice(&fs::read(delete_result).expect("delete ran")).expect("delete json");
+    assert_eq!(deleted["ok"], true);
+    assert!(!managed(&repo, "last").exists());
+    assert!(managed(&repo, "replacement").join("README.md").is_file());
+    assert_eq!(fs::read(&marker_path).expect("retained marker"), marker);
+    let next = repo.mabo(&["create", "next", "--json"]);
+    assert!(
+        next.status.success(),
+        "{} {}",
+        text(&next.stdout),
+        text(&next.stderr)
+    );
+}
+
+#[test]
 fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
     let repo = Repo::new();
     let created = repo.mabo(&["create", "feature", "--json"]);
@@ -8226,7 +8441,7 @@ fn list_shows_absolute_or_home_paths() {
 }
 
 #[test]
-fn symlink_spelling_keeps_metadata_and_cleans_the_project_directory() {
+fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
     let repo = Repo::new();
     let created = repo.mabo(&["create", "feature", "--owner", "alice", "--json"]);
     assert!(
@@ -8290,8 +8505,10 @@ fn symlink_spelling_keeps_metadata_and_cleans_the_project_directory() {
     assert_eq!(removed["createdAt"], created_at);
     assert!(!real.exists());
     assert!(
-        !managed_root(&repo).exists(),
-        "last worktree inside the resolved directory should remove the project directory"
+        managed_root(&repo)
+            .join(maboroshi::paths::PROJECT_MARKER)
+            .is_file(),
+        "last worktree deletion should keep the project directory and marker"
     );
     let store =
         records::read_to_string(repo.repo.join(".git/maboroshi/workspaces")).unwrap_or_default();
