@@ -950,6 +950,52 @@ pub fn status_count(cwd: &Path) -> Result<usize> {
     Ok(count)
 }
 
+pub(crate) const SUBMODULE_REMOVAL_DETAIL: &str = "Git cannot remove worktrees containing populated submodules or retained submodule data without force. Review the submodule contents, including unpushed commits, before removing with --discard-changes.";
+
+/// Match Git's worktree removal guard without walking ignored directories.
+/// Git also refuses a retained (even empty) per-worktree modules directory.
+pub(crate) fn has_removal_submodules(cwd: &Path) -> Result<bool> {
+    let modules = output(&["rev-parse", "--git-path", "modules"], Some(cwd), true)?;
+    if cwd.join(modules).is_dir() {
+        return Ok(true);
+    }
+    let index = raw_git_bytes(cwd, &["ls-files", "--stage", "-z"])?;
+    if !index.status.success() {
+        return Err(Error::msg(format!(
+            "Failed to inspect submodule paths: {}",
+            String::from_utf8_lossy(&index.stderr).trim()
+        )));
+    }
+    // Inspect only indexed gitlinks, including those without a .gitmodules
+    // mapping. NUL delimiters preserve spaces, tabs and newlines in paths.
+    for entry in index.stdout.split(|byte| *byte == 0) {
+        if !entry.starts_with(b"160000 ") {
+            continue;
+        }
+        let Some(tab) = entry.iter().position(|byte| *byte == b'\t') else {
+            return Err(Error::msg("Invalid gitlink index entry"));
+        };
+        let name = &entry[tab + 1..];
+        #[cfg(unix)]
+        let name = {
+            use std::os::unix::ffi::OsStrExt;
+            std::ffi::OsStr::from_bytes(name)
+        };
+        #[cfg(not(unix))]
+        let name = std::str::from_utf8(name)
+            .map_err(|error| Error::msg(format!("Invalid submodule path: {error}")))?;
+        if cwd
+            .join(name)
+            .join(".git")
+            .try_exists()
+            .map_err(|error| Error::msg(format!("Failed to inspect submodule Git data: {error}")))?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub fn is_clean(cwd: &Path) -> bool {
     status_count(cwd).map(|count| count == 0).unwrap_or(true)
 }

@@ -391,6 +391,8 @@ Modified or staged tracked files (including submodule changes) and non-ignored u
 
 For remove (including `--dry-run`) and gc (plan and `--apply`), dirty uses the same rule as list/show. Ignored files do not count as dirty and are deleted with the workspace without a warning or `--discard-changes`. Known limitation: nested Git repositories inside ignored directories (for example, `vendor/x/.git` under ignored `vendor/`) are also deleted with the workspace.
 
+Even when clean, workspaces with populated submodules or retained submodule data are refused during remove preflight (exit 4 `dirty`, including `--dry-run`) and skipped by gc (plan and `--apply`) with a `mabo remove NAME --discard-changes` hint; review the submodule contents, including unpushed commits, before using that permission.
+
 `remove --json` returns the shared schema 2 envelope with this data:
 
 ```json

@@ -17031,8 +17031,7 @@ fn retirement_ignored_nested_repository_is_removed_with_workspace() {
     assert!(!nested.exists());
 }
 
-#[test]
-fn retirement_ignored_content_does_not_hide_submodule_changes() {
+fn retirement_populated_submodule_repo() -> Repo {
     let repo = Repo::new();
     let source = Repo::new();
     repo.git(&[
@@ -17071,6 +17070,203 @@ fn retirement_ignored_content_does_not_hide_submodule_changes() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     fs::write(path.join("cache"), "disposable\n").unwrap();
     assert_retirement_dirty(&repo, "submodule", false);
+    repo
+}
+
+#[test]
+fn retirement_populated_submodule_requires_discard_before_any_removal() {
+    let repo = retirement_populated_submodule_repo();
+    assert!(repo
+        .mabo(&["create", "clean", "--no-setup"])
+        .status
+        .success());
+    let path = managed(&repo, "submodule");
+    let marker = repo.root.join("hook-ran");
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        format!("[hooks]\npre-remove = ['touch {}']\n", marker.display()),
+    )
+    .unwrap();
+    let record_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let before = records::read(&record_dir).unwrap();
+    for dry_run in [false, true] {
+        for json in [false, true] {
+            let mut args = vec!["remove", "clean", "submodule"];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            if json {
+                args.push("--json");
+            }
+            let out = repo.mabo(&args);
+            assert_eq!(
+                out.status.code(),
+                Some(4),
+                "{args:?}: {} {}",
+                text(&out.stdout),
+                text(&out.stderr)
+            );
+            let detail = if json {
+                let doc = assert_envelope(&out, "remove");
+                assert_eq!(doc["error"]["code"], "dirty", "{doc}");
+                assert!(
+                    doc["data"]["items"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|item| item["removed"] == false),
+                    "{doc}"
+                );
+                doc.to_string()
+            } else {
+                text(&out.stderr)
+            };
+            for expected in [
+                "populated submodules",
+                "unpushed commits",
+                "--discard-changes",
+            ] {
+                assert!(detail.contains(expected), "{detail}");
+            }
+            assert!(!marker.exists());
+            assert_eq!(records::read(&record_dir).unwrap(), before);
+            for name in ["clean", "submodule"] {
+                assert!(managed(&repo, name).is_dir());
+                assert!(worktree_registered(&repo, name));
+                assert!(branch_listed(&repo, name));
+            }
+            assert!(path.join("sub/README.md").exists());
+            assert!(path.join("cache").exists());
+        }
+    }
+    let plan = repo.mabo(&[
+        "remove",
+        "submodule",
+        "--discard-changes",
+        "--dry-run",
+        "--json",
+    ]);
+    assert!(plan.status.success(), "{}", text(&plan.stdout));
+    assert!(path.is_dir());
+    assert!(!marker.exists());
+    let out = repo.mabo(&["remove", "submodule", "--discard-changes", "--json"]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert_eq!(
+        assert_envelope(&out, "remove")["data"]["items"][0]["removed"],
+        true
+    );
+    assert!(!path.exists());
+    assert!(!worktree_registered(&repo, "submodule"));
+    assert!(marker.exists());
+    assert!(managed(&repo, "clean").is_dir());
+}
+
+#[test]
+fn retirement_populated_submodule_is_skipped_by_gc_plan_and_apply() {
+    let repo = retirement_populated_submodule_repo();
+    let path = managed(&repo, "submodule");
+    let marker = repo.root.join("hook-ran");
+    fs::write(
+        repo.repo.join(".mabo.toml"),
+        format!("[hooks]\npre-remove = ['touch {}']\n", marker.display()),
+    )
+    .unwrap();
+    let record_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let before = records::read(&record_dir).unwrap();
+    for apply in [false, true] {
+        let mut args = vec!["gc", "--merged", "--json"];
+        if apply {
+            args.push("--apply");
+        }
+        let out = repo.mabo(&args);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = assert_envelope(&out, "gc");
+        let item = &doc["data"]["items"][0];
+        assert_eq!(item["workspace"]["name"], "submodule", "{doc}");
+        assert_eq!(item["action"], "skipped", "{doc}");
+        let detail = item["detail"].as_str().unwrap();
+        for expected in [
+            "populated submodules",
+            "unpushed commits",
+            " remove --discard-changes -- 'submodule'",
+        ] {
+            assert!(detail.contains(expected), "{detail}");
+        }
+        assert!(!marker.exists());
+        assert_eq!(records::read(&record_dir).unwrap(), before);
+        assert!(path.join("sub/README.md").exists());
+        assert!(path.join("cache").exists());
+        assert!(worktree_registered(&repo, "submodule"));
+    }
+}
+
+#[test]
+fn retirement_submodule_layouts_follow_git_removal_guard() {
+    for layout in ["uninitialized", "retained", "embedded"] {
+        let repo = retirement_populated_submodule_repo();
+        let path = managed(&repo, "submodule");
+        let sub = path.join("sub");
+        let out = repo
+            .command("git", &["rev-parse", "--absolute-git-dir"])
+            .current_dir(&sub)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let git_dir = PathBuf::from(text(&out.stdout).trim());
+        let modules = git_dir.parent().unwrap();
+        if layout == "embedded" {
+            let out = repo
+                .command("git", &["config", "--unset", "core.worktree"])
+                .current_dir(&sub)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", text(&out.stderr));
+            fs::remove_file(sub.join(".git")).unwrap();
+            fs::rename(&git_dir, sub.join(".git")).unwrap();
+            fs::remove_dir(modules).unwrap();
+        } else {
+            let out = repo
+                .command("git", &["submodule", "deinit", "--force", "--all"])
+                .current_dir(&path)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", text(&out.stderr));
+            if layout == "uninitialized" {
+                fs::remove_dir_all(modules).unwrap();
+            }
+        }
+        assert_retirement_dirty(&repo, "submodule", false);
+        for dry_run in [true, false] {
+            let mut args = vec!["remove", "submodule", "--json"];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let out = repo.mabo(&args);
+            let expected = if layout == "uninitialized" { 0 } else { 4 };
+            assert_eq!(
+                out.status.code(),
+                Some(expected),
+                "{layout}: {}",
+                text(&out.stdout)
+            );
+            if expected == 4 {
+                assert_eq!(assert_envelope(&out, "remove")["error"]["code"], "dirty");
+                assert!(path.join("cache").exists());
+            }
+        }
+        if layout != "uninitialized" {
+            let out = repo.mabo(&["remove", "submodule", "--discard-changes", "--json"]);
+            assert!(out.status.success(), "{layout}: {}", text(&out.stdout));
+        }
+        assert!(!path.exists(), "{layout}");
+        assert!(!worktree_registered(&repo, "submodule"), "{layout}");
+    }
+}
+
+#[test]
+fn retirement_ignored_content_does_not_hide_submodule_changes() {
+    let repo = retirement_populated_submodule_repo();
+    let path = managed(&repo, "submodule");
     for change in ["modified", "untracked", "head"] {
         let sub = path.join("sub");
         if change == "untracked" {
@@ -17138,6 +17334,14 @@ fn retirement_ignored_content_does_not_hide_submodule_changes() {
         }
         assert!(path.join("cache").exists());
     }
+    let out = repo.mabo(&["remove", "submodule", "--discard-changes", "--json"]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert_eq!(
+        assert_envelope(&out, "remove")["data"]["items"][0]["removed"],
+        true
+    );
+    assert!(!path.exists());
+    assert!(!worktree_registered(&repo, "submodule"));
 }
 
 #[cfg(unix)]
