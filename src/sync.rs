@@ -486,9 +486,8 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         targets = listed;
     } else if !request.names.is_empty() {
         for name in &request.names {
-            worktree::validate_worktree_name(name)?;
             let tree = worktree::find_worktree(context, name, false, None)?;
-            if paths::same_location(Path::new(&tree.path), &context.git_root) {
+            if name != "." && paths::same_location(Path::new(&tree.path), &context.git_root) {
                 return Err(Error::validation("Sync targets must be linked workspaces"));
             }
             if !targets
@@ -967,7 +966,7 @@ fn sync_tree(
         item.status(
             "base-gone",
             Some(format!(
-                "Set a new base: mabo meta set {} --base <ref>",
+                "Set a new base: mabo set {} --base <ref>",
                 tree.name
             )),
         );

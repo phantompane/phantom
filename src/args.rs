@@ -122,6 +122,15 @@ pub fn parse_with(
                     next.clone()
                 };
                 parsed.flags.push((spec.name.to_string(), Some(value)));
+                if spec.name == "unset" {
+                    while let Some(field) = args.get(index).filter(|field| !field.starts_with('-'))
+                    {
+                        parsed
+                            .flags
+                            .push((spec.name.to_string(), Some(field.clone())));
+                        index += 1;
+                    }
+                }
             } else if inline.is_some() {
                 return Err(Error::validation(unknown_option(&format!("--{option}"))));
             } else {

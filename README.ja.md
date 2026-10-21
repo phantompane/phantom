@@ -17,7 +17,7 @@ Git はコードとチェックアウトを記録します。しかし、その�
 Maboroshi はワークスペースを作成し、既存の作業を引き継いで準備し、ベースの変更に追従させ、片付けます。
 
 - **確保と準備。** `clone` は ghq のディレクトリ構成でリポジトリを配置します。`create`、`attach`、`github checkout`（別名 `gh checkout`）は、作業ごとに専用のワークスペースを用意し、`.worktreeinclude` で指定した Git の無視対象ファイルをコピーして、信頼済みのリポジトリでプロジェクトフックを実行します。
-- **情報の記録。** `meta set` で目的、関連するプルリクエストや issue、ベースを記録します。`list` と `where` で、何がどこにあるかを確認できます。
+- **情報の記録。** `set` で目的、関連するプルリクエストや issue、ベースを記録します。`list` と `show` で、何がどこにあるかを確認できます。
 - **更新。** `sync` は fetch し、可能ならデフォルトブランチを fast-forward して、選択したワークスペースにベースの変更を取り込みます。
 - **片付け。** `gc` はマージ済みブランチ、クローズ済みのプルリクエスト、孤立したレコード、経過時間（`--older-than`）を根拠に対象を選びます。
 
@@ -51,7 +51,7 @@ Maboroshi が担わない役割は次のとおりです。
 {"schema":2,"command":"list","ok":true,"data":{"workspaces":[]},"warnings":[],"error":null}
 ```
 
-標準出力には envelope を1件だけ出し、進捗・フック・Git・`--exec` の出力は標準エラー出力へ出します。`data` はコマンド結果を含み、最上位の `schema` は含みません。アプリケーションのバージョンを示す `data.version` を持つのは `--version` だけです。`command` は `meta set` のような空白区切りの名前です。エラーは `{code,message,details?}`、警告は `{code,message}` です。部分的な結果は `data` に残り、gc の dry-run では `data.plan: true` を返します。パーサーは未知のフィールドを無視してください。
+標準出力には envelope を1件だけ出し、進捗・フック・Git・`--exec` の出力は標準エラー出力へ出します。`data` はコマンド結果を含み、最上位の `schema` は含みません。アプリケーションのバージョンを示す `data.version` を持つのは `--version` だけです。`command` は `github checkout` のような空白区切りの名前です。エラーは `{code,message,details?}`、警告は `{code,message}` です。部分的な結果は `data` に残り、gc の dry-run では `data.plan: true` を返します。パーサーは未知のフィールドを無視してください。
 
 | 終了コード | 意味 | 主な error.code |
 | --- | --- | --- |
@@ -69,7 +69,7 @@ Maboroshi が担わない役割は次のとおりです。
 
 ## メタデータの保存と移行
 
-ワークスペースのメタデータは `<git-common-dir>/maboroshi/workspaces/<id>.json` に1件ずつ保存します。`id` は `ws_<uuid v4>`、各ファイルには `schema: 2`、`id`、`path`、任意の `name` と、既存の `base`、`purpose`、`createdAt`、`createdFrom`、`links` が入ります。JSON 出力の ワークスペースオブジェクトにも `id` が入り、未記録なら null です。検索・置き換え・削除は従来どおり path で行い、削除はそのファイルだけを消します。破損したレコードは警告と null メタデータになり、ほかのレコードは読み続けられます。変更するコマンドは破損があれば拒否して元のファイルを保ちます。`sync` も fetch や対象の更新前にメタデータを厳密に検証します。同じ path の初回同時登録で重複ができた場合は、`createdAt` が古いレコード、同時刻なら `id` の辞書順で小さいレコードに読み取り時にまとめます。全フィールドはそのレコードを採用し、次のメタデータ書き込みで余分なファイルを削除します。`delete` と `gc` はこのメタデータに記録されていれば、設定した保存先の外にあるワークスペース も削除対象にできます。
+ワークスペースのメタデータは `<git-common-dir>/maboroshi/workspaces/<id>.json` に1件ずつ保存します。`id` は `ws_<uuid v4>`、各ファイルには `schema: 2`、`id`、`path`、任意の `name` と、既存の `base`、`purpose`、`createdAt`、`updatedAt`、`createdFrom`、`links` が入ります。JSON 出力の ワークスペースオブジェクトにも `id` が入り、未記録なら null です。検索・置き換え・削除は従来どおり path で行い、削除はそのファイルだけを消します。破損したレコードは警告と null メタデータになり、ほかのレコードは読み続けられます。変更するコマンドは破損があれば拒否して元のファイルを保ちます。`sync` も fetch や対象の更新前にメタデータを厳密に検証します。同じ path の初回同時登録で重複ができた場合は、`createdAt` が古いレコード、同時刻なら `id` の辞書順で小さいレコードに読み取り時にまとめます。全フィールドはそのレコードを採用し、次のメタデータ書き込みで余分なファイルを削除します。`delete` と `gc` はこのメタデータに記録されていれば、設定した保存先の外にあるワークスペース も削除対象にできます。
 
 リポジトリの登録情報は `$XDG_STATE_HOME/maboroshi/repos/<id>.json`（既定は `~/.local/state/maboroshi/repos/<id>.json`）に1件ずつ保存し、既存の `proj_<uuid>` ID を引き継ぎます。同じ root の重複は、読み込み時に `createdAt` が古い方へまとめます。同時刻なら ID の辞書順で決めます。
 
@@ -77,7 +77,7 @@ Maboroshi が担わない役割は次のとおりです。
 
 ## ワークスペースのパスと環境変数
 
-新規ワークスペースの既定パスは `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash8>/<name>` です。`XDG_DATA_HOME` が未設定・空・相対パスの場合は `~/.local/share/maboroshi/workspaces/...` を使います。`workspace-root` 設定は引き続き使えます。既存の `maboroshi/worktrees/` 以下は移動せず、`list`、`where`、`delete`、`sync`、`gc` で引き続き扱えます。
+新規ワークスペースの既定パスは `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash8>/<name>` です。`XDG_DATA_HOME` が未設定・空・相対パスの場合は `~/.local/share/maboroshi/workspaces/...` を使います。`workspace-root` 設定は引き続き使えます。既存の `maboroshi/worktrees/` 以下は移動せず、`list`、`show`、`delete`、`sync`、`gc` で引き続き扱えます。
 
 フック（`post-create`、`pre-delete`）、`exec`、`create`/`attach --exec` には、`MABO=1`、名前の `MABO_WORKSPACE`、記録済み ID の `MABO_WORKSPACE_ID`（未記録なら空）、絶対パスの `MABO_WORKSPACE_PATH`、primary checkout の絶対パスの `MABO_REPO_PATH` を渡します。フック設定を読む場所は実行元チェックアウトのままです。旧 `MABO_NAME`、`MABO_PATH`、`MABO_ROOT_PATH` は子プロセスから取り除くため、スクリプトを更新してください。
 
@@ -110,4 +110,29 @@ mabo --version --json
 
 JSON は schema 2 の envelope を使います。リポジトリの結果キーは `repo` / `repos` で、clone は `data: {repo: {root, name, remoteUrl}, cloned, updated}` を返します。`help --json` は help-data.json の仕様全体を含み、すべてのコマンドとフラグ、終了コードとエラーコード、`schemaVersion: 2` を返します。`--version --json` はアプリケーションのバージョンを `data.version` に入れます。詳しい例は英語の README を参照してください。
 
-ワークスペースの所有者（owner）と `lastUsedAt` は廃止しました。`--owner` は終了コード 2 で、`--purpose`・PR リンク・ワークスペース名を使うよう案内します。`sync --mine` は終了コード 2 で、名前の明示か `--all` を案内します。`MABO_AGENT_ID` は使われなくなりました。古いレコードはそのまま読め、次にメタデータを書き込むときにこれらのフィールドは削除されます。`where` と `exec` はレコードを変更しません。`gc --older-than` は `createdAt` を使います。
+ワークスペースの所有者（owner）と `lastUsedAt` は廃止しました。`--owner` は終了コード 2 で、`--purpose`・PR リンク・ワークスペース名を使うよう案内します。`sync --mine` は終了コード 2 で、名前の明示か `--all` を案内します。`MABO_AGENT_ID` は使われなくなりました。古いレコードはそのまま読め、次にメタデータを書き込むときにこれらのフィールドは削除されます。`show`・`path`・`list`・`exec` はレコードを変更しません。`gc --older-than` は `createdAt` を使います。
+
+## ワークスペースの選択・確認・更新
+
+`SEL` には名前、`.`（現在のディレクトリを含むチェックアウト）、`pr:N`、`issue:N`、PR/issue の URL を指定できます。PR/issue は記録済みのリンクだけを検索し、新規作成しません。該当なしは終了コード 3（`not_found`）、複数一致は 2（`ambiguous`）です。`.` と別リポジトリの `-R` の併用は 2、リポジトリ外での現在位置の選択は 3 になります。
+
+`show [SEL]`・`path [SEL]`・`set [SEL]`・`exec [SEL] -- COMMAND [ARG...]` は SEL 省略時に `.` を選びます。primary 内では primary checkout が対象です。`show` は primary や管理外の未記録チェックアウトを `managed:false` として表示します。`sync` と `delete` の位置引数にも同じセレクタを使えます。引数なしの `sync` の対象と `delete` のフラグ・安全判定は従来どおりです。
+
+```sh
+mabo show pr:774 --json
+cd "$(mabo path feature/auth)"
+mabo set --purpose 'fix checkout' --base origin/main --pr 774
+mabo set feature/auth --unset purpose base pr issue
+mabo exec -- git status
+mabo exec feature/auth -- npm test
+mabo list --kind workspace --paths
+mabo list --all-repos --json
+```
+
+`path` のテキスト出力は絶対パスと改行だけ、JSON は `data: {path}` です。`show` と `set` は `data.workspace` を返します。共有オブジェクトには `id`、`name`、`kind`、`path`、`current`、`repo:{root,name}`、`managed`、`orphaned`、`branch`、`head`、`detached`、`dirty`、`base`、`createdFrom`、`upstream`、`purpose`、`links`、`createdAt`、`updatedAt` が入り、不明な値は null です。`upstream` は未設定なら null、設定時は `{ref,ahead,behind,gone}` です。削除済みなら `gone:true`、件数は null になります。
+
+`show`・`path`・`list`・`exec` は記録の内容・mtime を変えず、旧ファイルの移行もしません。`set` は指定フィールドだけを一度の atomic write で更新します。`--unset` は purpose/base/pr/issue を削除し、複数フィールドやフラグの繰り返しを受け付けます。不正なフィールドや同じフィールドの設定と削除の併用は終了コード 2 です。`--base` は参照を検証して full ref 化し、コミット指定も引き続き使えます。`--unset base` は既定値を補わず、不明として記録します。
+
+`list --kind workspace|primary` は種類を絞り、`--names` と `--paths` は1行1件のテキストを出します。`--all-repos` は `repo list` が把握する登録済み・検出済みリポジトリを一覧にし、JSON には `data.repos` と全ワークスペースの `data.workspaces` が入ります。`-R` とは併用できません。人間向け出力にはリポジトリ見出し、現在位置の `*`、名前、ブランチ、upstream の進み・遅れ（`↑a ↓b`）、dirty、PR/issue、目的を表示し、削除済み upstream は `upstream:gone` と表示します。
+
+旧 `where` は `path` / `show --json`、旧 `meta` / `meta set` は `set` / `show`、`list --no-default` は `--kind workspace` を案内して終了コード 2 を返します。`exec` では子コマンドの前の `--` が必須です。省略時は新構文のヒントと終了コード 2 を返します。`exec` は `MABO_OUTPUT` を無視し、明示的な JSON 出力は拒否します。使用方法エラーと付随するヘルプは標準エラー出力へ出し、テキストの標準出力は空にします。

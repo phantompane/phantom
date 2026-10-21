@@ -417,15 +417,7 @@ fn linked_default_is_only_integrated_fast_forward_once() {
         );
         let out = r.mabo(
             &r.main,
-            &[
-                "meta",
-                "set",
-                "main",
-                "--purpose",
-                "tester",
-                "--base",
-                "other",
-            ],
+            &["set", "main", "--purpose", "tester", "--base", "other"],
         );
         assert!(
             out.status.success(),
@@ -583,7 +575,7 @@ fn corrupt_custom_base_metadata_refuses_sync_before_fetch_or_updates() {
     r.git(&r.main, &["branch", "stack"]);
     r.write_commit(&tree, "own", "own commit\n");
     assert!(r
-        .mabo(&r.main, &["meta", "set", "topic", "--base", "stack"])
+        .mabo(&r.main, &["set", "topic", "--base", "stack"])
         .status
         .success());
     let dir = r.main.join(".git/maboroshi/workspaces");
@@ -648,7 +640,7 @@ fn updates_with_failures_conflicts_or_published_refusals_exit_partial() {
                 );
                 r.git(&r.main, &["fetch", "broken"]);
                 assert!(r
-                    .mabo(&r.main, &["meta", "set", "topic", "--base", "broken/main"])
+                    .mabo(&r.main, &["set", "topic", "--base", "broken/main"])
                     .status
                     .success());
                 r.git(
@@ -812,14 +804,11 @@ fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
         "merged"
     );
     r.git(&r.main, &["branch", "stack"]);
-    let out = r.mabo(
-        &r.main,
-        &["meta", "set", "topic", "--base", "stack", "--json"],
-    );
+    let out = r.mabo(&r.main, &["set", "topic", "--base", "stack", "--json"]);
     assert!(out.status.success());
     let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(doc["data"]["workspace"]["base"], "refs/heads/stack");
-    let invalid = r.mabo(&r.main, &["meta", "set", "topic", "--base", "nonexistent"]);
+    let invalid = r.mabo(&r.main, &["set", "topic", "--base", "nonexistent"]);
     assert!(!invalid.status.success());
     r.git(&r.main, &["branch", "-D", "stack"]);
     assert_eq!(
@@ -1128,7 +1117,7 @@ fn multiple_bases_fetch_each_involved_remote_and_respect_no_default() {
     );
     r.git(&r.main, &["fetch", "stack"]);
     assert!(r
-        .mabo(&r.main, &["meta", "set", "topic", "--base", "stack/main"])
+        .mabo(&r.main, &["set", "topic", "--base", "stack/main"])
         .status
         .success());
     r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
@@ -1517,7 +1506,7 @@ fn git_hook_can_run_mabo_exec_and_create_with_project_hooks_and_exec() {
 [ -e '{gate}' ] && exit 0
 touch '{gate}'
 cd '{main}'
-'{bin}' exec victim sh -c "touch '{standalone}'" &&
+'{bin}' exec victim -- sh -c "touch '{standalone}'" &&
 '{bin}' create nested --exec "touch '{create_exec}'"
 echo $? > '{status}'
 "#,
@@ -1590,7 +1579,7 @@ fn post_create_hook_can_list_and_create_and_pre_delete_hook_can_create() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(r.mabo(&r.main, &["where", "from-delete"]).status.success());
+    assert!(r.mabo(&r.main, &["path", "from-delete"]).status.success());
 }
 
 #[test]
@@ -1701,7 +1690,7 @@ fn attach_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(!tree.exists());
-    assert!(r.mabo(&r.main, &["where", "from-gc"]).status.success());
+    assert!(r.mabo(&r.main, &["path", "from-gc"]).status.success());
     // A hook can change the target; the old preflight is stale.
     fs::write(
         r.main.join(".mabo.toml"),
@@ -1718,7 +1707,7 @@ fn attach_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
     let out = finish_child(child);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("Workspace changed"));
-    assert!(r.mabo(&r.main, &["where", "from-attach"]).status.success());
+    assert!(r.mabo(&r.main, &["path", "from-attach"]).status.success());
 }
 
 #[test]
@@ -2170,10 +2159,7 @@ fn slash_remote_default_and_explicit_bases_fetch_and_integrate_main() {
             );
             let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
             let tree = PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap());
-            let out = r.mabo(
-                &r.main,
-                &["meta", "set", &name, "--base", "team/origin/main"],
-            );
+            let out = r.mabo(&r.main, &["set", &name, "--base", "team/origin/main"]);
             assert!(
                 out.status.success(),
                 "{}",
@@ -2617,10 +2603,7 @@ fn failed_default_remote_does_not_block_a_healthy_base_remote() {
     );
     r.git(&r.main, &["fetch", "healthy"]);
     assert!(r
-        .mabo(
-            &r.main,
-            &["meta", "set", "healthy", "--base", "healthy/main"]
-        )
+        .mabo(&r.main, &["set", "healthy", "--base", "healthy/main"])
         .status
         .success());
     r.advance();
@@ -2660,10 +2643,7 @@ fn fetch_failures_exit_one_even_with_a_published_rebase_refusal() {
     r.git(&tree, &["push", "healthy", "published"]);
     r.git(&r.main, &["fetch", "healthy"]);
     assert!(r
-        .mabo(
-            &r.main,
-            &["meta", "set", "published", "--base", "healthy/main"]
-        )
+        .mabo(&r.main, &["set", "published", "--base", "healthy/main"])
         .status
         .success());
     r.advance();
@@ -2924,7 +2904,7 @@ fn fetch_refspec_namespace_determines_remote_and_default_local_name() {
         let tree = r.create("topic");
         let out = r.mabo(
             &r.main,
-            &["meta", "set", "topic", "--base", "refs/remotes/cache/main"],
+            &["set", "topic", "--base", "refs/remotes/cache/main"],
         );
         assert!(out.status.success());
         r.write_commit(&tree, "local", "local\n");

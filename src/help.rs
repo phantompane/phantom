@@ -276,7 +276,7 @@ mod tests {
             "gh checkout",
             "exec",
             "delete",
-            "where",
+            "path",
         ] {
             let help = command_help(key).expect("help data").expect(key);
             assert!(
@@ -286,15 +286,15 @@ mod tests {
         }
         let list = command_help("list").expect("help").expect("list");
         assert!(list.contains("--names"));
-        assert!(list.contains("--no-default"));
+        assert!(list.contains("--kind"));
         assert!(list.contains("--json"));
         assert!(list.contains("-R, --repo <value>"));
         assert!(!list.contains("Put this before the workspace name"));
         let exec = command_help("exec").expect("help").expect("exec");
         assert!(exec.contains("--repo <value>"));
-        assert!(exec.contains("Put this before the workspace name"));
-        assert!(exec.contains("pwd --repo y"));
-        let where_help = command_help("where").expect("help").expect("where");
+        assert!(exec.contains("put this before SEL"));
+        assert!(exec.contains("mabo exec -- git status"));
+        let where_help = command_help("path").expect("help").expect("path");
         assert!(!where_help.contains("Put this before the workspace name"));
         assert!(where_help.contains("may appear with the other options"));
         let checkout = command_help("github checkout")
@@ -366,7 +366,7 @@ mod tests {
             "create",
             "attach",
             "list",
-            "where",
+            "path",
             "delete",
             "exec",
             "config",

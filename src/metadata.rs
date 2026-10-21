@@ -25,6 +25,8 @@ pub struct WorktreeMetadata {
     pub purpose: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
     /// Full commit the branch was created from. Absent on older records, when
     /// a new branch has no HEAD, and when an existing branch has no reflog.
     #[serde(default)]
@@ -182,10 +184,20 @@ pub fn replace(
     })
 }
 
-/// Insert or patch the record for `path`. `meta set` and re-checkout use this.
+/// Insert or patch the record for `path`. `set` and re-checkout use this.
 /// A new record gets `createdAt` and `createdFrom`. An existing record
 /// keeps omitted fields, including `createdFrom`.
 pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<WorktreeMetadata> {
+    patch(git_root, path, input, &[])
+}
+
+/// Apply intent edits and removals in one atomic record update.
+pub fn patch(
+    git_root: &Path,
+    path: &Path,
+    input: &MetadataInput,
+    unset: &[String],
+) -> Result<WorktreeMetadata> {
     let key = path_key(path);
     with_store(git_root, Some(path), |store| {
         if let Some(record) = store
@@ -194,19 +206,35 @@ pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<Work
             .find(|record| paths::same_location(Path::new(&record.path), path))
         {
             apply_input(&mut record.metadata, input);
+            clear_fields(&mut record.metadata, unset);
             record.name = record.metadata.name.clone();
             return Ok((record.metadata.clone(), true));
         }
-        let metadata = fresh_metadata(path, input, BranchOrigin::Existing);
+        let mut metadata = fresh_metadata(path, input, BranchOrigin::Existing);
+        clear_fields(&mut metadata, unset);
         store.worktrees.push(stored_worktree(key, metadata.clone()));
         Ok((metadata, true))
     })
+}
+
+fn clear_fields(record: &mut WorktreeMetadata, fields: &[String]) {
+    for field in fields {
+        match field.as_str() {
+            "purpose" => record.purpose = None,
+            "base" => record.base = None,
+            "pr" => record.links.pr = None,
+            "issue" => record.links.issue = None,
+            _ => {}
+        }
+    }
+    record.updated_at = Some(iso_now());
 }
 
 fn fresh_metadata(path: &Path, input: &MetadataInput, origin: BranchOrigin) -> WorktreeMetadata {
     let mut metadata = WorktreeMetadata {
         id: Some(format!("ws_{}", uuid::Uuid::new_v4())),
         created_at: Some(iso_now()),
+        updated_at: Some(iso_now()),
         created_from: recorded_creation(path, origin),
         ..WorktreeMetadata::default()
     };
@@ -232,6 +260,7 @@ pub fn record_sync_tip(git_root: &Path, path: &Path, tip: &str) -> Result<()> {
             return Ok(((), false));
         };
         record.metadata.created_from = Some(tip.to_string());
+        record.metadata.updated_at = Some(iso_now());
         Ok(((), true))
     })
 }

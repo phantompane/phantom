@@ -17,6 +17,8 @@ use crate::trust::{self, HookControl};
 
 #[derive(Debug, Clone)]
 pub struct WorktreeInfo {
+    pub repo_root: PathBuf,
+    pub managed: bool,
     pub name: String,
     pub path: String,
     pub path_to_display: String,
@@ -141,6 +143,8 @@ pub fn list_worktrees(
             continue;
         }
         infos.push(WorktreeInfo {
+            repo_root: context.git_root.clone(),
+            managed: true,
             name: resolve_worktree_name(
                 path,
                 &context.worktrees_directory,
@@ -205,6 +209,10 @@ fn info_from_git(
         &short_head,
     );
     WorktreeInfo {
+        repo_root: context.git_root.clone(),
+        managed: !paths::same_location(&original, &context.git_root)
+            && (recorded_path.is_some()
+                || paths::is_strictly_inside(&path, &context.worktrees_directory)),
         name,
         path: path.to_string_lossy().into_owned(),
         path_to_display: paths::list_path(&path),
@@ -400,9 +408,10 @@ fn select_worktree(mut worktrees: Vec<WorktreeInfo>, name: &str) -> Result<Workt
         [found] => return Ok(found.clone()),
         [] => {}
         _ => {
-            return Err(Error::msg(format!(
-                "More than one workspace is named '{name}'."
-            )));
+            return Err(Error::Status {
+                code: "ambiguous",
+                message: format!("More than one workspace is named '{name}'."),
+            });
         }
     }
     let branches = worktrees
@@ -412,9 +421,12 @@ fn select_worktree(mut worktrees: Vec<WorktreeInfo>, name: &str) -> Result<Workt
     match branches.as_slice() {
         [found] => Ok(found.clone()),
         [] => Err(Error::WorktreeNotFound(name.to_string())),
-        _ => Err(Error::msg(format!(
+        _ => Err(Error::Status {
+            code: "ambiguous",
+            message: format!(
             "Branch '{name}' matches more than one workspace. Use the workspace directory name."
-        ))),
+        ),
+        }),
     }
 }
 
@@ -448,13 +460,39 @@ pub fn find_worktree(
     Ok(found)
 }
 
-fn find_including_orphaned(
+pub fn find_including_orphaned(
     context: &Context,
     name: &str,
     exclude_default: bool,
     expected_path: Option<&Path>,
 ) -> Result<WorktreeInfo> {
     let listed = list_worktrees(context, false, true)?;
+    if name == "."
+        || name.starts_with("pr:")
+        || name.starts_with("issue:")
+        || name.starts_with("https://")
+        || name.starts_with("http://")
+    {
+        let mut matches = crate::selectors::matches(context, &listed, name)?;
+        matches.retain(|tree| {
+            expected_path.is_none_or(|path| paths::same_location(Path::new(&tree.path), path))
+        });
+        return match matches.as_slice() {
+            [found] if exclude_default && found.is_default => Err(Error::Status {
+                code: "primary",
+                message: "The primary checkout cannot be selected for this operation".into(),
+            }),
+            [found] => Ok(found.clone()),
+            [] => Err(Error::WorktreeNotFound(name.into())),
+            _ => Err(Error::Status {
+                code: "ambiguous",
+                message: format!(
+                    "Selector '{name}' matches multiple workspaces; use a workspace name"
+                ),
+            }),
+        };
+    }
+    validate_worktree_name(name)?;
     let live_match = listed
         .iter()
         .any(|worktree| !worktree.orphaned && same_worktree(worktree, name));
@@ -1635,8 +1673,8 @@ fn copy_error(relative: &Path, error: impl std::fmt::Display) -> Error {
 /// Machine-readable workspace. Field names are camelCase, matching `repo list --json`.
 ///
 /// `base` is set when the command that produced the object knows the starting
-/// commit-ish (create, and GitHub issue/PR checkout). List, where, attach, and
-/// delete leave it null. `purpose`, `createdAt`, `createdFrom`, and `links`
+/// commit-ish (create, and GitHub issue/PR checkout), otherwise it is the recorded
+/// base. `purpose`, `createdAt`, `updatedAt`, `createdFrom`, and `links`
 /// come from the repository metadata store.
 /// `createdFrom` is the full creation commit, or null when the record has
 /// none. Cleanup fields such as
@@ -1645,14 +1683,18 @@ fn copy_error(relative: &Path, error: impl std::fmt::Display) -> Error {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeJson {
+    pub current: bool,
+    pub repo: crate::selectors::RepoJson,
+    pub managed: bool,
+    pub upstream: Option<crate::selectors::UpstreamJson>,
     pub name: String,
     pub path: String,
     pub branch: Option<String>,
     pub head: Option<String>,
     pub base: Option<String>,
-    pub dirty: bool,
+    pub dirty: Option<bool>,
     pub kind: &'static str,
-    pub detached: bool,
+    pub detached: Option<bool>,
     pub orphaned: bool,
     #[serde(flatten)]
     pub metadata: metadata::WorktreeMetadata,
@@ -1746,6 +1788,10 @@ pub struct DeleteOutput {
 impl WorktreeInfo {
     pub fn to_json(&self, base: Option<String>) -> WorktreeJson {
         WorktreeJson {
+            current: crate::selectors::is_current(Path::new(&self.path)),
+            repo: crate::selectors::repo_json(&self.repo_root),
+            managed: self.managed,
+            upstream: crate::selectors::upstream(self),
             name: self.name.clone(),
             path: absolute_path(&self.path),
             branch: if self.detached || self.orphaned {
@@ -1755,13 +1801,13 @@ impl WorktreeInfo {
             },
             head: self.head.clone(),
             base: base.or_else(|| self.metadata.base.clone()),
-            dirty: !self.is_clean,
+            dirty: (!self.orphaned).then_some(!self.is_clean),
             kind: if self.is_default {
                 "primary"
             } else {
                 "workspace"
             },
-            detached: self.detached,
+            detached: (!self.orphaned).then_some(self.detached),
             orphaned: self.orphaned,
             metadata: metadata::WorktreeMetadata {
                 base: None,
@@ -1846,6 +1892,8 @@ mod tests {
 
     fn sample(name: &str, branch: &str) -> WorktreeInfo {
         WorktreeInfo {
+            repo_root: PathBuf::from("/repo"),
+            managed: false,
             name: name.to_string(),
             path: format!("/worktrees/{name}"),
             path_to_display: name.to_string(),

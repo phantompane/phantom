@@ -29,6 +29,7 @@ pub mod process;
 pub mod projects;
 pub mod repository;
 mod runtime;
+mod selectors;
 pub mod sync;
 mod tracking;
 pub mod trust;

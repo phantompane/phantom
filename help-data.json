@@ -13,8 +13,12 @@
       "description": "List all workspaces"
     },
     {
-      "name": "where",
-      "description": "Output the filesystem path of a specific workspace"
+      "name": "show",
+      "description": "Inspect a workspace and its intent and observed state"
+    },
+    {
+      "name": "path",
+      "description": "Output only the filesystem path of a workspace"
     },
     {
       "name": "delete",
@@ -37,8 +41,8 @@
       "description": "Execute a command in a workspace directory"
     },
     {
-      "name": "meta",
-      "description": "Record workspace purpose and links"
+      "name": "set",
+      "description": "Update workspace purpose, base and links"
     },
     {
       "name": "config",
@@ -308,11 +312,6 @@
           "example": "--repo ~/src/repo"
         },
         {
-          "name": "no-default",
-          "type": "boolean",
-          "description": "Exclude the primary checkout from the list"
-        },
-        {
           "name": "names",
           "type": "boolean",
           "description": "Output only workspace names (for scripts and automation)"
@@ -337,6 +336,21 @@
           "short": "h",
           "type": "boolean",
           "description": "Show text help"
+        },
+        {
+          "name": "kind",
+          "type": "string",
+          "description": "Filter by workspace or primary"
+        },
+        {
+          "name": "paths",
+          "type": "boolean",
+          "description": "Output only absolute paths, one per line"
+        },
+        {
+          "name": "all-repos",
+          "type": "boolean",
+          "description": "List repositories known to repo list; JSON adds data.repos. Cannot be combined with --repo."
         }
       ],
       "examples": [
@@ -350,70 +364,14 @@
         },
         {
           "description": "List only workspaces",
-          "command": "mabo list --no-default"
+          "command": "mabo list --kind workspace"
         }
       ],
       "notes": [
-        "Shows all workspaces with their paths and associated branches",
-        "Includes records whose workspace is unregistered and directory is missing, marked [orphaned] (orphaned: true in JSON)",
-        "The primary checkout is included unless --no-default is set",
-        "The primary checkout is marked as '(bare)' if using a bare repository",
-        "Use --names for scripts and automation",
-        "--json cannot be combined with --names. The JSON schema is documented in the README",
-        "The human list prints the purpose when set",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
-      ]
-    },
-    "where": {
-      "name": "where",
-      "description": "Output the filesystem path of a specific workspace",
-      "usage": "mabo where [--repo <ref>] <workspace-name> [options]",
-      "options": [
-        {
-          "name": "repo",
-          "short": "R",
-          "type": "string",
-          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
-          "example": "--repo owner/repo"
-        },
-        {
-          "name": "json",
-          "type": "boolean",
-          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
-        },
-        {
-          "name": "output",
-          "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
-        },
-        {
-          "name": "no-input",
-          "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
-        },
-        {
-          "name": "help",
-          "short": "h",
-          "type": "boolean",
-          "description": "Show text help"
-        }
-      ],
-      "examples": [
-        {
-          "description": "Get the path of a workspace",
-          "command": "mabo where feature-auth"
-        },
-        {
-          "description": "Change directory to a workspace",
-          "command": "cd $(mabo where staging)"
-        }
-      ],
-      "notes": [
-        "Outputs only the path, making it suitable for use in scripts",
-        "Exits 3 if the workspace does not exist",
-        "--json prints the workspace object instead of the bare path. The schema is documented in the README",
-        "Orphaned names are refused because the workspace directory is gone",
-        "where reads metadata without changing workspace records",
+        "Includes the primary checkout (kind:primary); filter with --kind workspace or --kind primary.",
+        "Human output has a repository header and current (*), name, branch, ahead/behind, upstream:gone, dirty, PR/issue and purpose columns.",
+        "Includes orphaned records, marked [orphaned] and orphaned:true in JSON.",
+        "--names and --paths select text output even with MABO_OUTPUT=json. They cannot be combined with each other or explicit JSON.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
@@ -495,6 +453,7 @@
         }
       ],
       "notes": [
+        "SEL is a name, . (the checkout containing cwd), pr:N, issue:N, or a PR/issue URL. PR and issue selectors find already-linked workspaces only. No match exits 3; multiple matches exit 2 (ambiguous). A dot selector with a different --repo exits 2. Outside any repository exits 3.",
         "An orphaned record (no Git registration and no directory) is removed without hooks or branch changes. A live match takes precedence. JSON reports workspace.orphaned: true and branchDeleted: false",
         "By default, deletion will fail if the workspace has uncommitted changes",
         "By default, deletion will fail if the branch has commits that are not on the default branch or any remote, or if that check cannot be completed. --keep-branch still deletes the workspace and leaves the branch",
@@ -693,13 +652,13 @@
     "exec": {
       "name": "exec",
       "description": "Execute a command in a workspace directory",
-      "usage": "mabo exec [--repo <ref>] <workspace-name> <command> [args...]",
+      "usage": "mabo exec [--repo <ref>] [SEL] -- COMMAND [ARG...]",
       "options": [
         {
           "name": "repo",
           "short": "R",
           "type": "string",
-          "description": "Repository to operate on instead of the current directory. Put this before the workspace name. Everything after the workspace name is passed to the command, including options such as --repo. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
+          "description": "Select the repository; put this before SEL. Child arguments follow the required -- separator.",
           "example": "--repo owner/repo"
         },
         {
@@ -716,145 +675,24 @@
       ],
       "examples": [
         {
-          "description": "Run npm test in a workspace",
-          "command": "mabo exec feature-auth npm test"
+          "command": "mabo exec -- git status",
+          "description": "Run in the current checkout"
         },
         {
-          "description": "Check git status in a workspace",
-          "command": "mabo exec bugfix-123 git status"
+          "command": "mabo exec feature-auth -- npm test",
+          "description": "Run in a named workspace"
         },
         {
-          "description": "Pass the command's own options through",
-          "command": "mabo exec feature git branch --show-current"
-        },
-        {
-          "description": "Run in another repo and pass --repo through to the command",
-          "command": "mabo exec --repo owner/repo feature pwd --repo y"
-        },
-        {
-          "description": "Run a complex command with arguments",
-          "command": "mabo exec staging npm run build -- --production"
+          "command": "mabo -R owner/repo exec pr:774 -- git status",
+          "description": "Run in an already-linked workspace"
         }
       ],
       "notes": [
-        "The command is executed with the workspace directory as the working directory",
-        "Put --repo before the workspace name. All arguments after the workspace name are passed to the command, including options. A -- before the command is accepted but not required",
-        "The exit code of the executed command is preserved",
+        "SEL is a name, . (the checkout containing cwd), pr:N, issue:N, or a PR/issue URL. PR and issue selectors find already-linked workspaces only. No match exits 3; multiple matches exit 2 (ambiguous). A dot selector with a different --repo exits 2. Outside any repository exits 3.",
+        "SEL defaults to .; -- before COMMAND is required. Put --repo before SEL. Every argument after -- is passed unchanged to the child.",
+        "The child exit code and stdin are preserved. MABO_OUTPUT is ignored; explicit --json is refused.",
         "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
-        "Orphaned names are refused because the workspace directory is gone",
-        "exec reads metadata without changing workspace records"
-      ]
-    },
-    "meta": {
-      "name": "meta",
-      "usage": "mabo meta <subcommand>",
-      "description": "Show or update workspace purpose and links",
-      "examples": [
-        {
-          "command": "mabo meta set feature-auth --purpose 'fix flaky checkout' --pr 774",
-          "description": "Record a purpose and linked pull request"
-        }
-      ],
-      "notes": [
-        "Subcommands:",
-        "  set <name>   Set purpose or links on a workspace",
-        "",
-        "Records live in maboroshi/workspaces/<id>.json under the Git common directory inside the repository. delete removes the record for the workspace."
-      ],
-      "options": [
-        {
-          "name": "repo",
-          "short": "R",
-          "type": "string",
-          "description": "Select a repository by path, registered ID, canonical host/owner/repo name, or an unambiguous name suffix. May precede the command. For exec, put it before the workspace name."
-        },
-        {
-          "name": "no-input",
-          "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
-        },
-        {
-          "name": "help",
-          "short": "h",
-          "type": "boolean",
-          "description": "Show text help"
-        }
-      ]
-    },
-    "meta set": {
-      "name": "meta set",
-      "usage": "mabo meta set [--repo <ref>] <workspace-name> [options]",
-      "description": "Set purpose or links on an existing workspace",
-      "options": [
-        {
-          "name": "repo",
-          "short": "R",
-          "type": "string",
-          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
-          "example": "--repo owner/repo"
-        },
-        {
-          "name": "purpose",
-          "type": "string",
-          "description": "Replace the recorded purpose",
-          "example": "--purpose 'fix the flake'"
-        },
-        {
-          "name": "pr",
-          "type": "string",
-          "description": "Replace the linked pull request. A number or an http(s) URL",
-          "example": "--pr 774"
-        },
-        {
-          "name": "issue",
-          "type": "string",
-          "description": "Replace the linked issue. A number or an http(s) URL",
-          "example": "--issue 12"
-        },
-        {
-          "name": "json",
-          "type": "boolean",
-          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
-        },
-        {
-          "name": "base",
-          "type": "string",
-          "description": "Set and validate the base ref used by sync; stored as a full ref name",
-          "example": "--base origin/main"
-        },
-        {
-          "name": "output",
-          "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
-        },
-        {
-          "name": "no-input",
-          "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
-        },
-        {
-          "name": "help",
-          "short": "h",
-          "type": "boolean",
-          "description": "Show text help"
-        }
-      ],
-      "examples": [
-        {
-          "command": "mabo meta set feature-auth --purpose 'land the fix'",
-          "description": "Change the purpose and leave links as they are"
-        },
-        {
-          "command": "mabo meta set feature-auth --pr https://github.com/phantompane/phantom/pull/774 --json",
-          "description": "Link a pull request and print the workspace object"
-        }
-      ],
-      "notes": [
-        "At least one of --purpose, --pr, --issue, or --base is required",
-        "Omitted fields keep their current values. A workspace with no record yet gets createdAt",
-        "The workspace must already exist. A missing name exits 3",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
-        "Workspace records use schema 2 and ws_<uuid v4> IDs. Each file is replaced atomically. Concurrent first registrations for the same path use the oldest createdAt, then the smallest ID; all fields come from that record. The next write removes extra files. The first write imports legacy worktrees.json and renames it to worktrees.json.imported; read-only commands can read the legacy file before import."
+        "exec reads records without rewriting or importing them. Orphaned workspaces are refused."
       ]
     },
     "config": {
@@ -1642,6 +1480,7 @@
         }
       ],
       "notes": [
+        "SEL is a name, . (the checkout containing cwd), pr:N, issue:N, or a PR/issue URL. PR and issue selectors find already-linked workspaces only. No match exits 3; multiple matches exit 2 (ambiguous). A dot selector with a different --repo exits 2. Outside any repository exits 3.",
         "sync validates all metadata before fetching or updating. After any item changes, a failure, conflict, or published refusal exits 6. Without changes, failures exit 1, conflicts 5, and published refusals 4. Usage errors exit 2",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
@@ -1834,6 +1673,190 @@
       ],
       "notes": [
         "Text is the same as --help. JSON data is generated directly from help-data.json and includes every command, flag, exit code, error code and envelope schema. A selected command is also included in data.selected."
+      ]
+    },
+    "show": {
+      "name": "show",
+      "description": "Inspect a workspace and its intent and observed state",
+      "usage": "mabo show [--repo <ref>] [SEL] [options]",
+      "options": [
+        {
+          "name": "repo",
+          "short": "R",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--repo owner/repo"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+        },
+        {
+          "name": "help",
+          "short": "h",
+          "type": "boolean",
+          "description": "Show text help"
+        }
+      ],
+      "examples": [
+        {
+          "command": "mabo show pr:774",
+          "description": "Select an already-linked workspace"
+        },
+        {
+          "command": "mabo show",
+          "description": "Inspect the current checkout"
+        }
+      ],
+      "notes": [
+        "SEL is a name, . (the checkout containing cwd), pr:N, issue:N, or a PR/issue URL. PR and issue selectors find already-linked workspaces only. No match exits 3; multiple matches exit 2 (ambiguous). A dot selector with a different --repo exits 2. Outside any repository exits 3.",
+        "SEL defaults to .; the primary checkout and other unrecorded checkouts report managed:false. Reads never import or rewrite workspace records.",
+        "JSON returns data.workspace with id, name, kind, path, current, repo, managed, orphaned, branch, head, detached, dirty, base, createdFrom, upstream, purpose, links, createdAt and updatedAt. Unknown values are null.",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+      ]
+    },
+    "path": {
+      "name": "path",
+      "description": "Output only the filesystem path of a workspace",
+      "usage": "mabo path [--repo <ref>] [SEL] [options]",
+      "options": [
+        {
+          "name": "repo",
+          "short": "R",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--repo owner/repo"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+        },
+        {
+          "name": "help",
+          "short": "h",
+          "type": "boolean",
+          "description": "Show text help"
+        }
+      ],
+      "examples": [
+        {
+          "command": "mabo path pr:774",
+          "description": "Select an already-linked workspace"
+        },
+        {
+          "command": "mabo path",
+          "description": "Inspect the current checkout"
+        }
+      ],
+      "notes": [
+        "SEL is a name, . (the checkout containing cwd), pr:N, issue:N, or a PR/issue URL. PR and issue selectors find already-linked workspaces only. No match exits 3; multiple matches exit 2 (ambiguous). A dot selector with a different --repo exits 2. Outside any repository exits 3.",
+        "SEL defaults to .; the primary checkout and other unrecorded checkouts report managed:false. Reads never import or rewrite workspace records.",
+        "JSON returns data.path; text outputs only the path.",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+      ]
+    },
+    "set": {
+      "name": "set",
+      "usage": "mabo set [--repo <ref>] [SEL] [options]",
+      "description": "Update workspace purpose, base and links",
+      "options": [
+        {
+          "name": "repo",
+          "short": "R",
+          "type": "string",
+          "description": "Repository to operate on instead of the current directory. It may appear with the other options. A value starting with /, ., or ~ is a directory inside the repository, including a linked workspace, and resolves to the primary checkout. Any other value matches a known repo's canonical host/owner/repo name, the directory name from repo list, or an unambiguous suffix such as owner/repo or repo",
+          "example": "--repo owner/repo"
+        },
+        {
+          "name": "purpose",
+          "type": "string",
+          "description": "Replace the recorded purpose",
+          "example": "--purpose 'fix the flake'"
+        },
+        {
+          "name": "pr",
+          "type": "string",
+          "description": "Replace the linked pull request. A number or an http(s) URL",
+          "example": "--pr 774"
+        },
+        {
+          "name": "issue",
+          "type": "string",
+          "description": "Replace the linked issue. A number or an http(s) URL",
+          "example": "--issue 12"
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "description": "Alias for --output json: one schema 2 envelope (schema, command, ok, data, warnings, error) on stdout. Progress and child output go to stderr"
+        },
+        {
+          "name": "base",
+          "type": "string",
+          "description": "Set and validate the base ref used by sync; stored as a full ref name",
+          "example": "--base origin/main"
+        },
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+        },
+        {
+          "name": "no-input",
+          "type": "boolean",
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+        },
+        {
+          "name": "help",
+          "short": "h",
+          "type": "boolean",
+          "description": "Show text help"
+        },
+        {
+          "name": "unset",
+          "type": "string",
+          "description": "Clear purpose, base, pr or issue. Supply several fields or repeat the flag to clear several fields. Cannot set and unset the same field."
+        }
+      ],
+      "examples": [
+        {
+          "command": "mabo set feature-auth --purpose 'land the fix'",
+          "description": "Change the purpose and leave links as they are"
+        },
+        {
+          "command": "mabo set feature-auth --pr https://github.com/phantompane/phantom/pull/774 --json",
+          "description": "Link a pull request and print the workspace object"
+        }
+      ],
+      "notes": [
+        "SEL is a name, . (the checkout containing cwd), pr:N, issue:N, or a PR/issue URL. PR and issue selectors find already-linked workspaces only. No match exits 3; multiple matches exit 2 (ambiguous). A dot selector with a different --repo exits 2. Outside any repository exits 3.",
+        "SEL defaults to .; at least one of --purpose, --base, --pr, --issue or --unset is required. Omitted fields keep their values. --unset base records an unknown base without choosing a default.",
+        "The workspace must already exist. A missing name exits 3",
+        "--base validates an existing ref and stores its full ref name; commit bases remain supported.",
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
+        "Workspace records use schema 2 and ws_<uuid v4> IDs. Each file is replaced atomically. Concurrent first registrations for the same path use the oldest createdAt, then the smallest ID; all fields come from that record. The next write removes extra files. The first write imports legacy worktrees.json and renames it to worktrees.json.imported; read-only commands can read the legacy file before import."
       ]
     }
   },
