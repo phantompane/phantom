@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table};
@@ -231,12 +230,10 @@ fn untrusted(project: &str, setup: &[String], pre_remove: &[String]) -> Error {
 }
 
 fn confirm(project: &str, setup: &[String], pre_remove: &[String], question: &str) -> Result<bool> {
-    let mut stderr = std::io::stderr().lock();
-    writeln!(stderr, "Project: {}", visible_text(project)).map_err(prompt_io)?;
-    writeln!(stderr, "{}", format_hooks(setup, pre_remove)).map_err(prompt_io)?;
-    write!(stderr, "{question} ").map_err(prompt_io)?;
-    stderr.flush().map_err(prompt_io)?;
-    drop(stderr);
+    crate::output::errln!("Project: {}", visible_text(project));
+    crate::output::errln!("{}", format_hooks(setup, pre_remove));
+    crate::output::stderr(format_args!("{question} "));
+    crate::output::check_stderr()?;
     let mut line = String::new();
     std::io::stdin().read_line(&mut line).map_err(prompt_io)?;
     Ok(answer_is_yes(&line))

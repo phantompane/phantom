@@ -135,6 +135,228 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim_end().to_string()
 }
 
+// Close the reader before spawning, so even a short help page deterministically
+// hits EPIPE instead of depending on scheduling or the platform's pipe capacity.
+fn closed_pipe() -> std::io::PipeWriter {
+    let (reader, writer) = std::io::pipe().expect("pipe");
+    drop(reader);
+    writer
+}
+
+fn assert_closed_stdout(repo: &Repo, args: &[&str], expected: i32) {
+    let output = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), args)
+        .stdout(closed_pipe())
+        .output()
+        .expect("mabo with closed stdout");
+    let stderr = text(&output.stderr);
+    assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
+    assert_eq!(output.status.code(), Some(expected), "{args:?}: {stderr}");
+}
+
+#[test]
+fn broken_pipe_help_stdout_preserves_success() {
+    let repo = Repo::new();
+    for args in [vec!["help", "--json"], vec!["help"], vec!["--help"]] {
+        assert_closed_stdout(&repo, &args, 0);
+    }
+}
+
+#[test]
+fn broken_pipe_large_list_stdout_preserves_success() {
+    let repo = Repo::new();
+    for index in 0..16 {
+        let path = repo.root.join(format!("workspace-{index}"));
+        repo.git(&[
+            "worktree",
+            "add",
+            "--detach",
+            path.to_str().unwrap(),
+            "HEAD",
+        ]);
+        maboroshi::metadata::write(
+            &repo.repo,
+            &path,
+            &maboroshi::metadata::MetadataInput {
+                purpose: Some("x".repeat(1024)),
+                ..Default::default()
+            },
+        )
+        .expect("workspace metadata");
+    }
+    for args in [vec!["list"], vec!["list", "--json"]] {
+        let normal = repo.mabo(&args);
+        assert!(normal.status.success(), "{}", text(&normal.stderr));
+        assert!(normal.stdout.len() > 16 * 1024, "large output fixture");
+        assert_closed_stdout(&repo, &args, 0);
+    }
+}
+
+#[test]
+fn broken_pipe_stderr_preserves_success_and_usage_status() {
+    let repo = Repo::new();
+    fs::create_dir_all(repo.home.join(".config/maboroshi")).unwrap();
+    fs::write(
+        repo.home.join(".config/maboroshi/config.toml"),
+        "directory-name-separator = \"-\"\n",
+    )
+    .unwrap();
+    // The warning succeeds with status 0; usage writes diagnostics and help with
+    // status 2. Keep stdout available to catch accidental stream coupling.
+    for (args, expected) in [
+        (vec!["config", "list", "--json"], 0),
+        (vec!["not-a-command"], 2),
+    ] {
+        let normal = repo.mabo(&args);
+        assert_eq!(normal.status.code(), Some(expected));
+        assert!(!normal.stderr.is_empty());
+        let output = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .stderr(closed_pipe())
+            .output()
+            .unwrap();
+        assert!(!text(&output.stdout).contains("panicked"));
+        assert_eq!(output.status.code(), Some(expected), "{args:?}");
+        assert_eq!(output.stdout, normal.stdout);
+    }
+    assert_closed_stdout(&repo, &["not-a-command", "--json"], 2);
+}
+
+#[test]
+fn broken_pipe_progress_does_not_interrupt_create_or_setup() {
+    for json in [false, true] {
+        for (last_hook, expected, state) in [("true", 0, "ok"), ("exit 7", 6, "failed")] {
+            let repo = Repo::new();
+            fs::write(
+                repo.repo.join(".mabo.toml"),
+                format!("[hooks]\nsetup = [\"touch setup-completed\", \"{last_hook}\"]\n"),
+            )
+            .unwrap();
+            let args = if json {
+                vec!["create", "topic", "--json"]
+            } else {
+                vec!["create", "topic"]
+            };
+            let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), &args);
+            if json {
+                command.stderr(closed_pipe());
+            } else {
+                command.stdout(closed_pipe());
+            }
+            let output = command.output().unwrap();
+            assert!(!text(&output.stderr).contains("panicked"));
+            assert_eq!(
+                output.status.code(),
+                Some(expected),
+                "{}",
+                text(&output.stderr)
+            );
+            let shown = repo.mabo(&["show", "topic", "--json"]);
+            assert!(shown.status.success(), "{}", text(&shown.stderr));
+            let document: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+            let path = document["data"]["workspace"]["path"].as_str().unwrap();
+            assert!(Path::new(path).join("setup-completed").is_file());
+            assert_eq!(document["data"]["workspace"]["setup"]["state"], state);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn json_stderr_errors_are_included_before_emitting_the_envelope() {
+    let repo = Repo::new();
+    let args = ["config", "list", "--json"];
+    let normal = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &args)
+        .env("GIT_CONFIG_COUNT", "broken")
+        .output()
+        .unwrap();
+    assert!(normal.status.success(), "{}", text(&normal.stderr));
+    assert!(!normal.stderr.is_empty());
+    let expected = assert_envelope(&normal, "config list");
+    assert!(!expected["warnings"].as_array().unwrap().is_empty());
+
+    let output = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &args)
+        .env("GIT_CONFIG_COUNT", "broken")
+        .stderr(fs::File::options().write(true).open("/dev/full").unwrap())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let document = assert_envelope(&output, "config list");
+    assert_eq!(document["ok"], false);
+    assert_eq!(document["error"]["code"], "failed");
+    assert!(document["error"]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("Failed to write stderr: "));
+    assert_eq!(document["data"], expected["data"]);
+    assert_eq!(document["warnings"], expected["warnings"]);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn json_stderr_errors_preserve_mutations_and_override_partial_status() {
+    for last_hook in ["true", "exit 7"] {
+        let repo = Repo::new();
+        fs::write(
+            repo.repo.join(".mabo.toml"),
+            format!("[hooks]\nsetup = [\"touch setup-completed\", \"{last_hook}\"]\n"),
+        )
+        .unwrap();
+        let output = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &["create", "topic", "--json"])
+            .stderr(fs::File::options().write(true).open("/dev/full").unwrap())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let document = assert_envelope(&output, "create");
+        assert_eq!(document["ok"], false);
+        assert_eq!(document["error"]["code"], "failed");
+        assert!(document["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Failed to write stderr: "));
+        let workspace = &document["data"]["workspace"];
+        let path = workspace["path"].as_str().unwrap();
+        assert!(Path::new(path).join("setup-completed").is_file());
+        assert_eq!(
+            workspace["setup"]["state"],
+            if last_hook == "true" { "ok" } else { "failed" }
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn output_errors_other_than_broken_pipe_fail_without_panicking() {
+    let repo = Repo::new();
+    for args in [vec!["help"], vec!["help", "--json"], vec!["--help"]] {
+        let output = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .stdout(fs::File::options().write(true).open("/dev/full").unwrap())
+            .output()
+            .unwrap();
+        let stderr = text(&output.stderr);
+        assert!(!stderr.contains("panicked"), "{stderr}");
+        assert!(stderr.contains("Failed to write stdout:"), "{stderr}");
+        assert_eq!(output.status.code(), Some(1));
+    }
+    let output = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &["help"])
+        .stdout(fs::File::options().write(true).open("/dev/full").unwrap())
+        .stderr(closed_pipe())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let output = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &["not-a-command"])
+        .stderr(fs::File::options().write(true).open("/dev/full").unwrap())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+}
+
 fn mabo_color(
     repo: &Repo,
     args: &[&str],

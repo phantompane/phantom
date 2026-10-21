@@ -1,6 +1,7 @@
 #![cfg_attr(
     not(test),
     deny(
+        clippy::disallowed_macros,
         clippy::unwrap_used,
         clippy::expect_used,
         clippy::panic,
@@ -18,7 +19,7 @@ fn main() -> ExitCode {
         Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
         Err(error) => {
             let code = u8::try_from(error.exit_code()).unwrap_or(1);
-            eprintln!("Error: {error}");
+            maboroshi::output::stderr(format_args!("Error: {error}\n"));
             ExitCode::from(code)
         }
     }

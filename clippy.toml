@@ -1,0 +1,6 @@
+disallowed-macros = [
+    { path = "std::print", reason = "Use the shared output helpers to handle closed pipes without panicking." },
+    { path = "std::println", reason = "Use the shared output helpers to handle closed pipes without panicking." },
+    { path = "std::eprint", reason = "Use the shared output helpers to handle closed pipes without panicking." },
+    { path = "std::eprintln", reason = "Use the shared output helpers to handle closed pipes without panicking." },
+]

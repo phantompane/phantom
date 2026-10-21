@@ -1,5 +1,9 @@
 mod build_git;
 
+#[allow(
+    clippy::disallowed_macros,
+    reason = "Cargo consumes these build directives."
+)]
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=build_git.rs");
