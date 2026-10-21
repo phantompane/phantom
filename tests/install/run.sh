@@ -180,7 +180,9 @@ for layout in compact pretty; do
         print "]"
     }' > "$root/api/releases?per_page=100"
     bytes=$(wc -c < "$root/api/releases?per_page=100")
-    [ "$bytes" -ge 1000000 ] && [ "$bytes" -le 2000000 ] || fail "Unexpected large fixture size: $bytes"
+    if [ "$bytes" -lt 1000000 ] || [ "$bytes" -gt 2000000 ]; then
+        fail "Unexpected large fixture size: $bytes"
+    fi
     run 0
     assertVersion 7.1.0 "$HOME/.local/bin"
     run 0 --prerelease
@@ -278,13 +280,34 @@ contains "$root/gh-args" '/maboroshi-v7.0.0-linux-x64.tar.gz'
 [ "$(wc -l < "$root/gh-args" | tr -d ' ')" = 5 ] || fail 'Unexpected gh arguments'
 unset MABO_VERIFY_ATTESTATION
 rm "$root/tools/curl"
-if command -v wget >/dev/null 2>&1; then
+if command -v wget >/dev/null 2>&1 && wget --version 2>&1 | grep -q 'GNU Wget'; then
     ln -s "$(command -v wget)" "$root/tools/wget"
     run 0 --version 7.0.0
     assertVersion 7.0.0 "$HOME/.local/bin"
     rm "$root/tools/wget"
 fi
-runFail 1 'curl or wget' --version 7.0.0
+# Non-GNU wget must fail before any request, even if --version exits nonzero
+# (as BusyBox does). Keep both failure and successful version probes covered.
+cp "$HOME/.local/bin/mabo" "$root/before"
+cat > "$root/tools/wget" <<'SH'
+#!/bin/sh
+printf '%s\n' "$@" >> "$TEST_WGET_ARGS"
+printf 'BusyBox wget: unrecognized option --version\n' >&2
+exit "$TEST_WGET_VERSION_STATUS"
+SH
+chmod +x "$root/tools/wget"
+export TEST_WGET_ARGS="$root/wget-args"
+for TEST_WGET_VERSION_STATUS in 0 1; do
+    export TEST_WGET_VERSION_STATUS
+    : > "$TEST_WGET_ARGS"
+    runFail 1 'curl or GNU wget is required' --version 7.0.0
+    contains "$root/stderr" 'apk add curl'
+    [ "$(cat "$TEST_WGET_ARGS")" = --version ] || fail 'Requested download with non-GNU wget'
+    unchanged
+done
+unset TEST_WGET_ARGS TEST_WGET_VERSION_STATUS
+rm "$root/tools/wget"
+runFail 1 'curl or GNU wget' --version 7.0.0
 ln -s "$curlPath" "$root/tools/curl"
 rm "$root/tools/$shaName"
 runFail 1 'sha256sum or shasum' --version 7.0.0
@@ -324,6 +347,8 @@ runFail 1 'Invalid GitHub API response'
 
 # Pipe the actual script: commands must not consume its unread source bytes.
 status=0
+# Keep a pipe so the shell reads source from stdin, as with curl | sh.
+# shellcheck disable=SC2002
 cat "$installer" | MABO_VERSION=7.0.0 "$runner" > "$root/stdout" 2> "$root/stderr" || status=$?
 [ "$status" = 0 ] || fail 'Piped installer failed'
 assertVersion 7.0.0 "$HOME/.local/bin"
@@ -356,6 +381,10 @@ cat > "$root/http-tools/curl" <<'SH'
 #!/bin/sh
 set -eu
 client=${0##*/}
+if [ "$client" = wget ] && [ "${1-}" = --version ]; then
+    printf 'GNU Wget 1.21 (mock)\n'
+    exit 0
+fi
 auth=no
 secure=no
 redirectSafe=no
@@ -365,6 +394,12 @@ silent=no
 headers=no
 maxRedirect=no
 hstsDisabled=no
+connectTimeout=no
+speedLimit=no
+speedTime=no
+maxTime=no
+timeout=no
+tries=no
 if [ "$client" = curl ]; then
     [ "$1" = --disable ] || exit 90
 fi
@@ -375,6 +410,12 @@ while [ "$#" -gt 0 ]; do
         --proto) [ "$2" = '=https' ] || exit 91; secure=yes; shift 2 ;;
         --proto-redir) [ "$2" = '=https' ] || exit 91; redirectSafe=yes; shift 2 ;;
         --tlsv1.2) tls=yes; shift ;;
+        --connect-timeout) [ "$2" = 30 ] || exit 97; connectTimeout=yes; shift 2 ;;
+        --speed-limit) [ "$2" = 1 ] || exit 97; speedLimit=yes; shift 2 ;;
+        --speed-time) [ "$2" = 60 ] || exit 97; speedTime=yes; shift 2 ;;
+        --max-time) [ "$2" = 600 ] || exit 97; maxTime=yes; shift 2 ;;
+        --timeout=60) timeout=yes; shift ;;
+        --tries=1) tries=yes; shift ;;
         --no-hsts) hstsDisabled=yes; shift ;;
         --https-only) secure=yes; shift ;;
         --max-redirect=0) maxRedirect=yes; shift ;;
@@ -389,8 +430,10 @@ done
 [ "$config:$secure:$silent" = yes:yes:yes ] || exit 94
 if [ "$client" = curl ]; then
     [ "$redirectSafe:$tls" = yes:yes ] || exit 94
+    [ "$connectTimeout:$speedLimit:$speedTime:$maxTime" = yes:yes:yes:yes ] || exit 97
 else
     [ "$headers:$maxRedirect:$hstsDisabled" = yes:yes:yes ] || exit 94
+    [ "$timeout:$tries" = yes:yes ] || exit 97
 fi
 case $url in
     'https://mirror.invalid/api/releases?per_page=100')

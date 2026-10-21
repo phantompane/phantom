@@ -2,6 +2,7 @@
 # Official mabo installer. Re-run to update; pin with MABO_VERSION for reproducibility.
 # MABO_RELEASE_BASE_URL and MABO_API_URL are overrides for testing/mirrors;
 # they accept https:// URLs and local file:// URLs (copied without HTTP).
+# Requires curl or GNU wget; BusyBox wget is unsupported (Alpine: apk add curl).
 set -eu
 
 usage() {
@@ -13,6 +14,7 @@ Usage: sh install.sh [options]
   --verify-attestation   Require gh attestation verification (MABO_VERIFY_ATTESTATION=1)
   -h, --help             Show this help
 Re-run to update. Never prompts, uses sudo, or changes shell profiles.
+Requires curl or GNU wget (Alpine: apk add curl).
 USAGE
 }
 
@@ -42,9 +44,12 @@ download() {
             if [ "$downloader" = curl ]; then
                 if [ "${3-}" = api ] && [ -n "${GITHUB_TOKEN-}" ]; then
                     curl --disable -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+                        --connect-timeout 30 --speed-limit 1 --speed-time 60 --max-time 600 \
                         -H "Authorization: Bearer $GITHUB_TOKEN" -o "$2" "$1"
                 else
-                    curl --disable -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 -o "$2" "$1"
+                    curl --disable -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+                        --connect-timeout 30 --speed-limit 1 --speed-time 60 --max-time 600 \
+                        -o "$2" "$1"
                 fi
             else
                 downloadWget "$@"
@@ -61,9 +66,11 @@ downloadWget() (
         case $url in https://*) ;; *) exit 1 ;; esac
         if [ "$requestKind" = api ] && [ -n "${GITHUB_TOKEN-}" ]; then
             if wget --no-config --no-hsts --quiet --https-only --max-redirect=0 --server-response \
+                --timeout=60 --tries=1 \
                 --header="Authorization: Bearer $GITHUB_TOKEN" -O "$destination" "$url" 2> "$tmp/headers"; then return; fi
         else
             if wget --no-config --no-hsts --quiet --https-only --max-redirect=0 --server-response \
+                --timeout=60 --tries=1 \
                 -O "$destination" "$url" 2> "$tmp/headers"; then return; fi
         fi
         url=$(awk '
@@ -191,7 +198,9 @@ main() {
     while [ "$#" -gt 0 ]; do
         case $1 in
             --version|--install-dir)
-                [ "$#" -ge 2 ] && [ -n "$2" ] || usageError "$1 requires a value"
+                if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+                    usageError "$1 requires a value"
+                fi
                 case $1 in --version) version=$2 ;; --install-dir) installDir=$2 ;; esac
                 shift 2 ;;
             --prerelease) prerelease=1; shift ;;
@@ -217,8 +226,12 @@ main() {
         fail "Unsupported platform. See https://github.com/phantompane/phantom/releases or use: cargo install --git https://github.com/phantompane/phantom --tag ${version:-<tag>} --locked maboroshi"
     fi
     if command -v curl >/dev/null 2>&1; then downloader=curl
-    elif command -v wget >/dev/null 2>&1; then downloader=wget
-    else fail 'curl or wget is required.'; fi
+    elif command -v wget >/dev/null 2>&1; then
+        if ! wget --version 2>&1 | grep -q 'GNU Wget'; then
+            fail 'curl or GNU wget is required; this wget is unsupported. On Alpine, run: apk add curl.'
+        fi
+        downloader=wget
+    else fail 'curl or GNU wget is required. On Alpine, run: apk add curl.'; fi
     if command -v sha256sum >/dev/null 2>&1; then hasher=sha256sum
     elif command -v shasum >/dev/null 2>&1; then hasher=shasum
     else fail 'sha256sum or shasum is required for checksum verification.'; fi
@@ -271,7 +284,9 @@ main() {
     mkdir "$tmp/extracted"
     tar -xzf "$tmp/$archive" -C "$tmp/extracted" mabo 2>/dev/null || fail 'Archive is missing a regular mabo executable or cannot be extracted.'
     binary=$tmp/extracted/mabo
-    [ -f "$binary" ] && [ ! -L "$binary" ] || fail 'Archive must contain a regular mabo executable.'
+    if [ ! -f "$binary" ] || [ -L "$binary" ]; then
+        fail 'Archive must contain a regular mabo executable.'
+    fi
     chmod 755 "$binary"
     reported=$("$binary" --version 2>/dev/null) || fail 'Downloaded mabo --version failed.'
     case $reported in
