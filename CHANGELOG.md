@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- `install.sh` installs and updates `mabo` with an exact version pin. Unpinned installs select stable v7 releases; prereleases require a pin or explicit opt-in. The installer always verifies SHA-256, optionally verifies GitHub artifact attestations, and replaces the binary atomically without sudo, prompts, or shell profile edits.
+- Release assets now include `SHA256SUMS` and `install.sh`, with GitHub artifact attestations for the archives, checksum file, and installer.
+
+### Changed
+
+- Linux release binaries are now static musl builds, supporting Alpine and older glibc distributions; previously they required glibc 2.34+. Asset names are unchanged.
 
 ## v7.0.0-alpha.7 (2026-10-22)
 

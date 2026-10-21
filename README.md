@@ -4,7 +4,71 @@ Maboroshi (幻, "phantom space") — workspaces for parallel coding agents.
 
 Maboroshi manages local Git workspaces so that many coding agents and humans can work independently in the same repository at the same time. A workspace is one checkout of one repository plus what Git doesn't track about it: its name, its purpose (pull request, issue, base), and its observed state. Today each checkout is a Git worktree.
 
-The Rust rewrite lives on `next` and ships as `v7.0.0-alpha` prereleases on [GitHub Releases](https://github.com/phantompane/phantom/releases) (it is not on npm yet). The previous TypeScript version stays on `main`; its README is at <https://github.com/phantompane/phantom/blob/main/README.md>.
+The Rust rewrite lives on `next` and ships as v7 releases on [GitHub Releases](https://github.com/phantompane/phantom/releases). The previous TypeScript version stays on `main`; its README is at <https://github.com/phantompane/phantom/blob/main/README.md>.
+
+## Installation
+
+For agents and CI, pin the installer and binary to the same release tag:
+
+```sh
+curl -fsSL https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh | MABO_VERSION=<TAG> sh
+```
+
+Replace `<TAG>` with a release tag, such as the newest `v7.*` on the [Releases page](https://github.com/phantompane/phantom/releases). `install.sh` and `SHA256SUMS` are published starting with the first release after v7.0.0-alpha.7; install older releases manually as described below. Pinned installs allow prereleases and make no GitHub API request.
+
+Without a version pin, the installer selects the newest stable v7 release, skipping v6:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/next/install.sh | sh
+```
+
+While only v7 prereleases exist, it stops and names the newest prerelease. To allow that prerelease:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/next/install.sh | sh -s -- --prerelease
+```
+
+Pass installer options with `sh -s -- [options]`; flags override environment variables.
+
+| Option | Environment variable | Behavior |
+|---|---|---|
+| `--version <TAG>` | `MABO_VERSION` | Exact release tag, with or without the leading `v` |
+| `--prerelease` | `MABO_PRERELEASE=1` | Allow the newest prerelease when unpinned |
+| `--install-dir <DIR>` | `MABO_INSTALL_DIR` | Install directory (default `~/.local/bin`) |
+| `--verify-attestation` | `MABO_VERIFY_ATTESTATION=1` | Also verify GitHub artifact provenance; requires `gh` and aborts if verification fails |
+
+`GITHUB_TOKEN` is optional, only for GitHub API rate limits on unpinned installs; it is not sent to asset downloads. The installer never prompts, uses no sudo, and does not edit shell profiles; it prints a PATH hint if needed. It always verifies SHA-256 and replaces the binary atomically. It refuses to replace a symlinked `mabo` managed by another tool; update with that tool or choose another install directory.
+
+Release binaries support Linux x64/arm64 (static musl builds for any distribution, including Alpine) and macOS x64/arm64. Windows is not supported; use WSL with the Linux binaries.
+
+### Other installation methods
+
+With mise, pin a v7 version: the repository's **Latest** release is still the v6 TypeScript `phantom`.
+
+```sh
+mise use github:phantompane/phantom@<VERSION>
+```
+
+Or build from source with Rust 1.89+ (the `rust-version` in `Cargo.toml`):
+
+```sh
+cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked maboroshi
+```
+
+For a manual install, download `maboroshi-v<VERSION>-<os>-<arch>.tar.gz` from Releases (`<VERSION>` omits the leading `v`; `<os>` is `linux` or `darwin`, and `<arch>` is `x64` or `arm64`). Each archive contains only `mabo`; extract it and place it in a directory on PATH. For releases after v7.0.0-alpha.7, download `SHA256SUMS` from the same release and verify before extracting. To verify provenance with `gh` and check SHA-256 on Linux, run these in the download directory, substituting your archive name:
+
+```sh
+gh attestation verify maboroshi-v<VERSION>-linux-x64.tar.gz --repo phantompane/phantom
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+`SHA256SUMS` covers all four archives and `install.sh`; `--ignore-missing` checks only files you downloaded. On macOS, use `shasum -a 256` to compare the archive's hash with its entry in `SHA256SUMS`. Older releases have no `SHA256SUMS` or artifact attestations.
+
+npm `@phantompane/cli` and Homebrew `phantom` remain the previous TypeScript `phantom` v6, not v7.
+
+### Updating
+
+Re-run the pinned installer command above with the new release tag. mise users update their version pin with mise; Cargo users rerun the source install command with the new tag; manual users replace the binary with the newly downloaded and verified one. `mabo` has no self-update command and does not check for updates or make network calls for update checks.
 
 ## Why
 

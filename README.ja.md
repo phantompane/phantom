@@ -4,7 +4,71 @@ Maboroshi（幻、"phantom space"）— 並列で働くコーディングエー�
 
 Maboroshi はローカルの Git ワークスペースを管理し、多数のコーディングエージェントと人間が、同じリポジトリで同時に独立して作業できるようにします。ワークスペースは、ひとつのリポジトリのひとつのチェックアウトに、Git が記録しない名前、目的（PR、issue、ベース）、観測した状態を加えたものです。現在、チェックアウトの実体は Git worktree です。
 
-Rust 版は `next` で開発し、[GitHub Releases](https://github.com/phantompane/phantom/releases) で `v7.0.0-alpha` 系のプレリリースを配布しています（npm ではまだ配布していません）。従来の TypeScript 版は `main` に残しており、その README は <https://github.com/phantompane/phantom/blob/main/README.md> にあります。
+Rust 版は `next` で開発し、[GitHub Releases](https://github.com/phantompane/phantom/releases) で v7 を配布しています。従来の TypeScript 版は `main` に残しており、その README は <https://github.com/phantompane/phantom/blob/main/README.md> にあります。
+
+## インストール
+
+エージェントや CI では、インストーラーとバイナリを同じリリースタグに固定します。
+
+```sh
+curl -fsSL https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh | MABO_VERSION=<TAG> sh
+```
+
+`<TAG>` は [Releases ページ](https://github.com/phantompane/phantom/releases) の最新の `v7.*` など、リリースタグに置き換えてください。`install.sh` と `SHA256SUMS` は v7.0.0-alpha.7 の次のリリースから配布します。それ以前は後述の方法で手動インストールしてください。バージョン固定時はプレリリースも指定でき、GitHub API にはアクセスしません。
+
+バージョンを固定しない場合は、v6 を除外して最新の v7 安定版を選びます。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/next/install.sh | sh
+```
+
+v7 がプレリリースのみの場合は、最新のプレリリース名を表示して停止します。そのプレリリースを許可するには、次のように実行します。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/next/install.sh | sh -s -- --prerelease
+```
+
+インストーラーのオプションは `sh -s -- [options]` で渡します。フラグは環境変数より優先します。
+
+| オプション | 環境変数 | 動作 |
+|---|---|---|
+| `--version <TAG>` | `MABO_VERSION` | リリースタグを指定（先頭の `v` は省略可） |
+| `--prerelease` | `MABO_PRERELEASE=1` | バージョン未固定時に最新のプレリリースを許可 |
+| `--install-dir <DIR>` | `MABO_INSTALL_DIR` | インストール先（既定は `~/.local/bin`） |
+| `--verify-attestation` | `MABO_VERIFY_ATTESTATION=1` | GitHub の成果物の来歴も検証。`gh` が必要で、検証失敗時は中止 |
+
+`GITHUB_TOKEN` は任意で、バージョン未固定時の GitHub API のレート制限対策にだけ使い、アセットのダウンロードには送信しません。インストーラーは入力を求めず、sudo を使わず、シェルの起動ファイルを編集しません。必要なら PATH 設定のヒントを表示します。必ず SHA-256 を検証し、バイナリをアトミックに置き換えます。別のツールが管理するシンボリックリンクの `mabo` は置き換えを拒否するため、そのツールで更新するか、別のインストール先を指定してください。
+
+配布バイナリは Linux x64/arm64（static musl ビルドで Alpine を含む各ディストリビューションに対応）と macOS x64/arm64 に対応します。Windows は未対応です。WSL では Linux バイナリを使ってください。
+
+### その他のインストール方法
+
+mise では v7 のバージョンを固定してください。リポジトリの **Latest** リリースは、まだ v6 の TypeScript 版 `phantom` です。
+
+```sh
+mise use github:phantompane/phantom@<VERSION>
+```
+
+Rust 1.89 以降（`Cargo.toml` の `rust-version`）でソースからビルドすることもできます。
+
+```sh
+cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked maboroshi
+```
+
+手動でインストールする場合は、Releases から `maboroshi-v<VERSION>-<os>-<arch>.tar.gz` をダウンロードします（`<VERSION>` は先頭の `v` を除いたもの、`<os>` は `linux` または `darwin`、`<arch>` は `x64` または `arm64`）。アーカイブの中身は `mabo` のみです。展開して PATH の通ったディレクトリに配置してください。v7.0.0-alpha.7 より後のリリースでは、同じリリースの `SHA256SUMS` もダウンロードし、展開前に検証します。`gh` で来歴を検証し、Linux で SHA-256 を確認するには、ダウンロード先でアーカイブ名を置き換えて次を実行します。
+
+```sh
+gh attestation verify maboroshi-v<VERSION>-linux-x64.tar.gz --repo phantompane/phantom
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+`SHA256SUMS` は4つのアーカイブと `install.sh` を対象とし、`--ignore-missing` はダウンロード済みのファイルだけを確認します。macOS では `shasum -a 256` でアーカイブのハッシュを求め、`SHA256SUMS` の該当行と比較してください。それ以前のリリースには `SHA256SUMS` と成果物のアテステーションはありません。
+
+npm の `@phantompane/cli` と Homebrew の `phantom` は、従来の TypeScript 版 `phantom` v6 のままで、v7 ではありません。
+
+### 更新
+
+上記の固定インストールコマンドを、新しいリリースタグで再実行します。mise を使う場合は mise で固定バージョンを更新し、Cargo を使う場合は新しいタグでソースインストールのコマンドを再実行してください。手動の場合は、新しくダウンロード・検証したバイナリに置き換えます。`mabo` に自己更新コマンドはなく、更新の確認や、そのためのネットワークアクセスも行いません。
 
 ## なぜ必要か
 
