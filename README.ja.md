@@ -16,7 +16,7 @@ Git はコードとチェックアウトを記録します。しかし、その�
 
 Maboroshi はワークスペースを作成し、既存の作業を引き継いで準備し、ベースの変更に追従させ、片付けます。
 
-- **確保と準備。** `clone` は ghq のディレクトリ構成でリポジトリを配置します。`create`、`attach`、`github checkout`（別名 `gh checkout`）は、作業ごとに専用のワークスペースを用意し、`.worktreeinclude` で指定した Git の無視対象ファイルをコピーして、信頼済みのリポジトリでプロジェクトフックを実行します。
+- **確保と準備。** `clone` は ghq のディレクトリ構成でリポジトリを配置します。`create`は、作業ごとに専用のワークスペースを用意し、`.worktreeinclude` で指定した Git の無視対象ファイルをコピーして、信頼済みのリポジトリでプロジェクトフックを実行します。
 - **情報の記録。** `set` で目的、関連するプルリクエストや issue、ベースを記録します。`list` と `show` で、何がどこにあるかを確認できます。
 - **更新。** `sync` は fetch し、可能ならデフォルトブランチを fast-forward して、選択したワークスペースにベースの変更を取り込みます。
 - **片付け。** `gc` はマージ済みブランチ、クローズ済みのプルリクエスト、孤立したレコード、経過時間（`--older-than`）を根拠に対象を選びます。
@@ -28,7 +28,7 @@ Maboroshi はワークスペースを作成し、既存の作業を引き継い�
 - **マージ済み、クローズ済み、古い、という状態は判断材料であり、削除してよいという許可ではありません。** `gc` は `--apply` または `--force` を指定するまで、削除予定を表示するだけです（`--force` は適用も兼ねます）。`--force` がなければ、未コミットの変更がある作業や、公開済みまたは取り込み済みと確認できないコミットを保護します。デフォルトブランチのワークスペース、実行中のカレントディレクトリがあるワークスペース、Git でロックされたワークスペースは、`--force` があっても保護します。
 - **一括操作はすべてのワークスペースが対象です。** `sync --all` はリポジトリ内の全ワークスペースを選び、`--no-default` がなければデフォルトブランチも更新します。対象を絞るには名前を明示してください。`gc` は根拠と経過時間で候補を選び、未コミットの変更や保存されていないコミットの保護は維持します。
 - **push 済みの履歴は既定で保ちます。** 変更の取り込みが必要な場合、`sync` は公開済みの作業にベースをマージします。リベースには `--rebase --force` が必要です。ベースに含まれないコミットがひとつでも、既知のリモート追跡参照または fetch 先として設定された参照から到達可能なら、公開済みとして扱います。
-- **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust add` で信頼を記録するか、`--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。`--exec` と単体 `exec` は標準入力を引き継ぎます。
+- **非対話実行では、mabo 自身がプロンプトで入力を待つことはありません。** `CI` が空でないとき、JSON 出力、`--no-input`、空でも `0` でもない `MABO_NO_INPUT`、標準入力または標準エラー出力が端末でないときが該当します。未信頼のフックを実行する必要がある操作は、変更前に終了コード 4（`untrusted`）で拒否します。`gc` はそのフックが必要な削除をスキップし、スキップ自体はエラーにしません。`mabo trust add` で信頼を記録するか、`--no-hooks` で省略してください。ネットワーク Git 操作には `GIT_TERMINAL_PROMPT=0` を設定し、プロジェクトフックと gh の標準入力には `/dev/null` を渡します。単体 `exec` は標準入力を引き継ぎます。
 
 ## 目指さないこと
 
@@ -51,7 +51,7 @@ Maboroshi が担わない役割は次のとおりです。
 {"schema":2,"command":"list","ok":true,"data":{"workspaces":[]},"warnings":[],"error":null}
 ```
 
-標準出力には envelope を1件だけ出し、進捗・フック・Git・`--exec` の出力は標準エラー出力へ出します。`data` はコマンド結果を含み、最上位の `schema` は含みません。アプリケーションのバージョンを示す `data.version` を持つのは `--version` だけです。`command` は `github checkout` のような空白区切りの名前です。エラーは `{code,message,details?}`、警告は `{code,message}` です。部分的な結果は `data` に残り、gc の dry-run では `data.plan: true` を返します。パーサーは未知のフィールドを無視してください。
+標準出力には envelope を1件だけ出し、進捗・フック・Git の出力は標準エラー出力へ出します。`data` はコマンド結果を含み、最上位の `schema` は含みません。アプリケーションのバージョンを示す `data.version` を持つのは `--version` だけです。`command` は `repo list` のような空白区切りの名前です。エラーは `{code,message,details?}`、警告は `{code,message}` です。部分的な結果は `data` に残り、gc の dry-run では `data.plan: true` を返します。パーサーは未知のフィールドを無視してください。
 
 | 終了コード | 意味 | 主な error.code |
 | --- | --- | --- |
@@ -65,7 +65,7 @@ Maboroshi が担わない役割は次のとおりです。
 
 コマンドが不明な場合や共通オプションの後にコマンドがない場合も、JSON 出力が選択されていれば使用方法エラーの envelope（終了コード 2）を返します。`sync` はいずれかの対象を更新した後に失敗・競合・公開済み履歴の拒否が起きると、終了コード 6 を優先します。変更がなければ、それぞれ 1・5・4 です。`gc` は checkout や Git 登録の削除後にメタデータ削除が失敗した場合も終了コード 6 を返します。
 
-単体 `exec` は子プロセスの終了コードをそのまま返します。`create --exec` の失敗は 6 となり、子の終了コードは `data.exec.exitCode` に入ります。
+単体 `exec` は子プロセスの終了コードをそのまま返します。
 
 ## メタデータの保存と移行
 
@@ -79,7 +79,7 @@ Maboroshi が担わない役割は次のとおりです。
 
 新規ワークスペースの既定パスは `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash8>/<name>` です。`XDG_DATA_HOME` が未設定・空・相対パスの場合は `~/.local/share/maboroshi/workspaces/...` を使います。`workspace-root` 設定は引き続き使えます。既存の `maboroshi/worktrees/` 以下は移動せず、`list`、`show`、`delete`、`sync`、`gc` で引き続き扱えます。
 
-フック（`post-create`、`pre-delete`）、`exec`、`create`/`attach --exec` には、`MABO=1`、名前の `MABO_WORKSPACE`、記録済み ID の `MABO_WORKSPACE_ID`（未記録なら空）、絶対パスの `MABO_WORKSPACE_PATH`、primary checkout の絶対パスの `MABO_REPO_PATH` を渡します。フック設定を読む場所は実行元チェックアウトのままです。旧 `MABO_NAME`、`MABO_PATH`、`MABO_ROOT_PATH` は子プロセスから取り除くため、スクリプトを更新してください。
+フック（`post-create`、`pre-delete`）と `exec` には、`MABO=1`、名前の `MABO_WORKSPACE`、記録済み ID の `MABO_WORKSPACE_ID`（未記録なら空）、絶対パスの `MABO_WORKSPACE_PATH`、primary checkout の絶対パスの `MABO_REPO_PATH` を渡します。フック設定を読む場所は実行元チェックアウトのままです。旧 `MABO_NAME`、`MABO_PATH`、`MABO_ROOT_PATH` は子プロセスから取り除くため、スクリプトを更新してください。
 
 JSON の結果キーは `workspace` / `workspaces` です。共有オブジェクトの `default` 真偽値は `kind` に変わり、primary checkout は `primary`、ほかは `workspace` です。schema 2、終了コード、旧メタデータの移行方法は変わりません。
 
@@ -136,3 +136,30 @@ mabo list --all-repos --json
 `list --kind workspace|primary` は種類を絞り、`--names` と `--paths` は1行1件のテキストを出します。`--all-repos` は `repo list` が把握する登録済み・検出済みリポジトリを一覧にし、JSON には `data.repos` と全ワークスペースの `data.workspaces` が入ります。`-R` とは併用できません。人間向け出力にはリポジトリ見出し、現在位置の `*`、名前、ブランチ、upstream の進み・遅れ（`↑a ↓b`）、dirty、PR/issue（`#12` / `issue #34`）、目的を表示し、削除済み upstream は `upstream:gone` と表示します。
 
 旧 `where` は `path` / `show --json`、旧 `meta` / `meta set` は `set` / `show`、`list --no-default` は `--kind workspace` を案内して終了コード 2 を返します。`exec` では子コマンドの前の `--` が必須です。省略時は新構文のヒントと終了コード 2 を返します。`exec` は `MABO_OUTPUT` を無視し、明示的な JSON 出力は拒否します。使用方法エラーと付随するヘルプは標準エラー出力へ出し、テキストの標準出力は空にします。
+
+## 作成・取り込み・記録解除
+
+```sh
+mabo create feature --base origin/main
+mabo create --branch origin/existing
+mabo create --pr 123
+mabo create --issue 456 --base main
+mabo create snapshot --detach --base main
+mabo create feature --base origin/main --reuse
+mabo adopt /path/to/linked-checkout --name review --purpose 'review existing work'
+mabo forget review pr:123
+```
+
+`create [NAME]` は新しいブランチを作ります。`--base` の既定はリモートの既定ブランチ、なければローカルの既定ブランチです。NAME 省略時は名前を生成します。ローカルのブランチや観測済みリモート追跡 ref と同じ名前は fetch せずに終了コード 4（`exists_remote`）で拒否します。既存ブランチには `--branch` を使います。`--branch remote/name` はローカルの name を使うか、そのリモートを追跡する name を作ります。複数リモートに一致した場合は終了コード 2 で候補を表示します。
+
+`--pr 番号|URL` は PR の head ブランチを使い、fork では owner/branch を名前にします。fork や head 削除済み PR は pull/N/head から取得し、upstream を設定しません。`--issue 番号|URL` 単独では issues/N を作り、目的の既定値を issue のタイトルにします。`--pr`・`--branch` と一緒ならリンクだけを追加します。明示した NAME はワークスペース名を変更し、既存ブランチの名前は維持します。`--base`・`--branch`・`--pr` は排他的です。`--detach` は `--base`・`--issue` と組み合わせられます。
+
+既存ワークスペースは終了コード 4（`exists`）です。`--reuse` を付けると、要求した base・branch・PR と指定した issue が一致する場合だけ成功し、コピーもフックも再実行しません。不一致は同じく 4 です。繰り返しても作成情報や既存の目的を保持します。`--no-hooks`・`--copy-file` は引き続き使えます。
+
+create の JSON は `data.workspace`、`data.source`、`data.setup`、`data.copy`、`data.metadata` を返します。source.kind は new/branch/pr/issue/detach、base は正規化済み ref、reused は再利用の有無です。branch は branch/ref、PR は number/url/headRef/headRepository/branch/checkout、issue は number/url/issue を含みます。checkout は作成時の branch または pullHead です。copy は copied（コピーした相対パスの配列）と error、setup は ran/ok/command/exitCode/signal/error を持ちます。作成後のコピー・フック・記録の失敗は部分完了の 6 です。
+
+`adopt PATH` は同一リポジトリの既存 linked worktree を管理下に入れます。`--name`・`--base`・`--purpose`・`--pr`・`--issue` を指定でき、setup は実行せず、createdAt と createdFrom は null です。`--base` は既存チェックアウトの同期先を任意で記録し、省略時は不明（`null`）です。既に記録済みなら 4、対象リポジトリの linked checkout でないパスは 3 です。JSON は workspace を返します。記録保存後にワークスペースの再取得が失敗した場合は 6（`partial`）を返し、保存済みの登録情報を `data.workspace` に残します。
+
+`forget SEL...` は記録だけを消し、チェックアウト・ブランチ・Git 登録を残します。primary の記録も対象にできます。名前・`.`・pr:N・issue:N・PR/issue URL を複数指定でき、全セレクタを解決してから記録を削除します。JSON は `{items:[{workspace,ok}]}` で、workspace は記録削除後の状態を返します。
+
+移行: attach BRANCH は create --branch BRANCH、github/gh checkout は create --pr REF または create --issue REF に変わりました。create -x/--exec は create の後に exec SEL -- COMMAND を実行してください。旧構文は text・JSON ともに終了コード 2 と移行ヒントを返します。

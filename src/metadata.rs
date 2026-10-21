@@ -21,7 +21,7 @@ pub struct WorktreeMetadata {
     pub id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
-    /// Explicitly cleared intent must not use the legacy default-base fallback.
+    /// Explicitly unknown intent must not use the legacy default-base fallback.
     #[serde(default, skip_serializing_if = "is_false")]
     pub base_cleared: bool,
     #[serde(default)]
@@ -36,7 +36,7 @@ pub struct WorktreeMetadata {
     pub created_from: Option<String>,
     #[serde(default)]
     pub links: WorktreeLinks,
-    /// Name saved for a worktree outside `maboroshi/worktrees`.
+    /// Saved workspace name, taking precedence over the directory name.
     ///
     /// Command JSON already has `name`, so this stays out of that flatten.
     /// Older records omit it and keep the folder name.
@@ -65,8 +65,10 @@ pub struct WorktreeLink {
 /// Whether the branch was created with this record or already existed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BranchOrigin {
-    /// `create` just pointed a new branch at HEAD. That commit is the base.
+    /// `create` just allocated this checkout; its initial commit is known.
     New,
+    /// Existing checkout with unknown creation time and creation commit.
+    Adopted,
     /// The branch already existed. The base is its reflog, when one exists.
     Existing,
 }
@@ -75,6 +77,8 @@ pub enum BranchOrigin {
 #[derive(Debug, Clone, Default)]
 pub struct MetadataInput {
     pub base: Option<String>,
+    /// Preserve an unknown sync target instead of using the legacy fallback.
+    pub base_cleared: bool,
     pub purpose: Option<String>,
     pub pr: Option<WorktreeLink>,
     pub issue: Option<WorktreeLink>,
@@ -159,7 +163,7 @@ pub fn load_strict(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>
         .collect())
 }
 
-/// Replace any record at `path`. Create, attach, and a first checkout use this
+/// Replace any record at `path`. Creation and adoption use this
 /// so a workspace removed outside mabo does not keep its previous intent.
 pub fn replace(
     git_root: &Path,
@@ -243,7 +247,8 @@ fn clear_fields(record: &mut WorktreeMetadata, fields: &[String]) {
 fn fresh_metadata(path: &Path, input: &MetadataInput, origin: BranchOrigin) -> WorktreeMetadata {
     let mut metadata = WorktreeMetadata {
         id: Some(format!("ws_{}", uuid::Uuid::new_v4())),
-        created_at: Some(iso_now()),
+        base_cleared: origin == BranchOrigin::Adopted && input.base.is_none(),
+        created_at: (origin != BranchOrigin::Adopted).then(iso_now),
         updated_at: Some(iso_now()),
         created_from: recorded_creation(path, origin),
         ..WorktreeMetadata::default()
@@ -256,6 +261,7 @@ fn recorded_creation(path: &Path, origin: BranchOrigin) -> Option<String> {
     match origin {
         BranchOrigin::New => crate::git::head_commit(path),
         BranchOrigin::Existing => crate::git::reflog_creation_commit(path),
+        BranchOrigin::Adopted => None,
     }
 }
 
@@ -424,6 +430,10 @@ fn stored_worktree(path: String, metadata: WorktreeMetadata) -> StoredWorktree {
 }
 
 fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
+    if input.base_cleared {
+        metadata.base = None;
+        metadata.base_cleared = true;
+    }
     if input.base.is_some() {
         metadata.base = input.base.clone();
         metadata.base_cleared = false;

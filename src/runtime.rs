@@ -105,6 +105,11 @@ pub(crate) fn prepare(
                         Error::validation(format!("Option '{arg}' was removed. Use -R/--repo REF."))
                     });
                 }
+                if key == "create"
+                    && (name == "--exec" || (arg.starts_with("-x") && !arg.starts_with("--")))
+                {
+                    error.get_or_insert_with(|| Error::validation("create -x/--exec was removed. Use `mabo create [NAME]` then `mabo exec SEL -- COMMAND`."));
+                }
                 if key == "list" && name == "--no-default" {
                     error.get_or_insert_with(|| {
                         Error::validation(
@@ -141,7 +146,6 @@ pub(crate) fn prepare(
                 if let Some((spec, attached)) = spec {
                     if spec.value && !attached {
                         if spec.remainder {
-                            // Only create/attach define --exec/-x as remainder options.
                             let values = &args[index + 1..];
                             if values.is_empty() || (values.len() == 1 && values[0] == "--") {
                                 error.get_or_insert_with(|| {

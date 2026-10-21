@@ -26,10 +26,14 @@ pub fn generate_unique_name(
     directory: &Path,
     separator: &str,
     remote_branches: &BTreeSet<String>,
+    workspace_names: &BTreeSet<String>,
 ) -> Result<String> {
     for _ in 0..MAX_RETRIES {
         let name = next_candidate();
         if validate_worktree_name(&name).is_err() {
+            continue;
+        }
+        if workspace_names.contains(&name) {
             continue;
         }
         let path = paths::worktree_path(directory, &name, separator);
@@ -50,7 +54,7 @@ pub fn generate_unique_name(
 }
 
 /// `MABO_NAME_CANDIDATES` is a comma-separated list. Tests use it so the first
-/// candidate can collide with a remote-tracking branch and the next one is free.
+/// candidate can collide with a branch or workspace name and the next one is free.
 #[cfg(debug_assertions)]
 static CANDIDATE_INDEX: AtomicUsize = AtomicUsize::new(0);
 

@@ -651,3 +651,34 @@ fn explicit_no_input_and_environment_no_input_refuse_at_a_tty() {
     assert!(out.status.success(), "{}", text(&out.stdout));
     assert!(text(&out.stdout).contains("Trust this project and run its hooks?"));
 }
+
+#[test]
+fn branch_and_detached_sources_preserve_trust_and_reuse_skips_authorization() {
+    for (name, source) in [
+        ("existing", vec!["--branch", "existing"]),
+        ("snapshot", vec!["snapshot", "--detach"]),
+    ] {
+        let repo = Repo::new();
+        repo.git(&["branch", "existing"]);
+        hooks(&repo, "\"touch setup-ran\"", "");
+        let args = [vec!["create"], source, vec!["--json"]].concat();
+        let refused = repo.mabo(&args);
+        assert_eq!(refused.status.code(), Some(4));
+        let doc: serde_json::Value = serde_json::from_slice(&refused.stdout).unwrap();
+        assert_eq!(doc["error"]["code"], "untrusted");
+        let created = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("MABO_TRUST_ALL", "1")
+            .output()
+            .unwrap();
+        assert!(created.status.success(), "{}", text(&created.stdout));
+        let doc: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+        let path = PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap());
+        assert!(path.join("setup-ran").exists());
+        fs::remove_file(path.join("setup-ran")).unwrap();
+        let reuse = [args, vec!["--reuse"]].concat();
+        let reused = repo.mabo(&reuse);
+        assert!(reused.status.success(), "{name}: {}", text(&reused.stdout));
+        assert!(!path.join("setup-ran").exists());
+    }
+}

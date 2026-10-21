@@ -10,6 +10,7 @@
     )
 )]
 
+mod allocation;
 pub mod args;
 pub(crate) mod atomic;
 pub mod cli;

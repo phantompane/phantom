@@ -270,14 +270,7 @@ mod tests {
 
     #[test]
     fn long_options_use_two_dashes() {
-        for key in [
-            "list",
-            "github checkout",
-            "gh checkout",
-            "exec",
-            "delete",
-            "path",
-        ] {
+        for key in ["list", "create", "adopt", "exec", "delete", "path"] {
             let help = command_help(key).expect("help data").expect(key);
             assert!(
                 !help.contains("----"),
@@ -297,9 +290,7 @@ mod tests {
         let where_help = command_help("path").expect("help").expect("path");
         assert!(!where_help.contains("Put this before the workspace name"));
         assert!(where_help.contains("may appear with the other options"));
-        let checkout = command_help("github checkout")
-            .expect("help")
-            .expect("checkout");
+        let checkout = command_help("create").expect("help").expect("checkout");
         assert!(checkout.contains("--base <value>"));
     }
 
@@ -337,11 +328,11 @@ mod tests {
     #[test]
     fn help_names_workspaces_and_mabo_env() {
         let main = main_help().expect("main help");
-        assert!(main.contains("Create a new workspace"));
+        assert!(main.contains("Create a workspace"));
         assert!(main.contains("List all workspaces"));
         assert!(main.contains("Delete a workspace"));
-        assert!(main.contains("GitHub-specific commands for workspaces"));
-        for key in ["create", "attach", "delete", "exec"] {
+        assert!(main.contains("Drop workspace records"));
+        for key in ["create", "delete", "exec"] {
             let help = command_help(key).expect("render").expect(key);
             for variable in [
                 "MABO=1",

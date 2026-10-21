@@ -268,18 +268,18 @@ fn lookup_ok(directory: String, plan: AttachPlan) -> AttachLookup {
 
 fn ambiguous(branch: &str, remotes: &[String]) -> String {
     format!(
-        "Branch '{branch}' exists on more than one remote ({}). Run `mabo attach <remote>/{branch}`.",
+        "Branch '{branch}' exists on more than one remote ({}). Run `mabo create --branch <remote>/{branch}`.",
         remotes.join(", ")
     )
 }
 
 fn remote_taken(branch: &str, remotes: &[String]) -> String {
     let commands = if remotes.len() == 1 {
-        format!("`mabo attach {branch}`")
+        format!("`mabo create --branch {branch}`")
     } else {
         remotes
             .iter()
-            .map(|remote| format!("`mabo attach {remote}/{branch}`"))
+            .map(|remote| format!("`mabo create --branch {remote}/{branch}`"))
             .collect::<Vec<_>>()
             .join(" or ")
     };
@@ -377,7 +377,7 @@ refs/remotes/stale/solo\0
         let message = lookup.outcome.expect_err("ambiguous").to_string();
         assert_eq!(
             message,
-            "Branch 'solo' exists on more than one remote (origin, upstream). Run `mabo attach <remote>/solo`."
+            "Branch 'solo' exists on more than one remote (origin, upstream). Run `mabo create --branch <remote>/solo`."
         );
         assert!(!message.contains("stale"));
     }
