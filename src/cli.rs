@@ -74,7 +74,7 @@ fn run_inner(args: &[String]) -> Result<i32> {
     match find(args, COMMANDS) {
         Some((command, remaining)) => {
             let key = command.help_key;
-            let supports_json = key != "exec";
+            let supports_json = !matches!(key, "exec" | "completions" | "shell-init");
             let prepared = crate::runtime::prepare(
                 remaining,
                 supports_json || (!command.children.is_empty() && !remaining.is_empty()),
@@ -143,6 +143,31 @@ fn find<'a>(args: &'a [String], commands: &'a [Command]) -> Option<(&'a Command,
         }
     }
     Some((command, rest))
+}
+
+fn completions(args: &[String]) -> Result<i32> {
+    shell_script(args, "completions")
+}
+
+fn shell_init(args: &[String]) -> Result<i32> {
+    shell_script(args, "shell-init")
+}
+
+fn shell_script(args: &[String], key: &str) -> Result<i32> {
+    let parsed = args::parse(args, &command_options(key), true)?;
+    let [shell] = parsed.positionals.as_slice() else {
+        return Err(Error::validation(format!(
+            "Usage: mabo {key} bash|zsh|fish"
+        )));
+    };
+    let shell = crate::shell::Shell::parse(shell)?;
+    let script = if key == "completions" {
+        crate::shell::completions(shell)?
+    } else {
+        crate::shell::init(shell).to_string()
+    };
+    outln!("{script}");
+    Ok(SUCCESS)
 }
 
 fn sync(args: &[String]) -> Result<i32> {
@@ -2123,6 +2148,18 @@ static TRUST_COMMANDS: &[Command] = &[
 
 static COMMANDS: &[Command] = &[
     Command {
+        name: "completions",
+        help_key: "completions",
+        run: completions,
+        children: &[],
+    },
+    Command {
+        name: "shell-init",
+        help_key: "shell-init",
+        run: shell_init,
+        children: &[],
+    },
+    Command {
         name: "-v",
         help_key: "--version",
         run: version,
@@ -2261,7 +2298,7 @@ mod contract_tests {
             assert!(entry.is_object(), "missing command {key}");
             let actual = command_options(&key)
                 .iter()
-                .map(|opt| (opt.name.to_string(), opt.short))
+                .map(|opt| (opt.name.to_string(), opt.short, opt.value))
                 .collect::<BTreeSet<_>>();
             let documented = entry["options"]
                 .as_array()
@@ -2273,13 +2310,14 @@ mod contract_tests {
                         (
                             name.to_string(),
                             opt["short"].as_str().and_then(|short| short.chars().next()),
+                            opt["type"] == "string",
                         )
                     })
                 })
                 .collect::<BTreeSet<_>>();
             let actual = actual
                 .into_iter()
-                .filter(|(name, _)| name != "help")
+                .filter(|(name, _, _)| name != "help")
                 .collect::<BTreeSet<_>>();
             assert_eq!(documented, actual, "flags for {key}");
         }

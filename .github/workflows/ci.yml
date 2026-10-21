@@ -48,5 +48,10 @@ jobs:
         with:
           toolchain: "1.99.1"
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
+      - name: Install shells for smoke tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh fish
+          command -v bash zsh fish
       - name: Unit and CLI tests
         run: cargo test --locked --lib --test cli

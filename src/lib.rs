@@ -33,6 +33,7 @@ pub mod repository;
 mod runtime;
 mod selectors;
 pub mod setup;
+mod shell;
 pub mod sync;
 mod tracking;
 pub mod trust;
