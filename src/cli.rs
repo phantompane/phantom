@@ -1509,8 +1509,7 @@ fn metadata_input(parsed: &Parsed) -> Result<MetadataInput> {
         issue: single_value(parsed, "issue")?
             .map(metadata::parse_link)
             .transpose()?,
-        name: None,
-        base: None,
+        ..MetadataInput::default()
     })
 }
 

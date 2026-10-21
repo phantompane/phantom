@@ -3104,12 +3104,23 @@ fn unresolved_default_does_not_block_recorded_bases() {
     let created: Value = serde_json::from_slice(&out.stdout).unwrap();
     let tree = PathBuf::from(created["data"]["workspace"]["path"].as_str().unwrap());
     r.write_commit(&tree, "own", "own\n");
-    // attach deliberately leaves the recorded base null, exercising fallback errors.
+    // Older records without an explicit unknown marker still exercise fallback errors.
     r.git(&clone, &["branch", "legacy"]);
     assert!(r
         .mabo(&clone, &["create", "--branch", "legacy"])
         .status
         .success());
+    let store = clone.join(".git/maboroshi/workspaces");
+    let mut legacy: Value = serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
+    let record = legacy["worktrees"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|record| record["name"] == "legacy")
+        .unwrap();
+    assert_eq!(record["baseCleared"], true);
+    record.as_object_mut().unwrap().remove("baseCleared");
+    records::write(&store, serde_json::to_vec(&legacy).unwrap()).unwrap();
     r.write_commit(&r.upstream, "incoming-develop", "incoming\n");
     r.git(&r.upstream, &["push", "origin", "develop"]);
     let doc = r.sync(&clone, &["legacy", "topic"], 6);
@@ -3607,6 +3618,118 @@ fn rebase_keeps_own_commits_after_upstream_rewind_with_forkpoint_config() {
         );
         assert_eq!(fs::read_to_string(tree.join("own")).unwrap(), "own\n");
     }
+}
+
+#[test]
+fn review9_adopt_without_base_skips_sync() {
+    check_adopted_sync_base(false);
+}
+
+#[test]
+fn review9_adopt_with_base_syncs_normally() {
+    check_adopted_sync_base(true);
+}
+
+fn check_adopted_sync_base(explicit_base: bool) {
+    for selector in ["topic", "--all"] {
+        for no_default in [false, true] {
+            let r = Repo::new();
+            let tree = r.root.join("adopted");
+            r.git(
+                &r.main,
+                &["worktree", "add", "-b", "topic", tree.to_str().unwrap()],
+            );
+            let mut args = vec!["adopt", tree.to_str().unwrap(), "--name", "topic", "--json"];
+            if explicit_base {
+                args.extend(["--base", "origin/main"]);
+            }
+            let adopted = r.mabo(&r.main, &args);
+            assert!(adopted.status.success(), "{adopted:?}");
+            let store = r.main.join(".git/maboroshi/workspaces");
+            let record_before = records::read(&store).unwrap();
+            r.advance();
+            let before = r.snapshot(&tree);
+            let mut args = vec![selector];
+            if no_default {
+                args.push("--no-default");
+            }
+            let doc = r.sync(&r.main, &args, 0);
+            let items = doc["data"]["workspaces"].as_array().unwrap();
+            assert_eq!(items.len(), 1, "{doc}");
+            let item = &items[0];
+            if explicit_base {
+                assert_eq!(item["status"], "updated", "{doc}");
+                assert_eq!(item["base"], "refs/remotes/origin/main");
+                assert_eq!(
+                    r.git(&tree, &["rev-parse", "HEAD"]),
+                    r.git(&r.upstream, &["rev-parse", "HEAD"])
+                );
+            } else {
+                assert_eq!(item["status"], "base-unknown", "{doc}");
+                assert!(item["base"].is_null());
+                assert_eq!(r.snapshot(&tree), before);
+                assert_eq!(records::read(&store).unwrap(), record_before);
+                let record: Value = serde_json::from_slice(&record_before).unwrap();
+                assert_eq!(record["worktrees"][0]["baseCleared"], true);
+                assert!(record["worktrees"][0]["base"].is_null());
+            }
+        }
+    }
+}
+
+#[test]
+fn review9_branch_with_unknown_default_stays_unknown_after_default_returns() {
+    for selector in ["review", "--all"] {
+        let r = Repo::new();
+        r.git(&r.main, &["remote", "remove", "origin"]);
+        r.git(&r.main, &["branch", "-m", "topic"]);
+        r.git(&r.main, &["checkout", "--orphan", "unborn"]);
+        let out = r.mabo(
+            &r.main,
+            &["create", "review", "--branch", "topic", "--json"],
+        );
+        assert!(out.status.success(), "{out:?}");
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(doc["data"]["workspace"]["base"].is_null());
+        let tree = PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap());
+        // A newly available default must not silently replace the unknown intent.
+        r.git(&r.main, &["checkout", "-b", "main", "topic"]);
+        r.write_commit(&r.main, "new-default", "new default\n");
+        let before = r.snapshot(&tree);
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let record_before = records::read(&store).unwrap();
+        let doc = r.sync(&r.main, &[selector, "--no-default"], 0);
+        assert_eq!(
+            doc["data"]["workspaces"][0]["status"], "base-unknown",
+            "{doc}"
+        );
+        assert_eq!(r.snapshot(&tree), before);
+        assert_eq!(records::read(&store).unwrap(), record_before);
+        let record: Value = serde_json::from_slice(&record_before).unwrap();
+        assert_eq!(record["worktrees"][0]["baseCleared"], true);
+        assert!(r
+            .mabo(&r.main, &["set", "review", "--base", "main"])
+            .status
+            .success());
+        let doc = r.sync(&r.main, &[selector, "--no-default"], 0);
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "updated", "{doc}");
+    }
+}
+
+#[test]
+fn review9_branch_with_known_default_preserves_sync_fallback() {
+    let r = Repo::new();
+    r.git(&r.main, &["branch", "topic"]);
+    let out = r.mabo(
+        &r.main,
+        &["create", "review", "--branch", "topic", "--json"],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(doc["data"]["workspace"]["base"].is_null());
+    r.advance();
+    let doc = r.sync(&r.main, &["review", "--no-default"], 0);
+    assert_eq!(doc["data"]["workspaces"][0]["status"], "updated", "{doc}");
 }
 
 #[test]

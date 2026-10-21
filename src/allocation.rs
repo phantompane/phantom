@@ -221,6 +221,10 @@ pub(crate) fn create(
     } else {
         None
     };
+    // Existing branches keep the legacy fallback only when its target is known
+    // now. A later default must not invent intent for an unknown branch/PR base.
+    request.metadata.base_cleared = request.metadata.base.is_none()
+        && (pull.is_some() || sync::fallback_base(&context.source_checkout).is_err());
     request.metadata.name = Some(name.clone());
     let kind = if request.detach {
         "detach"
@@ -636,6 +640,7 @@ mod adopt_tests {
                 number: Some(8),
                 url: None,
             }),
+            ..MetadataInput::default()
         };
         let error = adopt_with_refresh(&fixture.context, &fixture.path, input, |context, path| {
             // Inject the failure only after the real record has been persisted.

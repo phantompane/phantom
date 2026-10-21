@@ -21,7 +21,7 @@ pub struct WorktreeMetadata {
     pub id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
-    /// Explicitly cleared intent must not use the legacy default-base fallback.
+    /// Explicitly unknown intent must not use the legacy default-base fallback.
     #[serde(default, skip_serializing_if = "is_false")]
     pub base_cleared: bool,
     #[serde(default)]
@@ -77,6 +77,8 @@ pub enum BranchOrigin {
 #[derive(Debug, Clone, Default)]
 pub struct MetadataInput {
     pub base: Option<String>,
+    /// Preserve an unknown sync target instead of using the legacy fallback.
+    pub base_cleared: bool,
     pub purpose: Option<String>,
     pub pr: Option<WorktreeLink>,
     pub issue: Option<WorktreeLink>,
@@ -245,6 +247,7 @@ fn clear_fields(record: &mut WorktreeMetadata, fields: &[String]) {
 fn fresh_metadata(path: &Path, input: &MetadataInput, origin: BranchOrigin) -> WorktreeMetadata {
     let mut metadata = WorktreeMetadata {
         id: Some(format!("ws_{}", uuid::Uuid::new_v4())),
+        base_cleared: origin == BranchOrigin::Adopted && input.base.is_none(),
         created_at: (origin != BranchOrigin::Adopted).then(iso_now),
         updated_at: Some(iso_now()),
         created_from: recorded_creation(path, origin),
@@ -427,6 +430,10 @@ fn stored_worktree(path: String, metadata: WorktreeMetadata) -> StoredWorktree {
 }
 
 fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
+    if input.base_cleared {
+        metadata.base = None;
+        metadata.base_cleared = true;
+    }
     if input.base.is_some() {
         metadata.base = input.base.clone();
         metadata.base_cleared = false;

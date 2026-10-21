@@ -14708,6 +14708,59 @@ fn review1_existing_branch_creation_does_not_require_a_default_or_source_head() 
 }
 
 #[test]
+fn review9_pr_unknown_base_stays_unknown_after_default_returns() {
+    let repo = Repo::new();
+    publish_pr_topic(&repo);
+    let path = fake_gh_for_topic_pr(&repo);
+    repo.git(&["checkout", "--orphan", "unborn"]);
+    repo.git(&["branch", "-D", "main"]);
+    repo.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["create", "--pr", "7", "--json"],
+        )
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    let doc = json_value(&out);
+    assert!(doc["data"]["source"]["base"].is_null());
+    let tree = PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap());
+    let head = || {
+        let out = repo
+            .command("git", &["rev-parse", "HEAD"])
+            .current_dir(&tree)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        text(&out.stdout)
+    };
+    let head_before = head();
+    repo.git(&["checkout", "-b", "main", "topic"]);
+    fs::write(repo.repo.join("new-default"), "new default\n").unwrap();
+    repo.git(&["add", "new-default"]);
+    repo.git(&["commit", "-m", "advance default"]);
+    // Keep sync local so the PR's former remote default cannot hide the fallback.
+    repo.git(&["remote", "remove", "origin"]);
+    let store = repo.repo.join(".git/maboroshi/workspaces");
+    let record_before = records::read(&store).unwrap();
+    for selector in ["topic", "--all"] {
+        let out = repo.mabo(&["sync", selector, "--no-default", "--json"]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = json_value(&out);
+        assert_eq!(
+            doc["data"]["workspaces"][0]["status"], "base-unknown",
+            "{doc}"
+        );
+        assert_eq!(head(), head_before);
+        assert_eq!(records::read(&store).unwrap(), record_before);
+    }
+    let record: serde_json::Value = serde_json::from_slice(&record_before).unwrap();
+    assert_eq!(record["worktrees"][0]["baseCleared"], true);
+}
+
+#[test]
 fn review1_pr_creation_does_not_require_a_default_or_source_head() {
     let repo = Repo::new();
     publish_pr_topic(&repo);
