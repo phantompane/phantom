@@ -608,12 +608,8 @@ fn observe_listed(
         _ => false,
     };
     let merged = moved && integrated;
-    let preserved = git::retirement_preserved(
-        &context.git_root,
-        branch.as_deref(),
-        worktree.head.as_deref(),
-        base.as_deref(),
-    );
+    let preserved =
+        integrated || git::retirement_upstream_matches(&context.git_root, branch.as_deref());
     // An unresolved remote mapping must not prevent orphan-record cleanup or
     // accidentally allow deletion of the checkout holding the default branch.
     let is_default = branch

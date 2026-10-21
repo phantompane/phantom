@@ -16887,6 +16887,104 @@ fn retirement_removed_interfaces_have_migration_hints() {
 }
 
 #[test]
+fn retirement_review5_remove_batches_long_base_history() {
+    assert_retirement_batches_long_history(false);
+}
+
+#[test]
+fn retirement_review5_gc_reuses_integration_observation() {
+    assert_retirement_batches_long_history(true);
+}
+
+fn assert_retirement_batches_long_history(gc: bool) {
+    let repo = Repo::new();
+    for name in ["local", "other", "rebased"] {
+        assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+        commit_file(&repo, name, &format!("{name}.txt"), "first\n");
+    }
+    let first = retirement_head_at(&repo, &managed(&repo, "rebased"));
+    commit_file(&repo, "rebased", "second.txt", "second\n");
+    fs::write(repo.repo.join("base.txt"), "divergence\n").unwrap();
+    repo.git(&["add", "."]);
+    repo.git(&["commit", "-m", "divergence"]);
+    repo.git(&["cherry-pick", &first]);
+    repo.git(&["cherry-pick", "refs/heads/rebased"]);
+    // Require the per-commit fallback, including evidence before later edits.
+    fs::write(repo.repo.join("rebased.txt"), "later base edit\n").unwrap();
+    repo.git(&["add", "."]);
+    repo.git(&["commit", "-m", "later edit"]);
+    let trace = repo.root.join("history-trace.json");
+    let mut counts = Vec::new();
+    let mut tree_counts = Vec::new();
+    let mut advanced = 0;
+    for extra_commits in [1, 50] {
+        for index in advanced..extra_commits {
+            // Include both empty and nonempty commits in the batched output.
+            if index % 2 == 0 {
+                fs::write(repo.repo.join("base.txt"), format!("base {index}\n")).unwrap();
+                repo.git(&["add", "."]);
+            }
+            repo.git(&["commit", "--allow-empty", "-m", "advance base"]);
+        }
+        advanced = extra_commits;
+        fs::write(&trace, "").unwrap();
+        let args = if gc {
+            vec!["gc", "--merged", "--json"]
+        } else {
+            vec!["remove", "local", "other", "rebased", "--dry-run", "--json"]
+        };
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("GIT_TRACE2_EVENT", &trace)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        let doc = json_value(&out);
+        let items = doc["data"]["items"].as_array().unwrap();
+        if gc {
+            assert_eq!(items.len(), 1, "{doc}");
+            assert_eq!(items[0]["workspace"]["name"], "rebased");
+            assert_eq!(items[0]["action"], "wouldRemove");
+        } else {
+            assert_eq!(items.len(), 3, "{doc}");
+            for item in items {
+                assert_eq!(item["removed"], false);
+                if item["workspace"]["name"] == "rebased" {
+                    assert!(item["branchKeptReason"].is_null(), "{item}");
+                } else {
+                    assert_eq!(item["branchKeptReason"], "unpreserved");
+                }
+            }
+        }
+        let starts: Vec<Vec<String>> = fs::read_to_string(&trace)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .filter(|event| event["event"] == "start")
+            .map(|event| serde_json::from_value(event["argv"].clone()).unwrap())
+            .collect();
+        let tree_processes = starts
+            .iter()
+            .filter(|args| {
+                args.iter().any(|arg| arg == "diff-tree")
+                    || (args.iter().any(|arg| arg == "log")
+                        && args.iter().any(|arg| arg == "--raw"))
+            })
+            .count();
+        // Three workspaces, each with one aggregate diff and two history reads.
+        // GC must reuse its integrated result when checking preservation.
+        tree_counts.push(tree_processes);
+        counts.push(starts.len());
+        for name in ["local", "other", "rebased"] {
+            assert!(managed(&repo, name).is_dir());
+            assert!(branch_listed(&repo, name));
+        }
+    }
+    assert_eq!(tree_counts, [9, 9], "1 and 50 extra base commits");
+    assert_eq!(counts[0], counts[1], "all Git starts must stay constant");
+}
+
+#[test]
 fn retirement_tree_entries_preserve_rebased_work_after_later_base_edits() {
     let repo = Repo::new();
     assert!(repo

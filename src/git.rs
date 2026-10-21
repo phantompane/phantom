@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
@@ -645,6 +645,12 @@ pub(crate) fn retirement_preserved(
     if base.is_some_and(|base| retirement_integrated(root, &tip, base)) {
         return true;
     }
+    retirement_upstream_matches(root, branch)
+}
+
+// Keep the upstream proof separate so a GC observation can reuse its integration
+// result, including a negative result, without scanning the same history twice.
+pub(crate) fn retirement_upstream_matches(root: &Path, branch: Option<&str>) -> bool {
     let Some(branch) = branch else {
         return false;
     };
@@ -669,7 +675,7 @@ pub(crate) fn retirement_preserved(
     else {
         return false;
     };
-    let Some(upstream) = retirement_destination(root, &tip, upstream) else {
+    let Some(upstream) = retirement_destination(root, &reference, upstream) else {
         return false;
     };
     let resolve = |spec: &str| {
@@ -678,7 +684,7 @@ pub(crate) fn retirement_preserved(
             .filter(|result| result.code == 0)
             .map(|result| result.stdout.trim().to_string())
     };
-    match (resolve(&tip), resolve(&upstream)) {
+    match (resolve(&reference), resolve(&upstream)) {
         (Some(tip), Some(upstream)) => tip == upstream,
         _ => false,
     }
@@ -707,6 +713,7 @@ fn retirement_changes_landed(root: &Path, tip: &str, base: &str) -> bool {
     let Some(landed) = retirement_history_trees(root, &format!("{ancestor}..{base}"), false) else {
         return false;
     };
+    let landed: HashSet<_> = landed.into_iter().collect();
     // A complete squash must preserve every changed entry in one base commit.
     if landed.contains(&delta) {
         return true;
@@ -727,53 +734,79 @@ fn retirement_history_trees(
     range: &str,
     require_linear: bool,
 ) -> Option<Vec<Vec<u8>>> {
-    let history = raw_git(root, &["rev-list", "--parents", range]).ok()?;
-    if history.code != 0 {
+    // One process emits the parent list and raw tree entries for the whole
+    // range. Base merges are not evidence; workspace merges must be observed
+    // and rejected rather than silently omitting their conflict resolutions.
+    let mut args = vec![
+        "log",
+        "--format=%x00%P",
+        "--no-notes",
+        "--no-show-signature",
+    ];
+    args.extend_from_slice(RETIREMENT_DIFF_OPTIONS);
+    if !require_linear {
+        args.push("--no-merges");
+    }
+    args.extend_from_slice(&[range, "--"]);
+    let history = raw_git_bytes(root, &args).ok()?;
+    if !history.status.success() {
         return None;
     }
+    retirement_parse_history(&history.stdout)
+}
+
+fn retirement_parse_history(mut bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
+    fn field<'a>(bytes: &mut &'a [u8]) -> Option<&'a [u8]> {
+        let end = bytes.iter().position(|byte| *byte == 0)?;
+        let value = &bytes[..end];
+        *bytes = &bytes[end + 1..];
+        Some(value)
+    }
+
     let mut deltas = Vec::new();
-    for line in history.stdout.lines() {
-        let mut ids = line.split_whitespace();
-        let commit = ids.next()?;
-        let parent = ids.next()?;
-        if ids.next().is_some() {
-            if require_linear {
-                // Do not omit any workspace merge's conflict resolution.
+    while !bytes.is_empty() {
+        bytes = bytes.strip_prefix(b"\0")?;
+        let parents = field(&mut bytes)?;
+        if parents.split(|byte| *byte == b' ').count() != 1 || parents.is_empty() {
+            // Neither roots nor workspace merges supply a linear transition.
+            return None;
+        }
+        // Git inserts a newline before a nonempty raw diff, but not an empty
+        // commit. Consume paths as fields, never as lines or commit markers:
+        // paths may contain newlines, colons and non-UTF-8 bytes.
+        bytes = bytes.strip_prefix(b"\n").unwrap_or(bytes);
+        let start = bytes;
+        while bytes.starts_with(b":") {
+            field(&mut bytes)?;
+            if field(&mut bytes)?.is_empty() {
                 return None;
             }
-            // A base merge need not be a candidate; its ordinary ancestors
-            // can still independently prove preservation.
-            continue;
         }
-        deltas.push(retirement_tree_delta(root, parent, commit)?);
+        deltas.push(start[..start.len() - bytes.len()].to_vec());
     }
     Some(deltas)
 }
 
+const RETIREMENT_DIFF_OPTIONS: &[&str] = &[
+    "-r",
+    "--raw",
+    "-z",
+    "--no-abbrev",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+    "--no-renames",
+    "--no-relative",
+    "--ignore-submodules=none",
+    "--submodule=short",
+    "-O/dev/null",
+];
+
 fn retirement_tree_delta(root: &Path, before: &str, after: &str) -> Option<Vec<u8>> {
-    let diff = raw_git_bytes(
-        root,
-        &[
-            "diff-tree",
-            "-r",
-            "--raw",
-            "-z",
-            "--no-commit-id",
-            "--no-abbrev",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-color",
-            "--no-renames",
-            "--no-relative",
-            "--ignore-submodules=none",
-            "--submodule=short",
-            "-O/dev/null",
-            before,
-            after,
-            "--",
-        ],
-    )
-    .ok()?;
+    let mut args = vec!["diff-tree", "--no-commit-id"];
+    args.extend_from_slice(RETIREMENT_DIFF_OPTIONS);
+    args.extend_from_slice(&[before, after, "--"]);
+    let diff = raw_git_bytes(root, &args).ok()?;
     diff.status.success().then_some(diff.stdout)
 }
 
@@ -1054,6 +1087,43 @@ fn normalize(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retirement_history_preserves_raw_paths_and_empty_commits() {
+        let parent = "a".repeat(40);
+        let header = format!(":100644 100644 {} {} M\0", "b".repeat(40), "c".repeat(40));
+        // Paths that resemble headers or contain line breaks must remain part
+        // of their own diff, including non-UTF-8 bytes and a trailing newline.
+        let mut delta = header.as_bytes().to_vec();
+        delta.extend_from_slice(b"\n:commit-like\xff\n\0");
+        delta.extend_from_slice(header.as_bytes());
+        delta.extend_from_slice(b"ordinary\0");
+        let mut bytes = format!("\0{parent}\0\0{parent}\0\n").into_bytes();
+        bytes.extend_from_slice(&delta);
+        bytes.extend_from_slice(format!("\0{parent}\0").as_bytes());
+        assert_eq!(
+            retirement_parse_history(&bytes),
+            Some(vec![vec![], delta, vec![]])
+        );
+        assert_eq!(retirement_parse_history(b""), Some(vec![]));
+    }
+
+    #[test]
+    fn retirement_history_rejects_merges_roots_and_truncated_entries() {
+        let parent = "a".repeat(40);
+        let header = format!(":100644 100644 {} {} M\0", "b".repeat(40), "c".repeat(40));
+        for bytes in [
+            b"\0\0".to_vec(),
+            format!("\0{parent} {parent}\0").into_bytes(),
+            format!("\0{parent}").into_bytes(),
+            format!("\0{parent}\0\n{header}").into_bytes(),
+            format!("\0{parent}\0\n{header}path").into_bytes(),
+            format!("\0{parent}\0\n{header}\0").into_bytes(),
+            format!("\0{parent}\0unexpected").into_bytes(),
+        ] {
+            assert_eq!(retirement_parse_history(&bytes), None, "{bytes:?}");
+        }
+    }
 
     #[test]
     fn review11_registration_scan_still_refuses_an_unregistered_checkout() {
