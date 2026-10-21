@@ -21,7 +21,7 @@ notContains() { if grep -F -e "$2" "$1" >/dev/null; then fail "Unexpected $2 in 
 mkdir -p "$root/releases" "$root/api" "$root/home" "$root/tmp" "$root/bin"
 export HOME="$root/home" TMPDIR="$root/tmp"
 export MABO_RELEASE_BASE_URL="file://$root/releases" MABO_API_URL="file://$root/api"
-unset MABO_VERSION MABO_INSTALL_DIR MABO_PRERELEASE MABO_VERIFY_ATTESTATION GITHUB_TOKEN
+unset MABO_VERSION MABO_INSTALL_DIR MABO_PRERELEASE MABO_VERIFY_ATTESTATION MABO_ATTESTATION_TIMEOUT GITHUB_TOKEN
 cat > "$root/bin/uname" <<'SH'
 #!/bin/sh
 case $1 in -s) printf '%s\n' "${TEST_OS:-Linux}" ;; -m) printf '%s\n' "${TEST_ARCH:-x86_64}" ;; esac
@@ -236,7 +236,7 @@ runFail 1 'managed elsewhere' --version 7.0.0 --install-dir "$HOME/managed"
 # A restricted PATH makes absence reproducible even on developer/CI machines
 # with gh, jq, python, curl or multiple checksum implementations installed.
 mkdir "$root/tools"
-for tool in sh bash dash awk busybox cat chmod cp grep mkdir mktemp mv rm sed tar uname gzip; do
+for tool in sh bash dash awk busybox cat chmod cp grep mkdir mktemp mv ps rm sed sleep tar uname gzip; do
     found=$(command -v "$tool" || :)
     if [ -n "$found" ]; then ln -s "$found" "$root/tools/$tool"; fi
 done
@@ -250,28 +250,64 @@ cat > "$root/bin/isolated-shell" <<'SH'
 #!/bin/sh
 PATH=$TEST_TOOLS
 export PATH
-exec /bin/sh "$@"
+case $TEST_RUNNER in
+    bash) exec bash --posix "$@" ;;
+    *) exec "$TEST_RUNNER" "$@" ;;
+esac
 SH
 chmod +x "$root/bin/isolated-shell"
-export TEST_TOOLS="$root/tools"
+export TEST_TOOLS="$root/tools" TEST_RUNNER="$runner"
 savedRunner=$runner
 runner=isolated-shell
 runFail 1 'requires gh' --version 7.0.0 --verify-attestation
 unchanged
 cat > "$root/tools/gh" <<'SH'
 #!/bin/sh
+printf '%s\n' "$$" > "$TEST_GH_PID"
 printf '%s\n' "$@" > "$TEST_GH_ARGS"
 # Attempting to read must see EOF, even when the installer itself is piped.
 if read -r ignored; then exit 99; fi
+case ${TEST_GH_MODE-} in
+    delay) "$TEST_SLEEP" 1 ;;
+    stall) exec "$TEST_SLEEP" 60 ;;
+    ignore-term) trap '' TERM; exec "$TEST_SLEEP" 60 ;;
+esac
 exit "${TEST_GH_STATUS:-0}"
 SH
 chmod +x "$root/tools/gh"
-export TEST_GH_ARGS="$root/gh-args" TEST_GH_STATUS=1
+export TEST_GH_ARGS="$root/gh-args" TEST_GH_PID="$root/gh-pid" TEST_GH_STATUS=1
+# Record every watchdog sleep and its parent (the killer subshell), including the
+# grace period. exec preserves the sleep PID so cancellation must reap it.
+TEST_SLEEP=$(command -v sleep)
+export TEST_SLEEP TEST_SLEEP_PIDS="$root/sleep-pids"
+rm "$root/tools/sleep"
+cat > "$root/tools/sleep" <<'SH'
+#!/bin/sh
+ps -p $$ -o ppid= >> "$TEST_SLEEP_PIDS"
+printf '%s\n' "$$" >> "$TEST_SLEEP_PIDS"
+exec "$TEST_SLEEP" "$@"
+SH
+chmod +x "$root/tools/sleep"
+noAttestationProcesses() {
+    for pidFile in "$TEST_GH_PID" "$TEST_SLEEP_PIDS"; do
+        [ -f "$pidFile" ] || continue
+        while read -r pid; do
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -KILL "$pid" 2>/dev/null || :
+                fail "Leaked attestation process $pid"
+            fi
+        done < "$pidFile"
+    done
+}
+# Leave time for the watchdog's sleep to start before success/failure cancellation.
+export TEST_GH_MODE=delay
 runFail 1 'Attestation verification failed' --version 7.0.0 --verify-attestation
 unchanged
+noAttestationProcesses
 export TEST_GH_STATUS=0 MABO_VERIFY_ATTESTATION=1
 run 0 --version 7.0.0
 assertVersion 7.0.0 "$HOME/.local/bin"
+noAttestationProcesses
 [ "$(sed -n '1p' "$root/gh-args")" = attestation ] || fail 'Wrong gh command'
 [ "$(sed -n '2p' "$root/gh-args")" = verify ] || fail 'Wrong gh subcommand'
 contains "$root/gh-args" '/maboroshi-v7.0.0-linux-x64.tar.gz'
@@ -279,6 +315,44 @@ contains "$root/gh-args" '/maboroshi-v7.0.0-linux-x64.tar.gz'
 [ "$(sed -n '5p' "$root/gh-args")" = phantompane/phantom ] || fail 'Wrong gh repo'
 [ "$(wc -l < "$root/gh-args" | tr -d ' ')" = 5 ] || fail 'Unexpected gh arguments'
 unset MABO_VERIFY_ATTESTATION
+# Capture stdout in a pipe as well as piping the script source: an uncancelled
+# sleep must neither consume source bytes nor hold the output pipe open for 120s.
+started=$(date +%s)
+status=0
+# shellcheck disable=SC2002
+captured=$(cat "$installer" | MABO_VERSION=7.0.0 MABO_VERIFY_ATTESTATION=1 "$runner" 2> "$root/stderr") || status=$?
+[ "$status" = 0 ] || fail 'Piped attestation install failed'
+elapsed=$(( $(date +%s) - started ))
+[ "$elapsed" -lt 20 ] || fail "Piped attestation install took $elapsed seconds"
+printf '%s\n' "$captured" > "$root/stdout"
+assertVersion 7.0.0 "$HOME/.local/bin"
+noAttestationProcesses
+[ -z "$(ls -A "$root/tmp")" ] || fail 'Leaked download directory'
+[ -z "$(find "$root" -name '.mabo.install.*' -print)" ] || fail 'Leaked staging directory'
+count=$((count+1))
+# Both a normal TERM exit and a process requiring KILL must be bounded. The
+# generous 20-second ceiling is far below the fake's 60-second sleep, allowing
+# slow CI hosts without asserting the exact deadline/grace duration.
+cp "$HOME/.local/bin/mabo" "$root/before"
+for TEST_GH_MODE in stall ignore-term; do
+    export TEST_GH_MODE MABO_ATTESTATION_TIMEOUT=1
+    : > "$TEST_SLEEP_PIDS"
+    started=$(date +%s)
+    runFail 1 'Attestation verification timed out after 1 seconds for maboroshi-v7.0.0-linux-x64.tar.gz.' \
+        --version 7.0.0 --verify-attestation
+    elapsed=$(( $(date +%s) - started ))
+    [ "$elapsed" -lt 20 ] || fail "Attestation timeout took $elapsed seconds"
+    unchanged
+    noAttestationProcesses
+done
+unset TEST_GH_MODE MABO_ATTESTATION_TIMEOUT
+for MABO_ATTESTATION_TIMEOUT in '' 0 00 -1 1.5 nope; do
+    export MABO_ATTESTATION_TIMEOUT
+    runFail 2 'MABO_ATTESTATION_TIMEOUT must be a positive integer in seconds.' \
+        --version 7.0.0 --verify-attestation
+    unchanged
+done
+unset MABO_ATTESTATION_TIMEOUT
 rm "$root/tools/curl"
 # Missing curl must fail without invoking wget, regardless of its implementation.
 cp "$HOME/.local/bin/mabo" "$root/before"

@@ -2,6 +2,8 @@
 # Official mabo installer. Re-run to update; pin with MABO_VERSION for reproducibility.
 # MABO_RELEASE_BASE_URL and MABO_API_URL are overrides for testing/mirrors;
 # they accept https:// URLs and local file:// URLs (copied without HTTP).
+# MABO_ATTESTATION_TIMEOUT is a test-only positive integer deadline in seconds
+# (default 120); invalid values are usage errors.
 # Requires curl (Alpine: apk add curl).
 set -eu
 
@@ -24,9 +26,60 @@ progress() { printf '%s\n' "$*" >&2; }
 
 cleanup() {
     status=$?
+    if [ -n "$ghPid" ]; then
+        kill -KILL "$ghPid" 2>/dev/null || :
+        wait "$ghPid" 2>/dev/null || :
+    fi
+    stopWatchdog
     if [ -n "$stageDir" ]; then rm -rf "$stageDir"; fi
     if [ -n "$tmp" ]; then rm -rf "$tmp"; fi
     if [ "$status" -ne 0 ]; then exit 1; fi
+}
+
+stopWatchdog() {
+    if [ -n "$watchdogPid" ]; then
+        kill -TERM "$watchdogPid" 2>/dev/null || :
+        wait "$watchdogPid" 2>/dev/null || :
+        watchdogPid=''
+    fi
+}
+
+verifyAttestation() {
+    GH_PROMPT_DISABLED=1 gh attestation verify "$tmp/$archive" --repo phantompane/phantom \
+        </dev/null >"$tmp/attestation.log" 2>&1 &
+    ghPid=$!
+    (
+        # A background sleep plus wait lets POSIX shells handle TERM promptly.
+        # Reap the sleep too, including when TERM arrives during its startup.
+        trap - 0
+        stopping=0 sleepPid=''
+        trap 'stopping=1; if [ -n "$sleepPid" ]; then kill "$sleepPid" 2>/dev/null || :; fi' HUP INT TERM
+        pauseWatchdog() {
+            sleep "$1" &
+            sleepPid=$!
+            if [ "$stopping" = 1 ]; then kill "$sleepPid" 2>/dev/null || :; fi
+            wait "$sleepPid" 2>/dev/null || :
+            if [ "$stopping" = 1 ]; then
+                wait "$sleepPid" 2>/dev/null || :
+                exit 0
+            fi
+            sleepPid=''
+        }
+        pauseWatchdog "$attestationTimeout"
+        : > "$tmp/attestation.timed-out"
+        kill -TERM "$ghPid" 2>/dev/null || :
+        pauseWatchdog 2
+        kill -KILL "$ghPid" 2>/dev/null || :
+    ) </dev/null >"$tmp/watchdog.log" 2>&1 &
+    watchdogPid=$!
+    ghStatus=0
+    wait "$ghPid" 2>/dev/null || ghStatus=$?
+    ghPid=''
+    stopWatchdog
+    if [ -f "$tmp/attestation.timed-out" ]; then
+        fail "Attestation verification timed out after $attestationTimeout seconds for $archive."
+    fi
+    [ "$ghStatus" = 0 ] || fail "Attestation verification failed for $archive."
 }
 
 refuseManagedTarget() {
@@ -179,6 +232,12 @@ main() {
             *) usageError "Unknown option: $1" ;;
         esac
     done
+    attestationTimeout=${MABO_ATTESTATION_TIMEOUT-120}
+    case $attestationTimeout in
+        ''|*[!0-9]*) usageError 'MABO_ATTESTATION_TIMEOUT must be a positive integer in seconds.' ;;
+    esac
+    [ "$attestationTimeout" -gt 0 ] 2>/dev/null ||
+        usageError 'MABO_ATTESTATION_TIMEOUT must be a positive integer in seconds.'
     if [ -z "$installDir" ]; then
         [ -n "${HOME-}" ] || fail 'HOME is unset; pass --install-dir.'
         installDir=$HOME/.local/bin
@@ -187,7 +246,7 @@ main() {
     case $installDir in /*) ;; *) installDir=$PWD/$installDir ;; esac
     target=$installDir/mabo
     refuseManagedTarget
-    tmp='' stageDir=''
+    tmp='' stageDir='' ghPid='' watchdogPid=''
     trap cleanup 0
     trap 'exit 1' HUP INT TERM
     case $(uname -s) in Linux) os=linux ;; Darwin) os=darwin ;; *) os=unsupported ;; esac
@@ -242,8 +301,7 @@ main() {
     [ "$actual" = "$expected" ] || fail "Checksum mismatch for $archive."
     if [ "$verify" = 1 ]; then
         progress 'Verifying GitHub attestation...'
-        GH_PROMPT_DISABLED=1 gh attestation verify "$tmp/$archive" --repo phantompane/phantom </dev/null >/dev/null 2>&1 ||
-            fail "Attestation verification failed for $archive."
+        verifyAttestation
     fi
     # Extract only the expected root member, not arbitrary paths from the archive.
     mkdir "$tmp/extracted"
