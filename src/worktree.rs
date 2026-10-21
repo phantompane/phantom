@@ -23,6 +23,8 @@ pub struct WorktreeInfo {
     pub recorded: bool,
     pub name: String,
     pub path: String,
+    /// Original Git registration path, before resolving the checkout itself.
+    pub(crate) registered_path: PathBuf,
     pub path_to_display: String,
     pub branch: String,
     pub is_clean: bool,
@@ -155,6 +157,7 @@ pub fn list_worktrees(
                 "HEAD",
             ),
             path: key.clone(),
+            registered_path: path.to_path_buf(),
             path_to_display: paths::list_path(path),
             branch: "(detached HEAD)".to_string(),
             is_clean: true,
@@ -214,6 +217,7 @@ fn info_from_git(
         recorded: recorded_path.is_some(),
         name,
         path: path.to_string_lossy().into_owned(),
+        registered_path: original.clone(),
         path_to_display: paths::list_path(&path),
         branch,
         is_clean: path.is_dir() && git::is_clean(&path),
@@ -434,19 +438,41 @@ fn select_worktree(mut worktrees: Vec<WorktreeInfo>, name: &str) -> Result<Workt
     }
 }
 
+fn invalid_checkout(tree: &WorktreeInfo, action: &str, reason: &str) -> Error {
+    Error::msg(format!(
+        "Cannot {action} workspace '{}': {reason}. Check its .git entry and repair or remove the stale Git worktree registration before retrying.",
+        crate::output::visible_text(&tree.name)
+    ))
+}
+
+/// Parent directory symlinks are valid; the registered checkout itself must not be a symlink.
+pub(crate) fn validate_registered_path(tree: &WorktreeInfo, action: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(&tree.registered_path).map_err(|error| {
+        invalid_checkout(
+            tree,
+            action,
+            &format!("failed to inspect checkout ({error})"),
+        )
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(invalid_checkout(
+            tree,
+            action,
+            "registered checkout path is a symlink",
+        ));
+    }
+    Ok(())
+}
+
 /// Validate the checkout against Git's independent registration before mutations.
 pub(crate) fn validate_checkout(
     context: &Context,
     tree: &WorktreeInfo,
     action: &str,
 ) -> Result<()> {
-    let invalid = |reason: &str| {
-        Error::msg(format!(
-            "Cannot {action} workspace '{}': {reason}. Check its .git entry and repair or remove the stale Git worktree registration before retrying.",
-            crate::output::visible_text(&tree.name)
-        ))
-    };
-    let path = Path::new(&tree.path);
+    validate_registered_path(tree, action)?;
+    let invalid = |reason: &str| invalid_checkout(tree, action, reason);
+    let path = &tree.registered_path;
     let observed = git::top_level(path)
         .map_err(|error| invalid(&format!("failed to inspect checkout ({error})")))?;
     if !paths::same_location(path, &observed) {
@@ -1555,6 +1581,7 @@ mod tests {
             recorded: false,
             name: name.to_string(),
             path: format!("/worktrees/{name}"),
+            registered_path: PathBuf::from(format!("/worktrees/{name}")),
             path_to_display: name.to_string(),
             branch: branch.to_string(),
             is_clean: true,

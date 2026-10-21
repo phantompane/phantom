@@ -61,10 +61,27 @@ pub fn canonical_common_dir(cwd: &Path) -> Result<PathBuf> {
     }
 }
 
+/// Resolve parent aliases without losing the identity of the registered checkout.
+pub(crate) fn checkout_registration_path(checkout: &Path) -> PathBuf {
+    let checkout = normalize(checkout);
+    match (checkout.parent(), checkout.file_name()) {
+        (Some(parent), Some(name)) => {
+            let parent = if parent.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                parent
+            };
+            crate::paths::canonical_location(parent).join(name)
+        }
+        _ => checkout,
+    }
+}
+
 /// Find the admin directory from Git's registration, without trusting the
 /// checkout's `.git` entry, which may point at a different worktree.
 pub(crate) fn registered_git_dir(repo: &Path, checkout: &Path) -> Result<PathBuf> {
-    if same_path(repo, checkout) {
+    let checkout = checkout_registration_path(checkout);
+    if checkout_registration_path(repo) == checkout {
         return Ok(PathBuf::from(output(
             &["rev-parse", "--absolute-git-dir"],
             Some(repo),
@@ -74,7 +91,6 @@ pub(crate) fn registered_git_dir(repo: &Path, checkout: &Path) -> Result<PathBuf
     let inspect_error = |error| Error::msg(format!("Failed to inspect Git registration: {error}"));
     let entries =
         std::fs::read_dir(git_common_dir(repo)?.join("worktrees")).map_err(inspect_error)?;
-    let gitfile = checkout.join(".git");
     for entry in entries {
         let admin = entry.map_err(inspect_error)?.path();
         if !admin.is_dir() {
@@ -84,7 +100,12 @@ pub(crate) fn registered_git_dir(repo: &Path, checkout: &Path) -> Result<PathBuf
             continue;
         };
         let backlink = backlink.strip_suffix('\n').unwrap_or(&backlink);
-        if same_path(&admin.join(backlink), &gitfile) {
+        let backlink = admin.join(backlink);
+        if backlink.file_name().is_some_and(|name| name == ".git")
+            && backlink
+                .parent()
+                .is_some_and(|path| checkout_registration_path(path) == checkout)
+        {
             return Ok(admin);
         }
     }

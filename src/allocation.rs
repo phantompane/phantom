@@ -470,21 +470,27 @@ fn adopt_with_refresh(
     mut input: MetadataInput,
     refresh: impl FnOnce(&Context, &Path) -> Result<worktree::WorktreeInfo>,
 ) -> Result<worktree::WorktreeInfo> {
+    let registration_path = git::checkout_registration_path(path);
     let path = paths::canonical_location(path);
     let trees = worktree::list_worktrees(context, false, true)?;
-    let tree = trees
-        .iter()
-        .find(|tree| {
-            !tree.orphaned && !tree.is_default && paths::same_location(Path::new(&tree.path), &path)
-        })
+    let live = || {
+        trees
+            .iter()
+            .filter(|tree| !tree.orphaned && !tree.is_default)
+    };
+    // Prefer the requested registration before considering canonical aliases.
+    let tree = live()
+        .find(|tree| git::checkout_registration_path(&tree.registered_path) == registration_path)
+        .or_else(|| live().find(|tree| paths::same_location(Path::new(&tree.path), &path)))
         .ok_or_else(|| Error::WorktreeNotFound(visible_text(&path.to_string_lossy())))?;
     if !path.is_dir() || !path.join(".git").is_file() {
         return Err(Error::WorktreeNotFound(path.to_string_lossy().into_owned()));
     }
+    worktree::validate_registered_path(tree, "adopt")?;
     let observed = git::top_level(&path)?;
     if !paths::same_location(&path, &observed)
         || git::canonical_common_dir(&path)? != git::canonical_common_dir(&context.git_root)?
-        || !git::matches_registered_git_dir(&context.git_root, &path)?
+        || !git::matches_registered_git_dir(&context.git_root, &tree.registered_path)?
     {
         return Err(Error::WorktreeNotFound(path.to_string_lossy().into_owned()));
     }

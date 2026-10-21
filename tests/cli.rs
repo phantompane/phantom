@@ -15463,6 +15463,190 @@ fn assert_review11_stale_registration_skipped(adopt: bool, directory: bool) {
 }
 
 #[test]
+fn setup_no_hooks_rejects_symlink_to_another_registered_workspace() {
+    assert_rejects_symlink_to_registered_workspace("setup-no-hooks");
+}
+
+#[test]
+fn setup_rejects_symlink_to_another_registered_workspace() {
+    assert_rejects_symlink_to_registered_workspace("setup");
+}
+
+#[test]
+fn create_reuse_rejects_symlink_to_another_registered_workspace() {
+    assert_rejects_symlink_to_registered_workspace("create");
+}
+
+#[test]
+fn adopt_rejects_symlink_to_another_registered_workspace() {
+    assert_rejects_symlink_to_registered_workspace("adopt");
+}
+
+#[test]
+fn preparation_rejects_git_file_symlink_to_another_registered_workspace() {
+    for command in ["setup-no-hooks", "setup", "create"] {
+        assert_rejects_symlink_to_registered_workspace_entry(command, true);
+    }
+}
+
+fn assert_rejects_symlink_to_registered_workspace(command: &str) {
+    assert_rejects_symlink_to_registered_workspace_entry(command, false);
+}
+
+fn assert_rejects_symlink_to_registered_workspace_entry(command: &str, gitfile: bool) {
+    for recorded in [false, true] {
+        let repo = Repo::new();
+        for name in ["b", "a"] {
+            assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+        }
+        if !recorded || command == "adopt" {
+            assert!(repo.mabo(&["forget", "a"]).status.success());
+        }
+        if command == "adopt" && !recorded {
+            assert!(repo.mabo(&["forget", "b"]).status.success());
+        }
+        let a = managed(&repo, "a");
+        let b = managed(&repo, "b");
+        // Make the vulnerable registration scan find b first regardless of readdir order.
+        let admins: Vec<_> = fs::read_dir(repo.repo.join(".git/worktrees"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(admins.len(), 2);
+        for (admin, (name, checkout)) in admins.iter().zip([("b", &b), ("a", &a)]) {
+            fs::write(
+                admin.join("gitdir"),
+                format!("{}\n", checkout.join(".git").display()),
+            )
+            .unwrap();
+            fs::write(admin.join("HEAD"), format!("ref: refs/heads/{name}\n")).unwrap();
+            fs::write(
+                checkout.join(".git"),
+                format!("gitdir: {}\n", admin.display()),
+            )
+            .unwrap();
+        }
+        fs::write(repo.repo.join(".gitignore"), "*.env\n").unwrap();
+        fs::write(repo.repo.join(".worktreeinclude"), "*.env\n").unwrap();
+        fs::write(repo.repo.join("secret.env"), "primary secret").unwrap();
+        fs::write(repo.repo.join("existing.env"), "primary value").unwrap();
+        fs::write(b.join("existing.env"), "keep b value").unwrap();
+        fs::write(
+            repo.repo.join(".mabo.toml"),
+            "[hooks]\nsetup = ['touch hook-ran']\n",
+        )
+        .unwrap();
+        let replaced = if gitfile {
+            let gitfile = a.join(".git");
+            fs::remove_file(&gitfile).unwrap();
+            std::os::unix::fs::symlink(b.join(".git"), &gitfile).unwrap();
+            gitfile
+        } else {
+            fs::remove_dir_all(&a).unwrap();
+            std::os::unix::fs::symlink(&b, &a).unwrap();
+            a.clone()
+        };
+        let snapshot = |directory: &Path| {
+            let mut files: Vec<_> = fs::read_dir(directory)
+                .unwrap()
+                .map(|entry| {
+                    let path = entry.unwrap().path();
+                    (
+                        path.file_name().unwrap().to_owned(),
+                        fs::read(&path).unwrap(),
+                    )
+                })
+                .collect();
+            files.sort();
+            files
+        };
+        let a_before = snapshot(&a);
+        let b_before = snapshot(&b);
+        let records_path = repo.repo.join(".git/maboroshi/workspaces");
+        let records_before = snapshot(&records_path);
+        let args = match command {
+            "setup-no-hooks" => vec!["setup", "a", "--no-hooks", "--json"],
+            "setup" => vec!["setup", "a", "--json"],
+            "create" => vec!["create", "--branch", "a", "--reuse", "--json"],
+            "adopt" => vec!["adopt", a.to_str().unwrap(), "--name", "adopted", "--json"],
+            _ => panic!("Unknown command"),
+        };
+        let out = repo.mabo(&args);
+        let unchanged = snapshot(&b) == b_before && snapshot(&records_path) == records_before;
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{command}, recorded={recorded}, unchanged={unchanged}: {}",
+            text(&out.stdout)
+        );
+        let doc = assert_envelope(&out, args[0]);
+        assert_eq!(doc["error"]["code"], "failed");
+        let message = doc["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains(".git") && message.contains("repair"),
+            "{message}"
+        );
+        assert_eq!(snapshot(&a), a_before);
+        assert_eq!(snapshot(&b), b_before);
+        assert_eq!(snapshot(&records_path), records_before);
+        assert!(replaced
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+}
+
+#[test]
+fn setup_reuse_and_adopt_allow_symlinked_parent_directories() {
+    let repo = Repo::new();
+    let real = repo.root.join("real-workspaces");
+    let via = repo.root.join("via-workspaces");
+    fs::create_dir(&real).unwrap();
+    std::os::unix::fs::symlink(&real, &via).unwrap();
+    assert!(repo
+        .mabo(&["config", "set", "workspace-root", via.to_str().unwrap()])
+        .status
+        .success());
+    assert!(repo.mabo(&["create", "a", "--no-setup"]).status.success());
+    // Preserve a symlink spelling in Git's independent registration, too.
+    fs::write(
+        repo.repo.join(".git/worktrees/a/gitdir"),
+        format!("{}\n", via.join("a/.git").display()),
+    )
+    .unwrap();
+    let primary_alias = repo.root.join("via-primary");
+    std::os::unix::fs::symlink(&repo.repo, &primary_alias).unwrap();
+    fs::write(repo.repo.join(".gitignore"), "*.env\n").unwrap();
+    fs::write(repo.repo.join(".worktreeinclude"), "*.env\n").unwrap();
+    fs::write(repo.repo.join("secret.env"), "primary secret").unwrap();
+    let via_a = via.join("a");
+    for args in [
+        vec!["setup", "a", "--no-hooks", "--json"],
+        vec!["setup", "a", "--json"],
+        vec!["create", "a", "--reuse", "--json"],
+        vec!["forget", "a", "--json"],
+        vec!["adopt", via_a.to_str().unwrap(), "--json"],
+    ] {
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .current_dir(&primary_alias)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {} {}",
+            text(&out.stdout),
+            text(&out.stderr)
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(real.join("a/secret.env")).unwrap(),
+        "primary secret"
+    );
+}
+
+#[test]
 fn setup_rejects_checkout_replaced_by_foreign_repository() {
     assert_setup_rejects_replaced_checkout("foreign");
 }
