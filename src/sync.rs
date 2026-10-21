@@ -116,7 +116,10 @@ pub fn fallback_base(root: &Path) -> Result<String> {
     }
     let specs = fetch_refspecs(root)?;
     let remotes = checked_output(&["remote"], root, true)?;
-    for remote in remotes.lines() {
+    // Prefer origin even when its HEAD points into a custom fetch namespace.
+    let origin = remotes.lines().filter(|remote| *remote == "origin");
+    let others = remotes.lines().filter(|remote| *remote != "origin");
+    for remote in origin.chain(others) {
         let head = git::raw_git(
             root,
             &[
@@ -599,9 +602,13 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         let item = if let Some(tree) = cleared_default {
             base_unknown_item(tree)
         } else {
-            let result = match fallback_error.as_ref().or_else(|| fetch_error(&fallback)) {
-                Some(error) => Err(Error::msg(error.clone())),
-                None => sync_default(context, &fallback, &remotes),
+            let result = match (
+                fallback_error.as_ref().or_else(|| fetch_error(&fallback)),
+                default_name.as_deref(),
+            ) {
+                (Some(error), _) => Err(Error::msg(error.clone())),
+                (None, Some(name)) => sync_default(context, &fallback, name),
+                (None, None) => Err(Error::msg("Cannot determine the default branch")),
             };
             match result {
                 Ok(item) => item,
@@ -630,7 +637,6 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
                 base,
                 request,
                 &fallback,
-                &remotes,
                 default_name.as_deref(),
             ),
         };
@@ -844,8 +850,9 @@ fn default_local_name(root: &Path, base: &str, remotes: &[FetchRefspec]) -> Resu
     Ok(local_name.to_string())
 }
 
-fn sync_default(context: &Context, base: &str, remotes: &[FetchRefspec]) -> Result<Item> {
-    let local_name = default_local_name(&context.git_root, base, remotes)?;
+fn sync_default(context: &Context, base: &str, local_name: &str) -> Result<Item> {
+    // Fetch may create a remote HEAD. Keep the branch identity resolved during
+    // planning so integration and the preflight guards use the same target.
     let local = format!("refs/heads/{local_name}");
     let root = &context.git_root;
     let before = commit(root, &local)?;
@@ -959,12 +966,11 @@ fn sync_tree(
     base: &str,
     request: &Request,
     default_base: &str,
-    remotes: &[FetchRefspec],
     default_name: Option<&str>,
 ) -> Result<Item> {
     // Keep this guard at the integration boundary, regardless of selector/strategy.
     if !tree.detached && default_name == Some(tree.branch.as_str()) {
-        let mut item = sync_default(context, default_base, remotes)?;
+        let mut item = sync_default(context, default_base, &tree.branch)?;
         item.name = tree.name.clone();
         return Ok(item);
     }
