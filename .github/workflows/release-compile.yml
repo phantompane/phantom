@@ -179,7 +179,10 @@ jobs:
         # SHA256SUMS, so old checksums never pair with rebuilt archives. The
         # installer refuses a release without SHA256SUMS (fails closed).
         run: |
-          if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -qx SHA256SUMS; then
+          # Fetch the asset list on its own so a failed lookup stops the job
+          # instead of silently skipping the stale-checksum cleanup.
+          existing=$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
+          if printf '%s\n' "$existing" | grep -qx SHA256SUMS; then
             gh release delete-asset "$RELEASE_TAG" SHA256SUMS --yes
           fi
           gh release upload "$RELEASE_TAG" ./*.tar.gz install.sh --clobber
