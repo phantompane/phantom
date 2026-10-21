@@ -155,6 +155,103 @@ impl Drop for Repo {
     }
 }
 
+fn check_primary_sync_selectors(default_branch: bool, no_default: bool) {
+    for strategy in [None, Some("--rebase"), Some("--merge")] {
+        for named in [false, true] {
+            let r = Repo::new();
+            if !default_branch {
+                r.git(&r.main, &["checkout", "-b", "primary-topic"]);
+                r.write_commit(&r.main, "local-file", "local\n");
+            }
+            let shown = r.mabo(&r.main, &["show", "--json"]);
+            assert!(shown.status.success());
+            let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
+            let name = shown["data"]["workspace"]["name"].as_str().unwrap();
+            let before = r.snapshot(&r.main);
+            let default_before = r.git(&r.main, &["rev-parse", "refs/heads/main"]);
+            r.advance();
+            let remote_tip = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+            let mut args = vec![if named { name } else { "." }];
+            if no_default {
+                args.push("--no-default");
+            }
+            if let Some(strategy) = strategy {
+                args.push(strategy);
+            }
+            let doc = r.sync(&r.main, &args, 0);
+            assert_eq!(doc["schema"], 2);
+            assert_eq!(doc["data"]["workspaces"], json!([]), "{args:?}: {doc}");
+            if no_default {
+                assert!(doc["data"]["default"].is_null(), "{doc}");
+                assert_eq!(r.snapshot(&r.main), before, "{args:?}");
+                assert_eq!(
+                    r.git(&r.main, &["rev-parse", "refs/heads/main"]),
+                    default_before
+                );
+            } else {
+                assert_eq!(doc["data"]["default"]["strategy"], "ff-only");
+                assert_eq!(doc["data"]["default"]["status"], "updated");
+                assert_eq!(
+                    r.git(&r.main, &["rev-parse", "refs/heads/main"]),
+                    remote_tip
+                );
+                if default_branch {
+                    assert_eq!(r.git(&r.main, &["rev-parse", "HEAD"]), remote_tip);
+                } else {
+                    assert_eq!(r.snapshot(&r.main), before, "{args:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn primary_nondefault_sync_selectors_skip_integration() {
+    check_primary_sync_selectors(false, false);
+}
+
+#[test]
+fn primary_nondefault_sync_selectors_skip_integration_with_no_default() {
+    check_primary_sync_selectors(false, true);
+}
+
+#[test]
+fn primary_default_sync_selectors_only_fast_forward() {
+    check_primary_sync_selectors(true, false);
+}
+
+#[test]
+fn primary_default_sync_selectors_skip_with_no_default() {
+    check_primary_sync_selectors(true, true);
+}
+
+#[test]
+fn primary_default_sync_selectors_never_integrate_divergence() {
+    for no_default in [false, true] {
+        for selector in [".", "main"] {
+            for strategy in ["--rebase", "--merge"] {
+                let r = Repo::new();
+                r.write_commit(&r.main, "local-file", "local\n");
+                let before = r.snapshot(&r.main);
+                r.advance();
+                let mut args = vec![selector, strategy];
+                if no_default {
+                    args.push("--no-default");
+                }
+                let doc = r.sync(&r.main, &args, if no_default { 0 } else { 1 });
+                assert_eq!(r.snapshot(&r.main), before, "{args:?}");
+                assert_eq!(doc["data"]["workspaces"], json!([]), "{doc}");
+                if no_default {
+                    assert!(doc["data"]["default"].is_null());
+                } else {
+                    assert_eq!(doc["data"]["default"]["strategy"], "ff-only");
+                    assert_eq!(doc["data"]["default"]["status"], "diverged");
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn default_upstream_precedes_other_remote_heads_without_origin_head() {
     for existing_trunk in [false, true] {
@@ -380,6 +477,49 @@ fn default_without_remote_head_uses_differently_named_upstream() {
 }
 
 #[test]
+fn implicit_sync_does_not_revalidate_the_resolved_branch_name() {
+    for subdirectory in [false, true] {
+        let r = Repo::new();
+        let tree = r.root.join("plain-checkout");
+        r.git(
+            &r.main,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "topic+fix",
+                tree.to_str().unwrap(),
+                "main",
+            ],
+        );
+        let other = r.create("other");
+        let other_before = r.snapshot(&other);
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let records_before = records::read(&store).unwrap();
+        r.advance();
+        let cwd = if subdirectory {
+            let sub = tree.join("sub");
+            fs::create_dir(&sub).unwrap();
+            sub
+        } else {
+            tree.clone()
+        };
+        let doc = r.sync(&cwd, &[], 0);
+        assert_eq!(doc["schema"], 2);
+        assert_eq!(doc["data"]["default"]["status"], "updated");
+        assert_eq!(doc["data"]["workspaces"].as_array().unwrap().len(), 1);
+        assert_eq!(doc["data"]["workspaces"][0]["name"], "topic+fix");
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
+        assert_eq!(
+            r.git(&tree, &["rev-parse", "HEAD"]),
+            r.git(&r.upstream, &["rev-parse", "HEAD"])
+        );
+        assert_eq!(r.snapshot(&other), other_before);
+        assert_eq!(records::read(&store).unwrap(), records_before);
+    }
+}
+
+#[test]
 fn default_only_and_linked_implicit_including_subdirectory_and_detached() {
     let r = Repo::new();
     let tree = r.create("topic");
@@ -417,15 +557,7 @@ fn linked_default_is_only_integrated_fast_forward_once() {
         );
         let out = r.mabo(
             &r.main,
-            &[
-                "meta",
-                "set",
-                "main",
-                "--purpose",
-                "tester",
-                "--base",
-                "other",
-            ],
+            &["set", "main", "--purpose", "tester", "--base", "other"],
         );
         assert!(
             out.status.success(),
@@ -583,7 +715,7 @@ fn corrupt_custom_base_metadata_refuses_sync_before_fetch_or_updates() {
     r.git(&r.main, &["branch", "stack"]);
     r.write_commit(&tree, "own", "own commit\n");
     assert!(r
-        .mabo(&r.main, &["meta", "set", "topic", "--base", "stack"])
+        .mabo(&r.main, &["set", "topic", "--base", "stack"])
         .status
         .success());
     let dir = r.main.join(".git/maboroshi/workspaces");
@@ -648,7 +780,7 @@ fn updates_with_failures_conflicts_or_published_refusals_exit_partial() {
                 );
                 r.git(&r.main, &["fetch", "broken"]);
                 assert!(r
-                    .mabo(&r.main, &["meta", "set", "topic", "--base", "broken/main"])
+                    .mabo(&r.main, &["set", "topic", "--base", "broken/main"])
                     .status
                     .success());
                 r.git(
@@ -812,14 +944,11 @@ fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
         "merged"
     );
     r.git(&r.main, &["branch", "stack"]);
-    let out = r.mabo(
-        &r.main,
-        &["meta", "set", "topic", "--base", "stack", "--json"],
-    );
+    let out = r.mabo(&r.main, &["set", "topic", "--base", "stack", "--json"]);
     assert!(out.status.success());
     let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(doc["data"]["workspace"]["base"], "refs/heads/stack");
-    let invalid = r.mabo(&r.main, &["meta", "set", "topic", "--base", "nonexistent"]);
+    let invalid = r.mabo(&r.main, &["set", "topic", "--base", "nonexistent"]);
     assert!(!invalid.status.success());
     r.git(&r.main, &["branch", "-D", "stack"]);
     assert_eq!(
@@ -1128,7 +1257,7 @@ fn multiple_bases_fetch_each_involved_remote_and_respect_no_default() {
     );
     r.git(&r.main, &["fetch", "stack"]);
     assert!(r
-        .mabo(&r.main, &["meta", "set", "topic", "--base", "stack/main"])
+        .mabo(&r.main, &["set", "topic", "--base", "stack/main"])
         .status
         .success());
     r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
@@ -1517,7 +1646,7 @@ fn git_hook_can_run_mabo_exec_and_create_with_project_hooks_and_exec() {
 [ -e '{gate}' ] && exit 0
 touch '{gate}'
 cd '{main}'
-'{bin}' exec victim sh -c "touch '{standalone}'" &&
+'{bin}' exec victim -- sh -c "touch '{standalone}'" &&
 '{bin}' create nested --exec "touch '{create_exec}'"
 echo $? > '{status}'
 "#,
@@ -1590,7 +1719,7 @@ fn post_create_hook_can_list_and_create_and_pre_delete_hook_can_create() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(r.mabo(&r.main, &["where", "from-delete"]).status.success());
+    assert!(r.mabo(&r.main, &["path", "from-delete"]).status.success());
 }
 
 #[test]
@@ -1701,7 +1830,7 @@ fn attach_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(!tree.exists());
-    assert!(r.mabo(&r.main, &["where", "from-gc"]).status.success());
+    assert!(r.mabo(&r.main, &["path", "from-gc"]).status.success());
     // A hook can change the target; the old preflight is stale.
     fs::write(
         r.main.join(".mabo.toml"),
@@ -1718,7 +1847,7 @@ fn attach_and_gc_hooks_can_run_mabo_and_delete_rechecks_after_hooks() {
     let out = finish_child(child);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("Workspace changed"));
-    assert!(r.mabo(&r.main, &["where", "from-attach"]).status.success());
+    assert!(r.mabo(&r.main, &["path", "from-attach"]).status.success());
 }
 
 #[test]
@@ -2170,10 +2299,7 @@ fn slash_remote_default_and_explicit_bases_fetch_and_integrate_main() {
             );
             let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
             let tree = PathBuf::from(doc["data"]["workspace"]["path"].as_str().unwrap());
-            let out = r.mabo(
-                &r.main,
-                &["meta", "set", &name, "--base", "team/origin/main"],
-            );
+            let out = r.mabo(&r.main, &["set", &name, "--base", "team/origin/main"]);
             assert!(
                 out.status.success(),
                 "{}",
@@ -2617,10 +2743,7 @@ fn failed_default_remote_does_not_block_a_healthy_base_remote() {
     );
     r.git(&r.main, &["fetch", "healthy"]);
     assert!(r
-        .mabo(
-            &r.main,
-            &["meta", "set", "healthy", "--base", "healthy/main"]
-        )
+        .mabo(&r.main, &["set", "healthy", "--base", "healthy/main"])
         .status
         .success());
     r.advance();
@@ -2660,10 +2783,7 @@ fn fetch_failures_exit_one_even_with_a_published_rebase_refusal() {
     r.git(&tree, &["push", "healthy", "published"]);
     r.git(&r.main, &["fetch", "healthy"]);
     assert!(r
-        .mabo(
-            &r.main,
-            &["meta", "set", "published", "--base", "healthy/main"]
-        )
+        .mabo(&r.main, &["set", "published", "--base", "healthy/main"])
         .status
         .success());
     r.advance();
@@ -2924,7 +3044,7 @@ fn fetch_refspec_namespace_determines_remote_and_default_local_name() {
         let tree = r.create("topic");
         let out = r.mabo(
             &r.main,
-            &["meta", "set", "topic", "--base", "refs/remotes/cache/main"],
+            &["set", "topic", "--base", "refs/remotes/cache/main"],
         );
         assert!(out.status.success());
         r.write_commit(&tree, "local", "local\n");
@@ -3473,4 +3593,212 @@ fn rebase_keeps_own_commits_after_upstream_rewind_with_forkpoint_config() {
         );
         assert_eq!(fs::read_to_string(tree.join("own")).unwrap(), "own\n");
     }
+}
+
+#[test]
+fn explicitly_cleared_base_skips_sync_until_reset() {
+    for selector in ["--all", "topic"] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        let out = r.mabo(&r.main, &["set", "topic", "--unset", "base", "--json"]);
+        assert!(out.status.success());
+        // An unrelated edit must preserve the explicit clear across process boundaries.
+        assert!(r
+            .mabo(&r.main, &["set", "topic", "--purpose", "paused"])
+            .status
+            .success());
+        r.advance();
+        let before = r.snapshot(&tree);
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let record_before = records::read(&store).unwrap();
+        let doc = r.sync(&r.main, &[selector, "--no-default"], 0);
+        let item = &doc["data"]["workspaces"][0];
+        assert_eq!(item["status"], "base-unknown");
+        assert!(item["base"].is_null());
+        assert!(item["detail"]
+            .as_str()
+            .unwrap()
+            .contains("explicitly cleared"));
+        assert!(item["detail"]
+            .as_str()
+            .unwrap()
+            .contains("mabo set topic --base REF"));
+        assert_eq!(r.snapshot(&tree), before);
+        assert_eq!(records::read(&store).unwrap(), record_before);
+        let out = r.mabo(&r.main, &["set", "topic", "--base", "origin/main"]);
+        assert!(out.status.success());
+        let doc = r.sync(&r.main, &[selector, "--no-default"], 0);
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
+        assert_eq!(
+            r.git(&tree, &["rev-parse", "HEAD"]),
+            r.git(&r.upstream, &["rev-parse", "HEAD"])
+        );
+    }
+}
+
+#[test]
+fn cleared_base_on_default_checkout_is_skipped() {
+    for selector in ["--all", "topic"] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        r.git(&r.main, &["checkout", "-b", "primary"]);
+        r.git(&tree, &["checkout", "main"]);
+        assert!(r
+            .mabo(&r.main, &["set", "topic", "--unset", "base"])
+            .status
+            .success());
+        r.advance();
+        let before = r.snapshot(&tree);
+        let doc = r.sync(&r.main, &[selector, "--no-default"], 0);
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "base-unknown");
+        assert_eq!(r.snapshot(&tree), before);
+        let doc = r.sync(&r.main, &[selector], 0);
+        assert_eq!(doc["data"]["default"]["status"], "base-unknown");
+        assert_eq!(r.snapshot(&tree), before);
+    }
+}
+
+fn assert_cleared_default_skips_unavailable_remote(selectors: &[&str]) {
+    for no_default in [false, true] {
+        let r = Repo::new();
+        let tree = r.create("topic");
+        r.git(&r.main, &["checkout", "-b", "primary"]);
+        r.git(&tree, &["checkout", "main"]);
+        assert!(r.mabo(&tree, &["set", "--unset", "base"]).status.success());
+        r.advance();
+        r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
+        let before = r.snapshot(&tree);
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let records_before = records::read(&store).unwrap();
+        let refs_before = r.git(&r.main, &["for-each-ref"]);
+        let trace = r.root.join("trace");
+        let mut args = vec!["sync", "--json"];
+        args.extend_from_slice(selectors);
+        if no_default {
+            args.push("--no-default");
+        }
+        let out = r
+            .command(env!("CARGO_BIN_EXE_mabo"), &tree, &args)
+            .env("GIT_TRACE", &trace)
+            .output()
+            .unwrap();
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(doc["schema"], 2);
+        if no_default {
+            assert!(doc["data"]["default"].is_null());
+        } else {
+            assert_eq!(doc["data"]["default"]["status"], "base-unknown", "{doc}");
+        }
+        let items = doc["data"]["workspaces"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["status"], "base-unknown");
+        assert!(items[0]["base"].is_null());
+        assert_eq!(out.status.code(), Some(0), "{doc}");
+        assert!(!fs::read_to_string(&trace)
+            .unwrap()
+            .contains("fetch --prune"));
+        assert_eq!(r.snapshot(&tree), before);
+        assert_eq!(records::read(&store).unwrap(), records_before);
+        assert_eq!(r.git(&r.main, &["for-each-ref"]), refs_before);
+    }
+}
+
+#[test]
+fn cleared_default_named_sync_skips_unavailable_remote() {
+    assert_cleared_default_skips_unavailable_remote(&["topic"]);
+}
+
+#[test]
+fn cleared_default_all_sync_skips_unavailable_remote() {
+    assert_cleared_default_skips_unavailable_remote(&["--all"]);
+}
+
+#[test]
+fn cleared_default_implicit_sync_skips_unavailable_remote() {
+    assert_cleared_default_skips_unavailable_remote(&[]);
+}
+
+#[test]
+fn cleared_primary_default_skips_unavailable_remote() {
+    for selectors in [vec!["."], vec!["--all"], vec![]] {
+        let r = Repo::new();
+        assert!(r
+            .mabo(&r.main, &["set", "--unset", "base"])
+            .status
+            .success());
+        r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
+        let doc = r.sync(&r.main, &selectors, 0);
+        assert_eq!(doc["data"]["default"]["status"], "base-unknown");
+    }
+}
+
+#[test]
+fn cleared_bases_do_not_hide_other_targets_fetch_failures() {
+    for clear_default in [false, true] {
+        for selectors in [vec!["topic"], vec!["--all"], vec![]] {
+            let r = Repo::new();
+            let tree = r.create("topic");
+            let cleared = if clear_default { &r.main } else { &tree };
+            assert!(r
+                .mabo(cleared, &["set", "--unset", "base"])
+                .status
+                .success());
+            r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
+            let before = r.snapshot(&tree);
+            let doc = r.sync(&tree, &selectors, 1);
+            assert_eq!(doc["schema"], 2);
+            let (unknown, failed) = if clear_default {
+                (&doc["data"]["default"], &doc["data"]["workspaces"][0])
+            } else {
+                (&doc["data"]["workspaces"][0], &doc["data"]["default"])
+            };
+            assert_eq!(unknown["status"], "base-unknown", "{doc}");
+            assert!(unknown["base"].is_null());
+            assert_eq!(failed["status"], "failed", "{doc}");
+            assert!(failed["detail"]
+                .as_str()
+                .unwrap()
+                .contains("Fetch origin failed"));
+            assert_eq!(r.snapshot(&tree), before);
+        }
+    }
+}
+
+#[test]
+fn legacy_missing_base_falls_back_after_record_migration() {
+    let r = Repo::new();
+    let legacy = r.root.join("legacy");
+    let cleared = r.root.join("cleared");
+    for (name, path) in [("legacy", &legacy), ("cleared", &cleared)] {
+        r.git(
+            &r.main,
+            &["worktree", "add", "-b", name, path.to_str().unwrap()],
+        );
+    }
+    let file = r.main.join(".git/maboroshi/worktrees.json");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({"version": 1, "worktrees": [
+            {"path": legacy, "purpose": "old"}, {"path": cleared}
+        ]}))
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(r
+        .mabo(&r.main, &["set", "cleared", "--unset", "base"])
+        .status
+        .success());
+    assert!(!file.exists());
+    assert!(file.with_extension("json.imported").exists());
+    r.advance();
+    let before = r.snapshot(&cleared);
+    let doc = r.sync(&r.main, &["--all", "--no-default"], 0);
+    let items = doc["data"]["workspaces"].as_array().unwrap();
+    let old = items.iter().find(|item| item["name"] == "legacy").unwrap();
+    assert_eq!(old["base"], "refs/remotes/origin/main");
+    assert_eq!(old["status"], "updated");
+    let unknown = items.iter().find(|item| item["name"] == "cleared").unwrap();
+    assert_eq!(unknown["status"], "base-unknown");
+    assert_eq!(r.snapshot(&cleared), before);
 }

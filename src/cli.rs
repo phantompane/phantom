@@ -123,7 +123,7 @@ fn unresolved_usage(args: &[String], command: &str, message: &str) -> Result<i32
             crate::runtime::is_removed_repo_option(arg) || args::removed_option_hint(arg).is_some()
         });
     if !crate::output::json() && !removed_interface {
-        println!("{}", help::main_help()?);
+        eprintln!("{}", help::main_help()?);
     }
     crate::output::finish(exit)?;
     Ok(exit)
@@ -314,101 +314,274 @@ fn attach(args: &[String]) -> Result<i32> {
 }
 
 fn list(args: &[String]) -> Result<i32> {
+    let parsed = args::parse(args, &command_options("list"), false)?;
     let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("list"), false) {
-        Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    if json && parsed.flag("names") {
-        return fail_with(
-            &Error::msg("Only one of --json or --names can be specified"),
-            VALIDATION,
-        );
+    if (parsed.flag("names") && parsed.flag("paths"))
+        || (json && (parsed.flag("names") || parsed.flag("paths")))
+    {
+        return Err(Error::validation(
+            "Only one of --json, --names or --paths can be specified",
+        ));
     }
-    let context = match command_context(&parsed) {
-        Ok(context) => context,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    let exclude_default = parsed.flag("no-default");
-    if let Some(warning) = metadata::read_problem(&context.git_root) {
-        crate::output::warning("metadata_read", format!("Warning: {warning}"));
+    let kind = single_value(&parsed, "kind")?;
+    if kind.is_some_and(|kind| !matches!(kind, "workspace" | "primary")) {
+        return Err(Error::validation("--kind must be workspace or primary"));
     }
-    let worktrees = match worktree::list_worktrees(&context, exclude_default, false) {
-        Ok(worktrees) => worktrees,
-        Err(error) => return fail_with(&error, GENERAL),
-    };
-    if json {
-        return emit_json(&worktree::WorktreeListOutput {
-            version: crate::error::JSON_VERSION,
-            worktrees: worktrees
-                .iter()
-                .map(|worktree| worktree.to_json(None))
-                .collect(),
-        });
-    }
-    if worktrees.is_empty() {
-        if !parsed.flag("names") {
-            let available = worktree::list_worktrees(&context, false, false).unwrap_or_default();
-            let message = if exclude_default && !available.is_empty() {
-                "No linked workspaces found".to_string()
-            } else {
-                "No workspaces found".to_string()
-            };
-            println!("{message}");
+    let contexts = if parsed.flag("all-repos") {
+        if parsed.value("repo").is_some() {
+            return Err(Error::validation(
+                "--all-repos cannot be combined with -R/--repo",
+            ));
         }
-        return Ok(SUCCESS);
-    }
-    for worktree in worktrees {
-        if parsed.flag("names") {
-            println!("{}", worktree.name);
-        } else {
-            let dirty = if worktree.is_clean { "" } else { " [dirty]" };
-            let suffix = metadata::list_suffix(&worktree.metadata);
-            let orphaned = if worktree.orphaned { " [orphaned]" } else { "" };
+        let catalog = projects::list_catalog(
+            preferences::load_preferences()?
+                .ghq_discovery
+                .unwrap_or(true),
+        )?;
+        for warning in catalog.warnings {
+            crate::output::warning("repo_discovery", warning);
+        }
+        catalog
+            .projects
+            .iter()
+            .map(|repo| {
+                let (ProjectListEntry::Registry { root_path, .. }
+                | ProjectListEntry::Ghq { root_path, .. }) = repo;
+                crate::context::create_at(Path::new(root_path))
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        vec![command_context(&parsed)?]
+    };
+    let mut workspaces = Vec::new();
+    let mut repos = Vec::new();
+    for context in contexts {
+        if let Some(warning) = metadata::read_problem(&context.git_root) {
+            crate::output::warning("metadata_read", format!("Warning: {warning}"));
+        }
+        let repo = crate::selectors::repo_json(&context.git_root);
+        if !json && !parsed.flag("names") && !parsed.flag("paths") {
             println!(
-                "{} ({}){dirty}{suffix}{orphaned}",
-                worktree.name, worktree.path_to_display
+                "{}  (primary: {})",
+                visible_text(&repo.name),
+                visible_text(&repo.root)
             );
         }
+        repos.push(repo);
+        let mut count = 0;
+        for tree in worktree::list_worktrees(&context, false, false)? {
+            if kind.is_some_and(|kind| (kind == "primary") != tree.is_default) {
+                continue;
+            }
+            count += 1;
+            let workspace = tree.to_json(None);
+            if !json {
+                if parsed.flag("names") {
+                    println!("{}", tree.name);
+                } else if parsed.flag("paths") {
+                    println!("{}", tree.path);
+                } else {
+                    let upstream = workspace
+                        .upstream
+                        .as_ref()
+                        .map(|u| {
+                            if u.gone {
+                                "upstream:gone".into()
+                            } else {
+                                format!(
+                                    "↑{} ↓{}",
+                                    u.ahead.map(|n| n.to_string()).unwrap_or_else(|| "?".into()),
+                                    u.behind
+                                        .map(|n| n.to_string())
+                                        .unwrap_or_else(|| "?".into())
+                                )
+                            }
+                        })
+                        .unwrap_or_default();
+                    let links = [
+                        tree.metadata.links.pr.as_ref().map(|l| {
+                            format!(
+                                "#{}",
+                                l.number
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|| l.url.clone().unwrap_or_default())
+                            )
+                        }),
+                        tree.metadata.links.issue.as_ref().map(|l| {
+                            format!(
+                                "issue #{}",
+                                l.number
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|| l.url.clone().unwrap_or_default())
+                            )
+                        }),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                    println!(
+                        "{} {}  {}  {}  {}  {}  {}{}",
+                        if workspace.current { "*" } else { " " },
+                        visible_text(&tree.name),
+                        visible_text(workspace.branch.as_deref().unwrap_or("(detached)")),
+                        upstream,
+                        if tree.is_clean { "" } else { "dirty" },
+                        visible_text(&links),
+                        visible_text(tree.metadata.purpose.as_deref().unwrap_or("")),
+                        if tree.orphaned { " [orphaned]" } else { "" }
+                    );
+                }
+            }
+            workspaces.push(workspace);
+        }
+        if count == 0 && !json && !parsed.flag("names") && !parsed.flag("paths") {
+            println!("No linked workspaces found");
+        }
     }
-    Ok(SUCCESS)
+    if json {
+        let mut data = serde_json::json!({"workspaces": workspaces});
+        if parsed.flag("all-repos") {
+            data["repos"] = serde_json::to_value(repos).map_err(|e| Error::msg(e.to_string()))?;
+        }
+        emit_json(&data)
+    } else {
+        Ok(SUCCESS)
+    }
 }
 
-fn where_cmd(args: &[String]) -> Result<i32> {
-    let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("where"), true) {
-        Ok(parsed) => parsed,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    if parsed.positionals.is_empty() {
-        return fail_with(
-            &Error::msg("Usage: mabo where <workspace-name>"),
-            VALIDATION,
-        );
+fn inspect(args: &[String], path_only: bool) -> Result<i32> {
+    let parsed = args::parse(args, &command_options("show"), true)?;
+    if parsed.positionals.len() > 1 {
+        return Err(Error::validation("Usage: mabo show/path [SEL]"));
     }
-    let context = match command_context(&parsed) {
-        Ok(context) => context,
-        Err(error) => return fail_with(&error, error.exit_code()),
-    };
-    let name = &parsed.positionals[0];
+    let context = command_context(&parsed)?;
     if let Some(warning) = metadata::read_problem(&context.git_root) {
         crate::output::warning("metadata_read", format!("Warning: {warning}"));
     }
-    match worktree::find_worktree(&context, name, false, None) {
-        Ok(worktree) => {
-            if json {
-                emit_json(&worktree::WorktreeRefOutput {
-                    version: crate::error::JSON_VERSION,
-                    worktree: worktree.to_json(None),
-                })
-            } else {
-                println!("{}", worktree.path);
-                Ok(SUCCESS)
+    let tree = crate::selectors::resolve_including_orphaned(
+        &context,
+        parsed
+            .positionals
+            .first()
+            .map(String::as_str)
+            .unwrap_or("."),
+        false,
+        None,
+    )?;
+    if path_only && tree.orphaned {
+        return Err(Error::msg(
+            "Workspace is orphaned: its directory is gone. Use mabo show to inspect its record.",
+        ));
+    }
+    if crate::output::json() {
+        if path_only {
+            emit_json(&serde_json::json!({"path": tree.path}))
+        } else {
+            emit_json(&worktree::WorktreeRefOutput {
+                version: crate::error::JSON_VERSION,
+                worktree: tree.to_json(None),
+            })
+        }
+    } else {
+        if path_only {
+            println!("{}", tree.path);
+        } else {
+            let object = tree.to_json(None);
+            println!("{} ({})", visible_text(&tree.name), object.kind);
+            println!("Path: {}", visible_text(&tree.path));
+            println!("Repository: {}", visible_text(&object.repo.name));
+            println!("Repository path: {}", visible_text(&object.repo.root));
+            println!(
+                "ID: {}",
+                visible_text(object.metadata.id.as_deref().unwrap_or("unknown"))
+            );
+            println!(
+                "HEAD: {}",
+                visible_text(object.head.as_deref().unwrap_or("unknown"))
+            );
+            println!("Managed: {}", object.managed);
+            println!(
+                "Detached: {}",
+                object
+                    .detached
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "unknown".into())
+            );
+            for (label, value) in [
+                ("Created from", &object.metadata.created_from),
+                ("Created at", &object.metadata.created_at),
+                ("Updated at", &object.metadata.updated_at),
+            ] {
+                println!(
+                    "{label}: {}",
+                    visible_text(value.as_deref().unwrap_or("unknown"))
+                );
+            }
+            println!(
+                "Branch: {}",
+                visible_text(object.branch.as_deref().unwrap_or("(detached)"))
+            );
+            println!(
+                "Base: {}",
+                visible_text(object.base.as_deref().unwrap_or("unknown"))
+            );
+            println!(
+                "Purpose: {}",
+                visible_text(tree.metadata.purpose.as_deref().unwrap_or(""))
+            );
+            println!(
+                "Dirty: {}",
+                object
+                    .dirty
+                    .map(|dirty| dirty.to_string())
+                    .unwrap_or_else(|| "unknown".into())
+            );
+            println!("Current: {}", object.current);
+            println!("Orphaned: {}", object.orphaned);
+            if let Some(upstream) = object.upstream {
+                println!(
+                    "Upstream: {}{}",
+                    visible_text(&upstream.r#ref),
+                    if upstream.gone {
+                        " (gone)".into()
+                    } else {
+                        format!(
+                            " ↑{} ↓{}",
+                            upstream
+                                .ahead
+                                .map(|n| n.to_string())
+                                .unwrap_or_else(|| "?".into()),
+                            upstream
+                                .behind
+                                .map(|n| n.to_string())
+                                .unwrap_or_else(|| "?".into())
+                        )
+                    }
+                );
+            }
+            for (kind, link) in [
+                ("PR", tree.metadata.links.pr),
+                ("Issue", tree.metadata.links.issue),
+            ] {
+                if let Some(link) = link {
+                    println!(
+                        "{kind}: {}",
+                        visible_text(&link.url.unwrap_or_else(|| {
+                            link.number.map(|n| n.to_string()).unwrap_or_default()
+                        }))
+                    );
+                }
             }
         }
-        Err(error @ Error::WorktreeNotFound(_)) => fail_with(&error, NOT_FOUND),
-        Err(error) => fail_with(&error, GENERAL),
+        Ok(SUCCESS)
     }
+}
+fn show(args: &[String]) -> Result<i32> {
+    inspect(args, false)
+}
+fn path_cmd(args: &[String]) -> Result<i32> {
+    inspect(args, true)
 }
 
 fn delete(args: &[String]) -> Result<i32> {
@@ -440,7 +613,7 @@ fn delete(args: &[String]) -> Result<i32> {
         parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false);
     let names = if delete_current {
         match worktree::current_worktree_name(&context) {
-            Ok(Some(name)) => vec![name],
+            Ok(Some(_)) => vec![".".to_string()],
             Ok(None) => {
                 return fail_with(
                     &Error::msg(
@@ -551,49 +724,40 @@ fn delete(args: &[String]) -> Result<i32> {
 }
 
 fn exec(args: &[String]) -> Result<i32> {
-    let parsed = args::parse_with(args, &command_options("exec"), true, Some(1))?;
-    if parsed.positionals.len() < 2 {
-        return fail(
-            &Error::msg("Usage: mabo exec <workspace-name> <command> [args...]"),
-            VALIDATION,
-        );
-    }
-    let command_args = parsed.positionals[1..].to_vec();
-    let context = match command_context(&parsed) {
-        Ok(context) => context,
-        Err(error) => return fail_with(&error, error.exit_code()),
+    let Some(separator) = args.iter().position(|arg| arg == "--") else {
+        // Check mabo options before SEL, but old child flags still get the migration hint.
+        args::parse_with(args, &command_options("exec"), true, Some(1))?;
+        return Err(Error::validation(
+            "exec requires '--' before the command. Use `mabo exec [SEL] -- COMMAND [ARG...]`.",
+        ));
     };
-    let name = parsed.positionals[0].clone();
-    if let Err(error) = worktree::find_worktree(&context, &name, false, None) {
-        let code = if matches!(error, Error::WorktreeNotFound(_)) {
-            NOT_FOUND
-        } else {
-            error.child_exit_code()
-        };
-        return fail(&error, code);
+    let parsed = args::parse_with(&args[..separator], &command_options("exec"), true, Some(1))?;
+    let command_args = &args[separator + 1..];
+    if parsed.positionals.len() > 1 || command_args.is_empty() {
+        return Err(Error::validation(
+            "Usage: mabo exec [SEL] -- COMMAND [ARG...]",
+        ));
     }
-    let command = command_args[0].as_str();
+    let context = command_context(&parsed)?;
+    let name = parsed
+        .positionals
+        .first()
+        .map(String::as_str)
+        .unwrap_or(".");
     let rest = command_args[1..]
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
-    match worktree::exec_in_worktree(&context, &name, command, &rest, &[], false) {
+    match worktree::exec_in_worktree(&context, name, &command_args[0], &rest, &[], false) {
         Ok(0) => Ok(SUCCESS),
         Ok(code) => fail(
             &Error::CommandFailed {
-                command: command.to_string(),
+                command: command_args[0].clone(),
                 code,
             },
             code,
         ),
-        Err(error) => {
-            let code = if matches!(error, Error::WorktreeNotFound(_)) {
-                NOT_FOUND
-            } else {
-                error.child_exit_code()
-            };
-            fail(&error, code)
-        }
+        Err(error) => fail(&error, error.child_exit_code()),
     }
 }
 
@@ -762,14 +926,16 @@ fn help_cmd(args: &[String]) -> Result<i32> {
 
 fn removed_command_hint(command: &str) -> Option<String> {
     let replacement = match command.split_whitespace().next()? {
-        "project" => "mabo repo add/list/show/forget",
-        "preferences" => "mabo config get/set/unset/list",
-        "untrust" => "mabo trust remove",
-        "version" => "mabo --version",
+        "project" => "`mabo repo add/list/show/forget`",
+        "preferences" => "`mabo config get/set/unset/list`",
+        "untrust" => "`mabo trust remove`",
+        "version" => "`mabo --version`",
+        "where" => "`mabo path [SEL]` or `mabo show [SEL] --json`",
+        "meta" => "`mabo set [SEL]` or `mabo show [SEL]`",
         _ => return None,
     };
     Some(format!(
-        "Command '{command}' was removed. Use `{replacement}`."
+        "Command '{command}' was removed. Use {replacement}."
     ))
 }
 
@@ -1180,30 +1346,14 @@ fn catalog_json(projects: &[ProjectListEntry], version: u32) -> serde_json::Valu
     })
 }
 
-fn meta_root(args: &[String]) -> Result<i32> {
-    if args.is_empty() {
-        if let Some(text) = help::command_help("meta")? {
-            println!("{text}");
-        }
-        return Ok(SUCCESS);
-    }
-    Err(Error::validation(format!(
-        "Unknown meta subcommand: {}",
-        args[0]
-    )))
-}
-
-fn meta_set(args: &[String]) -> Result<i32> {
+fn set(args: &[String]) -> Result<i32> {
     let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("meta set"), true) {
+    let parsed = match args::parse(args, &command_options("set"), true) {
         Ok(parsed) => parsed,
         Err(error) => return fail_with(&error, error.exit_code()),
     };
-    if parsed.positionals.len() != 1 {
-        return fail_with(
-            &Error::msg("Usage: mabo meta set <workspace-name> [options]"),
-            VALIDATION,
-        );
+    if parsed.positionals.len() > 1 {
+        return fail_with(&Error::msg("Usage: mabo set [SEL] [options]"), VALIDATION);
     }
     let mut input = match metadata_input(&parsed) {
         Ok(input) => input,
@@ -1213,11 +1363,25 @@ fn meta_set(args: &[String]) -> Result<i32> {
         && input.purpose.is_none()
         && input.pr.is_none()
         && input.issue.is_none()
+        && parsed.values("unset").is_empty()
     {
         return fail_with(
-            &Error::msg("Specify at least one of --purpose, --pr, --issue, or --base"),
+            &Error::msg("Specify at least one of --purpose, --pr, --issue, --base or --unset"),
             VALIDATION,
         );
+    }
+    let unset = parsed.values("unset");
+    for field in &unset {
+        if !matches!(field.as_str(), "purpose" | "base" | "pr" | "issue") {
+            return Err(Error::validation(format!(
+                "Invalid --unset field '{field}'; use purpose, base, pr or issue"
+            )));
+        }
+        if parsed.value(field).is_some() {
+            return Err(Error::validation(format!(
+                "Cannot set and unset '{field}' together"
+            )));
+        }
     }
     let context = match command_context(&parsed) {
         Ok(context) => context,
@@ -1233,8 +1397,12 @@ fn meta_set(args: &[String]) -> Result<i32> {
             Err(error) => return fail_with(&error, VALIDATION),
         };
     }
-    let name = &parsed.positionals[0];
-    let worktree = match worktree::find_worktree(&context, name, false, None) {
+    let name = parsed
+        .positionals
+        .first()
+        .map(String::as_str)
+        .unwrap_or(".");
+    let worktree = match crate::selectors::resolve(&context, name, false, None) {
         Ok(worktree) => worktree,
         Err(error @ Error::WorktreeNotFound(_)) => return fail_with(&error, NOT_FOUND),
         Err(error) => return fail_with(&error, error.exit_code()),
@@ -1243,7 +1411,9 @@ fn meta_set(args: &[String]) -> Result<i32> {
         Ok(name) => metadata::MetadataInput { name, ..input },
         Err(error) => return fail_with(&error, error.exit_code()),
     };
-    if let Err(error) = metadata::write(&context.git_root, Path::new(&worktree.path), &input) {
+    if let Err(error) =
+        metadata::patch(&context.git_root, Path::new(&worktree.path), &input, &unset)
+    {
         return fail_with(&error, GENERAL);
     }
     let worktree = match worktree::worktree_at_path(&context, Path::new(&worktree.path)) {
@@ -1315,8 +1485,14 @@ fn command_options(key: &str) -> Vec<Opt> {
             options.extend(metadata_options());
             options
         }
-        "list" => vec![repo_flag(), flag("no-default", None), flag("names", None)],
-        "where" => vec![repo_flag()],
+        "list" => vec![
+            repo_flag(),
+            value_flag("kind", None),
+            flag("names", None),
+            flag("paths", None),
+            flag("all-repos", None),
+        ],
+        "show" | "path" => vec![repo_flag()],
         "delete" => vec![
             repo_flag(),
             flag("force", Some('f')),
@@ -1346,8 +1522,18 @@ fn command_options(key: &str) -> Vec<Opt> {
             flag("no-hooks", None),
             value_flag("purpose", None),
         ],
-        "meta set" => {
-            let mut options = vec![repo_flag(), value_flag("base", None)];
+        "set" => {
+            let mut options = vec![
+                repo_flag(),
+                value_flag("base", None),
+                Opt {
+                    name: "unset",
+                    short: None,
+                    value: true,
+                    multiple: true,
+                    remainder: false,
+                },
+            ];
             options.extend(metadata_options());
             options
         }
@@ -1788,13 +1974,6 @@ fn attach_code(error: &Error) -> i32 {
     error.exit_code()
 }
 
-static META_COMMANDS: &[Command] = &[Command {
-    name: "set",
-    help_key: "meta set",
-    run: meta_set,
-    children: &[],
-}];
-
 static PREFERENCE_COMMANDS: &[Command] = &[
     Command {
         name: "list",
@@ -1915,9 +2094,15 @@ static COMMANDS: &[Command] = &[
         children: &[],
     },
     Command {
-        name: "where",
-        help_key: "where",
-        run: where_cmd,
+        name: "show",
+        help_key: "show",
+        run: show,
+        children: &[],
+    },
+    Command {
+        name: "path",
+        help_key: "path",
+        run: path_cmd,
         children: &[],
     },
     Command {
@@ -1945,10 +2130,10 @@ static COMMANDS: &[Command] = &[
         children: &[],
     },
     Command {
-        name: "meta",
-        help_key: "meta",
-        run: meta_root,
-        children: META_COMMANDS,
+        name: "set",
+        help_key: "set",
+        run: set,
+        children: &[],
     },
     Command {
         name: "config",

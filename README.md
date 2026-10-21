@@ -17,7 +17,7 @@ Workspaces separate files and branches, not processes, ports, databases, or cred
 Maboroshi creates, takes over, and prepares workspaces, keeps them current with their base, and retires them:
 
 - **Allocate and prepare.** `clone` places a repository in the ghq layout. `create`, `attach`, and `github checkout` (alias `gh checkout`) give each piece of work its own workspace, copy ignored files matched by `.worktreeinclude`, and run repository hooks in repositories you trust.
-- **Identify.** `meta set` records the purpose, linked pull request or issue, and base. `list` and `where` show what exists and where.
+- **Identify.** `set` records the purpose, linked pull request or issue, and base. `list` and `show` show what exists and where.
 - **Update.** `sync` fetches, fast-forwards the default branch when possible, and brings selected workspaces up to date with their base.
 - **Retire.** `gc` selects workspaces on evidence: merged branches, closed pull requests, orphaned records, and age (`--older-than`).
 
@@ -45,7 +45,7 @@ Maboroshi will not become:
 
 The old `project`, `preferences`, `untrust`, and `version` commands, `trust --yes/--list` (and `-y`), and `-p/--project` are removed. They exit 2 with a replacement hint; there are no aliases. Use `repo`, `config`, `trust remove`, `--version`, `trust add/list`, and `-R/--repo` respectively. `--version` and `-v` remain available. `mabo --version --json` returns the schema 2 envelope with `command: "--version"` and `data.version` containing the application version (`data.display` contains the text version line).
 
-Workspace ownership and `lastUsedAt` have been removed. `--owner` (on create, attach, GitHub checkout, meta set, list, and gc) exits 2: use `--purpose`, PR links, and workspace names. `sync --mine` exits 2: use explicit names or `--all`. `MABO_AGENT_ID` no longer affects mabo. Old records remain readable; their removed fields disappear when the record is next written. `where` and `exec` leave records unchanged, and `gc --older-than` uses `createdAt`.
+Workspace ownership and `lastUsedAt` have been removed. `--owner` (on create, attach, GitHub checkout, set, list, and gc) exits 2: use `--purpose`, PR links, and workspace names. `sync --mine` exits 2: use explicit names or `--all`. `MABO_AGENT_ID` no longer affects mabo. Old records remain readable; their removed fields disappear when the record is next written. `show`, `path`, `list`, and `exec` leave records unchanged, and `gc --older-than` uses `createdAt`.
 
 `mabo help [COMMAND...]` prints the same text as `--help`. `mabo help --json` returns the schema 2 envelope with the complete contents of `help-data.json` in `data`: `commands`, `helps` (all commands and flags), `globalOptions`, `exitCodes`, `errorCodes`, and `schemaVersion: 2`. `mabo help repo show --json` includes the same contract plus `data.selected` for that command.
 
@@ -60,7 +60,7 @@ discover-ghq = true
 clone-root = "~/ghq"
 ```
 
-When `workspace-root` is unset, `mabo create` and `mabo attach` place the new workspace at `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash>/<name>`. The fallback is `~/.local/share/maboroshi/workspaces/...` when `XDG_DATA_HOME` is unset, empty, or not absolute. `<checkout>` is the canonical primary checkout directory name, with characters outside letters, numbers, `.`, `_`, and `-` replaced by `-`. A symlink to that checkout uses the same directory. `<hash>` is the first 8 hexadecimal digits of the SHA-256 of the canonical Git common directory. Two clones of the same remote get different directories. Workspace names retain their `/` hierarchy. Existing workspaces under `maboroshi/worktrees/` stay at their current paths and remain available to `list`, `where`, `delete`, `sync`, and `gc`. Deleting the last workspace keeps the repo directory and its `.maboroshi-common-dir` marker so concurrent and subsequent creates can reuse it safely. `delete` and `gc` also remove a linked workspace recorded in `maboroshi/workspaces/<id>.json`, including one created under `.git/maboroshi/worktrees` or a different data directory. An unrecorded workspace outside the resolved directory stays. Empty parent directories below the repo directory are cleaned up only for a workspace inside the resolved directory. A set `workspace-root` may be absolute, start with `~/`, or be relative to the repository root, and that directory is left in place when it becomes empty.
+When `workspace-root` is unset, `mabo create` and `mabo attach` place the new workspace at `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash>/<name>`. The fallback is `~/.local/share/maboroshi/workspaces/...` when `XDG_DATA_HOME` is unset, empty, or not absolute. `<checkout>` is the canonical primary checkout directory name, with characters outside letters, numbers, `.`, `_`, and `-` replaced by `-`. A symlink to that checkout uses the same directory. `<hash>` is the first 8 hexadecimal digits of the SHA-256 of the canonical Git common directory. Two clones of the same remote get different directories. Workspace names retain their `/` hierarchy. Existing workspaces under `maboroshi/worktrees/` stay at their current paths and remain available to `list`, `show`, `delete`, `sync`, and `gc`. Deleting the last workspace keeps the repo directory and its `.maboroshi-common-dir` marker so concurrent and subsequent creates can reuse it safely. `delete` and `gc` also remove a linked workspace recorded in `maboroshi/workspaces/<id>.json`, including one created under `.git/maboroshi/worktrees` or a different data directory. An unrecorded workspace outside the resolved directory stays. Empty parent directories below the repo directory are cleaned up only for a workspace inside the resolved directory. A set `workspace-root` may be absolute, start with `~/`, or be relative to the repository root, and that directory is left in place when it becomes empty.
 
 `clone-root` is where `mabo clone` places repositories. It is an absolute path or a path starting with `~/`. When `clone-root` is unset, `mabo clone` uses the first `git config ghq.root` value, then `$GHQ_ROOT`, then `~/ghq`. A configured `clone-root` is used without reading git config. If reading `ghq.root` fails, `mabo` warns and continues with `$GHQ_ROOT` or `~/ghq`. `repo list` scans that same directory.
 
@@ -103,16 +103,40 @@ mabo repo forget REF
 
 ## Targeting a repository
 
-The global `-R/--repo` option selects a repository. Workspace commands (`create`, `attach`, `list`, `where`, `delete`, `sync`, `gc`, `exec`, `meta set`, and `github checkout`) accept `--repo <ref>` (`-R`) so they can run against a repository other than the current directory. It may precede the command or appear among its options. `mabo exec` is the exception: it parses mabo options only before the workspace name, and passes everything after that name to the command. This runs `pwd --repo y` inside the `feature` workspace of `owner/repo`:
+The global `-R/--repo` option selects a repository. Workspace commands (`create`, `attach`, `list`, `show`, `path`, `delete`, `sync`, `gc`, `exec`, `set`, and `github checkout`) accept `--repo <ref>` (`-R`) so they can run against a repository other than the current directory. It may precede the command or appear among its options. `mabo exec` is the exception: put mabo options before SEL and separate the child command with the required `--`. Everything after `--` is passed to the command. This runs `pwd --repo y` inside the `feature` workspace of `owner/repo`:
 
 ```bash
-mabo exec --repo owner/repo feature pwd --repo y
+mabo exec --repo owner/repo feature -- pwd --repo y
 mabo list --repo ~/src/foo --json
 ```
 
 A ref that starts with `/`, `.`, or `~` is a directory. It can be anywhere inside the repository, including a linked workspace, and resolves to the primary checkout. Hooks and `.worktreeinclude` are read from that primary checkout.
 
 Any other ref is matched against registered repos and discovered checkouts (the same set as `repo list`, including when `discover-ghq` is false). The canonical name is `host/owner/repo`: from the `origin` URL when it is an http(s), ssh, or scp-style remote, otherwise from a checkout stored at `<root>/<host>/<owner>/<repo>`. A local or relative origin, including `backups/widget.git`, is not a host-based name. `owner/repo` and `repo` match when only one repo has that suffix. The directory name shown by `repo list` matches too, including when it differs from the canonical name. A location name that differs from the remote also matches. Several matches is a usage error (exit code 2) that lists the candidates. No match is not found (exit code 3). A path that does not exist is not found and says the path does not exist. A `--repo` value that starts with `-` is a validation error.
+
+## Selecting and inspecting workspaces
+
+`SEL` accepts a workspace name, `.` (the checkout containing cwd), `pr:N`, `issue:N`, or a PR/issue URL. Linked selectors only find existing records; they never create workspaces. A missing match exits 3 (`not_found`), and multiple matches exit 2 (`ambiguous`). A URL matches its recorded repository and link; a bare number is scoped to the selected repository. Using `.` with a different `-R` exits 2. Outside a repository, current selection exits 3.
+
+`show [SEL]`, `path [SEL]`, `set [SEL]`, and `exec [SEL] -- COMMAND [ARG...]` default to `.`. In the primary checkout, `.` refers to that checkout. `show` reports its context with `managed:false`; unrecorded checkouts outside mabo's workspace directory also report `managed:false`. Positional arguments of `sync` and `delete` accept the same selectors. Sync without arguments keeps its default-branch and current-workspace behavior; delete keeps its existing flags and safety checks.
+
+```sh
+mabo show --json
+mabo show pr:774 --json
+mabo path issue:12
+cd "$(mabo path feature/auth)"
+mabo set --purpose 'fix checkout' --pr 774 --base origin/main
+mabo set feature/auth --unset purpose --unset base --unset pr --unset issue
+mabo exec -- git status
+mabo exec feature/auth -- npm test
+mabo sync pr:774 --no-default
+```
+
+`path` prints only an absolute path and newline in text mode; JSON is `data: {path}`. `show` and `set` return `data.workspace`. `show`, `path`, `list`, and `exec` never change record contents or mtimes, or import legacy state. `set` atomically replaces the supplied purpose, base, PR and issue fields; omitted fields are kept. `--unset FIELD` clears one of purpose/base/pr/issue per occurrence; repeat the flag to clear several fields. It rejects unknown fields or a field that is also being set. `--base` validates and normalizes a ref; commit bases remain supported. `--unset base` records an unknown base without choosing a default. Sync skips it with `base-unknown` until `mabo set <name> --base REF` restores a base. Older records with no base field still use the default base.
+
+`list` includes primary checkouts. Use `--kind workspace` or `--kind primary` to filter, `--names` or `--paths` for shell output, and `--all-repos` for repositories known to `repo list` (registrations and enabled discovery). `--all-repos` cannot be combined with `-R`. Its JSON includes `data.repos` as well as the flattened `data.workspaces`. Human output starts each repository with its name and primary path, then shows current (`*`), name, branch, ahead/behind (`↑a ↓b`), dirty state, PR/issue links (`#12` / `issue #34`) and purpose. A deleted upstream appears as `upstream:gone`.
+
+The removed `where` command exits 2 with a `path` / `show --json` hint. `meta` and `meta set` exit 2 with a `set` / `show` hint. `list --no-default` exits 2 with `--kind workspace` guidance. An exec invocation without the required `--` exits 2 with the new syntax. Exec preserves child output and exit status, ignores `MABO_OUTPUT`, and refuses explicit JSON output. Usage diagnostics and any accompanying help go to stderr, leaving text stdout empty.
 
 ## Copying gitignored files
 
@@ -169,7 +193,7 @@ The old `MABO_NAME`, `MABO_PATH`, and `MABO_ROOT_PATH` variables are removed fro
 ```json
 {
   "schema": 2,
-  "command": "where",
+  "command": "show",
   "ok": false,
   "data": null,
   "warnings": [],
@@ -177,7 +201,7 @@ The old `MABO_NAME`, `MABO_PATH`, and `MABO_ROOT_PATH` variables are removed fro
 }
 ```
 
-`command` uses space-separated names such as `meta set` and `github checkout`. `data` contains the command result without a top-level `schema`; only `--version` uses `data.version` for the application version. `error` is null on success, otherwise an object with stable `code`, human `message` and optional `details`. Partial results remain in `data`, including setup failures and per-item delete/gc/sync results. Per-item errors stay on their items. `warnings` contains objects with stable `code` and `message`, including metadata read/update failures and unavailable PR status; warnings may also appear on stderr.
+`command` uses space-separated names such as `set` and `github checkout`. `data` contains the command result without a top-level `schema`; only `--version` uses `data.version` for the application version. `error` is null on success, otherwise an object with stable `code`, human `message` and optional `details`. Partial results remain in `data`, including setup failures and per-item delete/gc/sync results. Per-item errors stay on their items. `warnings` contains objects with stable `code` and `message`, including metadata read/update failures and unavailable PR status; warnings may also appear on stderr.
 
 | Exit | Meaning | Example error codes |
 |---|---|---|
@@ -191,26 +215,35 @@ The old `MABO_NAME`, `MABO_PATH`, and `MABO_ROOT_PATH` variables are removed fro
 
 `refused` is the fallback when a safety refusal has no more specific cause. The same statuses apply to text output. Standalone `exec` preserves its child's exit status, including 128+signal. Create/attach/checkout setup failures exit 6 and retain the workspace plus child statuses in `data.postCreate.exitCode` or `data.exec.exitCode`. Metadata save and copy failures after creation also exit 6. Delete checks every name before removing any; a safety refusal exits 4 and removes nothing. A later failure exits 6 if something was removed, otherwise 1. A failed pre-delete hook aborts deletion. `unpreserved` protects commits absent from the default branch or remotes, or commits that could not be checked; use `--keep-branch` or `--force` (detached HEAD requires `--force`).
 
-`MABO_OUTPUT=json|text` sets the default; empty means unset and other values exit 2. Explicit output flags override it. Unknown commands and missing commands after common options also return a usage envelope when JSON is selected. `list --names` (and repo `--names`/`--paths`) selects text even with `MABO_OUTPUT=json`; explicitly combining it with JSON is a usage error. `exec` and text help through `--help` ignore `MABO_OUTPUT`. `--version` and `help` support JSON and honor the output mode. Explicit `exec --json` or `exec --output json` is a usage error; arguments after the workspace name belong to the child.
+`MABO_OUTPUT=json|text` sets the default; empty means unset and other values exit 2. Explicit output flags override it. Unknown commands and missing commands after common options also return a usage envelope when JSON is selected. `list --names`/`--paths` (and repo `--names`/`--paths`) select text even with `MABO_OUTPUT=json`; explicitly combining it with JSON is a usage error. `exec` and text help through `--help` ignore `MABO_OUTPUT`. `--version` and `help` support JSON and honor the output mode. Explicit `exec --json` or `exec --output json` is a usage error; arguments after the required `--` belong to the child.
 
 Mabo never prompts in non-interactive mode: nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or stdin/stderr without a TTY. Untrusted hooks refuse before changes with exit 4 and a `mabo trust add` / `--no-hooks` hint. Network Git operations receive `GIT_TERMINAL_PROMPT=0`; repository hooks and gh read stdin from `/dev/null`. User commands (`--exec` and standalone `exec`) inherit stdin.
 
 ### Workspace object
 
-`list`, `where`, `create`, `attach`, `meta set`, `delete`, and `github checkout` share this object. Their data uses `workspace` or `workspaces` keys (including each `deleted` entry); sync reports its results under `default` and `workspaces`. `path` is absolute. `head` is the full HEAD SHA, or null when Git has no HEAD. `branch` is null when HEAD is detached (`detached` is true). `base` is the commit-ish this command started from when it knows one; otherwise it is the recorded sync base (a full ref such as `refs/remotes/origin/main`), or null for legacy/unrecorded workspaces. `list --json` exposes that recorded base. `dirty` is true when `git status --porcelain` reports any change. `kind` is `primary` for the repository's primary checkout and `workspace` for other workspaces.
+`current` identifies the checkout containing cwd. `repo` contains the primary root and repository name. `managed` is false for the primary checkout and unrecorded checkouts outside the workspace directory. `upstream` is null when no upstream is configured, otherwise `{ref,ahead,behind,gone}`; ref is fully qualified, and counts are null when the upstream is gone or unavailable. Unknown metadata and observed state are null. For an orphaned record, branch, head, dirty and detached are null. Reads never invent timestamps.
+
+`list`, `show`, `create`, `attach`, `set`, `delete`, and `github checkout` share this object. Their data uses `workspace` or `workspaces` keys (including each `deleted` entry); sync reports its results under `default` and `workspaces`. `path` is absolute. `head` is the full HEAD SHA, or null when Git has no HEAD. `branch` is null when HEAD is detached (`detached` is true). `base` is the commit-ish this command started from when it knows one; otherwise it is the recorded sync base (a full ref such as `refs/remotes/origin/main`), or null for legacy/unrecorded workspaces. `list --json` exposes that recorded base. `dirty` is true when `git status --porcelain` reports any change. `kind` is `primary` for the repository's primary checkout and `workspace` for other workspaces.
 
 ```json
 {
+  "id": "ws_12345678-1234-4000-8000-123456789abc",
   "name": "feature/add-tests",
+  "current": false,
+  "repo": {"root": "/home/user/ghq/github.com/acme/demo", "name": "github.com/acme/demo"},
+  "managed": true,
+  "orphaned": false,
+  "upstream": null,
   "path": "/home/user/.local/share/maboroshi/workspaces/repo-6b4ca2db/feature/add-tests",
   "branch": "feature/add-tests",
   "head": "0123456789abcdef0123456789abcdef01234567",
-  "base": "HEAD",
+  "base": "refs/heads/main",
   "dirty": false,
   "kind": "workspace",
   "detached": false,
   "purpose": "fix the flaky checkout test",
   "createdAt": "2026-10-18T11:46:00.000Z",
+  "updatedAt": "2026-10-18T11:46:00.000Z",
   "createdFrom": "0123456789abcdef0123456789abcdef01234567",
   "links": {
     "pr": { "number": 774, "url": null },
@@ -219,7 +252,7 @@ Mabo never prompts in non-interactive mode: nonempty `CI`, JSON output, `--no-in
 }
 ```
 
-`id`, `purpose`, `base`, `createdAt`, `createdFrom`, and `links` come from `maboroshi/workspaces/<id>.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `mabo create`, `mabo attach`, and `mabo github checkout` write a record. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `github checkout` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `where` and `exec` read metadata without changing record files. `delete` removes the record after Git removes the workspace. `create` and `attach` replace any record already stored at that path. `meta set` and a second `github checkout` of a workspace that already exists patch the record. `create --json` and `attach --json` include `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the workspace exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 6 with `error.code` set to `partial` and the result retained in `data`. A corrupt workspace record makes `list`, `where`, and `exec` continue with null metadata for that record and a warning; other records remain readable. `create`, `attach`, `delete`, `meta set`, `sync`, and `github checkout` refuse and leave the file unchanged. Sync validates metadata before fetching or updating any target. Concurrent first registrations for the same path are read as one record: the oldest `createdAt` wins, then the lexicographically smallest `id` breaks ties. All fields come from that record, and the next metadata write removes the extra files. `createdFrom` is the full commit the branch was created from, or the base tip sync last fast-forwarded it to while it had no commits of its own. `create` stores the new branch's HEAD. A record for a branch that already existed stores the oldest `refs/heads` reflog entry, or null when that reflog is missing. `meta set` and a later checkout leave it unchanged. A record written before this field existed has `createdFrom` null. `mabo meta set` patches the fields you pass and leaves the others. A workspace Git created outside `mabo`, including the primary checkout, has null metadata fields until `meta set` or `github checkout` records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
+`id`, `purpose`, `base`, `createdAt`, `updatedAt`, `createdFrom`, and `links` come from `maboroshi/workspaces/<id>.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `mabo create`, `mabo attach`, and `mabo github checkout` write a record. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `github checkout` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `show`, `path`, `list`, and `exec` read metadata without changing record files. `delete` removes the record after Git removes the workspace. `create` and `attach` replace any record already stored at that path. `set` and a second `github checkout` of a workspace that already exists patch the record. `create --json` and `attach --json` include `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the workspace exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 6 with `error.code` set to `partial` and the result retained in `data`. A corrupt workspace record makes `list`, `show`, and `exec` continue with null metadata for that record and a warning; other records remain readable. `create`, `attach`, `delete`, `set`, `sync`, and `github checkout` refuse and leave the file unchanged. Sync validates metadata before fetching or updating any target. Concurrent first registrations for the same path are read as one record: the oldest `createdAt` wins, then the lexicographically smallest `id` breaks ties. All fields come from that record, and the next metadata write removes the extra files. `createdFrom` is the full commit the branch was created from, or the base tip sync last fast-forwarded it to while it had no commits of its own. `create` stores the new branch's HEAD. A record for a branch that already existed stores the oldest `refs/heads` reflog entry, or null when that reflog is missing. `set` and a later checkout leave it unchanged. A record written before this field existed has `createdFrom` null. `mabo set` patches the fields you pass and leaves the others. A workspace Git created outside `mabo`, including the primary checkout, has null metadata fields until `set` or `github checkout` records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
 
 Workspace records contain `schema: 2`, an `id` of the form `ws_<uuid v4>`, `path`, an optional `name`, and the metadata fields above. JSON workspace objects include `id` (null for an unrecorded workspace). Each record is written atomically through a temporary file in the same directory, fsync, and rename. Deleting a record removes only its file. Concurrent additions of different records preserve both; concurrent updates of the same record use the last write.
 
@@ -233,7 +266,7 @@ Repo registrations live in `$XDG_STATE_HOME/maboroshi/repos/<id>.json`, falling 
 # Human: from the primary checkout, update only the default branch.
 mabo sync
 # From a linked workspace or any subdirectory, also sync that workspace.
-cd "$(mabo where feature/auth)"
+cd "$(mabo path feature/auth)"
 mabo sync
 # Select workspaces and choose a strategy explicitly.
 mabo sync feature/auth feature/tests --merge
@@ -246,10 +279,10 @@ mabo sync --all --no-default
 mabo sync -R owner/repo --all
 # Keep a single conflicted operation for manual resolution.
 mabo sync feature/auth --keep-conflicts
-mabo meta set feature/auth --base origin/main
+mabo set feature/auth --base origin/main
 ```
 
-`create` and new GitHub issue checkouts record a sync `base`: an explicit `--base` is normalized to a full ref, otherwise the remote-tracking default branch when available, then the local default branch. Commit bases remain supported. When a clone has no discoverable default branch, creation retains its existing HEAD-based behavior and records that ref. PR checkout records the PR target as a full `origin` remote-tracking ref when present locally, otherwise the same fallback. A second GitHub checkout preserves an existing base, including one set by the user. Older metadata without `base` uses the same default-branch fallback at sync time. `meta set --base <ref>` validates and replaces the base; a removed base is skipped as `base-gone` with a repair hint.
+`create` and new GitHub issue checkouts record a sync `base`: an explicit `--base` is normalized to a full ref, otherwise the remote-tracking default branch when available, then the local default branch. Commit bases remain supported. When a clone has no discoverable default branch, creation retains its existing HEAD-based behavior and records that ref. PR checkout records the PR target as a full `origin` remote-tracking ref when present locally, otherwise the same fallback. A second GitHub checkout preserves an existing base, including one set by the user. Older metadata without `base` uses the same default-branch fallback at sync time. `set --base <ref>` validates and replaces the base; a removed base is skipped as `base-gone` with a repair hint.
 
 Auto strategy rebases when none of the workspace's own commits (`base..branch`) is reachable from any remote-tracking ref, including destinations outside `refs/remotes` in configured fetch refspecs; otherwise it merges. `--rebase` refuses published commits with code `published` and exit 4 unless `--force` is given. `--merge` always selects merge. Rebasing requires Git 2.29 or later, reapplies upstream cherry-picks (including reverted ones), and keeps intentionally empty commits and commits that become empty. Before flattening merges, sync requires Git 2.38 or later to verify their automatic merge trees; merges with their own changes or conflict resolutions (and merges it cannot verify) fail untouched with a `--merge` hint. `--force` only permits local history rewriting. Dirty workspaces (including untracked, non-ignored files), detached workspaces, and already landed branches are skipped. Ignored paths that integration could overwrite also cause a dirty skip, with case-insensitive comparisons when `core.ignorecase` is true. Landed branches suggest `mabo gc`. `--all` selects every workspace in the repository.
 
@@ -301,7 +334,7 @@ Human output has one `<name>  <status>  [detail]` line per item, followed by sta
 
 Statuses are `updated`, `up-to-date`, `dirty`, `diverged`, `merged`, `detached`, `base-gone`, `conflict`, and `failed`. Exit 6 takes precedence when any item changes and a failure, conflict, or published refusal occurs. Without changes, failures exit 1, conflicts exit 5, and published refusals exit 4; other outcomes exit 0. A default-only `dirty`/`diverged` result remains an operational failure (1). Usage errors exit 2.
 
-Orphaned records have neither a Git worktree registration nor an existing directory. `list` includes them with a trailing `[orphaned]`; the shared JSON workspace object has `orphaned: true` (false for existing entries), with null `branch` and `head`. `where` and `exec` refuse orphaned names. `delete <name>` removes only the stale record, exits 0, and reports that the workspace was already gone; it runs no hooks and leaves branches alone. Its existing JSON result uses `workspace.orphaned: true` and `branchDeleted: false`. A live workspace matching the same name takes precedence; multiple orphaned records with the same resolved name are refused as ambiguous. Orphaned records do not reserve names for live workspaces. When a live workspace takes the same name, the orphan remains visible in `list`; use `gc --apply` to remove it, since `delete <name>` resolves to the live workspace.
+Orphaned records have neither a Git worktree registration nor an existing directory. `list` includes them with a trailing `[orphaned]`; the shared JSON workspace object has `orphaned: true` (false for existing entries), with null `branch` and `head`. `path` and `exec` refuse orphaned names; `show` can inspect their records. `delete <name>` removes only the stale record, exits 0, and reports that the workspace was already gone; it runs no hooks and leaves branches alone. Its existing JSON result uses `workspace.orphaned: true` and `branchDeleted: false`. A live workspace matching the same name takes precedence; multiple orphaned records with the same resolved name are refused as ambiguous. Orphaned records do not reserve names for live workspaces. When a live workspace takes the same name, the orphan remains visible in `list`; use `gc --apply` to remove it, since `delete <name>` resolves to the live workspace.
 
 ### Commands
 
@@ -320,12 +353,12 @@ Orphaned records have neither a Git worktree registration nor an existing direct
 }
 ```
 
-`where --json` and the result of a create, attach, or checkout use the workspace object. `where` returns:
+`show --json` and the result of a create, attach, or checkout use the workspace object. `show` returns:
 
 ```json
 {
   "schema": 2,
-  "command": "where",
+  "command": "show",
   "ok": true,
   "data": {
     "workspace": {}

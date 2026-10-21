@@ -16,6 +16,14 @@ pub(crate) struct AttachLookup {
     pub outcome: std::result::Result<AttachPlan, Error>,
 }
 
+/// Interpret user input, validating the workspace portion after remote qualification.
+pub(crate) fn parse_attach_name(git_root: &Path, name: &str) -> Result<AttachLookup> {
+    let lookup = lookup_attach(git_root, name)?;
+    validate_worktree_name(&lookup.directory)?;
+    Ok(lookup)
+}
+
+/// Resolve observed Git names without imposing the user workspace-name policy.
 pub(crate) fn lookup_attach(git_root: &Path, name: &str) -> Result<AttachLookup> {
     let catalog = Catalog::read(git_root)?;
     Ok(decide(&catalog, name))
@@ -137,7 +145,7 @@ impl Catalog {
             let Some(branch) = rest.strip_prefix('/') else {
                 continue;
             };
-            if branch.is_empty() || validate_worktree_name(branch).is_err() {
+            if branch.is_empty() {
                 continue;
             }
             let start_point = format!("refs/remotes/{remote}/{branch}");
@@ -337,6 +345,27 @@ refs/remotes/stale/solo\0
             } => {
                 assert_eq!(branch, "feature/teammate");
                 assert_eq!(start_point, "refs/remotes/origin/feature/teammate");
+            }
+            AttachPlan::Existing { .. } => panic!("expected a tracking plan"),
+        }
+    }
+
+    #[test]
+    fn internal_qualified_lookup_accepts_git_only_branch_names() {
+        let catalog = Catalog::parse(
+            "origin\n",
+            "refs/remotes/origin/topic+fix\0\n",
+            "refs/heads/main\n",
+        );
+        let lookup = decide(&catalog, "origin/topic+fix");
+        assert_eq!(lookup.directory, "topic+fix");
+        match lookup.outcome.expect("plan") {
+            AttachPlan::Track {
+                branch,
+                start_point,
+            } => {
+                assert_eq!(branch, "topic+fix");
+                assert_eq!(start_point, "refs/remotes/origin/topic+fix");
             }
             AttachPlan::Existing { .. } => panic!("expected a tracking plan"),
         }

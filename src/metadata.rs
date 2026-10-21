@@ -21,10 +21,15 @@ pub struct WorktreeMetadata {
     pub id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
+    /// Explicitly cleared intent must not use the legacy default-base fallback.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub base_cleared: bool,
     #[serde(default)]
     pub purpose: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
     /// Full commit the branch was created from. Absent on older records, when
     /// a new branch has no HEAD, and when an existing branch has no reflog.
     #[serde(default)]
@@ -94,6 +99,10 @@ struct StoredWorktree {
     name: Option<String>,
     #[serde(flatten)]
     metadata: WorktreeMetadata,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 pub fn path_key(path: &Path) -> String {
@@ -182,10 +191,20 @@ pub fn replace(
     })
 }
 
-/// Insert or patch the record for `path`. `meta set` and re-checkout use this.
+/// Insert or patch the record for `path`. `set` and re-checkout use this.
 /// A new record gets `createdAt` and `createdFrom`. An existing record
 /// keeps omitted fields, including `createdFrom`.
 pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<WorktreeMetadata> {
+    patch(git_root, path, input, &[])
+}
+
+/// Apply intent edits and removals in one atomic record update.
+pub fn patch(
+    git_root: &Path,
+    path: &Path,
+    input: &MetadataInput,
+    unset: &[String],
+) -> Result<WorktreeMetadata> {
     let key = path_key(path);
     with_store(git_root, Some(path), |store| {
         if let Some(record) = store
@@ -194,19 +213,38 @@ pub fn write(git_root: &Path, path: &Path, input: &MetadataInput) -> Result<Work
             .find(|record| paths::same_location(Path::new(&record.path), path))
         {
             apply_input(&mut record.metadata, input);
+            clear_fields(&mut record.metadata, unset);
             record.name = record.metadata.name.clone();
             return Ok((record.metadata.clone(), true));
         }
-        let metadata = fresh_metadata(path, input, BranchOrigin::Existing);
+        let mut metadata = fresh_metadata(path, input, BranchOrigin::Existing);
+        clear_fields(&mut metadata, unset);
         store.worktrees.push(stored_worktree(key, metadata.clone()));
         Ok((metadata, true))
     })
+}
+
+fn clear_fields(record: &mut WorktreeMetadata, fields: &[String]) {
+    for field in fields {
+        match field.as_str() {
+            "purpose" => record.purpose = None,
+            "base" => {
+                record.base = None;
+                record.base_cleared = true;
+            }
+            "pr" => record.links.pr = None,
+            "issue" => record.links.issue = None,
+            _ => {}
+        }
+    }
+    record.updated_at = Some(iso_now());
 }
 
 fn fresh_metadata(path: &Path, input: &MetadataInput, origin: BranchOrigin) -> WorktreeMetadata {
     let mut metadata = WorktreeMetadata {
         id: Some(format!("ws_{}", uuid::Uuid::new_v4())),
         created_at: Some(iso_now()),
+        updated_at: Some(iso_now()),
         created_from: recorded_creation(path, origin),
         ..WorktreeMetadata::default()
     };
@@ -232,6 +270,7 @@ pub fn record_sync_tip(git_root: &Path, path: &Path, tip: &str) -> Result<()> {
             return Ok(((), false));
         };
         record.metadata.created_from = Some(tip.to_string());
+        record.metadata.updated_at = Some(iso_now());
         Ok(((), true))
     })
 }
@@ -315,7 +354,7 @@ pub fn parse_link(value: &str) -> Result<WorktreeLink> {
         ));
     }
     Ok(WorktreeLink {
-        number: link_number(value),
+        number: link_target(value).map(|(_, number)| number),
         url: Some(value.to_string()),
     })
 }
@@ -361,27 +400,18 @@ fn parse_number(value: &str) -> Result<u64> {
     Ok(number)
 }
 
-fn link_number(url: &str) -> Option<u64> {
-    let without_query = url.split(['?', '#']).next().unwrap_or(url);
-    let path = without_query
-        .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(without_query);
-    let segments = path.split('/').filter(|segment| !segment.is_empty());
-    let mut previous = None;
-    for segment in segments {
-        if let Some(kind) = previous {
-            if matches!(kind, "pull" | "pulls" | "issues" | "issue") {
-                if let Ok(number) = segment.parse::<u64>() {
-                    if number > 0 {
-                        return Some(number);
-                    }
-                }
-            }
-        }
-        previous = Some(segment);
+/// Read the kind and number together from the terminal URL path pair.
+pub(crate) fn link_target(url: &str) -> Option<(&str, u64)> {
+    let clean = url.split(['?', '#']).next()?.trim_end_matches('/');
+    let (_, authority_and_path) = clean.split_once("://")?;
+    let (_, path) = authority_and_path.split_once('/')?;
+    let (prefix, number) = path.rsplit_once('/')?;
+    let kind = prefix.rsplit('/').next()?;
+    if !matches!(kind, "pull" | "pulls" | "issues" | "issue") {
+        return None;
     }
-    None
+    let number = number.parse::<u64>().ok()?;
+    (number > 0).then_some((kind, number))
 }
 
 fn stored_worktree(path: String, metadata: WorktreeMetadata) -> StoredWorktree {
@@ -396,6 +426,7 @@ fn stored_worktree(path: String, metadata: WorktreeMetadata) -> StoredWorktree {
 fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
     if input.base.is_some() {
         metadata.base = input.base.clone();
+        metadata.base_cleared = false;
     }
     if input.name.is_some() {
         metadata.name = input.name.clone();
@@ -1181,6 +1212,18 @@ mod tests {
         assert_eq!(load(&root).unwrap().len(), 10);
         assert!(!legacy.exists());
         assert!(legacy.with_extension("json.imported").is_file());
+    }
+
+    #[test]
+    fn link_numbers_use_only_the_terminal_kind_number_pair() {
+        for kind in ["pull", "pulls", "issues", "issue"] {
+            let url = format!("https://git.example.com/pull/123/{kind}/42/?plain=1#details");
+            assert_eq!(parse_link(&url).unwrap().number, Some(42), "{url}");
+        }
+        for suffix in ["pull/0", "issues/not-a-number", "pull/42/files", "other/42"] {
+            let url = format!("https://git.example.com/pull/123/{suffix}");
+            assert_eq!(parse_link(&url).unwrap().number, None, "{url}");
+        }
     }
 
     #[test]

@@ -826,11 +826,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
         let doc: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
         assert!(doc.to_string().contains(expected), "{doc}");
 
-        let out = mabo(
-            &clone,
-            &bin,
-            &["meta", "set", "deleted-feature", "--base", "HEAD"],
-        );
+        let out = mabo(&clone, &bin, &["set", "deleted-feature", "--base", "HEAD"]);
         assert!(out.status.success());
         let out = mabo(
             &clone,
@@ -868,7 +864,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
             let listed = mabo(
                 &clone,
                 &bin,
-                &["where", &format!("issues/{number}"), "--json"],
+                &["show", &format!("issues/{number}"), "--json"],
             );
             let doc: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
             assert_eq!(
