@@ -938,6 +938,8 @@ fn remove_retry_command(
     }
     if json {
         command.push_str(" --json");
+    } else {
+        command.push_str(" --output text");
     }
     if crate::runtime::non_interactive() {
         command.push_str(" --no-input");

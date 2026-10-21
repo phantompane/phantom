@@ -19439,6 +19439,68 @@ fn retirement_remove_retry_quotes_repository_and_preserves_permission_flags() {
 }
 
 #[test]
+fn retirement_remove_retry_pins_output_over_environment_defaults() {
+    for json in [false, true] {
+        let repo = Repo::new();
+        for name in ["done", "remaining"] {
+            assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+        }
+        let remaining = managed(&repo, "remaining");
+        repo.git(&["worktree", "lock", remaining.to_str().unwrap()]);
+        let env_output = if json { "text" } else { "json" };
+        let output = if json { "json" } else { "text" };
+        let out = repo
+            .command(
+                env!("CARGO_BIN_EXE_mabo"),
+                &["remove", "done", "remaining", "--output", output],
+            )
+            .env("MABO_OUTPUT", env_output)
+            .env("MABO_NO_INPUT", "1")
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(6),
+            "{} {}",
+            text(&out.stdout),
+            text(&out.stderr)
+        );
+        assert!(!managed(&repo, "done").exists());
+        assert!(remaining.exists());
+        let hint = setup_retry_hint(&out, json);
+        repo.git(&["worktree", "unlock", remaining.to_str().unwrap()]);
+        // Execute the displayed command unchanged under the original defaults.
+        let script = format!("export MABO_OUTPUT={env_output} MABO_NO_INPUT=1\n{hint}");
+        let retried = run_setup_retry_hint(&repo, &repo.home, &script);
+        assert_eq!(
+            retried.status.code(),
+            Some(0),
+            "{hint}: {} {}",
+            text(&retried.stdout),
+            text(&retried.stderr)
+        );
+        if json {
+            let doc = assert_envelope(&retried, "remove");
+            assert_eq!(doc["ok"], true);
+            assert_eq!(doc["data"]["items"].as_array().unwrap().len(), 1);
+        } else {
+            assert!(
+                serde_json::from_slice::<serde_json::Value>(&retried.stdout).is_err(),
+                "retry switched to JSON: {}",
+                text(&retried.stdout)
+            );
+            assert!(text(&retried.stdout).contains("remaining"));
+        }
+        assert!(hint.contains(if json { " --json " } else { " --output text " }));
+        assert!(hint.contains(" --no-input "));
+        assert!(!remaining.exists());
+        assert!(maboroshi::metadata::load_strict(&repo.repo)
+            .unwrap()
+            .is_empty());
+    }
+}
+
+#[test]
 fn retirement_remove_missing_wins_over_other_preflight_errors() {
     let repo = Repo::new();
     assert!(repo
