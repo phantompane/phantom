@@ -50,21 +50,11 @@ pub(crate) fn matches(
     } else if let Some(number) = selector.strip_prefix("issue:") {
         (false, metadata::parse_link(number)?)
     } else {
-        let parts = selector
-            .split(['?', '#'])
-            .next()
-            .unwrap_or(selector)
-            .trim_end_matches('/')
-            .split('/')
-            .collect::<Vec<_>>();
-        let kind = parts.get(parts.len().saturating_sub(2)).copied();
-        if !matches!(kind, Some("pull" | "pulls" | "issues" | "issue")) {
-            return Err(Error::validation(
-                "Selector URL must identify a pull request or issue",
-            ));
-        }
+        let (kind, _) = metadata::link_target(selector).ok_or_else(|| {
+            Error::validation("Selector URL must identify a pull request or issue")
+        })?;
         (
-            matches!(kind, Some("pull" | "pulls")),
+            matches!(kind, "pull" | "pulls"),
             metadata::parse_link(selector)?,
         )
     };

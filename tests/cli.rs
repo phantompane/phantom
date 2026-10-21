@@ -13309,3 +13309,143 @@ fn selector_urls_strip_the_final_link_suffix_for_reserved_repository_names() {
         }
     }
 }
+
+#[test]
+fn selector_urls_use_the_terminal_pair_for_selection_and_deletion() {
+    for (kind, flag) in [
+        ("pull", "--pr"),
+        ("pulls", "--pr"),
+        ("issues", "--issue"),
+        ("issue", "--issue"),
+    ] {
+        for url_link in [false, true] {
+            let repo = Repo::new();
+            repo.git(&[
+                "remote",
+                "add",
+                "origin",
+                "git@git.example.com:pull/123.git",
+            ]);
+            let url = format!("https://git.example.com/pull/123/{kind}/42");
+            assert!(repo
+                .mabo(&["create", "earlier", "--base", "main", flag, "123"])
+                .status
+                .success());
+            assert!(repo
+                .mabo(&[
+                    "create",
+                    "terminal",
+                    "--base",
+                    "main",
+                    flag,
+                    if url_link { &url } else { "42" }
+                ])
+                .status
+                .success());
+            for selector in [url.clone(), format!("{url}/?plain=1#details")] {
+                let out = repo.mabo(&["show", &selector, "--json"]);
+                assert_eq!(
+                    out.status.code(),
+                    Some(0),
+                    "{} {}",
+                    text(&out.stdout),
+                    text(&out.stderr)
+                );
+                assert_eq!(
+                    assert_envelope(&out, "show")["data"]["workspace"]["name"],
+                    "terminal",
+                    "{selector}, url_link={url_link}"
+                );
+            }
+            let out = repo.mabo(&["delete", &url, "--force", "--keep-branch", "--json"]);
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{} {}",
+                text(&out.stdout),
+                text(&out.stderr)
+            );
+            assert_eq!(
+                assert_envelope(&out, "delete")["data"]["deleted"][0]["workspace"]["name"],
+                "terminal"
+            );
+            assert!(managed(&repo, "earlier").is_dir());
+            assert!(!managed(&repo, "terminal").exists());
+        }
+    }
+}
+
+#[test]
+fn create_and_set_save_link_numbers_from_the_terminal_pair() {
+    for (kind, flag, field) in [
+        ("pull", "--pr", "pr"),
+        ("pulls", "--pr", "pr"),
+        ("issues", "--issue", "issue"),
+        ("issue", "--issue", "issue"),
+    ] {
+        let repo = Repo::new();
+        for (command, number) in [("create", 42), ("set", 43)] {
+            let url = format!("https://git.example.com/pull/123/{kind}/{number}/?plain=1#details");
+            let out = repo.mabo(&[command, "linked", flag, &url, "--json"]);
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{} {}",
+                text(&out.stdout),
+                text(&out.stderr)
+            );
+            let workspace = &assert_envelope(&out, command)["data"]["workspace"];
+            assert_eq!(workspace["links"][field]["number"], number);
+            assert_eq!(workspace["links"][field]["url"], url);
+            let out = repo.mabo(&["show", "linked", "--json"]);
+            assert_eq!(
+                assert_envelope(&out, "show")["data"]["workspace"]["links"][field]["number"],
+                number
+            );
+        }
+    }
+}
+
+#[test]
+fn delete_current_does_not_revalidate_the_resolved_branch_name() {
+    let repo = Repo::new();
+    let tree = managed(&repo, "topic+fix");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "topic+fix",
+        tree.to_str().unwrap(),
+        "main",
+    ]);
+    fs::write(tree.join("dirty"), "local changes\n").unwrap();
+    let refused = repo
+        .command(env!("CARGO_BIN_EXE_mabo"), &["delete", "--current"])
+        .current_dir(&tree)
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(4));
+    assert!(text(&refused.stderr).contains("topic+fix"));
+    fs::remove_file(tree.join("dirty")).unwrap();
+    let out = repo
+        .command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["delete", "--current", "--json"],
+        )
+        .current_dir(&tree)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(
+        assert_envelope(&out, "delete")["data"]["deleted"][0]["workspace"]["branch"],
+        "topic+fix"
+    );
+    assert!(!tree.exists());
+    assert!(!branch_listed(&repo, "topic+fix"));
+}

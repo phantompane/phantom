@@ -354,7 +354,7 @@ pub fn parse_link(value: &str) -> Result<WorktreeLink> {
         ));
     }
     Ok(WorktreeLink {
-        number: link_number(value),
+        number: link_target(value).map(|(_, number)| number),
         url: Some(value.to_string()),
     })
 }
@@ -400,27 +400,18 @@ fn parse_number(value: &str) -> Result<u64> {
     Ok(number)
 }
 
-fn link_number(url: &str) -> Option<u64> {
-    let without_query = url.split(['?', '#']).next().unwrap_or(url);
-    let path = without_query
-        .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(without_query);
-    let segments = path.split('/').filter(|segment| !segment.is_empty());
-    let mut previous = None;
-    for segment in segments {
-        if let Some(kind) = previous {
-            if matches!(kind, "pull" | "pulls" | "issues" | "issue") {
-                if let Ok(number) = segment.parse::<u64>() {
-                    if number > 0 {
-                        return Some(number);
-                    }
-                }
-            }
-        }
-        previous = Some(segment);
+/// Read the kind and number together from the terminal URL path pair.
+pub(crate) fn link_target(url: &str) -> Option<(&str, u64)> {
+    let clean = url.split(['?', '#']).next()?.trim_end_matches('/');
+    let (_, authority_and_path) = clean.split_once("://")?;
+    let (_, path) = authority_and_path.split_once('/')?;
+    let (prefix, number) = path.rsplit_once('/')?;
+    let kind = prefix.rsplit('/').next()?;
+    if !matches!(kind, "pull" | "pulls" | "issues" | "issue") {
+        return None;
     }
-    None
+    let number = number.parse::<u64>().ok()?;
+    (number > 0).then_some((kind, number))
 }
 
 fn stored_worktree(path: String, metadata: WorktreeMetadata) -> StoredWorktree {
@@ -1221,6 +1212,18 @@ mod tests {
         assert_eq!(load(&root).unwrap().len(), 10);
         assert!(!legacy.exists());
         assert!(legacy.with_extension("json.imported").is_file());
+    }
+
+    #[test]
+    fn link_numbers_use_only_the_terminal_kind_number_pair() {
+        for kind in ["pull", "pulls", "issues", "issue"] {
+            let url = format!("https://git.example.com/pull/123/{kind}/42/?plain=1#details");
+            assert_eq!(parse_link(&url).unwrap().number, Some(42), "{url}");
+        }
+        for suffix in ["pull/0", "issues/not-a-number", "pull/42/files", "other/42"] {
+            let url = format!("https://git.example.com/pull/123/{suffix}");
+            assert_eq!(parse_link(&url).unwrap().number, None, "{url}");
+        }
     }
 
     #[test]

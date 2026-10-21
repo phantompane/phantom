@@ -380,6 +380,49 @@ fn default_without_remote_head_uses_differently_named_upstream() {
 }
 
 #[test]
+fn implicit_sync_does_not_revalidate_the_resolved_branch_name() {
+    for subdirectory in [false, true] {
+        let r = Repo::new();
+        let tree = r.root.join("plain-checkout");
+        r.git(
+            &r.main,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "topic+fix",
+                tree.to_str().unwrap(),
+                "main",
+            ],
+        );
+        let other = r.create("other");
+        let other_before = r.snapshot(&other);
+        let store = r.main.join(".git/maboroshi/workspaces");
+        let records_before = records::read(&store).unwrap();
+        r.advance();
+        let cwd = if subdirectory {
+            let sub = tree.join("sub");
+            fs::create_dir(&sub).unwrap();
+            sub
+        } else {
+            tree.clone()
+        };
+        let doc = r.sync(&cwd, &[], 0);
+        assert_eq!(doc["schema"], 2);
+        assert_eq!(doc["data"]["default"]["status"], "updated");
+        assert_eq!(doc["data"]["workspaces"].as_array().unwrap().len(), 1);
+        assert_eq!(doc["data"]["workspaces"][0]["name"], "topic+fix");
+        assert_eq!(doc["data"]["workspaces"][0]["status"], "updated");
+        assert_eq!(
+            r.git(&tree, &["rev-parse", "HEAD"]),
+            r.git(&r.upstream, &["rev-parse", "HEAD"])
+        );
+        assert_eq!(r.snapshot(&other), other_before);
+        assert_eq!(records::read(&store).unwrap(), records_before);
+    }
+}
+
+#[test]
 fn default_only_and_linked_implicit_including_subdirectory_and_detached() {
     let r = Repo::new();
     let tree = r.create("topic");

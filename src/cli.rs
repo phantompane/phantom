@@ -613,7 +613,7 @@ fn delete(args: &[String]) -> Result<i32> {
         parsed.flag("keep-branch") || context.preferences.keep_branch.unwrap_or(false);
     let names = if delete_current {
         match worktree::current_worktree_name(&context) {
-            Ok(Some(name)) => vec![name],
+            Ok(Some(_)) => vec![".".to_string()],
             Ok(None) => {
                 return fail_with(
                     &Error::msg(

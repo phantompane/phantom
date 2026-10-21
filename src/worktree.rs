@@ -985,6 +985,11 @@ pub fn preflight_delete(
     let keep_branch = options.keep_branch;
     let worktree =
         find_including_orphaned(context, name, true, expected_path).map_err(DeleteError::bare)?;
+    let label = if options.allow_current && name == "." {
+        worktree.name.as_str()
+    } else {
+        name
+    };
     let path = PathBuf::from(&worktree.path);
     let inside = paths::is_strictly_inside(&path, &context.worktrees_directory);
     let recorded = metadata::records_path(&context.git_root, &path)
@@ -992,7 +997,7 @@ pub fn preflight_delete(
     if !inside && !recorded {
         return Err(DeleteError::kept(
             Error::msg(format!(
-                "Workspace '{name}' was not created by mabo (for example, it was made by plain git or an older tool). Remove it with `git worktree remove {}`.",
+                "Workspace '{label}' was not created by mabo (for example, it was made by plain git or an older tool). Remove it with `git worktree remove {}`.",
                 path.display()
             )),
             &worktree,
@@ -1013,7 +1018,7 @@ pub fn preflight_delete(
     if changed > 0 && !force {
         return Err(DeleteError::kept(
             Error::Uncommitted {
-                name: name.to_string(),
+                name: label.to_string(),
                 files: changed,
             },
             &worktree,
@@ -1049,7 +1054,7 @@ pub fn preflight_delete(
         };
         if let Some(unknown) = refusal {
             return Err(DeleteError::kept(
-                Error::unpushed_delete(name, worktree.detached, unknown),
+                Error::unpushed_delete(label, worktree.detached, unknown),
                 &worktree,
             ));
         }
@@ -1224,6 +1229,12 @@ pub(crate) fn commit_delete_checked(
         remove_empty_parents(&path, &context.worktrees_directory)
     } else {
         None
+    };
+    // --current resolves through '.', but keeps the workspace name in messages.
+    let name = if options.allow_current && name == "." {
+        worktree.name.as_str()
+    } else {
+        &name
     };
     let (message, branch_deleted, branch_error) = if worktree.branch == "(detached HEAD)" {
         (format!("Deleted workspace '{name}'"), false, None)

@@ -494,10 +494,11 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
                 targets.push(tree);
             }
         }
-    } else {
-        if let Some(name) = worktree::current_worktree_name(context)? {
-            targets.push(worktree::find_worktree(context, &name, false, None)?);
-        }
+    } else if let Some(tree) = listed
+        .into_iter()
+        .find(|tree| crate::selectors::is_current(Path::new(&tree.path)))
+    {
+        targets.push(tree);
     }
     if request.keep_conflicts && targets.len() != 1 {
         return Err(Error::validation(
