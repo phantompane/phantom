@@ -277,6 +277,7 @@ pub(crate) fn create(
         };
         source["reused"] = json!(true);
         return report(
+            context,
             &tree,
             source,
             None,
@@ -410,6 +411,7 @@ pub(crate) fn create(
     }
     source["reused"] = json!(false);
     report(
+        context,
         &worktree::worktree_at_path(context, &path)?,
         source,
         metadata_error.as_deref(),
@@ -419,6 +421,7 @@ pub(crate) fn create(
 }
 
 fn report(
+    context: &Context,
     tree: &worktree::WorktreeInfo,
     source: Value,
     metadata_error: Option<&str>,
@@ -448,12 +451,57 @@ fn report(
         return Err(Error::status(
             crate::error::PARTIAL,
             format!(
-                "Workspace created but setup did not complete. Retry with `mabo setup {}`.",
-                visible_text(&tree.name)
+                "Workspace created but setup did not complete. Retry with `{}`.",
+                visible_text(&setup_retry_command(context, tree))
             ),
         ));
     }
     Ok(0)
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn shell_directory(path: &str) -> String {
+    if visible_text(path) == path {
+        return shell_quote(path);
+    }
+    // Keep control characters executable without putting them on the terminal.
+    // The trailing slash prevents command substitution stripping a final newline.
+    let octal: String = path.bytes().map(|byte| format!("\\{byte:03o}")).collect();
+    format!("\"$(printf '{octal}/')\"")
+}
+
+fn setup_retry_command(context: &Context, tree: &worktree::WorktreeInfo) -> String {
+    let command = format!(
+        "mabo -R {} setup",
+        shell_directory(&context.git_root.to_string_lossy())
+    );
+    let candidates = std::iter::once(tree.name.clone()).chain(
+        [
+            ("pr", &tree.metadata.links.pr),
+            ("issue", &tree.metadata.links.issue),
+        ]
+        .into_iter()
+        .filter_map(|(kind, link)| {
+            link.as_ref()?
+                .number
+                .map(|number| format!("{kind}:{number}"))
+        }),
+    );
+    for selector in candidates {
+        if !selector.starts_with('-')
+            && crate::selectors::resolve(context, &selector, false, None).is_ok_and(|resolved| {
+                paths::same_location(Path::new(&resolved.path), Path::new(&tree.path))
+            })
+        {
+            return format!("{command} {}", shell_quote(&selector));
+        }
+    }
+    // Paths are not selectors. Dot resolves this checkout even when links were
+    // not saved or match several workspaces, and -R keeps the primary's config.
+    format!("(cd {} && {command} .)", shell_directory(&tree.path))
 }
 
 pub(crate) fn adopt(

@@ -217,7 +217,7 @@
         "Same-repository PRs use the head branch; fork PRs use owner/head. Fork or deleted heads are fetched from pull/N/head without an upstream. --base, --branch, and --pr are mutually exclusive; --detach cannot accompany --branch or --pr.",
         "--json returns workspace, source (kind new/branch/pr/issue/detach and source details), setup (state, at, ran, ok, command, exitCode, signal, error), copy (copied paths, error), and metadata (ok, error). Failures after checkout creation exit 6.",
         "--no-setup skips copying and hooks; it conflicts with --copy-file. Old create --no-hooks exits 2 with a migration hint.",
-        "Copy files from the primary checkout. After exit 6, retry with mabo setup NAME. --reuse never repeats setup.",
+        "Copy files from the primary checkout. After exit 6, run the retry command from the error: mabo -R '/absolute/primary/checkout' setup 'SELECTOR'. It uses a uniquely resolving name or PR/issue selector, or changes into the workspace and runs setup . with the same -R path. --reuse never repeats setup.",
         "Old [hooks] post-create / pre-delete keys fail with exit 1; rename them to setup / pre-remove."
       ]
     },
@@ -1706,7 +1706,7 @@
         "Before copying or updating records, untrusted hooks refuse with exit 4 untrusted. Use mabo trust add, MABO_TRUST_ALL=1, or --no-hooks for copying only. Non-interactive runs never prompt.",
         ".mabo.toml is read from the checkout where the command runs. [hooks] setup runs after copying; write hooks to tolerate repeated execution. Old post-create / pre-delete keys fail with a rename hint.",
         "Setup records state, at and error: pending, running, ok, failed or skipped. Older, imported and adopted records report unknown; unrecorded workspaces report null. A running attempt whose pid is gone on the same host displays interrupted without rewriting the record or blocking operations.",
-        "JSON data contains workspace, setup (state, at, error, ran, ok, command, exitCode, signal), and copy (copied, error). Hook and copy failures exit 1; create setup failures exit 6 with a mabo setup NAME retry hint."
+        "JSON data contains workspace, setup (state, at, error, ran, ok, command, exitCode, signal), and copy (copied, error). Hook and copy failures exit 1; create setup failures exit 6 with a shell-quoted retry command that preserves the primary checkout via -R and selects the created workspace uniquely."
       ]
     }
   },

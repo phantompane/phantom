@@ -15799,6 +15799,234 @@ fn setup_and_create_escape_copy_failure_diagnostics() {
 }
 
 #[test]
+fn setup_retry_hint_resolves_pr_names_and_ambiguous_links() {
+    for json in [false, true] {
+        for ambiguous in [false, true] {
+            let repo = Repo::new();
+            let path = fake_gh_for_topic_pr(&repo);
+            publish_pr_topic(&repo);
+            let gh = repo.root.join("bin/gh");
+            let script = fs::read_to_string(&gh).unwrap();
+            fs::write(&gh, script.replace("\"topic\"", "\"topic+fix\"")).unwrap();
+            if ambiguous {
+                assert!(repo
+                    .create_recorded(&["create", "duplicate", "--pr", "7", "--no-setup"])
+                    .status
+                    .success());
+            }
+            fs::write(
+                repo.repo.join(".mabo.toml"),
+                "[hooks]\nsetup = [\"test -f ready && touch hook-ran\"]\n",
+            )
+            .unwrap();
+            let mut args = vec!["create", "--pr", "7"];
+            if json {
+                args.push("--json");
+            }
+            let created = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .env("PATH", &path)
+                .output()
+                .unwrap();
+            assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
+            let hint = setup_retry_hint(&created, json);
+            let target = managed(&repo, "topic+fix");
+            fs::write(target.join("ready"), "").unwrap();
+            let retried = run_setup_retry_hint(&repo, &repo.repo, &hint);
+            assert!(
+                retried.status.success(),
+                "{hint}: {} {}",
+                text(&retried.stdout),
+                text(&retried.stderr)
+            );
+            assert!(target.join("hook-ran").is_file());
+            if ambiguous {
+                assert!(hint.starts_with("(cd "), "{hint}");
+            } else {
+                assert!(hint.ends_with("setup 'pr:7'"), "{hint}");
+            }
+            let listed = json_value(&repo.mabo(&["list", "--json"]));
+            let workspace = listed["data"]["workspaces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tree| tree["name"] == "topic+fix")
+                .unwrap();
+            assert_eq!(workspace["setup"]["state"], "ok");
+            if ambiguous {
+                assert!(!managed(&repo, "duplicate/hook-ran").exists());
+            }
+        }
+    }
+}
+
+fn setup_retry_hint(out: &std::process::Output, json: bool) -> String {
+    let message = if json {
+        json_value(out)["error"]["message"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    } else {
+        text(&out.stderr)
+    };
+    message
+        .split_once("Retry with `")
+        .expect("retry hint")
+        .1
+        .strip_suffix("`.")
+        .expect("end of retry hint")
+        .to_owned()
+}
+
+fn run_setup_retry_hint(repo: &Repo, cwd: &Path, hint: &str) -> std::process::Output {
+    let binary_dir = Path::new(env!("CARGO_BIN_EXE_mabo")).parent().unwrap();
+    repo.command("sh", &["-c", hint])
+        .current_dir(cwd)
+        .env("MABO_TRUST_ALL", "1")
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                binary_dir.display(),
+                std::env::var("PATH").unwrap()
+            ),
+        )
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn setup_retry_hint_preserves_selected_repository_from_any_directory() {
+    for json in [false, true] {
+        for from_other_repo in [false, true] {
+            for directory in [
+                "primary's $repo `literal` with spaces",
+                "primary's $repo `literal`\u{1b}[31m\t\nend",
+            ] {
+                let mut repo = Repo::new();
+                let renamed = repo.root.join(directory);
+                fs::rename(&repo.repo, &renamed).unwrap();
+                repo.repo = renamed;
+                let other = Repo::new();
+                let outside = repo.root.join("outside");
+                fs::create_dir(&outside).unwrap();
+                let decoy = repo.mabo(&[
+                    "-R",
+                    other.repo.to_str().unwrap(),
+                    "create",
+                    "lifecycle",
+                    "--no-setup",
+                ]);
+                assert!(decoy.status.success(), "{}", text(&decoy.stderr));
+                let other_records = other.repo.join(".git/maboroshi/workspaces");
+                let before = records::read(&other_records).unwrap();
+                fs::write(
+                    other.repo.join(".mabo.toml"),
+                    "[hooks]\nsetup = [\"touch wrong-target\"]\n",
+                )
+                .unwrap();
+                fs::write(
+                    repo.repo.join(".mabo.toml"),
+                    "[hooks]\nsetup = [\"test -f ready && touch hook-ran\"]\n",
+                )
+                .unwrap();
+                let mut args = vec!["-R", repo.repo.to_str().unwrap(), "create", "lifecycle"];
+                if json {
+                    args.push("--json");
+                }
+                let created = repo
+                    .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                    .current_dir(&outside)
+                    .output()
+                    .unwrap();
+                assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
+                let hint = setup_retry_hint(&created, json);
+                assert!(!hint.chars().any(char::is_control), "{hint:?}");
+                assert!(hint.starts_with("mabo -R "), "{hint}");
+                assert!(hint.ends_with("setup 'lifecycle'"), "{hint}");
+                fs::write(managed(&repo, "lifecycle/ready"), "").unwrap();
+                let cwd = if from_other_repo {
+                    &other.repo
+                } else {
+                    &outside
+                };
+                let retried = run_setup_retry_hint(&repo, cwd, &hint);
+                assert!(
+                    retried.status.success(),
+                    "{hint}: {} {}",
+                    text(&retried.stdout),
+                    text(&retried.stderr)
+                );
+                assert!(managed(&repo, "lifecycle/hook-ran").is_file());
+                let shown = repo.mabo(&["show", "lifecycle", "--json"]);
+                assert_eq!(
+                    json_value(&shown)["data"]["workspace"]["setup"]["state"],
+                    "ok"
+                );
+                assert_eq!(records::read(&other_records).unwrap(), before);
+                let decoy_path =
+                    managed_directory(&other.repo, &repo.root.join("xdg")).join("lifecycle");
+                assert!(!decoy_path.join("wrong-target").exists());
+            }
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn setup_retry_hint_works_without_saved_links() {
+    for json in [false, true] {
+        let repo = Repo::new();
+        let path = fake_gh_for_topic_pr(&repo);
+        publish_pr_topic(&repo);
+        let gh = repo.root.join("bin/gh");
+        let script = fs::read_to_string(&gh).unwrap();
+        fs::write(&gh, script.replace("\"topic\"", "\"topic+fix\"")).unwrap();
+        fs::write(
+            repo.repo.join(".mabo.toml"),
+            "[hooks]\nsetup = [\"test -f ready && touch hook-ran\"]\n",
+        )
+        .unwrap();
+        let mut args = vec!["create", "--pr", "7"];
+        if json {
+            args.push("--json");
+        }
+        let created = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("PATH", &path)
+            .env("MABO_TEST_FAIL_METADATA_SAVE", "1")
+            .output()
+            .unwrap();
+        assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
+        if json {
+            let doc = json_value(&created);
+            assert_eq!(doc["data"]["metadata"]["ok"], false);
+            assert!(doc["data"]["workspace"]["links"]["pr"].is_null());
+        }
+        let hint = setup_retry_hint(&created, json);
+        fs::write(managed(&repo, "topic+fix/ready"), "").unwrap();
+        let retried = run_setup_retry_hint(&repo, &repo.root, &hint);
+        assert!(
+            retried.status.success(),
+            "{hint}: {} {}",
+            text(&retried.stdout),
+            text(&retried.stderr)
+        );
+        assert!(hint.starts_with("(cd "), "{hint}");
+        assert!(managed(&repo, "topic+fix/hook-ran").is_file());
+        let shown = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &["show", "--json"])
+            .current_dir(managed(&repo, "topic+fix"))
+            .output()
+            .unwrap();
+        assert_eq!(
+            json_value(&shown)["data"]["workspace"]["setup"]["state"],
+            "ok"
+        );
+    }
+}
+
+#[test]
 fn setup_lifecycle_failure_retry_and_shared_state() {
     let repo = Repo::new();
     fs::write(
@@ -15811,10 +16039,10 @@ fn setup_lifecycle_failure_retry_and_shared_state() {
     let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(doc["data"]["workspace"]["setup"]["state"], "failed");
     assert_eq!(doc["data"]["setup"]["exitCode"], 1);
-    assert!(doc["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("mabo setup lifecycle"));
+    assert_eq!(
+        setup_retry_hint(&out, true),
+        format!("mabo -R '{}' setup 'lifecycle'", repo.repo.display())
+    );
     let path = managed(&repo, "lifecycle");
     assert!(text(&repo.mabo(&["list"]).stdout).contains("setup:failed"));
     let records = repo.repo.join(".git/maboroshi/workspaces");
