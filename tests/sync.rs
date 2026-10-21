@@ -4295,6 +4295,201 @@ fn p8_strategy_sources_and_permission_does_not_choose_rebase() {
 }
 
 #[test]
+fn review_p1_fetch_cannot_rewrite_local_branches_or_their_reflogs() {
+    for dry_run in [true, false] {
+        for destination in ["refs/heads/release", "refs/heads/rel*", "refs/*"] {
+            let r = Repo::new();
+            r.git(&r.main, &["checkout", "-b", "release"]);
+            r.write_commit(&r.main, "local-release", "unpublished release\n");
+            r.git(&r.main, &["checkout", "main"]);
+            r.git(&r.upstream, &["checkout", "-b", "release"]);
+            r.write_commit(&r.upstream, "remote-release", "remote release\n");
+            r.git(&r.upstream, &["push", "origin", "release"]);
+            let source = match destination {
+                "refs/heads/rel*" => "refs/heads/rel*",
+                "refs/*" => "refs/*",
+                _ => "refs/heads/release",
+            };
+            r.git(
+                &r.main,
+                &[
+                    "config",
+                    "--add",
+                    "remote.origin.fetch",
+                    &format!("+{source}:{destination}"),
+                ],
+            );
+            let heads = r.git(&r.main, &["for-each-ref", "refs/heads"]);
+            let reflogs = file_contents(&r.main.join(".git/logs/refs/heads"));
+            let primary = r.snapshot(&r.main);
+            let out = r.mabo(
+                &r.main,
+                if dry_run {
+                    &["sync", "--dry-run", "--json"]
+                } else {
+                    &["sync", "--json"]
+                },
+            );
+            // Assert protection before the refusal so the red run demonstrates
+            // the actual ref/reflog mutation rather than just an exit mismatch.
+            assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), heads);
+            assert_eq!(file_contents(&r.main.join(".git/logs/refs/heads")), reflogs);
+            assert_eq!(r.snapshot(&r.main), primary);
+            let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(out.status.code(), Some(4), "{doc}");
+            assert_eq!(doc["error"]["code"], "refused");
+            let message = doc["error"]["message"].as_str().unwrap();
+            assert!(message.contains("remote.origin.fetch"), "{doc}");
+            assert!(message.contains(destination), "{doc}");
+        }
+    }
+}
+
+#[test]
+fn review_p1_dry_run_refuses_custom_namespaces_before_fetching() {
+    let r = Repo::new();
+    r.git(
+        &r.main,
+        &[
+            "config",
+            "--add",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/cache/*",
+        ],
+    );
+    r.advance();
+    let refs = r.git(&r.main, &["for-each-ref"]);
+    let fetch_head = fs::read(r.main.join(".git/FETCH_HEAD")).unwrap();
+    let doc = r.sync(&r.main, &["--dry-run"], 4);
+    assert!(doc["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("refs/cache/*"));
+    assert_eq!(r.git(&r.main, &["for-each-ref"]), refs);
+    assert_eq!(
+        fs::read(r.main.join(".git/FETCH_HEAD")).unwrap(),
+        fetch_head
+    );
+    // Preserve execution's existing custom tracking namespace support.
+    let doc = r.sync(&r.main, &[], 0);
+    assert_eq!(doc["data"]["main"]["status"], "updated");
+}
+
+#[test]
+fn review_p1_fetch_cannot_follow_tracking_symrefs_into_local_branches() {
+    for dry_run in [true, false] {
+        let r = Repo::new();
+        r.git(&r.main, &["branch", "release"]);
+        r.git(
+            &r.main,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/release",
+                "refs/heads/release",
+            ],
+        );
+        r.advance();
+        r.git(&r.upstream, &["push", "origin", "HEAD:release"]);
+        let heads = r.git(&r.main, &["for-each-ref", "refs/heads"]);
+        let reflogs = file_contents(&r.main.join(".git/logs/refs/heads"));
+        let doc = r.sync(&r.main, if dry_run { &["--dry-run"] } else { &[] }, 4);
+        assert_eq!(doc["error"]["code"], "refused");
+        assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), heads);
+        assert_eq!(file_contents(&r.main.join(".git/logs/refs/heads")), reflogs);
+    }
+}
+
+#[test]
+fn review_p2_implicit_current_rejects_a_different_repository() {
+    let a = Repo::new();
+    let tree = a.create("topic");
+    let b = Repo::new();
+    b.advance();
+    let primary = b.snapshot(&b.main);
+    let mut errors = Vec::new();
+    for selectors in [vec![], vec!["."]] {
+        let mut args = vec!["-R", b.main.to_str().unwrap(), "sync", "--json"];
+        args.extend(selectors);
+        let out = a.mabo(&tree, &args);
+        assert_eq!(b.snapshot(&b.main), primary);
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(out.status.code(), Some(2), "{doc}");
+        assert_eq!(doc["error"]["code"], "usage");
+        errors.push(doc["error"].clone());
+    }
+    assert_eq!(errors[0], errors[1]);
+}
+
+#[test]
+fn review_p2_dry_run_uses_the_planned_primary_tip_as_local_base() {
+    for own_work in ["none", "unpublished", "published"] {
+        for dirty_primary in [false, true] {
+            let r = Repo::new();
+            let out = r.mabo(&r.main, &["create", "topic", "--base", "main", "--json"]);
+            assert!(out.status.success(), "{out:?}");
+            let created: Value = serde_json::from_slice(&out.stdout).unwrap();
+            let tree = PathBuf::from(created["data"]["workspace"]["path"].as_str().unwrap());
+            assert_eq!(created["data"]["workspace"]["base"], "refs/heads/main");
+            if own_work != "none" {
+                r.write_commit(&tree, "own", "workspace work\n");
+            }
+            if own_work == "published" {
+                r.git(&tree, &["push", "-u", "origin", "topic"]);
+            }
+            if dirty_primary {
+                fs::write(r.main.join("file"), "dirty primary\n").unwrap();
+            }
+            let primary = r.snapshot(&r.main);
+            let workspace = r.snapshot(&tree);
+            let reflogs = file_contents(&r.main.join(".git/logs/refs/heads"));
+            let records = file_contents(&r.main.join(".git/maboroshi/workspaces"));
+            r.advance();
+            let plan = r.sync(&tree, &[".", "--main", "--dry-run"], 0);
+            assert_eq!(r.snapshot(&r.main), primary);
+            assert_eq!(r.snapshot(&tree), workspace);
+            assert_eq!(file_contents(&r.main.join(".git/logs/refs/heads")), reflogs);
+            assert_eq!(
+                file_contents(&r.main.join(".git/maboroshi/workspaces")),
+                records
+            );
+            let actual = r.sync(&tree, &[".", "--main"], 0);
+            for (planned, executed) in [
+                (&plan["data"]["main"], &actual["data"]["main"]),
+                (&plan["data"]["items"][0], &actual["data"]["items"][0]),
+            ] {
+                for field in [
+                    "status",
+                    "strategy",
+                    "strategySource",
+                    "base",
+                    "before",
+                    "code",
+                ] {
+                    assert_eq!(
+                        planned[field], executed[field],
+                        "{field}: plan={plan}, actual={actual}"
+                    );
+                }
+                if !planned["after"].is_null() {
+                    assert_eq!(planned["after"], executed["after"]);
+                }
+            }
+            assert_eq!(
+                plan["data"]["items"][0]["status"],
+                if dirty_primary {
+                    "up-to-date"
+                } else {
+                    "updated"
+                }
+            );
+            if own_work != "none" && !dirty_primary {
+                assert!(plan["data"]["items"][0]["after"].is_null());
+            }
+        }
+    }
+}
+
+#[test]
 fn p8_dry_run_fetches_without_checkout_or_metadata_changes() {
     let r = Repo::new();
     let tree = r.create("topic");

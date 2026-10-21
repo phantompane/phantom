@@ -460,6 +460,51 @@ fn remote_for(base: &str, specs: &[FetchRefspec]) -> Option<String> {
     source_for(base, specs).map(|(remote, _)| remote)
 }
 
+fn fetch_destination_allowed(destination: &str, dry_run: bool) -> bool {
+    let prefix = destination.split('*').next().unwrap_or(destination);
+    // Broad patterns such as refs/* can write local branches too. Fetch
+    // must not bypass sync's ff-only/published guards, even during execution.
+    let writes_heads = prefix.starts_with("refs/heads/") || "refs/heads/".starts_with(prefix);
+    let tracking_namespace =
+        destination.starts_with("refs/remotes/") || destination.starts_with("refs/tags/");
+    destination.starts_with("refs/") && !writes_heads && (!dry_run || tracking_namespace)
+}
+
+fn check_fetch_destinations(
+    root: &Path,
+    specs: &[FetchRefspec],
+    involved: &BTreeSet<String>,
+    dry_run: bool,
+) -> Result<()> {
+    if involved.is_empty() {
+        return Ok(());
+    }
+    let symbols = checked_output(
+        &["for-each-ref", "--format=%(refname)%09%(symref)"],
+        root,
+        true,
+    )?;
+    for spec in specs.iter().filter(|spec| involved.contains(&spec.remote)) {
+        let destination = spec.destination.as_str();
+        // A tracking ref may itself point at a local branch. Refuse matching
+        // unsafe symrefs rather than letting fetch dereference them on update.
+        let mut writes_symbol = false;
+        for (name, target) in symbols.lines().filter_map(|line| line.split_once('\t')) {
+            if !target.is_empty() && map_ref(name, destination, &spec.source).is_some() {
+                let resolved = checked_output(&["symbolic-ref", name], root, true)?;
+                writes_symbol |= !fetch_destination_allowed(&resolved, dry_run);
+            }
+        }
+        if !fetch_destination_allowed(destination, dry_run) || writes_symbol {
+            return Err(Error::status(crate::error::REFUSED, format!(
+                "Unsafe remote.{}.fetch destination '{destination}'; sync refuses local-branch updates through fetch (including symbolic refs), and --dry-run requires destinations under refs/remotes/ or refs/tags/. Configure safe tracking destinations before retrying",
+                spec.remote
+            )));
+        }
+    }
+    Ok(())
+}
+
 // Flattening a merge drops its resolution and any changes made only in that
 // commit. Compare trees without checking out either parent or touching the index.
 fn unsafe_merge(path: &Path, base: &str) -> Result<Option<String>> {
@@ -529,13 +574,11 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             }
         }
     } else if !request.main {
-        if let Some(tree) = listed
-            .iter()
-            .find(|tree| !tree.is_default && crate::selectors::is_current(Path::new(&tree.path)))
-        {
-            targets.push(tree.clone());
-        } else {
+        let tree = crate::selectors::resolve(context, ".", false, None)?;
+        if tree.is_default {
             include_main = true;
+        } else {
+            targets.push(tree);
         }
     }
     // Only workspace integration can leave conflicts; preserve the existing
@@ -597,8 +640,25 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
             involved.insert(remote);
         }
     }
+    // Check every involved remote before any fetch or integration can mutate
+    // refs. Custom tracking namespaces remain supported during execution.
     let mut fetch_errors = BTreeMap::new();
+    if let Err(error) =
+        check_fetch_destinations(&context.git_root, &remotes, &involved, request.dry_run)
+    {
+        if error.exit_code() == crate::error::REFUSED {
+            return Err(error);
+        }
+        // Preserve per-item operational errors, but fetch nothing when the
+        // safety query fails: no destination has been proved safe to update.
+        for remote in &involved {
+            fetch_errors.insert(remote.clone(), error.to_string());
+        }
+    }
     for remote in involved {
+        if fetch_errors.contains_key(&remote) {
+            continue;
+        }
         let fetched = git::raw_git(
             &context.git_root,
             &[
@@ -655,6 +715,20 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         };
         report.default = Some(item);
     }
+    let mut planned_refs = BTreeMap::new();
+    if request.dry_run {
+        if let Some(item) = report
+            .default
+            .as_ref()
+            .filter(|item| item.status == "updated")
+        {
+            if let (Some(reference), Some(after)) = (&item.branch, &item.after) {
+                // Execution integrates primary first. Plan later workspaces
+                // against that same tip without writing a temporary ref.
+                planned_refs.insert(reference.clone(), after.clone());
+            }
+        }
+    }
     for (tree, base) in targets.iter().zip(&bases) {
         if tree.metadata.base_cleared {
             report.worktrees.push(base_unknown_item(context, tree));
@@ -676,6 +750,7 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
                 request,
                 &fallback,
                 default_name.as_deref(),
+                &planned_refs,
             ),
         };
         let item = match result {
@@ -1098,10 +1173,11 @@ fn sync_default(
 fn sync_tree(
     context: &Context,
     tree: &worktree::WorktreeInfo,
-    base: &str,
+    base_ref: &str,
     request: &Request,
     default_base: &str,
     default_name: Option<&str>,
+    planned_refs: &BTreeMap<String, String>,
 ) -> Result<Item> {
     // Keep this guard at the integration boundary, regardless of selector/strategy.
     if !tree.detached && default_name == Some(tree.branch.as_str()) {
@@ -1109,7 +1185,11 @@ fn sync_tree(
         item.name = tree.name.clone();
         return Ok(item);
     }
-    let mut item = tree_item(tree, base);
+    let mut item = tree_item(tree, base_ref);
+    let base = planned_refs
+        .get(base_ref)
+        .map(String::as_str)
+        .unwrap_or(base_ref);
     let path = Path::new(&tree.path);
     if !path.is_dir() || tree.orphaned {
         item.status(
@@ -1240,7 +1320,7 @@ fn sync_tree(
         return Ok(item);
     }
     if request.dry_run {
-        item.status("updated", Some(format!("Would {strategy} onto {base}")));
+        item.status("updated", Some(format!("Would {strategy} onto {base_ref}")));
         // Rebased and merged commit IDs do not exist yet. Never invent them.
         item.after = if own.is_empty() {
             commit(path, base)?
