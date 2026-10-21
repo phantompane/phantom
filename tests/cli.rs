@@ -11064,11 +11064,12 @@ fn every_command_help_uses_workspace_vocabulary() {
         args.push("--help");
         let out = repo.mabo(&args);
         assert!(out.status.success(), "{command}: {}", text(&out.stderr));
-        // These are retained interface names, not entity vocabulary. No Git
-        // diagnostic wording is currently needed in help.
+        // These are retained interface and file names, not entity vocabulary.
+        // No Git diagnostic wording is currently needed in help.
         let help = text(&out.stdout)
             .to_ascii_lowercase()
             .replace("worktrees-directory", "")
+            .replace("worktrees.json", "")
             .replace(".worktreeinclude", "");
         assert!(!help.contains("worktree"), "{command}: {help}");
     }

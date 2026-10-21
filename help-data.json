@@ -848,7 +848,7 @@
         "Omitted fields keep their current values. A workspace with no record yet gets createdAt and lastUsedAt",
         "The workspace must already exist. A missing name exits 3",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
-        "Workspace records use schema 2 and ws_<uuid v4> IDs. Each file is replaced atomically. Concurrent first registrations for the same path use the oldest createdAt, then the smallest ID; all fields come from that record. The next write removes extra files. The first write imports legacy workspaces.json and renames it to workspaces.json.imported; read-only commands can read the legacy file before import."
+        "Workspace records use schema 2 and ws_<uuid v4> IDs. Each file is replaced atomically. Concurrent first registrations for the same path use the oldest createdAt, then the smallest ID; all fields come from that record. The next write removes extra files. The first write imports legacy worktrees.json and renames it to worktrees.json.imported; read-only commands can read the legacy file before import."
       ]
     },
     "preferences": {
