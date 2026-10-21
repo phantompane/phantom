@@ -73,3 +73,16 @@ jobs:
       - name: Installer tests (dash)
         if: runner.os == 'Linux'
         run: dash tests/install/run.sh
+      - name: Install additional awk implementations
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y original-awk busybox
+      - name: Installer tests (original-awk and BusyBox awk)
+        timeout-minutes: 2
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "$RUNNER_TEMP/awk-original" "$RUNNER_TEMP/awk-busybox"
+          ln -s /usr/bin/original-awk "$RUNNER_TEMP/awk-original/awk"
+          printf '#!/bin/sh\nexec /usr/bin/busybox awk "$@"\n' > "$RUNNER_TEMP/awk-busybox/awk"
+          chmod +x "$RUNNER_TEMP/awk-busybox/awk"
+          PATH="$RUNNER_TEMP/awk-original:$PATH" sh tests/install/run.sh
+          PATH="$RUNNER_TEMP/awk-busybox:$PATH" sh tests/install/run.sh

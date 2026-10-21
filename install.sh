@@ -77,70 +77,75 @@ downloadWget() (
     exit 1
 )
 
-# A small structural JSON reader, rather than line/grep matching: ignore nested
-# metadata and strings containing JSON punctuation. Only direct release fields and
-# direct assets[].name values count. Parse the entire response before selecting.
+# Tokenize before awk: BWK awk substr/length scan long strings, so walking the
+# whole JSON response character by character is quadratic. grep consumes complete
+# strings/literals in one pass; the final alternative preserves invalid bytes so
+# malformed input cannot disappear. Only JSON whitespace is ignored by awk.
+# Parse the entire response before selecting, including metadata we do not use.
 resolveRelease() {
-    awk -v platform="$os-$arch" -v allow="$prerelease" '
-    function bad() { invalid=1; exit 1 }
-    function hex(s,    i,n,c) {
-        n=0
-        for(i=1;i<=length(s);i++) {
-            c=index("0123456789abcdef",tolower(substr(s,i,1)))-1
-            if(c<0) bad()
-            n=n*16+c
+    LC_ALL=C grep -aoE '"([^"\\[:cntrl:]]|\\(["\\/bfnrt]|u[0-9a-fA-F]{4}))*"|-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?|true|false|null|[[:space:]]+|.' \
+        "$tmp/releases.json" > "$tmp/releases.tokens" || return 1
+    LC_ALL=C awk -v platform="$os-$arch" -v allow="$prerelease" '
+    function bad() { exit 1 }
+    # Decode with a fixed number of linear substitutions, never a character walk.
+    # The lexer has validated escapes; raw strings cannot contain the sentinel.
+    function stringValue(s,    h,pattern,replacement) {
+        s=substr(s,2,length(s)-2)
+        if(index(s,"\\")==0) return s
+        gsub(/\\\\/,"\001",s)
+        gsub(/\\"/,"\"",s)
+        gsub(/\\\//,"/",s)
+        gsub(/\\[bfnrt]/,"?",s)
+        for(h=32;h<=126;h++) {
+            pattern=sprintf("%04x",h)
+            gsub(/a/,"[aA]",pattern); gsub(/b/,"[bB]",pattern)
+            gsub(/c/,"[cC]",pattern); gsub(/d/,"[dD]",pattern)
+            gsub(/e/,"[eE]",pattern); gsub(/f/,"[fF]",pattern)
+            replacement=(h==92 ? "\001" : (h==38 ? "\\&" : sprintf("%c",h)))
+            gsub("\\\\u" pattern,replacement,s)
         }
-        return n
+        # Preserve the original ASCII-only interpretation of release metadata.
+        gsub(/\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]/,"?",s)
+        gsub(/\001/,"\\\\",s)
+        return s
     }
-    function nextToken(    c,e,h) {
-        while(pos<=length(json) && substr(json,pos,1) ~ /[ \t\r\n]/) pos++
-        c=substr(json,pos++,1); token=c; value=c
-        if(c=="\"") {
-            value=""
-            while(pos<=length(json)) {
-                c=substr(json,pos++,1)
-                if(c=="\"") return
-                if(c=="\\") {
-                    e=substr(json,pos++,1)
-                    if(e=="u") {
-                        h=substr(json,pos,4); if(length(h)!=4) bad()
-                        h=hex(h); pos+=4
-                        # Release tags and asset names are ASCII. Keep other code
-                        # points distinct from their supported ASCII spellings.
-                        c=(h>=32 && h<=126) ? sprintf("%c",h) : "?"
-                    } else if(e=="\"" || e=="\\" || e=="/") c=e
-                    else if(e ~ /^[bfnrt]$/) c="?"
-                    else bad()
-                } else if(c ~ /[[:cntrl:]]/) bad()
-                value=value c
-            }
-            bad()
+    function nextToken(    status) {
+        do {
+            status=(getline value)
+            if(status<0) bad()
+            if(status==0) { token=""; value=""; return }
+        } while(value ~ /^[ \t\r]+$/)
+        token=value
+        if(substr(value,1,1)=="\"") {
+            if(length(value)<2) bad()
+            token="\""
         }
-        if(c ~ /[0-9tfn-]/ && c!="") {
-            while(pos<=length(json) && substr(json,pos,1) !~ /[] \t\r\n,}]/)
-                value=value substr(json,pos++,1)
-            token="literal"
-            if(value!="true" && value!="false" && value!="null" &&
-                value !~ /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/) bad()
-        }
+        else if(value=="true" || value=="false" || value=="null" ||
+            value ~ /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/) token="literal"
+        else if(value !~ /^[][{}:,]$/) bad()
     }
     function parse(path,    key,child) {
         if(++depth>100) bad()
         if(token=="{") {
+            if(path!="/item" && path!="/item/assets/item") path="/ignored"
             nextToken()
             if(token!="}") while(1) {
                 if(token!="\"") bad()
-                key=value; nextToken(); if(token!=":") bad()
-                nextToken(); parse(path "/" key)
+                key=stringValue(value); nextToken(); if(token!=":") bad()
+                child="/ignored"
+                if(path=="/item" && (key=="tag_name" || key=="draft" || key=="prerelease" || key=="assets")) child=path "/" key
+                if(path=="/item/assets/item" && key=="name") child=path "/name"
+                nextToken(); parse(child)
                 if(token=="}") break
                 if(token!=",") bad()
                 nextToken()
             }
             nextToken()
         } else if(token=="[") {
+            if(path!="" && path!="/item/assets") path="/ignored"
             nextToken()
             if(token!="]") while(1) {
-                child=path "/item"
+                child=(path=="" || path=="/item/assets") ? path "/item" : "/ignored"
                 if(path=="") {
                     tag=""; draft=""; pre=""
                     for(key in assets) delete assets[key]
@@ -161,22 +166,21 @@ resolveRelease() {
             }
             nextToken()
         } else if(token=="\"" || token=="literal") {
-            if(path=="/item/tag_name" && token=="\"") tag=value
+            if(path=="/item/tag_name" && token=="\"") tag=stringValue(value)
             if(path=="/item/draft" && token=="literal") draft=value
             if(path=="/item/prerelease" && token=="literal") pre=value
-            if(path=="/item/assets/item/name" && token=="\"") assets[value]=1
+            if(path=="/item/assets/item/name" && token=="\"") assets[stringValue(value)]=1
             nextToken()
         } else bad()
         depth--
     }
-    { json=json $0 "\n" }
-    END {
-        if(invalid) exit 1
-        pos=1; nextToken(); if(token!="[") bad()
+    BEGIN {
+        nextToken(); if(token!="[") bad()
         parse(""); if(token!="") bad()
         if(chosen!="") print chosen
         else if(firstPre!="") print "prerelease:" firstPre
-    }' "$tmp/releases.json"
+        exit
+    }' "$tmp/releases.tokens"
 }
 
 main() {

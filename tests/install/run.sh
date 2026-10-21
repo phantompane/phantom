@@ -1,5 +1,7 @@
 #!/bin/sh
 # Portable offline integration tests. Fixtures are generated, never downloaded.
+# Select awk via PATH, e.g. PATH=/tmp/awkshim/ow:$PATH sh tests/install/run.sh.
+# BusyBox wrappers may use `exec busybox awk "$@"`; isolated tests retain busybox.
 set -eu
 
 suiteDir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -106,6 +108,12 @@ run() {
     notContains "$root/stderr" 'test-secret-token'
     count=$((count+1))
 }
+runFail() {
+    expectedStatus=$1 expectedMessage=$2
+    shift 2
+    run "$expectedStatus" "$@"
+    contains "$root/stderr" "$expectedMessage"
+}
 assertVersion() {
     contains "$root/stdout" "Installed mabo v$1 to $2/mabo"
     [ "$("$2/mabo" --version)" = "mabo v$1+rust (test)" ] || fail 'Wrong installed version'
@@ -146,8 +154,7 @@ for layout in compact pretty; do
     run 0 --prerelease
     assertVersion 7.2.0-alpha.1 "$HOME/.local/bin"
     writeApi "$layout" no
-    run 1
-    contains "$root/stderr" 'v7.2.0-alpha.1'
+    runFail 1 'No stable mabo release; newest prerelease is v7.2.0-alpha.1'
     contains "$root/stderr" 'MABO_VERSION=v7.2.0-alpha.1'
     contains "$root/stderr" '--prerelease'
     export MABO_PRERELEASE=1
@@ -155,38 +162,79 @@ for layout in compact pretty; do
     assertVersion 7.2.0-alpha.1 "$HOME/.local/bin"
     unset MABO_PRERELEASE
 done
+
+# About 1.6 MB across 100 releases, with long escaped bodies. Generate both JSON
+# layouts without walking a giant string in awk (the regression we are testing).
+# Even a selected first release must not bypass validation of the remaining data.
+for layout in compact pretty; do
+    awk -v layout="$layout" 'BEGIN {
+        sep=(layout=="pretty" ? "\n  " : "")
+        printf "[%s",sep
+        for(i=1;i<=100;i++) {
+            tag=(i==1 ? "7.2.0-alpha.1" : (i==2 ? "7.1.0" : "7.3.0-draft"))
+            printf "{\"tag_name\":\"v%s\",%s\"draft\":%s,%s\"prerelease\":%s,%s",tag,sep,(i>2 ? "true" : "false"),sep,(i==1 ? "true" : "false"),sep
+            printf "\"assets\":[{\"name\":\"maboroshi-v%s-linux-x64.tar.gz\"}],%s\"body\":\"",tag,sep
+            for(j=0;j<150;j++) printf "Release notes: { [ ] } , : \\\"tag_name\\\": \\\"trick\\\", backslash \\\\, newline \\n, Unicode \\u65e5. More details. "
+            printf "\"}%s%s",(i<100 ? "," : ""),sep
+        }
+        print "]"
+    }' > "$root/api/releases?per_page=100"
+    bytes=$(wc -c < "$root/api/releases?per_page=100")
+    [ "$bytes" -ge 1000000 ] && [ "$bytes" -le 2000000 ] || fail "Unexpected large fixture size: $bytes"
+    run 0
+    assertVersion 7.1.0 "$HOME/.local/bin"
+    run 0 --prerelease
+    assertVersion 7.2.0-alpha.1 "$HOME/.local/bin"
+    printf 'garbage' >> "$root/api/releases?per_page=100"
+    runFail 1 'Invalid GitHub API response'
+done
+
+# Unicode-escaped ASCII keys/values are equivalent; punctuation and escaped
+# backslashes in unrelated keys must not manufacture direct assets[].name fields.
+cat > "$root/api/releases?per_page=100" <<'JSON'
+[{"tag_name":"v7.3.0-draft","draft":false,"prerelease":false,
+  "assets/item/name":"maboroshi-v7.3.0-draft-linux-x64.tar.gz",
+  "assets":[[{"name":"maboroshi-v7.3.0-draft-linux-x64.tar.gz"}],
+            {"nested":{"name":"maboroshi-v7.3.0-draft-linux-x64.tar.gz"}}]},
+ {"t\u0061g_name":"\u00767.1.0","draft":false,"prerelease":false,
+  "escaped\\u0061\"\/\b\f\n\r\t\u0026\u005c\u00AF":null,
+  "assets":[{"n\u0061me":"maboroshi-v7.1.0-linux-x64.tar.g\u007a"}]}]
+JSON
+run 0
+assertVersion 7.1.0 "$HOME/.local/bin"
+printf '[]\n' > "$root/api/releases?per_page=100"
+runFail 1 'No matching mabo release. Pin MABO_VERSION or use --prerelease.'
+
 cp "$HOME/.local/bin/mabo" "$root/before"
 for broken in 7.6.0-checksum 7.7.0-nosums 7.8.0-noline 7.5.0-missing 7.4.0-wrong; do
-    run 1 --version "$broken"
-    unchanged
     case $broken in
-        *checksum) contains "$root/stderr" 'Checksum mismatch' ;;
-        *nosums|*noline) contains "$root/stderr" 'SHA256SUMS' ;;
-        *missing) contains "$root/stderr" 'mabo executable' ;;
-        *wrong) contains "$root/stderr" 'does not match' ;;
+        *checksum) reason='Checksum mismatch' ;;
+        *nosums) reason='Missing or unavailable SHA256SUMS' ;;
+        *noline) reason='Missing, duplicate, or invalid SHA256SUMS line' ;;
+        *missing) reason='Archive is missing a regular mabo executable' ;;
+        *wrong) reason='Downloaded mabo version does not match' ;;
     esac
+    runFail 1 "$reason" --version "$broken"
+    unchanged
 done
 
 mkdir -p "$HOME/managed"
 printf 'package manager binary\n' > "$root/managed-target"
 ln -s "$root/managed-target" "$HOME/managed/mabo"
-run 1 --version 7.0.0 --install-dir "$HOME/managed"
-contains "$root/stderr" 'managed elsewhere'
+runFail 1 'managed elsewhere' --version 7.0.0 --install-dir "$HOME/managed"
 [ "$(cat "$root/managed-target")" = 'package manager binary' ] || fail 'Modified symlink target'
 [ -L "$HOME/managed/mabo" ] || fail 'Replaced symlink'
 rm "$HOME/managed/mabo"
 ln -s "$root/nonexistent" "$HOME/managed/mabo"
-run 1 --version 7.0.0 --install-dir "$HOME/managed"
-contains "$root/stderr" 'managed elsewhere'
+runFail 1 'managed elsewhere' --version 7.0.0 --install-dir "$HOME/managed"
 rm "$HOME/managed/mabo"
 mkdir "$HOME/managed/mabo"
-run 1 --version 7.0.0 --install-dir "$HOME/managed"
-contains "$root/stderr" 'managed elsewhere'
+runFail 1 'managed elsewhere' --version 7.0.0 --install-dir "$HOME/managed"
 
 # A restricted PATH makes absence reproducible even on developer/CI machines
 # with gh, jq, python, curl or multiple checksum implementations installed.
 mkdir "$root/tools"
-for tool in sh bash dash awk cat chmod cp grep mkdir mktemp mv rm sed tar uname gzip; do
+for tool in sh bash dash awk busybox cat chmod cp grep mkdir mktemp mv rm sed tar uname gzip; do
     found=$(command -v "$tool" || :)
     if [ -n "$found" ]; then ln -s "$found" "$root/tools/$tool"; fi
 done
@@ -206,8 +254,7 @@ chmod +x "$root/bin/isolated-shell"
 export TEST_TOOLS="$root/tools"
 savedRunner=$runner
 runner=isolated-shell
-run 1 --version 7.0.0 --verify-attestation
-contains "$root/stderr" 'requires gh'
+runFail 1 'requires gh' --version 7.0.0 --verify-attestation
 unchanged
 cat > "$root/tools/gh" <<'SH'
 #!/bin/sh
@@ -218,8 +265,7 @@ exit "${TEST_GH_STATUS:-0}"
 SH
 chmod +x "$root/tools/gh"
 export TEST_GH_ARGS="$root/gh-args" TEST_GH_STATUS=1
-run 1 --version 7.0.0 --verify-attestation
-contains "$root/stderr" 'Attestation verification failed'
+runFail 1 'Attestation verification failed' --version 7.0.0 --verify-attestation
 unchanged
 export TEST_GH_STATUS=0 MABO_VERIFY_ATTESTATION=1
 run 0 --version 7.0.0
@@ -238,12 +284,10 @@ if command -v wget >/dev/null 2>&1; then
     assertVersion 7.0.0 "$HOME/.local/bin"
     rm "$root/tools/wget"
 fi
-run 1 --version 7.0.0
-contains "$root/stderr" 'curl or wget'
+runFail 1 'curl or wget' --version 7.0.0
 ln -s "$curlPath" "$root/tools/curl"
 rm "$root/tools/$shaName"
-run 1 --version 7.0.0
-contains "$root/stderr" 'sha256sum or shasum'
+runFail 1 'sha256sum or shasum' --version 7.0.0
 if command -v shasum >/dev/null 2>&1; then
     ln -s "$(command -v shasum)" "$root/tools/shasum"
     run 0 --version 7.0.0
@@ -259,28 +303,24 @@ for pair in 'Linux amd64' 'Linux aarch64' 'Darwin arm64' 'Darwin x86_64'; do
     assertVersion 7.0.0 "$HOME/.local/bin"
 done
 export TEST_OS=FreeBSD TEST_ARCH=x86_64
-run 1 --version 7.0.0
+runFail 1 'Unsupported platform' --version 7.0.0
 contains "$root/stderr" 'https://github.com/phantompane/phantom/releases'
 contains "$root/stderr" 'cargo install --git https://github.com/phantompane/phantom --tag 7.0.0 --locked maboroshi'
 export TEST_OS=Linux TEST_ARCH=riscv64
-run 1 --version 7.0.0
-contains "$root/stderr" 'Unsupported platform'
+runFail 1 'Unsupported platform' --version 7.0.0
 unset TEST_OS TEST_ARCH
-run 2 --unknown
-contains "$root/stderr" 'Unknown option'
-run 2 --version
-run 2 --install-dir
+runFail 2 'Unknown option' --unknown
+runFail 2 '--version requires a value' --version
+runFail 2 '--install-dir requires a value' --install-dir
 run 0 --help
 contains "$root/stdout" 'Usage:'
 run 0 -h
 export MABO_API_URL="file://$root/nonexistent"
-run 1
-contains "$root/stderr" 'Pin MABO_VERSION'
+runFail 1 'GitHub API request failed. Pin MABO_VERSION'
 contains "$root/stderr" 'GITHUB_TOKEN'
 export MABO_API_URL="file://$root/api"
 printf '{"message":"rate limit"}\n' > "$root/api/releases?per_page=100"
-run 1
-contains "$root/stderr" 'Invalid GitHub API response'
+runFail 1 'Invalid GitHub API response'
 
 # Pipe the actual script: commands must not consume its unread source bytes.
 status=0
@@ -396,15 +436,14 @@ $client asset auth=no" ] || fail 'Incorrect HTTP requests or credential scope'
 $client asset auth=no" ] || fail 'Pinned install called API'
     cp "$HOME/.local/bin/mabo" "$root/before"
     export TEST_HTTP_FAILURE=1
-    run 1
-    contains "$root/stderr" 'Pin MABO_VERSION'
+    runFail 1 'GitHub API request failed. Pin MABO_VERSION'
     contains "$root/stderr" 'GITHUB_TOKEN'
     unchanged
     unset TEST_HTTP_FAILURE
     if [ "$client" = wget ]; then
         export TEST_HTTP_REDIRECT=1
         : > "$root/http-log"
-        run 1 --version 7.0.0
+        runFail 1 'Cannot download maboroshi-v7.0.0-linux-x64.tar.gz' --version 7.0.0
         [ "$(wc -l < "$root/http-log" | tr -d ' ')" = 1 ] || fail 'Followed insecure redirect'
         unchanged
         unset TEST_HTTP_REDIRECT
@@ -419,21 +458,19 @@ cat > "$root/bin/mv" <<'SH'
 exit 7
 SH
 chmod +x "$root/bin/mv"
-run 1 --version 7.1.0
+runFail 1 'Cannot replace' --version 7.1.0
 unchanged
-contains "$root/stderr" 'Cannot replace'
 rm "$root/bin/mv"
 
 # Duplicate/invalid checksum entries, symlink archive member, and malformed JSON
 # must fail closed too, with the same preservation guarantee.
 cp "$root/releases/v7.0.0/SHA256SUMS" "$root/good-sums"
 cat "$root/good-sums" >> "$root/releases/v7.0.0/SHA256SUMS"
-run 1 --version 7.0.0
-contains "$root/stderr" 'SHA256SUMS line'
+runFail 1 'Missing, duplicate, or invalid SHA256SUMS line' --version 7.0.0
 unchanged
 cp "$root/good-sums" "$root/releases/v7.0.0/SHA256SUMS"
 sed 's/^[0-9a-f]/z/' "$root/good-sums" > "$root/releases/v7.0.0/SHA256SUMS"
-run 1 --version 7.0.0
+runFail 1 'Missing, duplicate, or invalid SHA256SUMS line' --version 7.0.0
 unchanged
 cp "$root/good-sums" "$root/releases/v7.0.0/SHA256SUMS"
 mkdir "$root/link-archive"
@@ -442,13 +479,17 @@ tar -czf "$root/releases/v7.0.0/maboroshi-v7.0.0-linux-x64.tar.gz" -C "$root/lin
 asset=maboroshi-v7.0.0-linux-x64.tar.gz
 digest=$(hashFile "$root/releases/v7.0.0/$asset"); digest=${digest%% *}
 printf '%s  %s\n' "$digest" "$asset" > "$root/releases/v7.0.0/SHA256SUMS"
-run 1 --version 7.0.0
-contains "$root/stderr" 'regular mabo executable'
+runFail 1 'Archive must contain a regular mabo executable' --version 7.0.0
 unchanged
-for malformed in '[{' '[{"draft":false,"prerelease":false,"tag_name":"v7.1.0","assets":[{"name":"maboroshi-v7.1.0-linux-x64.tar.gz"}]}]garbage'; do
+for malformed in \
+    '' ' ' '[{' '[1]' '[{},]' \
+    '[{"body":"bad\q"}]' '[{"body":"bad\u123x"}]' '[{"body":"unterminated}]' \
+    '[{"body":01}]' '[{"body":truefalse}]' '[{"body":NaN}]' '[{"body":"line
+break"}]' \
+    '[{"body":false,}]' '[{"body" false}]' '[{"body":[1 2]}]' '[{"body":1e}]' '[{"body":"ok"}]#' '[{"body":"\"}]' \
+    '[{"draft":false,"prerelease":false,"tag_name":"v7.1.0","assets":[{"name":"maboroshi-v7.1.0-linux-x64.tar.gz"}]}]garbage'; do
     printf '%s\n' "$malformed" > "$root/api/releases?per_page=100"
-    run 1
-    contains "$root/stderr" 'Invalid GitHub API response'
+    runFail 1 'Invalid GitHub API response'
     unchanged
 done
 printf 'PASS: %s installer cases (%s)\n' "$count" "$runner"
