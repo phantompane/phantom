@@ -9434,6 +9434,89 @@ fn nameless_create_skips_a_remote_tracking_candidate() {
     assert!(managed(&repo, "calm-comet").is_dir());
 }
 
+#[cfg(debug_assertions)]
+#[test]
+fn review4_nameless_create_skips_recorded_workspace_names() {
+    assert_generated_name_skips_adopted_alias(false);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn review4_nameless_detach_skips_recorded_workspace_names() {
+    assert_generated_name_skips_adopted_alias(true);
+}
+
+#[cfg(debug_assertions)]
+fn assert_generated_name_skips_adopted_alias(detach: bool) {
+    for (inside_root, state) in [
+        (true, "live"),
+        (false, "live"),
+        (false, "prunable"),
+        (false, "orphaned"),
+    ] {
+        let repo = Repo::new();
+        let path = if inside_root {
+            let seed = repo.mabo(&["create", "seed", "--json"]);
+            assert!(seed.status.success(), "{}", text(&seed.stdout));
+            managed(&repo, "directory-name")
+        } else {
+            repo.root.join("outside")
+        };
+        repo.git(&[
+            "worktree",
+            "add",
+            "-b",
+            "topic",
+            path.to_str().unwrap(),
+            "main",
+        ]);
+        let adopted = repo.mabo(&[
+            "adopt",
+            path.to_str().unwrap(),
+            "--name",
+            "calm-comet",
+            "--json",
+        ]);
+        assert!(adopted.status.success(), "{}", text(&adopted.stdout));
+        match state {
+            "prunable" => fs::remove_dir_all(&path).expect("remove checkout"),
+            "orphaned" => repo.git(&["worktree", "remove", path.to_str().unwrap()]),
+            _ => {}
+        }
+        let records_before = maboroshi::metadata::load_strict(&repo.repo).expect("records");
+        let args = if detach {
+            vec!["create", "--detach", "--json"]
+        } else {
+            vec!["create", "--json"]
+        };
+        let created = repo
+            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .env("MABO_NAME_CANDIDATES", "calm-comet,bold-badger")
+            .output()
+            .expect("mabo");
+        assert!(
+            created.status.success(),
+            "inside_root={inside_root}, state={state}: {}\n{}",
+            text(&created.stdout),
+            text(&created.stderr)
+        );
+        let doc = assert_envelope(&created, "create");
+        assert_eq!(doc["data"]["workspace"]["name"], "bold-badger");
+        assert_eq!(doc["data"]["workspace"]["detached"], detach);
+        assert_eq!(
+            doc["data"]["source"]["kind"],
+            if detach { "detach" } else { "new" }
+        );
+        assert!(managed(&repo, "bold-badger").is_dir());
+        assert!(!managed(&repo, "calm-comet").exists());
+        assert!(local_branch(&repo, "calm-comet").is_empty());
+        let records_after = maboroshi::metadata::load_strict(&repo.repo).expect("records");
+        for (path, record) in records_before {
+            assert_eq!(records_after.get(&path), Some(&record));
+        }
+    }
+}
+
 fn assert_no_upstream(repo: &Repo, branch: &str) {
     let spec = format!("{branch}@{{upstream}}");
     let output = repo

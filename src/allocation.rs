@@ -161,11 +161,17 @@ pub(crate) fn create(
             } else if let Some(issue) = &issue {
                 format!("issues/{}", issue.link.number.unwrap_or_default())
             } else {
+                // Include adopted aliases and names whose checkout is missing.
+                let workspace_names = worktree::list_worktrees(context, false, true)?
+                    .into_iter()
+                    .map(|tree| tree.name)
+                    .collect();
                 names::generate_unique_name(
                     &context.git_root,
                     &context.worktrees_directory,
                     &context.directory_name_separator,
                     &tracking::remote_tracking_branch_names(&context.git_root)?,
+                    &workspace_names,
                 )?
             }
         }
