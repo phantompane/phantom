@@ -15799,11 +15799,131 @@ fn setup_and_create_escape_copy_failure_diagnostics() {
 }
 
 #[test]
+fn setup_source_checkout_rejects_another_repository_before_changes() {
+    let repo = Repo::new();
+    let other = Repo::new();
+    assert!(repo
+        .mabo(&["create", "target", "--no-setup"])
+        .status
+        .success());
+    let before = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    fs::write(repo.repo.join(".gitignore"), "*.env\n").unwrap();
+    fs::write(repo.repo.join("secret.env"), "secret").unwrap();
+    fs::write(
+        other.repo.join(".mabo.toml"),
+        "[hooks]\nsetup = ['touch wrong-hook']\n",
+    )
+    .unwrap();
+    let out = repo.mabo(&[
+        "setup",
+        "target",
+        "--source-checkout",
+        other.repo.to_str().unwrap(),
+        "--copy-file",
+        "*.env",
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
+    assert!(json_value(&out)["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("selected repository"));
+    assert_eq!(
+        records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+        before
+    );
+    assert!(!managed(&repo, "target/secret.env").exists());
+    assert!(!managed(&repo, "target/wrong-hook").exists());
+}
+
+#[test]
+fn setup_retry_hint_preserves_linked_source_hooks() {
+    for json in [false, true] {
+        for mode in 0..4 {
+            if mode == 2 && !cfg!(debug_assertions) {
+                continue;
+            }
+            let fallback = mode != 0;
+            let repo = Repo::new();
+            assert!(repo
+                .mabo(&["create", "source", "--no-setup"])
+                .status
+                .success());
+            let source = managed(&repo, "source");
+            let gh_path = fallback.then(|| {
+                let path = fake_gh_for_topic_pr(&repo);
+                publish_pr_topic(&repo);
+                let gh = repo.root.join("bin/gh");
+                let script = fs::read_to_string(&gh).unwrap();
+                fs::write(&gh, script.replace("\"topic\"", "\"topic+fix\"")).unwrap();
+                if mode == 1 {
+                    assert!(repo
+                        .create_recorded(&["create", "duplicate", "--pr", "7", "--no-setup"])
+                        .status
+                        .success());
+                }
+                path
+            });
+            fs::write(
+                repo.repo.join(".mabo.toml"),
+                "[hooks]\nsetup = ['touch primary-hook']\n",
+            )
+            .unwrap();
+            fs::write(
+                source.join(".mabo.toml"),
+                "[hooks]\nsetup = ['test -f ready && touch source-hook']\n",
+            )
+            .unwrap();
+            let mut args = if fallback {
+                vec!["create", "--pr", "7"]
+            } else {
+                vec!["create", "target"]
+            };
+            if json {
+                args.push("--json");
+            }
+            let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), &args);
+            command.current_dir(&source);
+            if mode == 2 {
+                command.env("MABO_TEST_FAIL_METADATA_SAVE", "1");
+            }
+            if let Some(path) = gh_path {
+                command.env("PATH", path);
+            }
+            let created = command.output().unwrap();
+            assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
+            let target = managed(&repo, if fallback { "topic+fix" } else { "target" });
+            let hint = setup_retry_hint(&created, json);
+            assert!(!hint.chars().any(char::is_control), "{hint:?}");
+            fs::write(target.join("ready"), "").unwrap();
+            let retried = run_setup_retry_hint(&repo, &repo.root, &hint);
+            assert!(
+                retried.status.success(),
+                "{hint}: {}",
+                text(&retried.stderr)
+            );
+            assert!(target.join("source-hook").is_file(), "{hint}");
+            assert!(!target.join("primary-hook").exists(), "{hint}");
+            let shown = repo
+                .command(env!("CARGO_BIN_EXE_mabo"), &["show", ".", "--json"])
+                .current_dir(&target)
+                .output()
+                .unwrap();
+            assert_eq!(
+                json_value(&shown)["data"]["workspace"]["setup"]["state"],
+                "ok"
+            );
+            assert!(!source.join("source-hook").exists());
+        }
+    }
+}
+
+#[test]
 fn setup_retry_hint_preserves_copy_patterns_after_copy_failure() {
     for json in [false, true] {
         for fallback in [false, true] {
             let repo = Repo::new();
-            let directory = "private's $data `literal`";
+            let directory = "private's $data `literal`\t";
             let outside = repo.root.join("outside");
             fs::create_dir(&outside).unwrap();
             std::os::unix::fs::symlink(&outside, repo.repo.join(directory)).unwrap();
@@ -15908,7 +16028,7 @@ fn setup_retry_hint_escapes_copy_patterns_in_text_and_json() {
             "--copy-file",
             "private's $data `literal`/*.env",
             "--copy-file",
-            "control\u{1b}[31m\t*.env",
+            "control\u{1b}[31m\t\n\u{202e}*.env",
         ];
         if json {
             args.push("--json");
@@ -15919,7 +16039,7 @@ fn setup_retry_hint_escapes_copy_patterns_in_text_and_json() {
         assert!(!hint.chars().any(char::is_control), "{hint:?}");
         assert!(
             hint.ends_with(
-                " --copy-file 'private'\\''s $data `literal`/*.env' --copy-file 'control\\u{1b}[31m\\u{9}*.env'"
+                " --copy-file 'private'\\''s $data `literal`/*.env' --copy-file $'control\\x1b[31m\\t\\n\\xe2\\x80\\xae*.env'"
             ),
             "{hint}"
         );
@@ -16010,7 +16130,7 @@ fn setup_retry_hint(out: &std::process::Output, json: bool) -> String {
 
 fn run_setup_retry_hint(repo: &Repo, cwd: &Path, hint: &str) -> std::process::Output {
     let binary_dir = Path::new(env!("CARGO_BIN_EXE_mabo")).parent().unwrap();
-    repo.command("sh", &["-c", hint])
+    repo.command("bash", &["-c", hint])
         .current_dir(cwd)
         .env("MABO_TRUST_ALL", "1")
         .env(
@@ -16072,7 +16192,7 @@ fn setup_retry_hint_preserves_selected_repository_from_any_directory() {
                 assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
                 let hint = setup_retry_hint(&created, json);
                 assert!(!hint.chars().any(char::is_control), "{hint:?}");
-                assert!(hint.starts_with("mabo -R "), "{hint}");
+                assert!(hint.starts_with("cd "), "{hint}");
                 assert!(hint.ends_with("setup 'lifecycle'"), "{hint}");
                 fs::write(managed(&repo, "lifecycle/ready"), "").unwrap();
                 let cwd = if from_other_repo {
@@ -16171,7 +16291,7 @@ fn setup_lifecycle_failure_retry_and_shared_state() {
     assert_eq!(doc["data"]["setup"]["exitCode"], 1);
     assert_eq!(
         setup_retry_hint(&out, true),
-        format!("mabo -R '{}' setup 'lifecycle'", repo.repo.display())
+        format!("cd '{}' && mabo setup 'lifecycle'", repo.repo.display())
     );
     let path = managed(&repo, "lifecycle");
     assert!(text(&repo.mabo(&["list"]).stdout).contains("setup:failed"));

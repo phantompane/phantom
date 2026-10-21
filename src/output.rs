@@ -97,11 +97,14 @@ fn failure_with(error: JsonErrorBody, report: impl FnOnce(&str)) {
                 // Outer commands may report opaque IO/Git errors containing paths.
                 // Ambiguity reports escape each value where their list is built,
                 // so their intentional line breaks can remain readable.
-                if (is_outer_command(&out.command) && error.code != "ambiguous")
+                if ((is_outer_command(&out.command) && error.code != "ambiguous")
                     || matches!(
                         out.command.as_str(),
                         "create" | "adopt" | "forget" | "setup"
-                    )
+                    ))
+                    // Create partial errors contain an already shell-encoded retry
+                    // command. Preserve it verbatim for execution in bash/zsh.
+                    && !(out.command == "create" && error.code == "partial")
                 {
                     report(&visible_text(&message));
                 } else {

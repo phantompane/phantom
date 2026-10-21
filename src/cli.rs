@@ -245,10 +245,14 @@ fn setup(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &command_options("setup"), true)?;
     if parsed.positionals.len() > 1 {
         return Err(Error::validation(
-            "Usage: mabo setup [SEL] [--copy-file PAT] [--no-hooks]",
+            "Usage: mabo setup [SEL] [--copy-file PAT] [--no-hooks] [--source-checkout PATH]",
         ));
     }
-    let context = command_context(&parsed)?;
+    let context = if let Some(source) = single_value(&parsed, "source-checkout")? {
+        crate::context::open_for_setup(selected_repository(&parsed)?.as_deref(), Path::new(source))?
+    } else {
+        command_context(&parsed)?
+    };
     crate::setup::execute(
         &context,
         parsed
@@ -1453,6 +1457,7 @@ fn command_options(key: &str) -> Vec<Opt> {
         }
         "setup" => vec![
             repo_flag(),
+            value_flag("source-checkout", None),
             Opt {
                 name: "copy-file",
                 short: None,

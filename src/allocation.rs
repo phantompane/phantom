@@ -455,25 +455,34 @@ fn report(
             crate::error::PARTIAL,
             format!(
                 "Workspace created but setup did not complete. Retry with `{}`.",
-                visible_text(&setup_retry_command(context, tree, copy_files))
+                setup_retry_command(context, tree, copy_files)
             ),
         ));
     }
     Ok(0)
 }
 
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn shell_directory(path: &str) -> String {
-    if visible_text(path) == path {
-        return shell_quote(path);
+fn shell_quote(value: impl AsRef<std::ffi::OsStr>) -> String {
+    let value = value.as_ref();
+    if let Some(text) = value.to_str().filter(|text| visible_text(text) == *text) {
+        return format!("'{}'", text.replace('\'', "'\\''"));
     }
-    // Keep control characters executable without putting them on the terminal.
-    // The trailing slash prevents command substitution stripping a final newline.
-    let octal: String = path.bytes().map(|byte| format!("\\{byte:03o}")).collect();
-    format!("\"$(printf '{octal}/')\"")
+    // ANSI-C quoting is understood by bash and zsh. Encode bytes rather than
+    // lossy Unicode so paths and control characters round-trip exactly.
+    let mut quoted = String::from("$'");
+    for byte in value.as_encoded_bytes() {
+        match byte {
+            b'\t' => quoted.push_str("\\t"),
+            b'\n' => quoted.push_str("\\n"),
+            b'\r' => quoted.push_str("\\r"),
+            b'\\' => quoted.push_str("\\\\"),
+            b'\'' => quoted.push_str("\\'"),
+            0x20..=0x7e => quoted.push(char::from(*byte)),
+            _ => quoted.push_str(&format!("\\x{byte:02x}")),
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 fn setup_retry_command(
@@ -481,10 +490,7 @@ fn setup_retry_command(
     tree: &worktree::WorktreeInfo,
     copy_files: &[String],
 ) -> String {
-    let command = format!(
-        "mabo -R {} setup",
-        shell_directory(&context.git_root.to_string_lossy())
-    );
+    let command = format!("cd {} && mabo setup", shell_quote(&context.source_checkout));
     let copy_options: String = copy_files
         .iter()
         .map(|pattern| format!(" --copy-file {}", shell_quote(pattern)))
@@ -511,10 +517,12 @@ fn setup_retry_command(
         }
     }
     // Paths are not selectors. Dot resolves this checkout even when links were
-    // not saved or match several workspaces, and -R keeps the primary's config.
+    // not saved or match several workspaces. Keep the original hook source even
+    // though dot requires changing into the target checkout.
     format!(
-        "(cd {} && {command} .{copy_options})",
-        shell_directory(&tree.path)
+        "(cd {} && mabo setup . --source-checkout {}{copy_options})",
+        shell_quote(&tree.path),
+        shell_quote(&context.source_checkout)
     )
 }
 
@@ -596,6 +604,35 @@ mod adopt_tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
+
+    #[test]
+    fn retry_shell_arguments_round_trip_bytes_without_terminal_controls() {
+        use std::os::unix::ffi::OsStrExt;
+        let controls: Vec<u8> = (1..=31).chain([127, 128, 255]).collect();
+        let values: Vec<&[u8]> = vec![
+            b"",
+            b"printable's $data `literal` * ? \\ end",
+            "Unicode 日本語".as_bytes(),
+            b"tabs\tnewlines\n\r\x1b[31m'\\a\n",
+            "C1 \u{85}".as_bytes(),
+            "format \u{202e}".as_bytes(),
+            &controls,
+        ];
+        for bytes in values {
+            let quoted = shell_quote(std::ffi::OsStr::from_bytes(bytes));
+            assert!(!quoted.chars().any(char::is_control), "{quoted:?}");
+            assert_eq!(
+                quoted.starts_with("$'"),
+                std::str::from_utf8(bytes).map_or(true, |text| visible_text(text) != text)
+            );
+            let output = std::process::Command::new("bash")
+                .args(["-c", &format!("printf '%s' {quoted}")])
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{quoted}");
+            assert_eq!(output.stdout, bytes, "{quoted}");
+        }
+    }
 
     struct Fixture {
         root: PathBuf,

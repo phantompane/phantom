@@ -41,6 +41,23 @@ pub fn open(repository: Option<&Path>) -> Result<Context> {
     create(&git_root)
 }
 
+/// Select setup hooks independently of the target checkout used by dot.
+/// The source must belong to the selected repository; copies still use primary.
+pub(crate) fn open_for_setup(repository: Option<&Path>, source: &Path) -> Result<Context> {
+    let cwd = std::env::current_dir().map_err(|error| Error::msg(error.to_string()))?;
+    let git_root = match repository {
+        Some(root) => root.to_path_buf(),
+        None => git::git_root(&cwd)?,
+    };
+    let source_checkout = git::top_level(source)?;
+    if !paths::same_location(&git::git_root(&source_checkout)?, &git_root) {
+        return Err(Error::validation(
+            "--source-checkout must belong to the selected repository",
+        ));
+    }
+    assemble(&git_root, source_checkout)
+}
+
 fn assemble(git_root: &Path, source_checkout: PathBuf) -> Result<Context> {
     let config = config::load_config(&source_checkout)?;
     let preferences = preferences::load_preferences()?;

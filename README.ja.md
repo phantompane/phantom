@@ -176,7 +176,9 @@ mabo create feature-auth --no-setup
 
 `.mabo.toml` は実行元チェックアウトから読みます。フック名は `[hooks] setup` と `pre-remove` です。旧 `post-create` / `pre-delete` キーは終了コード 1（`failed`）となり、新しい名前への変更を案内します。未知キーも拒否します。`delete` と `gc` は `pre-remove` を実行します。
 
-setup の成功は 0、コピーやフックの失敗は 1、対象なしは 3 です。未信頼フックはコピーや記録更新の前に 4（`untrusted`）で拒否します。`mabo trust add` または `MABO_TRUST_ALL=1` で許可できます。primary checkout はコピー元と同じなので 4（`primary`）で拒否します。create の setup 失敗は 6 のままで、`mabo -R '/absolute/primary/checkout' setup 'SELECTOR'` で再試行します。`create --reuse` は setup を再実行しません。setup フックは何度実行してもよいように書いてください。
+setup の成功は 0、コピーやフックの失敗は 1、対象なしは 3 です。未信頼フックはコピーや記録更新の前に 4（`untrusted`）で拒否します。`mabo trust add` または `MABO_TRUST_ALL=1` で許可できます。primary checkout はコピー元と同じなので 4（`primary`）で拒否します。create の setup 失敗は 6 のままで、`cd '/absolute/source/checkout' && mabo setup 'SELECTOR'` で再試行します。`create --reuse` は setup を再実行しません。setup フックは何度実行してもよいように書いてください。
+
+Run retry hints in bash or zsh. The hint preserves the original hook configuration and every `--copy-file` pattern, using ANSI-C quoting (`$'...'`) for control characters. If no name or PR/issue selector resolves uniquely, it uses `(cd WORKSPACE && mabo setup . --source-checkout SOURCE)`. `--source-checkout` must belong to the same repository.
 
 共有ワークスペース JSON の `setup` は `{state, at, error}` です。新規作成では pending → running → ok / failed と遷移し、`--no-setup` は skipped を記録します。古いレコード・移行済みレコード・adopt は unknown（at/error は null）、未記録や forget 後は setup 自体が null です。成功した再実行で error を消します。人間向け list は ok 以外で `setup:failed` などを表示します。setup の JSON は `data: {workspace, setup, copy}` で、setup には実行したフックの ran/ok/command/exitCode/signal も含みます。
 
