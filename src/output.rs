@@ -111,6 +111,8 @@ struct Output {
 struct Warning {
     code: String,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace: Option<String>,
 }
 
 thread_local! {
@@ -219,6 +221,18 @@ pub(crate) fn warning(code: &str, message: impl Into<String>) {
         out.warnings.push(Warning {
             code: code.into(),
             message,
+            workspace: None,
+        })
+    });
+}
+
+pub(crate) fn workspace_warning(code: &str, message: &str, workspace: &str) {
+    errln!("{}: {}", visible_text(workspace), message);
+    OUTPUT.with_borrow_mut(|out| {
+        out.warnings.push(Warning {
+            code: code.into(),
+            message: message.into(),
+            workspace: Some(workspace.into()),
         })
     });
 }
@@ -450,6 +464,7 @@ mod tests {
                 // An unrelated warning must not hide a later error.
                 OUTPUT.with_borrow_mut(|out| {
                     out.warnings.push(Warning {
+                        workspace: None,
                         code: "unrelated".into(),
                         message: "Warning: unrelated".into(),
                     })

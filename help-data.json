@@ -551,9 +551,10 @@
         }
       ],
       "notes": [
-        "Keys: workspace-root, clone-root, discover-ghq. Config layering: flags, environment, user config, defaults. No per-command flags or environment overrides are defined for these keys, except the clone-root fallback chain documented below.",
+        "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
         "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true. Legacy keep-branch warns and is ignored, then removed on the next config write.",
-        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write."
+        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write.",
+        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
       ]
     },
     "config get": {
@@ -595,9 +596,10 @@
         }
       ],
       "notes": [
-        "Keys: workspace-root, clone-root, discover-ghq. Config layering: flags, environment, user config, defaults. No per-command flags or environment overrides are defined for these keys, except the clone-root fallback chain documented below.",
+        "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
         "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true. Legacy keep-branch warns and is ignored, then removed on the next config write.",
-        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write."
+        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write.",
+        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
       ]
     },
     "config set": {
@@ -634,9 +636,10 @@
         }
       ],
       "notes": [
-        "Keys: workspace-root, clone-root, discover-ghq. Config layering: flags, environment, user config, defaults. No per-command flags or environment overrides are defined for these keys, except the clone-root fallback chain documented below.",
+        "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
         "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true. Legacy keep-branch warns and is ignored, then removed on the next config write.",
-        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write."
+        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write.",
+        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
       ]
     },
     "config unset": {
@@ -673,9 +676,10 @@
         }
       ],
       "notes": [
-        "Keys: workspace-root, clone-root, discover-ghq. Config layering: flags, environment, user config, defaults. No per-command flags or environment overrides are defined for these keys, except the clone-root fallback chain documented below.",
+        "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
         "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true. Legacy keep-branch warns and is ignored, then removed on the next config write.",
-        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write."
+        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write.",
+        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
       ]
     },
     "clone": {
@@ -981,8 +985,8 @@
     },
     "sync": {
       "name": "sync",
-      "description": "Fetch involved remotes once, fast-forward the default branch, then safely integrate each workspace base. Never pushes, changes upstreams, or runs hooks. No arguments in the primary checkout sync only the default branch; in a linked workspace (including subdirectories), sync that workspace too. Auto rebases unpublished commits and merges published commits. Conflicts are aborted unless --keep-conflicts is set.",
-      "usage": "mabo sync [--repo <ref>] [<name>... | --all] [options]",
+      "description": "Fetch each involved remote once and integrate selected workspace bases. No arguments sync only the current workspace; in primary, behave as --main. Never pushes, changes upstreams, or runs hooks.",
+      "usage": "mabo sync [SEL... | --all | --main] [--auto | --rebase | --merge] [--rewrite-published] [--keep-conflicts] [--dry-run]",
       "options": [
         {
           "name": "repo",
@@ -996,9 +1000,24 @@
           "description": "Sync every workspace in this repository"
         },
         {
-          "name": "no-default",
+          "name": "main",
           "type": "boolean",
-          "description": "Skip the default branch"
+          "description": "Also fast-forward primary, only when on the default branch; may combine with SEL or --all"
+        },
+        {
+          "name": "auto",
+          "type": "boolean",
+          "description": "Rebase unpublished commits and merge published commits; overrides sync.strategy"
+        },
+        {
+          "name": "rewrite-published",
+          "type": "boolean",
+          "description": "Allow rebasing published history; permission only, does not select rebase"
+        },
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "description": "Fetch and report plan:true without changing checkouts, local branches, or workspace records"
         },
         {
           "name": "rebase",
@@ -1009,12 +1028,6 @@
           "name": "merge",
           "type": "boolean",
           "description": "Merge the base instead of choosing automatically"
-        },
-        {
-          "name": "force",
-          "type": "boolean",
-          "description": "Existing sync override; sync redesign is deferred to P8",
-          "short": "f"
         },
         {
           "name": "keep-conflicts",
@@ -1046,7 +1059,7 @@
       "examples": [
         {
           "command": "mabo sync",
-          "description": "Update the default branch, and the current linked workspace if inside one"
+          "description": "Sync only the current workspace; in primary, fast-forward only if on the default branch"
         },
         {
           "command": "mabo sync --all --json",
@@ -1055,12 +1068,26 @@
         {
           "command": "mabo sync feature/auth --merge --keep-conflicts",
           "description": "Merge and resolve conflicts manually for a single workspace"
+        },
+        {
+          "command": "mabo sync . --main --dry-run --json",
+          "description": "Fetch and plan current workspace plus primary checkout"
+        },
+        {
+          "command": "mabo sync feature/auth --rebase --rewrite-published",
+          "description": "Explicitly allow rebasing published history; may require a force push later"
         }
       ],
       "notes": [
         "SEL is a name, . (the checkout containing cwd), pr:N, issue:N, or a PR/issue URL. PR and issue selectors find already-linked workspaces only. No match exits 3; multiple matches exit 2 (ambiguous). A dot selector with a different --repo exits 2. Outside any repository exits 3.",
         "sync validates all metadata before fetching or updating. After any item changes, a failure, conflict, or published refusal exits 6. Without changes, failures exit 1, conflicts 5, and published refusals 4. Usage errors exit 2",
-        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
+        "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
+        "SEL and --all are mutually exclusive. --main alone selects only primary; sync . --main also syncs the current workspace. Primary on another branch skips with not-default-branch. --keep-conflicts requires exactly one workspace integration target (the optional primary update is ff-only).",
+        "Both execution and dry runs use ordinary git fetch in the invoking repository. Before any fetch or integration, sync checks every configured fetch refspec of every involved remote and refuses with exit 4 refused if a positive refspec has a destination outside refs/remotes/ (including explicit refs/tags/ destinations and mirror mappings). Negative exclusions do not relax this conservative check; a missing or empty destination only writes FETCH_HEAD and is allowed. Use a tracking destination under refs/remotes/ for custom namespaces. Sync also refuses any existing symbolic ref visible to git for-each-ref under refs/remotes/ or refs/tags/ that points outside refs/remotes/; repair or remove the alias before retrying. Dangling symbolic refs are omitted by Git's enumeration and are not detected: this is a known limit shared with plain git fetch. Git retains its configured pruning, automatic tag following, negative exclusions and followRemoteHEAD behavior; automatic tag following is not an explicit fetch refspec. Combined dry runs evaluate local bases against tips planned for primary and earlier workspaces, in selection order. Planned branch tips are keyed by full refs: the short branch name refs/heads/a maps to refs/heads/refs/heads/a, independently of branch a at refs/heads/a. When an earlier planned tip is unknown, dependent items report updated, after:null, strategy:null and a dependency explanation in detail, without deciding against the old base.",
+        "Strategy precedence: --auto/--rebase/--merge, then user config sync.strategy, then auto. Rewrite permission: --rewrite-published or user config sync.rewrite-published (default false). Publication evidence includes observed remote-tracking refs, configured fetch destinations and the workspace upstream, even independent local branch refs or destinations of remotes not fetched by this sync. Only the current branch itself is excluded. Personal sync policy is rejected in .mabo.toml. Items expose strategySource and rewriteSource independently.",
+        "data is {plan, items:[{workspace,status,strategy,strategySource,rewriteAllowed,rewriteSource,rewrotePublished,before,after,conflicts,detail,code}], main:item|null}. Planned merge/rebase after is null when the future commit ID is unknown; rewrotePublished remains false in plans. Statuses: updated, up-to-date, dirty, diverged, integrated, detached, base-gone, base-unknown, conflict, refused, failed; primary also has not-default-branch.",
+        "Rebasing published commits without permission exits 4 published with --rewrite-published guidance. Actual rewrites emit published_rewritten with the workspace name: updating the existing remote branch may require a force push.",
+        "Removed -f/--force exits 2: use --rewrite-published. --no-default exits 2: current-only is now the default, add --main to advance primary. --mine exits 2: select a workspace or --all."
       ]
     },
     "repo show": {
@@ -1139,9 +1166,10 @@
         }
       ],
       "notes": [
-        "Keys: workspace-root, clone-root, discover-ghq. Config layering: flags, environment, user config, defaults. No per-command flags or environment overrides are defined for these keys, except the clone-root fallback chain documented below.",
+        "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
         "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true. Legacy keep-branch warns and is ignored, then removed on the next config write.",
-        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write."
+        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write.",
+        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
       ]
     },
     "trust add": {
