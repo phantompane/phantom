@@ -13451,6 +13451,171 @@ fn delete_current_does_not_revalidate_the_resolved_branch_name() {
 }
 
 #[test]
+fn github_rechecks_out_a_pull_request_after_git_worktree_remove() {
+    assert_github_recreates_orphaned_checkout(false);
+}
+
+#[test]
+fn github_recreates_an_issue_checkout_after_its_worktree_and_branch_are_removed() {
+    assert_github_recreates_orphaned_checkout(true);
+}
+
+fn assert_github_recreates_orphaned_checkout(issue: bool) {
+    let repo = Repo::new();
+    publish_pr_topic(&repo);
+    let path = fake_gh_for_topic_pr(&repo);
+    let branch = if issue { "issues/7" } else { "topic" };
+    let link = if issue { "issue" } else { "pr" };
+    if issue {
+        let gh = repo.root.join("bin/gh");
+        let script = fs::read_to_string(&gh).expect("gh script");
+        fs::write(
+            &gh,
+            script.replace("\"pull_request\":{}", "\"title\":\"issue\""),
+        )
+        .expect("issue");
+    }
+    let checkout = || {
+        repo.command(
+            env!("CARGO_BIN_EXE_mabo"),
+            &["github", "checkout", "7", "--json"],
+        )
+        .env("PATH", &path)
+        .output()
+        .expect("checkout")
+    };
+    let first = checkout();
+    assert!(first.status.success(), "{}", text(&first.stdout));
+    let first = assert_envelope(&first, "github checkout");
+    assert_eq!(first["data"]["github"]["alreadyExists"], false);
+    let directory = managed(&repo, branch);
+    repo.git(&["worktree", "remove", directory.to_str().expect("path")]);
+    assert!(!directory.exists());
+    assert!(branch_listed(&repo, branch));
+    // Issue checkout creates a new branch, so keep its existing branch-conflict policy.
+    if issue {
+        repo.git(&["branch", "-D", branch]);
+    }
+    let stale = repo.mabo(&["show", branch, "--json"]);
+    assert!(stale.status.success(), "{}", text(&stale.stdout));
+    assert_eq!(json_value(&stale)["data"]["workspace"]["orphaned"], true);
+
+    let again = checkout();
+    assert!(
+        again.status.success(),
+        "{}\n{}",
+        text(&again.stdout),
+        text(&again.stderr)
+    );
+    let again = assert_envelope(&again, "github checkout");
+    assert_eq!(again["data"]["github"]["alreadyExists"], false);
+    assert_eq!(again["data"]["workspace"]["orphaned"], false);
+    assert_eq!(again["data"]["workspace"]["branch"], branch);
+    assert_eq!(again["data"]["workspace"]["links"][link]["number"], 7);
+    assert_eq!(again["data"]["metadata"]["ok"], true);
+    assert!(directory.join(".git").is_file());
+    if !issue {
+        assert!(directory.join("topic.txt").is_file());
+        assert_eq!(upstream_name(&repo, branch), "origin/topic");
+    }
+    let listed = repo.mabo(&["list", "--kind", "workspace", "--json"]);
+    assert!(listed.status.success(), "{}", text(&listed.stdout));
+    let listed = json_value(&listed);
+    assert_eq!(
+        listed["data"]["workspaces"]
+            .as_array()
+            .expect("workspaces")
+            .len(),
+        1
+    );
+    assert_eq!(listed["data"]["workspaces"][0]["orphaned"], false);
+}
+
+#[test]
+fn github_reuse_propagates_orphan_ambiguity_and_git_read_errors() {
+    for issue in [false, true] {
+        for read_error in [false, true] {
+            let repo = Repo::new();
+            let path = fake_gh_for_topic_pr(&repo);
+            let name = if issue { "issues/7" } else { "topic" };
+            if issue {
+                let gh = repo.root.join("bin/gh");
+                let script = fs::read_to_string(&gh).expect("gh script");
+                fs::write(
+                    &gh,
+                    script.replace("\"pull_request\":{}", "\"title\":\"issue\""),
+                )
+                .expect("issue");
+            }
+            let file = repo.repo.join(".git/maboroshi/workspaces");
+            let body = serde_json::json!({"worktrees": [
+                {"path": repo.root.join("missing-one"), "name": name},
+                {"path": repo.root.join("missing-two"), "name": name}
+            ]})
+            .to_string();
+            records::write(&file, body).expect("records");
+            let before = records::read(&file).expect("records");
+            let real_git = repo
+                .command("sh", &["-c", "command -v git"])
+                .output()
+                .expect("git path");
+            assert!(real_git.status.success());
+            if read_error {
+                let shim = repo.root.join("bin/git");
+                fs::write(
+                    &shim,
+                    r#"#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "list" ]; then
+  echo 'injected worktree list failure' >&2
+  exit 1
+fi
+exec "$REAL_GIT" "$@"
+"#,
+                )
+                .expect("git shim");
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).expect("chmod");
+            }
+            fs::write(
+                repo.repo.join(".mabo.toml"),
+                "[hooks]\npost-create = [\"touch should-not-run\"]\n",
+            )
+            .expect("hooks");
+            let result = repo
+                .command(
+                    env!("CARGO_BIN_EXE_mabo"),
+                    &["github", "checkout", "7", "--json"],
+                )
+                .env("PATH", &path)
+                .env("REAL_GIT", text(&real_git.stdout))
+                .env_remove("MABO_TRUST_ALL")
+                .output()
+                .expect("checkout");
+            assert_eq!(
+                result.status.code(),
+                Some(if read_error { 1 } else { 2 }),
+                "{}",
+                text(&result.stdout)
+            );
+            let value = assert_envelope(&result, "github checkout");
+            assert_eq!(
+                value["error"]["code"],
+                if read_error { "failed" } else { "ambiguous" }
+            );
+            if read_error {
+                assert!(value["error"]["message"]
+                    .as_str()
+                    .expect("message")
+                    .contains("injected worktree list failure"));
+            }
+            assert_eq!(records::read(&file).expect("unchanged records"), before);
+            assert!(!managed(&repo, name).exists());
+            assert!(!branch_listed(&repo, name));
+        }
+    }
+}
+
+#[test]
 fn github_reuses_plain_git_checkout_with_a_git_only_branch_name() {
     let repo = Repo::new();
     let path = fake_gh_for_topic_pr(&repo);

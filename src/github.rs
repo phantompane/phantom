@@ -230,8 +230,8 @@ fn checkout_pull_request(
         pull.head_ref.clone()
     };
     metadata.pr = Some(subject_link(repo, pull.number, "pull"));
-    match worktree::find_worktree(&context, &worktree_name, false, None) {
-        Ok(existing) if existing.branch == worktree_name => {
+    match worktree::find_including_orphaned(&context, &worktree_name, false, None) {
+        Ok(existing) if !existing.orphaned && existing.branch == worktree_name => {
             let info = record_existing_checkout(&context, Path::new(&existing.path), &metadata)?;
             let path = info.path.clone().into();
             return Ok(Checkout {
@@ -363,8 +363,8 @@ fn checkout_issue(
     let context = context::open(repository)?;
     let name = format!("issues/{number}");
     metadata.issue = Some(subject_link(repo, number, "issues"));
-    match worktree::find_worktree(&context, &name, false, None) {
-        Ok(existing) => {
+    match worktree::find_including_orphaned(&context, &name, false, None) {
+        Ok(existing) if !existing.orphaned => {
             let info = record_existing_checkout(&context, Path::new(&existing.path), &metadata)?;
             let path = info.path.clone().into();
             return Ok(Checkout {
@@ -381,7 +381,7 @@ fn checkout_issue(
                 subject: GithubSubject::Issue { number },
             });
         }
-        Err(Error::WorktreeNotFound(_)) => {}
+        Ok(_) | Err(Error::WorktreeNotFound(_)) => {}
         Err(error) => return Err(error),
     }
     let post = post_commands(&context);
