@@ -358,7 +358,10 @@ fn custom_namespace_origin_head_precedes_other_remote_heads() {
             "+refs/heads/*:refs/remotes/cache/*",
             "refs/remotes/cache/main",
         ),
-        ("+refs/heads/*:refs/cache/*", "refs/cache/main"),
+        (
+            "+refs/heads/*:refs/remotes/custom/*",
+            "refs/remotes/custom/main",
+        ),
     ] {
         let r = Repo::new();
         r.git(&r.main, &["config", "remote.origin.fetch", refspec]);
@@ -3565,9 +3568,9 @@ fn merge_own_changes_refuse_rebase_and_survive_explicit_merge() {
 #[test]
 fn published_commits_in_fetch_destinations_outside_remotes_are_protected() {
     for refspec in [
-        "+refs/heads/*:refs/cache/*",
-        "+refs/heads/topic:refs/cache/topic",
-        "+refs/heads/to*ic:refs/cache/to*ic",
+        "+refs/heads/*:refs/tags/cache/*",
+        "+refs/heads/topic:refs/tags/cache/topic",
+        "+refs/heads/to*ic:refs/tags/cache/to*ic",
     ] {
         for explicit in [false, true] {
             let r = Repo::new();
@@ -4296,6 +4299,49 @@ fn p8_strategy_sources_and_permission_does_not_choose_rebase() {
     assert_eq!(doc["warnings"], json!([]));
 }
 
+fn assert_fetch_refused(r: &Repo, path: &Path, dry_run: bool, scope: &[&str], fragments: &[&str]) {
+    let refs = r.git(&r.main, &["for-each-ref"]);
+    let reflogs = file_contents(&r.main.join(".git/logs"));
+    let fetch_head = fs::read(r.main.join(".git/FETCH_HEAD")).unwrap();
+    let primary = r.snapshot(&r.main);
+    let checkout = r.snapshot(path);
+    let record_dir = r.main.join(".git/maboroshi/workspaces");
+    let records = record_dir.exists().then(|| file_contents(&record_dir));
+    let trace = r.root.join("refusal-trace");
+    let mut args = vec!["sync", "--json"];
+    args.extend_from_slice(scope);
+    if dry_run {
+        args.push("--dry-run");
+    }
+    let out = r
+        .command(env!("CARGO_BIN_EXE_mabo"), path, &args)
+        .env("GIT_TRACE", &trace)
+        .output()
+        .unwrap();
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(4), "{doc}");
+    assert_eq!(doc["error"]["code"], "refused", "{doc}");
+    for fragment in fragments {
+        assert!(
+            doc["error"]["message"].as_str().unwrap().contains(fragment),
+            "{fragment}: {doc}"
+        );
+    }
+    assert!(!fs::read_to_string(trace).unwrap().contains(" fetch "));
+    assert_eq!(r.git(&r.main, &["for-each-ref"]), refs);
+    assert_eq!(file_contents(&r.main.join(".git/logs")), reflogs);
+    assert_eq!(
+        fs::read(r.main.join(".git/FETCH_HEAD")).unwrap(),
+        fetch_head
+    );
+    assert_eq!(r.snapshot(&r.main), primary);
+    assert_eq!(r.snapshot(path), checkout);
+    assert_eq!(
+        record_dir.exists().then(|| file_contents(&record_dir)),
+        records
+    );
+}
+
 #[test]
 fn review_p1_fetch_cannot_rewrite_local_branches_or_their_reflogs() {
     for dry_run in [true, false] {
@@ -4321,31 +4367,52 @@ fn review_p1_fetch_cannot_rewrite_local_branches_or_their_reflogs() {
                     &format!("+{source}:{destination}"),
                 ],
             );
-            let heads = r.git(&r.main, &["for-each-ref", "refs/heads"]);
-            let reflogs = file_contents(&r.main.join(".git/logs/refs/heads"));
-            let primary = r.snapshot(&r.main);
-            let out = r.mabo(
+            r.advance();
+            assert_fetch_refused(
+                &r,
                 &r.main,
-                if dry_run {
-                    &["sync", "--dry-run", "--json"]
-                } else {
-                    &["sync", "--json"]
-                },
+                dry_run,
+                &[],
+                &["origin", &format!("+{source}:{destination}"), "Configure"],
             );
-            // Fetch is isolated even for broad mirror mappings. A configured
-            // local-branch destination is ignored when publishing tracking refs.
-            assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), heads);
-            assert_eq!(file_contents(&r.main.join(".git/logs/refs/heads")), reflogs);
-            assert_eq!(r.snapshot(&r.main), primary);
-            let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
-            assert_eq!(out.status.code(), Some(0), "{doc}");
-            assert_eq!(doc["data"]["main"]["status"], "up-to-date");
         }
     }
 }
 
 #[test]
-fn review_p1_dry_run_supports_custom_namespaces_without_local_branch_changes() {
+fn conservative_fetch_refuses_destinations_outside_tracking_namespaces() {
+    for dry_run in [true, false] {
+        for destination in [
+            "refs/cache/*",
+            "refs/remotes-other/*",
+            "refs/tags-other/*",
+            "release",
+        ] {
+            let r = Repo::new();
+            let source = if destination.contains('*') {
+                "refs/heads/*"
+            } else {
+                "refs/heads/main"
+            };
+            let refspec = format!("+{source}:{destination}");
+            r.git(
+                &r.main,
+                &["config", "--add", "remote.origin.fetch", &refspec],
+            );
+            r.advance();
+            assert_fetch_refused(
+                &r,
+                &r.main,
+                dry_run,
+                &[],
+                &["origin", &refspec, "Configure"],
+            );
+        }
+    }
+}
+
+#[test]
+fn conservative_fetch_supports_custom_tracking_namespaces_in_plans_and_execution() {
     let r = Repo::new();
     r.git(
         &r.main,
@@ -4353,22 +4420,28 @@ fn review_p1_dry_run_supports_custom_namespaces_without_local_branch_changes() {
             "config",
             "--add",
             "remote.origin.fetch",
-            "+refs/heads/*:refs/cache/*",
+            "+refs/heads/*:refs/remotes/custom/*",
         ],
     );
     r.advance();
     let heads = r.git(&r.main, &["for-each-ref", "refs/heads"]);
+    let reflogs = file_contents(&r.main.join(".git/logs/refs/heads"));
     let primary = r.snapshot(&r.main);
-    let doc = r.sync(&r.main, &["--dry-run"], 0);
-    assert_eq!(doc["data"]["main"]["status"], "updated");
+    let plan = r.sync(&r.main, &["--dry-run"], 0);
+    assert_eq!(plan["data"]["main"]["status"], "updated");
     assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), heads);
+    assert_eq!(file_contents(&r.main.join(".git/logs/refs/heads")), reflogs);
     assert_eq!(r.snapshot(&r.main), primary);
     assert_eq!(
-        r.git(&r.main, &["rev-parse", "refs/cache/main"]),
+        r.git(&r.main, &["rev-parse", "refs/remotes/custom/main"]),
         r.git(&r.upstream, &["rev-parse", "HEAD"])
     );
-    let doc = r.sync(&r.main, &[], 0);
-    assert_eq!(doc["data"]["main"]["status"], "updated");
+    let actual = r.sync(&r.main, &[], 0);
+    assert_eq!(actual["data"]["main"]["status"], "updated");
+    assert_eq!(
+        actual["data"]["main"]["after"],
+        plan["data"]["main"]["after"]
+    );
 }
 
 #[test]
@@ -4388,50 +4461,22 @@ fn review_p1_fetch_cannot_follow_tracking_symrefs_into_local_branches() {
         fs::write(tree.join("file"), "dirty workspace\n").unwrap();
         r.advance();
         r.git(&r.upstream, &["push", "origin", "HEAD:release"]);
-        let heads = r.git(&r.main, &["for-each-ref", "refs/heads"]);
-        let reflogs = file_contents(&r.main.join(".git/logs/refs/heads"));
-        let doc = r.sync(&tree, if dry_run { &["--dry-run"] } else { &[] }, 0);
-        assert_eq!(doc["data"]["items"][0]["status"], "dirty");
-        assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), heads);
-        assert_eq!(file_contents(&r.main.join(".git/logs/refs/heads")), reflogs);
-    }
-}
-
-// Review 2: Git omits dangling symrefs from for-each-ref, so a safety
-// implementation must not rely on enumerating resolved refs before fetch.
-#[test]
-fn review2_fetch_handles_dangling_tracking_symrefs_without_creating_local_branches() {
-    for dry_run in [true, false] {
-        let r = Repo::new();
-        r.git(
-            &r.main,
+        assert_fetch_refused(
+            &r,
+            &tree,
+            dry_run,
+            &[],
             &[
-                "symbolic-ref",
                 "refs/remotes/origin/release",
                 "refs/heads/release",
+                "Repair",
             ],
-        );
-        let tree = r.create("topic");
-        fs::write(tree.join("file"), "dirty workspace\n").unwrap();
-        r.advance();
-        r.git(&r.upstream, &["checkout", "-b", "release"]);
-        r.write_commit(&r.upstream, "release-only", "separate remote release\n");
-        r.git(&r.upstream, &["push", "origin", "release"]);
-        let heads = r.git(&r.main, &["for-each-ref", "refs/heads"]);
-        let reflogs = file_contents(&r.main.join(".git/logs/refs/heads"));
-        let doc = r.sync(&tree, if dry_run { &["--dry-run"] } else { &[] }, 0);
-        assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), heads);
-        assert_eq!(file_contents(&r.main.join(".git/logs/refs/heads")), reflogs);
-        assert_eq!(doc["data"]["items"][0]["status"], "dirty");
-        assert_eq!(
-            r.git(&r.main, &["rev-parse", "refs/remotes/origin/release"]),
-            r.git(&r.upstream, &["rev-parse", "HEAD"])
         );
     }
 }
 
 #[test]
-fn review2_negative_refspec_does_not_refuse_or_update_excluded_destinations() {
+fn conservative_fetch_refuses_unsafe_destinations_even_with_negative_exclusions() {
     for dry_run in [true, false] {
         let r = Repo::new();
         let tree = r.create("topic");
@@ -4459,19 +4504,105 @@ fn review2_negative_refspec_does_not_refuse_or_update_excluded_destinations() {
                 "^refs/heads/release",
             ],
         );
-        let heads = r.git(&r.main, &["for-each-ref", "refs/heads"]);
-        let excluded = r.git(&r.main, &["rev-parse", "refs/remotes/origin/release"]);
-        let reflogs = file_contents(&r.main.join(".git/logs/refs/heads"));
         r.advance();
         r.git(&r.upstream, &["push", "origin", "HEAD:release"]);
-        let doc = r.sync(&tree, if dry_run { &["--dry-run"] } else { &[] }, 0);
-        assert_eq!(doc["data"]["items"][0]["status"], "dirty");
-        assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), heads);
-        assert_eq!(file_contents(&r.main.join(".git/logs/refs/heads")), reflogs);
-        assert_eq!(
-            r.git(&r.main, &["rev-parse", "refs/remotes/origin/release"]),
-            excluded
+        assert_fetch_refused(
+            &r,
+            &tree,
+            dry_run,
+            &[],
+            &["origin", "+refs/heads/release:refs/heads/release"],
         );
+    }
+}
+
+#[test]
+fn conservative_fetch_checks_all_involved_remotes_before_any_fetch() {
+    for dry_run in [true, false] {
+        let r = Repo::new();
+        r.git(
+            &r.main,
+            &[
+                "remote",
+                "add",
+                "z-other",
+                r.root.join("remote.git").to_str().unwrap(),
+            ],
+        );
+        r.git(&r.main, &["fetch", "z-other"]);
+        let a = r.create("a");
+        let b = r.create("b");
+        assert!(r
+            .mabo(&b, &["set", "--base", "refs/remotes/z-other/main"])
+            .status
+            .success());
+        r.git(
+            &r.main,
+            &[
+                "config",
+                "--add",
+                "remote.z-other.fetch",
+                "+refs/heads/main:refs/heads/unselected",
+            ],
+        );
+        r.advance();
+        assert_fetch_refused(
+            &r,
+            &r.main,
+            dry_run,
+            &["a", "b", "--main"],
+            &["z-other", "+refs/heads/main:refs/heads/unselected"],
+        );
+        assert!(!a.join("remote-file").exists());
+        assert!(!b.join("remote-file").exists());
+    }
+}
+
+#[test]
+fn conservative_fetch_allows_missing_and_empty_destinations() {
+    for dry_run in [true, false] {
+        for refspec in ["refs/heads/main", "refs/heads/main:"] {
+            let r = Repo::new();
+            let tree = r.create("topic");
+            fs::write(tree.join("file"), "dirty\n").unwrap();
+            r.git(
+                &r.main,
+                &["config", "--add", "remote.origin.fetch", refspec],
+            );
+            let heads = r.git(&r.main, &["for-each-ref", "refs/heads"]);
+            r.advance();
+            let tip = r.git(&r.upstream, &["rev-parse", "HEAD"]);
+            let doc = r.sync(&tree, if dry_run { &["--dry-run"] } else { &[] }, 0);
+            assert_eq!(doc["data"]["items"][0]["status"], "dirty", "{doc}");
+            assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), heads);
+            assert_eq!(r.git(&r.main, &["rev-parse", "origin/main"]), tip);
+            assert!(fs::read_to_string(r.main.join(".git/FETCH_HEAD"))
+                .unwrap()
+                .contains(&tip));
+        }
+    }
+}
+
+#[test]
+fn conservative_fetch_refuses_visible_symrefs_to_any_outside_namespace() {
+    for dry_run in [true, false] {
+        for target in ["refs/tags/existing", "refs/cache/existing"] {
+            let r = Repo::new();
+            r.git(&r.main, &["update-ref", target, "HEAD"]);
+            // Refuse even an alias unrelated to the fetched remote/refspec.
+            r.git(
+                &r.main,
+                &["symbolic-ref", "refs/remotes/unrelated/alias", target],
+            );
+            r.advance();
+            assert_fetch_refused(
+                &r,
+                &r.main,
+                dry_run,
+                &[],
+                &["refs/remotes/unrelated/alias", target, "Repair"],
+            );
+        }
     }
 }
 
@@ -4509,40 +4640,6 @@ fn review2_dry_run_propagates_earlier_workspace_tips_through_local_bases() {
 }
 
 #[test]
-fn review2_mirror_mapping_preserves_unselected_heads_and_unpublished_strategy() {
-    for dry_run in [true, false] {
-        let r = Repo::new();
-        let tree = r.create("topic");
-        r.write_commit(&tree, "own", "unpublished work\n");
-        r.git(&r.main, &["branch", "release"]);
-        r.git(
-            &r.main,
-            &["config", "--add", "remote.origin.fetch", "+refs/*:refs/*"],
-        );
-        let protected = r.git(
-            &r.main,
-            &["for-each-ref", "refs/heads/main", "refs/heads/release"],
-        );
-        let topic_before = r.snapshot(&tree);
-        r.advance();
-        r.git(&r.upstream, &["push", "origin", "HEAD:release"]);
-        let doc = r.sync(&tree, if dry_run { &["--dry-run"] } else { &[] }, 0);
-        assert_eq!(doc["data"]["items"][0]["strategy"], "rebase", "{doc}");
-        assert_eq!(doc["data"]["items"][0]["status"], "updated", "{doc}");
-        assert_eq!(
-            r.git(
-                &r.main,
-                &["for-each-ref", "refs/heads/main", "refs/heads/release"]
-            ),
-            protected
-        );
-        if dry_run {
-            assert_eq!(r.snapshot(&tree), topic_before);
-        }
-    }
-}
-
-#[test]
 fn review2_git_prune_negative_exclusions_tags_and_remote_head_remain_scoped() {
     for dry_run in [true, false] {
         let r = Repo::new();
@@ -4558,7 +4655,7 @@ fn review2_git_prune_negative_exclusions_tags_and_remote_head_remain_scoped() {
                 "config",
                 "--add",
                 "remote.origin.fetch",
-                "+refs/heads/*:refs/cache/*",
+                "+refs/heads/*:refs/remotes/cache/*",
             ],
         );
         r.git(
@@ -4566,15 +4663,6 @@ fn review2_git_prune_negative_exclusions_tags_and_remote_head_remain_scoped() {
             &["config", "remote.origin.followRemoteHEAD", "always"],
         );
         r.git(&r.main, &["fetch", "origin"]);
-        r.git(&r.main, &["branch", "gone"]);
-        r.git(
-            &r.main,
-            &[
-                "symbolic-ref",
-                "refs/remotes/origin/gone",
-                "refs/heads/gone",
-            ],
-        );
         r.git(&r.main, &["update-ref", "refs/other/untouched", "HEAD"]);
         r.git(&r.main, &["tag", "local-only"]);
         let untouched = r.git(&r.main, &["rev-parse", "refs/other/untouched"]);
@@ -4604,7 +4692,7 @@ fn review2_git_prune_negative_exclusions_tags_and_remote_head_remain_scoped() {
                 &[
                     "for-each-ref",
                     "refs/remotes/origin/gone",
-                    "refs/cache/gone"
+                    "refs/remotes/cache/gone"
                 ]
             ),
             ""
@@ -4614,7 +4702,7 @@ fn review2_git_prune_negative_exclusions_tags_and_remote_head_remain_scoped() {
             excluded
         );
         assert_eq!(
-            r.git(&r.main, &["rev-parse", "refs/cache/excluded"]),
+            r.git(&r.main, &["rev-parse", "refs/remotes/cache/excluded"]),
             excluded
         );
         assert_eq!(
@@ -4638,7 +4726,7 @@ fn review2_effective_conditional_and_environment_fetch_config_is_retained() {
     let r = Repo::new();
     let tree = r.create("topic");
     // The remote mapping exists only in a condition matching the original Git
-    // directory. Evaluating this include in the temporary repository loses it.
+    // directory. Fetch and preflight must both use this effective configuration.
     r.git(&r.main, &["config", "--unset-all", "remote.origin.fetch"]);
     let included = r.root.join("conditional.config");
     r.git(
@@ -4648,7 +4736,7 @@ fn review2_effective_conditional_and_environment_fetch_config_is_retained() {
             "--file",
             included.to_str().unwrap(),
             "remote.origin.fetch",
-            "+refs/heads/*:refs/cache/*",
+            "+refs/heads/*:refs/remotes/cache/*",
         ],
     );
     r.git(
@@ -4676,14 +4764,14 @@ fn review2_effective_conditional_and_environment_fetch_config_is_retained() {
     assert!(out.status.success(), "{doc}");
     assert_eq!(doc["data"]["items"][0]["status"], "updated");
     assert_eq!(
-        r.git(&r.main, &["rev-parse", "refs/cache/main"]),
+        r.git(&r.main, &["rev-parse", "refs/remotes/cache/main"]),
         r.git(&r.upstream, &["rev-parse", "HEAD"])
     );
-    // Do not rewrite the original config while flattening the effective view.
+    // Reading effective configuration must not rewrite the original config.
     assert_eq!(fs::read(r.main.join(".git/config")).unwrap(), original);
     assert_eq!(
         r.git(&r.main, &["config", "--get-all", "remote.origin.fetch"]),
-        "+refs/heads/*:refs/cache/*"
+        "+refs/heads/*:refs/remotes/cache/*"
     );
 }
 

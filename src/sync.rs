@@ -598,9 +598,21 @@ pub fn run(context: &Context, request: &Request) -> Result<Report> {
         }
     }
     let mut fetch_errors = BTreeMap::new();
-    for remote in involved {
-        if let Err(error) = fetch::fetch(&context.git_root, &remote) {
-            fetch_errors.insert(remote, error.to_string());
+    match fetch::check(&context.git_root, &involved) {
+        Err(error) if error.exit_code() == crate::error::REFUSED => return Err(error),
+        Err(error) => {
+            // Preserve per-item operational failures, without fetching after
+            // an incomplete safety query.
+            for remote in involved {
+                fetch_errors.insert(remote, error.to_string());
+            }
+        }
+        Ok(()) => {
+            for remote in involved {
+                if let Err(error) = fetch::fetch(&context.git_root, &remote) {
+                    fetch_errors.insert(remote, error.to_string());
+                }
+            }
         }
     }
     let mut report = Report {
