@@ -460,7 +460,7 @@ id/purpose/base/createdAt/updatedAt/createdFrom/setup/links は Git common direc
 
 各レコードは schema:2、ws_<uuid v4> の id、path、任意の name と上記メタデータです。JSON の id は未記録なら null。同じディレクトリの一時ファイル、fsync、rename でアトミックに置き換えます。削除はそのレコードだけ。異なるレコードの同時追加は両方残り、同じレコードの同時更新は後勝ちです。
 
-repo 登録は `$XDG_STATE_HOME/mabo/repos/<id>.json`（既定 `~/.local/state/mabo/repos/<id>.json`）で proj_<uuid> ID を維持します。同じ root は最古 createdAt、同時なら最小 ID にまとめます。最初の書き込みで旧 `mabo/worktrees.json` / `$XDG_STATE_HOME/mabo/projects.json` 全件を取り込み、`*.json.imported` に改名します。それまで読み取りは旧ファイルを読め、移行失敗なら元を保ちます。内部ファイルロックはなく、trust/config は単一ファイルをアトミックに置き換えます。
+repo 登録は `$XDG_STATE_HOME/mabo/repos/<id>.json`（既定 `~/.local/state/mabo/repos/<id>.json`）で proj_<uuid> ID を維持します。同じ root は最古 createdAt、同時なら最小 ID にまとめます。最初の書き込みで `<git-common-dir>/mabo/` または `<git-common-dir>/maboroshi/` 内の旧 `worktrees.json` と、`$XDG_STATE_HOME/mabo/` または `$XDG_STATE_HOME/maboroshi/` 内の旧 `projects.json` 全件を個別ファイルに取り込み、元を `*.json.imported` に改名します。それまで読み取りは旧ファイルを読め、移行失敗なら元を保ちます。内部ファイルロックはなく、trust/config は単一ファイルをアトミックに置き換えます。
 
 ### Sync
 

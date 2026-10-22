@@ -33,7 +33,7 @@ fn write_with(
 }
 
 /// Only this marker proves that all legacy records have been published.
-const IMPORT_COMPLETE: &str = ".import-complete";
+pub(crate) const IMPORT_COMPLETE: &str = ".import-complete";
 
 pub(crate) fn import_complete(target: &Path) -> bool {
     target.join(IMPORT_COMPLETE).is_file()

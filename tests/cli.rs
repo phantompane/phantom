@@ -22050,6 +22050,67 @@ fn shared_state_path_migrates_on_either_repo_or_trust_writes() {
 }
 
 #[test]
+fn imported_metadata_path_migration_preserves_legacy_locks_without_warnings() {
+    for json in [false, true] {
+        let repo = Repo::new();
+        let current = repo.repo.join(".git/mabo");
+        fs::create_dir_all(&current).unwrap();
+        let archive = include_str!("fixtures/alpha6/worktrees.json");
+        fs::write(current.join("worktrees.json"), archive).unwrap();
+        let imported = repo.mabo(&["set", "main", "--purpose", "before", "--json"]);
+        assert!(imported.status.success(), "{}", text(&imported.stdout));
+        let original_id = json_value(&imported)["data"]["workspace"]["id"].clone();
+        let legacy = repo.repo.join(".git/maboroshi");
+        fs::rename(&current, &legacy).unwrap();
+        for lock in ["operation.lock", "worktrees.lock"] {
+            fs::write(legacy.join(lock), lock).unwrap();
+        }
+        // This is the layout left by a completed legacy record import.
+        assert_eq!(fs::read_dir(&legacy).unwrap().count(), 4);
+        let before = mabo::metadata::load_strict(&repo.repo).unwrap();
+        assert!(legacy.join("workspaces/.import-complete").is_file());
+        assert!(!current.exists(), "reading metadata must not migrate it");
+
+        let mut args = vec!["set", "main", "--purpose", "migrated"];
+        if json {
+            args.push("--json");
+        }
+        let out = repo.mabo(&args);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+        if json {
+            assert_eq!(json_value(&out)["warnings"], serde_json::json!([]));
+            assert_eq!(json_value(&out)["data"]["workspace"]["id"], original_id);
+        }
+        let after = mabo::metadata::load_strict(&repo.repo).unwrap();
+        assert_eq!(after.len(), before.len());
+        for (path, mut record) in before {
+            if record.id.as_deref() == original_id.as_str() {
+                record.purpose = Some("migrated".to_owned());
+                assert!(after[&path].updated_at.is_some());
+                record.updated_at = after[&path].updated_at.clone();
+            }
+            assert_eq!(after[&path], record);
+        }
+        assert_eq!(
+            fs::read(current.join("workspaces/.import-complete")).unwrap(),
+            b"complete\n"
+        );
+        assert_eq!(
+            fs::read_to_string(current.join("worktrees.json.imported")).unwrap(),
+            archive
+        );
+        assert!(!legacy.join("workspaces").exists());
+        assert!(!legacy.join("worktrees.json.imported").exists());
+        assert_eq!(fs::read_dir(&legacy).unwrap().count(), 2);
+        for lock in ["operation.lock", "worktrees.lock"] {
+            assert_eq!(fs::read_to_string(legacy.join(lock)).unwrap(), lock);
+            assert!(!current.join(lock).exists());
+        }
+    }
+}
+
+#[test]
 fn metadata_path_migration_keeps_legacy_git_checkout_and_reads_without_renaming() {
     let repo = Repo::new();
     let checkout = repo.repo.join(".git/maboroshi/worktrees/feature/nested");

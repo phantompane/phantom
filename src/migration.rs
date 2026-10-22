@@ -222,7 +222,8 @@ fn metadata_only(path: &Path) -> bool {
             return false;
         };
         entry.file_type().is_ok_and(|kind| kind.is_file())
-            && (name.ends_with(".json")
+            && (name == crate::atomic::IMPORT_COMPLETE
+                || name.ends_with(".json")
                 || name
                     .strip_prefix(".state-")
                     .and_then(|s| s.strip_suffix(".tmp"))
@@ -399,7 +400,6 @@ mod tests {
             "nested/.git",
             "workspaces/nested/.git",
             "workspaces/unknown",
-            "workspaces/.import-complete",
             "workspaces/link",
         ] {
             let fixture = Fixture::new();
@@ -427,6 +427,42 @@ mod tests {
     }
 
     #[test]
+    fn metadata_only_accepts_known_regular_files() {
+        for (name, allowed) in [
+            (".import-complete".to_owned(), true),
+            ("ws_record.json".to_owned(), true),
+            ("record.json".to_owned(), true),
+            (format!(".state-{}.tmp", uuid::Uuid::new_v4()), true),
+            (".state-invalid.tmp".to_owned(), false),
+            (".import-complete.tmp".to_owned(), false),
+            ("unknown".to_owned(), false),
+            // import_directory stages beside workspaces/, never inside it.
+            (format!(".import-{}", uuid::Uuid::new_v4()), false),
+        ] {
+            for kind in ["file", "directory", "symlink"] {
+                let fixture = Fixture::new();
+                let records = fixture.0.join("workspaces");
+                fs::create_dir(&records).unwrap();
+                let entry = records.join(&name);
+                match kind {
+                    "file" => fs::write(&entry, "saved").unwrap(),
+                    "directory" => fs::create_dir(&entry).unwrap(),
+                    _ => {
+                        let target = fixture.0.join("target");
+                        fs::write(&target, "saved").unwrap();
+                        std::os::unix::fs::symlink(target, &entry).unwrap();
+                    }
+                }
+                assert_eq!(
+                    metadata_only(&records),
+                    allowed && kind == "file",
+                    "{name}: {kind}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn metadata_migration_moves_only_metadata_and_atomic_writer_files() {
         let fixture = Fixture::new();
         let output = crate::test_git::command("git")
@@ -438,7 +474,10 @@ mod tests {
         let legacy = fixture.0.join(LEGACY_NAME);
         fs::create_dir_all(legacy.join("workspaces")).unwrap();
         fs::create_dir_all(legacy.join("worktrees/live/.git")).unwrap();
+        let staging = legacy.join(format!(".import-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&staging).unwrap();
         for item in [
+            "workspaces/.import-complete",
             "workspaces/ws_record.json",
             "worktrees.json",
             "worktrees.json.imported",
@@ -458,6 +497,7 @@ mod tests {
             );
         }
         assert!(legacy.join("worktrees/live/.git").is_dir());
+        assert!(staging.is_dir());
         assert!(fixture.0.join("mabo").join(temporary).is_file());
     }
 
