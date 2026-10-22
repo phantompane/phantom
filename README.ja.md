@@ -105,13 +105,13 @@ mabo は次の役割を担いません。
 - 端末・セッション管理（tmux、ペイン、ダッシュボード。提供するのはパス）。
 - セキュリティ上の隔離やエージェント間のアクセス制御。
 
-## コマンド移行と機械可読ヘルプ
+## 機械可読ヘルプ
 
-破壊的変更と alpha.6 からの全移行表は [CHANGELOG.md](CHANGELOG.md#unreleased) を参照してください。
+破壊的変更は [CHANGELOG.md](CHANGELOG.md#unreleased) を参照してください。
 
-旧 `project`、`preferences`、`untrust`、`version`、`trust --yes/--list`（`-y` も）、`-p/--project` は廃止しました。別名としては動かず、移行ヒント付きで終了コード 2 を返します。それぞれ `repo`、`config`、`trust remove`、`--version`、`trust add/list`、`-R/--repo` を使います。`--version` と `-v` は使えます。`mabo --version --json` は `command: "--version"` の schema 2 envelope を返し、アプリのバージョンは `data.version`、テキストのバージョン行は `data.display` に入ります。
+`--version` と `-v` はアプリのバージョンを表示します。`mabo --version --json` は `command: "--version"` の schema 2 envelope を返し、アプリのバージョンは `data.version`、テキストのバージョン行は `data.display` に入ります。
 
-所有者と `lastUsedAt` は廃止しました。`--owner` は終了コード 2 で、`--purpose`、PR リンク、ワークスペース名を案内します。`sync --mine` も終了コード 2 で、名前か `--all` を案内します。`MABO_AGENT_ID` は mabo に影響しません。旧レコードは読み込め、廃止フィールドはそのレコードの次の書き込みで消えます。`show`、`path`、`list`、`exec` は記録を変更せず、`gc --older-than` は `createdAt` を使います。
+`show`、`path`、`list`、`exec` は記録を変更せず、`gc --older-than` は `createdAt` を使います。
 
 `mabo help [COMMAND...]` は `--help` と同じテキストを表示します。`mabo help --json` は `data` に help-data.json 全体（`commands`、全コマンドとフラグの `helps`、`globalOptions`、`exitCodes`、`errorCodes`、`warningCodes`、`schemaVersion: 2`）を返します。`mabo help repo show --json` は同じ契約と、そのコマンドの `data.selected` を含みます。
 
@@ -221,8 +221,6 @@ clone-root = "~/ghq"
 
 `config get KEY` と `config list` は既定値を含む有効値を返します。`--sources` は `value`、`source`（`config`、`env`、`default`）、`detail` を表示します。JSON は `data.config[KEY]` で、`--sources` なしなら値だけです。既定値は `workspace-root` が null（XDG 配置）、`discover-ghq` が true。clone-root はユーザー設定の下で ghq.root → `$GHQ_ROOT` → `~/ghq` の順です。`sync.strategy` は `auto`（既定）/`rebase`/`merge`、`sync.rewrite-published` は真偽値（既定 false）で、sync フラグが優先します。不正な値は終了コード 2。ユーザー config.toml の `[sync]` に置き、リポジトリ `.mabo.toml` には置けません。
 
-旧キー `worktrees-directory`、`root`、`ghq-discovery` は `workspace-root`、`clone-root`、`discover-ghq` として効き、`config_key_renamed` と移行ヒントを出します。新旧両方なら新名が優先です。読み取りは変更せず、次の成功した `config set` / `config unset` で改名します。`directory-name-separator` と `keep-branch` は `config_key_removed` で無視し、次の書き込みで削除します。
-
 ```sh
 mabo config list --sources
 mabo config get clone-root --sources --json
@@ -291,7 +289,7 @@ mabo sync pr:774
 
 `list` は primary を含みます。`--kind workspace` / `--kind primary` で絞り、`--names` / `--paths` はシェル用です。`--all-repos` は repo list の登録・有効な検出の全対象を表示し、`-R` と併用できません。JSON は `data.repos` と平坦化した `data.workspaces` を含みます。人間向け出力はリポジトリ名と primary パスの見出し、現在位置 `*`、名前、ブランチ、進み・遅れ `↑a ↓b`、dirty、リンク `#12` / `issue #34`、ok 以外の setup 状態（`setup:failed` など）、目的です。削除済み upstream は `upstream:gone` と表示します。
 
-旧 `where` は path/show --json、meta/meta set は set/show、list --no-default は --kind workspace を案内して 2 で終了します。必須の `--` がない exec も新構文のヒント付きで 2。exec は子の出力と終了コードを維持し、`MABO_OUTPUT` を無視して明示的 JSON を拒否します。使用方法エラーと付随するヘルプは標準エラー出力に出し、テキストの標準出力は空です。
+exec は子の出力と終了コードを維持し、`MABO_OUTPUT` を無視して明示的 JSON を拒否します。使用方法エラーと付随するヘルプは標準エラー出力に出し、テキストの標準出力は空です。
 
 ## シェル補助
 
@@ -363,7 +361,7 @@ setup = ["pnpm install"]
 pre-remove = ["./scripts/teardown.sh"]
 ```
 
-create/setup はコピー後に対象で setup を実行します。再実行可能にしてください。remove/gc --apply は削除前に対象で pre-remove を実行します。順に実行し、最初の失敗で止まります。不明キーは拒否します。旧 `[hooks] post-create` と `pre-delete` は 1（`failed`）で失敗し、setup/pre-remove への改名を案内します。
+create/setup はコピー後に対象で setup を実行します。再実行可能にしてください。remove/gc --apply は削除前に対象で pre-remove を実行します。順に実行し、最初の失敗で止まります。不明キーは拒否します。
 
 フックには信頼が必要です。コピーはフックではなく信頼不要です。フックなしなら質問しません。
 
@@ -373,7 +371,7 @@ create/setup はコピー後に対象で setup を実行します。再実行可
 
 信頼記録は絶対パスの `$XDG_STATE_HOME/mabo/trust.toml`、それ以外は `~/.local/state/mabo/trust.toml` です。各項目は path と trustedAt を保存します。
 
-`MABO_TRUST_ALL=1` はそのプロセスだけ全 repo を信頼し、ファイルには書きません。値は厳密に `1` です。CI・コンテナで使えます。`create --no-setup` はコピーとフックを省略します。`setup --no-hooks` はコピーだけ、remove/gc --no-hooks は削除フックだけ省略します。信頼は記録しません。旧 create --no-hooks は --no-setup のヒント付きで 2、no-setup と copy-file は併用不可です。
+`MABO_TRUST_ALL=1` はそのプロセスだけ全 repo を信頼し、ファイルには書きません。値は厳密に `1` です。CI・コンテナで使えます。`create --no-setup` はコピーとフックを省略します。`setup --no-hooks` はコピーだけ、remove/gc --no-hooks は削除フックだけ省略します。信頼は記録しません。no-setup と copy-file は併用不可です。
 
 gc は端末でも質問しません。pre-remove のある未信頼 repo は `untrusted hooks` として候補をスキップし、他の対象は続行します。`--no-hooks` はフックを実行せず削除します。
 
@@ -384,8 +382,6 @@ gc は端末でも質問しません。pre-remove のある未信頼 repo は `u
 - `MABO_WORKSPACE_ID` — 記録した ws_ ID、未記録は空
 - `MABO_WORKSPACE_PATH` — ワークスペースの絶対パス
 - `MABO_REPO_PATH` — フック元が linked checkout でも primary の絶対パス
-
-旧 MABO_NAME/MABO_PATH/MABO_ROOT_PATH は子環境から取り除きます。フック・exec スクリプトを更新してください。
 
 ## 機械可読 JSON
 
@@ -503,9 +499,7 @@ rebase は upstream の cherry-pick（revert 済みを含む）、意図的な�
 
 人間向けは対象ごとに `<name>  <status>  [detail]` と件数。JSON schema 2 の data は `{plan,items:[…],main:item|null}` です。item は workspace/status/strategy/strategySource/rewriteAllowed/rewriteSource/rewrotePublished/before/after/conflicts/detail/code（published など）。workspace は統合前の観測、before/after は完全 SHA です。診断用 name/path/branch/base も返します。strategy は rebase/merge/ff-only または選択前スキップの null、不明値も null です。
 
-状態は updated、up-to-date、dirty、diverged、integrated（旧 merged）、detached、base-gone、base-unknown、conflict、refused、failed、primary の not-default-branch です。
-
-移行: -f/--force は --rewrite-published、--no-default は現在だけが既定になったため --main、--mine はセレクタか --all を案内して 2。JSON default/workspaces は main/items へ移りました。
+状態は updated、up-to-date、dirty、diverged、integrated、detached、base-gone、base-unknown、conflict、refused、failed、primary の not-default-branch です。
 
 孤立レコードは Git 登録もディレクトリもありません。list は [orphaned]、JSON は orphaned:true、branch/head:null（既存は orphaned:false）。path/exec は拒否し、show は確認できます。remove はフック・ブランチ削除なしで stale record だけを消し、0 と既に消えている旨を返します。JSON は workspace.orphaned:true、branchDeleted:false。同名の生きた対象が優先され、孤立記録の複数一致は ambiguous。孤立記録は名前を予約せず、同名の生きた対象を作れます。残った孤立記録は gc --apply で片付けます（remove の名前は生きた方へ解決します）。
 
@@ -629,8 +623,6 @@ apply なしは plan:true と 0（保護対象も含む）。apply は remove �
 
 action は wouldRemove/removed/skipped/failed。gc --apply は再実行でき、片付け済みは候補から消えます。
 
-移行: delete は remove SEL...、`--current` は remove .。remove/gc の -f/--force は別々の remove 権限、または安全な gc --apply を案内して 2。gc --pr は --closed-pr。keep-branch 設定は型を問わず警告して無視し、次の成功した設定書き込みで消します。フラグ --keep-branch を明示してください。
-
 single-branch など狭い refspec の clone では create --pr が branch.<b>.remote/merge を書き git pull を可能にしますが、remote.origin.fetch は変えないため @{upstream} と ahead/behind は解決できません。
 
 ### Repo list
@@ -707,10 +699,8 @@ create [NAME] は base から新規ブランチを作り、既定は remote defa
 
 --pr NUMBER|URL は PR head、fork は owner/branch。fork/削除済み head は pull/N/head を fetch し upstream は設定しません。--issue NUMBER|URL 単独は issues/N と題名の目的を生成し、--pr/--branch と併用ならリンクだけ追加します。NAME は workspace 名を上書きし、既存 branch 名は保ちます。base/branch/pr は排他で、`--detach` は base/issue と併用できます。
 
-既存 workspace は 4 exists。reuse は要求した base/branch/PR と指定 issue が一致すれば、setup 失敗後でもコピー・フックなしで成功します。不一致は 4。作成情報と既存 purpose を保ちます。no-setup はコピー・フックを省略し copy-file と排他。旧 create --no-hooks は移行ヒント付きで 2。
+既存 workspace は 4 exists。reuse は要求した base/branch/PR と指定 issue が一致すれば、setup 失敗後でもコピー・フックなしで成功します。不一致は 4。作成情報と既存 purpose を保ちます。no-setup はコピー・フックを省略し copy-file と排他。
 
 adopt PATH は選択 repo の既存 linked Git checkout を setup なしで記録します。`--name` / `--base` / `--purpose` / `--pr` / `--issue` を受け取り、base 省略は不明 null。作成時刻と作成コミットも null。記録済みは 4、同 repo の linked checkout でないパスは 3。
 
 forget SEL... は primary の意図も含め記録だけを消します。ファイル・ブランチ・Git 登録は残し、共通セレクタを受け取り全件を先に解決します。
-
-移行: attach BRANCH は create --branch BRANCH、github checkout / gh checkout は create --pr REF / create --issue REF。create -x/--exec は create 後に exec SEL -- COMMAND。廃止構文はテキスト/JSON とも移行ヒント付きで 2 です。

@@ -343,9 +343,6 @@ mod tests {
             ] {
                 assert!(help.contains(variable), "{key}: {variable}: {help}");
             }
-            for old in ["MABO_NAME", "MABO_PATH", "MABO_ROOT_PATH", "PHANTOM", "PTM"] {
-                assert!(!help.contains(old), "{key}: {old}: {help}");
-            }
         }
     }
 

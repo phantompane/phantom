@@ -1231,7 +1231,7 @@ pub(crate) fn run_hook_commands(
                 }));
             }
             return Err(Error::msg(format!(
-                "Pre-delete command failed with exit code {code}: {command}"
+                "Pre-remove command failed with exit code {code}: {command}"
             )));
         }
     }

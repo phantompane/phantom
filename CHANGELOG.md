@@ -8,6 +8,10 @@
 - **Breaking:** `install.sh` supports only `mabo-v<version>-<os>-<arch>.tar.gz` archives. v7.0.0-alpha.8 must be installed with its own `install.sh` at `https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.8/install.sh`; v7.0.0-alpha.7 and older have no installer and must be installed manually. Pinned installs require exactly one valid checksum entry for the expected archive; unpinned installs consider only releases with the `mabo-` archive for the platform.
 - New config, state, repository metadata and default workspace paths use `mabo/` instead of `maboroshi/`. Existing config/state directories and safe metadata items migrate by atomic rename on the next write, only when the new location is absent. Read-only commands, dry runs and gc plans leave paths unchanged. If both paths exist, the new one is used without merging and the ignored nonempty legacy path is reported on stderr; a failed rename warns and continues with legacy data unless the new path appeared concurrently. Migration never copies, overwrites or deletes user files. Existing Git worktrees, including `maboroshi/workspaces/` data and `<git-common-dir>/maboroshi/worktrees/`, stay managed in place; uncertain metadata contents also stay in place. New project markers and clone staging use `.mabo-common-dir` and `.mabo-clone-`, with legacy names still recognized. Known limit: whole-directory config/state migration relies on an allowlist of mabo files and cannot detect a legacy directory that is itself a broken Git checkout containing only allowlisted names.
 
+### Removed
+
+- Compatibility shims for retired commands, flags, config keys, hook keys and environment variables were removed; retired commands, flags and keys now fail as ordinary unknown input, and retired environment variables receive no special handling.
+
 ## v7.0.0-alpha.8 (2026-10-22)
 
 ### Added

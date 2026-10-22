@@ -52,25 +52,6 @@ pub fn pre_remove_commands(config: Option<&MaboConfig>) -> &[String] {
 }
 
 fn parse_config(content: &str) -> Result<MaboConfig> {
-    let document = content
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|error| Error::msg(format!("Invalid {FILE_NAME}: {error}")))?;
-    if let Some(hooks) = document
-        .get("hooks")
-        .and_then(toml_edit::Item::as_table_like)
-    {
-        let renamed = [("post-create", "setup"), ("pre-delete", "pre-remove")]
-            .into_iter()
-            .filter(|(old, _)| hooks.contains_key(old))
-            .map(|(old, new)| format!("rename [hooks] {old} to {new}"))
-            .collect::<Vec<_>>();
-        if !renamed.is_empty() {
-            return Err(Error::msg(format!(
-                "Invalid {FILE_NAME}: {}",
-                renamed.join("; ")
-            )));
-        }
-    }
     toml_edit::de::from_str(content)
         .map_err(|error| Error::msg(format!("Invalid {FILE_NAME}: {error}")))
 }
