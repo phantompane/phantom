@@ -14,15 +14,15 @@ Rust 版は `next` で開発し、[GitHub Releases](https://github.com/phantompa
 curl -fsSL https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh | MABO_VERSION=<TAG> sh
 ```
 
-`<TAG>` は [Releases ページ](https://github.com/phantompane/phantom/releases) の最新の `v7.*` など、リリースタグに置き換えてください。`install.sh` と `SHA256SUMS` は v7.0.0-alpha.7 の次のリリースから配布します。それ以前は後述の方法で手動インストールしてください。バージョン固定時はプレリリースも指定でき、GitHub API にはアクセスしません。
+`<TAG>` は [Releases ページ](https://github.com/phantompane/phantom/releases) の最新の `v7.*` など、リリースタグに置き換えてください。v7.0.0-alpha.8 までのリリースは、上記の URL にある、そのリリース自身の `install.sh` でインストールしてください。バージョン固定時はプレリリースも指定でき、GitHub API にはアクセスしません。
 
-バージョンを固定しない場合は、v6 を除外して最新の v7 安定版を選びます。
+バージョンを固定しない場合は、v6 を除外し、使用するプラットフォーム向けの `mabo-` アーカイブがある最新の v7 安定版を選びます。
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/next/install.sh | sh
 ```
 
-v7 がプレリリースのみの場合は、最新のプレリリース名を表示して停止します。そのプレリリースを許可するには、次のように実行します。
+条件に合う v7 がプレリリースのみの場合は、その中で最新のプレリリース名を表示して停止します。そのプレリリースを許可するには、次のように実行します。
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/next/install.sh | sh -s -- --prerelease
@@ -55,7 +55,7 @@ Rust 1.89 以降（`Cargo.toml` の `rust-version`）でソースからビルド
 cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked mabo
 ```
 
-手動でインストールする場合は、Releases から `mabo-v<VERSION>-<os>-<arch>.tar.gz` をダウンロードします（`<VERSION>` は先頭の `v` を除いたもの、`<os>` は `linux` または `darwin`、`<arch>` は `x64` または `arm64`）。v7.0.0-alpha.8 までのリリースは `maboroshi-` プレフィックスを使用します。`install.sh` は、そのリリースの `SHA256SUMS` に記載された名前を選びます。アーカイブの中身は `mabo` のみです。展開して PATH の通ったディレクトリに配置してください。v7.0.0-alpha.7 より後のリリースでは、同じリリースの `SHA256SUMS` もダウンロードし、展開前に検証します。`gh` で来歴を検証し、Linux で SHA-256 を確認するには、ダウンロード先でアーカイブ名を置き換えて次を実行します。
+手動でインストールする場合は、Releases から `mabo-v<VERSION>-<os>-<arch>.tar.gz` をダウンロードします（`<VERSION>` は先頭の `v` を除いたもの、`<os>` は `linux` または `darwin`、`<arch>` は `x64` または `arm64`）。`install.sh` はこのアーカイブ名のみをサポートし、`SHA256SUMS` 内に対応する有効な行がちょうど1行あることを必須とします。アーカイブの中身は `mabo` のみです。展開して PATH の通ったディレクトリに配置してください。v7.0.0-alpha.7 より後のリリースでは、同じリリースの `SHA256SUMS` もダウンロードし、展開前に検証します。`gh` で来歴を検証し、Linux で SHA-256 を確認するには、ダウンロード先でアーカイブ名を置き換えて次を実行します。
 
 ```sh
 gh attestation verify mabo-v<VERSION>-linux-x64.tar.gz --repo phantompane/phantom

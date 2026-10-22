@@ -14,15 +14,15 @@ For agents and CI, pin the installer and binary to the same release tag:
 curl -fsSL https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh | MABO_VERSION=<TAG> sh
 ```
 
-Replace `<TAG>` with a release tag, such as the newest `v7.*` on the [Releases page](https://github.com/phantompane/phantom/releases). `install.sh` and `SHA256SUMS` are published starting with the first release after v7.0.0-alpha.7; install older releases manually as described below. Pinned installs allow prereleases and make no GitHub API request.
+Replace `<TAG>` with a release tag, such as the newest `v7.*` on the [Releases page](https://github.com/phantompane/phantom/releases). Releases up to v7.0.0-alpha.8 must be installed with that release's own `install.sh` at the URL above. Pinned installs allow prereleases and make no GitHub API request.
 
-Without a version pin, the installer selects the newest stable v7 release, skipping v6:
+Without a version pin, the installer selects the newest stable v7 release with a `mabo-` archive for the platform, skipping v6:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/next/install.sh | sh
 ```
 
-While only v7 prereleases exist, it stops and names the newest prerelease. To allow that prerelease:
+While only matching v7 prereleases exist, it stops and names the newest matching prerelease. To allow that prerelease:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/next/install.sh | sh -s -- --prerelease
@@ -55,7 +55,7 @@ Or build from source with Rust 1.89+ (the `rust-version` in `Cargo.toml`):
 cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked mabo
 ```
 
-For a manual install, download `mabo-v<VERSION>-<os>-<arch>.tar.gz` from Releases (`<VERSION>` omits the leading `v`; `<os>` is `linux` or `darwin`, and `<arch>` is `x64` or `arm64`). Releases up to v7.0.0-alpha.8 use the `maboroshi-` prefix; `install.sh` picks the name listed in that release's `SHA256SUMS`. Each archive contains only `mabo`; extract it and place it in a directory on PATH. For releases after v7.0.0-alpha.7, download `SHA256SUMS` from the same release and verify before extracting. To verify provenance with `gh` and check SHA-256 on Linux, run these in the download directory, substituting your archive name:
+For a manual install, download `mabo-v<VERSION>-<os>-<arch>.tar.gz` from Releases (`<VERSION>` omits the leading `v`; `<os>` is `linux` or `darwin`, and `<arch>` is `x64` or `arm64`). `install.sh` supports only this archive name and requires exactly one valid entry for it in `SHA256SUMS`. Each archive contains only `mabo`; extract it and place it in a directory on PATH. For releases after v7.0.0-alpha.7, download `SHA256SUMS` from the same release and verify before extracting. To verify provenance with `gh` and check SHA-256 on Linux, run these in the download directory, substituting your archive name:
 
 ```sh
 gh attestation verify mabo-v<VERSION>-linux-x64.tar.gz --repo phantompane/phantom

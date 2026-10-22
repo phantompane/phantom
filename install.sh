@@ -21,6 +21,10 @@ USAGE
 }
 
 fail() { printf 'mabo installer: %s\n' "$*" >&2; exit 1; }
+failRelease() {
+    releaseTag=$1; shift
+    fail "$* Releases up to v7.0.0-alpha.8 must be installed with that release's own install.sh: https://github.com/phantompane/phantom/releases/download/$releaseTag/install.sh."
+}
 usageError() { printf 'mabo installer: %s\n' "$*" >&2; exit 2; }
 progress() { printf '%s\n' "$*" >&2; }
 
@@ -185,8 +189,7 @@ resolveRelease() {
                 if(path=="" && draft=="false" && (pre=="true" || pre=="false")) {
                     ver=tag; sub(/^v/,"",ver)
                     name="mabo-v" ver "-" platform ".tar.gz"
-                    legacy="maboroshi-v" ver "-" platform ".tar.gz"
-                    if(name in assets || legacy in assets) {
+                    if(name in assets) {
                         if(pre=="true" && firstPre=="") firstPre=tag
                         if(chosen=="" && (pre=="false" || allow==1)) chosen=tag
                     }
@@ -275,7 +278,7 @@ main() {
             prerelease:*)
                 version=${version#prerelease:}
                 fail "No stable mabo release; newest prerelease is $version. Set MABO_VERSION=$version or pass --prerelease." ;;
-            '') fail 'No matching mabo release. Pin MABO_VERSION or use --prerelease.' ;;
+            '') failRelease '<TAG>' 'No matching mabo release. Pin MABO_VERSION or use --prerelease.' ;;
         esac
     fi
     ver=${version#v}
@@ -284,25 +287,18 @@ main() {
     tag=v$ver
     progress "Downloading mabo $tag..."
     download "${base%/}/$tag/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null ||
-        fail "Missing or unavailable SHA256SUMS for $tag; refusing an unverified release."
-    # Prefer the new prefix, falling back to releases through v7.0.0-alpha.8.
+        failRelease "$tag" "Missing or unavailable SHA256SUMS for $tag; refusing an unverified release."
     # Compare the complete filename, accept only one well-formed standard entry.
-    # Keep the selected name and digest together for download and verification.
-    archive=''
-    for candidate in "mabo-$tag-$os-$arch.tar.gz" "maboroshi-$tag-$os-$arch.tar.gz"; do
-        if expected=$(awk -v name="$candidate" '
-            substr($0,67)==name && substr($0,65,2)=="  " {
-                hash=substr($0,1,64)
-                if(length(hash)!=64 || hash ~ /[^0-9a-fA-F]/) exit 1
-                count++; result=tolower(hash)
-            }
-            END { if(count!=1) exit 1; print result }
-        ' "$tmp/SHA256SUMS"); then
-            archive=$candidate
-            break
-        fi
-    done
-    [ -n "$archive" ] || fail "Missing, duplicate, or invalid SHA256SUMS line for mabo-$tag-$os-$arch.tar.gz or maboroshi-$tag-$os-$arch.tar.gz."
+    archive=mabo-$tag-$os-$arch.tar.gz
+    expected=$(awk -v name="$archive" '
+        substr($0,67)==name && substr($0,65,2)=="  " {
+            hash=substr($0,1,64)
+            if(length(hash)!=64 || hash ~ /[^0-9a-fA-F]/) exit 1
+            count++; result=tolower(hash)
+        }
+        END { if(count!=1) exit 1; print result }
+    ' "$tmp/SHA256SUMS") ||
+        failRelease "$tag" "Missing, duplicate, or invalid SHA256SUMS line for $archive."
     download "${base%/}/$tag/$archive" "$tmp/$archive" 2>/dev/null || fail "Cannot download $archive."
     if [ "$hasher" = sha256sum ]; then actual=$(sha256sum "$tmp/$archive")
     else actual=$(shasum -a 256 "$tmp/$archive"); fi
