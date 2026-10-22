@@ -618,6 +618,7 @@ fn ensure_records_with(git_root: &Path, before_publish: impl FnOnce()) -> Result
     }
     let dir = records_dir(git_root)?;
     let legacy = metadata_file(git_root)?;
+    crate::migration::check_write_location(&dir)?;
     if legacy.exists() {
         crate::atomic::import_directory(&dir, &legacy, |staging| {
             let mut store = validated_store(&legacy)?.unwrap_or_else(empty_store);
@@ -627,6 +628,7 @@ fn ensure_records_with(git_root: &Path, before_publish: impl FnOnce()) -> Result
                 save_record(staging, record)?;
             }
             before_publish();
+            crate::migration::check_write_location(&dir)?;
             Ok(())
         })?;
     } else {
@@ -647,6 +649,7 @@ fn save_record(dir: &Path, record: &StoredWorktree) -> Result<()> {
         .as_deref()
         .ok_or_else(|| Error::msg("Missing workspace id"))?;
     let body = serde_json::to_vec_pretty(record).map_err(|error| Error::msg(error.to_string()))?;
+    crate::migration::check_write_location(dir)?;
     crate::atomic::write(&dir.join(format!("{id}.json")), &body)
         .map_err(|error| Error::msg(format!("Failed to save workspace metadata: {error}")))
 }
@@ -680,6 +683,7 @@ fn with_store<T>(
                 .any(|after| after.metadata.id == record.metadata.id)
             {
                 if let Some(id) = &record.metadata.id {
+                    crate::migration::check_write_location(&dir)?;
                     match fs::remove_file(dir.join(format!("{id}.json"))) {
                         Ok(()) => {}
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

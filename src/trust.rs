@@ -256,15 +256,23 @@ fn remember(git_root: &Path) -> Result<()> {
 
 fn update(body: impl FnOnce(&mut BTreeMap<String, String>) -> bool) -> Result<bool> {
     let path = crate::migration::state_dir(crate::migration::Access::Write)?.join("trust.toml");
+    update_at(&path, body)
+}
+
+fn update_at(
+    path: &Path,
+    body: impl FnOnce(&mut BTreeMap<String, String>) -> bool,
+) -> Result<bool> {
     let Some(dir) = path.parent().map(Path::to_path_buf) else {
         return Err(Error::msg(format!("Failed to write {}", path.display())));
     };
+    crate::migration::check_write_location(&dir)?;
     fs::create_dir_all(&dir)
         .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))?;
-    let mut records = load_at(&path)?;
+    let mut records = load_at(path)?;
     let dirty = body(&mut records);
     if dirty {
-        write_records(&path, &dir, &records)?;
+        write_records(path, &dir, &records)?;
     }
     Ok(dirty)
 }
@@ -305,7 +313,8 @@ fn load_at(path: &Path) -> Result<BTreeMap<String, String>> {
     parse_store(path, &content)
 }
 
-fn write_records(path: &Path, _dir: &Path, records: &BTreeMap<String, String>) -> Result<()> {
+fn write_records(path: &Path, dir: &Path, records: &BTreeMap<String, String>) -> Result<()> {
+    crate::migration::check_write_location(dir)?;
     crate::atomic::write(path, render_store(records).as_bytes())
         .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))
 }
@@ -418,6 +427,60 @@ mod tests {
         assert!(!file.exists());
         assert_eq!(load_at(&file).unwrap(), records);
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn stale_legacy_trust_write_refuses_concurrent_migration() {
+        for before_load in [true, false] {
+            let base = std::env::temp_dir()
+                .join(format!("mabo-trust-write-migrate-{}", uuid::Uuid::new_v4()));
+            let old = base.join("maboroshi");
+            fs::create_dir_all(&old).unwrap();
+            let records = BTreeMap::from([(
+                "/repository/.git".to_owned(),
+                "2026-10-23T00:00:00Z".to_owned(),
+            )]);
+            let original = render_store(&records);
+            fs::write(old.join("trust.toml"), &original).unwrap();
+            // Unknown contents keep this writer on legacy; another process then
+            // removes the blocker and migrates before trust removal is committed.
+            let blocker = old.join("unknown");
+            fs::write(&blocker, "blocker").unwrap();
+            let resolved = crate::migration::product_dir(
+                &base,
+                crate::migration::Access::Write,
+                crate::migration::Layout::State,
+            );
+            assert_eq!(resolved, old);
+            fs::remove_file(blocker).unwrap();
+            let migrate = || {
+                crate::migration::product_dir(
+                    &base,
+                    crate::migration::Access::Write,
+                    crate::migration::Layout::State,
+                );
+            };
+            if before_load {
+                migrate();
+            }
+            let error = update_at(&resolved.join("trust.toml"), |records| {
+                if !before_load {
+                    migrate();
+                }
+                records.clear();
+                true
+            })
+            .unwrap_err();
+            assert_eq!(error.exit_code(), 1);
+            assert!(error.to_string().contains("migrated concurrently"));
+            assert!(error.to_string().contains("retry the command"));
+            assert!(!old.exists());
+            assert_eq!(
+                fs::read_to_string(base.join("mabo/trust.toml")).unwrap(),
+                original
+            );
+            fs::remove_dir_all(base).unwrap();
+        }
     }
 
     #[test]

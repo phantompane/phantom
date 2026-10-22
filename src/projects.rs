@@ -101,6 +101,7 @@ impl ProjectRegistryStore {
             .iter()
             .filter(|record| record.root_path == project.root_path)
         {
+            crate::migration::check_write_location(&self.data_dir)?;
             match fs::remove_file(
                 self.data_dir
                     .join("repos")
@@ -119,6 +120,7 @@ impl ProjectRegistryStore {
     }
 
     fn ensure_records_with(&self, before_publish: impl FnOnce()) -> Result<()> {
+        crate::migration::check_write_location(&self.data_dir)?;
         let dir = self.data_dir.join("repos");
         let legacy = self.data_dir.join(REGISTRY_FILE);
         if legacy.exists() {
@@ -127,6 +129,7 @@ impl ProjectRegistryStore {
                     save_project(staging, &project)?;
                 }
                 before_publish();
+                crate::migration::check_write_location(&self.data_dir)?;
                 Ok(())
             })
         } else {
@@ -241,6 +244,9 @@ impl ProjectRegistryStore {
 fn save_project(dir: &Path, project: &ProjectRecord) -> Result<()> {
     let body =
         serde_json::to_vec_pretty(project).map_err(|error| Error::Projects(error.to_string()))?;
+    if let Some(parent) = dir.parent() {
+        crate::migration::check_write_location(parent)?;
+    }
     crate::atomic::write(&dir.join(format!("{}.json", project.id)), &body)
         .map_err(|error| Error::Projects(error.to_string()))
 }

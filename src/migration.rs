@@ -198,6 +198,32 @@ pub(crate) fn product_dir(base: &Path, access: Access, layout: Layout) -> PathBu
     )
 }
 
+/// Refuse a stale legacy write once its corresponding new location exists.
+/// The location is a product directory or an individually migrated metadata item.
+pub(crate) fn check_write_location(location: &Path) -> Result<()> {
+    if location.file_name().is_some_and(|name| name == "mabo") {
+        return Ok(());
+    }
+    let current = if location.file_name().is_some_and(|name| name == LEGACY_NAME) {
+        Some(location.with_file_name("mabo"))
+    } else {
+        location
+            .parent()
+            .filter(|parent| parent.file_name().is_some_and(|name| name == LEGACY_NAME))
+            .map(|parent| {
+                parent
+                    .with_file_name("mabo")
+                    .join(location.file_name().unwrap_or_default())
+            })
+    };
+    if current.is_some_and(|current| present(&current)) {
+        return Err(Error::msg(
+            "The data directory was migrated concurrently; retry the command.",
+        ));
+    }
+    Ok(())
+}
+
 /// Re-resolve only a known legacy product directory, including explicitly supplied stores.
 pub(crate) fn reresolve_product_dir(path: &Path, layout: Layout) -> PathBuf {
     match path

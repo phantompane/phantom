@@ -195,6 +195,7 @@ fn read_document(path: &Path) -> Result<Option<DocumentMut>> {
 
 fn write_document(path: &Path, document: &DocumentMut, prepend_header: bool) -> Result<()> {
     if let Some(parent) = path.parent() {
+        crate::migration::check_write_location(parent)?;
         fs::create_dir_all(parent).map_err(|error| {
             Error::msg(format!("Failed to create {}: {error}", parent.display()))
         })?;
@@ -205,6 +206,9 @@ fn write_document(path: &Path, document: &DocumentMut, prepend_header: bool) -> 
     } else {
         body
     };
+    if let Some(parent) = path.parent() {
+        crate::migration::check_write_location(parent)?;
+    }
     crate::atomic::write(path, contents.as_bytes())
         .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))
 }

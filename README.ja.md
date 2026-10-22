@@ -207,7 +207,7 @@ zsh・fish では「シェル補助」の初期化を使います。gc は先に
 
 既存の `maboroshi` という設定・状態ディレクトリは次の書き込みまでそのまま読み取り、移行先がなければディレクトリ全体を `mabo` にアトミックに改名します。`<git-common-dir>/maboroshi/` 内では metadata の `workspaces/` と `worktrees.json*` だけを移行し、`worktrees/` 内の checkout は移動しません。metadata ディレクトリに想定外の内容があれば元の場所を使います。data の `maboroshi/workspaces/` と `maboroshi/worktrees/` にある既存 checkout も移動せず管理対象のままです。新しい marker は `.mabo-common-dir` で、旧ディレクトリでは `.maboroshi-common-dir` も受け入れます。discovery と古い clone staging の片付けは `.mabo-clone-` と `.maboroshi-clone-` の両方を認識します。
 
-読み取り専用コマンド、dry run、`gc` の計画表示は移行しません。両方の場所が存在すると新しい方を使い、結合せず、無視した旧パスを警告します（空の旧ディレクトリは警告しません）。改名に失敗すると警告して旧パスを使いますが、別プロセスが新パスを作成済みなら新パスを使います。移行ではユーザーファイルをコピー・上書き・削除せず、Git checkout を含む可能性のあるディレクトリは元の場所に残します。
+読み取り専用コマンド、dry run、`gc` の計画表示は移行しません。両方の場所が存在すると新しい方を使い、結合せず、無視した旧パスを警告します（空の旧ディレクトリは警告しません）。改名に失敗すると警告して旧パスを使いますが、別プロセスが新パスを作成済みなら新パスを使います。移行ではユーザーファイルをコピー・上書き・削除せず、Git checkout を含む可能性のあるディレクトリは元の場所に残します。既知の制限: 設定・状態ディレクトリ全体の移行は mabo のファイル名の許可リストに依存するため、旧ディレクトリ自体が許可された名前だけを含む壊れた Git checkout である場合は検出できません。
 
 ```toml
 workspace-root = "../mabo-workspaces"
