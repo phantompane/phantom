@@ -195,9 +195,9 @@ fn broken_pipe_large_list_stdout_preserves_success() {
 #[test]
 fn broken_pipe_stderr_preserves_success_and_usage_status() {
     let repo = Repo::new();
-    fs::create_dir_all(repo.home.join(".config/maboroshi")).unwrap();
+    fs::create_dir_all(repo.home.join(".config/mabo")).unwrap();
     fs::write(
-        repo.home.join(".config/maboroshi/config.toml"),
+        repo.home.join(".config/mabo/config.toml"),
         "directory-name-separator = \"-\"\n",
     )
     .unwrap();
@@ -634,7 +634,7 @@ fn create_list_where_delete_and_attach() {
     assert!(worktree.join("README.md").is_file());
     assert!(!repo.repo.join(".git/phantom").exists());
     assert!(!repo.repo.join(".git/ptm").exists());
-    assert!(repo.repo.join(".git/maboroshi/workspaces").is_dir());
+    assert!(repo.repo.join(".git/mabo/workspaces").is_dir());
 
     let duplicate = repo.mabo(&["create", "feature/add-tests"]);
     assert_eq!(duplicate.status.code(), Some(4));
@@ -1050,7 +1050,7 @@ fn preferences_and_project_registry() {
     assert!(
         set_stdout.contains(
             repo.home
-                .join(".config/maboroshi/config.toml")
+                .join(".config/mabo/config.toml")
                 .to_str()
                 .expect("path")
         ),
@@ -1099,7 +1099,7 @@ fn preferences_and_project_registry() {
 }
 
 #[test]
-fn project_registry_is_stored_under_xdg_state_home_maboroshi() {
+fn project_registry_is_stored_under_xdg_state_home_mabo() {
     let repo = Repo::new();
     let legacy = repo.root.join("state/phantom");
     let previous = repo.root.join("state/ptm");
@@ -1111,7 +1111,7 @@ fn project_registry_is_stored_under_xdg_state_home_maboroshi() {
     let added = repo.mabo(&["repo", "add", "--json"]);
     assert!(added.status.success(), "{}", text(&added.stderr));
     let registry = fs::read_to_string(
-        fs::read_dir(repo.root.join("state/maboroshi/repos"))
+        fs::read_dir(repo.root.join("state/mabo/repos"))
             .unwrap()
             .next()
             .unwrap()
@@ -1142,8 +1142,8 @@ fn project_registry_is_stored_under_xdg_state_home_maboroshi() {
     let help = repo.mabo(&["repo", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
     let help_text = text(&help.stdout);
-    assert!(help_text.contains("$XDG_STATE_HOME/maboroshi"));
-    assert!(help_text.contains("~/.local/state/maboroshi"));
+    assert!(help_text.contains("$XDG_STATE_HOME/mabo"));
+    assert!(help_text.contains("~/.local/state/mabo"));
     assert!(!help_text.contains("XDG_STATE_HOME/phantom"));
     assert!(!help_text.contains(".local/state/phantom"));
     assert!(!help_text.contains("XDG_STATE_HOME/ptm"));
@@ -1151,7 +1151,7 @@ fn project_registry_is_stored_under_xdg_state_home_maboroshi() {
 }
 
 #[test]
-fn project_registry_defaults_to_home_local_state_maboroshi() {
+fn project_registry_defaults_to_home_local_state_mabo() {
     let repo = Repo::new();
     let legacy = repo.home.join(".local/state/phantom");
     let previous = repo.home.join(".local/state/ptm");
@@ -1169,7 +1169,7 @@ fn project_registry_defaults_to_home_local_state_maboroshi() {
         .expect("add");
     assert!(added.status.success(), "{}", text(&added.stderr));
     let registry = fs::read_to_string(
-        fs::read_dir(repo.home.join(".local/state/maboroshi/repos"))
+        fs::read_dir(repo.home.join(".local/state/mabo/repos"))
             .unwrap()
             .next()
             .unwrap()
@@ -1221,7 +1221,7 @@ fn write_legacy_registry(dir: &std::path::Path) {
 #[test]
 fn preferences_file_uses_xdg_config_home() {
     let repo = Repo::new();
-    let path = repo.home.join(".config/maboroshi/config.toml");
+    let path = repo.home.join(".config/mabo/config.toml");
     let gitconfig = fs::read_to_string(repo.home.join(".gitconfig")).expect("gitconfig");
 
     let missing = repo.mabo(&["config", "get", "discover-ghq"]);
@@ -1299,7 +1299,7 @@ fn preferences_file_uses_xdg_config_home() {
 #[test]
 fn keep_branch_preference_applies_to_delete() {
     let repo = Repo::new();
-    let path = repo.home.join(".config/maboroshi/config.toml");
+    let path = repo.home.join(".config/mabo/config.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "keep-branch = true\n").unwrap();
     assert!(repo.mabo(&["create", "removable"]).status.success());
@@ -1828,7 +1828,7 @@ fn delete_removes_empty_parents_but_keeps_the_project_directory_and_marker() {
     let project = managed_root(&repo);
     let marker_path = project.join(mabo::paths::PROJECT_MARKER);
     let marker = fs::read(&marker_path).expect("marker");
-    let ceiling = project.parent().expect("maboroshi/worktrees");
+    let ceiling = project.parent().expect("mabo/workspaces");
     let parent = project.join("cursor");
     assert!(parent.join("foo").is_dir());
     let deleted = repo.mabo(&["remove", "cursor/foo"]);
@@ -1837,7 +1837,7 @@ fn delete_removes_empty_parents_but_keeps_the_project_directory_and_marker() {
     assert!(!parent.exists(), "empty parent directory should be removed");
     assert!(project.is_dir(), "empty project directory should stay");
     assert_eq!(fs::read(&marker_path).expect("retained marker"), marker);
-    assert!(ceiling.is_dir(), "maboroshi/worktrees should stay");
+    assert!(ceiling.is_dir(), "mabo/workspaces should stay");
 
     assert!(repo.mabo(&["create", "cursor/foo"]).status.success());
     assert!(repo.mabo(&["create", "cursor/bar"]).status.success());
@@ -3183,7 +3183,7 @@ fn clone_registration_failure_preserves_completed_clone_and_fetch_results() {
 
         // A file at the records-directory path prevents registration writes,
         // including when tests run as a user that can bypass Unix permissions.
-        let registry = repo.root.join("state/maboroshi/repos");
+        let registry = repo.root.join("state/mabo/repos");
         fs::create_dir_all(registry.parent().expect("state dir")).expect("state dir");
         fs::write(&registry, "blocked registry\n").expect("block registry");
         let destination = root.join("github.com/example/widget");
@@ -4859,7 +4859,7 @@ fn github_recheckout_keeps_the_original_intent() {
         .as_str()
         .expect("created")
         .to_string();
-    let file = repo.repo.join(".git/maboroshi/workspaces");
+    let file = repo.repo.join(".git/mabo/workspaces");
     let mut document: serde_json::Value =
         serde_json::from_str(&records::read_to_string(&file).expect("store")).expect("json");
     document["worktrees"][0]["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
@@ -4913,7 +4913,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     let corrupt = Repo::new();
     publish_pr_topic(&corrupt);
     let corrupt_path = fake_gh_for_topic_pr(&corrupt);
-    let file = corrupt.repo.join(".git/maboroshi/workspaces");
+    let file = corrupt.repo.join(".git/mabo/workspaces");
     fs::create_dir_all(file.parent().expect("dir")).expect("dir");
     records::write(&file, "{not json").expect("corrupt");
     let refused = corrupt
@@ -4941,7 +4941,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     let locked = Repo::new();
     publish_pr_topic(&locked);
     let locked_path = fake_gh_for_topic_pr(&locked);
-    let metadata_dir = locked.repo.join(".git/maboroshi/workspaces");
+    let metadata_dir = locked.repo.join(".git/mabo/workspaces");
     fs::create_dir_all(&metadata_dir).expect("dir");
     let store = "{\n  \"version\": 1,\n  \"worktrees\": []\n}\n";
     records::write(&metadata_dir, store).expect("store");
@@ -5031,7 +5031,7 @@ fn delete_refuses_when_metadata_is_not_writable() {
     let repo = Repo::new();
     let created = repo.mabo(&["create", "doomed", "--purpose", "creator", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let metadata_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let metadata_dir = repo.repo.join(".git/mabo/workspaces");
     let store = records::read_to_string(&metadata_dir).expect("store");
     use std::os::unix::fs::PermissionsExt;
     let mut locked = fs::metadata(&metadata_dir).expect("meta").permissions();
@@ -5134,7 +5134,7 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
         .success());
     let file = repo
         .repo
-        .join(".git/maboroshi/workspaces")
+        .join(".git/mabo/workspaces")
         .join(format!("{id}.json"));
     fs::write(&file, "{not json").expect("corrupt");
 
@@ -5261,12 +5261,8 @@ fn separate_git_dir_creates_the_default_worktree_under_xdg() {
     let worktree = managed_directory(&checkout, &root.join("xdg")).join("feature");
     assert_worktree_object(&created_json["data"]["workspace"], "feature", &worktree);
     assert!(worktree.is_dir());
-    assert!(!sep
-        .join("maboroshi")
-        .join("workspaces")
-        .join("feature")
-        .exists());
-    assert!(sep.join("maboroshi").join("workspaces").is_dir());
+    assert!(!sep.join("mabo").join("workspaces").join("feature").exists());
+    assert!(sep.join("mabo").join("workspaces").is_dir());
     assert!(checkout.join(".git").is_file(), ".git stayed a gitdir file");
     assert!(!checkout.join(".git").join("maboroshi").exists());
     let _ = fs::remove_dir_all(&root);
@@ -5352,7 +5348,7 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
         text(&created.stderr)
     );
     assert!(worktrees.join("feature").is_dir());
-    let store = sep.join("maboroshi").join("workspaces");
+    let store = sep.join("mabo").join("workspaces");
     let document: serde_json::Value =
         serde_json::from_str(&records::read_to_string(&store).expect("common store"))
             .expect("json");
@@ -5484,7 +5480,7 @@ fn separate_git_dir_delete_current_removes_the_linked_worktree() {
     );
     assert!(!repo
         .git_dir
-        .join("maboroshi")
+        .join("mabo")
         .join("workspaces")
         .join("linked")
         .exists());
@@ -6184,9 +6180,9 @@ fn submodule_lists_and_execs_the_main_checkout() {
     );
     let git_dir = superproject.join(".git").join("modules").join("sub");
     let linked = managed_directory(&checkout, &root.join("xdg")).join("linked");
-    assert!(git_dir.join("maboroshi").join("workspaces").is_dir());
+    assert!(git_dir.join("mabo").join("workspaces").is_dir());
     assert!(!git_dir
-        .join("maboroshi")
+        .join("mabo")
         .join("workspaces")
         .join("linked")
         .exists());
@@ -6366,7 +6362,7 @@ fn copy_dir(from: &Path, to: &Path) {
 fn blocked_project_import_exits_failure_and_preserves_legacy_for_retry() {
     for json in [false, true] {
         let repo = Repo::new();
-        let state = repo.root.join("state/maboroshi");
+        let state = repo.root.join("state/mabo");
         fs::create_dir_all(&state).unwrap();
         let legacy = state.join("projects.json");
         let fixture = include_str!("fixtures/alpha6/projects.json");
@@ -6412,7 +6408,7 @@ fn blocked_project_import_exits_failure_and_preserves_legacy_for_retry() {
 fn blocked_workspace_import_exits_failure_and_preserves_legacy_for_retry() {
     for json in [false, true] {
         let repo = Repo::new();
-        let legacy = repo.repo.join(".git/maboroshi/worktrees.json");
+        let legacy = repo.repo.join(".git/mabo/worktrees.json");
         fs::create_dir_all(legacy.parent().unwrap()).unwrap();
         let fixture = include_str!("fixtures/alpha6/worktrees.json");
         fs::write(&legacy, fixture).unwrap();
@@ -6459,8 +6455,8 @@ fn duplicate_legacy_metadata_paths_block_mutations() {
     let created = repo.mabo(&["create", "kept", "--purpose", "creator"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     repo.git(&["branch", "side"]);
-    fs::remove_dir_all(repo.repo.join(".git/maboroshi/workspaces")).expect("remove records");
-    let file = repo.repo.join(".git/maboroshi/worktrees.json");
+    fs::remove_dir_all(repo.repo.join(".git/mabo/workspaces")).expect("remove records");
+    let file = repo.repo.join(".git/mabo/worktrees.json");
     let body = "{\n  \"version\": 1,\n  \"worktrees\": [\n    {\"path\": \"/tmp/one\", \"owner\": \"a\"},\n    {\"path\": \"/tmp/one\", \"owner\": \"b\"}\n  ]\n}\n";
     records::write(&file, body).expect("duplicate");
     let before = records::read_to_string(&file).expect("snapshot");
@@ -6568,7 +6564,7 @@ fn squash_onto_main(repo: &Repo, name: &str) {
 }
 
 fn clear_created_from(repo: &Repo, name: &str) {
-    let file = repo.repo.join(".git/maboroshi/workspaces");
+    let file = repo.repo.join(".git/mabo/workspaces");
     let mut document: serde_json::Value =
         serde_json::from_str(&records::read_to_string(&file).expect("store")).expect("json");
     let records = document["worktrees"].as_array_mut().expect("records");
@@ -6595,7 +6591,7 @@ fn clear_created_from(repo: &Repo, name: &str) {
 }
 
 fn age_metadata(repo: &Repo, name: &str) {
-    let file = repo.repo.join(".git/maboroshi/workspaces");
+    let file = repo.repo.join(".git/mabo/workspaces");
     let mut document: serde_json::Value =
         serde_json::from_str(&records::read_to_string(&file).expect("store")).expect("json");
     let records = document["worktrees"].as_array_mut().expect("records");
@@ -7008,9 +7004,9 @@ fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
         .contains(" remove --delete-unpreserved-branch -- 'topic'"));
     assert!(worktree_dir(&repo, "topic").is_dir());
 
-    fs::create_dir_all(repo.home.join(".config/maboroshi")).expect("config dir");
+    fs::create_dir_all(repo.home.join(".config/mabo")).expect("config dir");
     fs::write(
-        repo.home.join(".config/maboroshi/config.toml"),
+        repo.home.join(".config/mabo/config.toml"),
         "keep-branch = true\n",
     )
     .expect("preference");
@@ -7082,7 +7078,7 @@ esac
                 .command(env!("CARGO_BIN_EXE_mabo"), &args)
                 .env("PATH", std::env::join_paths(paths).expect("paths"))
                 .env("REAL_GIT", &real_git)
-                .env("METADATA_DIR", repo.repo.join(".git/maboroshi/workspaces"))
+                .env("METADATA_DIR", repo.repo.join(".git/mabo/workspaces"))
                 .output()
                 .expect("gc");
             assert_eq!(
@@ -7593,7 +7589,7 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
         &path
     ));
     assert!(!repo.repo.join(".git/maboroshi/worktrees/feature").exists());
-    assert!(repo.repo.join(".git/maboroshi/workspaces").is_dir());
+    assert!(repo.repo.join(".git/mabo/workspaces").is_dir());
     let common = mabo::git::canonical_common_dir(&repo.repo).expect("common dir");
     let marker =
         fs::read_to_string(managed_root(&repo).join(mabo::paths::PROJECT_MARKER)).expect("marker");
@@ -8064,7 +8060,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         text(&moved.stdout)
     );
 
-    let file = repo.repo.join(".git/maboroshi/workspaces");
+    let file = repo.repo.join(".git/mabo/workspaces");
     let mut document: serde_json::Value =
         serde_json::from_str(&records::read_to_string(&file).expect("store")).expect("store json");
     for record in document["worktrees"].as_array_mut().expect("records") {
@@ -8269,8 +8265,7 @@ fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
             .is_file(),
         "last workspace deletion should keep the project directory and marker"
     );
-    let store =
-        records::read_to_string(repo.repo.join(".git/maboroshi/workspaces")).unwrap_or_default();
+    let store = records::read_to_string(repo.repo.join(".git/mabo/workspaces")).unwrap_or_default();
     assert!(!store.contains("alice"), "{store}");
 }
 
@@ -8357,7 +8352,7 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
     );
     let project = managed_directory(&repo.repo, &real);
     let via_link = link
-        .join("maboroshi")
+        .join("mabo")
         .join("workspaces")
         .join(project.file_name().expect("project name"))
         .join("feature");
@@ -8953,8 +8948,7 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
         text(&outside_where.stderr)
     );
     assert!(paths_match(text(&outside_where.stdout).trim(), &outside));
-    let stored =
-        records::read_to_string(repo.repo.join(".git/maboroshi/workspaces")).expect("meta");
+    let stored = records::read_to_string(repo.repo.join(".git/mabo/workspaces")).expect("meta");
     assert!(stored.contains("\"name\": \"zz\""), "{stored}");
     let names = text(
         &repo
@@ -9005,8 +8999,7 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
     let found_sha = repo.mabo(&["path", &sha]);
     assert!(found_sha.status.success(), "{}", text(&found_sha.stderr));
     assert!(paths_match(text(&found_sha.stdout).trim(), &loose));
-    let stored =
-        records::read_to_string(repo.repo.join(".git/maboroshi/workspaces")).expect("meta");
+    let stored = records::read_to_string(repo.repo.join(".git/mabo/workspaces")).expect("meta");
     assert!(stored.contains(&format!("\"name\": \"{sha}\"")), "{stored}");
     fs::write(loose.join("later.txt"), "later\n").expect("later");
     for args in [vec!["add", "later.txt"], vec!["commit", "-m", "later"]] {
@@ -9044,7 +9037,7 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
 fn meta_set_records_outside_worktrees_despite_orphaned_names() {
     for layout in [false, true] {
         let repo = Repo::new();
-        let records_path = repo.repo.join(".git/maboroshi/worktrees.json");
+        let records_path = repo.repo.join(".git/mabo/worktrees.json");
         let missing = repo.root.join("missing");
         fs::create_dir_all(records_path.parent().expect("parent")).expect("directory");
         let records = serde_json::json!({
@@ -9115,7 +9108,7 @@ fn meta_set_refuses_to_record_an_outside_worktree_under_a_taken_name() {
         outside.to_str().expect("outside"),
         "HEAD",
     ]);
-    let meta_path = repo.repo.join(".git/maboroshi/workspaces");
+    let meta_path = repo.repo.join(".git/mabo/workspaces");
     let before = records::read(&meta_path).expect("before");
     let marked = repo.mabo(&["set", "zz", "--purpose", "a"]);
     assert_eq!(
@@ -9164,7 +9157,7 @@ fn a_record_without_a_stored_name_keeps_the_ptm_folder_name() {
         .expect("head");
     assert!(head.status.success(), "{}", text(&head.stderr));
     let sha = text(&head.stdout);
-    let meta = repo.repo.join(".git/maboroshi/worktrees.json");
+    let meta = repo.repo.join(".git/mabo/worktrees.json");
     fs::create_dir_all(meta.parent().expect("meta dir")).expect("meta dir");
     let path = next.to_string_lossy();
     records::write(
@@ -9732,7 +9725,7 @@ fn orphaned_records_are_listed_and_deleted_without_hooks_or_branch_changes() {
     assert_eq!(document["data"]["items"][0]["branchDeleted"], false);
     assert!(branch_listed(&repo, "json-gone"));
     let records: serde_json::Value = serde_json::from_slice(
-        &records::read(repo.repo.join(".git/maboroshi/workspaces")).expect("records"),
+        &records::read(repo.repo.join(".git/mabo/workspaces")).expect("records"),
     )
     .expect("json");
     assert_eq!(records["worktrees"], serde_json::json!([]));
@@ -9743,7 +9736,7 @@ fn orphaned_records_are_listed_and_deleted_without_hooks_or_branch_changes() {
 fn delete_prefers_a_live_worktree_over_an_orphaned_record_with_the_same_name() {
     let repo = Repo::new();
     assert!(repo.mabo(&["create", "shared"]).status.success());
-    let records_path = repo.repo.join(".git/maboroshi/workspaces");
+    let records_path = repo.repo.join(".git/mabo/workspaces");
     let mut records: serde_json::Value =
         serde_json::from_slice(&records::read(&records_path).expect("records")).expect("json");
     let missing = repo.root.join("missing");
@@ -9767,7 +9760,7 @@ fn delete_prefers_a_live_worktree_over_an_orphaned_record_with_the_same_name() {
 #[test]
 fn ambiguous_orphaned_names_leave_all_records_untouched() {
     let repo = Repo::new();
-    let records_path = repo.repo.join(".git/maboroshi/worktrees.json");
+    let records_path = repo.repo.join(".git/mabo/worktrees.json");
     fs::create_dir_all(records_path.parent().expect("parent")).expect("directory");
     let records = serde_json::json!({
         "version": 1,
@@ -10715,7 +10708,7 @@ fn legacy_worktrees_directories_remain_usable_without_moving_workspaces() {
         assert!(!old_root.join("feature/delete").exists());
         empty_commit(&repo, &old_root.join("feature/gc"), "retire this workspace");
         repo.git(&["merge", "--ff-only", "refs/heads/feature/gc"]);
-        let dir = repo.repo.join(".git/maboroshi/workspaces");
+        let dir = repo.repo.join(".git/mabo/workspaces");
         for entry in fs::read_dir(&dir).unwrap() {
             let file = entry.unwrap().path();
             let mut record: serde_json::Value =
@@ -10740,7 +10733,7 @@ fn legacy_worktrees_directories_remain_usable_without_moving_workspaces() {
         assert!(out.status.success(), "{doc}");
         assert!(
             Path::new(doc["data"]["workspace"]["path"].as_str().unwrap())
-                .starts_with(repo.root.join("xdg/maboroshi/workspaces"))
+                .starts_with(repo.root.join("xdg/mabo/workspaces"))
         );
     }
 }
@@ -11011,7 +11004,7 @@ fn outer_config_commands_text_json_sources_and_exit_codes() {
         ] {
             outer_run(&repo, &args, json, command, status);
         }
-        let path = repo.home.join(".config/maboroshi/config.toml");
+        let path = repo.home.join(".config/mabo/config.toml");
         fs::write(path, "bad = [\n").unwrap();
         outer_run(&repo, &["config", "list"], json, "config list", 1);
     }
@@ -11058,7 +11051,7 @@ fn outer_clone_root_sources_match_the_existing_resolution_chain() {
 fn outer_legacy_config_warnings_appear_once_per_invocation() {
     let repo = Repo::new();
     assert!(repo.mabo(&["repo", "add"]).status.success());
-    let path = repo.home.join(".config/maboroshi/config.toml");
+    let path = repo.home.join(".config/mabo/config.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let path_env = silent_ghq_path(&repo);
     let warnings = [
@@ -11134,7 +11127,7 @@ fn outer_legacy_config_warnings_appear_once_per_invocation() {
 fn outer_legacy_config_warns_takes_effect_and_rewrites_on_set_or_unset() {
     for mutation in ["set", "unset"] {
         let repo = Repo::new();
-        let path = repo.home.join(".config/maboroshi/config.toml");
+        let path = repo.home.join(".config/mabo/config.toml");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let legacy = "# retain this\nworktrees-directory = \"../legacy-spaces\" # location\nroot = \"~/legacy-clones\"\nghq-discovery = false\ndirectory-name-separator = [\"ignored regardless of type\"]\nkeep-branch = true\n";
         fs::write(&path, legacy).unwrap();
@@ -11207,7 +11200,7 @@ fn outer_legacy_config_warns_takes_effect_and_rewrites_on_set_or_unset() {
         );
     }
     let repo = Repo::new();
-    let path = repo.home.join(".config/maboroshi/config.toml");
+    let path = repo.home.join(".config/mabo/config.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "worktrees-directory = \"../old\"\nworkspace-root = \"~/new\"\nghq-discovery = false\ndiscover-ghq = true\n").unwrap();
     let out = repo.mabo(&["config", "list", "--json"]);
@@ -12139,7 +12132,7 @@ fn inspection_list_and_exec_leave_legacy_and_schema2_record_bytes_and_mtime_unch
     for legacy in [false, true] {
         let repo = Repo::new();
         let created = json_value(&repo.mabo(&["create", "feature", "--purpose", "task", "--json"]));
-        let dir = repo.repo.join(".git/maboroshi/workspaces");
+        let dir = repo.repo.join(".git/mabo/workspaces");
         let file = dir.join(format!(
             "{}.json",
             created["data"]["workspace"]["id"].as_str().unwrap()
@@ -12152,7 +12145,7 @@ fn inspection_list_and_exec_leave_legacy_and_schema2_record_bytes_and_mtime_unch
             record.as_object_mut().unwrap().remove("id");
             record.as_object_mut().unwrap().remove("schema");
             fs::remove_dir_all(&dir).unwrap();
-            let file = repo.repo.join(".git/maboroshi/worktrees.json");
+            let file = repo.repo.join(".git/mabo/worktrees.json");
             fs::write(
                 &file,
                 serde_json::to_vec(&serde_json::json!({"version": 1, "worktrees": [record]}))
@@ -12239,7 +12232,7 @@ fn gc_age_selection_ignores_legacy_owner_and_last_used() {
     let repo = Repo::new();
     assert!(repo.mabo(&["create", "old"]).status.success());
     land_branch(&repo, "old");
-    let dir = repo.repo.join(".git/maboroshi/workspaces");
+    let dir = repo.repo.join(".git/mabo/workspaces");
     let mut record =
         serde_json::from_slice::<serde_json::Value>(&records::read(&dir).unwrap()).unwrap();
     record["worktrees"][0]["owner"] = serde_json::json!("another-agent");
@@ -12360,7 +12353,7 @@ fn selectors_fail_before_side_effects_for_missing_ambiguous_and_foreign_dot() {
         .unwrap()
         .status
         .success());
-    let records = repo.repo.join(".git/maboroshi/workspaces");
+    let records = repo.repo.join(".git/mabo/workspaces");
     let before = records::read(&records).unwrap();
     for command in ["show", "path", "set", "exec", "sync", "remove"] {
         for (selector, code, error) in [
@@ -12575,7 +12568,7 @@ fn set_updates_and_unsets_every_intent_field_atomically() {
         created["data"]["workspace"]["createdAt"]
     );
     assert!(workspace["updatedAt"].is_string());
-    let records = repo.repo.join(".git/maboroshi/workspaces");
+    let records = repo.repo.join(".git/mabo/workspaces");
     for args in [
         vec!["set", "--unset", "unknown", "--json"],
         vec!["set", "--base", "does-not-exist", "--json"],
@@ -12807,7 +12800,7 @@ fn assert_inspection_uses_checkout_config(include: bool) {
         "refs/heads/checkout-upstream"
     );
     assert_eq!(upstream_name(&repo, "local"), "origin/checkout-upstream");
-    let store = repo.repo.join(".git/maboroshi/workspaces");
+    let store = repo.repo.join(".git/mabo/workspaces");
     let before = records::read(&store).unwrap();
     for gone in [false, true] {
         if gone {
@@ -13232,7 +13225,7 @@ fn assert_legacy_delete_with_hooks(migrate_in_hook: bool) {
     for (name, path) in ["one", "two"].iter().zip(&paths) {
         repo.git(&["worktree", "add", "-b", name, path.to_str().unwrap()]);
     }
-    let legacy = repo.repo.join(".git/maboroshi/worktrees.json");
+    let legacy = repo.repo.join(".git/mabo/worktrees.json");
     fs::create_dir_all(legacy.parent().unwrap()).unwrap();
     let fixture = serde_json::to_vec(&serde_json::json!({
         "version": 1, "worktrees": [{"path": paths[0]}, {"path": paths[1]}]
@@ -13291,7 +13284,7 @@ fn assert_legacy_delete_with_hooks(migrate_in_hook: bool) {
         fs::read(legacy.with_extension("json.imported")).unwrap(),
         fixture
     );
-    let records = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    let records = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
     let records: serde_json::Value = serde_json::from_slice(&records).unwrap();
     assert!(records["worktrees"].as_array().unwrap().is_empty());
 }
@@ -13301,7 +13294,7 @@ fn delete_stops_when_a_migrated_record_is_replaced_between_hooks() {
     let repo = Repo::new();
     let path = managed(&repo, "topic");
     repo.git(&["worktree", "add", "-b", "topic", path.to_str().unwrap()]);
-    let legacy = repo.repo.join(".git/maboroshi/worktrees.json");
+    let legacy = repo.repo.join(".git/mabo/worktrees.json");
     fs::create_dir_all(legacy.parent().unwrap()).unwrap();
     fs::write(
         &legacy,
@@ -13312,7 +13305,7 @@ fn delete_stops_when_a_migrated_record_is_replaced_between_hooks() {
     let bin = env!("CARGO_BIN_EXE_mabo");
     let commands = [
         format!("'{bin}' set . --purpose migrated"),
-        format!("rm \"$MABO_REPO_PATH/.git/maboroshi/workspaces/$MABO_WORKSPACE_ID.json\" && '{bin}' set . --purpose replacement"),
+        format!("rm \"$MABO_REPO_PATH/.git/mabo/workspaces/$MABO_WORKSPACE_ID.json\" && '{bin}' set . --purpose replacement"),
         "touch third-hook-ran".to_owned(),
     ];
     fs::write(
@@ -13642,7 +13635,7 @@ fn github_reuse_propagates_orphan_ambiguity_and_git_read_errors() {
                 )
                 .expect("issue");
             }
-            let file = repo.repo.join(".git/maboroshi/workspaces");
+            let file = repo.repo.join(".git/mabo/workspaces");
             let body = serde_json::json!({"worktrees": [
                 {"path": repo.root.join("missing-one"), "name": name},
                 {"path": repo.root.join("missing-two"), "name": name}
@@ -13965,7 +13958,7 @@ fn unified_create_reuse_is_idempotent_and_never_repeats_setup() {
         first["data"]["copy"]["copied"],
         serde_json::json!(["secret"])
     );
-    let records = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    let records = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
     fs::write(repo.repo.join("secret"), "changed").unwrap();
     for _ in 0..2 {
         let out = repo
@@ -14004,7 +13997,7 @@ fn unified_create_reuse_is_idempotent_and_never_repeats_setup() {
         "first"
     );
     assert_eq!(
-        records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+        records::read(repo.repo.join(".git/mabo/workspaces")).unwrap(),
         records
     );
     repo.git(&["branch", "another"]);
@@ -14198,7 +14191,7 @@ fn review10_create_rejects_foreign_repository_host_and_source_kind_urls() {
                 "repo view --json url,owner,name\n"
             );
             assert!(!managed(&repo, "review").exists());
-            assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
+            assert!(!repo.repo.join(".git/mabo/workspaces").exists());
         }
     }
 }
@@ -14353,7 +14346,7 @@ fn adopt_and_forget_preserve_git_and_skip_setup() {
     assert_eq!(fs::read_to_string(outside.join("local")).unwrap(), "keep");
     assert!(branch_listed(&repo, "topic+fix"));
     assert!(
-        records::read_to_string(repo.repo.join(".git/maboroshi/workspaces"))
+        records::read_to_string(repo.repo.join(".git/mabo/workspaces"))
             .unwrap()
             .contains("\"worktrees\": []")
     );
@@ -14548,9 +14541,7 @@ fn create_reuse_propagates_corrupt_record_errors() {
         .as_str()
         .unwrap()
         .to_owned();
-    let file = repo
-        .repo
-        .join(format!(".git/maboroshi/workspaces/{id}.json"));
+    let file = repo.repo.join(format!(".git/mabo/workspaces/{id}.json"));
     fs::write(&file, "{invalid").unwrap();
     let out = repo.mabo(&["create", "--branch", "existing", "--reuse", "--json"]);
     assert_eq!(out.status.code(), Some(1));
@@ -14935,7 +14926,7 @@ fn review9_pr_unknown_base_stays_unknown_after_default_returns() {
     repo.git(&["commit", "-m", "advance default"]);
     // Keep sync local so the PR's former remote default cannot hide the fallback.
     repo.git(&["remote", "remove", "origin"]);
-    let store = repo.repo.join(".git/maboroshi/workspaces");
+    let store = repo.repo.join(".git/mabo/workspaces");
     let record_before = records::read(&store).unwrap();
     for selector in ["topic", "--all"] {
         let out = repo.mabo(&["sync", selector, "--json"]);
@@ -14999,7 +14990,7 @@ fn review3_reuse_rejects_a_prunable_checkout_with_a_missing_git_file() {
             .unwrap();
         assert!(text(&listed.stdout).contains("prunable"));
         let records_before =
-            records::read_to_string(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+            records::read_to_string(repo.repo.join(".git/mabo/workspaces")).unwrap();
         create.push("--reuse");
         let out = repo.mabo(&create);
         assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
@@ -15012,7 +15003,7 @@ fn review3_reuse_rejects_a_prunable_checkout_with_a_missing_git_file() {
         );
         assert!(message.contains(".git"), "{message}");
         assert_eq!(
-            records::read_to_string(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+            records::read_to_string(repo.repo.join(".git/mabo/workspaces")).unwrap(),
             records_before
         );
         assert!(directory.is_dir());
@@ -15097,7 +15088,7 @@ fn assert_reuse_rejects_swapped_git_dir(primary: bool) {
         text(&actual_branch.stdout),
         if primary { "main" } else { "other" }
     );
-    let records_before = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    let records_before = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
     let gitfile_before = fs::read(directory.join(".git")).unwrap();
     for source in [vec![], vec!["--branch", "review"]] {
         let mut args = vec!["create", "review", "--reuse", "--json"];
@@ -15108,7 +15099,7 @@ fn assert_reuse_rejects_swapped_git_dir(primary: bool) {
         assert_eq!(doc["error"]["code"], "failed");
         assert!(doc["error"]["message"].as_str().unwrap().contains(".git"));
         assert_eq!(
-            records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+            records::read(repo.repo.join(".git/mabo/workspaces")).unwrap(),
             records_before
         );
         assert_eq!(fs::read(directory.join(".git")).unwrap(), gitfile_before);
@@ -15165,7 +15156,7 @@ fn review5_user_names_reject_reserved_selectors_without_records() {
                 text(&out.stdout)
             );
             assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
-            assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
+            assert!(!repo.repo.join(".git/mabo/workspaces").exists());
             assert!(directory.join(".git").is_file());
         }
     }
@@ -15365,7 +15356,7 @@ fn assert_adopt_rejects_swapped_git_dir(primary: bool) {
     ]);
     assert!(!out.status.success(), "{}", text(&out.stdout));
     assert_eq!(assert_envelope(&out, "adopt")["error"]["code"], "not_found");
-    assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
+    assert!(!repo.repo.join(".git/mabo/workspaces").exists());
     assert_eq!(fs::read(directory.join(".git")).unwrap(), gitfile);
 }
 
@@ -15413,7 +15404,7 @@ fn assert_review11_primary_refused(pr: bool, named: bool) {
         }
         let before = json_value(&repo.mabo(&["show", ".", "--json"]));
         let primary_name = before["data"]["workspace"]["name"].as_str().unwrap();
-        let record_path = repo.repo.join(".git/maboroshi/workspaces");
+        let record_path = repo.repo.join(".git/mabo/workspaces");
         let records_before = records::read(&record_path).ok();
         let mut args = vec!["create"];
         if named {
@@ -15513,7 +15504,7 @@ fn assert_review11_stale_registration_skipped(adopt: bool, directory: bool) {
         assert_eq!(tree["createdAt"], serde_json::Value::Null);
     } else {
         assert_eq!(doc["data"]["source"]["reused"], true);
-        assert!(!repo.repo.join(".git/maboroshi/workspaces").exists());
+        assert!(!repo.repo.join(".git/mabo/workspaces").exists());
     }
     assert_eq!(fs::read(checkout.join(".git")).unwrap(), gitfile);
     assert!(stale.exists());
@@ -15619,7 +15610,7 @@ fn assert_rejects_symlink_to_registered_workspace_entry(command: &str, gitfile: 
         };
         let a_before = snapshot(&a);
         let b_before = snapshot(&b);
-        let records_path = repo.repo.join(".git/maboroshi/workspaces");
+        let records_path = repo.repo.join(".git/mabo/workspaces");
         let records_before = snapshot(&records_path);
         let args = match command {
             "setup-no-hooks" => vec!["setup", "a", "--no-hooks", "--json"],
@@ -15766,7 +15757,7 @@ fn assert_setup_rejects_replaced_checkout(replacement: &str) {
                 _ => panic!("Unknown replacement"),
             }
             fs::write(target.join("README.md"), "changed in target\n").unwrap();
-            let records_path = repo.repo.join(".git/maboroshi/workspaces");
+            let records_path = repo.repo.join(".git/mabo/workspaces");
             let records_before = records::read(&records_path).unwrap();
             let head_before = fs::read(repo.repo.join(".git/HEAD")).unwrap();
             let index_before = fs::read(repo.repo.join(".git/index")).unwrap();
@@ -15863,7 +15854,7 @@ fn setup_source_checkout_rejects_another_repository_before_changes() {
         .mabo(&["create", "target", "--no-setup"])
         .status
         .success());
-    let before = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    let before = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
     fs::write(repo.repo.join(".gitignore"), "*.env\n").unwrap();
     fs::write(repo.repo.join("secret.env"), "secret").unwrap();
     fs::write(
@@ -15886,7 +15877,7 @@ fn setup_source_checkout_rejects_another_repository_before_changes() {
         .unwrap()
         .contains("selected repository"));
     assert_eq!(
-        records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+        records::read(repo.repo.join(".git/mabo/workspaces")).unwrap(),
         before
     );
     assert!(!managed(&repo, "target/secret.env").exists());
@@ -16225,7 +16216,7 @@ fn setup_retry_hint_preserves_selected_repository_from_any_directory() {
                     "--no-setup",
                 ]);
                 assert!(decoy.status.success(), "{}", text(&decoy.stderr));
-                let other_records = other.repo.join(".git/maboroshi/workspaces");
+                let other_records = other.repo.join(".git/mabo/workspaces");
                 let before = records::read(&other_records).unwrap();
                 fs::write(
                     other.repo.join(".mabo.toml"),
@@ -16352,7 +16343,7 @@ fn setup_lifecycle_failure_retry_and_shared_state() {
     );
     let path = managed(&repo, "lifecycle");
     assert!(text(&repo.mabo(&["list"]).stdout).contains("setup:failed"));
-    let records = repo.repo.join(".git/maboroshi/workspaces");
+    let records = repo.repo.join(".git/mabo/workspaces");
     let before = records::read(&records).unwrap();
     let reused = repo.mabo(&["create", "lifecycle", "--reuse", "--json"]);
     assert!(reused.status.success(), "{}", text(&reused.stderr));
@@ -16437,7 +16428,7 @@ fn setup_lifecycle_trust_refusal_and_primary_are_read_only() {
         "[hooks]\nsetup = [\"touch hook-ran\"]\n",
     )
     .unwrap();
-    let records = repo.repo.join(".git/maboroshi/workspaces");
+    let records = repo.repo.join(".git/mabo/workspaces");
     let before: Vec<_> = fs::read_dir(&records)
         .unwrap()
         .map(|e| fs::read(e.unwrap().path()).unwrap())
@@ -16570,7 +16561,7 @@ fn setup_lifecycle_interrupted_is_display_only() {
         .mabo(&["create", "interrupted", "--json"])
         .status
         .success());
-    let record = fs::read_dir(repo.repo.join(".git/maboroshi/workspaces"))
+    let record = fs::read_dir(repo.repo.join(".git/mabo/workspaces"))
         .unwrap()
         .map(|e| e.unwrap().path())
         .find(|p| p.extension().is_some_and(|e| e == "json"))
@@ -16602,7 +16593,7 @@ fn setup_lifecycle_running_is_saved_before_hooks_and_process_fields_stay_interna
     fs::write(
         repo.repo.join(".mabo.toml"),
         r#"[hooks]
-setup = ['cat "$MABO_REPO_PATH/.git/maboroshi/workspaces/$MABO_WORKSPACE_ID.json" > observed.json']
+setup = ['cat "$MABO_REPO_PATH/.git/mabo/workspaces/$MABO_WORKSPACE_ID.json" > observed.json']
 "#,
     )
     .unwrap();
@@ -16672,7 +16663,7 @@ fn setup_lifecycle_unknown_legacy_adopt_and_null_after_forget() {
         serde_json::json!({"state":"unknown", "at":null, "error":null})
     );
     // A pre-P6 individual record has no setup field.
-    let record = fs::read_dir(repo.repo.join(".git/maboroshi/workspaces"))
+    let record = fs::read_dir(repo.repo.join(".git/mabo/workspaces"))
         .unwrap()
         .map(|e| e.unwrap().path())
         .find(|p| p.extension().is_some_and(|e| e == "json"))
@@ -16764,7 +16755,7 @@ fn setup_lifecycle_legacy_import_keeps_setup_unknown_until_explicit_run() {
         "external",
         external.to_str().unwrap(),
     ]);
-    let legacy = repo.repo.join(".git/maboroshi/worktrees.json");
+    let legacy = repo.repo.join(".git/mabo/worktrees.json");
     fs::create_dir_all(legacy.parent().unwrap()).unwrap();
     let bytes = serde_json::to_vec(
         &serde_json::json!({"version":1,"worktrees":[{"path":external,"purpose":"legacy"}]}),
@@ -17090,7 +17081,7 @@ fn retirement_populated_submodule_requires_discard_before_any_removal() {
         format!("[hooks]\npre-remove = ['touch {}']\n", marker.display()),
     )
     .unwrap();
-    let record_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let record_dir = repo.repo.join(".git/mabo/workspaces");
     let before = records::read(&record_dir).unwrap();
     for dry_run in [false, true] {
         for json in [false, true] {
@@ -17174,7 +17165,7 @@ fn retirement_populated_submodule_is_skipped_by_gc_plan_and_apply() {
         format!("[hooks]\npre-remove = ['touch {}']\n", marker.display()),
     )
     .unwrap();
-    let record_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let record_dir = repo.repo.join(".git/mabo/workspaces");
     let before = records::read(&record_dir).unwrap();
     for apply in [false, true] {
         let mut args = vec!["gc", "--merged", "--json"];
@@ -17548,7 +17539,7 @@ fn assert_retirement_missing_remove_path(name_first: bool) {
         format!("[hooks]\npre-remove = ['touch {}']\n", marker.display()),
     )
     .unwrap();
-    let records = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    let records = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
     let missing_path = repo.root.join("missing");
     for dry_run in [true, false] {
         for json in [false, true] {
@@ -17586,7 +17577,7 @@ fn assert_retirement_missing_remove_path(name_first: bool) {
             assert!(branch_listed(&repo, "topic"));
             assert!(!marker.exists());
             assert_eq!(
-                records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+                records::read(repo.repo.join(".git/mabo/workspaces")).unwrap(),
                 records
             );
             if json {
@@ -17643,7 +17634,7 @@ fn assert_retirement_creation_with_tag(clear_creation: bool, synced: bool) {
     if clear_creation {
         clear_created_from(&repo, "topic");
     }
-    let records = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    let records = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
     for apply in [false, true] {
         let mut args = vec!["gc", "--merged", "--json"];
         if apply {
@@ -17661,7 +17652,7 @@ fn assert_retirement_creation_with_tag(clear_creation: bool, synced: bool) {
         assert!(worktree_registered(&repo, "topic"));
         assert!(branch_listed(&repo, "topic"));
         assert_eq!(
-            records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+            records::read(repo.repo.join(".git/mabo/workspaces")).unwrap(),
             records
         );
     }
@@ -17846,7 +17837,7 @@ fn retirement_replay_file(
 
 fn assert_retirement_replay_is_unpreserved(repo: &Repo, detached: bool) {
     let head = retirement_head_at(repo, &managed(repo, "replay"));
-    let records = records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap();
+    let records = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
     for apply in [false, true] {
         let mut args = vec!["gc", "--merged", "--json"];
         if apply {
@@ -17858,7 +17849,7 @@ fn assert_retirement_replay_is_unpreserved(repo: &Repo, detached: bool) {
         assert!(worktree_registered(repo, "replay"));
         assert_eq!(retirement_head_at(repo, &managed(repo, "replay")), head);
         assert_eq!(
-            records::read(repo.repo.join(".git/maboroshi/workspaces")).unwrap(),
+            records::read(repo.repo.join(".git/mabo/workspaces")).unwrap(),
             records
         );
     }
@@ -18015,13 +18006,13 @@ fn retirement_dry_run_preserves_git_and_legacy_metadata_bytes() {
         .success());
     commit_in_worktree(&repo, "squash");
     squash_onto_main(&repo, "squash");
-    let metadata = repo.repo.join(".git/maboroshi/workspaces");
+    let metadata = repo.repo.join(".git/mabo/workspaces");
     let mut legacy: serde_json::Value =
         serde_json::from_slice(&records::read(&metadata).unwrap()).unwrap();
     legacy["version"] = serde_json::json!(1);
     let legacy = serde_json::to_vec(&legacy).unwrap();
     fs::remove_dir_all(&metadata).unwrap();
-    fs::write(repo.repo.join(".git/maboroshi/worktrees.json"), legacy).unwrap();
+    fs::write(repo.repo.join(".git/mabo/worktrees.json"), legacy).unwrap();
     let marker = repo.root.join("dry-run-hook");
     fs::write(
         repo.repo.join(".mabo.toml"),
@@ -18088,7 +18079,7 @@ fn retirement_gc_age_filters_evidence_and_excludes_unknown_creation_time() {
             land_branch(&repo, name);
         }
     }
-    let dir = repo.repo.join(".git/maboroshi/workspaces");
+    let dir = repo.repo.join(".git/mabo/workspaces");
     for entry in fs::read_dir(&dir).unwrap() {
         let file = entry.unwrap().path();
         let mut record: serde_json::Value =
@@ -18254,7 +18245,7 @@ fn retirement_bugbot_gc_keeps_live_unregistered_records() {
             .stdout,
     );
     fs::remove_dir_all(admin).unwrap();
-    let record_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let record_dir = repo.repo.join(".git/mabo/workspaces");
     let before = records::read(&record_dir).unwrap();
     let listed = repo.mabo(&["list", "--json"]);
     assert!(listed.status.success());
@@ -18340,7 +18331,7 @@ fn retirement_bugbot_remove_reports_all_preflight_refusals() {
         format!("[hooks]\npre-remove = ['touch {}']\n", marker.display()),
     )
     .unwrap();
-    let record_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let record_dir = repo.repo.join(".git/mabo/workspaces");
     let before = records::read(&record_dir).unwrap();
     for invalid_first in [false, true] {
         for dry_run in [false, true] {
@@ -18883,7 +18874,7 @@ fn assert_retirement_keeps_missing_detached(command: &str) {
     let admin = PathBuf::from(text(&admin.stdout));
     let head = fs::read(admin.join("HEAD")).unwrap();
     let reflog = fs::read(admin.join("logs/HEAD")).unwrap();
-    let record_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let record_dir = repo.repo.join(".git/mabo/workspaces");
     let records_before = records::read(&record_dir).unwrap();
     fs::remove_dir_all(&path).unwrap();
     if command == "remove" {
@@ -19047,7 +19038,7 @@ fn retirement_review_already_gone_is_visible_in_text_only() {
         .output()
         .unwrap();
     fs::remove_dir_all(text(&admin.stdout)).unwrap();
-    let record_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let record_dir = repo.repo.join(".git/mabo/workspaces");
     let before = records::read(&record_dir).unwrap();
     for args in [
         vec!["remove", "missing"],
@@ -19170,7 +19161,7 @@ fn retirement_review2_gc_keeps_fresh_detached_workspace() {
         if unknown_creation {
             clear_created_from(&repo, "review");
         }
-        let record_dir = repo.repo.join(".git/maboroshi/workspaces");
+        let record_dir = repo.repo.join(".git/mabo/workspaces");
         let before = records::read(&record_dir).unwrap();
         for args in [
             vec!["gc", "--merged", "--json"],
@@ -19212,7 +19203,7 @@ fn retirement_review2_gc_keeps_landed_detached_with_unknown_creation() {
         } else if creation == "missing" {
             clear_created_from(&repo, "review");
         } else {
-            let store = repo.repo.join(".git/maboroshi/workspaces");
+            let store = repo.repo.join(".git/mabo/workspaces");
             let mut document: serde_json::Value =
                 serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
             document["worktrees"][0]["createdFrom"] =
@@ -19347,7 +19338,7 @@ fn retirement_review2_gc_hint_accepts_leading_hyphen_alias() {
 fn persist_retirement_hyphen_alias(repo: &Repo) {
     // The current CLI rejects option-like --name values, but recorded aliases
     // (including imported metadata) are valid selectors and must remain usable.
-    let store = repo.repo.join(".git/maboroshi/workspaces");
+    let store = repo.repo.join(".git/mabo/workspaces");
     let mut document: serde_json::Value =
         serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
     document["worktrees"][0]["name"] = serde_json::json!("-alias");
@@ -19521,7 +19512,7 @@ fn retirement_review4_rejects_detached_head_and_unrooted_commit_bases() {
         };
         // Exercise imported/raw metadata as well as the OID produced by normalizing
         // --base HEAD in a detached checkout. HEAD must not prove its own retention.
-        let store = repo.repo.join(".git/maboroshi/workspaces");
+        let store = repo.repo.join(".git/mabo/workspaces");
         let mut document: serde_json::Value =
             serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
         document["worktrees"][0]["base"] = serde_json::json!(reference);
@@ -19758,7 +19749,7 @@ fn retirement_remove_unknown_selectors_preflight_all_targets_without_hooks() {
         "[hooks]\npre-remove = [\"touch hook-ran\"]\n",
     )
     .unwrap();
-    let records_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let records_dir = repo.repo.join(".git/mabo/workspaces");
     let before = records::read(&records_dir).unwrap();
     let missing_path = repo.root.join("missing path's $(touch injected)");
     let unregistered_path = managed(&repo, "unregistered-directory");
@@ -20404,7 +20395,7 @@ esac
     )
     .unwrap();
     fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
-    let metadata_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let metadata_dir = repo.repo.join(".git/mabo/workspaces");
     let mut args = vec!["remove", "metadata-failure", "last", "--no-hooks"];
     if hook_source {
         args = vec!["remove", "last", "metadata-failure", "--discard-changes"];
@@ -20521,7 +20512,7 @@ fn retirement_remove_source_checkout_rejects_another_repository_before_changes()
         .mabo(&["create", "target", "--no-setup"])
         .status
         .success());
-    let store = repo.repo.join(".git/maboroshi/workspaces");
+    let store = repo.repo.join(".git/mabo/workspaces");
     let before = records::read(&store).unwrap();
     fs::write(
         other.repo.join(".mabo.toml"),
@@ -20772,7 +20763,7 @@ fn retirement_remove_review_dot_resolves_record_after_registration_disappears() 
             .stdout,
     );
     fs::remove_dir_all(admin).unwrap();
-    let record_dir = repo.repo.join(".git/maboroshi/workspaces");
+    let record_dir = repo.repo.join(".git/mabo/workspaces");
     let before = records::read(&record_dir).unwrap();
     for cwd in [&path, &nested] {
         for selector in [".", "unregistered", path.to_str().unwrap(), "./.."] {
@@ -21918,5 +21909,741 @@ fn merged_pr_cached_proof_does_not_cover_new_local_commits_after_hooks() {
             1,
             "{calls}"
         );
+    }
+}
+
+#[test]
+fn config_path_migration_waits_for_writes_and_preserves_atomic_temporary_files() {
+    for xdg in ["absolute", "unset", "empty", "relative"] {
+        let repo = Repo::new();
+        let base = if xdg == "absolute" {
+            repo.root.join("config")
+        } else {
+            repo.home.join(".config")
+        };
+        let old = base.join("maboroshi");
+        let new = base.join("mabo");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("config.toml"), "discover-ghq = false\n").unwrap();
+        let temporary = format!(".state-{}.tmp", uuid::Uuid::new_v4());
+        fs::write(old.join(&temporary), "keep me").unwrap();
+        let run = |args: &[&str]| {
+            let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), args);
+            match xdg {
+                "absolute" => {
+                    command.env("XDG_CONFIG_HOME", &base);
+                }
+                "unset" => {
+                    command.env_remove("XDG_CONFIG_HOME");
+                }
+                "empty" => {
+                    command.env("XDG_CONFIG_HOME", "");
+                }
+                _ => {
+                    command.env("XDG_CONFIG_HOME", "relative/config");
+                }
+            }
+            command.output().unwrap()
+        };
+        for args in [
+            vec!["config", "get", "discover-ghq", "--json"],
+            vec!["config", "list", "--json"],
+            vec!["help", "--json"],
+            vec!["gc", "--json"],
+            vec!["sync", "--dry-run", "--json"],
+        ] {
+            let out = run(&args);
+            assert!(
+                out.status.success(),
+                "{} {}",
+                text(&out.stdout),
+                text(&out.stderr)
+            );
+            if args.get(1) == Some(&"get") {
+                assert!(text(&out.stdout).contains("false"));
+            }
+            assert!(old.join("config.toml").is_file());
+            assert!(!new.exists());
+        }
+        let out = run(&["config", "set", "sync.strategy", "merge", "--json"]);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        assert!(!old.exists());
+        assert_eq!(fs::read_to_string(new.join(&temporary)).unwrap(), "keep me");
+        assert!(fs::read_to_string(new.join("config.toml"))
+            .unwrap()
+            .contains("discover-ghq = false"));
+    }
+}
+
+#[test]
+fn shared_state_path_migrates_on_either_repo_or_trust_writes() {
+    for writer in ["repo", "trust"] {
+        for fallback in [false, true] {
+            let repo = Repo::new();
+            let base = if fallback {
+                repo.home.join(".local/state")
+            } else {
+                repo.root.join("state")
+            };
+            let run = |args: &[&str]| {
+                let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), args);
+                if fallback {
+                    command.env("XDG_STATE_HOME", "relative/state");
+                }
+                command.output().unwrap()
+            };
+            for args in [["repo", "add", "--json"], ["trust", "add", "--json"]] {
+                let out = run(&args);
+                assert!(
+                    out.status.success(),
+                    "{} {}",
+                    text(&out.stdout),
+                    text(&out.stderr)
+                );
+            }
+            let new = base.join("mabo");
+            let old = base.join("maboroshi");
+            fs::write(new.join("projects.json.imported"), "archived user data").unwrap();
+            fs::rename(&new, &old).unwrap();
+            let trust = fs::read(old.join("trust.toml")).unwrap();
+            let records = fs::read_dir(old.join("repos")).unwrap().count();
+            for args in [
+                vec!["repo", "list", "--json"],
+                vec!["repo", "show", "--json"],
+                vec!["trust", "list", "--json"],
+                vec!["list", "--json"],
+                vec!["gc", "--json"],
+                vec!["remove", "main", "--dry-run", "--json"],
+            ] {
+                let out = run(&args);
+                assert!(
+                    out.status.success() || args[0] == "remove",
+                    "{} {}",
+                    text(&out.stdout),
+                    text(&out.stderr)
+                );
+                serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap();
+                if args[0] == "trust" {
+                    assert!(text(&out.stdout).contains(repo.repo.to_str().unwrap()));
+                }
+                if args[0] == "repo" {
+                    assert!(text(&out.stdout).contains(repo.repo.to_str().unwrap()));
+                }
+                assert!(old.is_dir());
+                assert!(!new.exists());
+            }
+            let out = run(&[writer, "add", "--json"]);
+            assert!(out.status.success(), "{}", text(&out.stdout));
+            assert!(!old.exists());
+            assert_eq!(fs::read_dir(new.join("repos")).unwrap().count(), records);
+            if writer == "repo" {
+                assert_eq!(fs::read(new.join("trust.toml")).unwrap(), trust);
+            }
+            assert_eq!(
+                fs::read_to_string(new.join("projects.json.imported")).unwrap(),
+                "archived user data"
+            );
+        }
+    }
+}
+
+#[test]
+fn imported_metadata_path_migration_preserves_legacy_locks_without_warnings() {
+    for json in [false, true] {
+        let repo = Repo::new();
+        let current = repo.repo.join(".git/mabo");
+        fs::create_dir_all(&current).unwrap();
+        let archive = include_str!("fixtures/alpha6/worktrees.json");
+        fs::write(current.join("worktrees.json"), archive).unwrap();
+        let imported = repo.mabo(&["set", "main", "--purpose", "before", "--json"]);
+        assert!(imported.status.success(), "{}", text(&imported.stdout));
+        let original_id = json_value(&imported)["data"]["workspace"]["id"].clone();
+        let legacy = repo.repo.join(".git/maboroshi");
+        fs::rename(&current, &legacy).unwrap();
+        for lock in ["operation.lock", "worktrees.lock"] {
+            fs::write(legacy.join(lock), lock).unwrap();
+        }
+        // This is the layout left by a completed legacy record import.
+        assert_eq!(fs::read_dir(&legacy).unwrap().count(), 4);
+        let before = mabo::metadata::load_strict(&repo.repo).unwrap();
+        assert!(legacy.join("workspaces/.import-complete").is_file());
+        assert!(!current.exists(), "reading metadata must not migrate it");
+
+        let mut args = vec!["set", "main", "--purpose", "migrated"];
+        if json {
+            args.push("--json");
+        }
+        let out = repo.mabo(&args);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+        if json {
+            assert_eq!(json_value(&out)["warnings"], serde_json::json!([]));
+            assert_eq!(json_value(&out)["data"]["workspace"]["id"], original_id);
+        }
+        let after = mabo::metadata::load_strict(&repo.repo).unwrap();
+        assert_eq!(after.len(), before.len());
+        for (path, mut record) in before {
+            if record.id.as_deref() == original_id.as_str() {
+                record.purpose = Some("migrated".to_owned());
+                assert!(after[&path].updated_at.is_some());
+                record.updated_at = after[&path].updated_at.clone();
+            }
+            assert_eq!(after[&path], record);
+        }
+        assert_eq!(
+            fs::read(current.join("workspaces/.import-complete")).unwrap(),
+            b"complete\n"
+        );
+        assert_eq!(
+            fs::read_to_string(current.join("worktrees.json.imported")).unwrap(),
+            archive
+        );
+        assert!(!legacy.join("workspaces").exists());
+        assert!(!legacy.join("worktrees.json.imported").exists());
+        assert_eq!(fs::read_dir(&legacy).unwrap().count(), 2);
+        for lock in ["operation.lock", "worktrees.lock"] {
+            assert_eq!(fs::read_to_string(legacy.join(lock)).unwrap(), lock);
+            assert!(!current.join(lock).exists());
+        }
+    }
+}
+
+#[test]
+fn metadata_path_migration_keeps_legacy_git_checkout_and_reads_without_renaming() {
+    let repo = Repo::new();
+    let checkout = repo.repo.join(".git/maboroshi/worktrees/feature/nested");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature/nested",
+        checkout.to_str().unwrap(),
+        "HEAD",
+    ]);
+    let out = repo.mabo(&["adopt", checkout.to_str().unwrap(), "--json"]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    let original_id = json_value(&out)["data"]["workspace"]["id"].clone();
+    assert!(!original_id.is_null());
+    let current = repo.repo.join(".git/mabo");
+    let legacy = repo.repo.join(".git/maboroshi");
+    fs::rename(current.join("workspaces"), legacy.join("workspaces")).unwrap();
+    fs::remove_dir(&current).unwrap();
+    fs::write(legacy.join("worktrees.json.imported"), "archived data").unwrap();
+    let registration = fs::read(checkout.join(".git")).unwrap();
+    for args in [
+        vec!["list", "--json"],
+        vec!["show", "feature/nested", "--json"],
+        vec!["path", "feature/nested", "--json"],
+        vec!["exec", "feature/nested", "--", "true"],
+        vec!["remove", "feature/nested", "--dry-run", "--json"],
+        vec!["sync", "feature/nested", "--dry-run", "--json"],
+        vec!["gc", "--json"],
+    ] {
+        let out = repo.mabo(&args);
+        assert!(
+            out.status.success(),
+            "{args:?}: {} {}",
+            text(&out.stdout),
+            text(&out.stderr)
+        );
+        if args[0] == "show" {
+            assert_eq!(json_value(&out)["data"]["workspace"]["id"], original_id);
+        }
+        assert!(legacy.join("workspaces").is_dir());
+        assert!(!current.exists());
+        assert_eq!(fs::read(checkout.join(".git")).unwrap(), registration);
+    }
+    let out = repo.mabo(&["set", "feature/nested", "--purpose", "preserved", "--json"]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert!(current.join("workspaces").is_dir());
+    assert!(!legacy.join("workspaces").exists());
+    assert_eq!(
+        fs::read_to_string(current.join("worktrees.json.imported")).unwrap(),
+        "archived data"
+    );
+    assert_eq!(fs::read(checkout.join(".git")).unwrap(), registration);
+    assert!(repo
+        .command("git", &["status", "--porcelain"])
+        .current_dir(&checkout)
+        .output()
+        .unwrap()
+        .status
+        .success());
+}
+
+#[test]
+fn legacy_data_workspaces_keep_layout_names_and_removal_and_gc_eligibility() {
+    for recorded in [false, true] {
+        let repo = Repo::new();
+        let common = mabo::git::canonical_common_dir(&repo.repo).unwrap();
+        let project = mabo::paths::project_directory_name("repo", &common);
+        let root = repo.root.join("xdg/maboroshi/workspaces").join(project);
+        for name in ["feature/remove", "feature/gc"] {
+            let path = root.join(name);
+            repo.git(&[
+                "worktree",
+                "add",
+                "-b",
+                &name.replace('/', "-"),
+                path.to_str().unwrap(),
+                "HEAD",
+            ]);
+            if recorded {
+                let out = repo.mabo(&["adopt", path.to_str().unwrap(), "--json"]);
+                assert!(out.status.success(), "{}", text(&out.stdout));
+            }
+            let shown = repo.mabo(&["show", name, "--json"]);
+            let value = assert_envelope(&shown, "show");
+            assert!(shown.status.success(), "{value}");
+            assert_eq!(value["data"]["workspace"]["name"], name);
+            assert_eq!(value["data"]["workspace"]["managed"], true);
+            assert_eq!(value["data"]["workspace"]["path"], path.to_str().unwrap());
+            let located = repo.mabo(&["path", name]);
+            assert_eq!(text(&located.stdout).trim_end(), path.to_str().unwrap());
+        }
+        empty_commit(
+            &repo,
+            &root.join("feature/gc"),
+            "integrated legacy workspace",
+        );
+        repo.git(&["merge", "--ff-only", "feature-gc"]);
+        let listed = repo.mabo(&["list", "--json"]);
+        assert!(listed.status.success());
+        assert!(text(&listed.stdout).contains("feature/remove"));
+        let plan = repo.mabo(&["gc", "--json"]);
+        assert!(plan.status.success(), "{}", text(&plan.stdout));
+        assert!(root.join("feature/gc").is_dir());
+        let removed = repo.mabo(&["remove", "feature/remove", "--json"]);
+        assert!(removed.status.success(), "{}", text(&removed.stdout));
+        assert!(!root.join("feature/remove").exists());
+        let collected = repo.mabo(&["gc", "--apply", "--json"]);
+        assert!(collected.status.success(), "{}", text(&collected.stdout));
+        assert!(
+            !root.join("feature/gc").exists(),
+            "{}",
+            text(&collected.stdout)
+        );
+        let created = repo.mabo(&["create", "fresh", "--no-setup", "--json"]);
+        assert!(created.status.success(), "{}", text(&created.stdout));
+        assert!(managed(&repo, "fresh").is_dir());
+        assert!(managed_root(&repo).join(".mabo-common-dir").is_file());
+        assert!(!managed_root(&repo).join(".maboroshi-common-dir").exists());
+    }
+}
+
+#[test]
+fn both_path_names_use_current_data_warn_once_and_never_merge() {
+    for target in ["config", "state", "metadata"] {
+        let repo = Repo::new();
+        let (old, new, reader, writer) = match target {
+            "config" => {
+                let base = repo.home.join(".config");
+                fs::create_dir_all(base.join("mabo")).unwrap();
+                fs::create_dir_all(base.join("maboroshi")).unwrap();
+                fs::write(base.join("mabo/config.toml"), "discover-ghq = false\n").unwrap();
+                fs::write(base.join("maboroshi/config.toml"), "discover-ghq = true\n").unwrap();
+                (
+                    base.join("maboroshi"),
+                    base.join("mabo"),
+                    vec!["config", "get", "discover-ghq", "--json"],
+                    vec!["config", "set", "sync.strategy", "merge", "--json"],
+                )
+            }
+            "state" => {
+                assert!(repo.mabo(&["repo", "add", "--json"]).status.success());
+                let base = repo.root.join("state");
+                fs::create_dir_all(base.join("maboroshi")).unwrap();
+                fs::write(base.join("maboroshi/trust.toml"), "old trust data").unwrap();
+                fs::write(
+                    base.join("maboroshi/projects.json"),
+                    "invalid legacy data must be ignored",
+                )
+                .unwrap();
+                (
+                    base.join("maboroshi"),
+                    base.join("mabo"),
+                    vec!["repo", "list", "--json"],
+                    vec!["trust", "add", "--json"],
+                )
+            }
+            _ => {
+                assert!(repo
+                    .mabo(&["create", "current", "--no-setup", "--json"])
+                    .status
+                    .success());
+                let base = repo.repo.join(".git");
+                fs::create_dir_all(base.join("maboroshi/workspaces")).unwrap();
+                fs::write(
+                    base.join("maboroshi/workspaces/ws_ignored.json"),
+                    "invalid legacy data must be ignored",
+                )
+                .unwrap();
+                (
+                    base.join("maboroshi/workspaces"),
+                    base.join("mabo/workspaces"),
+                    vec!["show", "current", "--json"],
+                    vec!["set", "current", "--purpose", "new data", "--json"],
+                )
+            }
+        };
+        fs::write(old.join("sentinel"), "legacy stays").unwrap();
+        for args in [&reader, &writer] {
+            let out = repo.mabo(args);
+            let value = json_value(&out);
+            assert!(out.status.success(), "{target}: {value}");
+            let warnings = value["warnings"].as_array().unwrap();
+            assert_eq!(
+                warnings
+                    .iter()
+                    .filter(|warning| warning["code"] == "path_migration")
+                    .count(),
+                1,
+                "{value}"
+            );
+            let stderr = text(&out.stderr);
+            assert_eq!(stderr.matches(old.to_str().unwrap()).count(), 1, "{stderr}");
+            assert!(stderr.contains("ignored"), "{stderr}");
+            assert_eq!(
+                fs::read_to_string(old.join("sentinel")).unwrap(),
+                "legacy stays"
+            );
+            assert!(!new.join("sentinel").exists());
+        }
+        fs::remove_dir_all(&old).unwrap();
+        fs::create_dir_all(&old).unwrap();
+        let out = repo.mabo(&reader);
+        assert!(out.status.success(), "{}", text(&out.stdout));
+        assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
+    }
+}
+
+#[test]
+fn permission_denied_path_migration_keeps_writing_legacy_state() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    for target in ["config", "state", "metadata"] {
+        let repo = Repo::new();
+        if fs::metadata(&repo.root).unwrap().uid() == 0 {
+            mabo::output::stderr(format_args!(
+                "Skipping permission-denied command tests: root bypasses directory permissions\n"
+            ));
+            return;
+        }
+        let (parent, old, new, writer) = match target {
+            "config" => {
+                let parent = repo.home.join(".config");
+                let old = parent.join("maboroshi");
+                fs::create_dir_all(&old).unwrap();
+                fs::write(old.join("config.toml"), "discover-ghq = false\n").unwrap();
+                (
+                    parent.clone(),
+                    old,
+                    parent.join("mabo"),
+                    vec!["config", "set", "sync.strategy", "merge", "--json"],
+                )
+            }
+            "state" => {
+                assert!(repo.mabo(&["repo", "add", "--json"]).status.success());
+                let parent = repo.root.join("state");
+                let old = parent.join("maboroshi");
+                fs::rename(parent.join("mabo"), &old).unwrap();
+                (
+                    parent.clone(),
+                    old,
+                    parent.join("mabo"),
+                    vec!["trust", "add", "--json"],
+                )
+            }
+            _ => {
+                assert!(repo
+                    .mabo(&["create", "existing", "--no-setup", "--json"])
+                    .status
+                    .success());
+                let parent = repo.repo.join(".git");
+                let old = parent.join("maboroshi");
+                fs::rename(parent.join("mabo"), &old).unwrap();
+                // New container exists, but cannot accept the metadata directory.
+                fs::create_dir(parent.join("mabo")).unwrap();
+                fs::set_permissions(parent.join("mabo"), fs::Permissions::from_mode(0o555))
+                    .unwrap();
+                (
+                    parent.clone(),
+                    old,
+                    parent.join("mabo/workspaces"),
+                    vec!["set", "existing", "--purpose", "fallback", "--json"],
+                )
+            }
+        };
+        let temporary = format!(".state-{}.tmp", uuid::Uuid::new_v4());
+        fs::write(old.join(&temporary), "keep").unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
+        let out = repo.mabo(&writer);
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+        if target == "metadata" {
+            fs::set_permissions(parent.join("mabo"), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let value = json_value(&out);
+        assert!(out.status.success(), "{target}: {value}");
+        assert!(
+            text(&out.stderr).contains("could not be migrated"),
+            "{target}: {}",
+            text(&out.stderr)
+        );
+        assert!(!new.exists());
+        assert_eq!(fs::read_to_string(old.join(&temporary)).unwrap(), "keep");
+        match target {
+            "config" => assert!(fs::read_to_string(old.join("config.toml"))
+                .unwrap()
+                .contains("merge")),
+            "state" => assert!(old.join("trust.toml").is_file()),
+            _ => assert!(records::read_to_string(old.join("workspaces"))
+                .unwrap()
+                .contains("fallback")),
+        }
+    }
+}
+
+#[test]
+fn unknown_metadata_contents_keep_the_legacy_location_usable() {
+    let repo = Repo::new();
+    assert!(repo
+        .mabo(&["create", "existing", "--no-setup", "--json"])
+        .status
+        .success());
+    let old = repo.repo.join(".git/maboroshi");
+    fs::rename(repo.repo.join(".git/mabo"), &old).unwrap();
+    let nested = old.join("workspaces/live-checkout");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "nested",
+        nested.to_str().unwrap(),
+        "HEAD",
+    ]);
+    let gitfile = fs::read(nested.join(".git")).unwrap();
+    let out = repo.mabo(&["set", "existing", "--purpose", "still managed", "--json"]);
+    assert!(
+        out.status.success(),
+        "{} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert!(text(&out.stderr).contains("kept in place"));
+    assert!(!repo.repo.join(".git/mabo/workspaces").exists());
+    assert_eq!(fs::read(nested.join(".git")).unwrap(), gitfile);
+    let shown = repo.mabo(&["show", "existing", "--json"]);
+    assert_eq!(
+        json_value(&shown)["data"]["workspace"]["purpose"],
+        "still managed"
+    );
+}
+
+#[test]
+fn legacy_data_orphans_are_collected_without_moving_any_checkout() {
+    for recorded in [false, true] {
+        let repo = Repo::new();
+        let common = mabo::git::canonical_common_dir(&repo.repo).unwrap();
+        let project = mabo::paths::project_directory_name("repo", &common);
+        let path = repo
+            .root
+            .join("xdg/maboroshi/workspaces")
+            .join(project)
+            .join("feature/orphan");
+        repo.git(&[
+            "worktree",
+            "add",
+            "-b",
+            "orphan-branch",
+            path.to_str().unwrap(),
+            "HEAD",
+        ]);
+        if recorded {
+            assert!(repo
+                .mabo(&["adopt", path.to_str().unwrap(), "--json"])
+                .status
+                .success());
+        }
+        fs::remove_dir_all(&path).unwrap();
+        let plan = repo.mabo(&["gc", "--orphaned", "--json"]);
+        assert!(plan.status.success(), "{}", text(&plan.stdout));
+        assert!(text(&plan.stdout).contains("feature/orphan"));
+        let applied = repo.mabo(&["gc", "--orphaned", "--apply", "--json"]);
+        assert!(applied.status.success(), "{}", text(&applied.stdout));
+        assert!(text(&applied.stdout).contains("removed"));
+        assert!(!text(
+            &repo
+                .command("git", &["worktree", "list", "--porcelain"])
+                .output()
+                .unwrap()
+                .stdout
+        )
+        .contains(path.to_str().unwrap()));
+        repo.git(&["show-ref", "--verify", "refs/heads/orphan-branch"]);
+    }
+}
+
+#[test]
+fn legacy_state_directory_import_keeps_ids_and_existing_archive() {
+    let repo = Repo::new();
+    let old = repo.root.join("state/maboroshi");
+    fs::create_dir_all(&old).unwrap();
+    let fixture = include_str!("fixtures/alpha6/projects.json");
+    fs::write(old.join("projects.json"), fixture).unwrap();
+    fs::write(old.join("projects.json.imported"), "earlier archive").unwrap();
+    let listed = repo.mabo(&["repo", "list", "--json"]);
+    assert!(listed.status.success(), "{}", text(&listed.stdout));
+    assert!(old.join("projects.json").is_file());
+    assert!(!repo.root.join("state/mabo").exists());
+    let added = repo.mabo(&["repo", "add", "--json"]);
+    assert!(added.status.success(), "{}", text(&added.stdout));
+    let current = repo.root.join("state/mabo");
+    assert!(!old.exists());
+    assert_eq!(
+        fs::read_to_string(current.join("projects.json")).unwrap(),
+        fixture
+    );
+    assert_eq!(
+        fs::read_to_string(current.join("projects.json.imported")).unwrap(),
+        "earlier archive"
+    );
+    let records = mabo::projects::ProjectRegistryStore::new(current)
+        .list()
+        .unwrap();
+    let legacy: serde_json::Value = serde_json::from_str(fixture).unwrap();
+    assert_eq!(records.len(), 3);
+    for entry in legacy["projects"].as_array().unwrap() {
+        assert!(records
+            .iter()
+            .any(|record| serde_json::to_value(record).unwrap() == *entry));
+    }
+}
+
+#[test]
+fn registered_checkout_without_gitfile_is_never_renamed_with_state() {
+    for (target, outside) in ["config", "state", "metadata"]
+        .into_iter()
+        .flat_map(|target| [(target, false), (target, true)])
+    {
+        let repo = Repo::new();
+        let (old, new, writer) = match target {
+            "config" => (
+                repo.home.join(".config/maboroshi"),
+                repo.home.join(".config/mabo"),
+                vec!["config", "set", "discover-ghq", "false", "--json"],
+            ),
+            "state" => (
+                repo.root.join("state/maboroshi"),
+                repo.root.join("state/mabo"),
+                vec!["repo", "add", "--json"],
+            ),
+            _ => (
+                repo.repo.join(".git/maboroshi/workspaces"),
+                repo.repo.join(".git/mabo/workspaces"),
+                vec!["set", "main", "--purpose", "metadata", "--json"],
+            ),
+        };
+        // Config/state reject the unexpected directory even when the cwd has
+        // no registration table for this repository. Metadata retains its
+        // explicit common-directory registration check for an empty checkout.
+        let checkout = if target == "metadata" {
+            old.clone()
+        } else {
+            old.join("damaged")
+        };
+        repo.git(&[
+            "worktree",
+            "add",
+            "-b",
+            "damaged",
+            checkout.to_str().unwrap(),
+            "HEAD",
+        ]);
+        // Remove all checkout files; the nested directory alone must block migration.
+        fs::remove_file(checkout.join(".git")).unwrap();
+        fs::remove_file(checkout.join("README.md")).unwrap();
+        let out = if outside {
+            let mut args = vec!["-R", repo.repo.to_str().unwrap()];
+            args.extend(writer.iter().copied());
+            repo.command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .current_dir(&repo.root)
+                .output()
+                .unwrap()
+        } else {
+            repo.mabo(&writer)
+        };
+        assert!(
+            out.status.success(),
+            "{target}: {} {}",
+            text(&out.stdout),
+            text(&out.stderr)
+        );
+        assert!(old.is_dir());
+        assert!(!new.exists(), "registered checkout moved for {target}");
+        assert!(text(&out.stderr).contains("kept in place"));
+    }
+}
+
+#[test]
+fn unexpected_config_and_state_contents_keep_legacy_paths_with_warnings() {
+    for (target, entry, kind) in [
+        ("config", "unexpected", "file"),
+        ("config", "unexpected", "directory"),
+        ("config", "config.toml", "symlink"),
+        ("state", "unexpected", "file"),
+        ("state", "unexpected", "directory"),
+        ("state", "repos/unexpected", "file"),
+        ("state", "repos/unexpected", "directory"),
+        ("state", "repos/.import-complete", "symlink"),
+        ("state", "repos", "symlink"),
+    ] {
+        let repo = Repo::new();
+        let base = if target == "config" {
+            repo.home.join(".config")
+        } else {
+            repo.root.join("state")
+        };
+        let old = base.join("maboroshi");
+        let path = old.join(entry);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let saved = repo.root.join("saved-target");
+        match kind {
+            "file" => fs::write(&path, "saved").unwrap(),
+            "directory" => fs::create_dir(&path).unwrap(),
+            _ => {
+                if entry == "repos" {
+                    fs::create_dir(&saved).unwrap();
+                } else {
+                    fs::write(&saved, "# saved\n").unwrap();
+                }
+                std::os::unix::fs::symlink(&saved, &path).unwrap();
+            }
+        }
+        let args = if target == "config" {
+            vec!["config", "set", "discover-ghq", "false", "--json"]
+        } else {
+            vec!["trust", "add", "--json"]
+        };
+        let out = repo.mabo(&args);
+        assert!(
+            out.status.success(),
+            "{target}/{entry}/{kind}: {} {}",
+            text(&out.stdout),
+            text(&out.stderr)
+        );
+        assert!(old.is_dir());
+        assert!(!base.join("mabo").exists());
+        assert!(text(&out.stderr).contains("kept in place"));
+        assert!(json_value(&out)["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning["code"] == "path_migration"));
+        assert!(fs::symlink_metadata(&path).is_ok());
+        if kind == "symlink" {
+            assert!(saved.exists());
+            if entry != "repos" {
+                assert_eq!(fs::read_to_string(saved).unwrap(), "# saved\n");
+            }
+        }
     }
 }

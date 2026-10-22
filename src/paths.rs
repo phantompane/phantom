@@ -4,7 +4,8 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::{Error, Result};
 
-pub const PROJECT_MARKER: &str = ".maboroshi-common-dir";
+pub const PROJECT_MARKER: &str = ".mabo-common-dir";
+const LEGACY_PROJECT_MARKER: &str = ".maboroshi-common-dir";
 
 pub fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -78,8 +79,8 @@ pub fn configured_worktrees_directory(git_root: &Path, configured: &str) -> Work
     }
 }
 
-/// `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash>`, or
-/// `~/.local/share/maboroshi/workspaces/...` when the caller already applied the fallback.
+/// `$XDG_DATA_HOME/mabo/workspaces/<checkout>-<hash>`, or
+/// `~/.local/share/mabo/workspaces/...` when the caller already applied the fallback.
 pub fn default_worktrees_directory(
     git_root: &Path,
     common_dir_key: &Path,
@@ -87,7 +88,7 @@ pub fn default_worktrees_directory(
 ) -> WorktreesLocation {
     let name = project_directory_name(&checkout_component(git_root), common_dir_key);
     WorktreesLocation {
-        path: normalize(&data_home.join("maboroshi").join("workspaces").join(name)),
+        path: normalize(&data_home.join("mabo").join("workspaces").join(name)),
         project_common_dir: Some(common_dir_key.to_path_buf()),
     }
 }
@@ -307,7 +308,14 @@ fn reconcile_project_directory(directory: &Path, common_dir: &Path) -> Result<()
 }
 
 fn read_marker(directory: &Path) -> Result<Option<String>> {
-    let path = directory.join(PROJECT_MARKER);
+    let mut path = directory.join(PROJECT_MARKER);
+    if !path.try_exists().unwrap_or(true)
+        && directory
+            .components()
+            .any(|part| part.as_os_str() == crate::migration::LEGACY_NAME)
+    {
+        path = directory.join(LEGACY_PROJECT_MARKER);
+    }
     match fs::read_to_string(&path) {
         Ok(content) => Ok(Some(content.trim_end_matches(['\n', '\r']).to_string())),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
@@ -319,10 +327,7 @@ fn read_marker(directory: &Path) -> Result<Option<String>> {
 }
 
 fn write_marker(parent: &Path, directory: &Path, identity: &str) -> Result<()> {
-    let temp = parent.join(format!(
-        ".maboroshi-common-dir-{}.tmp",
-        uuid::Uuid::new_v4()
-    ));
+    let temp = parent.join(format!(".mabo-common-dir-{}.tmp", uuid::Uuid::new_v4()));
     let target = directory.join(PROJECT_MARKER);
     let written = write_marker_file(&temp, &target, directory, identity);
     if written.is_err() {
@@ -422,7 +427,7 @@ pub(crate) fn validate_worktree_destination(directory: &Path, path: &Path) -> Re
     Ok(())
 }
 
-/// `$XDG_CONFIG_HOME/maboroshi/config.toml`, or `~/.config/maboroshi/config.toml` when
+/// `$XDG_CONFIG_HOME/mabo/config.toml`, or `~/.config/mabo/config.toml` when
 /// `XDG_CONFIG_HOME` is unset, empty, or relative.
 pub fn user_config_file(home: &Path, xdg_config_home: Option<&Path>) -> PathBuf {
     let config_home = match xdg_config_home {
@@ -433,26 +438,16 @@ pub fn user_config_file(home: &Path, xdg_config_home: Option<&Path>) -> PathBuf 
 }
 
 pub fn user_config_path() -> Result<PathBuf> {
-    if let Some(xdg) = absolute_xdg_config_home() {
-        return Ok(mabo_config_file(&xdg));
-    }
-    let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) else {
-        return Err(Error::msg("HOME is not set"));
-    };
-    Ok(user_config_file(Path::new(&home), None))
+    Ok(crate::migration::config_dir(crate::migration::Access::Read)?.join("config.toml"))
 }
 
 fn mabo_config_file(config_home: &Path) -> PathBuf {
-    config_home.join("maboroshi").join("config.toml")
-}
-
-fn absolute_xdg_config_home() -> Option<PathBuf> {
-    let value = std::env::var_os("XDG_CONFIG_HOME")?;
-    if value.is_empty() {
-        return None;
-    }
-    let path = PathBuf::from(value);
-    path.is_absolute().then_some(path)
+    crate::migration::product_dir(
+        config_home,
+        crate::migration::Access::Read,
+        crate::migration::Layout::Config,
+    )
+    .join("config.toml")
 }
 
 pub fn is_strictly_inside(path: &Path, directory: &Path) -> bool {
@@ -490,6 +485,24 @@ mod tests {
     }
 
     #[test]
+    fn legacy_project_marker_is_reused_without_rewriting_it() {
+        let temp =
+            std::env::temp_dir().join(format!("mabo-legacy-marker-{}", uuid::Uuid::new_v4()));
+        let directory = temp.join("maboroshi/workspaces/project");
+        fs::create_dir_all(directory.join("live-checkout")).unwrap();
+        let common = Path::new("/repo/.git");
+        fs::write(directory.join(LEGACY_PROJECT_MARKER), "/repo/.git\n").unwrap();
+        ensure_worktrees_directory(&directory, Some(common)).unwrap();
+        assert!(!directory.join(PROJECT_MARKER).exists());
+        assert_eq!(
+            fs::read_to_string(directory.join(LEGACY_PROJECT_MARKER)).unwrap(),
+            "/repo/.git\n"
+        );
+        assert!(directory.join("live-checkout").is_dir());
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
     fn relative_paths_match_node() {
         assert_eq!(relative(Path::new("/repo"), Path::new("/repo")), "");
         assert_eq!(
@@ -511,13 +524,13 @@ mod tests {
         let location = default_worktrees_directory(root, git_dir, data);
         assert_eq!(
             location.path,
-            PathBuf::from("/home/u/.local/share/maboroshi/workspaces/repo-6b4ca2db")
+            PathBuf::from("/home/u/.local/share/mabo/workspaces/repo-6b4ca2db")
         );
         assert_eq!(location.project_common_dir.as_deref(), Some(git_dir));
         let separate_location = default_worktrees_directory(root, separate, data);
         assert_eq!(
             separate_location.path,
-            PathBuf::from("/home/u/.local/share/maboroshi/workspaces/repo-0d78ac9a")
+            PathBuf::from("/home/u/.local/share/mabo/workspaces/repo-0d78ac9a")
         );
         assert_ne!(location.path, separate_location.path);
         assert_eq!(
@@ -566,7 +579,7 @@ mod tests {
         assert_eq!(from_real.path, from_indirect.path);
         assert_eq!(
             from_real.path,
-            PathBuf::from("/home/u/.local/share/maboroshi/workspaces/real-name-0d78ac9a")
+            PathBuf::from("/home/u/.local/share/mabo/workspaces/real-name-0d78ac9a")
         );
         let _ = fs::remove_dir_all(&root);
     }
@@ -742,19 +755,19 @@ mod tests {
         let xdg = Path::new("/tmp/xdg");
         assert_eq!(
             user_config_file(home, Some(xdg)),
-            PathBuf::from("/tmp/xdg/maboroshi/config.toml")
+            PathBuf::from("/tmp/xdg/mabo/config.toml")
         );
         assert_eq!(
             user_config_file(home, None),
-            PathBuf::from("/home/phantom/.config/maboroshi/config.toml")
+            PathBuf::from("/home/phantom/.config/mabo/config.toml")
         );
         assert_eq!(
             user_config_file(home, Some(Path::new("relative"))),
-            PathBuf::from("/home/phantom/.config/maboroshi/config.toml")
+            PathBuf::from("/home/phantom/.config/mabo/config.toml")
         );
         assert_eq!(
             user_config_file(home, Some(Path::new(""))),
-            PathBuf::from("/home/phantom/.config/maboroshi/config.toml")
+            PathBuf::from("/home/phantom/.config/mabo/config.toml")
         );
     }
 }

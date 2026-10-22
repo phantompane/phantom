@@ -114,13 +114,18 @@ pub fn load_preferences() -> Result<Preferences> {
 }
 
 pub fn set_preference(key: &str, value: &str) -> Result<PathBuf> {
-    let path = config_path()?;
+    require_key(key)?;
+    if let Some(message) = validate_preference_value(key, value) {
+        return Err(Error::validation(message));
+    }
+    let path = crate::migration::config_dir(crate::migration::Access::Write)?.join("config.toml");
     set_preference_at(&path, key, value)?;
     Ok(path)
 }
 
 pub fn remove_preference(key: &str) -> Result<PathBuf> {
-    let path = config_path()?;
+    require_key(key)?;
+    let path = crate::migration::config_dir(crate::migration::Access::Write)?.join("config.toml");
     remove_preference_at(&path, key)?;
     Ok(path)
 }
@@ -175,7 +180,7 @@ fn remove_preference_at(path: &Path, key: &str) -> Result<()> {
 }
 
 fn read_document(path: &Path) -> Result<Option<DocumentMut>> {
-    match fs::read_to_string(path) {
+    match crate::migration::read_product_file(path, crate::migration::Layout::Config) {
         Ok(content) => content
             .parse::<DocumentMut>()
             .map(Some)
@@ -190,6 +195,7 @@ fn read_document(path: &Path) -> Result<Option<DocumentMut>> {
 
 fn write_document(path: &Path, document: &DocumentMut, prepend_header: bool) -> Result<()> {
     if let Some(parent) = path.parent() {
+        crate::migration::check_write_location(parent)?;
         fs::create_dir_all(parent).map_err(|error| {
             Error::msg(format!("Failed to create {}: {error}", parent.display()))
         })?;
@@ -200,6 +206,9 @@ fn write_document(path: &Path, document: &DocumentMut, prepend_header: bool) -> 
     } else {
         body
     };
+    if let Some(parent) = path.parent() {
+        crate::migration::check_write_location(parent)?;
+    }
     crate::atomic::write(path, contents.as_bytes())
         .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))
 }
@@ -384,9 +393,29 @@ mod tests {
     }
 
     #[test]
+    fn stale_config_path_retries_after_migration() {
+        let base = xdg_config("read-migration");
+        let old = base.join("maboroshi");
+        fs::create_dir_all(&old).unwrap();
+        let file = old.join("config.toml");
+        fs::write(&file, "discover-ghq = false\n").unwrap();
+        crate::migration::product_dir(
+            &base,
+            crate::migration::Access::Write,
+            crate::migration::Layout::Config,
+        );
+        assert!(!file.exists());
+        assert_eq!(
+            load_preferences_from(&file).unwrap().ghq_discovery,
+            Some(false)
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
     fn round_trip_preserves_comments_under_xdg_config_home() {
         let xdg = xdg_config("round-trip");
-        let path = xdg.join("maboroshi").join("config.toml");
+        let path = xdg.join("mabo").join("config.toml");
         assert!(!path.exists());
 
         set_preference_at(&path, "discover-ghq", "true").expect("set");
@@ -450,7 +479,7 @@ clone-root = \"~/clones\"
     #[test]
     fn invalid_toml_and_unknown_keys_name_the_file() {
         let xdg = xdg_config("invalid");
-        let path = xdg.join("maboroshi").join("config.toml");
+        let path = xdg.join("mabo").join("config.toml");
         fs::create_dir_all(path.parent().expect("parent")).expect("dir");
 
         fs::write(&path, "{\n").expect("toml");
@@ -506,7 +535,7 @@ clone-root = \"~/clones\"
     #[test]
     fn missing_file_is_empty_and_remove_does_not_create_it() {
         let xdg = xdg_config("missing");
-        let path = xdg.join("maboroshi").join("config.toml");
+        let path = xdg.join("mabo").join("config.toml");
         let loaded = load_preferences_from(&path).expect("missing");
         assert_eq!(loaded, Preferences::default());
         let error = remove_preference_at(&path, "discover-ghq").expect_err("remove");
@@ -533,7 +562,7 @@ clone-root = \"~/clones\"
     #[test]
     fn root_preference_is_an_absolute_or_tilde_path() {
         let xdg = xdg_config("clone-root");
-        let path = xdg.join("maboroshi").join("config.toml");
+        let path = xdg.join("mabo").join("config.toml");
         let error = set_preference_at(&path, "clone-root", "relative").expect_err("relative");
         assert!(error.to_string().contains("absolute"), "{error}");
         assert!(!path.exists());
