@@ -170,8 +170,21 @@ impl ProjectRegistryStore {
     }
 
     fn load_with(&self, before_legacy: impl FnOnce()) -> Result<RegistryState> {
+        before_legacy();
+        crate::migration::read_with_retry(
+            &self.data_dir,
+            || {
+                Ok(crate::migration::reresolve_product_dir(
+                    &self.data_dir,
+                    crate::migration::Layout::State,
+                ))
+            },
+            |dir| Self::new(dir.to_path_buf()).load_at(),
+        )
+    }
+
+    fn load_at(&self) -> Result<RegistryState> {
         if !crate::atomic::import_complete(&self.data_dir.join("repos")) {
-            before_legacy();
             if let Some(state) = self.load_legacy()? {
                 return Ok(state);
             }
@@ -746,7 +759,11 @@ fn resolve_data_dir(home: &str, xdg_state_home: Option<&str>) -> PathBuf {
         Some(state) if Path::new(state).is_absolute() => PathBuf::from(state),
         _ => PathBuf::from(home).join(".local").join("state"),
     };
-    crate::migration::product_dir(&base, crate::migration::Access::Read)
+    crate::migration::product_dir(
+        &base,
+        crate::migration::Access::Read,
+        crate::migration::Layout::State,
+    )
 }
 
 fn empty_registry() -> RegistryState {
@@ -943,6 +960,48 @@ mod tests {
         assert_eq!(listed.len(), 8);
         assert_eq!(fs::read_dir(dir.join("state/repos")).unwrap().count(), 8);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reader_retries_after_shared_state_migration() {
+        for individual in [false, true] {
+            let base = std::env::temp_dir().join(format!(
+                "mabo-project-read-migrate-{}",
+                uuid::Uuid::new_v4()
+            ));
+            let old = base.join("maboroshi");
+            fs::create_dir_all(&old).unwrap();
+            fs::write(
+                old.join(REGISTRY_FILE),
+                include_str!("../tests/fixtures/alpha6/projects.json"),
+            )
+            .unwrap();
+            let store = ProjectRegistryStore::new(old.clone());
+            if individual {
+                store.ensure_records().unwrap();
+            }
+            let before = store.list().unwrap();
+            let read = store
+                .load_with(|| {
+                    assert_eq!(
+                        crate::migration::product_dir(
+                            &base,
+                            crate::migration::Access::Write,
+                            crate::migration::Layout::State
+                        ),
+                        base.join("mabo")
+                    );
+                    assert!(!old.exists());
+                })
+                .unwrap();
+            assert_eq!(read.projects, before);
+            let current = ProjectRegistryStore::new(base.join("mabo"));
+            let (record, added) = current.add(Path::new(&before[0].root_path)).unwrap();
+            assert!(!added);
+            assert_eq!(record.id, before[0].id);
+            assert_eq!(current.list().unwrap().len(), before.len());
+            fs::remove_dir_all(base).unwrap();
+        }
     }
 
     #[test]

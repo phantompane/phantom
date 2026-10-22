@@ -180,7 +180,7 @@ fn remove_preference_at(path: &Path, key: &str) -> Result<()> {
 }
 
 fn read_document(path: &Path) -> Result<Option<DocumentMut>> {
-    match fs::read_to_string(path) {
+    match crate::migration::read_product_file(path, crate::migration::Layout::Config) {
         Ok(content) => content
             .parse::<DocumentMut>()
             .map(Some)
@@ -386,6 +386,26 @@ mod tests {
             "mabo-preferences-{label}-{}-{nanos}",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn stale_config_path_retries_after_migration() {
+        let base = xdg_config("read-migration");
+        let old = base.join("maboroshi");
+        fs::create_dir_all(&old).unwrap();
+        let file = old.join("config.toml");
+        fs::write(&file, "discover-ghq = false\n").unwrap();
+        crate::migration::product_dir(
+            &base,
+            crate::migration::Access::Write,
+            crate::migration::Layout::Config,
+        );
+        assert!(!file.exists());
+        assert_eq!(
+            load_preferences_from(&file).unwrap().ghq_discovery,
+            Some(false)
+        );
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

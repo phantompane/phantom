@@ -442,7 +442,12 @@ pub fn user_config_path() -> Result<PathBuf> {
 }
 
 fn mabo_config_file(config_home: &Path) -> PathBuf {
-    crate::migration::product_dir(config_home, crate::migration::Access::Read).join("config.toml")
+    crate::migration::product_dir(
+        config_home,
+        crate::migration::Access::Read,
+        crate::migration::Layout::Config,
+    )
+    .join("config.toml")
 }
 
 pub fn is_strictly_inside(path: &Path, directory: &Path) -> bool {

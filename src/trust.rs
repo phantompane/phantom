@@ -292,7 +292,7 @@ fn load() -> Result<BTreeMap<String, String>> {
 }
 
 fn load_at(path: &Path) -> Result<BTreeMap<String, String>> {
-    let content = match fs::read_to_string(path) {
+    let content = match crate::migration::read_product_file(path, crate::migration::Layout::State) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
         Err(error) => {
@@ -396,6 +396,28 @@ mod tests {
             tty: true,
             prompt: true,
         }
+    }
+
+    #[test]
+    fn stale_trust_path_retries_after_shared_state_migration() {
+        let base =
+            std::env::temp_dir().join(format!("mabo-trust-read-migrate-{}", uuid::Uuid::new_v4()));
+        let old = base.join("maboroshi");
+        fs::create_dir_all(&old).unwrap();
+        let records = BTreeMap::from([(
+            "/repository/.git".to_owned(),
+            "2026-10-23T00:00:00Z".to_owned(),
+        )]);
+        let file = old.join("trust.toml");
+        fs::write(&file, render_store(&records)).unwrap();
+        crate::migration::product_dir(
+            &base,
+            crate::migration::Access::Write,
+            crate::migration::Layout::State,
+        );
+        assert!(!file.exists());
+        assert_eq!(load_at(&file).unwrap(), records);
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

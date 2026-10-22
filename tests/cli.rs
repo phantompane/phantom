@@ -21913,7 +21913,7 @@ fn merged_pr_cached_proof_does_not_cover_new_local_commits_after_hooks() {
 }
 
 #[test]
-fn config_path_migration_waits_for_writes_and_preserves_other_files() {
+fn config_path_migration_waits_for_writes_and_preserves_atomic_temporary_files() {
     for xdg in ["absolute", "unset", "empty", "relative"] {
         let repo = Repo::new();
         let base = if xdg == "absolute" {
@@ -21925,7 +21925,8 @@ fn config_path_migration_waits_for_writes_and_preserves_other_files() {
         let new = base.join("mabo");
         fs::create_dir_all(&old).unwrap();
         fs::write(old.join("config.toml"), "discover-ghq = false\n").unwrap();
-        fs::write(old.join("unrelated"), "keep me").unwrap();
+        let temporary = format!(".state-{}.tmp", uuid::Uuid::new_v4());
+        fs::write(old.join(&temporary), "keep me").unwrap();
         let run = |args: &[&str]| {
             let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), args);
             match xdg {
@@ -21967,10 +21968,7 @@ fn config_path_migration_waits_for_writes_and_preserves_other_files() {
         let out = run(&["config", "set", "sync.strategy", "merge", "--json"]);
         assert!(out.status.success(), "{}", text(&out.stdout));
         assert!(!old.exists());
-        assert_eq!(
-            fs::read_to_string(new.join("unrelated")).unwrap(),
-            "keep me"
-        );
+        assert_eq!(fs::read_to_string(new.join(&temporary)).unwrap(), "keep me");
         assert!(fs::read_to_string(new.join("config.toml"))
             .unwrap()
             .contains("discover-ghq = false"));
@@ -22375,7 +22373,8 @@ fn permission_denied_path_migration_keeps_writing_legacy_state() {
                 )
             }
         };
-        fs::write(old.join("sentinel"), "keep").unwrap();
+        let temporary = format!(".state-{}.tmp", uuid::Uuid::new_v4());
+        fs::write(old.join(&temporary), "keep").unwrap();
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
         let out = repo.mabo(&writer);
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
@@ -22390,7 +22389,7 @@ fn permission_denied_path_migration_keeps_writing_legacy_state() {
             text(&out.stderr)
         );
         assert!(!new.exists());
-        assert_eq!(fs::read_to_string(old.join("sentinel")).unwrap(), "keep");
+        assert_eq!(fs::read_to_string(old.join(&temporary)).unwrap(), "keep");
         match target {
             "config" => assert!(fs::read_to_string(old.join("config.toml"))
                 .unwrap()
@@ -22521,7 +22520,10 @@ fn legacy_state_directory_import_keeps_ids_and_existing_archive() {
 
 #[test]
 fn registered_checkout_without_gitfile_is_never_renamed_with_state() {
-    for target in ["config", "state", "metadata"] {
+    for (target, outside) in ["config", "state", "metadata"]
+        .into_iter()
+        .flat_map(|target| [(target, false), (target, true)])
+    {
         let repo = Repo::new();
         let (old, new, writer) = match target {
             "config" => (
@@ -22540,18 +22542,35 @@ fn registered_checkout_without_gitfile_is_never_renamed_with_state() {
                 vec!["set", "main", "--purpose", "metadata", "--json"],
             ),
         };
+        // Config/state reject the unexpected directory even when the cwd has
+        // no registration table for this repository. Metadata retains its
+        // explicit common-directory registration check for an empty checkout.
+        let checkout = if target == "metadata" {
+            old.clone()
+        } else {
+            old.join("damaged")
+        };
         repo.git(&[
             "worktree",
             "add",
             "-b",
             "damaged",
-            old.to_str().unwrap(),
+            checkout.to_str().unwrap(),
             "HEAD",
         ]);
-        // Only regular *.json files remain, so the registration is the evidence.
-        fs::remove_file(old.join(".git")).unwrap();
-        fs::remove_file(old.join("README.md")).unwrap();
-        let out = repo.mabo(&writer);
+        // Remove all checkout files; the nested directory alone must block migration.
+        fs::remove_file(checkout.join(".git")).unwrap();
+        fs::remove_file(checkout.join("README.md")).unwrap();
+        let out = if outside {
+            let mut args = vec!["-R", repo.repo.to_str().unwrap()];
+            args.extend(writer.iter().copied());
+            repo.command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .current_dir(&repo.root)
+                .output()
+                .unwrap()
+        } else {
+            repo.mabo(&writer)
+        };
         assert!(
             out.status.success(),
             "{target}: {} {}",
@@ -22561,5 +22580,70 @@ fn registered_checkout_without_gitfile_is_never_renamed_with_state() {
         assert!(old.is_dir());
         assert!(!new.exists(), "registered checkout moved for {target}");
         assert!(text(&out.stderr).contains("kept in place"));
+    }
+}
+
+#[test]
+fn unexpected_config_and_state_contents_keep_legacy_paths_with_warnings() {
+    for (target, entry, kind) in [
+        ("config", "unexpected", "file"),
+        ("config", "unexpected", "directory"),
+        ("config", "config.toml", "symlink"),
+        ("state", "unexpected", "file"),
+        ("state", "unexpected", "directory"),
+        ("state", "repos/unexpected", "file"),
+        ("state", "repos/unexpected", "directory"),
+        ("state", "repos/.import-complete", "symlink"),
+        ("state", "repos", "symlink"),
+    ] {
+        let repo = Repo::new();
+        let base = if target == "config" {
+            repo.home.join(".config")
+        } else {
+            repo.root.join("state")
+        };
+        let old = base.join("maboroshi");
+        let path = old.join(entry);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let saved = repo.root.join("saved-target");
+        match kind {
+            "file" => fs::write(&path, "saved").unwrap(),
+            "directory" => fs::create_dir(&path).unwrap(),
+            _ => {
+                if entry == "repos" {
+                    fs::create_dir(&saved).unwrap();
+                } else {
+                    fs::write(&saved, "# saved\n").unwrap();
+                }
+                std::os::unix::fs::symlink(&saved, &path).unwrap();
+            }
+        }
+        let args = if target == "config" {
+            vec!["config", "set", "discover-ghq", "false", "--json"]
+        } else {
+            vec!["trust", "add", "--json"]
+        };
+        let out = repo.mabo(&args);
+        assert!(
+            out.status.success(),
+            "{target}/{entry}/{kind}: {} {}",
+            text(&out.stdout),
+            text(&out.stderr)
+        );
+        assert!(old.is_dir());
+        assert!(!base.join("mabo").exists());
+        assert!(text(&out.stderr).contains("kept in place"));
+        assert!(json_value(&out)["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning["code"] == "path_migration"));
+        assert!(fs::symlink_metadata(&path).is_ok());
+        if kind == "symlink" {
+            assert!(saved.exists());
+            if entry != "repos" {
+                assert_eq!(fs::read_to_string(saved).unwrap(), "# saved\n");
+            }
+        }
     }
 }

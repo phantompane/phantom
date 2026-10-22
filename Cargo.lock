@@ -321,6 +321,7 @@ version = "7.0.0-alpha.8"
 dependencies = [
  "chrono",
  "ignore",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",
