@@ -11496,6 +11496,11 @@ fn unknown_commands_and_options_are_usage_errors() {
             "trust",
             "Unknown command 'trust bogus'",
         ),
+        (
+            vec!["trust", "-R", "."],
+            "trust",
+            "Missing trust subcommand. Use add, remove, or list.",
+        ),
     ] {
         for json in [false, true] {
             let mut argv = args.clone();

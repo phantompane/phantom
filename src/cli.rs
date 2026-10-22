@@ -1947,6 +1947,11 @@ fn print_trust_list(json: bool) -> Result<i32> {
 
 fn trust_root_cmd(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &command_options("trust"), true)?;
+    if parsed.positionals.is_empty() {
+        return Err(Error::validation(
+            "Missing trust subcommand. Use add, remove, or list.",
+        ));
+    }
     Err(Error::validation(format!(
         "Unknown command 'trust {}'",
         parsed.positionals.join(" ")
