@@ -191,7 +191,7 @@ pub(crate) fn create(
     } else {
         None
     };
-    // Existing branches keep the legacy fallback only when its target is known
+    // Existing branches keep the default-base fallback only when its target is known
     // now. A later default must not invent intent for an unknown branch/PR base.
     request.metadata.base_cleared = request.metadata.base.is_none()
         && (pull.is_some() || sync::fallback_base(&context.source_checkout).is_err());

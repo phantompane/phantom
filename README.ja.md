@@ -205,9 +205,7 @@ zsh・fish では「シェル補助」の初期化を使います。gc は先に
 
 設定は `$XDG_CONFIG_HOME/mabo/config.toml`（既定 `~/.config/mabo/config.toml`）に保存します。`mabo config get`、`set`、`unset`、`list` で読み書きし、最初の `set` でディレクトリとファイルを作ります。
 
-既存の `maboroshi` という設定・状態ディレクトリは次の書き込みまでそのまま読み取り、移行先がなければディレクトリ全体を `mabo` にアトミックに改名します。`<git-common-dir>/maboroshi/` 内では metadata の `workspaces/` と `worktrees.json*` だけを移行し、`worktrees/` 内の checkout は移動しません。metadata ディレクトリに想定外の内容があれば元の場所を使います。data の `maboroshi/workspaces/` と `maboroshi/worktrees/` にある既存 checkout も移動せず管理対象のままです。新しい marker は `.mabo-common-dir` で、旧ディレクトリでは `.maboroshi-common-dir` も受け入れます。discovery と古い clone staging の片付けは `.mabo-clone-` と `.maboroshi-clone-` の両方を認識します。
-
-読み取り専用コマンド、dry run、`gc` の計画表示は移行しません。両方の場所が存在すると新しい方を使い、結合せず、無視した旧パスを警告します（空の旧ディレクトリは警告しません）。改名に失敗すると警告して旧パスを使いますが、別プロセスが新パスを作成済みなら新パスを使います。移行ではユーザーファイルをコピー・上書き・削除せず、Git checkout を含む可能性のあるディレクトリは元の場所に残します。既知の制限: 設定・状態ディレクトリ全体の移行は mabo のファイル名の許可リストに依存するため、旧ディレクトリ自体が許可された名前だけを含む壊れた Git checkout である場合は検出できません。
+設定・状態・metadata・既定のワークスペース保存先は `mabo` パスだけを使います。project marker は `.mabo-common-dir`、discovery と古い clone staging の片付けは `.mabo-clone-` を認識します。
 
 ```toml
 workspace-root = "../mabo-workspaces"
@@ -215,7 +213,7 @@ discover-ghq = true
 clone-root = "~/ghq"
 ```
 
-`workspace-root` 未設定時、`mabo create` は `$XDG_DATA_HOME/mabo/workspaces/<checkout>-<hash>/<name>` に配置します。`XDG_DATA_HOME` が未設定・空・相対パスなら `~/.local/share/mabo/workspaces/...` です。`<checkout>` は正規化した primary のディレクトリ名で、英数字・`.`・`_`・`-` 以外は `-` に置き換えます。シンボリックリンク経由でも同じ場所です。`<hash>` は正規化した Git common directory の SHA-256 の先頭 8 桁で、同じ remote の別 clone は別ディレクトリになります。名前内の `/` は階層として保持します。既存の `maboroshi/worktrees/` は移動せず、`list`、`show`、`remove`、`sync`、`gc` で扱えます。最後の削除後も repo ディレクトリと `.mabo-common-dir` は残し、同時・後続の作成で使えます。`mabo/workspaces/<id>.json` に記録した linked checkout は `.git/maboroshi/worktrees` や別の data ディレクトリにあっても remove/gc の対象です。記録がなく、設定した保存先および既知の既定レイアウトの外にある checkout は残します。空の親は解決済み保存先以下だけを片付けます。`workspace-root` は絶対パス、`~/`、リポジトリルートからの相対パスを受け取り、空になっても指定ディレクトリは残します。
+`workspace-root` 未設定時、`mabo create` は `$XDG_DATA_HOME/mabo/workspaces/<checkout>-<hash>/<name>` に配置します。`XDG_DATA_HOME` が未設定・空・相対パスなら `~/.local/share/mabo/workspaces/...` です。`<checkout>` は正規化した primary のディレクトリ名で、英数字・`.`・`_`・`-` 以外は `-` に置き換えます。シンボリックリンク経由でも同じ場所です。`<hash>` は正規化した Git common directory の SHA-256 の先頭 8 桁で、同じ remote の別 clone は別ディレクトリになります。名前内の `/` は階層として保持します。最後の削除後も repo ディレクトリと `.mabo-common-dir` は残し、同時・後続の作成で使えます。`mabo/workspaces/<id>.json` に記録した linked checkout は adopt した場所や別の workspace-root にあっても remove/gc の対象です。記録がなく、設定した保存先の外にある checkout は残します。空の親は解決済み保存先以下だけを片付けます。`workspace-root` は絶対パス、`~/`、リポジトリルートからの相対パスを受け取り、空になっても指定ディレクトリは残します。
 
 `clone-root` は `mabo clone` の配置先で、絶対パスか `~/` を指定します。未設定なら最初の `git config ghq.root`、`$GHQ_ROOT`、`~/ghq` の順です。明示した場合は git config を読みません。ghq.root の読み取りが失敗すると警告し、残りの既定値へ進みます。`repo list` も同じディレクトリを走査します。
 
@@ -285,7 +283,7 @@ mabo exec feature/auth -- npm test
 mabo sync pr:774
 ```
 
-`path` のテキストは絶対パスと改行だけ、JSON は `data: {path}`。`show` と `set` は `data.workspace` です。`show`、`path`、`list`、`exec` はレコード内容・mtime を変更せず旧状態の移行もしません。`set` は指定した purpose/base/pr/issue をアトミックに置き換え、省略分は保持します。`--unset FIELD` は1回で purpose/base/pr/issue のひとつを消し、複数なら繰り返します。不正フィールドや同じフィールドの設定・削除併用は拒否します。`--base` は ref を検証・正規化し、コミットも受け取ります。`--unset base` は既定ベースを補わず不明にし、`mabo set <name> --base REF` まで sync は `base-unknown` でスキップします。base フィールドのない旧記録は既定ベースを使います。
+`path` のテキストは絶対パスと改行だけ、JSON は `data: {path}`。`show` と `set` は `data.workspace` です。`show`、`path`、`list`、`exec` はレコード内容・mtime を変更しません。`set` は指定した purpose/base/pr/issue をアトミックに置き換え、省略分は保持します。`--unset FIELD` は1回で purpose/base/pr/issue のひとつを消し、複数なら繰り返します。不正フィールドや同じフィールドの設定・削除併用は拒否します。`--base` は ref を検証・正規化し、コミットも受け取ります。`--unset base` は既定ベースを補わず不明にし、`mabo set <name> --base REF` まで sync は `base-unknown` でスキップします。base フィールドのない記録は既定ベースを使います。
 
 `list` は primary を含みます。`--kind workspace` / `--kind primary` で絞り、`--names` / `--paths` はシェル用です。`--all-repos` は repo list の登録・有効な検出の全対象を表示し、`-R` と併用できません。JSON は `data.repos` と平坦化した `data.workspaces` を含みます。人間向け出力はリポジトリ名と primary パスの見出し、現在位置 `*`、名前、ブランチ、進み・遅れ `↑a ↓b`、dirty、リンク `#12` / `issue #34`、ok 以外の setup 状態（`setup:failed` など）、目的です。削除済み upstream は `upstream:gone` と表示します。
 
@@ -347,7 +345,7 @@ mabo create feature-auth --no-setup         # prepare later
 
 create の setup 失敗で 6 になったら、bash/zsh でエラーの再試行ヒント `cd '/absolute/source/checkout' && mabo setup 'SELECTOR'` を実行します。元 checkout のフック設定と、名前または一意な PR/issue セレクタを保ちます。一意に解決できなければ `(cd WORKSPACE && mabo setup . --source-checkout SOURCE)` で元の設定と dot の選択を保ちます。source は同じリポジトリ必須です。全 `--copy-file` パターンを保持し、制御文字は ANSI-C 引用 `$'...'` を使います。`create NAME --reuse` は一致対象を返すだけで setup を再実行しません。フックは再実行に耐える必要があります。
 
-共通ワークスペース JSON の setup は `{state, at, error}`、未記録（forget 後を含む）は null です。新規作成は pending → running → ok/failed、`--no-setup` は skipped。旧・移行・adopt 記録は unknown で時刻とエラーは null。各試行の時刻・エラーを記録し、成功時はエラーを消します。`data.setup` はその呼び出しの ran/ok/command/exitCode/signal も持ち、`data.copy` は copied/error です。
+共通ワークスペース JSON の setup は `{state, at, error}`、未記録（forget 後を含む）は null です。新規作成は pending → running → ok/failed、`--no-setup` は skipped。setup 情報のない記録（adopt を含む）は unknown で時刻とエラーは null。各試行の時刻・エラーを記録し、成功時はエラーを消します。`data.setup` はその呼び出しの ran/ok/command/exitCode/signal も持ち、`data.copy` は copied/error です。
 
 running は内部で PID と host を記録します。同じ host で PID が消えていれば、記録を書き換えず interrupted と観測します。別または不明な host は running のままです。情報表示だけで、ロックや操作の阻止には使いません。同じレコードの同時更新は後勝ちです。
 
@@ -420,7 +418,7 @@ refused は具体的原因がない安全拒否の既定です。テキストも
 
 current は現在位置を含む checkout、repo は primary root と名前です。primary と保存先外の未記録 checkout は managed:false。upstream は未設定なら null、設定済みは `{ref,ahead,behind,gone}`。ref は完全修飾で、gone または取得不能なら件数は null。不明なメタデータや状態は null。孤立レコードの branch/head/dirty/detached は null。読み取りで時刻を捏造しません。
 
-list/show/create/adopt/set/remove は共通オブジェクトを使い、結果は workspace/workspaces キー（items 内も同じ）、sync は main/items です。path は絶対パス。head は完全 SHA、不明は null。detached:true の branch は null。base はそのコマンドの開始 commit-ish が分かればそれ、そうでなければ記録した同期先（refs/remotes/origin/main など）で、旧・未記録は null。list --json は記録した base です。dirty は変更・ステージ済み追跡ファイル（submodule 変更を含む）か ignored 以外の未追跡があれば true で、Git status の表示設定に左右されません。kind は primary または workspace です。
+list/show/create/adopt/set/remove は共通オブジェクトを使い、結果は workspace/workspaces キー（items 内も同じ）、sync は main/items です。path は絶対パス。head は完全 SHA、不明は null。detached:true の branch は null。base はそのコマンドの開始 commit-ish が分かればそれ、そうでなければ記録した同期先（refs/remotes/origin/main など）で、base が未記録なら null。list --json は記録した base です。dirty は変更・ステージ済み追跡ファイル（submodule 変更を含む）か ignored 以外の未追跡があれば true で、Git status の表示設定に左右されません。kind は primary または workspace です。
 
 ```json
 {
@@ -452,11 +450,11 @@ list/show/create/adopt/set/remove は共通オブジェクトを使い、結果�
 
 id/purpose/base/createdAt/updatedAt/createdFrom/setup/links は Git common directory（`git rev-parse --git-common-dir`、通常 `.git`）の `mabo/workspaces/<id>.json` に保存します。create が記録し、pr/issue は `{number,url}` または null。番号だけなら url は null、http(s) URL は保持し、pull/pulls/issues/issue の番号を解析します。create --pr/--issue は対応リンクと `https://<host>/<owner>/<repo>/pull/<number>` または issues URL を補います。show/path/list/exec は記録を変更しません。remove は Git 削除後に記録を消し、create は同パスの記録を置き換え、set は意図だけ更新します。PR ブランチの reuse は作成情報を保ちつつ欠けた PR リンクを追加できます。create の metadata は `{ok:true,error:null}`。保存失敗後もコピー・フックを実行し、metadata.ok:false と理由を返し、6 partial で data を保ちます。
 
-破損レコードがあっても list/show/exec は警告と null メタデータで続行し、他は読めます。create/setup/adopt/forget/remove/set/sync は拒否して元を保ち、sync は fetch 前に検証します。同パスの初回同時登録は最古の createdAt、同時なら辞書順で最小の ID にまとめ、全フィールドをその記録から取り、次の書き込みで余分なファイルを削除します。createdFrom は作成元の完全 commit、または固有コミットがない状態で sync が最後に fast-forward した base です。新規ブランチは HEAD、既存ブランチは最古の refs/heads reflog（なければ null）。set や後続 checkout は変更しません。旧記録でフィールドがなければ null。Git で直接作った checkout（primary も含む）は set/adopt/PR reuse までメタデータが null です。prunable/locked などの診断フィールドは将来 schema を変えず追加できます。
+破損レコードがあっても list/show/exec は警告と null メタデータで続行し、他は読めます。create/setup/adopt/forget/remove/set/sync は拒否して元を保ち、sync は fetch 前に検証します。同パスの初回同時登録は最古の createdAt、同時なら辞書順で最小の ID にまとめ、全フィールドをその記録から取り、次の書き込みで余分なファイルを削除します。createdFrom は作成元の完全 commit、または固有コミットがない状態で sync が最後に fast-forward した base です。新規ブランチは HEAD、既存ブランチは最古の refs/heads reflog（なければ null）。set や後続 checkout は変更しません。adopt 記録の createdFrom は null。Git で直接作った checkout（primary も含む）は set/adopt/PR reuse までメタデータが null です。prunable/locked などの診断フィールドは将来 schema を変えず追加できます。
 
 各レコードは schema:2、ws_<uuid v4> の id、path、任意の name と上記メタデータです。JSON の id は未記録なら null。同じディレクトリの一時ファイル、fsync、rename でアトミックに置き換えます。削除はそのレコードだけ。異なるレコードの同時追加は両方残り、同じレコードの同時更新は後勝ちです。
 
-repo 登録は `$XDG_STATE_HOME/mabo/repos/<id>.json`（既定 `~/.local/state/mabo/repos/<id>.json`）で proj_<uuid> ID を維持します。同じ root は最古 createdAt、同時なら最小 ID にまとめます。最初の書き込みで `<git-common-dir>/mabo/` または `<git-common-dir>/maboroshi/` 内の旧 `worktrees.json` と、`$XDG_STATE_HOME/mabo/` または `$XDG_STATE_HOME/maboroshi/` 内の旧 `projects.json` 全件を個別ファイルに取り込み、元を `*.json.imported` に改名します。それまで読み取りは旧ファイルを読め、移行失敗なら元を保ちます。内部ファイルロックはなく、trust/config は単一ファイルをアトミックに置き換えます。
+repo 登録は `$XDG_STATE_HOME/mabo/repos/<id>.json`（既定 `~/.local/state/mabo/repos/<id>.json`）で ID は proj_<uuid> 形式です。同じ root は最古 createdAt、同時なら最小 ID にまとめます。内部ファイルロックはなく、trust/config は単一ファイルをアトミックに置き換えます。
 
 ### Sync
 
@@ -480,7 +478,7 @@ base を設定した fetch refspec で remote に対応付け、関係する rem
 
 実行も計画も実行元 repo で通常の git fetch を使います。fetch/統合の前に全対象 remote の全 fetch refspec を検証し、正の refspec の書き込み先が refs/remotes/ 外（明示 refs/tags/ や mirror を含む）なら 4 refused です。負の除外があっても拒否し、宛先なし・空なら FETCH_HEAD だけなので許可します。独自名前空間も追跡先を refs/remotes/ 以下にしてください。git for-each-ref に見える refs/remotes/ または refs/tags/ の symbolic ref が refs/remotes/ 外を指す場合も拒否し、修復・削除が必要です。Git が列挙しない dangling symbolic ref は検出できません。通常の Git と共通の制限です。pruning、自動タグ追従、負の除外、followRemoteHEAD は Git 設定のままです。自動タグ追従は明示 refspec とは別です。複数対象の計画は primary と先行 workspace の予定 tip を順に base に反映します。キーは完全 ref で、短いブランチ名 refs/heads/a は refs/heads/refs/heads/a、ブランチ a は refs/heads/a と独立です。先行 tip が不明なら依存対象は updated、after:null、strategy:null と detail の説明を返し、古い base で判断しません。
 
-create は正規化した base を記録し、旧記録の省略は既定 base に戻ります。set --unset base や base なし adopt は base-unknown で、set --base REF が必要です。消えた base は base-gone と修復ヒントです。明示的に消した base 自体では fetch しません。
+create は正規化した base を記録し、base 未記録かつ明示的に消されていない場合は既定 base に戻ります。set --unset base や base なし adopt は base-unknown で、set --base REF が必要です。消えた base は base-gone と修復ヒントです。明示的に消した base 自体では fetch しません。
 
 戦略の優先順位は --auto/--rebase/--merge、ユーザー sync.strategy、auto です。base..branch の固有コミットが観測済みリモート追跡 ref、設定した fetch 先、upstream のどれからも到達できなければ rebase、そうでなければ merge。独立したローカルブランチや今回 fetch しない remote の宛先も公開根拠で、現在のブランチ自身だけを除きます。公開済みの明示 rebase は --rewrite-published か sync.rewrite-published=true がなければ 4 published とヒントです。許可は戦略を選ばず、auto は公開済みを引き続き merge します。strategySource（flag/config/default）と rewriteAllowed/rewriteSource（flag/config/null）は別で、明示 false の source も config です。
 

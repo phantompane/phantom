@@ -8,9 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 use crate::paths;
 
-const FILE_NAME: &str = "worktrees.json";
 const RECORDS_DIR: &str = "workspaces";
-const STORE_VERSION: u32 = 1;
 const PURPOSE_MAX: usize = 1024;
 
 /// Intent and creation details recorded for one workspace.
@@ -21,7 +19,7 @@ pub struct WorktreeMetadata {
     pub id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
-    /// Explicitly unknown intent must not use the legacy default-base fallback.
+    /// Explicitly unknown intent must not use the repository default-base fallback.
     #[serde(default, skip_serializing_if = "is_false")]
     pub base_cleared: bool,
     #[serde(default)]
@@ -30,8 +28,8 @@ pub struct WorktreeMetadata {
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
-    /// Full commit the branch was created from. Absent on older records, when
-    /// a new branch has no HEAD, and when an existing branch has no reflog.
+    /// Full commit the branch was created from. Unknown for adopted checkouts,
+    /// a new branch with no HEAD, or an existing branch without a reflog.
     #[serde(default)]
     pub created_from: Option<String>,
     #[serde(default)]
@@ -41,7 +39,7 @@ pub struct WorktreeMetadata {
     /// Saved workspace name, taking precedence over the directory name.
     ///
     /// Command JSON already has `name`, so this stays out of that flatten.
-    /// Older records omit it and keep the folder name.
+    /// Without a saved name, use the folder name.
     #[serde(default, skip)]
     pub name: Option<String>,
 }
@@ -80,19 +78,17 @@ pub enum BranchOrigin {
 pub struct MetadataInput {
     pub base: Option<String>,
     pub setup: Option<crate::setup::Status>,
-    /// Preserve an unknown sync target instead of using the legacy fallback.
+    /// Preserve an unknown sync target instead of using the repository default.
     pub base_cleared: bool,
     pub purpose: Option<String>,
     pub pr: Option<WorktreeLink>,
     pub issue: Option<WorktreeLink>,
-    /// Set only when recording a worktree outside `maboroshi/worktrees`.
+    /// Optional saved workspace name.
     pub name: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Store {
-    version: u32,
     worktrees: Vec<StoredWorktree>,
 }
 
@@ -137,15 +133,7 @@ pub fn find_in<'a>(
         .find(|(key, _)| paths::same_location(Path::new(key), path))
 }
 
-pub fn metadata_file(git_root: &Path) -> Result<PathBuf> {
-    Ok(crate::migration::metadata_item(
-        &crate::git::git_common_dir(git_root)?,
-        FILE_NAME,
-        crate::migration::Access::Read,
-    ))
-}
-
-/// Records for every path in the store. A missing file is an empty map.
+/// Records for every path in the store. A missing directory is an empty map.
 pub fn load(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>> {
     let (store, _) = read_records(git_root, false)?;
     let mut records = BTreeMap::new();
@@ -329,7 +317,7 @@ pub fn read_problem(git_root: &Path) -> Option<String> {
 
 /// Drop the record for `path`. Missing records are already the end state.
 pub fn remove(git_root: &Path, path: &Path) -> Result<()> {
-    if !metadata_file(git_root)?.exists() && !records_dir(git_root)?.exists() {
+    if !records_dir(git_root)?.exists() {
         return Ok(());
     }
     with_store(git_root, None, |store| {
@@ -464,7 +452,7 @@ fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
 }
 
 /// `mabo/` inside the Git common directory. A custom `workspace-root` does
-/// not move this file, and a checkout whose `.git` is a file still shares it.
+/// not move this directory, and a checkout whose `.git` is a file still shares it.
 fn metadata_dir(git_root: &Path) -> Result<PathBuf> {
     Ok(crate::git::git_common_dir(git_root)?.join("mabo"))
 }
@@ -484,11 +472,9 @@ fn save_injected() -> bool {
 }
 
 pub fn records_dir(git_root: &Path) -> Result<PathBuf> {
-    Ok(crate::migration::metadata_item(
-        &crate::git::git_common_dir(git_root)?,
-        RECORDS_DIR,
-        crate::migration::Access::Read,
-    ))
+    Ok(crate::git::git_common_dir(git_root)?
+        .join("mabo")
+        .join(RECORDS_DIR))
 }
 
 fn read_records(git_root: &Path, strict: bool) -> Result<(Store, Vec<String>)> {
@@ -519,45 +505,19 @@ fn deduplicate(store: &mut Store) {
 }
 
 fn read_all_records(git_root: &Path, strict: bool) -> Result<(Store, Vec<String>)> {
-    read_all_records_with(git_root, strict, || {})
-}
-
-fn read_all_records_with(
-    git_root: &Path,
-    strict: bool,
-    before_legacy: impl FnOnce(),
-) -> Result<(Store, Vec<String>)> {
     let dir = records_dir(git_root)?;
-    before_legacy();
-    crate::migration::read_with_retry(
-        &dir,
-        || records_dir(git_root),
-        |dir| read_all_records_at(git_root, strict, dir),
-    )
-}
-
-fn read_all_records_at(git_root: &Path, strict: bool, dir: &Path) -> Result<(Store, Vec<String>)> {
-    if !crate::atomic::import_complete(dir) {
-        let file = metadata_file(git_root)?;
-        if let Some(store) =
-            crate::migration::read_with_retry(&file, || metadata_file(git_root), validated_store)?
-        {
-            return Ok((store, Vec::new()));
-        }
-        // An importer may have published the directory and archived the old
-        // file since our first check. Only report an empty store after retrying.
-        if !dir.exists() {
-            return Ok((empty_store(), Vec::new()));
-        }
-    }
     let mut store = empty_store();
     let mut problems = Vec::new();
-    let entries = fs::read_dir(dir).map_err(|error| {
-        Error::msg(format!(
-            "Failed to read workspace metadata {}: {error}",
-            dir.display()
-        ))
-    })?;
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((store, problems)),
+        Err(error) => {
+            return Err(Error::msg(format!(
+                "Failed to read workspace metadata {}: {error}",
+                dir.display()
+            )))
+        }
+    };
     let mut files = entries
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<std::io::Result<Vec<_>>>()
@@ -608,38 +568,13 @@ fn read_all_records_at(git_root: &Path, strict: bool, dir: &Path) -> Result<(Sto
 }
 
 fn ensure_records(git_root: &Path) -> Result<()> {
-    ensure_records_with(git_root, || {})
-}
-
-fn ensure_records_with(git_root: &Path, before_publish: impl FnOnce()) -> Result<()> {
-    let common = crate::git::git_common_dir(git_root)?;
-    for item in [RECORDS_DIR, FILE_NAME, "worktrees.json.imported"] {
-        crate::migration::metadata_item(&common, item, crate::migration::Access::Write);
-    }
     let dir = records_dir(git_root)?;
-    let legacy = metadata_file(git_root)?;
-    crate::migration::check_write_location(&dir)?;
-    if legacy.exists() {
-        crate::atomic::import_directory(&dir, &legacy, |staging| {
-            let mut store = validated_store(&legacy)?.unwrap_or_else(empty_store);
-            for record in &mut store.worktrees {
-                record.schema = Some(2);
-                record.metadata.id = Some(format!("ws_{}", uuid::Uuid::new_v4()));
-                save_record(staging, record)?;
-            }
-            before_publish();
-            crate::migration::check_write_location(&dir)?;
-            Ok(())
-        })?;
-    } else {
-        fs::create_dir_all(&dir).map_err(|error| {
-            Error::msg(format!(
-                "Workspace metadata directory {} is not writable: {error}",
-                dir.display()
-            ))
-        })?;
-    }
-    Ok(())
+    fs::create_dir_all(&dir).map_err(|error| {
+        Error::msg(format!(
+            "Workspace metadata directory {} is not writable: {error}",
+            dir.display()
+        ))
+    })
 }
 
 fn save_record(dir: &Path, record: &StoredWorktree) -> Result<()> {
@@ -649,7 +584,6 @@ fn save_record(dir: &Path, record: &StoredWorktree) -> Result<()> {
         .as_deref()
         .ok_or_else(|| Error::msg("Missing workspace id"))?;
     let body = serde_json::to_vec_pretty(record).map_err(|error| Error::msg(error.to_string()))?;
-    crate::migration::check_write_location(dir)?;
     crate::atomic::write(&dir.join(format!("{id}.json")), &body)
         .map_err(|error| Error::msg(format!("Failed to save workspace metadata: {error}")))
 }
@@ -683,7 +617,6 @@ fn with_store<T>(
                 .any(|after| after.metadata.id == record.metadata.id)
             {
                 if let Some(id) = &record.metadata.id {
-                    crate::migration::check_write_location(&dir)?;
                     match fs::remove_file(dir.join(format!("{id}.json"))) {
                         Ok(()) => {}
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -696,75 +629,8 @@ fn with_store<T>(
     Ok(value)
 }
 
-fn validated_store(path: &Path) -> Result<Option<Store>> {
-    let Some(store) = read_store(path)? else {
-        return Ok(None);
-    };
-    let mut seen = std::collections::BTreeSet::new();
-    for record in &store.worktrees {
-        let key = path_key(Path::new(&record.path));
-        if key.is_empty() {
-            return Err(Error::msg(format!(
-                "Workspace metadata file {} contains a record without a path",
-                path.display()
-            )));
-        }
-        if !seen.insert(key) {
-            return Err(Error::msg(format!(
-                "Workspace metadata file {} contains a duplicate path",
-                path.display()
-            )));
-        }
-    }
-    Ok(Some(store))
-}
-
-fn read_store(path: &Path) -> Result<Option<Store>> {
-    let content = match fs::read_to_string(path) {
-        Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(None);
-        }
-        Err(error) => {
-            return Err(Error::msg(format!(
-                "Workspace metadata file {} could not be read: {error}",
-                path.display()
-            )));
-        }
-    };
-    let value: serde_json::Value = serde_json::from_str(&content).map_err(|error| {
-        Error::msg(format!(
-            "Workspace metadata file {} contains invalid JSON: {error}",
-            path.display()
-        ))
-    })?;
-    if !value.is_object() {
-        return Err(Error::msg(format!(
-            "Workspace metadata file {} is not a JSON object",
-            path.display()
-        )));
-    }
-    let version = value
-        .get("version")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-    if version.as_u64() != Some(u64::from(STORE_VERSION)) {
-        return Err(Error::msg(format!(
-            "Workspace metadata file {} has unsupported version: {version}",
-            path.display()
-        )));
-    }
-    serde_json::from_value(value).map(Some).map_err(|error| {
-        Error::msg(format!(
-            "Workspace metadata file {} has an invalid shape: {error}",
-            path.display()
-        ))
-    })
-}
-
 fn empty_store() -> Store {
     Store {
-        version: STORE_VERSION,
         worktrees: Vec::new(),
     }
 }
@@ -806,7 +672,7 @@ mod tests {
     fn missing_file_loads_as_empty() {
         let root = root();
         assert!(load(&root).expect("load").is_empty());
-        assert!(!metadata_file(&root).expect("file").exists());
+        assert!(!records_dir(&root).expect("directory").exists());
     }
 
     #[test]
@@ -855,36 +721,6 @@ mod tests {
         remove(&root, &path).expect("remove");
         remove(&root, &path).expect("remove again");
         assert!(load(&root).expect("load").is_empty());
-    }
-
-    #[test]
-    fn corrupt_or_unknown_version_is_not_overwritten() {
-        let root = root();
-        fs::create_dir_all(metadata_dir(&root).expect("dir")).expect("dir");
-        let file = metadata_file(&root).expect("file");
-        fs::write(&file, "{not json").expect("corrupt");
-        let error = write(&root, &root.join("wt"), &MetadataInput::default()).expect_err("write");
-        assert!(error.to_string().contains("invalid JSON"));
-        assert_eq!(fs::read_to_string(&file).expect("kept"), "{not json");
-
-        let duplicate = "{\n  \"version\": 1,\n  \"worktrees\": [\n    {\"path\": \"/tmp/a\", \"owner\": \"first\"},\n    {\"path\": \"/tmp/a\", \"owner\": \"second\"}\n  ]\n}\n";
-        fs::write(&file, duplicate).expect("duplicate");
-        let error = replace(
-            &root,
-            Path::new("/tmp/b"),
-            &MetadataInput::default(),
-            BranchOrigin::Existing,
-        )
-        .expect_err("dup");
-        assert!(error.to_string().contains("duplicate path"));
-        assert_eq!(fs::read_to_string(&file).expect("kept"), duplicate);
-
-        fs::write(&file, "{\n  \"version\": 2,\n  \"worktrees\": []\n}\n").expect("version");
-        let error = load(&root).expect_err("version");
-        assert!(error.to_string().contains("unsupported version"));
-        assert!(fs::read_to_string(&file)
-            .expect("kept")
-            .contains("\"version\": 2"));
     }
 
     #[test]
@@ -1010,263 +846,6 @@ mod tests {
     }
 
     #[test]
-    fn reader_retries_migrated_records_without_losing_ids_or_creating_duplicates() {
-        for strict in [false, true] {
-            for marker in [false, true] {
-                let root = root();
-                let path = root.join("workspace");
-                let before = write(
-                    &root,
-                    &path,
-                    &MetadataInput {
-                        purpose: Some("before".into()),
-                        ..MetadataInput::default()
-                    },
-                )
-                .unwrap();
-                let common = crate::git::git_common_dir(&root).unwrap();
-                if marker {
-                    fs::write(
-                        records_dir(&root)
-                            .unwrap()
-                            .join(crate::atomic::IMPORT_COMPLETE),
-                        "complete",
-                    )
-                    .unwrap();
-                }
-                fs::rename(common.join("mabo"), common.join("maboroshi")).unwrap();
-                let (store, problems) = read_all_records_with(&root, strict, || {
-                    assert!(common.join("maboroshi/workspaces").is_dir());
-                    ensure_records(&root).unwrap();
-                    assert!(!common.join("maboroshi/workspaces").exists());
-                })
-                .unwrap();
-                assert!(problems.is_empty());
-                assert_eq!(store.worktrees.len(), 1);
-                assert_eq!(store.worktrees[0].metadata, before);
-                let after = patch(
-                    &root,
-                    &path,
-                    &MetadataInput {
-                        purpose: Some("after".into()),
-                        ..MetadataInput::default()
-                    },
-                    &[],
-                )
-                .unwrap();
-                assert_eq!(after.id, before.id);
-                let (store, _) = read_all_records(&root, true).unwrap();
-                assert_eq!(store.worktrees.len(), 1);
-                assert_eq!(
-                    store.worktrees[0].metadata.purpose.as_deref(),
-                    Some("after")
-                );
-                fs::remove_dir_all(root).unwrap();
-            }
-        }
-    }
-
-    #[test]
-    fn legacy_file_read_retries_after_metadata_migration() {
-        let root = root();
-        let common = crate::git::git_common_dir(&root).unwrap();
-        let legacy = common.join("maboroshi/worktrees.json");
-        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        fs::write(
-            &legacy,
-            include_str!("../tests/fixtures/alpha6/worktrees.json"),
-        )
-        .unwrap();
-        // Supply a stale resolved file, as if migration happened immediately
-        // after metadata_file() returned it.
-        crate::migration::metadata_item(&common, FILE_NAME, crate::migration::Access::Write);
-        let store =
-            crate::migration::read_with_retry(&legacy, || metadata_file(&root), validated_store)
-                .unwrap()
-                .unwrap();
-        assert_eq!(store.worktrees.len(), 2);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn reader_rechecks_records_after_a_concurrent_legacy_import() {
-        for strict in [false, true] {
-            let root = root();
-            let legacy = metadata_file(&root).unwrap();
-            fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-            let fixture = include_str!("../tests/fixtures/alpha6/worktrees.json");
-            fs::write(&legacy, fixture).unwrap();
-            let before = load(&root).unwrap();
-            let (store, problems) = read_all_records_with(&root, strict, || {
-                // Finish another thread's import after the reader sees no new
-                // directory, but before it attempts to open the legacy file.
-                assert!(!records_dir(&root).unwrap().exists());
-                thread::scope(|scope| {
-                    scope
-                        .spawn(|| ensure_records(&root).unwrap())
-                        .join()
-                        .unwrap();
-                });
-                assert!(!legacy.exists());
-                assert!(legacy.with_extension("json.imported").is_file());
-            })
-            .unwrap();
-            assert!(problems.is_empty());
-            assert_eq!(store.worktrees.len(), before.len());
-            for record in store.worktrees {
-                assert!(record.metadata.id.is_some());
-                let mut imported = record.metadata;
-                imported.id = None;
-                assert_eq!(imported, before[&record.path]);
-            }
-            fs::remove_dir_all(root).unwrap();
-        }
-    }
-
-    #[test]
-    fn blocked_import_destination_keeps_all_metadata_for_retry() {
-        let root = root();
-        let legacy = metadata_file(&root).unwrap();
-        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        let fixture = include_str!("../tests/fixtures/alpha6/worktrees.json");
-        fs::write(&legacy, fixture).unwrap();
-        let before = load(&root).unwrap();
-        let target = records_dir(&root).unwrap();
-        fs::write(&target, "blocker").unwrap();
-        assert!(write(&root, &root.join("new"), &MetadataInput::default()).is_err());
-        assert_eq!(fs::read_to_string(&legacy).unwrap(), fixture);
-        assert!(!legacy.with_extension("json.imported").exists());
-        assert_eq!(fs::read_to_string(&target).unwrap(), "blocker");
-        fs::remove_file(&target).unwrap();
-        assert_eq!(load(&root).unwrap(), before);
-        write(&root, &root.join("new"), &MetadataInput::default()).unwrap();
-        let after = load_strict(&root).unwrap();
-        assert_eq!(after.len(), before.len() + 1);
-        for (path, old) in before {
-            let mut imported = after[&path].clone();
-            imported.id = None;
-            assert_eq!(imported, old);
-        }
-        assert!(!legacy.exists());
-        assert_eq!(
-            fs::read_to_string(legacy.with_extension("json.imported")).unwrap(),
-            fixture
-        );
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn imports_legacy_into_existing_or_concurrently_created_directory() {
-        for scenario in ["empty-before", "empty-during", "record-during"] {
-            let concurrent = scenario != "empty-before";
-            let addition = scenario == "record-during";
-            let root = root();
-            let legacy = metadata_file(&root).unwrap();
-            fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-            fs::write(
-                &legacy,
-                include_str!("../tests/fixtures/alpha6/worktrees.json"),
-            )
-            .unwrap();
-            let before = load_strict(&root).unwrap();
-            let target = records_dir(&root).unwrap();
-            if !concurrent {
-                fs::create_dir_all(&target).unwrap();
-                assert_eq!(load_strict(&root).unwrap(), before);
-            }
-            ensure_records_with(&root, || {
-                if concurrent {
-                    // Another writer creates the destination and adds a record
-                    // after staging is populated but before publication.
-                    thread::scope(|scope| {
-                        scope
-                            .spawn(|| {
-                                fs::create_dir_all(&target).unwrap();
-                                if addition {
-                                    let mut record = validated_store(&legacy)
-                                        .unwrap()
-                                        .unwrap()
-                                        .worktrees
-                                        .remove(0);
-                                    record.schema = Some(2);
-                                    record.path = path_key(&root.join("concurrent"));
-                                    record.metadata.id =
-                                        Some(format!("ws_{}", uuid::Uuid::new_v4()));
-                                    record.metadata.purpose = Some("concurrent".into());
-                                    save_record(&target, &record).unwrap();
-                                }
-                            })
-                            .join()
-                            .unwrap()
-                    });
-                }
-            })
-            .unwrap();
-            let after = load_strict(&root).unwrap();
-            assert_eq!(after.len(), before.len() + usize::from(addition));
-            for (path, old) in before {
-                let mut imported = after[&path].clone();
-                imported.id = None;
-                assert_eq!(imported, old);
-            }
-            if addition {
-                assert_eq!(
-                    after[&path_key(&root.join("concurrent"))]
-                        .purpose
-                        .as_deref(),
-                    Some("concurrent")
-                );
-            }
-            assert!(crate::atomic::import_complete(&target));
-            assert!(!legacy.exists());
-            assert!(legacy.with_extension("json.imported").is_file());
-            fs::remove_dir_all(root).unwrap();
-        }
-    }
-
-    #[test]
-    fn imports_alpha6_on_first_write_and_preserves_intent_and_creation() {
-        let root = root();
-        let legacy = metadata_file(&root).unwrap();
-        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        let fixture = include_str!("../tests/fixtures/alpha6/worktrees.json");
-        fs::write(&legacy, fixture).unwrap();
-        let before = load(&root).unwrap();
-        assert_eq!(before.len(), 2);
-        assert!(
-            !records_dir(&root).unwrap().exists(),
-            "read-only load migrated"
-        );
-        write(&root, &root.join("new"), &MetadataInput::default()).unwrap();
-        assert!(!legacy.exists());
-        assert_eq!(
-            fs::read_to_string(legacy.with_extension("json.imported")).unwrap(),
-            fixture
-        );
-        for entry in fs::read_dir(records_dir(&root).unwrap()).unwrap() {
-            let file = entry.unwrap().path();
-            if file.extension().is_some_and(|ext| ext == "json") {
-                let record: serde_json::Value =
-                    serde_json::from_slice(&fs::read(file).unwrap()).unwrap();
-                assert!(record.get("owner").is_none());
-                assert!(record.get("lastUsedAt").is_none());
-            }
-        }
-        let after = load(&root).unwrap();
-        assert_eq!(after.len(), 3);
-        for (path, old) in before {
-            let mut imported = after[&path].clone();
-            assert!(imported.id.as_deref().unwrap().starts_with("ws_"));
-            imported.id = None;
-            assert_eq!(imported, old);
-        }
-        assert_eq!(
-            fs::read_dir(records_dir(&root).unwrap()).unwrap().count(),
-            4
-        );
-    }
-
-    #[test]
     fn corrupt_individual_record_keeps_healthy_metadata_readable() {
         let root = root();
         let one = write(
@@ -1305,37 +884,37 @@ mod tests {
     }
 
     #[test]
-    fn simultaneous_first_writes_import_legacy_without_losing_records() {
-        let root = Arc::new(root());
-        let legacy = metadata_file(&root).unwrap();
-        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        fs::write(
-            &legacy,
-            include_str!("../tests/fixtures/alpha6/worktrees.json"),
-        )
-        .unwrap();
-        let gate = Arc::new(Barrier::new(8));
-        let handles = (0..8)
-            .map(|index| {
-                let root = Arc::clone(&root);
-                let gate = Arc::clone(&gate);
-                thread::spawn(move || {
-                    gate.wait();
-                    write(
-                        &root,
-                        &root.join(format!("new-{index}")),
-                        &MetadataInput::default(),
-                    )
-                    .unwrap();
-                })
-            })
-            .collect::<Vec<_>>();
-        for handle in handles {
-            handle.join().unwrap();
+    fn invalid_schema_ids_and_paths_are_never_overwritten() {
+        let root = root();
+        let metadata = write(&root, &root.join("one"), &MetadataInput::default()).unwrap();
+        let dir = records_dir(&root).unwrap();
+        let file = dir.join(format!("{}.json", metadata.id.unwrap()));
+        let valid: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        for (field, value) in [
+            ("schema", serde_json::json!(1)),
+            ("schema", serde_json::Value::Null),
+            ("id", serde_json::Value::Null),
+            (
+                "id",
+                serde_json::json!(format!("ws_{}", uuid::Uuid::new_v4())),
+            ),
+            (
+                "id",
+                serde_json::json!("ws_550e8400-e29b-11d4-a716-446655440000"),
+            ),
+            ("path", serde_json::json!("")),
+            ("path", serde_json::Value::Null),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[field] = value;
+            let bytes = serde_json::to_vec(&invalid).unwrap();
+            fs::write(&file, &bytes).unwrap();
+            assert!(load_strict(&root).is_err(), "{invalid}");
+            assert!(load(&root).unwrap().is_empty(), "{invalid}");
+            assert!(write(&root, &root.join("two"), &MetadataInput::default()).is_err());
+            assert_eq!(fs::read(&file).unwrap(), bytes);
+            assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
         }
-        assert_eq!(load(&root).unwrap().len(), 10);
-        assert!(!legacy.exists());
-        assert!(legacy.with_extension("json.imported").is_file());
     }
 
     #[test]

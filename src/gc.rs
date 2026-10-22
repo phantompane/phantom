@@ -1318,7 +1318,7 @@ mod tests {
     fn feature() -> WorktreeFacts {
         WorktreeFacts {
             subject: Subject {
-                path: PathBuf::from("/repo/.git/maboroshi/worktrees/feature"),
+                path: PathBuf::from("/repo/custom/workspaces/feature"),
                 name: "feature".to_string(),
                 branch: Some("feature".to_string()),
                 head: None,

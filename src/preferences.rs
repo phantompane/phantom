@@ -118,14 +118,14 @@ pub fn set_preference(key: &str, value: &str) -> Result<PathBuf> {
     if let Some(message) = validate_preference_value(key, value) {
         return Err(Error::validation(message));
     }
-    let path = crate::migration::config_dir(crate::migration::Access::Write)?.join("config.toml");
+    let path = crate::paths::config_dir()?.join("config.toml");
     set_preference_at(&path, key, value)?;
     Ok(path)
 }
 
 pub fn remove_preference(key: &str) -> Result<PathBuf> {
     require_key(key)?;
-    let path = crate::migration::config_dir(crate::migration::Access::Write)?.join("config.toml");
+    let path = crate::paths::config_dir()?.join("config.toml");
     remove_preference_at(&path, key)?;
     Ok(path)
 }
@@ -176,7 +176,7 @@ fn remove_preference_at(path: &Path, key: &str) -> Result<()> {
 }
 
 fn read_document(path: &Path) -> Result<Option<DocumentMut>> {
-    match crate::migration::read_product_file(path, crate::migration::Layout::Config) {
+    match fs::read_to_string(path) {
         Ok(content) => content
             .parse::<DocumentMut>()
             .map(Some)
@@ -191,7 +191,6 @@ fn read_document(path: &Path) -> Result<Option<DocumentMut>> {
 
 fn write_document(path: &Path, document: &DocumentMut, prepend_header: bool) -> Result<()> {
     if let Some(parent) = path.parent() {
-        crate::migration::check_write_location(parent)?;
         fs::create_dir_all(parent).map_err(|error| {
             Error::msg(format!("Failed to create {}: {error}", parent.display()))
         })?;
@@ -202,9 +201,6 @@ fn write_document(path: &Path, document: &DocumentMut, prepend_header: bool) -> 
     } else {
         body
     };
-    if let Some(parent) = path.parent() {
-        crate::migration::check_write_location(parent)?;
-    }
     crate::atomic::write(path, contents.as_bytes())
         .map_err(|error| Error::msg(format!("Failed to write {}: {error}", path.display())))
 }
@@ -354,26 +350,6 @@ mod tests {
             "mabo-preferences-{label}-{}-{nanos}",
             std::process::id()
         ))
-    }
-
-    #[test]
-    fn stale_config_path_retries_after_migration() {
-        let base = xdg_config("read-migration");
-        let old = base.join("maboroshi");
-        fs::create_dir_all(&old).unwrap();
-        let file = old.join("config.toml");
-        fs::write(&file, "discover-ghq = false\n").unwrap();
-        crate::migration::product_dir(
-            &base,
-            crate::migration::Access::Write,
-            crate::migration::Layout::Config,
-        );
-        assert!(!file.exists());
-        assert_eq!(
-            load_preferences_from(&file).unwrap().ghq_discovery,
-            Some(false)
-        );
-        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
