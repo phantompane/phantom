@@ -138,7 +138,11 @@ pub fn find_in<'a>(
 }
 
 pub fn metadata_file(git_root: &Path) -> Result<PathBuf> {
-    Ok(metadata_dir(git_root)?.join(FILE_NAME))
+    Ok(crate::migration::metadata_item(
+        &crate::git::git_common_dir(git_root)?,
+        FILE_NAME,
+        crate::migration::Access::Read,
+    ))
 }
 
 /// Records for every path in the store. A missing file is an empty map.
@@ -459,10 +463,10 @@ fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
     }
 }
 
-/// `maboroshi/` inside the Git common directory. A custom `workspace-root` does
+/// `mabo/` inside the Git common directory. A custom `workspace-root` does
 /// not move this file, and a checkout whose `.git` is a file still shares it.
 fn metadata_dir(git_root: &Path) -> Result<PathBuf> {
-    Ok(crate::git::git_common_dir(git_root)?.join("maboroshi"))
+    Ok(crate::git::git_common_dir(git_root)?.join("mabo"))
 }
 
 fn save_injected() -> bool {
@@ -480,7 +484,11 @@ fn save_injected() -> bool {
 }
 
 pub fn records_dir(git_root: &Path) -> Result<PathBuf> {
-    Ok(metadata_dir(git_root)?.join(RECORDS_DIR))
+    Ok(crate::migration::metadata_item(
+        &crate::git::git_common_dir(git_root)?,
+        RECORDS_DIR,
+        crate::migration::Access::Read,
+    ))
 }
 
 fn read_records(git_root: &Path, strict: bool) -> Result<(Store, Vec<String>)> {
@@ -593,6 +601,10 @@ fn ensure_records(git_root: &Path) -> Result<()> {
 }
 
 fn ensure_records_with(git_root: &Path, before_publish: impl FnOnce()) -> Result<()> {
+    let common = crate::git::git_common_dir(git_root)?;
+    for item in [RECORDS_DIR, FILE_NAME, "worktrees.json.imported"] {
+        crate::migration::metadata_item(&common, item, crate::migration::Access::Write);
+    }
     let dir = records_dir(git_root)?;
     let legacy = metadata_file(git_root)?;
     if legacy.exists() {

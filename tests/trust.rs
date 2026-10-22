@@ -104,7 +104,7 @@ fn worktree(repo: &Repo, name: &str) -> PathBuf {
 }
 
 fn trust_file(repo: &Repo) -> PathBuf {
-    repo.root.join("state/maboroshi/trust.toml")
+    repo.root.join("state/mabo/trust.toml")
 }
 
 fn common_dir(repo: &Repo) -> String {
@@ -536,7 +536,7 @@ fn gc_on_a_terminal_does_not_ask() {
 #[test]
 fn a_broken_trust_file_still_allows_skip_paths() {
     let repo = Repo::new();
-    fs::create_dir_all(repo.root.join("state/maboroshi")).expect("state");
+    fs::create_dir_all(repo.root.join("state/mabo")).expect("state");
     fs::write(trust_file(&repo), "[[project]]\npath = 1\n").expect("broken");
 
     let plain = repo.mabo(&["create", "plain"]);

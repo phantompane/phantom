@@ -4,8 +4,9 @@
 
 ### Changed
 
-- The product is now named mabo, and the Cargo package is `mabo`. Install from source with `cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked mabo`. Data directories are unchanged.
+- The product is now named mabo, and the Cargo package is `mabo`. Install from source with `cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked mabo`.
 - Release archives are now named `mabo-v<version>-<os>-<arch>.tar.gz`. Releases up to v7.0.0-alpha.8 use the `maboroshi-` prefix; `install.sh` picks the name listed in that release's `SHA256SUMS`, preferring `mabo-` when both names have a valid entry.
+- New config, state, repository metadata and default workspace paths use `mabo/` instead of `maboroshi/`. Existing config/state directories and safe metadata items migrate by atomic rename on the next write, only when the new location is absent. Read-only commands, dry runs and gc plans leave paths unchanged. If both paths exist, the new one is used without merging and the ignored nonempty legacy path is reported on stderr; a failed rename warns and continues with legacy data unless the new path appeared concurrently. Migration never copies, overwrites or deletes user files. Existing Git worktrees, including `maboroshi/workspaces/` data and `<git-common-dir>/maboroshi/worktrees/`, stay managed in place; uncertain metadata contents also stay in place. New project markers and clone staging use `.mabo-common-dir` and `.mabo-clone-`, with legacy names still recognized.
 
 ## v7.0.0-alpha.8 (2026-10-22)
 

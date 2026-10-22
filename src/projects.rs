@@ -29,22 +29,38 @@ struct RegistryState {
 
 pub struct ProjectRegistryStore {
     data_dir: PathBuf,
+    shared_state: bool,
 }
 
 impl ProjectRegistryStore {
     pub fn new(data_dir: PathBuf) -> Self {
-        Self { data_dir }
+        Self {
+            data_dir,
+            shared_state: false,
+        }
     }
 
     pub fn default_store() -> Result<Self> {
-        Ok(Self::new(default_data_dir()?))
+        Ok(Self {
+            data_dir: default_data_dir()?,
+            shared_state: true,
+        })
     }
 
     pub fn list(&self) -> Result<Vec<ProjectRecord>> {
+        if self.shared_state {
+            return Self::new(crate::migration::state_dir(crate::migration::Access::Read)?).list();
+        }
         Ok(self.load()?.projects)
     }
 
     pub fn add(&self, root_path: &Path) -> Result<(ProjectRecord, bool)> {
+        if self.shared_state {
+            return Self::new(crate::migration::state_dir(
+                crate::migration::Access::Write,
+            )?)
+            .add(root_path);
+        }
         let normalized = normalize_root(root_path)?;
         self.ensure_records()?;
         if let Some(existing) = self
@@ -68,6 +84,12 @@ impl ProjectRegistryStore {
     }
 
     pub fn remove(&self, id: &str) -> Result<Option<ProjectRecord>> {
+        if self.shared_state {
+            return Self::new(crate::migration::state_dir(
+                crate::migration::Access::Write,
+            )?)
+            .remove(id);
+        }
         self.ensure_records()?;
         let records = self.read_individual()?;
         let Some(project) = records.iter().find(|project| project.id == id).cloned() else {
@@ -715,19 +737,16 @@ fn parse_ghq_paths(stdout: &str) -> Vec<String> {
 }
 
 pub fn default_data_dir() -> Result<PathBuf> {
-    let home = std::env::var("HOME").map_err(|_| Error::Projects("HOME is not set".to_string()))?;
-    Ok(resolve_data_dir(
-        &home,
-        std::env::var("XDG_STATE_HOME").ok().as_deref(),
-    ))
+    crate::migration::state_dir(crate::migration::Access::Read)
 }
 
+#[cfg(test)]
 fn resolve_data_dir(home: &str, xdg_state_home: Option<&str>) -> PathBuf {
     let base = match xdg_state_home {
         Some(state) if Path::new(state).is_absolute() => PathBuf::from(state),
         _ => PathBuf::from(home).join(".local").join("state"),
     };
-    base.join("maboroshi")
+    crate::migration::product_dir(&base, crate::migration::Access::Read)
 }
 
 fn empty_registry() -> RegistryState {
@@ -852,13 +871,13 @@ mod tests {
     fn default_data_dir_uses_xdg_state_home_mabo() {
         assert_eq!(
             resolve_data_dir("/home/user", Some("/var/state")),
-            PathBuf::from("/var/state/maboroshi")
+            PathBuf::from("/var/state/mabo")
         );
     }
 
     #[test]
     fn default_data_dir_falls_back_to_home_local_state_mabo() {
-        let fallback = PathBuf::from("/home/user/.local/state/maboroshi");
+        let fallback = PathBuf::from("/home/user/.local/state/mabo");
         assert_eq!(resolve_data_dir("/home/user", None), fallback);
         assert_eq!(resolve_data_dir("/home/user", Some("")), fallback);
         assert_eq!(
@@ -1351,13 +1370,13 @@ mod tests {
             .expect("inside .git"),
             main
         );
-        let missing = resolve_directory_reference("/no/such/maboroshi-project", &dir, &home);
+        let missing = resolve_directory_reference("/no/such/mabo-project", &dir, &home);
         let missing = missing.expect_err("missing path");
         assert!(matches!(missing, Error::PathNotFound(_)));
         assert_eq!(missing.exit_code(), crate::error::NOT_FOUND);
         assert_eq!(
             missing.to_string(),
-            "Path '/no/such/maboroshi-project' does not exist"
+            "Path '/no/such/mabo-project' does not exist"
         );
         let option = resolve_project_ref("--json").expect_err("option");
         assert!(matches!(option, Error::Validation(_)));

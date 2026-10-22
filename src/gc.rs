@@ -487,7 +487,7 @@ fn gather(context: &Context, policy: &Policy, target: Option<&Path>) -> Result<V
             continue;
         }
         let found = metadata::find_in(&stored, &path);
-        let inside = paths::is_strictly_inside(&path, &context.worktrees_directory);
+        let inside = worktree::managed_directory(context, &path).is_some();
         let recorded = found.is_some();
         if !inside && !recorded {
             continue;

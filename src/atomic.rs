@@ -100,9 +100,20 @@ pub(crate) fn import_directory(
         let _ = fs::remove_dir_all(&staging);
         result?;
     }
-    match fs::rename(legacy, legacy.with_extension("json.imported")) {
+    match crate::migration::rename_no_replace(legacy, &legacy.with_extension("json.imported")) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            crate::output::warning_once(
+                "path_migration",
+                format!(
+                    "Warning: {} already exists; keeping the legacy import source {} in place.",
+                    legacy.with_extension("json.imported").display(),
+                    legacy.display()
+                ),
+            );
+            Ok(())
+        }
         Err(error) => Err(Error::msg(format!(
             "Failed to archive {}: {error}",
             legacy.display()

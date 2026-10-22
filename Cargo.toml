@@ -9,6 +9,9 @@ keywords = ["git", "worktree", "workspace", "agents", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 license = "MIT"
 
+[lib]
+name = "mabo"
+
 [[bin]]
 name = "mabo"
 path = "src/main.rs"

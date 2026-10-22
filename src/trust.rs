@@ -255,7 +255,7 @@ fn remember(git_root: &Path) -> Result<()> {
 }
 
 fn update(body: impl FnOnce(&mut BTreeMap<String, String>) -> bool) -> Result<bool> {
-    let path = trust_path()?;
+    let path = crate::migration::state_dir(crate::migration::Access::Write)?.join("trust.toml");
     let Some(dir) = path.parent().map(Path::to_path_buf) else {
         return Err(Error::msg(format!("Failed to write {}", path.display())));
     };
@@ -284,19 +284,7 @@ fn trust_path() -> Result<PathBuf> {
 }
 
 fn state_dir() -> Result<PathBuf> {
-    if let Some(value) = std::env::var_os("XDG_STATE_HOME") {
-        let path = PathBuf::from(&value);
-        if !value.is_empty() && path.is_absolute() {
-            return Ok(path.join("maboroshi"));
-        }
-    }
-    let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) else {
-        return Err(Error::msg("HOME is not set"));
-    };
-    Ok(PathBuf::from(home)
-        .join(".local")
-        .join("state")
-        .join("maboroshi"))
+    crate::migration::state_dir(crate::migration::Access::Read)
 }
 
 fn load() -> Result<BTreeMap<String, String>> {
