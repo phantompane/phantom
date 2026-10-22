@@ -8,8 +8,6 @@ use crate::error::{Error, Result};
 use crate::git;
 use crate::process;
 
-const REGISTRY_FILE: &str = "projects.json";
-const REGISTRY_VERSION: u32 = 1;
 const LIST_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -21,46 +19,30 @@ pub struct ProjectRecord {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
 struct RegistryState {
-    version: u32,
     projects: Vec<ProjectRecord>,
 }
 
 pub struct ProjectRegistryStore {
     data_dir: PathBuf,
-    shared_state: bool,
 }
 
 impl ProjectRegistryStore {
     pub fn new(data_dir: PathBuf) -> Self {
-        Self {
-            data_dir,
-            shared_state: false,
-        }
+        Self { data_dir }
     }
 
     pub fn default_store() -> Result<Self> {
         Ok(Self {
             data_dir: default_data_dir()?,
-            shared_state: true,
         })
     }
 
     pub fn list(&self) -> Result<Vec<ProjectRecord>> {
-        if self.shared_state {
-            return Self::new(crate::migration::state_dir(crate::migration::Access::Read)?).list();
-        }
         Ok(self.load()?.projects)
     }
 
     pub fn add(&self, root_path: &Path) -> Result<(ProjectRecord, bool)> {
-        if self.shared_state {
-            return Self::new(crate::migration::state_dir(
-                crate::migration::Access::Write,
-            )?)
-            .add(root_path);
-        }
         let normalized = normalize_root(root_path)?;
         self.ensure_records()?;
         if let Some(existing) = self
@@ -84,12 +66,6 @@ impl ProjectRegistryStore {
     }
 
     pub fn remove(&self, id: &str) -> Result<Option<ProjectRecord>> {
-        if self.shared_state {
-            return Self::new(crate::migration::state_dir(
-                crate::migration::Access::Write,
-            )?)
-            .remove(id);
-        }
         self.ensure_records()?;
         let records = self.read_individual()?;
         let Some(project) = records.iter().find(|project| project.id == id).cloned() else {
@@ -101,7 +77,6 @@ impl ProjectRegistryStore {
             .iter()
             .filter(|record| record.root_path == project.root_path)
         {
-            crate::migration::check_write_location(&self.data_dir)?;
             match fs::remove_file(
                 self.data_dir
                     .join("repos")
@@ -116,32 +91,18 @@ impl ProjectRegistryStore {
     }
 
     fn ensure_records(&self) -> Result<()> {
-        self.ensure_records_with(|| {})
-    }
-
-    fn ensure_records_with(&self, before_publish: impl FnOnce()) -> Result<()> {
-        crate::migration::check_write_location(&self.data_dir)?;
-        let dir = self.data_dir.join("repos");
-        let legacy = self.data_dir.join(REGISTRY_FILE);
-        if legacy.exists() {
-            crate::atomic::import_directory(&dir, &legacy, |staging| {
-                for project in self.load_legacy()?.unwrap_or_else(empty_registry).projects {
-                    save_project(staging, &project)?;
-                }
-                before_publish();
-                crate::migration::check_write_location(&self.data_dir)?;
-                Ok(())
-            })
-        } else {
-            fs::create_dir_all(dir).map_err(|error| Error::Projects(error.to_string()))
-        }
+        fs::create_dir_all(self.data_dir.join("repos"))
+            .map_err(|error| Error::Projects(error.to_string()))
     }
 
     fn read_individual(&self) -> Result<Vec<ProjectRecord>> {
         let mut records = Vec::new();
-        for entry in fs::read_dir(self.data_dir.join("repos"))
-            .map_err(|error| Error::Projects(error.to_string()))?
-        {
+        let entries = match fs::read_dir(self.data_dir.join("repos")) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(records),
+            Err(error) => return Err(Error::Projects(error.to_string())),
+        };
+        for entry in entries {
             let path = entry
                 .map_err(|error| Error::Projects(error.to_string()))?
                 .path();
@@ -155,7 +116,6 @@ impl ProjectRegistryStore {
                 Error::Projects(format!("Projects registry contains invalid JSON: {error}"))
             })?;
             validate_state(&RegistryState {
-                version: REGISTRY_VERSION,
                 projects: vec![record.clone()],
             })?;
             if path.file_stem().and_then(|stem| stem.to_str()) != Some(&record.id) {
@@ -169,84 +129,17 @@ impl ProjectRegistryStore {
     }
 
     fn load(&self) -> Result<RegistryState> {
-        self.load_with(|| {})
-    }
-
-    fn load_with(&self, before_legacy: impl FnOnce()) -> Result<RegistryState> {
-        before_legacy();
-        crate::migration::read_with_retry(
-            &self.data_dir,
-            || {
-                Ok(crate::migration::reresolve_product_dir(
-                    &self.data_dir,
-                    crate::migration::Layout::State,
-                ))
-            },
-            |dir| Self::new(dir.to_path_buf()).load_at(),
-        )
-    }
-
-    fn load_at(&self) -> Result<RegistryState> {
-        if !crate::atomic::import_complete(&self.data_dir.join("repos")) {
-            if let Some(state) = self.load_legacy()? {
-                return Ok(state);
-            }
-            // A concurrent importer publishes repos before archiving the
-            // legacy file. Recheck it before treating NotFound as empty.
-            if !self.data_dir.join("repos").exists() {
-                return Ok(empty_registry());
-            }
-        }
         let mut records = self.read_individual()?;
         records.sort_by(|a, b| (&a.created_at, &a.id).cmp(&(&b.created_at, &b.id)));
         let mut roots = std::collections::HashSet::new();
         records.retain(|record| roots.insert(record.root_path.clone()));
-        Ok(RegistryState {
-            version: REGISTRY_VERSION,
-            projects: records,
-        })
-    }
-
-    fn load_legacy(&self) -> Result<Option<RegistryState>> {
-        let path = self.data_dir.join(REGISTRY_FILE);
-        let content = match fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(None);
-            }
-            Err(error) => return Err(Error::Projects(error.to_string())),
-        };
-        let value: serde_json::Value = serde_json::from_str(&content).map_err(|error| {
-            Error::Projects(format!("Projects registry contains invalid JSON: {error}"))
-        })?;
-        if !value.is_object() {
-            return Err(Error::Projects(
-                "Projects registry is not a JSON object".to_string(),
-            ));
-        }
-        let version = value
-            .get("version")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        if version.as_u64() != Some(u64::from(REGISTRY_VERSION)) {
-            return Err(Error::Projects(format!(
-                "Unsupported projects registry version: {version}"
-            )));
-        }
-        let state: RegistryState = serde_json::from_value(value).map_err(|error| {
-            Error::Projects(format!("Projects registry has an invalid shape: {error}"))
-        })?;
-        validate_state(&state)?;
-        Ok(Some(state))
+        Ok(RegistryState { projects: records })
     }
 }
 
 fn save_project(dir: &Path, project: &ProjectRecord) -> Result<()> {
     let body =
         serde_json::to_vec_pretty(project).map_err(|error| Error::Projects(error.to_string()))?;
-    if let Some(parent) = dir.parent() {
-        crate::migration::check_write_location(parent)?;
-    }
     crate::atomic::write(&dir.join(format!("{}.json", project.id)), &body)
         .map_err(|error| Error::Projects(error.to_string()))
 }
@@ -756,7 +649,7 @@ fn parse_ghq_paths(stdout: &str) -> Vec<String> {
 }
 
 pub fn default_data_dir() -> Result<PathBuf> {
-    crate::migration::state_dir(crate::migration::Access::Read)
+    crate::paths::state_dir()
 }
 
 #[cfg(test)]
@@ -765,18 +658,7 @@ fn resolve_data_dir(home: &str, xdg_state_home: Option<&str>) -> PathBuf {
         Some(state) if Path::new(state).is_absolute() => PathBuf::from(state),
         _ => PathBuf::from(home).join(".local").join("state"),
     };
-    crate::migration::product_dir(
-        &base,
-        crate::migration::Access::Read,
-        crate::migration::Layout::State,
-    )
-}
-
-fn empty_registry() -> RegistryState {
-    RegistryState {
-        version: REGISTRY_VERSION,
-        projects: Vec::new(),
-    }
+    base.join("mabo")
 }
 
 fn normalize_root(path: &Path) -> Result<String> {
@@ -799,12 +681,6 @@ fn paths_normalize(path: &Path) -> PathBuf {
 }
 
 fn validate_state(state: &RegistryState) -> Result<()> {
-    if state.version != REGISTRY_VERSION {
-        return Err(Error::Projects(format!(
-            "Unsupported projects registry version: {}",
-            state.version
-        )));
-    }
     let mut ids = std::collections::BTreeSet::new();
     let mut roots = std::collections::BTreeSet::new();
     for project in &state.projects {
@@ -969,216 +845,22 @@ mod tests {
     }
 
     #[test]
-    fn reader_retries_after_shared_state_migration() {
-        for individual in [false, true] {
-            let base = std::env::temp_dir().join(format!(
-                "mabo-project-read-migrate-{}",
-                uuid::Uuid::new_v4()
-            ));
-            let old = base.join("maboroshi");
-            fs::create_dir_all(&old).unwrap();
-            fs::write(
-                old.join(REGISTRY_FILE),
-                include_str!("../tests/fixtures/alpha6/projects.json"),
-            )
-            .unwrap();
-            let store = ProjectRegistryStore::new(old.clone());
-            if individual {
-                store.ensure_records().unwrap();
-            }
-            let before = store.list().unwrap();
-            let read = store
-                .load_with(|| {
-                    assert_eq!(
-                        crate::migration::product_dir(
-                            &base,
-                            crate::migration::Access::Write,
-                            crate::migration::Layout::State
-                        ),
-                        base.join("mabo")
-                    );
-                    assert!(!old.exists());
-                })
-                .unwrap();
-            assert_eq!(read.projects, before);
-            let current = ProjectRegistryStore::new(base.join("mabo"));
-            let (record, added) = current.add(Path::new(&before[0].root_path)).unwrap();
-            assert!(!added);
-            assert_eq!(record.id, before[0].id);
-            assert_eq!(current.list().unwrap().len(), before.len());
-            fs::remove_dir_all(base).unwrap();
-        }
-    }
-
-    #[test]
-    fn reader_rechecks_records_after_a_concurrent_legacy_import() {
-        let dir =
-            std::env::temp_dir().join(format!("mabo-project-read-import-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join(REGISTRY_FILE),
-            include_str!("../tests/fixtures/alpha6/projects.json"),
-        )
-        .unwrap();
-        let store = ProjectRegistryStore::new(dir.clone());
-        let before = store.list().unwrap();
-        let read = store
-            .load_with(|| {
-                assert!(!dir.join("repos").exists());
-                std::thread::scope(|scope| {
-                    scope
-                        .spawn(|| store.ensure_records().unwrap())
-                        .join()
-                        .unwrap();
-                });
-                assert!(!dir.join(REGISTRY_FILE).exists());
-                assert!(dir.join("projects.json.imported").is_file());
-            })
-            .unwrap();
-        assert_eq!(read.projects, before);
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn imports_legacy_into_existing_or_concurrently_created_directory() {
-        for scenario in ["empty-before", "empty-during", "record-during"] {
-            let concurrent = scenario != "empty-before";
-            let addition = scenario == "record-during";
-            let dir = std::env::temp_dir().join(format!(
-                "mabo-project-import-existing-{}",
-                uuid::Uuid::new_v4()
-            ));
-            fs::create_dir_all(&dir).unwrap();
-            let legacy = dir.join(REGISTRY_FILE);
-            fs::write(
-                &legacy,
-                include_str!("../tests/fixtures/alpha6/projects.json"),
-            )
-            .unwrap();
-            let store = ProjectRegistryStore::new(dir.clone());
-            let before = store.list().unwrap();
-            let target = dir.join("repos");
-            let mut added = before[0].clone();
-            added.id = format!("proj_{}", uuid::Uuid::new_v4());
-            added.root_path = "/alpha6/concurrent".into();
-            added.name = "concurrent".into();
-            if !concurrent {
-                fs::create_dir_all(&target).unwrap();
-                assert_eq!(store.list().unwrap(), before);
-            }
-            store
-                .ensure_records_with(|| {
-                    if concurrent {
-                        std::thread::scope(|scope| {
-                            scope
-                                .spawn(|| {
-                                    fs::create_dir_all(&target).unwrap();
-                                    if addition {
-                                        save_project(&target, &added).unwrap();
-                                    }
-                                })
-                                .join()
-                                .unwrap()
-                        });
-                    }
-                })
-                .unwrap();
-            let after = store.list().unwrap();
-            assert_eq!(after.len(), before.len() + usize::from(addition));
-            assert!(before.iter().all(|project| after.contains(project)));
-            if addition {
-                assert!(after.contains(&added));
-            }
-            assert!(crate::atomic::import_complete(&target));
-            assert!(!legacy.exists());
-            assert!(legacy.with_extension("json.imported").is_file());
-            fs::remove_dir_all(dir).unwrap();
-        }
-    }
-
-    #[test]
-    fn imports_alpha6_registry_on_first_write_with_existing_ids() {
-        let dir =
-            std::env::temp_dir().join(format!("mabo-project-import-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        let fixture = include_str!("../tests/fixtures/alpha6/projects.json");
-        fs::write(dir.join(REGISTRY_FILE), fixture).unwrap();
-        let store = ProjectRegistryStore::new(dir.clone());
-        let before = store.list().unwrap();
-        assert_eq!(before.len(), 2);
-        assert!(!dir.join("repos").exists());
-        store.add(Path::new("/alpha6/new")).unwrap();
-        let after = store.list().unwrap();
-        assert_eq!(after.len(), 3);
-        assert!(before.iter().all(|record| after.contains(record)));
-        assert!(!dir.join(REGISTRY_FILE).exists());
-        assert_eq!(
-            fs::read_to_string(dir.join("projects.json.imported")).unwrap(),
-            fixture
-        );
-        for record in before {
-            assert!(dir
-                .join("repos")
-                .join(format!("{}.json", record.id))
-                .is_file());
-        }
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
     fn duplicate_roots_keep_oldest_registration_and_remove_together() {
         let dir =
             std::env::temp_dir().join(format!("mabo-project-duplicate-{}", uuid::Uuid::new_v4()));
         let store = ProjectRegistryStore::new(dir.clone());
-        let (first, _) = store.add(Path::new("/alpha6/duplicate")).unwrap();
+        let (first, _) = store.add(Path::new("/work/duplicate")).unwrap();
         let mut older = first.clone();
         older.id = format!("proj_{}", uuid::Uuid::new_v4());
         older.created_at = "2000-01-01T00:00:00.000Z".into();
         save_project(&dir.join("repos"), &older).unwrap();
         assert_eq!(store.list().unwrap(), vec![older.clone()]);
         assert_eq!(
-            store.add(Path::new("/alpha6/duplicate")).unwrap(),
+            store.add(Path::new("/work/duplicate")).unwrap(),
             (older.clone(), false)
         );
         store.remove(&older.id).unwrap();
         assert!(store.list().unwrap().is_empty());
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn simultaneous_registry_imports_keep_old_and_new_projects() {
-        use std::{
-            sync::{Arc, Barrier},
-            thread,
-        };
-        let dir =
-            std::env::temp_dir().join(format!("mabo-project-import-race-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join(REGISTRY_FILE),
-            include_str!("../tests/fixtures/alpha6/projects.json"),
-        )
-        .unwrap();
-        let gate = Arc::new(Barrier::new(8));
-        let handles = (0..8)
-            .map(|index| {
-                let dir = dir.clone();
-                let gate = Arc::clone(&gate);
-                thread::spawn(move || {
-                    gate.wait();
-                    ProjectRegistryStore::new(dir)
-                        .add(Path::new(&format!("/alpha6/new-{index}")))
-                        .unwrap();
-                })
-            })
-            .collect::<Vec<_>>();
-        for handle in handles {
-            handle.join().unwrap();
-        }
-        assert_eq!(
-            ProjectRegistryStore::new(dir.clone()).list().unwrap().len(),
-            10
-        );
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1373,7 +1055,7 @@ mod tests {
         fs::write(repo.join("README.md"), "hi\n").expect("readme");
         git_ok(&repo, &["add", "README.md"]);
         git_ok(&repo, &["commit", "-m", "initial"]);
-        let worktree = repo.join(".git/maboroshi/worktrees/feature");
+        let worktree = repo.join("outside/feature");
         git_ok(
             &repo,
             &[

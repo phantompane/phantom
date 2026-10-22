@@ -1302,7 +1302,7 @@ worktree /repo
 HEAD abcdef1234567890
 branch refs/heads/main
 
-worktree /repo/.git/maboroshi/worktrees/feature
+worktree /repo/custom/workspaces/feature
 HEAD 1234567890abcdef
 branch refs/heads/feature/name
 prunable

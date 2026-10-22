@@ -5,7 +5,6 @@ use std::path::{Component, Path, PathBuf};
 use crate::error::{Error, Result};
 
 pub const PROJECT_MARKER: &str = ".mabo-common-dir";
-const LEGACY_PROJECT_MARKER: &str = ".maboroshi-common-dir";
 
 pub fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -101,7 +100,7 @@ pub fn project_directory_name(checkout_name: &str, common_dir_key: &Path) -> Str
     )
 }
 
-/// True when `name` has the `<checkout>-<hash>` shape in either workspace layout.
+/// True when `name` has the `<checkout>-<hash>` shape in the workspace layout.
 pub fn is_project_directory(name: &std::ffi::OsStr, common_dir: &Path) -> bool {
     let Some(name) = name.to_str() else {
         return false;
@@ -308,14 +307,7 @@ fn reconcile_project_directory(directory: &Path, common_dir: &Path) -> Result<()
 }
 
 fn read_marker(directory: &Path) -> Result<Option<String>> {
-    let mut path = directory.join(PROJECT_MARKER);
-    if !path.try_exists().unwrap_or(true)
-        && directory
-            .components()
-            .any(|part| part.as_os_str() == crate::migration::LEGACY_NAME)
-    {
-        path = directory.join(LEGACY_PROJECT_MARKER);
-    }
+    let path = directory.join(PROJECT_MARKER);
     match fs::read_to_string(&path) {
         Ok(content) => Ok(Some(content.trim_end_matches(['\n', '\r']).to_string())),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
@@ -432,17 +424,33 @@ pub fn user_config_file(home: &Path, xdg_config_home: Option<&Path>) -> PathBuf 
     mabo_config_file(&config_home)
 }
 
+pub fn config_dir() -> Result<PathBuf> {
+    Ok(xdg_base("XDG_CONFIG_HOME", ".config")?.join("mabo"))
+}
+
+pub fn state_dir() -> Result<PathBuf> {
+    Ok(xdg_base("XDG_STATE_HOME", ".local/state")?.join("mabo"))
+}
+
+fn xdg_base(variable: &str, fallback: &str) -> Result<PathBuf> {
+    if let Some(value) = std::env::var_os(variable).filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(value);
+        if path.is_absolute() {
+            return Ok(path);
+        }
+    }
+    let home = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| Error::msg("HOME is not set"))?;
+    Ok(PathBuf::from(home).join(fallback))
+}
+
 pub fn user_config_path() -> Result<PathBuf> {
-    Ok(crate::migration::config_dir(crate::migration::Access::Read)?.join("config.toml"))
+    Ok(config_dir()?.join("config.toml"))
 }
 
 fn mabo_config_file(config_home: &Path) -> PathBuf {
-    crate::migration::product_dir(
-        config_home,
-        crate::migration::Access::Read,
-        crate::migration::Layout::Config,
-    )
-    .join("config.toml")
+    config_home.join("mabo").join("config.toml")
 }
 
 pub fn is_strictly_inside(path: &Path, directory: &Path) -> bool {
@@ -480,20 +488,18 @@ mod tests {
     }
 
     #[test]
-    fn legacy_project_marker_is_reused_without_rewriting_it() {
-        let temp =
-            std::env::temp_dir().join(format!("mabo-legacy-marker-{}", uuid::Uuid::new_v4()));
+    fn unsupported_marker_cannot_claim_a_nonempty_directory() {
+        let temp = std::env::temp_dir().join(format!("mabo-marker-{}", uuid::Uuid::new_v4()));
         let directory = temp.join("maboroshi/workspaces/project");
-        fs::create_dir_all(directory.join("live-checkout")).unwrap();
-        let common = Path::new("/repo/.git");
-        fs::write(directory.join(LEGACY_PROJECT_MARKER), "/repo/.git\n").unwrap();
-        ensure_worktrees_directory(&directory, Some(common)).unwrap();
+        fs::create_dir_all(directory.join("checkout")).unwrap();
+        let marker = directory.join(".maboroshi-common-dir");
+        fs::write(&marker, "/repo/.git\n").unwrap();
+        let error =
+            ensure_worktrees_directory(&directory, Some(Path::new("/repo/.git"))).unwrap_err();
+        assert!(error.to_string().contains("without a repository marker"));
         assert!(!directory.join(PROJECT_MARKER).exists());
-        assert_eq!(
-            fs::read_to_string(directory.join(LEGACY_PROJECT_MARKER)).unwrap(),
-            "/repo/.git\n"
-        );
-        assert!(directory.join("live-checkout").is_dir());
+        assert_eq!(fs::read_to_string(marker).unwrap(), "/repo/.git\n");
+        assert!(directory.join("checkout").is_dir());
         fs::remove_dir_all(temp).unwrap();
     }
 
@@ -503,9 +509,9 @@ mod tests {
         assert_eq!(
             relative(
                 Path::new("/repo"),
-                Path::new("/repo/.git/maboroshi/worktrees/listed")
+                Path::new("/repo/.git/mabo/workspaces/listed")
             ),
-            ".git/maboroshi/worktrees/listed"
+            ".git/mabo/workspaces/listed"
         );
         assert_eq!(relative(Path::new("/repo/a"), Path::new("/repo/b")), "../b");
     }
@@ -626,7 +632,7 @@ mod tests {
                 .expect("clock")
                 .as_nanos()
         ));
-        let directory = root.join("maboroshi/worktrees/repo-abcdef12");
+        let directory = root.join("mabo/workspaces/repo-abcdef12");
         let first = Path::new("/repos/one/.git");
         let second = Path::new("/repos/two/.git");
         ensure_worktrees_directory(&directory, Some(first)).expect("claim");
@@ -656,7 +662,7 @@ mod tests {
                 .expect("clock")
                 .as_nanos()
         ));
-        let directory = root.join("maboroshi/worktrees/repo-abcdef12");
+        let directory = root.join("mabo/workspaces/repo-abcdef12");
         fs::create_dir_all(&directory).expect("empty");
         let common = Path::new("/repos/one/.git");
         ensure_worktrees_directory(&directory, Some(common)).expect("reclaim");
@@ -683,7 +689,7 @@ mod tests {
         fs::create_dir_all(&real).expect("real");
         let link = root.join("link.git");
         std::os::unix::fs::symlink(&real, &link).expect("symlink");
-        let directory = root.join("maboroshi/worktrees/repo");
+        let directory = root.join("mabo/workspaces/repo");
         fs::create_dir_all(&directory).expect("project");
         fs::write(
             directory.join(PROJECT_MARKER),
@@ -724,7 +730,7 @@ mod tests {
                 .expect("clock")
                 .as_nanos()
         ));
-        let directory = root.join("maboroshi/worktrees/repo-abcdef12");
+        let directory = root.join("mabo/workspaces/repo-abcdef12");
         let common = Path::new("/repos/one/.git");
         std::thread::scope(|scope| {
             for _ in 0..8 {

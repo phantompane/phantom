@@ -237,19 +237,6 @@ pub(crate) fn workspace_warning(code: &str, message: &str, workspace: &str) {
     });
 }
 
-/// Report a diagnostic only once in the invocation begun by `begin`.
-pub(crate) fn warning_once(code: &str, message: impl Into<String>) {
-    let message = message.into();
-    let reported = OUTPUT.with_borrow(|out| {
-        out.warnings
-            .iter()
-            .any(|warning| warning.code == code && warning.message == message)
-    });
-    if !reported {
-        warning(code, message);
-    }
-}
-
 pub(crate) fn finish(mut exit: i32) -> Result<i32> {
     // Finalize diagnostics before committing the JSON envelope and its status.
     // Commands have finished mutating; only the envelope's own stdout write
@@ -440,20 +427,6 @@ mod tests {
         assert_eq!(writer.flushes, 2);
         assert!(stdout.check("stdout").is_ok());
         assert!(stderr.check("stderr").is_ok());
-    }
-
-    #[test]
-    fn warning_once_distinguishes_diagnostics_and_resets_per_invocation() {
-        for json in [false, true] {
-            for _ in 0..2 {
-                begin("config list", json);
-                warning_once("renamed", "Warning: first key");
-                warning_once("renamed", "Warning: first key");
-                warning_once("renamed", "Warning: second key");
-                warning_once("removed", "Warning: first key");
-                OUTPUT.with_borrow(|out| assert_eq!(out.warnings.len(), 3));
-            }
-        }
     }
 
     #[test]

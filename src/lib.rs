@@ -23,7 +23,6 @@ pub mod git;
 pub mod github;
 pub mod help;
 pub mod metadata;
-mod migration;
 pub mod names;
 pub mod output;
 pub mod paths;
