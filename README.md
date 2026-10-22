@@ -637,14 +637,14 @@ In a single-branch or otherwise narrow-refspec clone, `create --pr` writes `bran
         "id": "proj_550e8400-e29b-41d4-a716-446655440000",
         "name": "phantom",
         "canonicalName": "github.com/phantompane/phantom",
-        "rootPath": "/home/maboroshi/ghq/github.com/phantompane/phantom",
+        "rootPath": "/home/user/ghq/github.com/phantompane/phantom",
         "createdAt": "2026-01-01T00:00:00.000Z"
       },
       {
         "source": "ghq",
         "name": "repo",
         "canonicalName": "github.com/owner/repo",
-        "rootPath": "/home/maboroshi/ghq/github.com/owner/repo"
+        "rootPath": "/home/user/ghq/github.com/owner/repo"
       }
     ]
   },
@@ -666,7 +666,7 @@ In a single-branch or otherwise narrow-refspec clone, `create --pr` writes `bran
   "ok": true,
   "data": {
     "repo": {
-      "root": "/home/maboroshi/ghq/github.com/phantompane/phantom",
+      "root": "/home/user/ghq/github.com/phantompane/phantom",
       "name": "github.com/phantompane/phantom",
       "remoteUrl": "https://github.com/phantompane/phantom.git"
     },

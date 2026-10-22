@@ -1134,7 +1134,7 @@ fn conflicts_restore_everything_and_keep_conflicts_is_single_target_only() {
 }
 
 #[test]
-fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
+fn dirty_merged_squash_base_gone_and_metadata_base() {
     let r = Repo::new();
     let tree = r.create("topic");
     r.write_commit(&tree, "topic-file", "topic\n");
@@ -1595,8 +1595,8 @@ fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
         r.sync(&landed, &[], 0)["data"]["items"][0]["status"],
         "integrated"
     );
-    // Legacy metadata uses the very same reflog fallback as gc.
-    let legacy = r.create("legacy");
+    // Records without createdFrom use the very same reflog fallback as gc.
+    let sparse = r.create("sparse");
     let file = r.main.join(".git/mabo/workspaces");
     let mut stored: Value = serde_json::from_slice(&records::read(&file).unwrap()).unwrap();
     for record in stored["worktrees"].as_array_mut().unwrap() {
@@ -1607,7 +1607,7 @@ fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
     r.git(&r.upstream, &["pull", "--no-rebase", "origin", "main"]);
     r.git(&r.upstream, &["push", "origin", "main"]);
     assert_eq!(
-        r.sync(&legacy, &[], 0)["data"]["items"][0]["status"],
+        r.sync(&sparse, &[], 0)["data"]["items"][0]["status"],
         "updated"
     );
 }
@@ -3344,25 +3344,25 @@ fn unresolved_default_does_not_block_recorded_bases() {
     let tree = PathBuf::from(created["data"]["workspace"]["path"].as_str().unwrap());
     r.write_commit(&tree, "own", "own\n");
     // Records without an explicit unknown marker exercise default-base errors.
-    r.git(&clone, &["branch", "legacy"]);
+    r.git(&clone, &["branch", "sparse"]);
     assert!(r
-        .mabo(&clone, &["create", "--branch", "legacy"])
+        .mabo(&clone, &["create", "--branch", "sparse"])
         .status
         .success());
     let store = clone.join(".git/mabo/workspaces");
-    let mut legacy: Value = serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
-    let record = legacy["worktrees"]
+    let mut sparse: Value = serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
+    let record = sparse["worktrees"]
         .as_array_mut()
         .unwrap()
         .iter_mut()
-        .find(|record| record["name"] == "legacy")
+        .find(|record| record["name"] == "sparse")
         .unwrap();
     assert_eq!(record["baseCleared"], true);
     record.as_object_mut().unwrap().remove("baseCleared");
-    records::write(&store, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    records::write(&store, serde_json::to_vec(&sparse).unwrap()).unwrap();
     r.write_commit(&r.upstream, "incoming-develop", "incoming\n");
     r.git(&r.upstream, &["push", "origin", "develop"]);
-    let doc = r.sync(&clone, &["legacy", "topic", "--main"], 6);
+    let doc = r.sync(&clone, &["sparse", "topic", "--main"], 6);
     assert_eq!(doc["data"]["main"]["status"], "failed", "{doc}");
     assert_eq!(doc["data"]["items"][0]["status"], "failed", "{doc}");
     for item in [&doc["data"]["main"], &doc["data"]["items"][0]] {
@@ -3379,7 +3379,7 @@ fn unresolved_default_does_not_block_recorded_bases() {
     let doc = r.sync(&clone, &["topic"], 0);
     assert!(doc["data"]["main"].is_null());
     assert_eq!(doc["data"]["items"][0]["status"], "up-to-date");
-    let doc = r.sync(&clone, &["legacy", "topic"], 1);
+    let doc = r.sync(&clone, &["sparse", "topic"], 1);
     assert!(doc["data"]["main"].is_null());
     assert_eq!(doc["data"]["items"][0]["status"], "failed");
     assert_eq!(doc["data"]["items"][1]["status"], "up-to-date");
