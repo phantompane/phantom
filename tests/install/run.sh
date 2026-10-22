@@ -37,18 +37,26 @@ makeRelease() {
     release=$1
     reported=${2:-$1}
     member=${3:-mabo}
+    prefix=${4:-mabo}
     fixture=$root/releases/v$release
     mkdir -p "$fixture" "$root/build"
     rm -f "$root/build/mabo" "$root/build/other"
-    printf '#!/bin/sh\nprintf "mabo v%s+rust (test)\\n"\n' "$reported" > "$root/build/$member"
+    printf '#!/bin/sh\n# archive prefix: %s\nprintf "mabo v%s+rust (test)\\n"\n' "$prefix" "$reported" > "$root/build/$member"
     chmod +x "$root/build/$member"
     for platform in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
-        asset=maboroshi-v$release-$platform.tar.gz
+        asset=$prefix-v$release-$platform.tar.gz
         tar -czf "$fixture/$asset" -C "$root/build" "$member"
         digest=$(hashFile "$fixture/$asset"); digest=${digest%% *}
         printf '%s  %s\n' "$digest" "$asset"
     done > "$fixture/SHA256SUMS"
 }
+makeRelease 7.0.0-alpha.8 7.0.0-alpha.8 mabo maboroshi
+makeRelease 7.9.0-both
+cp "$root/releases/v7.9.0-both/SHA256SUMS" "$root/new-sums"
+makeRelease 7.9.0-both 7.9.0-both mabo maboroshi
+cp "$root/releases/v7.9.0-both/SHA256SUMS" "$root/legacy-sums"
+cat "$root/new-sums" "$root/legacy-sums" > "$root/releases/v7.9.0-both/SHA256SUMS"
+cp "$root/releases/v7.9.0-both/SHA256SUMS" "$root/both-sums"
 makeRelease 7.0.0
 makeRelease 7.1.0
 makeRelease 7.2.0-alpha.1
@@ -58,9 +66,9 @@ makeRelease 7.5.0-missing 7.5.0-missing other
 makeRelease 7.6.0-checksum
 makeRelease 7.7.0-nosums
 makeRelease 7.8.0-noline
-printf 'corruption\n' >> "$root/releases/v7.6.0-checksum/maboroshi-v7.6.0-checksum-linux-x64.tar.gz"
+printf 'corruption\n' >> "$root/releases/v7.6.0-checksum/mabo-v7.6.0-checksum-linux-x64.tar.gz"
 rm "$root/releases/v7.7.0-nosums/SHA256SUMS"
-printf '%064d  maboroshi-v7.8.0-noline-linux-x64.tar.gz.extra\n' 0 > "$root/releases/v7.8.0-noline/SHA256SUMS"
+printf '%064d  mabo-v7.8.0-noline-linux-x64.tar.gz.extra\n' 0 > "$root/releases/v7.8.0-noline/SHA256SUMS"
 
 # Asset names precede tags; unrelated nested fields and escaped string contents
 # must never masquerade as release metadata. Both JSON layouts have the same data.
@@ -70,12 +78,12 @@ writeApi() {
     {
         printf '[\n'
         printf '{"tag_name":"v6.3.2","draft":false,"prerelease":false,"assets":[{"name":"phantom-v6.3.2-linux-x64.tar.gz"}]},\n'
-        printf '{"tag_name":"v7.3.0-draft","draft":true,"prerelease":false,"assets":[{"name":"maboroshi-v7.3.0-draft-linux-x64.tar.gz"}]},\n'
-        printf '{"tag_name":"v7.9.0-no-platform","draft":false,"prerelease":false,"assets":[{"name":"maboroshi-v7.9.0-no-platform-darwin-arm64.tar.gz"}]},\n'
-        printf '{"body":"braces } [, tag_name: \\"trick\\"", "assets":[{"name":"maboroshi-v7.2.0-alpha.1-linux-x64.tar.gz"}],"prerelease":true,"draft":false,"tag_name":"v7.2.0-alpha.1"}'
+        printf '{"tag_name":"v7.3.0-draft","draft":true,"prerelease":false,"assets":[{"name":"mabo-v7.3.0-draft-linux-x64.tar.gz"}]},\n'
+        printf '{"tag_name":"v7.9.0-no-platform","draft":false,"prerelease":false,"assets":[{"name":"mabo-v7.9.0-no-platform-darwin-arm64.tar.gz"}]},\n'
+        printf '{"body":"braces } [, tag_name: \\"trick\\"", "assets":[{"name":"mabo-v7.2.0-alpha.1-linux-x64.tar.gz"}],"prerelease":true,"draft":false,"tag_name":"v7.2.0-alpha.1"}'
         if [ "$stable" = yes ]; then
-            printf ',\n{"assets":[{"uploader":{"name":"ignored"},"name":"maboroshi-v7.1.0-linux-x64.tar.gz"}],"author":{"draft":true,"tag_name":"wrong"},"draft":false,"prerelease":false,"tag_name":"v7.1.0"},\n'
-            printf '{"tag_name":"v7.0.0","draft":false,"prerelease":false,"assets":[{"name":"maboroshi-v7.0.0-linux-x64.tar.gz"}]}'
+            printf ',\n{"assets":[{"uploader":{"name":"ignored"},"name":"mabo-v7.1.0-linux-x64.tar.gz"}],"author":{"draft":true,"tag_name":"wrong"},"draft":false,"prerelease":false,"tag_name":"v7.1.0"},\n'
+            printf '{"tag_name":"v7.0.0","draft":false,"prerelease":false,"assets":[{"name":"mabo-v7.0.0-linux-x64.tar.gz"}]}'
         fi
         printf '\n]\n'
     } > "$root/api/source"
@@ -122,6 +130,9 @@ assertVersion() {
 unchanged() {
     cmp "$root/before" "$HOME/.local/bin/mabo" || fail 'Existing binary changed on failure'
 }
+assertPrefix() {
+    grep -Fx -e "# archive prefix: $1" "$HOME/.local/bin/mabo" >/dev/null || fail "Wrong archive prefix: $1"
+}
 
 # Flags override env; pins bypass the API entirely. stdin is always /dev/null.
 export MABO_API_URL="file://$root/nonexistent" GITHUB_TOKEN=test-secret-token
@@ -146,6 +157,57 @@ run 0
 assertVersion 7.0.0 "$HOME/.local/bin"
 unset MABO_VERSION
 
+# Legacy alpha.8 remains installable. Different archive bytes for both prefixes
+# make a mixed filename/digest fail, even though both binaries report this tag.
+run 0 --version 7.0.0-alpha.8
+assertVersion 7.0.0-alpha.8 "$HOME/.local/bin"
+assertPrefix maboroshi
+both=$root/releases/v7.9.0-both
+for sums in both-sums new-sums legacy-sums; do
+    cp "$root/$sums" "$both/SHA256SUMS"
+    run 0 --version 7.9.0-both
+    assertVersion 7.9.0-both "$HOME/.local/bin"
+    case $sums in legacy-sums) chosenPrefix=maboroshi ;; *) chosenPrefix=mabo ;; esac
+    assertPrefix "$chosenPrefix"
+done
+# An unusable new entry falls back only to one valid legacy entry.
+for badNew in duplicate invalid; do
+    case $badNew in
+        duplicate) cat "$root/new-sums" "$root/new-sums" ;;
+        invalid) sed 's/^[0-9a-f]/z/' "$root/new-sums" ;;
+    esac > "$both/SHA256SUMS"
+    cat "$root/legacy-sums" >> "$both/SHA256SUMS"
+    run 0 --version 7.9.0-both
+    assertVersion 7.9.0-both "$HOME/.local/bin"
+    assertPrefix maboroshi
+done
+cp "$HOME/.local/bin/mabo" "$root/before"
+# Exact filenames, 64 hexadecimal digits, and the standard two spaces remain
+# required for both prefixes; near matches must not select either archive.
+for malformedSum in 's/^./ /' 's/  / /' 's/  / */' 's/^./&0/' 's/^.//' 's/$/.extra/'; do
+    sed "$malformedSum" "$root/both-sums" > "$both/SHA256SUMS"
+    runFail 1 'Missing, duplicate, or invalid SHA256SUMS line' --version 7.9.0-both
+    unchanged
+done
+for sums in both-sums new-sums legacy-sums; do
+    cat "$root/$sums" "$root/$sums" > "$both/SHA256SUMS"
+    runFail 1 'Missing, duplicate, or invalid SHA256SUMS line' --version 7.9.0-both
+    unchanged
+    sed 's/^[0-9a-f]/z/' "$root/$sums" > "$both/SHA256SUMS"
+    runFail 1 'Missing, duplicate, or invalid SHA256SUMS line' --version 7.9.0-both
+    unchanged
+done
+# Once selected, neither a missing archive nor a checksum mismatch may cause a
+# switch to the other prefix, even when its archive and checksum are available.
+cp "$root/both-sums" "$both/SHA256SUMS"
+mv "$both/mabo-v7.9.0-both-linux-x64.tar.gz" "$root/new-archive"
+runFail 1 'Cannot download mabo-v7.9.0-both-linux-x64.tar.gz' --version 7.9.0-both
+unchanged
+cp "$both/maboroshi-v7.9.0-both-linux-x64.tar.gz" "$both/mabo-v7.9.0-both-linux-x64.tar.gz"
+runFail 1 'Checksum mismatch for mabo-v7.9.0-both-linux-x64.tar.gz' --version 7.9.0-both
+unchanged
+mv "$root/new-archive" "$both/mabo-v7.9.0-both-linux-x64.tar.gz"
+
 export MABO_API_URL="file://$root/api"
 for layout in compact pretty; do
     writeApi "$layout" yes
@@ -163,6 +225,30 @@ for layout in compact pretty; do
     unset MABO_PRERELEASE
 done
 
+# Unpinned resolution accepts the legacy-only alpha.8 release asset and applies
+# the same prerelease policy. The main resolution fixtures use new-only names.
+cat > "$root/api/releases?per_page=100" <<'JSON'
+[{"tag_name":"v7.0.0-alpha.8","draft":false,"prerelease":true,
+  "assets":[{"name":"maboroshi-v7.0.0-alpha.8-linux-x64.tar.gz"}]}]
+JSON
+runFail 1 'No stable mabo release; newest prerelease is v7.0.0-alpha.8'
+run 0 --prerelease
+assertVersion 7.0.0-alpha.8 "$HOME/.local/bin"
+cat > "$root/api/releases?per_page=100" <<'JSON'
+[{"tag_name":"v7.9.0-both","draft":false,"prerelease":false,
+  "assets":[{"name":"maboroshi-v7.9.0-both-linux-x64.tar.gz"},
+            {"name":"mabo-v7.9.0-both-linux-x64.tar.gz"}]}]
+JSON
+run 0
+assertVersion 7.9.0-both "$HOME/.local/bin"
+assertPrefix mabo
+cat > "$root/api/releases?per_page=100" <<'JSON'
+[{"tag_name":"v7.1.0","draft":false,"prerelease":false,
+  "assets":[{"name":"mabo-v7.1.0-linux-x64.tar.gz.extra"},
+            {"name":"maboroshi-v7.1.0-linux-x64.tar.gz.extra"}]}]
+JSON
+runFail 1 'No matching mabo release.'
+
 # About 1.6 MB across 100 releases, with long escaped bodies. Generate both JSON
 # layouts without walking a giant string in awk (the regression we are testing).
 # Even a selected first release must not bypass validation of the remaining data.
@@ -173,7 +259,7 @@ for layout in compact pretty; do
         for(i=1;i<=100;i++) {
             tag=(i==1 ? "7.2.0-alpha.1" : (i==2 ? "7.1.0" : "7.3.0-draft"))
             printf "{\"tag_name\":\"v%s\",%s\"draft\":%s,%s\"prerelease\":%s,%s",tag,sep,(i>2 ? "true" : "false"),sep,(i==1 ? "true" : "false"),sep
-            printf "\"assets\":[{\"name\":\"maboroshi-v%s-linux-x64.tar.gz\"}],%s\"body\":\"",tag,sep
+            printf "\"assets\":[{\"name\":\"mabo-v%s-linux-x64.tar.gz\"}],%s\"body\":\"",tag,sep
             for(j=0;j<150;j++) printf "Release notes: { [ ] } , : \\\"tag_name\\\": \\\"trick\\\", backslash \\\\, newline \\n, Unicode \\u65e5. More details. "
             printf "\"}%s%s",(i<100 ? "," : ""),sep
         }
@@ -195,12 +281,12 @@ done
 # backslashes in unrelated keys must not manufacture direct assets[].name fields.
 cat > "$root/api/releases?per_page=100" <<'JSON'
 [{"tag_name":"v7.3.0-draft","draft":false,"prerelease":false,
-  "assets/item/name":"maboroshi-v7.3.0-draft-linux-x64.tar.gz",
-  "assets":[[{"name":"maboroshi-v7.3.0-draft-linux-x64.tar.gz"}],
-            {"nested":{"name":"maboroshi-v7.3.0-draft-linux-x64.tar.gz"}}]},
+  "assets/item/name":"mabo-v7.3.0-draft-linux-x64.tar.gz",
+  "assets":[[{"name":"mabo-v7.3.0-draft-linux-x64.tar.gz"}],
+            {"nested":{"name":"mabo-v7.3.0-draft-linux-x64.tar.gz"}}]},
  {"t\u0061g_name":"\u00767.1.0","draft":false,"prerelease":false,
   "escaped\\u0061\"\/\b\f\n\r\t\u0026\u005c\u00AF":null,
-  "assets":[{"n\u0061me":"maboroshi-v7.1.0-linux-x64.tar.g\u007a"}]}]
+  "assets":[{"n\u0061me":"mabo-v7.1.0-linux-x64.tar.g\u007a"}]}]
 JSON
 run 0
 assertVersion 7.1.0 "$HOME/.local/bin"
@@ -310,10 +396,17 @@ assertVersion 7.0.0 "$HOME/.local/bin"
 noAttestationProcesses
 [ "$(sed -n '1p' "$root/gh-args")" = attestation ] || fail 'Wrong gh command'
 [ "$(sed -n '2p' "$root/gh-args")" = verify ] || fail 'Wrong gh subcommand'
-contains "$root/gh-args" '/maboroshi-v7.0.0-linux-x64.tar.gz'
+contains "$root/gh-args" '/mabo-v7.0.0-linux-x64.tar.gz'
 [ "$(sed -n '4p' "$root/gh-args")" = --repo ] || fail 'Wrong gh repo flag'
 [ "$(sed -n '5p' "$root/gh-args")" = phantompane/phantom ] || fail 'Wrong gh repo'
 [ "$(wc -l < "$root/gh-args" | tr -d ' ')" = 5 ] || fail 'Unexpected gh arguments'
+for attested in 7.0.0-alpha.8 7.9.0-both; do
+    run 0 --version "$attested"
+    assertVersion "$attested" "$HOME/.local/bin"
+    noAttestationProcesses
+    case $attested in 7.0.0-alpha.8) attestedPrefix=maboroshi ;; *) attestedPrefix=mabo ;; esac
+    contains "$root/gh-args" "/$attestedPrefix-v$attested-linux-x64.tar.gz"
+done
 unset MABO_VERIFY_ATTESTATION
 # Capture stdout in a pipe as well as piping the script source: an uncancelled
 # sleep must neither consume source bytes nor hold the output pipe open for 120s.
@@ -338,7 +431,7 @@ for TEST_GH_MODE in stall ignore-term; do
     export TEST_GH_MODE MABO_ATTESTATION_TIMEOUT=1
     : > "$TEST_SLEEP_PIDS"
     started=$(date +%s)
-    runFail 1 'Attestation verification timed out after 1 seconds for maboroshi-v7.0.0-linux-x64.tar.gz.' \
+    runFail 1 'Attestation verification timed out after 1 seconds for mabo-v7.0.0-linux-x64.tar.gz.' \
         --version 7.0.0 --verify-attestation
     elapsed=$(( $(date +%s) - started ))
     [ "$elapsed" -lt 20 ] || fail "Attestation timeout took $elapsed seconds"
@@ -494,7 +587,7 @@ case $url in
         source=$TEST_ROOT/releases/${url#https://mirror.invalid/download/} ;;
     *) exit 96 ;;
 esac
-printf 'curl %s auth=%s\n' "$kind" "$auth" >> "$TEST_ROOT/http-log"
+printf 'curl %s auth=%s %s\n' "$kind" "$auth" "${url##*/}" >> "$TEST_ROOT/http-log"
 if [ "${TEST_HTTP_FAILURE:-0}" = 1 ]; then
     printf 'Failure containing %s\n' "$GITHUB_TOKEN" >&2
     exit 22
@@ -512,13 +605,32 @@ runner=isolated-shell
 : > "$root/http-log"
 run 0
 assertVersion 7.1.0 "$HOME/.local/bin"
-[ "$(cat "$root/http-log")" = "curl api auth=yes
-curl asset auth=no
-curl asset auth=no" ] || fail 'Incorrect HTTP requests or credential scope'
+[ "$(cat "$root/http-log")" = "curl api auth=yes releases?per_page=100
+curl asset auth=no SHA256SUMS
+curl asset auth=no mabo-v7.1.0-linux-x64.tar.gz" ] || fail 'Incorrect HTTP requests or credential scope'
 : > "$root/http-log"
 run 0 --version 7.0.0
-[ "$(cat "$root/http-log")" = "curl asset auth=no
-curl asset auth=no" ] || fail 'Pinned install called API'
+[ "$(cat "$root/http-log")" = "curl asset auth=no SHA256SUMS
+curl asset auth=no mabo-v7.0.0-linux-x64.tar.gz" ] || fail 'Pinned install called API or downloaded archive before checksums'
+for pinned in 7.0.0-alpha.8 7.9.0-both; do
+    : > "$root/http-log"
+    run 0 --version "$pinned"
+    assertVersion "$pinned" "$HOME/.local/bin"
+    case $pinned in 7.0.0-alpha.8) pinnedPrefix=maboroshi ;; *) pinnedPrefix=mabo ;; esac
+    [ "$(cat "$root/http-log")" = "curl asset auth=no SHA256SUMS
+curl asset auth=no $pinnedPrefix-v$pinned-linux-x64.tar.gz" ] || fail 'Downloaded an archive other than the checksum selection'
+done
+cp "$HOME/.local/bin/mabo" "$root/before"
+for broken in 7.7.0-nosums 7.8.0-noline; do
+    : > "$root/http-log"
+    case $broken in
+        *nosums) reason='Missing or unavailable SHA256SUMS' ;;
+        *noline) reason='Missing, duplicate, or invalid SHA256SUMS line' ;;
+    esac
+    runFail 1 "$reason" --version "$broken"
+    unchanged
+    [ "$(cat "$root/http-log")" = 'curl asset auth=no SHA256SUMS' ] || fail 'Downloaded an archive without a checksum selection'
+done
 cp "$HOME/.local/bin/mabo" "$root/before"
 export TEST_HTTP_FAILURE=1
 runFail 1 'GitHub API request failed. Pin MABO_VERSION'
@@ -551,8 +663,8 @@ unchanged
 cp "$root/good-sums" "$root/releases/v7.0.0/SHA256SUMS"
 mkdir "$root/link-archive"
 ln -s "$root/before" "$root/link-archive/mabo"
-tar -czf "$root/releases/v7.0.0/maboroshi-v7.0.0-linux-x64.tar.gz" -C "$root/link-archive" mabo
-asset=maboroshi-v7.0.0-linux-x64.tar.gz
+tar -czf "$root/releases/v7.0.0/mabo-v7.0.0-linux-x64.tar.gz" -C "$root/link-archive" mabo
+asset=mabo-v7.0.0-linux-x64.tar.gz
 digest=$(hashFile "$root/releases/v7.0.0/$asset"); digest=${digest%% *}
 printf '%s  %s\n' "$digest" "$asset" > "$root/releases/v7.0.0/SHA256SUMS"
 runFail 1 'Archive must contain a regular mabo executable' --version 7.0.0
@@ -563,7 +675,7 @@ for malformed in \
     '[{"body":01}]' '[{"body":truefalse}]' '[{"body":NaN}]' '[{"body":"line
 break"}]' \
     '[{"body":false,}]' '[{"body" false}]' '[{"body":[1 2]}]' '[{"body":1e}]' '[{"body":"ok"}]#' '[{"body":"\"}]' \
-    '[{"draft":false,"prerelease":false,"tag_name":"v7.1.0","assets":[{"name":"maboroshi-v7.1.0-linux-x64.tar.gz"}]}]garbage'; do
+    '[{"draft":false,"prerelease":false,"tag_name":"v7.1.0","assets":[{"name":"mabo-v7.1.0-linux-x64.tar.gz"}]}]garbage'; do
     printf '%s\n' "$malformed" > "$root/api/releases?per_page=100"
     runFail 1 'Invalid GitHub API response'
     unchanged

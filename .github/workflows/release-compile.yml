@@ -91,7 +91,7 @@ jobs:
         shell: bash
         run: |
           version=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
-          archive="maboroshi-v${version}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}.tar.gz"
+          archive="mabo-v${version}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}.tar.gz"
           tar -C "target/${{ matrix.target }}/release" -czf "$archive" mabo
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
 
@@ -132,10 +132,10 @@ jobs:
         run: |
           version=$(awk -F '"' '/^version = / { print $2; exit }' ../Cargo.toml)
           expected=(
-            "maboroshi-v${version}-darwin-arm64.tar.gz"
-            "maboroshi-v${version}-darwin-x64.tar.gz"
-            "maboroshi-v${version}-linux-arm64.tar.gz"
-            "maboroshi-v${version}-linux-x64.tar.gz"
+            "mabo-v${version}-darwin-arm64.tar.gz"
+            "mabo-v${version}-darwin-x64.tar.gz"
+            "mabo-v${version}-linux-arm64.tar.gz"
+            "mabo-v${version}-linux-x64.tar.gz"
           )
           # Compare the entire directory before adding installer/checksum files.
           if ! diff -u <(printf '%s\n' "${expected[@]}") \
