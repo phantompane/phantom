@@ -33,7 +33,7 @@ git checkout next
 cargo run --locked -- --help
 ```
 
-The built binary is `mabo` (`mabo --help`, `mabo create`). The Cargo package name is `mabo`. There is no `ptm` or `phantom` binary.
+The built binary is `mabo` (`mabo --help`, `mabo create`). The Cargo package name is `mabo`. Retired interfaces have no compatibility shims before v7 stable; unknown commands, flags, config keys, and hook fields use normal validation.
 
 ### Development Workflow
 

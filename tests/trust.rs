@@ -60,7 +60,6 @@ impl Repo {
             .env_remove("GHQ_ROOT")
             .env_remove("MABO_OUTPUT")
             .env_remove("MABO_NO_INPUT")
-            .env_remove("MABO_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM");
         if program.ends_with("git") && args.first() == Some(&"init") {
@@ -449,21 +448,6 @@ fn ci_trust_add_records_the_grant_without_prompting() {
     );
     assert!(text(&output.stdout).contains("echo shown-hook"));
     assert!(trust_file(&repo).exists());
-}
-
-#[test]
-fn agent_id_alone_on_a_terminal_still_prompts() {
-    let repo = Repo::new();
-    hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
-    let output = pty_env(
-        &repo,
-        &["create", "topic"],
-        Some("y\n"),
-        &[("MABO_AGENT_ID", "grok")],
-    );
-    assert!(output.status.success(), "{}", text(&output.stdout));
-    assert!(text(&output.stdout).contains("Trust this project and run its hooks?"));
-    assert!(worktree(&repo, "topic").join("hook-ran.txt").exists());
 }
 
 #[test]

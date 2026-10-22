@@ -390,13 +390,8 @@ fn directory_entries(directory: &Path) -> Result<Vec<std::ffi::OsString>> {
     Ok(names)
 }
 
-pub fn worktree_path(directory: &Path, name: &str, separator: &str) -> PathBuf {
-    let directory_name = if separator == "/" {
-        name.to_string()
-    } else {
-        name.replace('/', separator)
-    };
-    normalize(&directory.join(directory_name))
+pub fn worktree_path(directory: &Path, name: &str) -> PathBuf {
+    normalize(&directory.join(name))
 }
 
 /// Check a destination before creating it, resolving existing symlink parents
@@ -744,9 +739,9 @@ mod tests {
     }
 
     #[test]
-    fn flattens_directory_names() {
-        let path = worktree_path(Path::new("/tmp/worktrees"), "feature/test", "-");
-        assert_eq!(path, PathBuf::from("/tmp/worktrees/feature-test"));
+    fn preserves_hierarchical_directory_names() {
+        let path = worktree_path(Path::new("/tmp/worktrees"), "feature/test");
+        assert_eq!(path, PathBuf::from("/tmp/worktrees/feature/test"));
     }
 
     #[test]

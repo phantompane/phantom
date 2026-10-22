@@ -36,16 +36,11 @@ fn run_inner(args: &[String]) -> Result<i32> {
             prefix += 1;
             continue;
         }
-        if !matches!(
-            name,
-            "--json" | "--output" | "--no-input" | "--repo" | "-R" | "--project" | "-p"
-        ) {
+        if !matches!(name, "--json" | "--output" | "--no-input" | "--repo" | "-R") {
             break;
         }
         prefix += 1;
-        if matches!(name, "--output" | "--repo" | "-R" | "--project" | "-p")
-            && !arg.contains('=')
-            && prefix < args.len()
+        if matches!(name, "--output" | "--repo" | "-R") && !arg.contains('=') && prefix < args.len()
         {
             prefix += 1;
         }
@@ -108,13 +103,11 @@ fn run_inner(args: &[String]) -> Result<i32> {
         None => unresolved_usage(
             args,
             &args[0],
-            &removed_command_hint(&args[0]).unwrap_or_else(|| {
-                if crate::runtime::is_removed_repo_option(&args[0]) {
-                    format!("Option '{}' was removed. Use -R/--repo REF.", args[0])
-                } else {
-                    format!("Unknown command '{}'", args.join(" "))
-                }
-            }),
+            &if args[0].starts_with('-') {
+                format!("Unknown option '{}'", args[0])
+            } else {
+                format!("Unknown command '{}'", args.join(" "))
+            },
         ),
     }
 }
@@ -124,11 +117,7 @@ fn unresolved_usage(args: &[String], command: &str, message: &str) -> Result<i32
     crate::output::begin(command, prepared.json);
     let error = prepared.error.unwrap_or_else(|| Error::validation(message));
     let exit = fail_with(&error, VALIDATION)?;
-    let removed_interface = removed_command_hint(command).is_some()
-        || args.iter().any(|arg| {
-            crate::runtime::is_removed_repo_option(arg) || args::removed_option_hint(arg).is_some()
-        });
-    if !crate::output::json() && !removed_interface {
+    if !crate::output::json() {
         errln!("{}", help::main_help()?);
     }
     crate::output::finish(exit)
@@ -173,20 +162,7 @@ fn shell_script(args: &[String], key: &str) -> Result<i32> {
 fn sync(args: &[String]) -> Result<i32> {
     let _hooks = crate::process::suppress_git_hooks();
     let json = crate::output::json();
-    let parsed = match args::parse(args, &command_options("sync"), true) {
-        Ok(parsed) => parsed,
-        Err(error) => {
-            let message = error.to_string();
-            let error = if message.contains("--force") || message.contains("'-f'") {
-                Error::validation("sync -f/--force was removed; use --rewrite-published to allow rebasing published commits")
-            } else if message.contains("--no-default") {
-                Error::validation("sync --no-default was removed: current-only is now the default; use --main to also fast-forward primary when it is on the default branch")
-            } else {
-                error
-            };
-            return fail_with(&error, 2);
-        }
-    };
+    let parsed = args::parse(args, &command_options("sync"), true)?;
     let request = crate::sync::Request {
         names: parsed.positionals.clone(),
         all: parsed.flag("all"),
@@ -999,10 +975,10 @@ fn remove_retry_command(
 
 fn exec(args: &[String]) -> Result<i32> {
     let Some(separator) = args.iter().position(|arg| arg == "--") else {
-        // Check mabo options before SEL, but old child flags still get the migration hint.
+        // Validate mabo options before the workspace selector.
         args::parse_with(args, &command_options("exec"), true, Some(1))?;
         return Err(Error::validation(
-            "exec requires '--' before the command. Use `mabo exec [SEL] -- COMMAND [ARG...]`.",
+            "Usage: mabo exec [SEL] -- COMMAND [ARG...]",
         ));
     };
     let parsed = args::parse_with(&args[..separator], &command_options("exec"), true, Some(1))?;
@@ -1179,9 +1155,7 @@ fn help_cmd(args: &[String]) -> Result<i32> {
     selected_repository(&parsed)?;
     let key = parsed.positionals.join(" ");
     if !key.is_empty() && help::command_help(&key)?.is_none() {
-        return Err(Error::validation(
-            removed_command_hint(&key).unwrap_or_else(|| format!("Unknown command '{key}'")),
-        ));
+        return Err(Error::validation(format!("Unknown command '{key}'")));
     }
     if crate::output::json() {
         emit_json(&help::json_help(&key)?)
@@ -1196,24 +1170,6 @@ fn help_cmd(args: &[String]) -> Result<i32> {
         );
         Ok(SUCCESS)
     }
-}
-
-fn removed_command_hint(command: &str) -> Option<String> {
-    let replacement = match command.split_whitespace().next()? {
-        "delete" => "`mabo remove SEL...`; use `mabo remove .` instead of --current, and --discard-changes / --delete-unpreserved-branch instead of -f/--force",
-        "attach" => "`mabo create --branch BRANCH`",
-        "github" | "gh" => "`mabo create --pr REF` or `mabo create --issue REF`",
-        "project" => "`mabo repo add/list/show/forget`",
-        "preferences" => "`mabo config get/set/unset/list`",
-        "untrust" => "`mabo trust remove`",
-        "version" => "`mabo --version`",
-        "where" => "`mabo path [SEL]` or `mabo show [SEL] --json`",
-        "meta" => "`mabo set [SEL]` or `mabo show [SEL]`",
-        _ => return None,
-    };
-    Some(format!(
-        "Command '{command}' was removed. Use {replacement}."
-    ))
 }
 
 fn clone_cmd(args: &[String]) -> Result<i32> {
@@ -1990,13 +1946,15 @@ fn print_trust_list(json: bool) -> Result<i32> {
 }
 
 fn trust_root_cmd(args: &[String]) -> Result<i32> {
-    let hint = if args.iter().any(|arg| arg == "--list") {
-        "mabo trust list"
-    } else {
-        "mabo trust add [REPO] or mabo trust remove [REPO]"
-    };
+    let parsed = args::parse(args, &command_options("trust"), true)?;
+    if parsed.positionals.is_empty() {
+        return Err(Error::validation(
+            "Missing trust subcommand. Use add, remove, or list.",
+        ));
+    }
     Err(Error::validation(format!(
-        "Use `{hint}`. The old trust syntax (--yes/--list) was removed."
+        "Unknown command 'trust {}'",
+        parsed.positionals.join(" ")
     )))
 }
 
@@ -2328,7 +2286,7 @@ mod contract_tests {
                 .collect::<BTreeSet<_>>();
             assert_eq!(documented, actual, "flags for {key}");
         }
-        for (key, entry) in contract["helps"].as_object().unwrap() {
+        for key in contract["helps"].as_object().unwrap().keys() {
             assert!(
                 find(
                     &key.split_whitespace()
@@ -2339,32 +2297,6 @@ mod contract_tests {
                 .is_some(),
                 "unknown documented command {key}"
             );
-            for option in entry["options"].as_array().unwrap() {
-                assert!(
-                    !matches!(option["name"].as_str(), Some("project")),
-                    "removed flag in {key}"
-                );
-                if key.starts_with("trust") {
-                    assert!(
-                        !matches!(option["name"].as_str(), Some("yes" | "list")),
-                        "removed trust flag in {key}"
-                    );
-                }
-            }
-        }
-        for removed in [
-            "delete",
-            "project",
-            "preferences",
-            "untrust",
-            "version",
-            "attach",
-            "github",
-            "gh",
-            "github checkout",
-            "gh checkout",
-        ] {
-            assert!(contract["helps"].get(removed).is_none(), "{removed}");
         }
     }
 }
@@ -2410,7 +2342,6 @@ mod forget_tests {
                 source_checkout: repo.clone(),
                 worktrees_directory: root.join("workspaces"),
                 project_common_dir: None,
-                directory_name_separator: "/".into(),
                 config: None,
                 preferences: preferences::Preferences::default(),
             };

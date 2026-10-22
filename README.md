@@ -105,13 +105,13 @@ mabo will not become:
 - a terminal or session manager (tmux, panes, dashboards); it gives you a path;
 - security isolation or access control between agents.
 
-## Command migration and machine-readable help
+## Machine-readable help
 
-See [CHANGELOG.md](CHANGELOG.md#unreleased) for breaking changes and the complete migration table from alpha.6.
+See [CHANGELOG.md](CHANGELOG.md#unreleased) for breaking changes.
 
-The old `project`, `preferences`, `untrust`, and `version` commands, `trust --yes/--list` (and `-y`), and `-p/--project` are removed. They exit 2 with a replacement hint; there are no aliases. Use `repo`, `config`, `trust remove`, `--version`, `trust add/list`, and `-R/--repo` respectively. `--version` and `-v` remain available. `mabo --version --json` returns the schema 2 envelope with `command: "--version"` and `data.version` containing the application version (`data.display` contains the text version line).
+`--version` and `-v` display the application version. `mabo --version --json` returns the schema 2 envelope with `command: "--version"` and `data.version` containing the application version (`data.display` contains the text version line).
 
-Workspace ownership and `lastUsedAt` have been removed. `--owner` exits 2: use `--purpose`, PR links, and workspace names. `sync --mine` exits 2: use explicit names or `--all`. `MABO_AGENT_ID` no longer affects mabo. Old records remain readable; their removed fields disappear when the record is next written. `show`, `path`, `list`, and `exec` leave records unchanged, and `gc --older-than` uses `createdAt`.
+`show`, `path`, `list`, and `exec` leave records unchanged, and `gc --older-than` uses `createdAt`.
 
 `mabo help [COMMAND...]` prints the same text as `--help`. `mabo help --json` returns the schema 2 envelope with the complete contents of `help-data.json` in `data`: `commands`, `helps` (all commands and flags), `globalOptions`, `exitCodes`, `errorCodes`, `warningCodes`, and `schemaVersion: 2`. `mabo help repo show --json` includes the same contract plus `data.selected` for that command.
 
@@ -221,8 +221,6 @@ When `workspace-root` is unset, `mabo create` places the new workspace at `$XDG_
 
 `config get KEY` and `config list` return effective values, including defaults. Add `--sources` to see `value`, `source` (`config`, `env`, or `default`), and `detail`. JSON stores those values under `data.config[KEY]`; without `--sources`, each entry is the value itself. `workspace-root` defaults to null (the XDG layout), `discover-ghq` to true. The clone-root default chain stays `ghq.root` → `$GHQ_ROOT` → `~/ghq`, below user config. `sync.strategy` accepts `auto` (default), `rebase`, or `merge`; `sync.rewrite-published` is a boolean (default false). Sync flags override these user settings. Invalid policy values exit 2. Store them under `[sync]` in user config.toml; `.mabo.toml` rejects personal sync policy.
 
-Old config.toml keys `worktrees-directory`, `root`, and `ghq-discovery` still take effect as `workspace-root`, `clone-root`, and `discover-ghq`, with `config_key_renamed` warnings and migration hints. If both names exist, the new name wins. Reading does not change the file. The next successful `config set` or `config unset` rewrites old names. `directory-name-separator` is ignored with `config_key_removed` and removed on that write. `keep-branch` also warns and is ignored, then removed on the next config write.
-
 ```sh
 mabo config list --sources
 mabo config get clone-root --sources --json
@@ -291,7 +289,7 @@ mabo sync pr:774
 
 `list` includes primary checkouts. Use `--kind workspace` or `--kind primary` to filter, `--names` or `--paths` for shell output, and `--all-repos` for repositories known to `repo list` (registrations and enabled discovery). `--all-repos` cannot be combined with `-R`. Its JSON includes `data.repos` as well as the flattened `data.workspaces`. Human output starts each repository with its name and primary path, then shows current (`*`), name, branch, ahead/behind (`↑a ↓b`), dirty state, PR/issue links (`#12` / `issue #34`), setup state when it is not `ok` (such as `setup:failed`), and purpose. A deleted upstream appears as `upstream:gone`.
 
-The removed `where` command exits 2 with a `path` / `show --json` hint. `meta` and `meta set` exit 2 with a `set` / `show` hint. `list --no-default` exits 2 with `--kind workspace` guidance. An exec invocation without the required `--` exits 2 with the new syntax. Exec preserves child output and exit status, ignores `MABO_OUTPUT`, and refuses explicit JSON output. Usage diagnostics and any accompanying help go to stderr, leaving text stdout empty.
+Exec preserves child output and exit status, ignores `MABO_OUTPUT`, and refuses explicit JSON output. Usage diagnostics and any accompanying help go to stderr, leaving text stdout empty.
 
 ## Shell conveniences
 
@@ -363,7 +361,7 @@ setup = ["pnpm install"]
 pre-remove = ["./scripts/teardown.sh"]
 ```
 
-`mabo create` and `mabo setup` run `setup` in the target workspace after copying. Write setup hooks to tolerate repeated execution. `mabo remove` and `mabo gc --apply` run `pre-remove` in the workspace before removing it. Commands run in order and stop at the first failure. Unknown keys are rejected. Old `[hooks] post-create` and `pre-delete` keys fail with exit 1 (`failed`), with a hint to rename them to `setup` and `pre-remove`.
+`mabo create` and `mabo setup` run `setup` in the target workspace after copying. Write setup hooks to tolerate repeated execution. `mabo remove` and `mabo gc --apply` run `pre-remove` in the workspace before removing it. Commands run in order and stop at the first failure. Unknown keys are rejected.
 
 Hooks run only when that repository is trusted. `.worktreeinclude` copies are not hooks and do not need trust. A repository with no hook commands never asks.
 
@@ -373,7 +371,7 @@ On a terminal, mabo prints the repo path and the hook commands, then asks `Trust
 
 The record is `$XDG_STATE_HOME/mabo/trust.toml` when `XDG_STATE_HOME` is an absolute path, otherwise `~/.local/state/mabo/trust.toml`. Each entry stores `path` and `trustedAt`.
 
-`MABO_TRUST_ALL=1` trusts every repository for that process and does not write the file. The value has to be the single character `1`. Use it in CI and containers. `create --no-setup` skips copying and hooks. `setup --no-hooks` copies files only; `remove --no-hooks` and `gc --no-hooks` skip removal hooks. These flags do not write trust. Old `create --no-hooks` exits 2 with a `--no-setup` migration hint; `--no-setup` cannot be combined with `--copy-file`.
+`MABO_TRUST_ALL=1` trusts every repository for that process and does not write the file. The value has to be the single character `1`. Use it in CI and containers. `create --no-setup` skips copying and hooks. `setup --no-hooks` copies files only; `remove --no-hooks` and `gc --no-hooks` skip removal hooks. These flags do not write trust. `--no-setup` cannot be combined with `--copy-file`.
 
 `mabo gc` never asks, including on a terminal. An untrusted repository that has `pre-remove` hooks is skipped. The candidate detail is `untrusted hooks`. Other candidates still run. `--no-hooks` removes those workspaces without running hooks.
 
@@ -384,8 +382,6 @@ Hooks and `mabo exec` receive the same environment:
 - `MABO_WORKSPACE_ID` — recorded `ws_` ID, or empty when unrecorded
 - `MABO_WORKSPACE_PATH` — absolute workspace path
 - `MABO_REPO_PATH` — absolute primary checkout path, even when hooks are read from a linked workspace
-
-The old `MABO_NAME`, `MABO_PATH`, and `MABO_ROOT_PATH` variables are removed from child environments. Update hook scripts and exec commands to use the variables above.
 
 ## Machine-readable JSON
 
@@ -501,9 +497,7 @@ Conflicts list the files and roll back HEAD, index and contents (exit 5). `--kee
 
 Human output has one `<name>  <status>  [detail]` line per item and a status count. JSON uses envelope schema 2 with `data: {plan, items:[…], main:item|null}`. Each item contains `workspace` (the shared observed workspace object), `status`, `strategy`, `strategySource`, `rewriteAllowed`, `rewriteSource`, `rewrotePublished`, `before`, `after`, `conflicts`, `detail`, and `code` (e.g. `published`). The observed workspace describes the checkout before integration; `before`/`after` report full HEAD IDs. Diagnostic aliases `name`, `path`, `branch`, and `base` are also included. `strategy` is `rebase`, `merge`, `ff-only`, or null when skipped before selection. Unavailable fields are null.
 
-Statuses: `updated`, `up-to-date`, `dirty`, `diverged`, `integrated` (formerly `merged`), `detached`, `base-gone`, `base-unknown`, `conflict`, `refused`, `failed`, plus primary's `not-default-branch`.
-
-Migration: `-f`/`--force` exits 2 with guidance to `--rewrite-published`. `--no-default` exits 2 because current-only is now the default; add `--main` to advance primary. `--mine` exits 2 with guidance to a workspace selector or `--all`. JSON `default`/`workspaces` results moved to `main`/`items`.
+Statuses: `updated`, `up-to-date`, `dirty`, `diverged`, `integrated`, `detached`, `base-gone`, `base-unknown`, `conflict`, `refused`, `failed`, plus primary's `not-default-branch`.
 
 Orphaned records have neither a Git worktree registration nor an existing directory. `list` includes them with a trailing `[orphaned]`; the shared JSON workspace object has `orphaned: true` (false for existing entries), with null `branch` and `head`. `path` and `exec` refuse orphaned names; `show` can inspect their records. `remove <name>` removes only the stale record, exits 0, and reports that the workspace was already gone; it runs no hooks and leaves branches alone. Its existing JSON result uses `workspace.orphaned: true` and `branchDeleted: false`. A live workspace matching the same name takes precedence; multiple orphaned records with the same resolved name are refused as ambiguous. Orphaned records do not reserve names for live workspaces. When a live workspace takes the same name, the orphan remains visible in `list`; use `gc --apply` to remove it, since `remove <name>` resolves to the live workspace.
 
@@ -627,8 +621,6 @@ Without `--apply`, gc returns `plan: true` and exit 0, including protected candi
 
 Actions are `wouldRemove`, `removed`, `skipped`, and `failed`. Repeating `gc --apply` is safe; retired workspaces are no longer candidates.
 
-Migration: old `delete` exits 2 with a hint to `mabo remove SEL...`; `--current` becomes `remove .`. Old remove/gc `-f`/`--force` exit 2: use separate remove permissions, or `gc --apply` for safe candidates. `gc --pr` becomes `gc --closed-pr`. The `keep-branch` config key warns and is ignored regardless of its type, then disappears on the next successful config write; pass `--keep-branch` explicitly.
-
 In a single-branch or otherwise narrow-refspec clone, `create --pr` writes `branch.<b>.remote/merge` so `git pull` works, but `@{upstream}` and ahead/behind do not resolve because mabo does not change `remote.origin.fetch`.
 
 ### Repo list
@@ -707,10 +699,8 @@ mabo forget review pr:123
 
 `--pr NUMBER|URL` uses the PR head branch, with `owner/branch` for forks. Forks and deleted heads use `pull/N/head` without setting an upstream. `--issue NUMBER|URL` alone creates `issues/N` and defaults the purpose to the issue title. With `--pr` or `--branch`, it only adds a link. An explicit NAME overrides the workspace name; an existing branch retains its branch name. `--base`, `--branch`, and `--pr` are mutually exclusive. `--detach` accepts `--base` and `--issue`.
 
-An existing workspace exits 4 (`exists`). With `--reuse`, a workspace matching the requested base, branch or PR and any requested issue returns successfully without copying files or running hooks, even after a failed setup. A mismatch still exits 4. Repeated reuse preserves creation details and existing purpose. `--no-setup` skips copying and hooks and cannot be combined with `--copy-file`. Old `create --no-hooks` exits 2 with migration guidance.
+An existing workspace exits 4 (`exists`). With `--reuse`, a workspace matching the requested base, branch or PR and any requested issue returns successfully without copying files or running hooks, even after a failed setup. A mismatch still exits 4. Repeated reuse preserves creation details and existing purpose. `--no-setup` skips copying and hooks and cannot be combined with `--copy-file`.
 
 `adopt PATH` records an existing linked Git worktree of the selected repository without running setup. It accepts `--name`, `--base`, `--purpose`, `--pr`, and `--issue`. `--base` optionally records the sync target for the existing checkout; when omitted, the target is unknown (`null`). Unknown creation time and creation commit are null. An already recorded path exits 4; a path that is not a linked checkout of this repository exits 3.
 
 `forget SEL...` drops only records, including intent on the primary checkout. Files, branches and Git worktree registrations remain. It accepts the shared workspace selectors and resolves every selector before dropping any records.
-
-Migration: `attach BRANCH` becomes `create --branch BRANCH`; `github checkout` / `gh checkout` become `create --pr REF` or `create --issue REF`. `create -x/--exec` becomes `create` followed by `exec SEL -- COMMAND`. Removed forms exit 2 with a migration hint in text and JSON.
