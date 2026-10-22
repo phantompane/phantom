@@ -4,7 +4,8 @@
 
 ### Changed
 
-- The product is now named mabo, and the Cargo package is `mabo`. Install from source with `cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked mabo`. Release asset names and data directories are unchanged.
+- The product is now named mabo, and the Cargo package is `mabo`. Install from source with `cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked mabo`. Data directories are unchanged.
+- Release archives are now named `mabo-v<version>-<os>-<arch>.tar.gz`. Releases up to v7.0.0-alpha.8 use the `maboroshi-` prefix; `install.sh` picks the name listed in that release's `SHA256SUMS`, preferring `mabo-` when both names have a valid entry.
 
 ## v7.0.0-alpha.8 (2026-10-22)
 

@@ -55,11 +55,11 @@ Rust 1.89 以降（`Cargo.toml` の `rust-version`）でソースからビルド
 cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked mabo
 ```
 
-手動でインストールする場合は、Releases から `maboroshi-v<VERSION>-<os>-<arch>.tar.gz` をダウンロードします（`<VERSION>` は先頭の `v` を除いたもの、`<os>` は `linux` または `darwin`、`<arch>` は `x64` または `arm64`）。アーカイブの中身は `mabo` のみです。展開して PATH の通ったディレクトリに配置してください。v7.0.0-alpha.7 より後のリリースでは、同じリリースの `SHA256SUMS` もダウンロードし、展開前に検証します。`gh` で来歴を検証し、Linux で SHA-256 を確認するには、ダウンロード先でアーカイブ名を置き換えて次を実行します。
+手動でインストールする場合は、Releases から `mabo-v<VERSION>-<os>-<arch>.tar.gz` をダウンロードします（`<VERSION>` は先頭の `v` を除いたもの、`<os>` は `linux` または `darwin`、`<arch>` は `x64` または `arm64`）。v7.0.0-alpha.8 までのリリースは `maboroshi-` プレフィックスを使用します。`install.sh` は、そのリリースの `SHA256SUMS` に記載された名前を選びます。アーカイブの中身は `mabo` のみです。展開して PATH の通ったディレクトリに配置してください。v7.0.0-alpha.7 より後のリリースでは、同じリリースの `SHA256SUMS` もダウンロードし、展開前に検証します。`gh` で来歴を検証し、Linux で SHA-256 を確認するには、ダウンロード先でアーカイブ名を置き換えて次を実行します。
 
 ```sh
-gh attestation verify maboroshi-v<VERSION>-linux-x64.tar.gz --repo phantompane/phantom
-grep " maboroshi-v<VERSION>-linux-x64.tar.gz$" SHA256SUMS | sha256sum -c -
+gh attestation verify mabo-v<VERSION>-linux-x64.tar.gz --repo phantompane/phantom
+grep " mabo-v<VERSION>-linux-x64.tar.gz$" SHA256SUMS | sha256sum -c -
 ```
 
 `SHA256SUMS` は4つのアーカイブと `install.sh` を対象とします。`grep` でダウンロードしたアーカイブの行だけを取り出すので、GNU と BusyBox のどちらの `sha256sum` でも使えます。macOS では `sha256sum -c -` の代わりに `shasum -a 256 -c -` を使ってください。v7.0.0-alpha.7 以前のリリースには `SHA256SUMS` と成果物のアテステーションはありません。
