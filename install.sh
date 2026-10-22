@@ -252,7 +252,7 @@ main() {
     case $(uname -s) in Linux) os=linux ;; Darwin) os=darwin ;; *) os=unsupported ;; esac
     case $(uname -m) in x86_64|amd64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; *) arch=unsupported ;; esac
     if [ "$os" = unsupported ] || [ "$arch" = unsupported ]; then
-        fail "Unsupported platform. See https://github.com/phantompane/phantom/releases or use: cargo install --git https://github.com/phantompane/phantom --tag ${version:-<tag>} --locked maboroshi"
+        fail "Unsupported platform. See https://github.com/phantompane/phantom/releases or use: cargo install --git https://github.com/phantompane/phantom --tag ${version:-<tag>} --locked mabo"
     fi
     command -v curl >/dev/null 2>&1 ||
         fail 'curl is required. Install it with your package manager (Alpine: apk add curl).'
