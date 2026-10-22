@@ -1,7 +1,3 @@
-// P8 design §3.4/§4 migration: workspace sync is current-only; tests that
-// exercise primary alongside workspaces now request --main explicitly. The old
-// --no-default behavior is the default, merged is now integrated (§3.4), and the
-// schema 2 payload uses main/items with a shared workspace object.
 #[path = "common/records.rs"]
 mod records;
 #[path = "common/git.rs"]
@@ -80,7 +76,6 @@ impl Repo {
             .env("GIT_TEMPLATE_DIR", self.root.join("template"))
             .env_remove("MABO_OUTPUT")
             .env_remove("MABO_NO_INPUT")
-            .env_remove("MABO_AGENT_ID")
             .env_remove("GIT_CONFIG_COUNT")
             .env_remove("GIT_CONFIG_PARAMETERS");
         fs::create_dir_all(self.root.join("template")).unwrap();
@@ -1179,22 +1174,11 @@ fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
 }
 
 #[test]
-fn all_syncs_legacy_owners_and_unrecorded_workspaces() {
+fn all_syncs_recorded_and_unrecorded_workspaces() {
     let r = Repo::new();
-    for (name, owner) in [("first", "agent"), ("other", "someone")] {
+    for name in ["first", "other"] {
         let tree = r.create(name);
         r.write_commit(&tree, name, "work\n");
-        let store = r.main.join(".git/mabo/workspaces");
-        let mut body: Value = serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
-        let row = body["worktrees"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .find(|row| row["path"] == tree.to_str().unwrap())
-            .unwrap();
-        row["owner"] = json!(owner);
-        row["lastUsedAt"] = json!("2000-01-01T00:00:00.000Z");
-        records::write(&store, serde_json::to_vec(&body).unwrap()).unwrap();
     }
     let unrecorded = r.root.join("unrecorded");
     r.git(
@@ -1215,7 +1199,6 @@ fn all_syncs_legacy_owners_and_unrecorded_workspaces() {
             &r.main,
             &["sync", "--all", "--json"],
         )
-        .env("MABO_AGENT_ID", "agent")
         .output()
         .unwrap();
     assert!(
@@ -5005,20 +4988,8 @@ fn p8_dry_run_fetches_without_checkout_or_metadata_changes() {
 }
 
 #[test]
-fn p8_removed_flags_and_config_validation() {
+fn sync_config_validation() {
     let r = Repo::new();
-    for (flag, hint) in [
-        ("--force", "--rewrite-published"),
-        ("-f", "--rewrite-published"),
-        ("--no-default", "--main"),
-        ("--mine", "workspace"),
-    ] {
-        let doc = r.sync(&r.main, &[flag], 2);
-        assert!(
-            doc["error"]["message"].as_str().unwrap().contains(hint),
-            "{doc}"
-        );
-    }
     for (key, value) in [
         ("sync.strategy", "invalid"),
         ("sync.rewrite-published", "yes"),

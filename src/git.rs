@@ -375,7 +375,7 @@ pub fn top_level(cwd: &Path) -> Result<PathBuf> {
 
 /// Checkout the command is running in: `git rev-parse --show-toplevel` of the
 /// current directory. `.mabo.toml` and `.worktreeinclude` are read from here,
-/// and hooks receive this path as `MABO_ROOT_PATH`.
+/// and hooks receive this path as `MABO_REPO_PATH`.
 pub fn source_checkout(fallback: &Path) -> PathBuf {
     let Ok(cwd) = std::env::current_dir() else {
         return fallback.to_path_buf();

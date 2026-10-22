@@ -16,7 +16,6 @@ pub struct Context {
     /// Canonical git common dir when `worktrees_directory` is the default
     /// project directory. Unset when `workspace-root` overrides it.
     pub project_common_dir: Option<PathBuf>,
-    pub directory_name_separator: String,
     pub config: Option<MaboConfig>,
     pub preferences: Preferences,
 }
@@ -90,7 +89,6 @@ fn assemble(git_root: &Path, source_checkout: PathBuf) -> Result<Context> {
         source_checkout,
         worktrees_directory: location.path,
         project_common_dir: location.project_common_dir,
-        directory_name_separator: "/".to_string(),
         config,
         preferences,
     })

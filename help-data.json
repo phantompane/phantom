@@ -225,9 +225,8 @@
         "An existing workspace is refused with exit 4 exists unless --reuse matches its source (base/branch/PR and requested issue). Reuse never runs hooks or copies files and preserves existing purpose and creation details; PR reuse can add a missing PR link.",
         "Same-repository PRs use the head branch; fork PRs use owner/head. Fork or deleted heads are fetched from pull/N/head without an upstream. --base, --branch, and --pr are mutually exclusive; --detach cannot accompany --branch or --pr.",
         "--json returns workspace, source (kind new/branch/pr/issue/detach and source details), setup (state, at, ran, ok, command, exitCode, signal, error), copy (copied paths, error), and metadata (ok, error). Failures after checkout creation exit 6.",
-        "--no-setup skips copying and hooks; it conflicts with --copy-file. Old create --no-hooks exits 2 with a migration hint.",
-        "Copy files from the primary checkout. After exit 6, run the retry command from the error: cd '/absolute/source/checkout' && mabo setup 'SELECTOR'. It preserves the original hook configuration and all --copy-file patterns, using a uniquely resolving name or PR/issue selector. If no selector resolves uniquely, the hint uses (cd WORKSPACE && mabo setup . --source-checkout SOURCE). Run hints in bash or zsh; control characters use ANSI-C quoting ($'...'). --reuse never repeats setup.",
-        "Old [hooks] post-create / pre-delete keys fail with exit 1; rename them to setup / pre-remove."
+        "--no-setup skips copying and hooks; it conflicts with --copy-file.",
+        "Copy files from the primary checkout. After exit 6, run the retry command from the error: cd '/absolute/source/checkout' && mabo setup 'SELECTOR'. It preserves the original hook configuration and all --copy-file patterns, using a uniquely resolving name or PR/issue selector. If no selector resolves uniquely, the hint uses (cd WORKSPACE && mabo setup . --source-checkout SOURCE). Run hints in bash or zsh; control characters use ANSI-C quoting ($'...'). --reuse never repeats setup."
       ]
     },
     "list": {
@@ -404,7 +403,6 @@
         "Orphaned records are dropped without deleting checkout files or branches. The current workspace, primary checkout, default branch, and Git-locked checkouts are protected.",
         "Live removal runs trusted [hooks] pre-remove and rechecks the target afterwards. gc never asks for trust; untrusted hooks are skipped unless --no-hooks. A failed candidate does not prevent later candidates from being reported. Failures exit 6 after persistent removal, otherwise 1.",
         "Closed PRs are queried with gh using recorded URLs when available. Missing gh or an unavailable status is reported as unavailable.",
-        "Old --pr and -f/--force exit 2 with migration hints to --closed-pr and --apply or targeted remove permissions.",
         "Rerunning gc --apply is idempotent; already retired workspaces are no longer candidates.",
         "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
@@ -563,8 +561,7 @@
       ],
       "notes": [
         "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
-        "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true. Legacy keep-branch warns and is ignored, then removed on the next config write.",
-        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write.",
+        "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true.",
         "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
       ]
     },
@@ -608,8 +605,7 @@
       ],
       "notes": [
         "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
-        "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true. Legacy keep-branch warns and is ignored, then removed on the next config write.",
-        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write.",
+        "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true.",
         "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
       ]
     },
@@ -648,8 +644,7 @@
       ],
       "notes": [
         "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
-        "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true. Legacy keep-branch warns and is ignored, then removed on the next config write.",
-        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write.",
+        "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true.",
         "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
       ]
     },
@@ -688,8 +683,7 @@
       ],
       "notes": [
         "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
-        "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true. Legacy keep-branch warns and is ignored, then removed on the next config write.",
-        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write.",
+        "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true.",
         "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
       ]
     },
@@ -1098,8 +1092,7 @@
         "Both execution and dry runs use ordinary git fetch in the invoking repository. Before any fetch or integration, sync checks every configured fetch refspec of every involved remote and refuses with exit 4 refused if a positive refspec has a destination outside refs/remotes/ (including explicit refs/tags/ destinations and mirror mappings). Negative exclusions do not relax this conservative check; a missing or empty destination only writes FETCH_HEAD and is allowed. Use a tracking destination under refs/remotes/ for custom namespaces. Sync also refuses any existing symbolic ref visible to git for-each-ref under refs/remotes/ or refs/tags/ that points outside refs/remotes/; repair or remove the alias before retrying. Dangling symbolic refs are omitted by Git's enumeration and are not detected: this is a known limit shared with plain git fetch. Git retains its configured pruning, automatic tag following, negative exclusions and followRemoteHEAD behavior; automatic tag following is not an explicit fetch refspec. Combined dry runs evaluate local bases against tips planned for primary and earlier workspaces, in selection order. Planned branch tips are keyed by full refs: the short branch name refs/heads/a maps to refs/heads/refs/heads/a, independently of branch a at refs/heads/a. When an earlier planned tip is unknown, dependent items report updated, after:null, strategy:null and a dependency explanation in detail, without deciding against the old base.",
         "Strategy precedence: --auto/--rebase/--merge, then user config sync.strategy, then auto. Rewrite permission: --rewrite-published or user config sync.rewrite-published (default false). Publication evidence includes observed remote-tracking refs, configured fetch destinations and the workspace upstream, even independent local branch refs or destinations of remotes not fetched by this sync. Only the current branch itself is excluded. Personal sync policy is rejected in .mabo.toml. Items expose strategySource and rewriteSource independently.",
         "data is {plan, items:[{workspace,status,strategy,strategySource,rewriteAllowed,rewriteSource,rewrotePublished,before,after,conflicts,detail,code}], main:item|null}. Planned merge/rebase after is null when the future commit ID is unknown; rewrotePublished remains false in plans. Statuses: updated, up-to-date, dirty, diverged, integrated, detached, base-gone, base-unknown, conflict, refused, failed; primary also has not-default-branch.",
-        "Rebasing published commits without permission exits 4 published with --rewrite-published guidance. Actual rewrites emit published_rewritten with the workspace name: updating the existing remote branch may require a force push.",
-        "Removed -f/--force exits 2: use --rewrite-published. --no-default exits 2: current-only is now the default, add --main to advance primary. --mine exits 2: select a workspace or --all."
+        "Rebasing published commits without permission exits 4 published with --rewrite-published guidance. Actual rewrites emit published_rewritten with the workspace name: updating the existing remote branch may require a force push."
       ]
     },
     "repo show": {
@@ -1179,8 +1172,7 @@
       ],
       "notes": [
         "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
-        "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true. Legacy keep-branch warns and is ignored, then removed on the next config write.",
-        "Old config.toml keys worktrees-directory/root/ghq-discovery warn with config_key_renamed and act as workspace-root/clone-root/discover-ghq. New keys take precedence when both exist. The next successful config write rewrites old keys. directory-name-separator warns with config_key_removed, is ignored, and is removed on the next write.",
+        "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true.",
         "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
       ]
     },
@@ -1649,7 +1641,7 @@
         "SEL defaults to dot and follows the shared selector rules. The primary checkout is refused with exit 4 primary. Missing targets exit 3.",
         "Copy .worktreeinclude and --copy-file matches from the primary checkout. Only gitignored files are copied; existing files are preserved and symlinks are skipped.",
         "Before copying or updating records, untrusted hooks refuse with exit 4 untrusted. Use mabo trust add, MABO_TRUST_ALL=1, or --no-hooks for copying only. Non-interactive runs never prompt.",
-        ".mabo.toml is read from --source-checkout when supplied, otherwise from the invoking checkout (the selected primary checkout with -R/--repo). [hooks] setup runs after copying; write hooks to tolerate repeated execution. Old post-create / pre-delete keys fail with a rename hint.",
+        ".mabo.toml is read from --source-checkout when supplied, otherwise from the invoking checkout (the selected primary checkout with -R/--repo). [hooks] setup runs after copying; write hooks to tolerate repeated execution.",
         "Setup records state, at and error: pending, running, ok, failed or skipped. Older, imported and adopted records report unknown; unrecorded workspaces report null. A running attempt whose pid is gone on the same host displays interrupted without rewriting the record or blocking operations.",
         "JSON data contains workspace, setup (state, at, error, ran, ok, command, exitCode, signal), and copy (copied, error). Hook and copy failures exit 1; create setup failures exit 6 with a shell-quoted retry command that preserves the original source checkout and copy patterns and selects the created workspace uniquely."
       ]
@@ -1750,7 +1742,6 @@
         "If branch deletion fails after checkout removal, remove keeps the branch with warning branch_kept_delete_failed, branchKeptReason: delete_failed, and the Git error in the item detail. This does not fail the item or stop later targets; branch-only failures exit 0 and have no retry command. Decide on any later branch cleanup with Git.",
         "A failure after persistent removal exits 6 and retains every item result. Completed removals also remove their records, so repeating the original command may exit 3. Fix the cause, then run error.details.retryCommand, also shown as Retry with in text. The retry is one invocation: cd <primary> && mabo -R <primary> remove [flags] -- <unfinished paths>. It selects only unfinished checkout or record work, preserves permission flags and output mode, and protects selectors with --. Run hints in bash or zsh; paths are shell-quoted and control characters use ANSI-C quoting. Metadata cleanup is retried only for recorded targets, using the absolute path spelling saved in the record before removal. Location selectors are fixed before removal. A linked checkout supplying pre-remove hooks is removed last; retries preserve its configuration with --source-checkout PATH, which must belong to the selected repository. Once that source is removed, only record cleanup remains and retries disable hooks. Retries add --no-hooks when the original command disabled hooks or its source had no pre-remove hooks, preserving hook non-execution even if primary defines hooks. With -R PRIMARY, dot also resolves a recorded checkout whose Git registration disappeared.",
         "alreadyGone:true requires evidence: a missing directory with metadata and/or an eligible Git registration succeeds, cleaning stale records/registrations without hooks or branch deletion. A record with remaining files but no Git registration also succeeds with alreadyGone:true while retaining files, record and branch. A branch alone or an unregistered directory without a record is insufficient evidence. Removal is limited to linked workspaces inside the resolved directory or recorded paths. Unrecorded external checkouts are refused. Empty parents are cleaned up only below the resolved workspace directory.",
-        "Old delete, -f/--force, and --current exit 2. Use mabo remove SEL..., remove ., and the separate --discard-changes / --delete-unpreserved-branch permissions.",
         ".mabo.toml is read from --source-checkout when supplied, otherwise from the invoking checkout (the selected primary checkout with -R/--repo). [hooks] pre-remove commands run in the workspace before it is removed, in order, and stop at the first failure",
         "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
         "pre-remove hooks run only after the repository is trusted. On a terminal, mabo asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, nonempty CI, --no-input or MABO_NO_INPUT being enabled, or --json fails before deleting. An empty value counts as unset. Run mabo trust add or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
@@ -1904,8 +1895,6 @@
     "partial": 6
   },
   "warningCodes": [
-    "config_key_renamed",
-    "config_key_removed",
     "repo_discovery",
     "branch_kept_unpreserved",
     "branch_kept_delete_failed",

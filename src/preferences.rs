@@ -134,8 +134,6 @@ fn load_preferences_from(path: &Path) -> Result<Preferences> {
     let Some(document) = read_document(path)? else {
         return Ok(Preferences::default());
     };
-    let mut document = document;
-    migrate_keys(&mut document);
     preferences_from(&document, path)
 }
 
@@ -147,8 +145,7 @@ fn set_preference_at(path: &Path, key: &str, value: &str) -> Result<()> {
     let existing = read_document(path)?;
     let created = existing.is_none();
     let mut document = match existing {
-        Some(mut document) => {
-            migrate_keys(&mut document);
+        Some(document) => {
             preferences_from(&document, path)?;
             document
         }
@@ -163,7 +160,6 @@ fn remove_preference_at(path: &Path, key: &str) -> Result<()> {
     let Some(mut document) = read_document(path)? else {
         return Err(not_set(path, key));
     };
-    migrate_keys(&mut document);
     preferences_from(&document, path)?;
     let removed = if let Some((table, field)) = key.split_once('.') {
         document
@@ -256,38 +252,6 @@ fn preferences_from(document: &DocumentMut, path: &Path) -> Result<Preferences> 
         }
     }
     Ok(preferences)
-}
-
-const RENAMED_KEYS: &[(&str, &str)] = &[
-    ("worktrees-directory", "workspace-root"),
-    ("root", "clone-root"),
-    ("ghq-discovery", "discover-ghq"),
-];
-
-fn migrate_keys(document: &mut DocumentMut) {
-    for &(old, new) in RENAMED_KEYS {
-        let renamed_key = document.as_table().get_key_value(old).map(|(key, _)| {
-            toml_edit::Key::new(new)
-                .with_leaf_decor(key.leaf_decor().clone())
-                .with_dotted_decor(key.dotted_decor().clone())
-        });
-        if let Some(item) = document.remove(old) {
-            crate::output::warning_once("config_key_renamed", format!(
-                "Warning: config key '{old}' was renamed to '{new}'. Use `mabo config set {new} VALUE`; the next config write rewrites old keys. If both exist, '{new}' takes precedence."
-            ));
-            if !document.contains_key(new) {
-                if let Some(key) = renamed_key {
-                    document.as_table_mut().insert_formatted(&key, item);
-                }
-            }
-        }
-    }
-    if document.remove("keep-branch").is_some() {
-        crate::output::warning_once("config_key_removed", "Warning: config key 'keep-branch' was removed and is ignored. Use remove --keep-branch explicitly. The next config write removes this key.");
-    }
-    if document.remove("directory-name-separator").is_some() {
-        crate::output::warning_once("config_key_removed", "Warning: config key 'directory-name-separator' was removed and is ignored. Workspace names use '/'. The next config write removes this key.");
-    }
 }
 
 fn require_string(path: &Path, key: &str, item: &Item) -> Result<String> {

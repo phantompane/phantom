@@ -79,9 +79,7 @@ impl Repo {
             .env_remove("GHQ_ROOT")
             .env_remove("MABO_OUTPUT")
             .env_remove("MABO_NO_INPUT")
-            .env_remove("MABO_AGENT_ID")
             .env_remove("MABO_NAME_CANDIDATES")
-            .env_remove("PHANTOM_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
             .env_remove("GIT_CONFIG_COUNT")
@@ -195,16 +193,18 @@ fn broken_pipe_large_list_stdout_preserves_success() {
 #[test]
 fn broken_pipe_stderr_preserves_success_and_usage_status() {
     let repo = Repo::new();
-    fs::create_dir_all(repo.home.join(".config/mabo")).unwrap();
     fs::write(
-        repo.home.join(".config/mabo/config.toml"),
-        "directory-name-separator = \"-\"\n",
+        repo.repo.join(".mabo.toml"),
+        "[hooks]\nsetup = [\"true\"]\n",
     )
     .unwrap();
-    // The warning succeeds with status 0; usage writes diagnostics and help with
-    // status 2. Keep stdout available to catch accidental stream coupling.
+    assert!(repo
+        .mabo(&["create", "topic", "--no-setup"])
+        .status
+        .success());
+    // Setup emits progress and succeeds; usage writes diagnostics and help.
     for (args, expected) in [
-        (vec!["config", "list", "--json"], 0),
+        (vec!["setup", "topic", "--json"], 0),
         (vec!["not-a-command"], 2),
     ] {
         let normal = repo.mabo(&args);
@@ -217,7 +217,13 @@ fn broken_pipe_stderr_preserves_success_and_usage_status() {
             .unwrap();
         assert!(!text(&output.stdout).contains("panicked"));
         assert_eq!(output.status.code(), Some(expected), "{args:?}");
-        assert_eq!(output.stdout, normal.stdout);
+        if args[0] == "setup" {
+            // Each setup records a new timestamp; stdout must remain valid JSON.
+            let doc = assert_envelope(&output, "setup");
+            assert_eq!(doc["data"]["setup"]["state"], "ok");
+        } else {
+            assert_eq!(output.stdout, normal.stdout);
+        }
     }
     assert_closed_stdout(&repo, &["not-a-command", "--json"], 2);
 }
@@ -598,33 +604,6 @@ fn default_worktree_path(value: &serde_json::Value) -> String {
 }
 
 #[test]
-fn removed_tmux_options_are_unknown() {
-    let repo = Repo::new();
-    let cases = [
-        vec!["create", "name", "--tmux"],
-        vec!["create", "name", "-t"],
-        vec!["create", "--branch", "main", "--tmux-vertical"],
-        vec!["exec", "--tmux-h", "name", "true"],
-        vec!["create", "--pr", "1", "--tmux"],
-        vec!["create", "--pr", "1", "-t"],
-    ];
-    for args in cases {
-        let output = repo.mabo(&args);
-        assert_eq!(
-            output.status.code(),
-            Some(2),
-            "{args:?} {}",
-            text(&output.stderr)
-        );
-        let stderr = text(&output.stderr);
-        assert!(
-            stderr.contains("Unknown option"),
-            "{args:?} produced {stderr}"
-        );
-    }
-}
-
-#[test]
 fn create_list_where_delete_and_attach() {
     let repo = Repo::new();
     let created = repo.mabo(&["create", "feature/add-tests"]);
@@ -861,12 +840,6 @@ setup = [
   "printf '%s' \"$MABO\" > mabo-flag.txt",
   "printf '%s' \"$MABO_WORKSPACE\" > mabo-name.txt",
   "printf '%s' \"$MABO_WORKSPACE_PATH\" > mabo-path.txt",
-  "printf '%s' \"$PTM\" > ptm-flag.txt",
-  "printf '%s' \"$PTM_NAME\" > ptm-name.txt",
-  "printf '%s' \"$PTM_PATH\" > ptm-path.txt",
-  "printf '%s' \"$PHANTOM\" > phantom-flag.txt",
-  "printf '%s' \"$PHANTOM_NAME\" > phantom-name.txt",
-  "printf '%s' \"$PHANTOM_PATH\" > phantom-path.txt",
   "pwd > hook-cwd.txt",
   "touch first.txt",
   "false",
@@ -899,30 +872,6 @@ pre-remove = [
     assert_eq!(
         fs::read_to_string(worktree.join("mabo-path.txt")).expect("path"),
         worktree.display().to_string()
-    );
-    assert_eq!(
-        fs::read_to_string(worktree.join("ptm-flag.txt")).expect("old ptm flag"),
-        ""
-    );
-    assert_eq!(
-        fs::read_to_string(worktree.join("ptm-name.txt")).expect("old ptm name"),
-        ""
-    );
-    assert_eq!(
-        fs::read_to_string(worktree.join("ptm-path.txt")).expect("old ptm path"),
-        ""
-    );
-    assert_eq!(
-        fs::read_to_string(worktree.join("phantom-flag.txt")).expect("old flag"),
-        ""
-    );
-    assert_eq!(
-        fs::read_to_string(worktree.join("phantom-name.txt")).expect("old name"),
-        ""
-    );
-    assert_eq!(
-        fs::read_to_string(worktree.join("phantom-path.txt")).expect("old path"),
-        ""
     );
     assert_eq!(
         text(&fs::read(worktree.join("hook-cwd.txt")).expect("cwd")),
@@ -1297,116 +1246,6 @@ fn preferences_file_uses_xdg_config_home() {
 }
 
 #[test]
-fn keep_branch_preference_applies_to_delete() {
-    let repo = Repo::new();
-    let path = repo.home.join(".config/mabo/config.toml");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, "keep-branch = true\n").unwrap();
-    assert!(repo.mabo(&["create", "removable"]).status.success());
-    let out = repo.mabo(&["remove", "removable", "--json"]);
-    assert_eq!(out.status.code(), Some(0));
-    assert_eq!(json_value(&out)["data"]["items"][0]["branchDeleted"], true);
-    assert!(!branch_listed(&repo, "removable"));
-    assert!(repo.mabo(&["create", "explicit"]).status.success());
-    assert!(repo
-        .mabo(&["remove", "explicit", "--keep-branch"])
-        .status
-        .success());
-    assert!(branch_listed(&repo, "explicit"));
-    for command in ["get", "set", "unset"] {
-        let mut args = vec!["config", command, "keep-branch"];
-        if command == "set" {
-            args.push("true");
-        }
-        assert_eq!(repo.mabo(&args).status.code(), Some(2));
-    }
-    assert!(repo
-        .mabo(&["config", "set", "discover-ghq", "false"])
-        .status
-        .success());
-    assert!(!fs::read_to_string(path).unwrap().contains("keep-branch"));
-}
-
-#[test]
-fn removed_ai_command_and_preference_are_unknown() {
-    let repo = Repo::new();
-    let command = repo.mabo(&["ai", "feature"]);
-    assert_eq!(command.status.code(), Some(2));
-    assert!(text(&command.stderr).contains("Unknown command 'ai feature'"));
-
-    let preference = repo.mabo(&["config", "set", "ai", "claude"]);
-    assert_eq!(preference.status.code(), Some(2));
-    let stderr = text(&preference.stderr);
-    assert!(stderr.contains("Unknown config key 'ai'"), "{stderr}");
-    assert!(stderr.contains("workspace-root"), "{stderr}");
-}
-
-#[test]
-fn removed_edit_command_and_editor_preference_are_unknown() {
-    let repo = Repo::new();
-    let command = repo.mabo(&["edit", "feature"]);
-    assert_eq!(command.status.code(), Some(2));
-    assert!(text(&command.stderr).contains("Unknown command 'edit feature'"));
-
-    let preference = repo.mabo(&["config", "get", "editor"]);
-    assert_eq!(preference.status.code(), Some(2));
-    let stderr = text(&preference.stderr);
-    assert!(stderr.contains("Unknown config key 'editor'"), "{stderr}");
-    assert!(stderr.contains("workspace-root"), "{stderr}");
-}
-
-#[test]
-fn removed_shell_command_and_flag_are_unknown() {
-    let repo = Repo::new();
-    let command = repo.mabo(&["shell", "feature"]);
-    assert_eq!(command.status.code(), Some(2));
-    assert!(text(&command.stderr).contains("Unknown command 'shell feature'"));
-
-    for args in [
-        vec!["create", "name", "--shell"],
-        vec!["create", "--branch", "main", "-s"],
-    ] {
-        let output = repo.mabo(&args);
-        assert_eq!(
-            output.status.code(),
-            Some(2),
-            "{args:?} {}",
-            text(&output.stderr)
-        );
-        assert!(
-            text(&output.stderr).contains("Unknown option"),
-            "{args:?} {}",
-            text(&output.stderr)
-        );
-    }
-}
-
-#[test]
-fn removed_fzf_option_is_unknown() {
-    let repo = Repo::new();
-    let cases = [
-        vec!["list", "--fzf"],
-        vec!["path", "--fzf"],
-        vec!["remove", "--fzf"],
-        vec!["exec", "--fzf", "true"],
-    ];
-    for args in cases {
-        let output = repo.mabo(&args);
-        assert_eq!(
-            output.status.code(),
-            Some(2),
-            "{args:?} {}",
-            text(&output.stderr)
-        );
-        let stderr = text(&output.stderr);
-        assert!(
-            stderr.contains("Unknown option"),
-            "{args:?} produced {stderr}"
-        );
-    }
-}
-
-#[test]
 fn reports_when_only_the_default_worktree_exists() {
     let repo = Repo::new();
     let result = repo.mabo(&["list", "--kind", "workspace"]);
@@ -1776,48 +1615,6 @@ impl Drop for ModeReset<'_> {
         perms.set_mode(0o755);
         let _ = fs::set_permissions(self.0, perms);
     }
-}
-
-#[test]
-fn removed_mcp_command_is_unknown() {
-    let repo = Repo::new();
-    for args in [vec!["mcp"], vec!["mcp", "serve"], vec!["mcp", "--help"]] {
-        let output = repo.mabo(&args);
-        assert_eq!(
-            output.status.code(),
-            Some(2),
-            "{args:?}\n{}\n{}",
-            text(&output.stdout),
-            text(&output.stderr)
-        );
-        let stderr = text(&output.stderr);
-        assert!(
-            stderr.contains("Unknown command"),
-            "{args:?} produced {stderr}"
-        );
-    }
-
-    let help = repo.mabo(&["--help"]);
-    assert!(help.status.success(), "{}", text(&help.stderr));
-    assert!(
-        !text(&help.stdout).to_ascii_lowercase().contains("mcp"),
-        "top-level help should not mention MCP:\n{}",
-        text(&help.stdout)
-    );
-
-    let preferences = repo.mabo(&["config", "--help"]);
-    assert!(
-        preferences.status.success(),
-        "{}",
-        text(&preferences.stderr)
-    );
-    assert!(
-        !text(&preferences.stdout)
-            .to_ascii_lowercase()
-            .contains("mcp"),
-        "preferences help should not mention MCP:\n{}",
-        text(&preferences.stdout)
-    );
 }
 
 #[test]
@@ -3136,20 +2933,6 @@ fn create_and_attach_exec_pass_command_options_through() {
         let output = repo.mabo(&["exec", name, "--", "printf", "%s", "--json --repo --help"]);
         assert!(output.status.success());
         assert_eq!(text(&output.stdout), "--json --repo --help");
-    }
-}
-
-#[test]
-fn repeated_exec_options_are_rejected() {
-    let repo = Repo::new();
-    for args in [
-        vec!["create", "removed", "--exec", "true", "--exec", "true"],
-        vec!["create", "removed", "-x", "true"],
-    ] {
-        let out = repo.mabo(&args);
-        assert_eq!(out.status.code(), Some(2));
-        assert!(text(&out.stderr).contains("mabo exec SEL -- COMMAND"));
-        assert!(!managed(&repo, "removed").exists());
     }
 }
 
@@ -4752,8 +4535,6 @@ fn workspace_intent_is_recorded_updated_and_removed() {
             env!("CARGO_BIN_EXE_mabo"),
             &["create", "feature", "--purpose", "fix the flake", "--json"],
         )
-        .env("MABO_AGENT_ID", "ignored")
-        .env("MABO_ACTOR", "also ignored")
         .output()
         .unwrap();
     assert!(created.status.success(), "{}", text(&created.stderr));
@@ -4888,7 +4669,6 @@ fn github_recheckout_keeps_the_original_intent() {
             ],
         )
         .env("PATH", &path)
-        .env("MABO_AGENT_ID", "intruder")
         .output()
         .expect("checkout");
     assert!(again.status.success(), "{}", text(&again.stderr));
@@ -5247,7 +5027,6 @@ fn separate_git_dir_creates_the_default_worktree_under_xdg() {
         .env("XDG_DATA_HOME", root.join("xdg"))
         .env_remove("MABO_OUTPUT")
         .env_remove("MABO_NO_INPUT")
-        .env_remove("MABO_AGENT_ID")
         .output()
         .expect("mabo");
     assert!(
@@ -5329,7 +5108,6 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
             .env("XDG_DATA_HOME", root.join("xdg"))
             .env_remove("MABO_OUTPUT")
             .env_remove("MABO_NO_INPUT")
-            .env_remove("MABO_AGENT_ID")
             .output()
             .expect("mabo")
     };
@@ -5435,8 +5213,6 @@ impl SeparateCheckout {
             .env_remove("GHQ_ROOT")
             .env_remove("MABO_OUTPUT")
             .env_remove("MABO_NO_INPUT")
-            .env_remove("MABO_AGENT_ID")
-            .env_remove("PHANTOM_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
             .env_remove("GIT_CONFIG_COUNT")
@@ -5646,7 +5422,6 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
             .env("XDG_DATA_HOME", root.join("xdg"))
             .env_remove("MABO_OUTPUT")
             .env_remove("MABO_NO_INPUT")
-            .env_remove("MABO_AGENT_ID")
             .output()
             .expect("mabo")
     };
@@ -5758,7 +5533,6 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
             .env("XDG_DATA_HOME", root.join("xdg"))
             .env_remove("MABO_OUTPUT")
             .env_remove("MABO_NO_INPUT")
-            .env_remove("MABO_AGENT_ID")
             .output()
             .expect("mabo")
     };
@@ -5896,7 +5670,6 @@ fn missing_separate_checkout_names_the_git_dir() {
         .env("XDG_DATA_HOME", root.join("xdg"))
         .env_remove("MABO_OUTPUT")
         .env_remove("MABO_NO_INPUT")
-        .env_remove("MABO_AGENT_ID")
         .output()
         .expect("mabo");
     assert_eq!(
@@ -5940,7 +5713,6 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
             .env("XDG_DATA_HOME", root.join("xdg"))
             .env_remove("MABO_OUTPUT")
             .env_remove("MABO_NO_INPUT")
-            .env_remove("MABO_AGENT_ID")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
             .output()
@@ -6167,7 +5939,6 @@ fn submodule_lists_and_execs_the_main_checkout() {
             .env("XDG_DATA_HOME", root.join("xdg"))
             .env_remove("MABO_OUTPUT")
             .env_remove("MABO_NO_INPUT")
-            .env_remove("MABO_AGENT_ID")
             .output()
             .expect("mabo")
     };
@@ -6325,7 +6096,7 @@ fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path,
     let hidden_text = text(&hidden.stdout);
     assert!(
         !hidden_text.lines().any(|line| line.starts_with("main ")),
-        "--no-default still shows main\n{hidden_text}"
+        "workspace-only list still shows main\n{hidden_text}"
     );
     assert!(hidden_text.contains("linked"), "{hidden_text}");
     let ran = repo.mabo(linked, &["exec", "main", "--", "pwd"]);
@@ -6960,7 +6731,7 @@ fn gc_rechecks_pull_request_link_after_pre_remove_hooks() {
 }
 
 #[test]
-fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
+fn gc_closed_pull_request_with_unpreserved_history_is_skipped() {
     let repo = Repo::new();
     assert!(repo
         .create_recorded(&[
@@ -7004,12 +6775,6 @@ fn gc_closed_pull_request_stays_until_force_and_keep_branch_is_honored() {
         .contains(" remove --delete-unpreserved-branch -- 'topic'"));
     assert!(worktree_dir(&repo, "topic").is_dir());
 
-    fs::create_dir_all(repo.home.join(".config/mabo")).expect("config dir");
-    fs::write(
-        repo.home.join(".config/mabo/config.toml"),
-        "keep-branch = true\n",
-    )
-    .expect("preference");
     let forced = repo
         .command(
             env!("CARGO_BIN_EXE_mabo"),
@@ -10429,23 +10194,11 @@ fn output_and_help_scan_respects_command_option_arity_and_child_boundaries() {
     for args in [
         vec!["list", "--base", "--json"], // --base is not a list option.
         vec!["repo", "list", "--bogus", "--json"],
-        vec!["gc", "--closed-pr", "--json", "--bogus"], // --pr is a flag here.
+        vec!["gc", "--closed-pr", "--json", "--bogus"], // --closed-pr is a flag here.
     ] {
         let out = repo.mabo(&args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         assert_eq!(json_value(&out)["error"]["code"], "usage");
-    }
-    for command in ["create", "attach"] {
-        for exec in ["--exec", "-x"] {
-            let out = repo.mabo(&[command, "--bogus", exec, "ignored", "--json", "--help"]);
-            assert_eq!(out.status.code(), Some(2));
-            assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
-        }
-        for exec in ["--exec=ignored", "-xignored"] {
-            let out = repo.mabo(&[command, "--bogus", exec, "--json"]);
-            assert_eq!(out.status.code(), Some(2));
-            assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
-        }
     }
     let out = repo.mabo(&["list", "--repo", "alice", "--", "--json", "--help"]);
     assert_eq!(out.status.code(), Some(2));
@@ -10496,9 +10249,6 @@ fn create_and_attach_setup_failures_report_text_and_json_without_duplicate_cause
                 if json {
                     args.push("--json");
                 }
-                if cause == "exec" {
-                    args.extend(["--exec", "exit 24"]);
-                }
                 let mut process = repo.command(env!("CARGO_BIN_EXE_mabo"), &args);
                 if cause == "metadata" {
                     process.env("MABO_TEST_FAIL_METADATA_SAVE", "1");
@@ -10528,18 +10278,10 @@ fn create_and_attach_setup_failures_report_text_and_json_without_duplicate_cause
                             false
                         );
                     }
-                    if cause == "exec" {
-                        assert!(!stderr.contains(diagnostic), "{stderr}");
-                    } else {
-                        assert_eq!(stderr.matches(diagnostic).count(), 1, "{stderr}");
-                    }
+                    assert_eq!(stderr.matches(diagnostic).count(), 1, "{stderr}");
                 } else {
                     assert_eq!(stderr.matches(diagnostic).count(), 1, "{stderr}");
-                    let summary = if cause == "exec" {
-                        diagnostic
-                    } else {
-                        "Workspace created but setup did not complete"
-                    };
+                    let summary = "Workspace created but setup did not complete";
                     assert_eq!(stderr.matches(summary).count(), 1, "{stderr}");
                 }
             }
@@ -10565,7 +10307,6 @@ fn every_command_help_uses_workspace_vocabulary() {
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
-            .replace("worktrees-directory", "")
             .replace("worktrees.json", "")
             .replace(".worktreeinclude", "")
             .replace("git worktree", "git checkout")
@@ -10577,7 +10318,7 @@ fn every_command_help_uses_workspace_vocabulary() {
 
 fn workspace_env_script(output: &Path) -> String {
     format!(
-        "printf '%s\\n' \"$MABO\" \"$MABO_WORKSPACE\" \"$MABO_WORKSPACE_ID\" \"$MABO_WORKSPACE_PATH\" \"$MABO_REPO_PATH\" \"${{MABO_NAME+present}}\" \"${{MABO_PATH+present}}\" \"${{MABO_ROOT_PATH+present}}\" > '{}'",
+        "printf '%s\\n' \"$MABO\" \"$MABO_WORKSPACE\" \"$MABO_WORKSPACE_ID\" \"$MABO_WORKSPACE_PATH\" \"$MABO_REPO_PATH\" > '{}'",
         output.display()
     )
 }
@@ -10585,7 +10326,7 @@ fn workspace_env_script(output: &Path) -> String {
 fn assert_workspace_env(output: &Path, repo: &Repo, name: &str, path: &Path, id: &str) {
     let values = fs::read_to_string(output).expect("environment capture");
     let expected = format!(
-        "1\n{name}\n{id}\n{}\n{}\n\n\n\n",
+        "1\n{name}\n{id}\n{}\n{}\n",
         path.display(),
         repo.repo.display()
     );
@@ -10593,7 +10334,7 @@ fn assert_workspace_env(output: &Path, repo: &Repo, name: &str, path: &Path, id:
 }
 
 #[test]
-fn hooks_and_exec_export_workspace_identity_and_remove_inherited_legacy_variables() {
+fn hooks_and_exec_export_workspace_identity() {
     let repo = Repo::new();
     assert!(repo.mabo(&["create", "source"]).status.success());
     let source = managed(&repo, "source");
@@ -10616,9 +10357,6 @@ fn hooks_and_exec_export_workspace_identity_and_remove_inherited_legacy_variable
             .env("MABO_WORKSPACE_ID", "stale")
             .env("MABO_WORKSPACE_PATH", "/stale")
             .env("MABO_REPO_PATH", "/stale")
-            .env("MABO_NAME", "legacy")
-            .env("MABO_PATH", "/legacy")
-            .env("MABO_ROOT_PATH", "/legacy")
             .output()
             .unwrap()
     };
@@ -11048,173 +10786,6 @@ fn outer_clone_root_sources_match_the_existing_resolution_chain() {
 }
 
 #[test]
-fn outer_legacy_config_warnings_appear_once_per_invocation() {
-    let repo = Repo::new();
-    assert!(repo.mabo(&["repo", "add"]).status.success());
-    let path = repo.home.join(".config/mabo/config.toml");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let path_env = silent_ghq_path(&repo);
-    let warnings = [
-        ("config_key_removed", "config key 'keep-branch'"),
-        ("config_key_renamed", "config key 'worktrees-directory'"),
-        ("config_key_renamed", "config key 'root'"),
-        ("config_key_renamed", "config key 'ghq-discovery'"),
-        (
-            "config_key_removed",
-            "config key 'directory-name-separator'",
-        ),
-    ];
-    for discovery in [false, true] {
-        for (args, command) in [
-            (vec!["repo", "list"], "repo list"),
-            (vec!["config", "list", "--sources"], "config list"),
-            (vec!["config", "list", "--repo", "repo"], "config list"),
-            (
-                vec!["config", "get", "clone-root", "-R", "repo"],
-                "config get",
-            ),
-            (vec!["repo", "show", "repo"], "repo show"),
-            (vec!["list", "-R", "repo"], "list"),
-            (
-                vec!["config", "set", "discover-ghq", "false", "-R", "repo"],
-                "config set",
-            ),
-            (
-                vec!["config", "unset", "discover-ghq", "-R", "repo"],
-                "config unset",
-            ),
-        ] {
-            for json in [false, true] {
-                let legacy = format!("worktrees-directory = \"../spaces\"\nroot = \"~/clones\"\nghq-discovery = {discovery}\ndirectory-name-separator = \"-\"\nkeep-branch = true\n");
-                fs::write(&path, &legacy).unwrap();
-                let mut argv = args.clone();
-                if json {
-                    argv.push("--json");
-                }
-                let out = repo
-                    .command(env!("CARGO_BIN_EXE_mabo"), &argv)
-                    .env("PATH", &path_env)
-                    .output()
-                    .unwrap();
-                assert!(out.status.success(), "{argv:?}: {out:?}");
-                let stderr = text(&out.stderr);
-                for (code, message) in warnings {
-                    assert_eq!(stderr.matches(message).count(), 1, "{argv:?}: {stderr}");
-                    if json {
-                        let value = assert_envelope(&out, command);
-                        let recorded = value["warnings"].as_array().unwrap();
-                        assert_eq!(recorded.len(), warnings.len(), "{argv:?}: {value}");
-                        assert_eq!(
-                            recorded
-                                .iter()
-                                .filter(|warning| warning["code"] == code
-                                    && warning["message"].as_str().unwrap().contains(message))
-                                .count(),
-                            1,
-                            "{argv:?}: {value}"
-                        );
-                    }
-                }
-                if !matches!(command, "config set" | "config unset") {
-                    assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn outer_legacy_config_warns_takes_effect_and_rewrites_on_set_or_unset() {
-    for mutation in ["set", "unset"] {
-        let repo = Repo::new();
-        let path = repo.home.join(".config/mabo/config.toml");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let legacy = "# retain this\nworktrees-directory = \"../legacy-spaces\" # location\nroot = \"~/legacy-clones\"\nghq-discovery = false\ndirectory-name-separator = [\"ignored regardless of type\"]\nkeep-branch = true\n";
-        fs::write(&path, legacy).unwrap();
-        let out = repo.mabo(&["config", "list", "--sources", "--json"]);
-        let value = assert_envelope(&out, "config list");
-        assert_eq!(out.status.code(), Some(0));
-        let warnings = value["warnings"].as_array().unwrap();
-        assert_eq!(
-            warnings
-                .iter()
-                .filter(|w| w["code"] == "config_key_renamed")
-                .count(),
-            3
-        );
-        assert_eq!(
-            warnings
-                .iter()
-                .filter(|w| w["code"] == "config_key_removed")
-                .count(),
-            2
-        );
-        assert!(warnings
-            .iter()
-            .all(|w| w["message"].as_str().unwrap().contains("config")));
-        let config = &value["data"]["config"];
-        assert_eq!(config["workspace-root"]["value"], "../legacy-spaces");
-        assert_eq!(
-            config["clone-root"]["value"],
-            repo.home.join("legacy-clones").to_str().unwrap()
-        );
-        assert_eq!(config["discover-ghq"]["value"], false);
-        assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
-        let created = outer_run(&repo, &["create", "feature/nested"], true, "create", 0);
-        assert_eq!(
-            created["data"]["workspace"]["path"],
-            repo.root
-                .join("legacy-spaces/feature/nested")
-                .to_str()
-                .unwrap()
-        );
-        let out = if mutation == "set" {
-            repo.mabo(&["config", "set", "clone-root", "~/new-clones", "--json"])
-        } else {
-            repo.mabo(&["config", "unset", "discover-ghq", "--json"])
-        };
-        assert_eq!(out.status.code(), Some(0));
-        assert_envelope(&out, &format!("config {mutation}"));
-        let rewritten = fs::read_to_string(&path).unwrap();
-        for old in [
-            "worktrees-directory",
-            "\nroot =",
-            "ghq-discovery",
-            "directory-name-separator",
-            "keep-branch",
-        ] {
-            assert!(!rewritten.contains(old), "{rewritten}");
-        }
-        for key in [
-            "workspace-root",
-            "clone-root",
-            "# retain this",
-            "# location",
-        ] {
-            assert!(rewritten.contains(key), "{rewritten}");
-        }
-        let out = repo.mabo(&["config", "list", "--json"]);
-        assert_eq!(
-            assert_envelope(&out, "config list")["warnings"],
-            serde_json::json!([])
-        );
-    }
-    let repo = Repo::new();
-    let path = repo.home.join(".config/mabo/config.toml");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, "worktrees-directory = \"../old\"\nworkspace-root = \"~/new\"\nghq-discovery = false\ndiscover-ghq = true\n").unwrap();
-    let out = repo.mabo(&["config", "list", "--json"]);
-    let value = assert_envelope(&out, "config list");
-    assert_eq!(value["data"]["config"]["workspace-root"], "~/new");
-    assert_eq!(value["data"]["config"]["discover-ghq"], true);
-    let created = outer_run(&repo, &["create", "tilde"], true, "create", 0);
-    assert_eq!(
-        created["data"]["workspace"]["path"],
-        repo.home.join("new/tilde").to_str().unwrap()
-    );
-}
-
-#[test]
 fn outer_trust_commands_text_json_and_exit_codes() {
     for json in [false, true] {
         let repo = Repo::new();
@@ -11591,175 +11162,6 @@ fn outer_diagnostics_escape_repository_names_and_paths() {
 }
 
 #[test]
-fn outer_removed_trust_flags_only_hint_for_trust_commands() {
-    let repo = Repo::new();
-    for (args, command) in [
-        (vec!["list"], "list"),
-        (vec!["gc"], "gc"),
-        (vec!["repo", "list"], "repo list"),
-        (vec!["config", "list"], "config list"),
-        (vec!["trust"], "trust"),
-        (vec!["trust", "add"], "trust add"),
-        (vec!["trust", "remove"], "trust remove"),
-        (vec!["trust", "list"], "trust list"),
-    ] {
-        for flag in ["--yes", "-y", "--list"] {
-            for json in [false, true] {
-                let mut argv = args.clone();
-                argv.push(flag);
-                if json {
-                    argv.push("--json");
-                }
-                let out = repo.mabo(&argv);
-                assert_eq!(out.status.code(), Some(2), "{argv:?}: {out:?}");
-                let message = if json {
-                    let value = assert_envelope(&out, command);
-                    assert_eq!(value["error"]["code"], "usage");
-                    value["error"]["message"].as_str().unwrap().to_owned()
-                } else {
-                    assert!(out.stdout.is_empty(), "{argv:?}: {out:?}");
-                    text(&out.stderr)
-                };
-                if command.starts_with("trust") {
-                    assert!(message.contains("mabo trust add"), "{argv:?}: {message}");
-                    assert!(message.contains("mabo trust list"), "{argv:?}: {message}");
-                } else {
-                    assert!(
-                        message.starts_with(&format!("Unknown option '{flag}'.")),
-                        "{argv:?}: {message}"
-                    );
-                    assert!(!message.contains("trust"), "{argv:?}: {message}");
-                    assert!(!text(&out.stderr).contains("trust"), "{argv:?}: {out:?}");
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn outer_removed_flags_take_precedence_over_child_help() {
-    let repo = Repo::new();
-    for child in ["add", "remove", "list"] {
-        let command = format!("trust {child}");
-        for flag in [
-            "--yes",
-            "-y",
-            "--list",
-            "--project=repo",
-            "-prepo",
-            "--project",
-            "-p",
-        ] {
-            for help in ["--help", "-h"] {
-                for json in [false, true] {
-                    let mut args = vec!["trust", child, flag];
-                    if matches!(flag, "--project" | "-p") {
-                        args.push("repo");
-                    }
-                    args.push(help);
-                    if json {
-                        args.push("--json");
-                    }
-                    let out = repo.mabo(&args);
-                    assert_eq!(out.status.code(), Some(2), "{args:?}: {out:?}");
-                    let hint = if matches!(flag, "--yes" | "-y" | "--list") {
-                        "mabo trust"
-                    } else {
-                        "-R/--repo"
-                    };
-                    if json {
-                        let value = assert_envelope(&out, &command);
-                        assert_eq!(value["error"]["code"], "usage");
-                        assert!(value["error"]["message"].as_str().unwrap().contains(hint));
-                    } else {
-                        assert!(out.stdout.is_empty(), "{args:?}: {out:?}");
-                        let stderr = text(&out.stderr);
-                        assert_eq!(stderr.lines().count(), 1, "{args:?}: {stderr:?}");
-                        assert!(stderr.contains(hint), "{args:?}: {stderr:?}");
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn outer_removed_commands_and_flags_fail_with_migration_hints() {
-    let repo = Repo::new();
-    for (args, command, hint) in [
-        (vec!["project", "list"], "project", "mabo repo"),
-        (
-            vec!["preferences", "get", "root"],
-            "preferences",
-            "mabo config",
-        ),
-        (vec!["untrust"], "untrust", "mabo trust remove"),
-        (vec!["version"], "version", "mabo --version"),
-        (vec!["trust", "--yes"], "trust", "mabo trust add"),
-        (vec!["trust", "--list"], "trust", "mabo trust list"),
-        (vec!["trust", "-y"], "trust", "mabo trust add"),
-        (vec!["trust", "."], "trust", "mabo trust add"),
-        (vec!["list", "--project", "repo"], "list", "-R/--repo"),
-        (vec!["list", "--project=repo"], "list", "-R/--repo"),
-        (vec!["list", "-p", "repo"], "list", "-R/--repo"),
-        (vec!["list", "-prepo"], "list", "-R/--repo"),
-        (vec!["-p", "repo", "list"], "list", "-R/--repo"),
-        (vec!["--project", "repo", "list"], "list", "-R/--repo"),
-        (vec!["--project=repo"], "", "-R/--repo"),
-        (vec!["-prepo"], "-prepo", "-R/--repo"),
-        (vec!["help", "project"], "help", "mabo repo"),
-    ] {
-        for json in [false, true] {
-            let mut argv = args.clone();
-            if json {
-                argv.push("--json");
-            }
-            let out = repo.mabo(&argv);
-            assert_eq!(
-                out.status.code(),
-                Some(2),
-                "{argv:?}: {}",
-                text(&out.stdout)
-            );
-            let message = if json {
-                let value = assert_envelope(&out, command);
-                assert_eq!(value["error"]["code"], "usage");
-                value["error"]["message"].as_str().unwrap().to_string()
-            } else {
-                assert!(out.stdout.is_empty(), "{argv:?}: {}", text(&out.stdout));
-                assert_eq!(
-                    text(&out.stderr).lines().count(),
-                    1,
-                    "{argv:?}: {}",
-                    text(&out.stderr)
-                );
-                text(&out.stderr)
-            };
-            assert!(message.contains(hint), "{argv:?}: {message}");
-            assert!(
-                !text(&out.stderr).contains("COMMANDS"),
-                "{argv:?}: {}",
-                text(&out.stderr)
-            );
-        }
-    }
-    // Help cannot revive removed commands or flags.
-    for args in [
-        vec!["version", "--help"],
-        vec!["project", "--help"],
-        vec!["list", "-p", "repo", "--help"],
-        vec!["trust", "--yes", "--help"],
-    ] {
-        let out = repo.mabo(&args);
-        assert_eq!(out.status.code(), Some(2), "{args:?}");
-        assert!(out.stdout.is_empty(), "{args:?}: {}", text(&out.stdout));
-        let stderr = text(&out.stderr);
-        assert_eq!(stderr.lines().count(), 1, "{args:?}: {stderr}");
-        assert!(!stderr.contains("COMMANDS"), "{args:?}: {stderr}");
-    }
-}
-
-#[test]
 fn outer_global_repo_selection_works_before_commands_and_preserves_child_arguments() {
     let repo = Repo::new();
     assert!(repo.mabo(&["repo", "add"]).status.success());
@@ -12059,72 +11461,106 @@ fn outer_repo_forget_ambiguous_canonical_suffix_is_usage_and_keeps_registrations
 }
 
 #[test]
-fn removed_identity_flags_are_usage_errors_with_migration_hints() {
+fn unknown_commands_and_options_are_usage_errors() {
     let repo = Repo::new();
-    for command in [
-        "create", "create", "--branch", "create", "create", "set", "list", "gc", "sync",
+    for (args, command, expected) in [
+        (
+            vec!["delete", "topic"],
+            "delete",
+            "Unknown command 'delete topic",
+        ),
+        (
+            vec!["help", "preferences"],
+            "help",
+            "Unknown command 'preferences'",
+        ),
+        (
+            vec!["--project=repo", "list"],
+            "--project=repo",
+            "Unknown option '--project=repo'",
+        ),
+        (
+            vec!["create", "topic", "--exec", "true"],
+            "create",
+            "Unknown option '--exec'.",
+        ),
+        (
+            vec!["remove", "--force"],
+            "remove",
+            "Unknown option '--force'.",
+        ),
+        (vec!["sync", "--mine"], "sync", "Unknown option '--mine'."),
+        (vec!["trust", "--yes"], "trust", "Unknown option '--yes'."),
+        (
+            vec!["trust", "bogus"],
+            "trust",
+            "Unknown command 'trust bogus'",
+        ),
     ] {
-        let flag = if command == "sync" {
-            "--mine"
-        } else {
-            "--owner"
-        };
-        let expected = if command == "sync" {
-            "explicit workspace names or --all"
-        } else {
-            "Ownership was removed"
-        };
-        for form in ["bare", "separate", "inline"] {
-            let option = if form == "inline" {
-                format!("{flag}=old-agent")
-            } else {
-                flag.into()
-            };
-            for output in [None, Some("--json"), Some("--output=json")] {
-                let mut args = command.split_whitespace().collect::<Vec<_>>();
-                args.push(&option);
-                if form == "separate" && flag == "--owner" {
-                    args.push("old-agent");
-                }
-                if let Some(output) = output {
-                    args.push(output);
-                }
-                let out = repo.mabo(&args);
-                assert_eq!(out.status.code(), Some(2), "{args:?}");
-                let message = if output.is_some() {
-                    assert!(out.stderr.is_empty(), "{args:?}: {}", text(&out.stderr));
-                    let doc = assert_envelope(
-                        &out,
-                        if command == "create" {
-                            "create"
-                        } else {
-                            command
-                        },
-                    );
-                    assert_eq!(doc["error"]["code"], "usage");
-                    assert!(doc["data"].is_null());
-                    doc["error"]["message"].as_str().unwrap().to_string()
-                } else {
-                    assert!(out.stdout.is_empty(), "{args:?}: {}", text(&out.stdout));
-                    text(&out.stderr)
-                };
-                assert!(message.contains(expected), "{args:?}: {message}");
-                if flag == "--owner" {
-                    for hint in ["--purpose", "PR links", "workspace names"] {
-                        assert!(message.contains(hint), "{message}");
-                    }
-                }
+        for json in [false, true] {
+            let mut argv = args.clone();
+            if json {
+                argv.push("--json");
             }
+            let out = repo.mabo(&argv);
+            assert_eq!(out.status.code(), Some(2), "{argv:?}: {out:?}");
+            let message = if json {
+                let doc = assert_envelope(&out, command);
+                assert_eq!(doc["error"]["code"], "usage");
+                assert!(doc["data"].is_null());
+                doc["error"]["message"].as_str().unwrap().to_owned()
+            } else {
+                assert!(out.stdout.is_empty(), "{argv:?}: {out:?}");
+                text(&out.stderr)
+            };
+            assert!(message.starts_with(expected), "{argv:?}: {message}");
+            assert!(!message.contains("was removed"), "{argv:?}: {message}");
         }
     }
-    // Removed options in a child command retain their original meaning.
-    let out = repo.mabo(&["create", "child"]);
-    assert!(out.status.success());
+    // A help request follows the same precedence for every unknown option.
+    let help = repo.mabo(&["list", "--help"]);
+    assert!(help.status.success());
+    for flag in ["--bogus", "--owner"] {
+        let out = repo.mabo(&["list", flag, "--help"]);
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(out.stdout, help.stdout);
+        assert!(out.stderr.is_empty());
+    }
+    assert!(repo.mabo(&["create", "child"]).status.success());
     let out = repo.mabo(&["exec", "child", "--", "printf", "%s", "--owner"]);
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    let out = repo.mabo(&["exec", "child", "--", "printf", "%s", "--mine"]);
-    assert!(out.status.success());
-    assert_eq!(text(&out.stdout), "--mine");
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(text(&out.stdout), "--owner");
+}
+
+#[test]
+fn unknown_config_keys_are_rejected_without_rewriting() {
+    let repo = Repo::new();
+    let path = repo.home.join(".config/mabo/config.toml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    for key in [
+        "bogus",
+        "worktrees-directory",
+        "root",
+        "ghq-discovery",
+        "keep-branch",
+        "directory-name-separator",
+    ] {
+        let contents = format!("{key} = true\n");
+        fs::write(&path, &contents).unwrap();
+        for args in [
+            vec!["config", "list"],
+            vec!["config", "set", "discover-ghq", "false"],
+            vec!["config", "unset", "discover-ghq"],
+        ] {
+            let out = repo.mabo(&args);
+            assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
+            assert!(
+                text(&out.stderr).contains(&format!("Unknown key '{key}'")),
+                "{out:?}"
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), contents);
+        }
+    }
 }
 
 #[test]
@@ -12228,34 +11664,21 @@ fn inspection_list_and_exec_leave_legacy_and_schema2_record_bytes_and_mtime_unch
 }
 
 #[test]
-fn gc_age_selection_ignores_legacy_owner_and_last_used() {
+fn gc_age_selection_uses_creation_time() {
     let repo = Repo::new();
     assert!(repo.mabo(&["create", "old"]).status.success());
     land_branch(&repo, "old");
     let dir = repo.repo.join(".git/mabo/workspaces");
     let mut record =
         serde_json::from_slice::<serde_json::Value>(&records::read(&dir).unwrap()).unwrap();
-    record["worktrees"][0]["owner"] = serde_json::json!("another-agent");
     record["worktrees"][0]["createdAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
-    record["worktrees"][0]["lastUsedAt"] = serde_json::json!("2099-01-01T00:00:00.000Z");
     records::write(&dir, serde_json::to_vec(&record).unwrap()).unwrap();
-    for agent in [None, Some("different-agent")] {
-        let mut command = repo.command(
-            env!("CARGO_BIN_EXE_mabo"),
-            &["gc", "--older-than", "14d", "--json"],
-        );
-        if let Some(agent) = agent {
-            command.env("MABO_AGENT_ID", agent);
-        }
-        let out = command.output().unwrap();
-        assert!(out.status.success(), "{}", text(&out.stderr));
-        let doc = json_value(&out);
-        let candidates = doc["data"]["items"].as_array().unwrap();
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0]["action"], "wouldRemove");
-        assert!(candidates[0].get("owner").is_none());
-        assert!(candidates[0].get("lastUsedAt").is_none());
-    }
+    let out = repo.mabo(&["gc", "--older-than", "14d", "--json"]);
+    assert!(out.status.success(), "{out:?}");
+    let doc = json_value(&out);
+    let candidates = doc["data"]["items"].as_array().unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0]["action"], "wouldRemove");
 }
 
 #[test]
@@ -12605,35 +12028,8 @@ fn set_updates_and_unsets_every_intent_field_atomically() {
 }
 
 #[test]
-fn removed_inspection_interfaces_and_usage_keep_stdout_clean() {
+fn inspection_usage_keeps_stdout_clean() {
     let repo = Repo::new();
-    for (args, hint) in [
-        (
-            vec!["where", "main"],
-            "`mabo path [SEL]` or `mabo show [SEL] --json`",
-        ),
-        (vec!["meta"], "`mabo set [SEL]` or `mabo show [SEL]`"),
-        (vec!["meta", "set", "main"], "show"),
-        (vec!["list", "--no-default"], "--kind workspace"),
-    ] {
-        for json in [false, true] {
-            let mut args = args.clone();
-            if json {
-                args.push("--json");
-            }
-            let out = repo.mabo(&args);
-            assert_eq!(out.status.code(), Some(2), "{args:?}");
-            let message = if json {
-                let document = json_value(&out);
-                assert_eq!(document["error"]["code"], "usage");
-                document["error"]["message"].as_str().unwrap().to_owned()
-            } else {
-                assert!(out.stdout.is_empty());
-                text(&out.stderr)
-            };
-            assert!(message.contains(hint), "{args:?}: {message}");
-        }
-    }
     for args in [
         vec!["nonsense"],
         vec!["nonsense", "--help"],
@@ -12651,7 +12047,7 @@ fn removed_inspection_interfaces_and_usage_keep_stdout_clean() {
             assert!(text(&out.stderr).contains("exec [SEL] --"));
         }
     }
-    // Exec ignores the output default even for a rejected old invocation.
+    // Exec ignores the output default even for a missing command delimiter.
     let out = repo
         .command(env!("CARGO_BIN_EXE_mabo"), &["exec", "main", "true"])
         .env("MABO_OUTPUT", "json")
@@ -14408,36 +13804,8 @@ fn adopt_rejects_foreign_primary_subdirectories_missing_paths_and_name_collision
 }
 
 #[test]
-fn unified_create_rejects_removed_commands_and_conflicting_sources_in_text_and_json() {
+fn unified_create_rejects_conflicting_sources() {
     let repo = Repo::new();
-    for (args, hint) in [
-        (vec!["attach", "feature"], "create --branch"),
-        (vec!["github", "checkout", "7"], "create --pr"),
-        (vec!["gh", "checkout", "7"], "create --issue"),
-        (
-            vec!["create", "feature", "--exec", "true"],
-            "exec SEL -- COMMAND",
-        ),
-        (vec!["create", "feature", "-xtrue"], "exec SEL -- COMMAND"),
-    ] {
-        for json in [false, true] {
-            let mut args = args.clone();
-            if json {
-                args.push("--json");
-            }
-            let out = repo.mabo(&args);
-            assert_eq!(out.status.code(), Some(2));
-            let message = if json {
-                let doc = json_value(&out);
-                assert_eq!(doc["error"]["code"], "usage");
-                doc["error"]["message"].as_str().unwrap().to_owned()
-            } else {
-                text(&out.stderr)
-            };
-            assert!(message.contains(hint), "{message}");
-            assert!(!managed(&repo, "feature").exists());
-        }
-    }
     for args in [
         vec!["--base", "main", "--branch", "existing"],
         vec!["--base", "main", "--pr", "7"],
@@ -16370,7 +15738,7 @@ fn setup_lifecycle_failure_retry_and_shared_state() {
 }
 
 #[test]
-fn setup_lifecycle_skip_and_removed_create_flag() {
+fn setup_lifecycle_skip_and_conflicting_copy_flag() {
     let repo = Repo::new();
     fs::write(repo.repo.join(".gitignore"), "*.env\n").unwrap();
     fs::write(repo.repo.join(".worktreeinclude"), "*.env\n").unwrap();
@@ -16380,22 +15748,17 @@ fn setup_lifecycle_skip_and_removed_create_flag() {
         "[hooks]\nsetup = [\"touch hook-ran\"]\n",
     )
     .unwrap();
-    for args in [
-        vec!["create", "bad", "--no-hooks", "--json"],
-        vec![
-            "create",
-            "bad",
-            "--no-setup",
-            "--copy-file",
-            "*.env",
-            "--json",
-        ],
-    ] {
-        let out = repo.mabo(&args);
-        assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
-        assert!(text(&out.stdout).contains("--no-setup"));
-        assert!(!managed(&repo, "bad").exists());
-    }
+    let out = repo.mabo(&[
+        "create",
+        "bad",
+        "--no-setup",
+        "--copy-file",
+        "*.env",
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains("--no-setup"));
+    assert!(!managed(&repo, "bad").exists());
     let out = repo.mabo(&["create", "skip", "--no-setup", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -16462,12 +15825,12 @@ fn setup_lifecycle_trust_refusal_and_primary_are_read_only() {
 }
 
 #[test]
-fn setup_lifecycle_rejects_legacy_hook_keys() {
+fn setup_lifecycle_rejects_unknown_hook_keys() {
     let repo = Repo::new();
-    for (old, new) in [("post-create", "setup"), ("pre-delete", "pre-remove")] {
+    for key in ["bogus", "post-create", "pre-delete"] {
         fs::write(
             repo.repo.join(".mabo.toml"),
-            format!("[hooks]\n{old} = []\n"),
+            format!("[hooks]\n{key} = []\n"),
         )
         .unwrap();
         for args in [
@@ -16486,7 +15849,10 @@ fn setup_lifecycle_rejects_legacy_hook_keys() {
             );
             let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
             assert_eq!(doc["error"]["code"], "failed");
-            assert!(doc["error"]["message"].as_str().unwrap().contains(new));
+            assert!(doc["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("unknown field `{key}`")));
         }
     }
 }
@@ -17405,39 +16771,6 @@ exec "$REAL_GIT" "$@"
         assert!(path.join("cache").exists());
         assert!(worktree_registered(&repo, "race"));
         assert!(branch_listed(&repo, "race"));
-    }
-}
-
-#[test]
-fn retirement_removed_interfaces_have_migration_hints() {
-    let repo = Repo::new();
-    for args in [
-        vec!["delete", "old"],
-        vec!["delete", "--current"],
-        vec!["delete", "old", "-f"],
-        vec!["remove", "old", "--force"],
-        vec!["remove", "--current"],
-        vec!["gc", "--force"],
-        vec!["gc", "-f"],
-        vec!["gc", "--pr"],
-    ] {
-        let mut args = args;
-        args.push("--json");
-        let out = repo.mabo(&args);
-        assert_eq!(
-            out.status.code(),
-            Some(2),
-            "{args:?}: {}",
-            text(&out.stdout)
-        );
-        assert!(
-            json_value(&out)["error"]["message"]
-                .as_str()
-                .expect("message")
-                .contains("Use"),
-            "{}",
-            text(&out.stdout)
-        );
     }
 }
 
@@ -18484,38 +17817,6 @@ fn retirement_primary_is_refused_with_every_destructive_permission() {
         assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
         assert_eq!(json_value(&out)["error"]["code"], "primary");
         assert!(repo.repo.join(".git").exists());
-    }
-}
-
-#[test]
-fn retirement_removed_flags_take_precedence_over_help() {
-    let repo = Repo::new();
-    for args in [
-        vec!["remove", "x", "--force"],
-        vec!["remove", "--current"],
-        vec!["gc", "--pr"],
-        vec!["gc", "-f"],
-    ] {
-        for json in [false, true] {
-            let mut args = args.clone();
-            args.push("--help");
-            if json {
-                args.push("--json");
-            }
-            let out = repo.mabo(&args);
-            assert_eq!(
-                out.status.code(),
-                Some(2),
-                "{args:?}: {}",
-                text(&out.stdout)
-            );
-            if json {
-                assert_eq!(json_value(&out)["error"]["code"], "usage");
-            } else {
-                assert!(out.stdout.is_empty());
-                assert!(text(&out.stderr).contains("Use"));
-            }
-        }
     }
 }
 

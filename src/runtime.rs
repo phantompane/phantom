@@ -40,10 +40,6 @@ pub(crate) struct Prepared {
     pub error: Option<Error>,
 }
 
-pub(crate) fn is_removed_repo_option(arg: &str) -> bool {
-    arg.split('=').next() == Some("--project") || (arg.starts_with("-p") && !arg.starts_with("--"))
-}
-
 pub(crate) fn prepare(
     args: &[String],
     supports_json: bool,
@@ -97,42 +93,6 @@ pub(crate) fn prepare(
             }
             "--help" | "-h" if inline.is_none() && help_available => help = true,
             _ => {
-                if let Some(hint) = crate::args::removed_option_hint(arg) {
-                    error.get_or_insert_with(|| Error::validation(hint));
-                }
-                if is_removed_repo_option(arg) {
-                    error.get_or_insert_with(|| {
-                        Error::validation(format!("Option '{arg}' was removed. Use -R/--repo REF."))
-                    });
-                }
-                if matches!(
-                    (key, name),
-                    ("remove", "--force" | "-f" | "--current") | ("gc", "--force" | "-f" | "--pr")
-                ) {
-                    if let Some(hint) = crate::args::retirement_option_hint(arg) {
-                        error.get_or_insert_with(|| Error::validation(hint));
-                    }
-                }
-                if key == "create"
-                    && (name == "--exec" || (arg.starts_with("-x") && !arg.starts_with("--")))
-                {
-                    error.get_or_insert_with(|| Error::validation("create -x/--exec was removed. Use `mabo create [NAME]` then `mabo exec SEL -- COMMAND`."));
-                }
-                if key == "create" && name == "--no-hooks" {
-                    error.get_or_insert_with(|| Error::validation("create --no-hooks was removed. Use `mabo create --no-setup` to skip copying and hooks, or `mabo setup --no-hooks` for copying only."));
-                }
-                if key == "list" && name == "--no-default" {
-                    error.get_or_insert_with(|| {
-                        Error::validation(
-                            "list --no-default was removed. Use `mabo list --kind workspace`.",
-                        )
-                    });
-                }
-                if matches!(key, "trust" | "trust add" | "trust remove" | "trust list")
-                    && matches!(name, "--yes" | "-y" | "--list")
-                {
-                    error.get_or_insert_with(|| Error::validation("Old trust flags were removed. Use `mabo trust add` or `mabo trust list`."));
-                }
                 if inline.is_none()
                     && matches!(
                         (key, name),

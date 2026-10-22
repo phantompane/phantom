@@ -147,7 +147,6 @@ pub(crate) fn create(
                 names::generate_unique_name(
                     &context.git_root,
                     &context.worktrees_directory,
-                    &context.directory_name_separator,
                     &tracking::remote_tracking_branch_names(&context.git_root)?,
                     &workspace_names,
                 )?
@@ -286,11 +285,7 @@ pub(crate) fn create(
             logger,
         );
     }
-    let path = paths::worktree_path(
-        &context.worktrees_directory,
-        &name,
-        &context.directory_name_separator,
-    );
+    let path = paths::worktree_path(&context.worktrees_directory, &name);
     paths::validate_worktree_destination(&context.worktrees_directory, &path)?;
     if path.exists() {
         return Err(Error::WorktreeAlreadyExists(name));
@@ -674,7 +669,6 @@ mod adopt_tests {
                     source_checkout: repo,
                     worktrees_directory: root.join("workspaces"),
                     project_common_dir: None,
-                    directory_name_separator: "/".into(),
                     config: None,
                     preferences: crate::preferences::Preferences::default(),
                 },

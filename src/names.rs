@@ -24,7 +24,6 @@ const MAX_RETRIES: usize = 10;
 pub fn generate_unique_name(
     git_root: &Path,
     directory: &Path,
-    separator: &str,
     remote_branches: &BTreeSet<String>,
     workspace_names: &BTreeSet<String>,
 ) -> Result<String> {
@@ -36,7 +35,7 @@ pub fn generate_unique_name(
         if workspace_names.contains(&name) {
             continue;
         }
-        let path = paths::worktree_path(directory, &name, separator);
+        let path = paths::worktree_path(directory, &name);
         if path.exists() {
             continue;
         }
