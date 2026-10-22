@@ -130,7 +130,7 @@ To release a new version of Maboroshi:
    cargo update -p maboroshi --precise <version>
    ```
 
-   Title the pull request `chore(version): vX.Y.Z`, for example `chore(version): v7.0.0-alpha.7`. `.github/workflows/tag-on-merge.yml` creates that git tag when the pull request merges into `next`. `ci.yml` and `release-compile.yml` do not bump the version.
+   Title the pull request `chore(version): vX.Y.Z`, for example `chore(version): v7.0.0-alpha.8`. `.github/workflows/tag-on-merge.yml` creates that git tag when the pull request merges into `next`. `ci.yml` and `release-compile.yml` do not bump the version.
 
 2. **Review and merge the version pull request**
    - Confirm `Cargo.toml` and `Cargo.lock` show the same version
