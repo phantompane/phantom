@@ -7198,24 +7198,24 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
         "a preference directory stays when its last workspace is gone"
     );
 
-    let legacy = repo.repo.join("custom/workspaces/legacy");
+    let unmanaged = repo.repo.join("custom/workspaces/unmanaged");
     repo.git(&[
         "worktree",
         "add",
         "-b",
-        "legacy",
-        legacy.to_str().expect("legacy"),
+        "unmanaged",
+        unmanaged.to_str().expect("unmanaged"),
         "HEAD",
     ]);
     let names = repo.mabo(&["list", "--names", "--kind", "workspace"]);
     assert!(names.status.success(), "{}", text(&names.stderr));
     let listed = text(&names.stdout);
     assert!(listed.lines().any(|line| line == "feature"), "{listed}");
-    assert!(listed.lines().any(|line| line == "legacy"), "{listed}");
-    let found = repo.mabo(&["path", "legacy"]);
+    assert!(listed.lines().any(|line| line == "unmanaged"), "{listed}");
+    let found = repo.mabo(&["path", "unmanaged"]);
     assert!(found.status.success(), "{}", text(&found.stderr));
-    assert!(paths_match(text(&found.stdout).trim(), &legacy));
-    let refused = repo.mabo(&["remove", "legacy", "--keep-branch"]);
+    assert!(paths_match(text(&found.stdout).trim(), &unmanaged));
+    let refused = repo.mabo(&["remove", "unmanaged", "--keep-branch"]);
     assert!(!refused.status.success(), "{}", text(&refused.stdout));
     assert_eq!(refused.status.code(), Some(1), "{}", text(&refused.stderr));
     let refused_text = text(&refused.stderr);
@@ -7227,7 +7227,7 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
         refused_text.contains("git worktree remove"),
         "{refused_text}"
     );
-    assert!(legacy.is_dir());
+    assert!(unmanaged.is_dir());
 }
 
 #[test]
@@ -15720,7 +15720,7 @@ fn setup_lifecycle_copy_failure_stops_hooks_and_is_retryable() {
 }
 
 #[test]
-fn setup_lifecycle_unknown_legacy_adopt_and_null_after_forget() {
+fn setup_lifecycle_unknown_adopt_and_null_after_forget() {
     let repo = Repo::new();
     let external = repo.root.join("external");
     repo.git(&[
