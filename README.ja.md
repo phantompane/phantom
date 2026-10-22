@@ -14,7 +14,7 @@ Rust 版は `next` で開発し、[GitHub Releases](https://github.com/phantompa
 curl -fsSL https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh | MABO_VERSION=<TAG> sh
 ```
 
-`<TAG>` は [Releases ページ](https://github.com/phantompane/phantom/releases) の最新の `v7.*` など、リリースタグに置き換えてください。v7.0.0-alpha.8 までのリリースは、上記の URL にある、そのリリース自身の `install.sh` でインストールしてください。バージョン固定時はプレリリースも指定でき、GitHub API にはアクセスしません。
+`<TAG>` は [Releases ページ](https://github.com/phantompane/phantom/releases) の最新の `v7.*` など、リリースタグに置き換えてください。v7.0.0-alpha.8 は、そのリリース自身の `install.sh`（上記の URL で `<TAG>` を `v7.0.0-alpha.8` にしたもの）でインストールしてください。v7.0.0-alpha.7 以前にはインストーラーがないため、後述の手動インストールを使ってください。バージョン固定時はプレリリースも指定でき、GitHub API にはアクセスしません。
 
 バージョンを固定しない場合は、v6 を除外し、使用するプラットフォーム向けの `mabo-` アーカイブがある最新の v7 安定版を選びます。
 

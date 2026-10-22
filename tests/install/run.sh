@@ -155,7 +155,7 @@ unset MABO_VERSION
 # Legacy-only releases are refused with a release-specific installer hint.
 cp "$HOME/.local/bin/mabo" "$root/before"
 runFail 1 'Missing, duplicate, or invalid SHA256SUMS line for mabo-v7.0.0-alpha.8-linux-x64.tar.gz.' --version 7.0.0-alpha.8
-contains "$root/stderr" "Releases up to v7.0.0-alpha.8 must be installed with that release's own install.sh:"
+contains "$root/stderr" "Install v7.0.0-alpha.8 with its own installer:"
 contains "$root/stderr" 'https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.8/install.sh'
 unchanged
 
@@ -201,8 +201,8 @@ cp "$HOME/.local/bin/mabo" "$root/before"
 for option in '' --prerelease; do
     if [ -n "$option" ]; then runFail 1 'No matching mabo release.' "$option"
     else runFail 1 'No matching mabo release.'; fi
-    contains "$root/stderr" "Releases up to v7.0.0-alpha.8 must be installed with that release's own install.sh:"
-    contains "$root/stderr" 'https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh'
+    contains "$root/stderr" "Install v7.0.0-alpha.8 with its own installer:"
+    contains "$root/stderr" 'https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.8/install.sh'
     unchanged
 done
 cat > "$root/api/releases?per_page=100" <<'JSON'
@@ -570,7 +570,7 @@ run 0 --version 7.0.0
 curl asset auth=no mabo-v7.0.0-linux-x64.tar.gz" ] || fail 'Pinned install called API or downloaded archive before checksums'
 cp "$HOME/.local/bin/mabo" "$root/before"
 : > "$root/http-log"
-runFail 1 "Releases up to v7.0.0-alpha.8 must be installed with that release's own install.sh:" --version 7.0.0-alpha.8
+runFail 1 "Install v7.0.0-alpha.8 with its own installer:" --version 7.0.0-alpha.8
 contains "$root/stderr" 'https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.8/install.sh'
 unchanged
 [ "$(cat "$root/http-log")" = 'curl asset auth=no SHA256SUMS' ] || fail 'Downloaded a legacy archive'

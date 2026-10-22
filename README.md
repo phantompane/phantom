@@ -14,7 +14,7 @@ For agents and CI, pin the installer and binary to the same release tag:
 curl -fsSL https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh | MABO_VERSION=<TAG> sh
 ```
 
-Replace `<TAG>` with a release tag, such as the newest `v7.*` on the [Releases page](https://github.com/phantompane/phantom/releases). Releases up to v7.0.0-alpha.8 must be installed with that release's own `install.sh` at the URL above. Pinned installs allow prereleases and make no GitHub API request.
+Replace `<TAG>` with a release tag, such as the newest `v7.*` on the [Releases page](https://github.com/phantompane/phantom/releases). v7.0.0-alpha.8 must be installed with its own `install.sh` (the URL above with `<TAG>` set to `v7.0.0-alpha.8`); v7.0.0-alpha.7 and older have no installer, so install them manually as described below. Pinned installs allow prereleases and make no GitHub API request.
 
 Without a version pin, the installer selects the newest stable v7 release with a `mabo-` archive for the platform, skipping v6:
 

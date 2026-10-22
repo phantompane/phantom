@@ -22,8 +22,7 @@ USAGE
 
 fail() { printf 'mabo installer: %s\n' "$*" >&2; exit 1; }
 failRelease() {
-    releaseTag=$1; shift
-    fail "$* Releases up to v7.0.0-alpha.8 must be installed with that release's own install.sh: https://github.com/phantompane/phantom/releases/download/$releaseTag/install.sh."
+    fail "$* This installer supports only mabo- archives. Install v7.0.0-alpha.8 with its own installer: https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.8/install.sh; v7.0.0-alpha.7 and older have no installer."
 }
 usageError() { printf 'mabo installer: %s\n' "$*" >&2; exit 2; }
 progress() { printf '%s\n' "$*" >&2; }
@@ -278,7 +277,7 @@ main() {
             prerelease:*)
                 version=${version#prerelease:}
                 fail "No stable mabo release; newest prerelease is $version. Set MABO_VERSION=$version or pass --prerelease." ;;
-            '') failRelease '<TAG>' 'No matching mabo release. Pin MABO_VERSION or use --prerelease.' ;;
+            '') failRelease 'No matching mabo release. Pin MABO_VERSION or use --prerelease.' ;;
         esac
     fi
     ver=${version#v}
@@ -287,7 +286,7 @@ main() {
     tag=v$ver
     progress "Downloading mabo $tag..."
     download "${base%/}/$tag/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null ||
-        failRelease "$tag" "Missing or unavailable SHA256SUMS for $tag; refusing an unverified release."
+        failRelease "Missing or unavailable SHA256SUMS for $tag; refusing an unverified release."
     # Compare the complete filename, accept only one well-formed standard entry.
     archive=mabo-$tag-$os-$arch.tar.gz
     expected=$(awk -v name="$archive" '
@@ -298,7 +297,7 @@ main() {
         }
         END { if(count!=1) exit 1; print result }
     ' "$tmp/SHA256SUMS") ||
-        failRelease "$tag" "Missing, duplicate, or invalid SHA256SUMS line for $archive."
+        failRelease "Missing, duplicate, or invalid SHA256SUMS line for $archive."
     download "${base%/}/$tag/$archive" "$tmp/$archive" 2>/dev/null || fail "Cannot download $archive."
     if [ "$hasher" = sha256sum ]; then actual=$(sha256sum "$tmp/$archive")
     else actual=$(shasum -a 256 "$tmp/$archive"); fi

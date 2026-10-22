@@ -153,7 +153,7 @@ To release a new version of mabo:
      --target next
    ```
 
-   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `mabo-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains only the `mabo` binary. `install.sh` supports only `mabo-v<version>-<os>-<arch>.tar.gz` archives. Releases up to v7.0.0-alpha.8 must be installed with that release's own `install.sh` at `https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh`. npm is not published. Monitor the workflow run in GitHub Actions.
+   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `mabo-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains only the `mabo` binary. `install.sh` supports only `mabo-v<version>-<os>-<arch>.tar.gz` archives. v7.0.0-alpha.8 must be installed with its own `install.sh` at `https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.8/install.sh`; v7.0.0-alpha.7 and older have no installer and must be installed manually. npm is not published. Monitor the workflow run in GitHub Actions.
 
 4. **Update release notes for clarity**
    - Review the auto-generated release notes using `gh release view v<version>`
