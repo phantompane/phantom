@@ -153,7 +153,7 @@ To release a new version of mabo:
      --target next
    ```
 
-   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `maboroshi-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains the `mabo` binary. npm is not published. Monitor the workflow run in GitHub Actions.
+   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `mabo-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains only the `mabo` binary. Releases up to v7.0.0-alpha.8 use the `maboroshi-` prefix; `install.sh` picks the name listed in that release's `SHA256SUMS`. npm is not published. Monitor the workflow run in GitHub Actions.
 
 4. **Update release notes for clarity**
    - Review the auto-generated release notes using `gh release view v<version>`

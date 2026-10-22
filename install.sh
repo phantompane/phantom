@@ -184,8 +184,9 @@ resolveRelease() {
                 parse(child)
                 if(path=="" && draft=="false" && (pre=="true" || pre=="false")) {
                     ver=tag; sub(/^v/,"",ver)
-                    name="maboroshi-v" ver "-" platform ".tar.gz"
-                    if(name in assets) {
+                    name="mabo-v" ver "-" platform ".tar.gz"
+                    legacy="maboroshi-v" ver "-" platform ".tar.gz"
+                    if(name in assets || legacy in assets) {
                         if(pre=="true" && firstPre=="") firstPre=tag
                         if(chosen=="" && (pre=="false" || allow==1)) chosen=tag
                     }
@@ -281,20 +282,28 @@ main() {
     # Tags must be safe URL/path components; do not interpret arbitrary API text.
     case $ver in ''|*[!A-Za-z0-9.+-]*) fail "Invalid release tag: $version" ;; esac
     tag=v$ver
-    archive=maboroshi-$tag-$os-$arch.tar.gz
     progress "Downloading mabo $tag..."
-    download "${base%/}/$tag/$archive" "$tmp/$archive" 2>/dev/null || fail "Cannot download $archive."
     download "${base%/}/$tag/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null ||
         fail "Missing or unavailable SHA256SUMS for $tag; refusing an unverified release."
+    # Prefer the new prefix, falling back to releases through v7.0.0-alpha.8.
     # Compare the complete filename, accept only one well-formed standard entry.
-    expected=$(awk -v name="$archive" '
-        substr($0,67)==name && substr($0,65,2)=="  " {
-            hash=substr($0,1,64)
-            if(length(hash)!=64 || hash ~ /[^0-9a-fA-F]/) exit 1
-            count++; result=tolower(hash)
-        }
-        END { if(count!=1) exit 1; print result }
-    ' "$tmp/SHA256SUMS") || fail "Missing, duplicate, or invalid SHA256SUMS line for $archive."
+    # Keep the selected name and digest together for download and verification.
+    archive=''
+    for candidate in "mabo-$tag-$os-$arch.tar.gz" "maboroshi-$tag-$os-$arch.tar.gz"; do
+        if expected=$(awk -v name="$candidate" '
+            substr($0,67)==name && substr($0,65,2)=="  " {
+                hash=substr($0,1,64)
+                if(length(hash)!=64 || hash ~ /[^0-9a-fA-F]/) exit 1
+                count++; result=tolower(hash)
+            }
+            END { if(count!=1) exit 1; print result }
+        ' "$tmp/SHA256SUMS"); then
+            archive=$candidate
+            break
+        fi
+    done
+    [ -n "$archive" ] || fail "Missing, duplicate, or invalid SHA256SUMS line for mabo-$tag-$os-$arch.tar.gz or maboroshi-$tag-$os-$arch.tar.gz."
+    download "${base%/}/$tag/$archive" "$tmp/$archive" 2>/dev/null || fail "Cannot download $archive."
     if [ "$hasher" = sha256sum ]; then actual=$(sha256sum "$tmp/$archive")
     else actual=$(shasum -a 256 "$tmp/$archive"); fi
     actual=${actual%% *}

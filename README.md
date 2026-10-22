@@ -55,11 +55,11 @@ Or build from source with Rust 1.89+ (the `rust-version` in `Cargo.toml`):
 cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked mabo
 ```
 
-For a manual install, download `maboroshi-v<VERSION>-<os>-<arch>.tar.gz` from Releases (`<VERSION>` omits the leading `v`; `<os>` is `linux` or `darwin`, and `<arch>` is `x64` or `arm64`). Each archive contains only `mabo`; extract it and place it in a directory on PATH. For releases after v7.0.0-alpha.7, download `SHA256SUMS` from the same release and verify before extracting. To verify provenance with `gh` and check SHA-256 on Linux, run these in the download directory, substituting your archive name:
+For a manual install, download `mabo-v<VERSION>-<os>-<arch>.tar.gz` from Releases (`<VERSION>` omits the leading `v`; `<os>` is `linux` or `darwin`, and `<arch>` is `x64` or `arm64`). Releases up to v7.0.0-alpha.8 use the `maboroshi-` prefix; `install.sh` picks the name listed in that release's `SHA256SUMS`. Each archive contains only `mabo`; extract it and place it in a directory on PATH. For releases after v7.0.0-alpha.7, download `SHA256SUMS` from the same release and verify before extracting. To verify provenance with `gh` and check SHA-256 on Linux, run these in the download directory, substituting your archive name:
 
 ```sh
-gh attestation verify maboroshi-v<VERSION>-linux-x64.tar.gz --repo phantompane/phantom
-grep " maboroshi-v<VERSION>-linux-x64.tar.gz$" SHA256SUMS | sha256sum -c -
+gh attestation verify mabo-v<VERSION>-linux-x64.tar.gz --repo phantompane/phantom
+grep " mabo-v<VERSION>-linux-x64.tar.gz$" SHA256SUMS | sha256sum -c -
 ```
 
 `SHA256SUMS` covers all four archives and `install.sh`; the `grep` selects the line for the archive you downloaded, which works with GNU and BusyBox `sha256sum`. On macOS, use `shasum -a 256 -c -` instead of `sha256sum -c -`. v7.0.0-alpha.7 and older releases have no `SHA256SUMS` or artifact attestations.
