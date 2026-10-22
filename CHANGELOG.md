@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Nothing yet.
+
+## v7.0.0-alpha.8 (2026-10-22)
+
 ### Added
 
 - `install.sh` installs and updates `mabo` with an exact version pin. Unpinned installs select stable v7 releases; prereleases require a pin or explicit opt-in. The installer always verifies SHA-256, optionally verifies GitHub artifact attestations, and replaces the binary atomically without sudo, prompts, or shell profile edits. It requires `curl`, and every network call has a time limit.
