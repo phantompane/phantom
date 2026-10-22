@@ -203,15 +203,19 @@ zsh・fish では「シェル補助」の初期化を使います。gc は先に
 
 ## ユーザー設定
 
-設定は `$XDG_CONFIG_HOME/maboroshi/config.toml`（既定 `~/.config/maboroshi/config.toml`）に保存します。`mabo config get`、`set`、`unset`、`list` で読み書きし、最初の `set` でディレクトリとファイルを作ります。
+設定は `$XDG_CONFIG_HOME/mabo/config.toml`（既定 `~/.config/mabo/config.toml`）に保存します。`mabo config get`、`set`、`unset`、`list` で読み書きし、最初の `set` でディレクトリとファイルを作ります。
+
+既存の `maboroshi` という設定・状態ディレクトリは次の書き込みまでそのまま読み取り、移行先がなければディレクトリ全体を `mabo` にアトミックに改名します。`<git-common-dir>/maboroshi/` 内では metadata の `workspaces/` と `worktrees.json*` だけを移行し、`worktrees/` 内の checkout は移動しません。metadata ディレクトリに想定外の内容があれば元の場所を使います。data の `maboroshi/workspaces/` と `maboroshi/worktrees/` にある既存 checkout も移動せず管理対象のままです。新しい marker は `.mabo-common-dir` で、旧ディレクトリでは `.maboroshi-common-dir` も受け入れます。discovery と古い clone staging の片付けは `.mabo-clone-` と `.maboroshi-clone-` の両方を認識します。
+
+読み取り専用コマンド、dry run、`gc` の計画表示は移行しません。両方の場所が存在すると新しい方を使い、結合せず、無視した旧パスを警告します（空の旧ディレクトリは警告しません）。改名に失敗すると警告して旧パスを使いますが、別プロセスが新パスを作成済みなら新パスを使います。移行ではユーザーファイルをコピー・上書き・削除せず、Git checkout を含む可能性のあるディレクトリは元の場所に残します。既知の制限: 設定・状態ディレクトリ全体の移行は mabo のファイル名の許可リストに依存するため、旧ディレクトリ自体が許可された名前だけを含む壊れた Git checkout である場合は検出できません。
 
 ```toml
-workspace-root = "../maboroshi-workspaces"
+workspace-root = "../mabo-workspaces"
 discover-ghq = true
 clone-root = "~/ghq"
 ```
 
-`workspace-root` 未設定時、`mabo create` は `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash>/<name>` に配置します。`XDG_DATA_HOME` が未設定・空・相対パスなら `~/.local/share/maboroshi/workspaces/...` です。`<checkout>` は正規化した primary のディレクトリ名で、英数字・`.`・`_`・`-` 以外は `-` に置き換えます。シンボリックリンク経由でも同じ場所です。`<hash>` は正規化した Git common directory の SHA-256 の先頭 8 桁で、同じ remote の別 clone は別ディレクトリになります。名前内の `/` は階層として保持します。既存の `maboroshi/worktrees/` は移動せず、`list`、`show`、`remove`、`sync`、`gc` で扱えます。最後の削除後も repo ディレクトリと `.maboroshi-common-dir` は残し、同時・後続の作成で使えます。`maboroshi/workspaces/<id>.json` に記録した linked checkout は `.git/maboroshi/worktrees` や別の data ディレクトリにあっても remove/gc の対象です。記録がなく保存先外にある checkout は残します。空の親は解決済み保存先以下だけを片付けます。`workspace-root` は絶対パス、`~/`、リポジトリルートからの相対パスを受け取り、空になっても指定ディレクトリは残します。
+`workspace-root` 未設定時、`mabo create` は `$XDG_DATA_HOME/mabo/workspaces/<checkout>-<hash>/<name>` に配置します。`XDG_DATA_HOME` が未設定・空・相対パスなら `~/.local/share/mabo/workspaces/...` です。`<checkout>` は正規化した primary のディレクトリ名で、英数字・`.`・`_`・`-` 以外は `-` に置き換えます。シンボリックリンク経由でも同じ場所です。`<hash>` は正規化した Git common directory の SHA-256 の先頭 8 桁で、同じ remote の別 clone は別ディレクトリになります。名前内の `/` は階層として保持します。既存の `maboroshi/worktrees/` は移動せず、`list`、`show`、`remove`、`sync`、`gc` で扱えます。最後の削除後も repo ディレクトリと `.mabo-common-dir` は残し、同時・後続の作成で使えます。`mabo/workspaces/<id>.json` に記録した linked checkout は `.git/maboroshi/worktrees` や別の data ディレクトリにあっても remove/gc の対象です。記録がなく、設定した保存先および既知の既定レイアウトの外にある checkout は残します。空の親は解決済み保存先以下だけを片付けます。`workspace-root` は絶対パス、`~/`、リポジトリルートからの相対パスを受け取り、空になっても指定ディレクトリは残します。
 
 `clone-root` は `mabo clone` の配置先で、絶対パスか `~/` を指定します。未設定なら最初の `git config ghq.root`、`$GHQ_ROOT`、`~/ghq` の順です。明示した場合は git config を読みません。ghq.root の読み取りが失敗すると警告し、残りの既定値へ進みます。`repo list` も同じディレクトリを走査します。
 
@@ -228,7 +232,7 @@ mabo config unset workspace-root
 
 ## リポジトリの clone
 
-`mabo clone` は `<root>/<host>/<owner>/<repo>` に clone して登録します。`owner/repo` は `github.com` を使います。https、http、ssh:// URL、scp 形式 `git@host:owner/repo`、`host/owner/repo`、`owner/repo` を受け取ります。host は小文字化し、URL の port も含めます（`example.net:9443`）。`file://` は拒否します。ローカルパスにはこの配置に必要な host/owner/repo がありません。中断した clone は宛先の隣に `.maboroshi-clone-<pid>-<uuid>` を残すことがあり、後続の clone が記録したプロセスの終了を確認して削除します。
+`mabo clone` は `<root>/<host>/<owner>/<repo>` に clone して登録します。`owner/repo` は `github.com` を使います。https、http、ssh:// URL、scp 形式 `git@host:owner/repo`、`host/owner/repo`、`owner/repo` を受け取ります。host は小文字化し、URL の port も含めます（`example.net:9443`）。`file://` は拒否します。ローカルパスにはこの配置に必要な host/owner/repo がありません。中断した clone は宛先の隣に `.mabo-clone-<pid>-<uuid>` を残すことがあり、後続の clone が記録したプロセスの終了を確認して削除します。
 
 ```bash
 mabo clone phantompane/phantom
@@ -239,7 +243,7 @@ mabo clone phantompane/phantom --update
 
 同じパスが同じリポジトリなら再 clone せず登録し、パスを表示します。`--update` はこのとき origin を fetch します。別リポジトリなら使用方法エラーです。`--branch` と `--depth` は新規 clone だけに適用します。
 
-認証は Git に任せ、gh は呼びません。進捗は標準エラー出力です。新規ワークスペースは `$XDG_DATA_HOME/maboroshi/workspaces/<checkout>-<hash>`（`XDG_DATA_HOME` が未設定・空・相対パスなら `~/.local/share/maboroshi/workspaces/...`）に作ります。正規化した primary の名前と Git common directory の SHA-256 先頭 8 桁を使い、シンボリックリンクでも同じです。common directory は trust のキーと同じです。`workspace-root` で上書きでき、相対値は repo root から解決します。
+認証は Git に任せ、gh は呼びません。進捗は標準エラー出力です。新規ワークスペースは `$XDG_DATA_HOME/mabo/workspaces/<checkout>-<hash>`（`XDG_DATA_HOME` が未設定・空・相対パスなら `~/.local/share/mabo/workspaces/...`）に作ります。正規化した primary の名前と Git common directory の SHA-256 先頭 8 桁を使い、シンボリックリンクでも同じです。common directory は trust のキーと同じです。`workspace-root` で上書きでき、相対値は repo root から解決します。
 
 ## リポジトリの登録
 
@@ -367,7 +371,7 @@ create/setup はコピー後に対象で setup を実行します。再実行可
 
 `mabo trust add [REPO]` は stderr にフックを表示し、確認なしで信頼を記録します。`mabo trust remove [REPO]` で解除し、`mabo trust list` は common directory と許可時刻を表示します。REPO は -R と同じパス・名前で、省略時は -R または現在の repo です。信頼は正規化した Git common directory をキーとし、primary と linked checkout で共有します。同じパスへの再 clone も trust remove まで信頼が残り、フック編集でも再確認しません。人間の端末では create/setup/remove 中に質問できます。
 
-信頼記録は絶対パスの `$XDG_STATE_HOME/maboroshi/trust.toml`、それ以外は `~/.local/state/maboroshi/trust.toml` です。各項目は path と trustedAt を保存します。
+信頼記録は絶対パスの `$XDG_STATE_HOME/mabo/trust.toml`、それ以外は `~/.local/state/mabo/trust.toml` です。各項目は path と trustedAt を保存します。
 
 `MABO_TRUST_ALL=1` はそのプロセスだけ全 repo を信頼し、ファイルには書きません。値は厳密に `1` です。CI・コンテナで使えます。`create --no-setup` はコピーとフックを省略します。`setup --no-hooks` はコピーだけ、remove/gc --no-hooks は削除フックだけ省略します。信頼は記録しません。旧 create --no-hooks は --no-setup のヒント付きで 2、no-setup と copy-file は併用不可です。
 
@@ -431,7 +435,7 @@ list/show/create/adopt/set/remove は共通オブジェクトを使い、結果�
   "managed": true,
   "orphaned": false,
   "upstream": null,
-  "path": "/home/user/.local/share/maboroshi/workspaces/repo-6b4ca2db/feature/add-tests",
+  "path": "/home/user/.local/share/mabo/workspaces/repo-6b4ca2db/feature/add-tests",
   "branch": "feature/add-tests",
   "head": "0123456789abcdef0123456789abcdef01234567",
   "base": "refs/heads/main",
@@ -450,13 +454,13 @@ list/show/create/adopt/set/remove は共通オブジェクトを使い、結果�
 }
 ```
 
-id/purpose/base/createdAt/updatedAt/createdFrom/setup/links は Git common directory（`git rev-parse --git-common-dir`、通常 `.git`）の `maboroshi/workspaces/<id>.json` に保存します。create が記録し、pr/issue は `{number,url}` または null。番号だけなら url は null、http(s) URL は保持し、pull/pulls/issues/issue の番号を解析します。create --pr/--issue は対応リンクと `https://<host>/<owner>/<repo>/pull/<number>` または issues URL を補います。show/path/list/exec は記録を変更しません。remove は Git 削除後に記録を消し、create は同パスの記録を置き換え、set は意図だけ更新します。PR ブランチの reuse は作成情報を保ちつつ欠けた PR リンクを追加できます。create の metadata は `{ok:true,error:null}`。保存失敗後もコピー・フックを実行し、metadata.ok:false と理由を返し、6 partial で data を保ちます。
+id/purpose/base/createdAt/updatedAt/createdFrom/setup/links は Git common directory（`git rev-parse --git-common-dir`、通常 `.git`）の `mabo/workspaces/<id>.json` に保存します。create が記録し、pr/issue は `{number,url}` または null。番号だけなら url は null、http(s) URL は保持し、pull/pulls/issues/issue の番号を解析します。create --pr/--issue は対応リンクと `https://<host>/<owner>/<repo>/pull/<number>` または issues URL を補います。show/path/list/exec は記録を変更しません。remove は Git 削除後に記録を消し、create は同パスの記録を置き換え、set は意図だけ更新します。PR ブランチの reuse は作成情報を保ちつつ欠けた PR リンクを追加できます。create の metadata は `{ok:true,error:null}`。保存失敗後もコピー・フックを実行し、metadata.ok:false と理由を返し、6 partial で data を保ちます。
 
 破損レコードがあっても list/show/exec は警告と null メタデータで続行し、他は読めます。create/setup/adopt/forget/remove/set/sync は拒否して元を保ち、sync は fetch 前に検証します。同パスの初回同時登録は最古の createdAt、同時なら辞書順で最小の ID にまとめ、全フィールドをその記録から取り、次の書き込みで余分なファイルを削除します。createdFrom は作成元の完全 commit、または固有コミットがない状態で sync が最後に fast-forward した base です。新規ブランチは HEAD、既存ブランチは最古の refs/heads reflog（なければ null）。set や後続 checkout は変更しません。旧記録でフィールドがなければ null。Git で直接作った checkout（primary も含む）は set/adopt/PR reuse までメタデータが null です。prunable/locked などの診断フィールドは将来 schema を変えず追加できます。
 
 各レコードは schema:2、ws_<uuid v4> の id、path、任意の name と上記メタデータです。JSON の id は未記録なら null。同じディレクトリの一時ファイル、fsync、rename でアトミックに置き換えます。削除はそのレコードだけ。異なるレコードの同時追加は両方残り、同じレコードの同時更新は後勝ちです。
 
-repo 登録は `$XDG_STATE_HOME/maboroshi/repos/<id>.json`（既定 `~/.local/state/maboroshi/repos/<id>.json`）で proj_<uuid> ID を維持します。同じ root は最古 createdAt、同時なら最小 ID にまとめます。最初の書き込みで旧 `maboroshi/worktrees.json` / `$XDG_STATE_HOME/maboroshi/projects.json` 全件を取り込み、`*.json.imported` に改名します。それまで読み取りは旧ファイルを読め、移行失敗なら元を保ちます。内部ファイルロックはなく、trust/config は単一ファイルをアトミックに置き換えます。
+repo 登録は `$XDG_STATE_HOME/mabo/repos/<id>.json`（既定 `~/.local/state/mabo/repos/<id>.json`）で proj_<uuid> ID を維持します。同じ root は最古 createdAt、同時なら最小 ID にまとめます。最初の書き込みで `<git-common-dir>/mabo/` または `<git-common-dir>/maboroshi/` 内の旧 `worktrees.json` と、`$XDG_STATE_HOME/mabo/` または `$XDG_STATE_HOME/maboroshi/` 内の旧 `projects.json` 全件を個別ファイルに取り込み、元を `*.json.imported` に改名します。それまで読み取りは旧ファイルを読め、移行失敗なら元を保ちます。内部ファイルロックはなく、trust/config は単一ファイルをアトミックに置き換えます。
 
 ### Sync
 

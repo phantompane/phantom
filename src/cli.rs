@@ -2449,7 +2449,7 @@ mod forget_tests {
         fn record_path(&self, index: usize) -> PathBuf {
             self.context
                 .git_root
-                .join(".git/maboroshi/workspaces")
+                .join(".git/mabo/workspaces")
                 .join(format!(
                     "{}.json",
                     self.trees[index].metadata.id.as_ref().unwrap()

@@ -138,7 +138,11 @@ pub fn find_in<'a>(
 }
 
 pub fn metadata_file(git_root: &Path) -> Result<PathBuf> {
-    Ok(metadata_dir(git_root)?.join(FILE_NAME))
+    Ok(crate::migration::metadata_item(
+        &crate::git::git_common_dir(git_root)?,
+        FILE_NAME,
+        crate::migration::Access::Read,
+    ))
 }
 
 /// Records for every path in the store. A missing file is an empty map.
@@ -459,10 +463,10 @@ fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
     }
 }
 
-/// `maboroshi/` inside the Git common directory. A custom `workspace-root` does
+/// `mabo/` inside the Git common directory. A custom `workspace-root` does
 /// not move this file, and a checkout whose `.git` is a file still shares it.
 fn metadata_dir(git_root: &Path) -> Result<PathBuf> {
-    Ok(crate::git::git_common_dir(git_root)?.join("maboroshi"))
+    Ok(crate::git::git_common_dir(git_root)?.join("mabo"))
 }
 
 fn save_injected() -> bool {
@@ -480,7 +484,11 @@ fn save_injected() -> bool {
 }
 
 pub fn records_dir(git_root: &Path) -> Result<PathBuf> {
-    Ok(metadata_dir(git_root)?.join(RECORDS_DIR))
+    Ok(crate::migration::metadata_item(
+        &crate::git::git_common_dir(git_root)?,
+        RECORDS_DIR,
+        crate::migration::Access::Read,
+    ))
 }
 
 fn read_records(git_root: &Path, strict: bool) -> Result<(Store, Vec<String>)> {
@@ -520,9 +528,20 @@ fn read_all_records_with(
     before_legacy: impl FnOnce(),
 ) -> Result<(Store, Vec<String>)> {
     let dir = records_dir(git_root)?;
-    if !crate::atomic::import_complete(&dir) {
-        before_legacy();
-        if let Some(store) = validated_store(&metadata_file(git_root)?)? {
+    before_legacy();
+    crate::migration::read_with_retry(
+        &dir,
+        || records_dir(git_root),
+        |dir| read_all_records_at(git_root, strict, dir),
+    )
+}
+
+fn read_all_records_at(git_root: &Path, strict: bool, dir: &Path) -> Result<(Store, Vec<String>)> {
+    if !crate::atomic::import_complete(dir) {
+        let file = metadata_file(git_root)?;
+        if let Some(store) =
+            crate::migration::read_with_retry(&file, || metadata_file(git_root), validated_store)?
+        {
             return Ok((store, Vec::new()));
         }
         // An importer may have published the directory and archived the old
@@ -533,7 +552,7 @@ fn read_all_records_with(
     }
     let mut store = empty_store();
     let mut problems = Vec::new();
-    let entries = fs::read_dir(&dir).map_err(|error| {
+    let entries = fs::read_dir(dir).map_err(|error| {
         Error::msg(format!(
             "Failed to read workspace metadata {}: {error}",
             dir.display()
@@ -593,8 +612,13 @@ fn ensure_records(git_root: &Path) -> Result<()> {
 }
 
 fn ensure_records_with(git_root: &Path, before_publish: impl FnOnce()) -> Result<()> {
+    let common = crate::git::git_common_dir(git_root)?;
+    for item in [RECORDS_DIR, FILE_NAME, "worktrees.json.imported"] {
+        crate::migration::metadata_item(&common, item, crate::migration::Access::Write);
+    }
     let dir = records_dir(git_root)?;
     let legacy = metadata_file(git_root)?;
+    crate::migration::check_write_location(&dir)?;
     if legacy.exists() {
         crate::atomic::import_directory(&dir, &legacy, |staging| {
             let mut store = validated_store(&legacy)?.unwrap_or_else(empty_store);
@@ -604,6 +628,7 @@ fn ensure_records_with(git_root: &Path, before_publish: impl FnOnce()) -> Result
                 save_record(staging, record)?;
             }
             before_publish();
+            crate::migration::check_write_location(&dir)?;
             Ok(())
         })?;
     } else {
@@ -624,6 +649,7 @@ fn save_record(dir: &Path, record: &StoredWorktree) -> Result<()> {
         .as_deref()
         .ok_or_else(|| Error::msg("Missing workspace id"))?;
     let body = serde_json::to_vec_pretty(record).map_err(|error| Error::msg(error.to_string()))?;
+    crate::migration::check_write_location(dir)?;
     crate::atomic::write(&dir.join(format!("{id}.json")), &body)
         .map_err(|error| Error::msg(format!("Failed to save workspace metadata: {error}")))
 }
@@ -657,6 +683,7 @@ fn with_store<T>(
                 .any(|after| after.metadata.id == record.metadata.id)
             {
                 if let Some(id) = &record.metadata.id {
+                    crate::migration::check_write_location(&dir)?;
                     match fs::remove_file(dir.join(format!("{id}.json"))) {
                         Ok(()) => {}
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -980,6 +1007,85 @@ mod tests {
                 .and_then(|item| item.purpose.as_deref()),
             Some("two")
         );
+    }
+
+    #[test]
+    fn reader_retries_migrated_records_without_losing_ids_or_creating_duplicates() {
+        for strict in [false, true] {
+            for marker in [false, true] {
+                let root = root();
+                let path = root.join("workspace");
+                let before = write(
+                    &root,
+                    &path,
+                    &MetadataInput {
+                        purpose: Some("before".into()),
+                        ..MetadataInput::default()
+                    },
+                )
+                .unwrap();
+                let common = crate::git::git_common_dir(&root).unwrap();
+                if marker {
+                    fs::write(
+                        records_dir(&root)
+                            .unwrap()
+                            .join(crate::atomic::IMPORT_COMPLETE),
+                        "complete",
+                    )
+                    .unwrap();
+                }
+                fs::rename(common.join("mabo"), common.join("maboroshi")).unwrap();
+                let (store, problems) = read_all_records_with(&root, strict, || {
+                    assert!(common.join("maboroshi/workspaces").is_dir());
+                    ensure_records(&root).unwrap();
+                    assert!(!common.join("maboroshi/workspaces").exists());
+                })
+                .unwrap();
+                assert!(problems.is_empty());
+                assert_eq!(store.worktrees.len(), 1);
+                assert_eq!(store.worktrees[0].metadata, before);
+                let after = patch(
+                    &root,
+                    &path,
+                    &MetadataInput {
+                        purpose: Some("after".into()),
+                        ..MetadataInput::default()
+                    },
+                    &[],
+                )
+                .unwrap();
+                assert_eq!(after.id, before.id);
+                let (store, _) = read_all_records(&root, true).unwrap();
+                assert_eq!(store.worktrees.len(), 1);
+                assert_eq!(
+                    store.worktrees[0].metadata.purpose.as_deref(),
+                    Some("after")
+                );
+                fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_file_read_retries_after_metadata_migration() {
+        let root = root();
+        let common = crate::git::git_common_dir(&root).unwrap();
+        let legacy = common.join("maboroshi/worktrees.json");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(
+            &legacy,
+            include_str!("../tests/fixtures/alpha6/worktrees.json"),
+        )
+        .unwrap();
+        // Supply a stale resolved file, as if migration happened immediately
+        // after metadata_file() returned it.
+        crate::migration::metadata_item(&common, FILE_NAME, crate::migration::Access::Write);
+        let store =
+            crate::migration::read_with_retry(&legacy, || metadata_file(&root), validated_store)
+                .unwrap()
+                .unwrap();
+        assert_eq!(store.worktrees.len(), 2);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

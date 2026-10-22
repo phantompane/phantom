@@ -195,7 +195,7 @@ pub fn scan_repository_root(root: &Path) -> Vec<String> {
             };
             for repo in repos.flatten() {
                 let repo_path = repo.path();
-                // `.maboroshi-clone-*` is an in-progress staging checkout, not a project.
+                // Current and legacy clone staging directories are not projects.
                 if !is_project_directory(&repo_path) || !repo_path.join(".git").exists() {
                     continue;
                 }
@@ -300,7 +300,7 @@ fn place_clone(
     // stays on one filesystem. POSIX rename fails when the destination is a
     // non-empty directory, which is the racing clone we must not delete.
     let staging = parent.join(format!(
-        ".maboroshi-clone-{}-{}",
+        ".mabo-clone-{}-{}",
         std::process::id(),
         uuid::Uuid::new_v4()
     ));
@@ -935,8 +935,10 @@ fn is_project_directory(path: &Path) -> bool {
 }
 
 fn is_staging_directory(path: &Path) -> bool {
-    path.file_name()
-        .is_some_and(|name| name.as_encoded_bytes().starts_with(b".maboroshi-clone-"))
+    path.file_name().is_some_and(|name| {
+        name.as_encoded_bytes().starts_with(b".mabo-clone-")
+            || name.as_encoded_bytes().starts_with(b".maboroshi-clone-")
+    })
 }
 
 fn reap_stale_staging(parent: Option<&Path>, keep: &Path) {
@@ -965,7 +967,9 @@ fn reap_stale_staging(parent: Option<&Path>, keep: &Path) {
 
 fn staging_owner_pid(name: &std::ffi::OsStr) -> Option<u32> {
     let name = name.to_str()?;
-    let rest = name.strip_prefix(".maboroshi-clone-")?;
+    let rest = name
+        .strip_prefix(".mabo-clone-")
+        .or_else(|| name.strip_prefix(".maboroshi-clone-"))?;
     let (pid, id) = rest.split_once('-')?;
     let pid = pid.parse::<u32>().ok()?;
     if pid == 0 {
@@ -1699,6 +1703,21 @@ mod tests {
     }
 
     #[test]
+    fn current_and_legacy_staging_names_are_ignored_by_discovery() {
+        let root = temp_dir("both-staging-prefixes");
+        let owner = root.join("example.com/acme");
+        for prefix in [".mabo-clone-", ".maboroshi-clone-"] {
+            let name = format!("{prefix}123-{}", uuid::Uuid::new_v4());
+            let checkout = owner.join(&name);
+            fs::create_dir_all(checkout.join(".git")).unwrap();
+            assert!(is_staging_directory(&checkout));
+            assert_eq!(staging_owner_pid(std::ffi::OsStr::new(&name)), Some(123));
+        }
+        assert!(scan_repository_root(&root).is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn failed_clone_removes_only_its_staging_directory() {
         let root = temp_dir("fail-clone");
         let owner = root.join("github.com").join("example");
@@ -1723,7 +1742,7 @@ mod tests {
         let leftovers = fs::read_dir(&owner)
             .expect("owner")
             .map(|entry| entry.expect("entry").file_name())
-            .filter(|name| name.to_string_lossy().starts_with(".maboroshi-clone-"))
+            .filter(|name| is_staging_directory(Path::new(name)))
             .collect::<Vec<_>>();
         assert!(leftovers.is_empty(), "{leftovers:?}");
         let _ = fs::remove_dir_all(root);
@@ -1790,6 +1809,12 @@ mod tests {
         ));
         fs::create_dir_all(dead.join(".git")).expect("dead");
         fs::write(dead.join("keep.txt"), "stale").expect("stale");
+        let new_dead = owner.join(format!(
+            ".mabo-clone-{}-{}",
+            unused_pid(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(new_dead.join(".git")).expect("current staging");
         let live = owner.join(format!(
             ".maboroshi-clone-{}-{}",
             std::process::id(),
@@ -1810,6 +1835,10 @@ mod tests {
         let error = place_clone(&destination, &spec, None, None, false).expect_err("clone");
         assert!(error.to_string().contains("git clone"), "{error}");
         assert!(!dead.exists(), "dead staging directory was left behind");
+        assert!(
+            !new_dead.exists(),
+            "current staging directory was left behind"
+        );
         assert_eq!(
             fs::read_to_string(live.join("keep.txt")).expect("live kept"),
             "live"

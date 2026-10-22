@@ -240,7 +240,30 @@ fn info_from_git(
 
 pub(crate) fn is_managed(context: &Context, path: &Path, recorded: bool) -> bool {
     !paths::same_location(path, &context.git_root)
-        && (recorded || paths::is_strictly_inside(path, &context.worktrees_directory))
+        && (recorded || managed_directory(context, path).is_some())
+}
+
+/// Eligible roots, including historical layouts. No checkout is relocated.
+pub(crate) fn managed_directory(context: &Context, path: &Path) -> Option<PathBuf> {
+    if paths::is_strictly_inside(path, &context.worktrees_directory) {
+        return Some(context.worktrees_directory.clone());
+    }
+    if context.project_common_dir.is_some() {
+        let common = git::canonical_common_dir(&context.git_root).ok()?;
+        let data = paths::data_home_from_env().ok()?;
+        let project = paths::default_worktrees_directory(&context.git_root, &common, &data).path;
+        let name = project.file_name()?;
+        let legacy = data.join(crate::migration::LEGACY_NAME);
+        for root in [
+            legacy.join("workspaces").join(name),
+            legacy.join("worktrees").join(name),
+        ] {
+            if paths::is_strictly_inside(path, &root) {
+                return Some(root);
+            }
+        }
+    }
+    None
 }
 
 /// Git reports an unborn HEAD as an all-zero SHA. That is not a commit.
@@ -267,7 +290,9 @@ pub(crate) fn resolve_worktree_name(
     if let Some(recorded) = recorded_path {
         return name_from_recorded_path(recorded, common_dir);
     }
-    branch_or_short_hash(branch, short_head).unwrap_or_else(|| short_head.to_string())
+    workspace_layout_name(path, common_dir, true)
+        .or_else(|| branch_or_short_hash(branch, short_head))
+        .unwrap_or_else(|| short_head.to_string())
 }
 
 fn branch_or_short_hash(branch: Option<&str>, short_head: &str) -> Option<String> {
@@ -299,29 +324,30 @@ pub(crate) fn outside_record_name(
     )))
 }
 
-/// Name recorded under the current or legacy mabo directory layout.
+/// Name recorded under the current or legacy workspace directory layout.
 ///
-/// The default directory is `maboroshi/workspaces/<checkout>-<hash>/<name>`.
+/// The default directory is `mabo/workspaces/<checkout>-<hash>/<name>`.
 /// A configured directory, including `.git/maboroshi/worktrees/<name>`, has no hash segment.
 fn name_from_recorded_path(path: &Path, common_dir: &Path) -> String {
-    maboroshi_layout_name(path, common_dir).unwrap_or_else(|| basename_of(path))
+    workspace_layout_name(path, common_dir, false).unwrap_or_else(|| basename_of(path))
 }
 
-fn maboroshi_layout_name(path: &Path, common_dir: &Path) -> Option<String> {
+fn workspace_layout_name(path: &Path, common_dir: &Path, project_only: bool) -> Option<String> {
     let normalized = paths::normalize(path);
     let components = normalized
         .components()
         .map(|component| component.as_os_str().to_os_string())
         .collect::<Vec<_>>();
     let index = components.windows(2).rposition(|pair| {
-        pair[0] == "maboroshi" && (pair[1] == "workspaces" || pair[1] == "worktrees")
+        (pair[0] == "mabo" || pair[0] == crate::migration::LEGACY_NAME)
+            && (pair[1] == "workspaces" || pair[1] == "worktrees")
     })?;
     let rest = &components[index + 2..];
     let (project, name) = rest.split_first()?;
     if !name.is_empty() && paths::is_project_directory(project, common_dir) {
         return Some(join_components(name));
     }
-    if rest.is_empty() {
+    if project_only || rest.is_empty() {
         None
     } else {
         Some(join_components(rest))
@@ -369,7 +395,7 @@ pub(crate) fn outside_name_to_store(context: &Context, path: &Path) -> Result<Op
                 && !paths::same_location(Path::new(&other.path), path)
         })
     };
-    if let Some(layout) = maboroshi_layout_name(path, &common_dir) {
+    if let Some(layout) = workspace_layout_name(path, &common_dir, false) {
         if taken(&layout) {
             return Err(Error::msg(format!(
                 "Workspace name '{layout}' is already used. Refusing to record this outside workspace."
@@ -751,7 +777,7 @@ fn preflight_remove_selected(
         }
         _ => selector.clone(),
     };
-    let inside = paths::is_strictly_inside(&path, &context.worktrees_directory);
+    let inside = managed_directory(context, &path).is_some();
     let recorded = metadata::records_path(&context.git_root, &path)
         .map_err(|error| RemoveError::kept(error, &worktree))?;
     if !inside && !recorded {
@@ -967,7 +993,7 @@ pub(crate) fn commit_remove_checked(
         .err()
         .map(|error| error.to_string());
     let cleanup_warning = if inside {
-        remove_empty_parents(&path, &context.worktrees_directory)
+        managed_directory(context, &path).and_then(|root| remove_empty_parents(&path, &root))
     } else {
         None
     };

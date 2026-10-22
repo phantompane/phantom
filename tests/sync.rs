@@ -744,7 +744,7 @@ fn implicit_sync_does_not_revalidate_the_resolved_branch_name() {
         );
         let other = r.create("other");
         let other_before = r.snapshot(&other);
-        let store = r.main.join(".git/maboroshi/workspaces");
+        let store = r.main.join(".git/mabo/workspaces");
         let records_before = records::read(&store).unwrap();
         r.advance();
         let cwd = if subdirectory {
@@ -931,7 +931,7 @@ fn corrupt_custom_base_metadata_refuses_sync_before_fetch_or_updates() {
         .mabo(&r.main, &["set", "topic", "--base", "stack"])
         .status
         .success());
-    let dir = r.main.join(".git/maboroshi/workspaces");
+    let dir = r.main.join(".git/mabo/workspaces");
     let record = fs::read_dir(&dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -1165,7 +1165,7 @@ fn dirty_merged_squash_base_gone_legacy_and_metadata_base() {
         r.sync(&tree, &[], 0)["data"]["items"][0]["status"],
         "base-gone"
     );
-    let file = r.main.join(".git/maboroshi/workspaces");
+    let file = r.main.join(".git/mabo/workspaces");
     let mut stored: Value = serde_json::from_slice(&records::read(&file).unwrap()).unwrap();
     stored["worktrees"][0]
         .as_object_mut()
@@ -1184,7 +1184,7 @@ fn all_syncs_legacy_owners_and_unrecorded_workspaces() {
     for (name, owner) in [("first", "agent"), ("other", "someone")] {
         let tree = r.create(name);
         r.write_commit(&tree, name, "work\n");
-        let store = r.main.join(".git/maboroshi/workspaces");
+        let store = r.main.join(".git/mabo/workspaces");
         let mut body: Value = serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
         let row = body["worktrees"]
             .as_array_mut()
@@ -1614,7 +1614,7 @@ fn fresh_branches_update_but_fast_forward_landed_branches_are_merged() {
     );
     // Legacy metadata uses the very same reflog fallback as gc.
     let legacy = r.create("legacy");
-    let file = r.main.join(".git/maboroshi/workspaces");
+    let file = r.main.join(".git/mabo/workspaces");
     let mut stored: Value = serde_json::from_slice(&records::read(&file).unwrap()).unwrap();
     for record in stored["worktrees"].as_array_mut().unwrap() {
         record.as_object_mut().unwrap().remove("createdFrom");
@@ -1650,7 +1650,7 @@ fn unrecorded_fresh_syncs_keep_null_metadata_and_gc_keeps_them() {
                 "origin/main",
             ],
         );
-        let store = r.main.join(".git/maboroshi/workspaces");
+        let store = r.main.join(".git/mabo/workspaces");
         let before = records::read(&store).unwrap();
         r.advance();
         assert_eq!(
@@ -2860,7 +2860,7 @@ fn metadata_failure_after_fast_forward_restores_worktree() {
     for fail_rollback in ["0", "1", "silent"] {
         let r = Repo::new();
         let tree = r.create("topic");
-        let store = r.main.join(".git/maboroshi/workspaces");
+        let store = r.main.join(".git/mabo/workspaces");
         let original_store = records::read(&store).unwrap();
         r.advance();
         let before = r.snapshot(&tree);
@@ -3366,7 +3366,7 @@ fn unresolved_default_does_not_block_recorded_bases() {
         .mabo(&clone, &["create", "--branch", "legacy"])
         .status
         .success());
-    let store = clone.join(".git/maboroshi/workspaces");
+    let store = clone.join(".git/mabo/workspaces");
     let mut legacy: Value = serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
     let record = legacy["worktrees"]
         .as_array_mut()
@@ -3765,7 +3765,7 @@ fn gc_unresolved_default_keeps_branch_worktrees_and_only_cleans_orphans() {
                 ],
             );
         }
-        let store = r.main.join(".git/maboroshi/workspaces");
+        let store = r.main.join(".git/mabo/workspaces");
         let mut doc: Value = serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
         for record in doc["worktrees"].as_array_mut().unwrap() {
             record["createdAt"] = json!("2000-01-01T00:00:00.000Z");
@@ -3911,7 +3911,7 @@ fn check_adopted_sync_base(explicit_base: bool) {
             }
             let adopted = r.mabo(&r.main, &args);
             assert!(adopted.status.success(), "{adopted:?}");
-            let store = r.main.join(".git/maboroshi/workspaces");
+            let store = r.main.join(".git/mabo/workspaces");
             let record_before = records::read(&store).unwrap();
             r.advance();
             let before = r.snapshot(&tree);
@@ -3962,7 +3962,7 @@ fn review9_branch_with_unknown_default_stays_unknown_after_default_returns() {
         r.git(&r.main, &["checkout", "-b", "main", "topic"]);
         r.write_commit(&r.main, "new-default", "new default\n");
         let before = r.snapshot(&tree);
-        let store = r.main.join(".git/maboroshi/workspaces");
+        let store = r.main.join(".git/mabo/workspaces");
         let record_before = records::read(&store).unwrap();
         let doc = r.sync(&r.main, &[selector], 0);
         assert_eq!(doc["data"]["items"][0]["status"], "base-unknown", "{doc}");
@@ -4009,7 +4009,7 @@ fn explicitly_cleared_base_skips_sync_until_reset() {
             .success());
         r.advance();
         let before = r.snapshot(&tree);
-        let store = r.main.join(".git/maboroshi/workspaces");
+        let store = r.main.join(".git/mabo/workspaces");
         let record_before = records::read(&store).unwrap();
         let doc = r.sync(&r.main, &[selector], 0);
         let item = &doc["data"]["items"][0];
@@ -4068,7 +4068,7 @@ fn assert_cleared_default_skips_unavailable_remote(selectors: &[&str]) {
         r.advance();
         r.git(&r.main, &["remote", "set-url", "origin", "/does/not/exist"]);
         let before = r.snapshot(&tree);
-        let store = r.main.join(".git/maboroshi/workspaces");
+        let store = r.main.join(".git/mabo/workspaces");
         let records_before = records::read(&store).unwrap();
         let refs_before = r.git(&r.main, &["for-each-ref"]);
         let trace = r.root.join("trace");
@@ -4195,7 +4195,7 @@ fn legacy_missing_base_falls_back_after_record_migration() {
         .status
         .success());
     assert!(!file.exists());
-    assert!(file.with_extension("json.imported").exists());
+    assert!(r.main.join(".git/mabo/worktrees.json.imported").exists());
     r.advance();
     let before = r.snapshot(&cleared);
     let doc = r.sync(&r.main, &["--all"], 0);
@@ -4339,7 +4339,7 @@ fn assert_fetch_refused(r: &Repo, path: &Path, dry_run: bool, scope: &[&str], fr
     let fetch_head = fs::read(r.main.join(".git/FETCH_HEAD")).unwrap();
     let primary = r.snapshot(&r.main);
     let checkout = r.snapshot(path);
-    let record_dir = r.main.join(".git/maboroshi/workspaces");
+    let record_dir = r.main.join(".git/mabo/workspaces");
     let records = record_dir.exists().then(|| file_contents(&record_dir));
     let trace = r.root.join("refusal-trace");
     let mut args = vec!["sync", "--json"];
@@ -4652,15 +4652,12 @@ fn review2_dry_run_propagates_earlier_workspace_tips_through_local_bases() {
     assert!(r.mabo(&c, &["set", "--base", "b"]).status.success());
     let before = [r.snapshot(&a), r.snapshot(&b), r.snapshot(&c)];
     let refs = r.git(&r.main, &["for-each-ref", "refs/heads"]);
-    let records = file_contents(&r.main.join(".git/maboroshi/workspaces"));
+    let records = file_contents(&r.main.join(".git/mabo/workspaces"));
     r.advance();
     let plan = r.sync(&r.main, &["a", "b", "c", "--dry-run"], 0);
     assert_eq!([r.snapshot(&a), r.snapshot(&b), r.snapshot(&c)], before);
     assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), refs);
-    assert_eq!(
-        file_contents(&r.main.join(".git/maboroshi/workspaces")),
-        records
-    );
+    assert_eq!(file_contents(&r.main.join(".git/mabo/workspaces")), records);
     let actual = r.sync(&r.main, &["a", "b", "c"], 0);
     for i in 0..3 {
         let planned = &plan["data"]["items"][i];
@@ -4713,7 +4710,7 @@ fn check_ref_prefixed_branch_plan(dependent_base: &str, expected_status: &str) {
             r.snapshot(&dependent),
         ];
         let refs = r.git(&r.main, &["for-each-ref", "refs/heads"]);
-        let records = file_contents(&r.main.join(".git/maboroshi/workspaces"));
+        let records = file_contents(&r.main.join(".git/mabo/workspaces"));
         r.advance();
         let plan = r.sync(&r.main, &["refs/heads/a", "dependent", "--dry-run"], 0);
         assert_eq!(
@@ -4725,10 +4722,7 @@ fn check_ref_prefixed_branch_plan(dependent_base: &str, expected_status: &str) {
             before
         );
         assert_eq!(r.git(&r.main, &["for-each-ref", "refs/heads"]), refs);
-        assert_eq!(
-            file_contents(&r.main.join(".git/maboroshi/workspaces")),
-            records
-        );
+        assert_eq!(file_contents(&r.main.join(".git/mabo/workspaces")), records);
         let actual = r.sync(&r.main, &["refs/heads/a", "dependent"], 0);
         assert_eq!(actual["data"]["items"][1]["status"], expected_status);
         assert_eq!(r.snapshot(&a), before[0]);
@@ -4933,16 +4927,13 @@ fn review_p2_dry_run_uses_the_planned_primary_tip_as_local_base() {
             let primary = r.snapshot(&r.main);
             let workspace = r.snapshot(&tree);
             let reflogs = file_contents(&r.main.join(".git/logs/refs/heads"));
-            let records = file_contents(&r.main.join(".git/maboroshi/workspaces"));
+            let records = file_contents(&r.main.join(".git/mabo/workspaces"));
             r.advance();
             let plan = r.sync(&tree, &[".", "--main", "--dry-run"], 0);
             assert_eq!(r.snapshot(&r.main), primary);
             assert_eq!(r.snapshot(&tree), workspace);
             assert_eq!(file_contents(&r.main.join(".git/logs/refs/heads")), reflogs);
-            assert_eq!(
-                file_contents(&r.main.join(".git/maboroshi/workspaces")),
-                records
-            );
+            assert_eq!(file_contents(&r.main.join(".git/mabo/workspaces")), records);
             let actual = r.sync(&tree, &[".", "--main"], 0);
             for (planned, executed) in [
                 (&plan["data"]["main"], &actual["data"]["main"]),
@@ -4986,7 +4977,7 @@ fn p8_dry_run_fetches_without_checkout_or_metadata_changes() {
     let tree = r.create("topic");
     r.write_commit(&tree, "own", "own\n");
     let snapshots = [r.snapshot(&r.main), r.snapshot(&tree)];
-    let records_path = r.main.join(".git/maboroshi/workspaces");
+    let records_path = r.main.join(".git/mabo/workspaces");
     let metadata = file_contents(&records_path);
     let heads = r.git(&tree, &["for-each-ref", "refs/heads"]);
     let index_time = fs::metadata(r.main.join(".git/index"))
@@ -5131,7 +5122,7 @@ fn p8_config_policy_permission_sources_remain_independent() {
 #[test]
 fn p8_invalid_policy_in_user_file_is_usage_and_repo_policy_is_rejected() {
     let r = Repo::new();
-    let path = r.root.join("config/maboroshi/config.toml");
+    let path = r.root.join("config/mabo/config.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     for content in [
         "[sync]\nstrategy = 'unknown'\n",
@@ -5333,7 +5324,7 @@ fn review3_unknown_planned_tips_propagate_through_workspace_dependencies() {
         let before = [r.snapshot(&a), r.snapshot(&b), r.snapshot(&c)];
         let refs = r.git(&r.main, &["for-each-ref", "refs/heads"]);
         let reflogs = file_contents(&r.main.join(".git/logs"));
-        let records = file_contents(&r.main.join(".git/maboroshi/workspaces"));
+        let records = file_contents(&r.main.join(".git/mabo/workspaces"));
         r.advance();
         let plan = r.sync(&r.main, &["a", "b", "c", strategy, "--dry-run"], 0);
         assert_eq!([r.snapshot(&a), r.snapshot(&b), r.snapshot(&c)], before);
@@ -5345,10 +5336,7 @@ fn review3_unknown_planned_tips_propagate_through_workspace_dependencies() {
                 assert_eq!(&after_logs[path], content);
             }
         }
-        assert_eq!(
-            file_contents(&r.main.join(".git/maboroshi/workspaces")),
-            records
-        );
+        assert_eq!(file_contents(&r.main.join(".git/mabo/workspaces")), records);
         for i in 0..3 {
             let item = &plan["data"]["items"][i];
             assert_eq!(item["status"], "updated", "{plan}");
