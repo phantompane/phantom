@@ -55,7 +55,7 @@ Rust 1.89 以降（`Cargo.toml` の `rust-version`）でソースからビルド
 cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked mabo
 ```
 
-手動でインストールする場合は、Releases から `mabo-v<VERSION>-<os>-<arch>.tar.gz` をダウンロードします（`<VERSION>` は先頭の `v` を除いたもの、`<os>` は `linux` または `darwin`、`<arch>` は `x64` または `arm64`）。`install.sh` はこのアーカイブ名のみをサポートし、`SHA256SUMS` 内に対応する有効な行がちょうど1行あることを必須とします。アーカイブの中身は `mabo` のみです。展開して PATH の通ったディレクトリに配置してください。v7.0.0-alpha.7 より後のリリースでは、同じリリースの `SHA256SUMS` もダウンロードし、展開前に検証します。`gh` で来歴を検証し、Linux で SHA-256 を確認するには、ダウンロード先でアーカイブ名を置き換えて次を実行します。
+手動でインストールする場合は、Releases から `mabo-v<VERSION>-<os>-<arch>.tar.gz` をダウンロードします（`<VERSION>` は先頭の `v` を除いたもの、`<os>` は `linux` または `darwin`、`<arch>` は `x64` または `arm64`）。v7.0.0-alpha.8 以前のリリースは `maboroshi-v<VERSION>-<os>-<arch>.tar.gz` や `ptm-v<VERSION>-<os>-<arch>.tar.gz` など以前のアーカイブ名を使っているため、そのリリースに掲載されているアーカイブをダウンロードしてください。`install.sh` は `mabo-` のアーカイブ名のみをサポートし、`SHA256SUMS` 内に対応する有効な行がちょうど1行あることを必須とします。アーカイブの中身は `mabo` のみです。展開して PATH の通ったディレクトリに配置してください。v7.0.0-alpha.7 より後のリリースでは、同じリリースの `SHA256SUMS` もダウンロードし、展開前に検証します。`gh` で来歴を検証し、Linux で SHA-256 を確認するには、ダウンロード先でアーカイブ名を置き換えて次を実行します。
 
 ```sh
 gh attestation verify mabo-v<VERSION>-linux-x64.tar.gz --repo phantompane/phantom
