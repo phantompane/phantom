@@ -216,7 +216,7 @@
         "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
         "New workspaces are created under $XDG_DATA_HOME/mabo/workspaces/<checkout>-<hash> (default ~/.local/share/mabo/workspaces/...). <checkout> is the canonical primary checkout directory name, so a symlink uses the same directory. <hash> is the first 8 hex digits of the SHA-256 of the canonical Git common directory. A relative XDG_DATA_HOME is ignored. workspace-root overrides this and is joined to the repository root",
         "Purpose and links are stored in mabo/workspaces/<id>.json under the Git common directory",
-        "Legacy maboroshi config/state directories and repository metadata migrate by atomic rename on writes only when the destination is absent. Reads, dry runs and gc plans never migrate. Existing data checkouts never move. Both locations existing uses mabo without merging and warns for nonempty legacy paths; failed migration warns and keeps using legacy unless the new path appeared. No files are copied, overwritten or deleted. Unexpected metadata contents stay in place",
+        "Config and state live only under mabo paths. Project markers use .mabo-common-dir; clone staging uses .mabo-clone-",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
         "When no local branch has that name and exactly one configured remote already has it, create --branch creates the local branch tracking that remote. mabo does not fetch.",
         "When more than one configured remote has the name, create --branch exits 2 and lists those remotes. Pass <remote>/<name>. The remote is a configured remote name. A slash in a branch name is not itself a remote.",
@@ -523,7 +523,7 @@
         "SEL defaults to .; -- before COMMAND is required. Put --repo before SEL. Every argument after -- is passed unchanged to the child.",
         "The child exit code and stdin are preserved. MABO_OUTPUT is ignored; explicit --json is refused.",
         "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
-        "exec reads records without rewriting or importing them. Orphaned workspaces are refused."
+        "exec reads records without rewriting them. Orphaned workspaces are refused."
       ]
     },
     "config": {
@@ -840,7 +840,7 @@
       ],
       "notes": [
         "Forgetting a registration leaves repository files and workspaces intact. Discovered repos can still appear.",
-        "Registrations live in $XDG_STATE_HOME/mabo/repos/<id>.json; legacy projects.json is imported on the first write. The default is ~/.local/state/mabo/repos/<id>.json."
+        "Registrations live in $XDG_STATE_HOME/mabo/repos/<id>.json. The default is ~/.local/state/mabo/repos/<id>.json."
       ]
     },
     "repo add": {
@@ -880,7 +880,7 @@
         "When path is omitted, the selected repository or current checkout is used.",
         "Adding an already registered repository succeeds without creating a duplicate.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
-        "Repository records live in $XDG_STATE_HOME/mabo/repos/<id>.json (default ~/.local/state/mabo/repos/<id>.json), with proj_<uuid> IDs. The first write imports legacy projects.json and renames it to projects.json.imported. Duplicate roots are read once, using the oldest createdAt."
+        "Repository records live in $XDG_STATE_HOME/mabo/repos/<id>.json (default ~/.local/state/mabo/repos/<id>.json), with proj_<uuid> IDs. Duplicate roots are read once, using the oldest createdAt."
       ]
     },
     "repo list": {
@@ -943,7 +943,7 @@
         "The clone root is the clone-root config key, then the first git config ghq.root value, then $GHQ_ROOT, then ~/ghq.",
         "ghq is optional. Checkouts under the clone root are still discovered when it is not installed.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
-        "Repository records live in $XDG_STATE_HOME/mabo/repos/<id>.json (default ~/.local/state/mabo/repos/<id>.json), with proj_<uuid> IDs. The first write imports legacy projects.json and renames it to projects.json.imported. Duplicate roots are read once, using the oldest createdAt."
+        "Repository records live in $XDG_STATE_HOME/mabo/repos/<id>.json (default ~/.local/state/mabo/repos/<id>.json), with proj_<uuid> IDs. Duplicate roots are read once, using the oldest createdAt."
       ]
     },
     "repo forget": {
@@ -985,7 +985,7 @@
         "This command never deletes the Git repository or its workspaces.",
         "A repository discovered through ghq remains visible after its registry record is removed.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
-        "Repository records live in $XDG_STATE_HOME/mabo/repos/<id>.json (default ~/.local/state/mabo/repos/<id>.json), with proj_<uuid> IDs. The first write imports legacy projects.json and renames it to projects.json.imported. Duplicate roots are read once, using the oldest createdAt."
+        "Repository records live in $XDG_STATE_HOME/mabo/repos/<id>.json (default ~/.local/state/mabo/repos/<id>.json), with proj_<uuid> IDs. Duplicate roots are read once, using the oldest createdAt."
       ]
     },
     "sync": {
@@ -1331,7 +1331,7 @@
       ],
       "notes": [
         "SEL is a name, . (the checkout containing cwd), pr:N, issue:N, a PR/issue URL, or an absolute path / path starting with ./ or ../. PR and issue selectors find already-linked workspaces only. No match exits 3; multiple matches exit 2 (ambiguous). A dot selector with a different --repo exits 2. Outside any repository exits 3.",
-        "SEL defaults to .; the primary checkout and other unrecorded checkouts report managed:false. Reads never import or rewrite workspace records.",
+        "SEL defaults to .; the primary checkout and other unrecorded checkouts report managed:false. Reads never rewrite workspace records.",
         "JSON returns data.workspace with id, name, kind, path, current, repo, managed, orphaned, branch, head, detached, dirty, base, createdFrom, upstream, purpose, links, setup, createdAt and updatedAt. Unknown values are null.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
@@ -1382,7 +1382,7 @@
       ],
       "notes": [
         "SEL is a name, . (the checkout containing cwd), pr:N, issue:N, a PR/issue URL, or an absolute path / path starting with ./ or ../. PR and issue selectors find already-linked workspaces only. No match exits 3; multiple matches exit 2 (ambiguous). A dot selector with a different --repo exits 2. Outside any repository exits 3.",
-        "SEL defaults to .; the primary checkout and other unrecorded checkouts report managed:false. Reads never import or rewrite workspace records.",
+        "SEL defaults to .; the primary checkout and other unrecorded checkouts report managed:false. Reads never rewrite workspace records.",
         "JSON returns data.path; text outputs only the path.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
@@ -1467,7 +1467,7 @@
         "The workspace must already exist. A missing name exits 3",
         "--base validates an existing ref and stores its full ref name; commit bases remain supported.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
-        "Workspace records use schema 2 and ws_<uuid v4> IDs. Each file is replaced atomically. Concurrent first registrations for the same path use the oldest createdAt, then the smallest ID; all fields come from that record. The next write removes extra files. The first write imports legacy worktrees.json and renames it to worktrees.json.imported; read-only commands can read the legacy file before import."
+        "Workspace records use schema 2 and ws_<uuid v4> IDs. Each file is replaced atomically. Concurrent first registrations for the same path use the oldest createdAt, then the smallest ID; all fields come from that record. The next write removes extra files."
       ]
     },
     "adopt": {
@@ -1642,7 +1642,7 @@
         "Copy .worktreeinclude and --copy-file matches from the primary checkout. Only gitignored files are copied; existing files are preserved and symlinks are skipped.",
         "Before copying or updating records, untrusted hooks refuse with exit 4 untrusted. Use mabo trust add, MABO_TRUST_ALL=1, or --no-hooks for copying only. Non-interactive runs never prompt.",
         ".mabo.toml is read from --source-checkout when supplied, otherwise from the invoking checkout (the selected primary checkout with -R/--repo). [hooks] setup runs after copying; write hooks to tolerate repeated execution.",
-        "Setup records state, at and error: pending, running, ok, failed or skipped. Older, imported and adopted records report unknown; unrecorded workspaces report null. A running attempt whose pid is gone on the same host displays interrupted without rewriting the record or blocking operations.",
+        "Setup records state, at and error: pending, running, ok, failed or skipped. Records without setup information, including adopted records, report unknown; unrecorded workspaces report null. A running attempt whose pid is gone on the same host displays interrupted without rewriting the record or blocking operations.",
         "JSON data contains workspace, setup (state, at, error, ran, ok, command, exitCode, signal), and copy (copied, error). Hook and copy failures exit 1; create setup failures exit 6 with a shell-quoted retry command that preserves the original source checkout and copy patterns and selects the created workspace uniquely."
       ]
     },

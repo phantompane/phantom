@@ -3343,7 +3343,7 @@ fn unresolved_default_does_not_block_recorded_bases() {
     let created: Value = serde_json::from_slice(&out.stdout).unwrap();
     let tree = PathBuf::from(created["data"]["workspace"]["path"].as_str().unwrap());
     r.write_commit(&tree, "own", "own\n");
-    // Older records without an explicit unknown marker still exercise fallback errors.
+    // Records without an explicit unknown marker exercise default-base errors.
     r.git(&clone, &["branch", "legacy"]);
     assert!(r
         .mabo(&clone, &["create", "--branch", "legacy"])
@@ -4153,37 +4153,31 @@ fn cleared_bases_do_not_hide_other_targets_fetch_failures() {
 }
 
 #[test]
-fn legacy_missing_base_falls_back_after_record_migration() {
+fn missing_base_falls_back_but_explicitly_cleared_base_stays_unknown() {
     let r = Repo::new();
-    let legacy = r.root.join("legacy");
+    let fallback = r.root.join("fallback");
     let cleared = r.root.join("cleared");
-    for (name, path) in [("legacy", &legacy), ("cleared", &cleared)] {
+    for (name, path) in [("fallback", &fallback), ("cleared", &cleared)] {
         r.git(
             &r.main,
             &["worktree", "add", "-b", name, path.to_str().unwrap()],
         );
     }
-    let file = r.main.join(".git/maboroshi/worktrees.json");
-    fs::create_dir_all(file.parent().unwrap()).unwrap();
-    fs::write(
-        &file,
-        serde_json::to_vec(&json!({"version": 1, "worktrees": [
-            {"path": legacy, "purpose": "old"}, {"path": cleared}
-        ]}))
-        .unwrap(),
-    )
-    .unwrap();
+    for path in [&fallback, &cleared] {
+        mabo::metadata::write(&r.main, path, &Default::default()).unwrap();
+    }
     assert!(r
         .mabo(&r.main, &["set", "cleared", "--unset", "base"])
         .status
         .success());
-    assert!(!file.exists());
-    assert!(r.main.join(".git/mabo/worktrees.json.imported").exists());
     r.advance();
     let before = r.snapshot(&cleared);
     let doc = r.sync(&r.main, &["--all"], 0);
     let items = doc["data"]["items"].as_array().unwrap();
-    let old = items.iter().find(|item| item["name"] == "legacy").unwrap();
+    let old = items
+        .iter()
+        .find(|item| item["name"] == "fallback")
+        .unwrap();
     assert_eq!(old["base"], "refs/remotes/origin/main");
     assert_eq!(old["status"], "updated");
     let unknown = items.iter().find(|item| item["name"] == "cleared").unwrap();

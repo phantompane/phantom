@@ -243,27 +243,10 @@ pub(crate) fn is_managed(context: &Context, path: &Path, recorded: bool) -> bool
         && (recorded || managed_directory(context, path).is_some())
 }
 
-/// Eligible roots, including historical layouts. No checkout is relocated.
+/// The configured directory is the only layout managed without a record.
 pub(crate) fn managed_directory(context: &Context, path: &Path) -> Option<PathBuf> {
-    if paths::is_strictly_inside(path, &context.worktrees_directory) {
-        return Some(context.worktrees_directory.clone());
-    }
-    if context.project_common_dir.is_some() {
-        let common = git::canonical_common_dir(&context.git_root).ok()?;
-        let data = paths::data_home_from_env().ok()?;
-        let project = paths::default_worktrees_directory(&context.git_root, &common, &data).path;
-        let name = project.file_name()?;
-        let legacy = data.join(crate::migration::LEGACY_NAME);
-        for root in [
-            legacy.join("workspaces").join(name),
-            legacy.join("worktrees").join(name),
-        ] {
-            if paths::is_strictly_inside(path, &root) {
-                return Some(root);
-            }
-        }
-    }
-    None
+    paths::is_strictly_inside(path, &context.worktrees_directory)
+        .then(|| context.worktrees_directory.clone())
 }
 
 /// Git reports an unborn HEAD as an all-zero SHA. That is not a commit.
@@ -324,10 +307,10 @@ pub(crate) fn outside_record_name(
     )))
 }
 
-/// Name recorded under the current or legacy workspace directory layout.
+/// Name recorded under the current workspace directory layout.
 ///
 /// The default directory is `mabo/workspaces/<checkout>-<hash>/<name>`.
-/// A configured directory, including `.git/maboroshi/worktrees/<name>`, has no hash segment.
+/// A configured `mabo/workspaces/<name>` directory has no hash segment.
 fn name_from_recorded_path(path: &Path, common_dir: &Path) -> String {
     workspace_layout_name(path, common_dir, false).unwrap_or_else(|| basename_of(path))
 }
@@ -338,10 +321,9 @@ fn workspace_layout_name(path: &Path, common_dir: &Path, project_only: bool) -> 
         .components()
         .map(|component| component.as_os_str().to_os_string())
         .collect::<Vec<_>>();
-    let index = components.windows(2).rposition(|pair| {
-        (pair[0] == "mabo" || pair[0] == crate::migration::LEGACY_NAME)
-            && (pair[1] == "workspaces" || pair[1] == "worktrees")
-    })?;
+    let index = components
+        .windows(2)
+        .rposition(|pair| pair[0] == "mabo" && pair[1] == "workspaces")?;
     let rest = &components[index + 2..];
     let (project, name) = rest.split_first()?;
     if !name.is_empty() && paths::is_project_directory(project, common_dir) {
@@ -1178,6 +1160,7 @@ pub(crate) fn run_hook_commands(
     let path = Path::new(&worktree.path);
     let original_dir = fs::metadata(path).map_err(|error| Error::msg(error.to_string()))?;
     let mut expected_id = worktree.metadata.id.clone();
+    let mut expected_recorded = worktree.recorded;
     for command in commands {
         if post {
             logger.log(&format!("Executing: {command}"));
@@ -1190,7 +1173,7 @@ pub(crate) fn run_hook_commands(
             // and refuse a removed or replaced checkout before running another command.
             let current = worktree_at_path(context, path)?;
             let dir = fs::metadata(path).map_err(|error| Error::msg(error.to_string()))?;
-            if (expected_id.is_some() && current.metadata.id != expected_id)
+            if (expected_recorded && current.metadata.id != expected_id)
                 || dir.dev() != original_dir.dev()
                 || dir.ino() != original_dir.ino()
                 || !paths::same_location(
@@ -1200,9 +1183,10 @@ pub(crate) fn run_hook_commands(
             {
                 return Err(Error::msg("Workspace changed before running hook command"));
             }
-            // Legacy records gain an ID on the first metadata write. The same
-            // registered checkout may adopt that ID once; pin it for later hooks.
+            // An unrecorded checkout can be recorded by a hook. Pin its new ID
+            // so later hooks still reject replacement of that record.
             expected_id = current.metadata.id;
+            expected_recorded = current.recorded;
             exec_in_resolved_worktree(
                 context,
                 worktree,
@@ -1695,20 +1679,20 @@ mod tests {
     fn recorded_path_keeps_slash_names_and_skips_the_project_directory() {
         let common = Path::new("/repo/.git");
         assert_eq!(
-            name_from_recorded_path(Path::new("/repo/.git/maboroshi/worktrees/next"), common),
+            name_from_recorded_path(Path::new("/repo/.git/mabo/workspaces/next"), common),
             "next"
         );
         assert_eq!(
             name_from_recorded_path(
-                Path::new("/repo/.git/maboroshi/worktrees/feature/topic"),
+                Path::new("/repo/.git/mabo/workspaces/feature/topic"),
                 common
             ),
             "feature/topic"
         );
         let project = paths::project_directory_name("repo", common);
-        let nested = PathBuf::from(format!("/data/maboroshi/worktrees/{project}/feature/topic"));
+        let nested = PathBuf::from(format!("/data/mabo/workspaces/{project}/feature/topic"));
         assert_eq!(name_from_recorded_path(&nested, common), "feature/topic");
-        let single = PathBuf::from(format!("/data/maboroshi/worktrees/{project}/inside"));
+        let single = PathBuf::from(format!("/data/mabo/workspaces/{project}/inside"));
         assert_eq!(name_from_recorded_path(&single, common), "inside");
         assert_eq!(
             name_from_recorded_path(Path::new("/tmp/custom-wt/alias"), common),
@@ -1719,7 +1703,7 @@ mod tests {
             resolve_worktree_name(
                 Path::new("/data/wt/next"),
                 directory,
-                Some(Path::new("/repo/.git/maboroshi/worktrees/other")),
+                Some(Path::new("/repo/.git/mabo/workspaces/other")),
                 None,
                 common,
                 None,
@@ -1777,9 +1761,9 @@ mod tests {
         );
         assert_eq!(
             resolve_worktree_name(
-                Path::new("/repo/.git/ptm/worktrees/next"),
+                Path::new("/repo/custom/workspaces/next"),
                 directory,
-                Some(Path::new("/repo/.git/ptm/worktrees/next")),
+                Some(Path::new("/repo/custom/workspaces/next")),
                 None,
                 common,
                 None,
