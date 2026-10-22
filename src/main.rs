@@ -15,11 +15,11 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    match maboroshi::cli::run(&args) {
+    match mabo::cli::run(&args) {
         Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
         Err(error) => {
             let code = u8::try_from(error.exit_code()).unwrap_or(1);
-            maboroshi::output::stderr(format_args!("Error: {error}\n"));
+            mabo::output::stderr(format_args!("Error: {error}\n"));
             ExitCode::from(code)
         }
     }

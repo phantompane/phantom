@@ -1,6 +1,6 @@
-# 🤝 Contributing to Maboroshi
+# 🤝 Contributing to mabo
 
-Thank you for your interest in contributing to Maboroshi! This guide will help you get started with development.
+Thank you for your interest in contributing to mabo! This guide will help you get started with development.
 
 ## 📋 Table of Contents
 
@@ -33,7 +33,7 @@ git checkout next
 cargo run --locked -- --help
 ```
 
-The built binary is `mabo` (`mabo --help`, `mabo create`). The Cargo package name is `maboroshi`. There is no `ptm` or `phantom` binary.
+The built binary is `mabo` (`mabo --help`, `mabo create`). The Cargo package name is `mabo`. There is no `ptm` or `phantom` binary.
 
 ### Development Workflow
 
@@ -119,15 +119,15 @@ When contributing documentation:
 
 ## 🚀 Release Process
 
-To release a new version of Maboroshi:
+To release a new version of mabo:
 
 1. **Open a version pull request against `next`**
 
-   Change the version by hand in a dedicated pull request. Do not bump it in a feature pull request. Edit `version` in `Cargo.toml` and the `maboroshi` package entry in `Cargo.lock` so they match.
+   Change the version by hand in a dedicated pull request. Do not bump it in a feature pull request. Edit `version` in `Cargo.toml` and the `mabo` package entry in `Cargo.lock` so they match.
 
    ```bash
-   # After editing Cargo.toml, refresh only the maboroshi entry in Cargo.lock:
-   cargo update -p maboroshi --precise <version>
+   # After editing Cargo.toml, refresh only the mabo entry in Cargo.lock:
+   cargo update -p mabo --precise <version>
    ```
 
    Title the pull request `chore(version): vX.Y.Z`, for example `chore(version): v7.0.0-alpha.8`. `.github/workflows/tag-on-merge.yml` creates that git tag when the pull request merges into `next`. `ci.yml` and `release-compile.yml` do not bump the version.
@@ -207,7 +207,7 @@ To release a new version of Maboroshi:
 
 ## 🙏 Thank You!
 
-Your contributions make Maboroshi better for everyone. If you have questions, feel free to:
+Your contributions make mabo better for everyone. If you have questions, feel free to:
 
 - Open an issue for bugs or feature requests
 - Start a discussion for general questions

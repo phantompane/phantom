@@ -398,7 +398,7 @@ done
 export TEST_OS=FreeBSD TEST_ARCH=x86_64
 runFail 1 'Unsupported platform' --version 7.0.0
 contains "$root/stderr" 'https://github.com/phantompane/phantom/releases'
-contains "$root/stderr" 'cargo install --git https://github.com/phantompane/phantom --tag 7.0.0 --locked maboroshi'
+contains "$root/stderr" 'cargo install --git https://github.com/phantompane/phantom --tag 7.0.0 --locked mabo'
 export TEST_OS=Linux TEST_ARCH=riscv64
 runFail 1 'Unsupported platform' --version 7.0.0
 unset TEST_OS TEST_ARCH

@@ -1,8 +1,8 @@
-# Maboroshi
+# mabo
 
-Maboroshi（幻、"phantom space"）— 並列で働くコーディングエージェントのためのワークスペース。
+mabo（Maboroshi, 幻）— 並列コーディングエージェントのためのワークスペース。
 
-Maboroshi はローカルの Git ワークスペースを管理し、多数のコーディングエージェントと人間が、同じリポジトリで同時に独立して作業できるようにします。ワークスペースは、ひとつのリポジトリのひとつのチェックアウトに、Git が記録しない名前、目的（PR、issue、ベース）、観測した状態を加えたものです。現在、チェックアウトの実体は Git worktree です。
+mabo はローカルの Git ワークスペースを管理し、多数のコーディングエージェントと人間が、同じリポジトリで同時に独立して作業できるようにします。ワークスペースは、ひとつのリポジトリのひとつのチェックアウトに、Git が記録しない名前、目的（PR、issue、ベース）、観測した状態を加えたものです。現在、チェックアウトの実体は Git worktree です。
 
 Rust 版は `next` で開発し、[GitHub Releases](https://github.com/phantompane/phantom/releases) で v7 を配布しています。従来の TypeScript 版は `main` に残しており、その README は <https://github.com/phantompane/phantom/blob/main/README.md> にあります。
 
@@ -52,7 +52,7 @@ mise use github:phantompane/phantom@<VERSION>
 Rust 1.89 以降（`Cargo.toml` の `rust-version`）でソースからビルドすることもできます。
 
 ```sh
-cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked maboroshi
+cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked mabo
 ```
 
 手動でインストールする場合は、Releases から `maboroshi-v<VERSION>-<os>-<arch>.tar.gz` をダウンロードします（`<VERSION>` は先頭の `v` を除いたもの、`<os>` は `linux` または `darwin`、`<arch>` は `x64` または `arm64`）。アーカイブの中身は `mabo` のみです。展開して PATH の通ったディレクトリに配置してください。v7.0.0-alpha.7 より後のリリースでは、同じリリースの `SHA256SUMS` もダウンロードし、展開前に検証します。`gh` で来歴を検証し、Linux で SHA-256 を確認するには、ダウンロード先でアーカイブ名を置き換えて次を実行します。
@@ -72,13 +72,13 @@ npm の `@phantompane/cli` と Homebrew の `phantom` は、従来の TypeScript
 
 ## なぜ必要か
 
-Git はコードとチェックアウトを記録しますが、そのチェックアウトがなぜ存在するのか、片付けてよいのかは記録しません。多数のエージェントが同時に作業すると、その答えが分からなくなります。Maboroshi は通常の Git の上でその情報を補います。リポジトリ、ブランチ、Git worktree はそのままで、`mabo` と一緒に `git` を直接使えます。
+Git はコードとチェックアウトを記録しますが、そのチェックアウトがなぜ存在するのか、片付けてよいのかは記録しません。多数のエージェントが同時に作業すると、その答えが分からなくなります。mabo は通常の Git の上でその情報を補います。リポジトリ、ブランチ、Git worktree はそのままで、`mabo` と一緒に `git` を直接使えます。
 
-ワークスペースが分けるのはファイルとブランチです。プロセス、ポート、データベース、認証情報は分離しません。Maboroshi はワークスペースの境界と自身の操作を扱い、サービスを並行して動かす準備はプロジェクトとそのフックが担います。
+ワークスペースが分けるのはファイルとブランチです。プロセス、ポート、データベース、認証情報は分離しません。mabo はワークスペースの境界と自身の操作を扱い、サービスを並行して動かす準備はプロジェクトとそのフックが担います。
 
 ## できること
 
-Maboroshi はワークスペースを作成・取り込み・準備し、ベースの変更に追従させ、片付けます。
+mabo はワークスペースを作成・取り込み・準備し、ベースの変更に追従させ、片付けます。
 
 - **確保と準備。** `clone` は ghq の構成でリポジトリを配置します。`create` は作業ごとのワークスペースを用意し、`.worktreeinclude` に一致する ignored ファイルをコピーして、信頼済みリポジトリのフックを実行します。
 - **情報の記録。** `set` は目的、関連する PR・issue、ベースを記録します。`list` と `show` は何がどこにあるかを表示します。
@@ -96,7 +96,7 @@ Maboroshi はワークスペースを作成・取り込み・準備し、ベー�
 
 ## 目指さないこと
 
-Maboroshi は次の役割を担いません。
+mabo は次の役割を担いません。
 
 - エージェントの実行・スケジューリング（起動、監視、割り当て）。
 - タスク管理・PR ボット（担当割り当て、レビュー、コメント、マージ）。

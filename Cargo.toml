@@ -1,5 +1,5 @@
 [package]
-name = "maboroshi"
+name = "mabo"
 version = "7.0.0-alpha.8"
 edition = "2021"
 rust-version = "1.89"

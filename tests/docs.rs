@@ -1,6 +1,14 @@
 const README: &str = include_str!("../README.md");
 const README_JA: &str = include_str!("../README.ja.md");
 
+#[test]
+fn product_and_package_are_named_mabo() {
+    for document in [README, README_JA] {
+        assert_eq!(document.lines().next(), Some("# mabo"));
+    }
+    assert_eq!(env!("CARGO_PKG_NAME"), "mabo");
+}
+
 fn fenced_blocks(document: &str) -> Vec<Vec<&str>> {
     let mut blocks = Vec::new();
     let mut current: Option<Vec<&str>> = None;
