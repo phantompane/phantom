@@ -299,7 +299,7 @@ pub(crate) fn outside_record_name(
     )))
 }
 
-/// Name recorded under the current or legacy Maboroshi directory layout.
+/// Name recorded under the current or legacy mabo directory layout.
 ///
 /// The default directory is `maboroshi/workspaces/<checkout>-<hash>/<name>`.
 /// A configured directory, including `.git/maboroshi/worktrees/<name>`, has no hash segment.

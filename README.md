@@ -1,8 +1,8 @@
-# Maboroshi
+# mabo
 
-Maboroshi (幻, "phantom space") — workspaces for parallel coding agents.
+mabo (Maboroshi, 幻) — workspaces for parallel coding agents.
 
-Maboroshi manages local Git workspaces so that many coding agents and humans can work independently in the same repository at the same time. A workspace is one checkout of one repository plus what Git doesn't track about it: its name, its purpose (pull request, issue, base), and its observed state. Today each checkout is a Git worktree.
+mabo manages local Git workspaces so that many coding agents and humans can work independently in the same repository at the same time. A workspace is one checkout of one repository plus what Git doesn't track about it: its name, its purpose (pull request, issue, base), and its observed state. Today each checkout is a Git worktree.
 
 The Rust rewrite lives on `next` and ships as v7 releases on [GitHub Releases](https://github.com/phantompane/phantom/releases). The previous TypeScript version stays on `main`; its README is at <https://github.com/phantompane/phantom/blob/main/README.md>.
 
@@ -52,7 +52,7 @@ mise use github:phantompane/phantom@<VERSION>
 Or build from source with Rust 1.89+ (the `rust-version` in `Cargo.toml`):
 
 ```sh
-cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked maboroshi
+cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked mabo
 ```
 
 For a manual install, download `maboroshi-v<VERSION>-<os>-<arch>.tar.gz` from Releases (`<VERSION>` omits the leading `v`; `<os>` is `linux` or `darwin`, and `<arch>` is `x64` or `arm64`). Each archive contains only `mabo`; extract it and place it in a directory on PATH. For releases after v7.0.0-alpha.7, download `SHA256SUMS` from the same release and verify before extracting. To verify provenance with `gh` and check SHA-256 on Linux, run these in the download directory, substituting your archive name:
@@ -72,13 +72,13 @@ Re-run the pinned installer command above with the new release tag. mise users u
 
 ## Why
 
-Git records the code and the checkouts. It does not record why a checkout exists or whether it can be retired. With many agents working in one repository at once, those are the questions nobody can answer. Maboroshi fills that gap on top of plain Git: repositories, branches, and worktrees stay ordinary Git, and `git` keeps working alongside `mabo`.
+Git records the code and the checkouts. It does not record why a checkout exists or whether it can be retired. With many agents working in one repository at once, those are the questions nobody can answer. mabo fills that gap on top of plain Git: repositories, branches, and worktrees stay ordinary Git, and `git` keeps working alongside `mabo`.
 
-Workspaces separate files and branches, not processes, ports, databases, or credentials. Maboroshi coordinates workspace boundaries and its own operations; running services side by side is up to your repo and its hooks.
+Workspaces separate files and branches, not processes, ports, databases, or credentials. mabo coordinates workspace boundaries and its own operations; running services side by side is up to your repo and its hooks.
 
 ## What it does
 
-Maboroshi creates, takes over, and prepares workspaces, keeps them current with their base, and retires them:
+mabo creates, takes over, and prepares workspaces, keeps them current with their base, and retires them:
 
 - **Allocate and prepare.** `clone` places a repository in the ghq layout. `create` gives each piece of work its own workspace, copies ignored files matched by `.worktreeinclude`, and runs repository hooks in repositories you trust.
 - **Identify.** `set` records the purpose, linked pull request or issue, and base. `list` and `show` show what exists and where.
@@ -96,7 +96,7 @@ Every command can run non-interactively. Every JSON command returns a schema 2 e
 
 ## Non-goals
 
-Maboroshi will not become:
+mabo will not become:
 
 - an agent runner or scheduler (launching, supervising, or assigning agents);
 - a task tracker or PR bot (assignments, reviews, comments, merges);
@@ -414,7 +414,7 @@ The old `MABO_NAME`, `MABO_PATH`, and `MABO_ROOT_PATH` variables are removed fro
 
 `MABO_OUTPUT=json|text` sets the default; empty means unset and other values exit 2. Explicit output flags override it. Unknown commands and missing commands after common options also return a usage envelope when JSON is selected. `list --names`/`--paths` (and repo `--names`/`--paths`) select text even with `MABO_OUTPUT=json`; explicitly combining it with JSON is a usage error. `exec`, `completions`, `shell-init` and text help through `--help` ignore `MABO_OUTPUT`. `--version` and `help` support JSON and honor the output mode. Explicit JSON output for `exec`, `completions` or `shell-init` is a usage error; arguments after the required `--` belong to the child.
 
-Mabo never prompts in non-interactive mode: nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or stdin/stderr without a TTY. Untrusted hooks refuse before changes with exit 4 and a `mabo trust add` / `create --no-setup` / `setup --no-hooks` hint. Network Git operations receive `GIT_TERMINAL_PROMPT=0`; repository hooks and gh read stdin from `/dev/null`. User commands (standalone `exec`) inherit stdin.
+mabo never prompts in non-interactive mode: nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or stdin/stderr without a TTY. Untrusted hooks refuse before changes with exit 4 and a `mabo trust add` / `create --no-setup` / `setup --no-hooks` hint. Network Git operations receive `GIT_TERMINAL_PROMPT=0`; repository hooks and gh read stdin from `/dev/null`. User commands (standalone `exec`) inherit stdin.
 
 ### Workspace object
 
@@ -454,7 +454,7 @@ Mabo never prompts in non-interactive mode: nonempty `CI`, JSON output, `--no-in
 
 Workspace records contain `schema: 2`, an `id` of the form `ws_<uuid v4>`, `path`, an optional `name`, and the metadata fields above. JSON workspace objects include `id` (null for an unrecorded workspace). Each record is written atomically through a temporary file in the same directory, fsync, and rename. Deleting a record removes only its file. Concurrent additions of different records preserve both; concurrent updates of the same record use the last write.
 
-Repo registrations live in `$XDG_STATE_HOME/maboroshi/repos/<id>.json`, falling back to `~/.local/state/maboroshi/repos/<id>.json`. They keep their existing `proj_<uuid>` IDs. Readers deduplicate registrations by root path, keeping the oldest `createdAt` (then the smallest ID on a tie). The first write imports legacy `maboroshi/worktrees.json` or `$XDG_STATE_HOME/maboroshi/projects.json` into individual files and renames the source to `*.json.imported`. Read-only commands can read the legacy files before import. Failed imports leave the source intact. Mabo uses no internal file locks; trust and user config remain single files replaced atomically.
+Repo registrations live in `$XDG_STATE_HOME/maboroshi/repos/<id>.json`, falling back to `~/.local/state/maboroshi/repos/<id>.json`. They keep their existing `proj_<uuid>` IDs. Readers deduplicate registrations by root path, keeping the oldest `createdAt` (then the smallest ID on a tie). The first write imports legacy `maboroshi/worktrees.json` or `$XDG_STATE_HOME/maboroshi/projects.json` into individual files and renames the source to `*.json.imported`. Read-only commands can read the legacy files before import. Failed imports leave the source intact. mabo uses no internal file locks; trust and user config remain single files replaced atomically.
 
 ### Sync
 

@@ -111,8 +111,8 @@ impl Drop for Repo {
 }
 
 fn managed_directory(git_root: &Path, xdg: &Path) -> PathBuf {
-    let common = maboroshi::git::canonical_common_dir(git_root).expect("common dir");
-    maboroshi::paths::default_worktrees_directory(git_root, &common, xdg).path
+    let common = mabo::git::canonical_common_dir(git_root).expect("common dir");
+    mabo::paths::default_worktrees_directory(git_root, &common, xdg).path
 }
 
 fn managed(repo: &Repo, relative: &str) -> PathBuf {
@@ -174,10 +174,10 @@ fn broken_pipe_large_list_stdout_preserves_success() {
             path.to_str().unwrap(),
             "HEAD",
         ]);
-        maboroshi::metadata::write(
+        mabo::metadata::write(
             &repo.repo,
             &path,
-            &maboroshi::metadata::MetadataInput {
+            &mabo::metadata::MetadataInput {
                 purpose: Some("x".repeat(1024)),
                 ..Default::default()
             },
@@ -1826,7 +1826,7 @@ fn delete_removes_empty_parents_but_keeps_the_project_directory_and_marker() {
     let created = repo.mabo(&["create", "cursor/foo"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let project = managed_root(&repo);
-    let marker_path = project.join(maboroshi::paths::PROJECT_MARKER);
+    let marker_path = project.join(mabo::paths::PROJECT_MARKER);
     let marker = fs::read(&marker_path).expect("marker");
     let ceiling = project.parent().expect("maboroshi/worktrees");
     let parent = project.join("cursor");
@@ -6391,7 +6391,7 @@ fn blocked_project_import_exits_failure_and_preserves_legacy_for_retry() {
         fs::remove_file(&target).unwrap();
         let retried = repo.mabo(&args);
         assert!(retried.status.success(), "{}", text(&retried.stderr));
-        let store = maboroshi::projects::ProjectRegistryStore::new(state);
+        let store = mabo::projects::ProjectRegistryStore::new(state);
         let records = store.list().unwrap();
         assert_eq!(records.len(), 3);
         let original: serde_json::Value = serde_json::from_str(fixture).unwrap();
@@ -6416,7 +6416,7 @@ fn blocked_workspace_import_exits_failure_and_preserves_legacy_for_retry() {
         fs::create_dir_all(legacy.parent().unwrap()).unwrap();
         let fixture = include_str!("fixtures/alpha6/worktrees.json");
         fs::write(&legacy, fixture).unwrap();
-        let before = maboroshi::metadata::load_strict(&repo.repo).unwrap();
+        let before = mabo::metadata::load_strict(&repo.repo).unwrap();
         let target = legacy.parent().unwrap().join("workspaces");
         fs::write(&target, "blocker").unwrap();
         let mut args = vec!["set", "main", "--purpose", "new purpose"];
@@ -6435,13 +6435,10 @@ fn blocked_workspace_import_exits_failure_and_preserves_legacy_for_retry() {
         assert!(!legacy.with_extension("json.imported").exists());
         assert_eq!(fs::read_to_string(&target).unwrap(), "blocker");
         fs::remove_file(&target).unwrap();
-        assert_eq!(
-            maboroshi::metadata::load_strict(&repo.repo).unwrap(),
-            before
-        );
+        assert_eq!(mabo::metadata::load_strict(&repo.repo).unwrap(), before);
         let retried = repo.mabo(&args);
         assert!(retried.status.success(), "{}", text(&retried.stderr));
-        let after = maboroshi::metadata::load_strict(&repo.repo).unwrap();
+        let after = mabo::metadata::load_strict(&repo.repo).unwrap();
         assert_eq!(after.len(), before.len() + 1);
         for (path, old) in before {
             let mut imported = after[&path].clone();
@@ -6516,9 +6513,9 @@ fn worktree_registered(repo: &Repo, name: &str) -> bool {
 }
 
 fn reserve_project_dir(git_root: &Path, xdg: &Path) {
-    let common = maboroshi::git::canonical_common_dir(git_root).expect("common dir");
-    let directory = maboroshi::paths::default_worktrees_directory(git_root, &common, xdg).path;
-    maboroshi::paths::ensure_worktrees_directory(&directory, Some(&common)).expect("project dir");
+    let common = mabo::git::canonical_common_dir(git_root).expect("common dir");
+    let directory = mabo::paths::default_worktrees_directory(git_root, &common, xdg).path;
+    mabo::paths::ensure_worktrees_directory(&directory, Some(&common)).expect("project dir");
 }
 
 fn land_branch(repo: &Repo, name: &str) {
@@ -7476,7 +7473,7 @@ fn removing_the_last_worktree_keeps_the_project_marker_for_the_next_create() {
         let repo = Repo::new();
         assert!(repo.mabo(&["create", "feature/last"]).status.success());
         let project = managed_root(&repo);
-        let marker_path = project.join(maboroshi::paths::PROJECT_MARKER);
+        let marker_path = project.join(mabo::paths::PROJECT_MARKER);
         let marker = fs::read(&marker_path).expect("marker");
         let removed = if gc {
             commit_file(&repo, "feature/last", "landed.txt", "landed\n");
@@ -7516,7 +7513,7 @@ fn deleting_the_last_worktree_between_directory_claim_and_git_add_keeps_the_mark
     use std::os::unix::fs::PermissionsExt;
     let repo = Repo::new();
     assert!(repo.mabo(&["create", "last"]).status.success());
-    let marker_path = managed_root(&repo).join(maboroshi::paths::PROJECT_MARKER);
+    let marker_path = managed_root(&repo).join(mabo::paths::PROJECT_MARKER);
     let marker = fs::read(&marker_path).expect("marker");
     let real_git = std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
         .map(|dir| dir.join("git"))
@@ -7597,9 +7594,9 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
     ));
     assert!(!repo.repo.join(".git/maboroshi/worktrees/feature").exists());
     assert!(repo.repo.join(".git/maboroshi/workspaces").is_dir());
-    let common = maboroshi::git::canonical_common_dir(&repo.repo).expect("common dir");
-    let marker = fs::read_to_string(managed_root(&repo).join(maboroshi::paths::PROJECT_MARKER))
-        .expect("marker");
+    let common = mabo::git::canonical_common_dir(&repo.repo).expect("common dir");
+    let marker =
+        fs::read_to_string(managed_root(&repo).join(mabo::paths::PROJECT_MARKER)).expect("marker");
     assert_eq!(marker.trim_end(), common.to_string_lossy());
 
     let preference = repo.mabo(&["config", "set", "workspace-root", "../custom-wt"]);
@@ -7668,7 +7665,7 @@ fn relative_xdg_data_home_uses_the_home_fallback() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    let data_home = maboroshi::paths::data_home(Some(&repo.home), Some(Path::new("relative/data")))
+    let data_home = mabo::paths::data_home(Some(&repo.home), Some(Path::new("relative/data")))
         .expect("fallback");
     assert_eq!(data_home, repo.home.join(".local/share"));
     assert!(managed_directory(&repo.repo, &data_home)
@@ -7684,7 +7681,7 @@ fn a_project_directory_owned_by_another_repository_is_refused() {
     let directory = managed_root(&repo);
     fs::create_dir_all(&directory).expect("project dir");
     fs::write(
-        directory.join(maboroshi::paths::PROJECT_MARKER),
+        directory.join(mabo::paths::PROJECT_MARKER),
         "/other/repo/.git\n",
     )
     .expect("foreign marker");
@@ -8268,7 +8265,7 @@ fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
     assert!(!real.exists());
     assert!(
         managed_root(&repo)
-            .join(maboroshi::paths::PROJECT_MARKER)
+            .join(mabo::paths::PROJECT_MARKER)
             .is_file(),
         "last workspace deletion should keep the project directory and marker"
     );
@@ -9563,7 +9560,7 @@ fn assert_generated_name_skips_adopted_alias(detach: bool) {
             "orphaned" => repo.git(&["worktree", "remove", path.to_str().unwrap()]),
             _ => {}
         }
-        let records_before = maboroshi::metadata::load_strict(&repo.repo).expect("records");
+        let records_before = mabo::metadata::load_strict(&repo.repo).expect("records");
         let args = if detach {
             vec!["create", "--detach", "--json"]
         } else {
@@ -9590,7 +9587,7 @@ fn assert_generated_name_skips_adopted_alias(detach: bool) {
         assert!(managed(&repo, "bold-badger").is_dir());
         assert!(!managed(&repo, "calm-comet").exists());
         assert!(local_branch(&repo, "calm-comet").is_empty());
-        let records_after = maboroshi::metadata::load_strict(&repo.repo).expect("records");
+        let records_after = mabo::metadata::load_strict(&repo.repo).expect("records");
         for (path, record) in records_before {
             assert_eq!(records_after.get(&path), Some(&record));
         }
@@ -10658,8 +10655,8 @@ fn hooks_and_exec_export_workspace_identity_and_remove_inherited_legacy_variable
 fn legacy_worktrees_directories_remain_usable_without_moving_workspaces() {
     for old_layout in ["xdg", "git"] {
         let repo = Repo::new();
-        let common = maboroshi::git::canonical_common_dir(&repo.repo).unwrap();
-        let project = maboroshi::paths::project_directory_name("repo", &common);
+        let common = mabo::git::canonical_common_dir(&repo.repo).unwrap();
+        let project = mabo::paths::project_directory_name("repo", &common);
         let old_root = if old_layout == "xdg" {
             repo.root.join("xdg/maboroshi/worktrees").join(project)
         } else {
@@ -10954,7 +10951,7 @@ fn outer_config_commands_text_json_sources_and_exit_codes() {
             assert_eq!(config["workspace-root"]["value"], serde_json::Value::Null);
             assert_eq!(config["discover-ghq"]["value"], true);
             assert!(config.get("keep-branch").is_none());
-            for key in maboroshi::preferences::SUPPORTED_KEYS {
+            for key in mabo::preferences::SUPPORTED_KEYS {
                 assert_eq!(config[key]["source"], "default");
             }
         }
@@ -11928,7 +11925,7 @@ fn outer_help_and_version_contracts_text_json_and_exit_codes() {
     assert_eq!(expected["exitCodes"].as_object().unwrap().len(), 7);
     for (code, exit) in expected["errorCodes"].as_object().unwrap() {
         assert_eq!(
-            maboroshi::error::exit_for_code(code),
+            mabo::error::exit_for_code(code),
             exit.as_i64().unwrap() as i32
         );
     }
@@ -15348,7 +15345,7 @@ fn assert_adopt_rejects_swapped_git_dir(primary: bool) {
     assert!(observed.status.success());
     assert_eq!(Path::new(&text(&observed.stdout)), directory);
     assert_eq!(
-        maboroshi::git::canonical_common_dir(&directory).unwrap(),
+        mabo::git::canonical_common_dir(&directory).unwrap(),
         repo.repo.join(".git")
     );
     let branch = repo
@@ -17483,7 +17480,7 @@ fn assert_retirement_hook_loses_directory(gc: bool, keep_branch: bool) {
         }
         let path = managed(&repo, "topic");
         let head = retirement_head_at(&repo, &path);
-        let records = maboroshi::metadata::load_strict(&repo.repo).unwrap();
+        let records = mabo::metadata::load_strict(&repo.repo).unwrap();
         let command = if move_directory {
             r#"cd "$MABO_REPO_PATH" && mv -- "$MABO_WORKSPACE_PATH" "$MABO_WORKSPACE_PATH.moved""#
         } else {
@@ -17516,7 +17513,7 @@ fn assert_retirement_hook_loses_directory(gc: bool, keep_branch: bool) {
         assert!(!out.status.success(), "{}", text(&out.stdout));
         assert!(worktree_registered(&repo, "topic"));
         assert_eq!(
-            serde_json::to_value(maboroshi::metadata::load_strict(&repo.repo).unwrap()).unwrap(),
+            serde_json::to_value(mabo::metadata::load_strict(&repo.repo).unwrap()).unwrap(),
             serde_json::to_value(&records).unwrap(),
         );
         if move_directory {
@@ -18319,9 +18316,7 @@ fn retirement_bugbot_gc_keeps_live_unregistered_records() {
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(json_value(&out)["data"]["items"][0]["action"], "removed");
     assert!(branch_listed(&repo, "unregistered"));
-    assert!(maboroshi::metadata::load_strict(&repo.repo)
-        .unwrap()
-        .is_empty());
+    assert!(mabo::metadata::load_strict(&repo.repo).unwrap().is_empty());
 }
 
 #[test]
@@ -20066,9 +20061,7 @@ fn retirement_remove_retry_pins_output_over_environment_defaults() {
         assert!(hint.contains(if json { " --json " } else { " --output text " }));
         assert!(hint.contains(" --no-input "));
         assert!(!remaining.exists());
-        assert!(maboroshi::metadata::load_strict(&repo.repo)
-            .unwrap()
-            .is_empty());
+        assert!(mabo::metadata::load_strict(&repo.repo).unwrap().is_empty());
     }
 }
 
@@ -20123,9 +20116,7 @@ fn retirement_remove_branch_delete_failure_keeps_branch_and_continues() {
             assert!(branch_listed(&repo, "branch-failure"));
             assert!(!managed(&repo, "branch-failure").exists());
             assert!(!managed(&repo, "last").exists());
-            assert!(maboroshi::metadata::load_strict(&repo.repo)
-                .unwrap()
-                .is_empty());
+            assert!(mabo::metadata::load_strict(&repo.repo).unwrap().is_empty());
             if json {
                 let doc = json_value(&out); // Parsing the entire stdout rejects multiple documents.
                 assert_eq!(doc["ok"], true);
@@ -20226,9 +20217,7 @@ fn retirement_remove_branch_failure_and_unfinished_targets_use_one_retry() {
         }
         assert!(!managed(&repo, "last").exists());
         assert!(branch_listed(&repo, "branch-failure"));
-        assert!(maboroshi::metadata::load_strict(&repo.repo)
-            .unwrap()
-            .is_empty());
+        assert!(mabo::metadata::load_strict(&repo.repo).unwrap().is_empty());
     }
 }
 
@@ -20362,7 +20351,7 @@ fn assert_remove_metadata_failure_retry(
     }
     if symlink_root.is_some() {
         let canonical = fs::canonicalize(workspace_root.join("metadata-failure")).unwrap();
-        let stored = maboroshi::metadata::matching_path(&repo.repo, &canonical)
+        let stored = mabo::metadata::matching_path(&repo.repo, &canonical)
             .unwrap()
             .unwrap();
         assert_eq!(Path::new(&stored), workspace_root.join("metadata-failure"));
@@ -20494,7 +20483,7 @@ fn retirement_remove_path_and_name_aliases_deduplicate_before_hooks() {
         "[hooks]\npre-remove = ['printf x >> \"$MABO_REPO_PATH/hook-count\"']\n",
     )
     .unwrap();
-    let relative = format!("./{}", maboroshi::paths::relative(&repo.repo, &path));
+    let relative = format!("./{}", mabo::paths::relative(&repo.repo, &path));
     for dry_run in [true, false] {
         let mut args = vec![
             "remove",
@@ -20904,7 +20893,7 @@ fn fish_shell_smoke() {
 fn shell_available(shell: &str) -> bool {
     match Command::new(shell).arg("--version").output() {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            maboroshi::output::stderr(format_args!(
+            mabo::output::stderr(format_args!(
                 "SKIP {shell} shell smoke: {shell} is not installed\n"
             ));
             return false;

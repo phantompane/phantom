@@ -97,8 +97,8 @@ fn hooks(repo: &Repo, post: &str, pre: &str) {
 }
 
 fn worktree(repo: &Repo, name: &str) -> PathBuf {
-    let common = maboroshi::git::canonical_common_dir(&repo.repo).expect("common dir");
-    maboroshi::paths::default_worktrees_directory(&repo.repo, &common, &repo.root.join("xdg"))
+    let common = mabo::git::canonical_common_dir(&repo.repo).expect("common dir");
+    mabo::paths::default_worktrees_directory(&repo.repo, &common, &repo.root.join("xdg"))
         .path
         .join(name)
 }
