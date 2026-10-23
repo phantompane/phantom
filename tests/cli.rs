@@ -465,7 +465,7 @@ fn version_help_and_unknown_command() {
     let help = repo.mabo(&["--help"]);
     assert!(help.status.success());
     let help_text = text(&help.stdout);
-    assert!(help_text.contains("mabo - Workspaces for parallel coding agents"));
+    assert!(help_text.contains("mabo - Isolated Git workspaces for parallel coding agents"));
     assert!(!help_text.contains("Phantom"), "{help_text}");
     assert!(help_text.contains("mabo <command> [options]"));
     assert!(help_text.contains("Run 'mabo <command> --help'"));

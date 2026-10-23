@@ -1,6 +1,6 @@
 # mabo
 
-mabo (Maboroshi, 幻) — workspaces for parallel coding agents.
+mabo (Maboroshi, 幻) — isolated Git workspaces for parallel coding agents.
 
 Give each task an isolated Git workspace (a linked worktree), so coding agents and humans can work in the same repository in parallel. mabo records why each checkout exists, provides machine-readable output, and checks preservation before cleanup. Unpreserved commits and dirty work require explicit permission to discard.
 
