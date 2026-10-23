@@ -49,7 +49,7 @@ cargo clippy --locked --all-targets -- -D warnings
 
 ### Language Requirements
 
-- **All files, issues, and pull requests must be written in English**
+- **Write files, issues, and pull requests in English**, except for the Japanese README translation
 - This ensures the project is accessible to the global community
 
 ### Code Style
@@ -114,8 +114,11 @@ cargo test --locked
 When contributing documentation:
 
 - Keep language clear and concise
-- Update the table of contents if adding sections
-- Check for broken links
+- Keep `README.md` concise; put detailed reference material in [`docs/`](docs/commands.md)
+- Keep `README.ja.md` aligned in sections, commands, flags, and examples; fenced code blocks must be identical
+- Verify CLI guidance against `help-data.json`, the implementation, and isolated example runs
+- Run `cargo test --locked --test docs` for README consistency
+- Check for broken links when moving reference sections
 
 ## 🚀 Release Process
 
