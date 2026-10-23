@@ -2,6 +2,9 @@
 
 mabo (Maboroshi, 幻) — isolated Git workspaces for parallel coding agents.
 
+> [!WARNING]
+> mabo is under active development (v7 alpha). Commands, output, configuration and on-disk formats may change without backward compatibility until 7.0.0. It is not recommended for production use yet.
+
 Give each task an isolated Git workspace (a linked worktree), so coding agents and humans can work in the same repository in parallel. mabo records why each checkout exists, provides machine-readable output, and checks preservation before cleanup. Unpreserved commits and dirty work require explicit permission to discard.
 
 [日本語](README.ja.md) · [Command reference](docs/commands.md) · [JSON contract](docs/json.md)
@@ -124,7 +127,7 @@ Repository `.mabo.toml` defines setup and pre-remove hooks; `.worktreeinclude` s
 
 ## Status
 
-Alpha: breaking changes are possible before 7.0.0, with no backward compatibility between alphas. See [CHANGELOG](CHANGELOG.md). Rust development happens on `next`.
+Alpha (see the warning above). Breaking changes are listed in [CHANGELOG](CHANGELOG.md). Rust development happens on `next`.
 
 ## Contributing
 
