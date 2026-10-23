@@ -53,8 +53,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y zsh fish
           command -v bash zsh fish
-      - name: Unit and CLI tests
-        run: cargo test --locked --lib --test cli
+      - name: All tests
+        run: cargo test --locked
 
   test-musl:
     name: Rust test (musl)
