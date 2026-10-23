@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Nothing yet.
+
+## v7.0.0-alpha.9 (2026-10-24)
+
 ### Changed
 
 - The product is now named mabo, and the Cargo package is `mabo`. Install from source with `cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked mabo`.
