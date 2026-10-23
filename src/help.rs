@@ -79,7 +79,9 @@ pub fn json_help(key: &str) -> Result<serde_json::Value> {
 pub fn main_help() -> Result<String> {
     let file = data()?;
     let mut lines = Vec::new();
-    lines.push(bold("mabo - Workspaces for parallel coding agents"));
+    lines.push(bold(
+        "mabo - Isolated Git workspaces for parallel coding agents",
+    ));
     lines.push(String::new());
     lines.push(dim(
         "Manages local Git workspaces so many coding agents and humans can work independently in one repository",
@@ -297,7 +299,7 @@ mod tests {
     #[test]
     fn rendered_help_names_the_mabo_command() {
         let main = main_help().expect("main help");
-        assert!(main.contains("mabo - Workspaces for parallel coding agents"));
+        assert!(main.contains("mabo - Isolated Git workspaces for parallel coding agents"));
         assert!(main.contains("mabo <command> [options]"));
         assert!(main.contains("Run 'mabo <command> --help'"));
         assert!(!main.contains("Phantom"), "{main}");
