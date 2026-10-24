@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Nothing yet.
+
+## v7.0.0-alpha.10 (2026-10-24)
+
 ### Changed (Breaking)
 
 - Rename the product, command and Cargo package from mabo to **rabi** (ラビ, from "rabbit"). Install from source with `cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked rabi`, using a tag from the first release containing rabi or later.

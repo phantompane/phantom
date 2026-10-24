@@ -454,11 +454,11 @@ fn version_help_and_unknown_command() {
     assert!(version.status.success());
     let version_line = text(&version.stdout);
     assert!(
-        version_line.starts_with("rabi v7.0.0-alpha.9+rust"),
+        version_line.starts_with("rabi v7.0.0-alpha.10+rust"),
         "{version_line}"
     );
     assert!(!version_line.contains("ptm"), "{version_line}");
-    assert_ne!(version_line, "rabi v7.0.0-alpha.9");
+    assert_ne!(version_line, "rabi v7.0.0-alpha.10");
     let subcommand = repo.rabi(&["-v"]);
     assert_eq!(text(&subcommand.stdout), version_line);
 
