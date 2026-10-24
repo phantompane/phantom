@@ -18,6 +18,12 @@ rabi manages workspace boundaries and preparation. Use Git for commits, pushes, 
 
 Exec preserves child output and exit status, ignores `RABI_OUTPUT`, and refuses explicit JSON output. Usage diagnostics and any accompanying help go to stderr, leaving text stdout empty.
 
+## Workflow definitions
+
+`workflow list` lists the built-in `default` and `.rabi/workflows/<name>.yaml` in the invoking checkout. `-R/--repo` reads from the selected primary checkout. Listing includes invalid files without validating them. `workflow show NAME` prints the YAML, each step's allow_dirty setting, and resolved agent settings; `workflow check [NAME]` validates one definition, or the built-in and all repository files when NAME is omitted. These commands require no trust and execute no workflow steps, check commands, or agent CLI.
+
+Definitions are selected by filename stem, with no restriction on the embedded name matching it. The built-in `default` cannot be shadowed; a repository `default.yaml` is diagnosed by the all-definition check. Unknown names exit 3. Invalid definitions exit 2; check preserves every item's diagnostics in JSON data, and show reports them in error.details.diagnostics. The run commands are not public. See [workflow definitions](workflows.md) and [JSON](json.md).
+
 ## Creating, adopting, and forgetting
 
 `create [NAME]` makes a new branch from `--base`, defaulting to the remote default branch and then the local default branch. An omitted name is generated. A name that is already a local branch or locally observed remote-tracking branch exits 4 (`exists_remote`), without fetching; use `--branch` to use that branch. A qualified `--branch remote/name` uses local `name` or creates it tracking the observed remote ref. Multiple remote matches exit 2 and list the choices.

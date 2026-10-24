@@ -78,8 +78,12 @@ Read [removal safety and retries](docs/safety.md) and [sync strategies](docs/syn
 | `rabi repo list` | List registered and discovered repositories |
 | `rabi repo show` | Inspect a repository |
 | `rabi repo forget` | Drop a registration |
-| `rabi trust` | Hook trust commands |
-| `rabi trust add` | Show hooks and grant trust without prompting |
+| `rabi workflow` | Workflow definition commands |
+| `rabi workflow list` | List built-in and repository definitions |
+| `rabi workflow show` | Show YAML and resolved agent settings |
+| `rabi workflow check` | Validate definitions without executing them |
+| `rabi trust` | Hook and workflow execution trust |
+| `rabi trust add` | Show hooks/workflows and grant trust without prompting |
 | `rabi trust remove` | Revoke trust |
 | `rabi trust list` | List trusted Git common directories |
 | `rabi config` | User configuration commands |
@@ -112,13 +116,17 @@ Use `--json` or `--output json` for one schema 2 envelope: `schema`, `command`, 
 
 See [JSON objects and per-command data](docs/json.md) and [exit codes and recovery](docs/exit-codes.md).
 
+## Workflow definitions
+
+`rabi workflow list`, `rabi workflow show NAME`, and `rabi workflow check [NAME]` inspect the built-in `default` and `.rabi/workflows/<name>.yaml` without executing them or requiring trust. `-R` uses the selected primary checkout; otherwise definitions come from the invoking checkout. `rabi trust add` lists repository workflows alongside hooks and grants the same repository execution trust. See [workflow definitions](docs/workflows.md).
+
 ## Configuration
 
 `rabi config` manages user settings: `workspace-root`, `clone-root`, `discover-ghq`, `sync.strategy`, and `sync.rewrite-published`. `-R/--repo REF` targets a repository by path or registered/discovered name. See [configuration, paths, and repository registrations](docs/configuration.md).
 
 ## Hooks and trust
 
-Repository `.rabi.toml` defines setup and pre-remove hooks; `.worktreeinclude` selects ignored files to copy from primary. Review hooks before granting trust with `rabi trust add`. Trust applies to the Git common-directory path and survives a re-clone at that path until revoked. See [hooks, trust, and setup retries](docs/hooks.md).
+Repository `.rabi.toml` defines setup and pre-remove hooks; `.worktreeinclude` selects ignored files to copy from primary. Review hooks and workflow definitions before granting trust with `rabi trust add`. Trust applies to the Git common-directory path and survives a re-clone at that path until revoked. See [hooks, trust, and setup retries](docs/hooks.md).
 
 ## FAQ
 

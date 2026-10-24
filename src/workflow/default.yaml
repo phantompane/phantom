@@ -1,0 +1,56 @@
+schema_version: 1
+name: default
+version: 3
+workspace: new
+agent: {provider: codex, model: gpt-6.1-sol, effort: high}
+start: prepare
+limits: {max_steps: 15}
+loops: {repair: 2}
+steps:
+  prepare:
+    type: system
+    action: prepare
+    on: {ok: implement}
+  implement:
+    type: agent
+    mode: edit
+    output: report-v1
+    context: fresh
+    instruction: |
+      Implement the task and report changes and verification results.
+      Commit using Conventional Commits. Let rabi handle push and PR creation.
+    on: {ok: check}
+  fix:
+    type: agent
+    mode: edit
+    output: report-v1
+    context: {continue: implement}
+    instruction: |
+      Fix verification failures and review findings, report the results, and commit.
+      Let rabi handle push and PR creation.
+    on: {ok: check}
+  check:
+    type: check
+    commands: cli
+    on:
+      pass: review
+      fail: {to: fix, loop: repair}
+  review:
+    type: agent
+    mode: read-only
+    output: review-v1
+    context: fresh
+    instruction: |
+      Review the task and diff without editing. On the last line, write either
+      "判定: 問題なし" or "判定: 要修正" as required by review-v1.
+    on:
+      pass: push
+      revise: {to: fix, loop: repair}
+  push:
+    type: system
+    action: push
+    on: {ok: draft}
+  draft:
+    type: system
+    action: draft-pr
+    on: {ok: succeeded}

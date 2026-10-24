@@ -78,8 +78,12 @@ rabi remove task/auth
 | `rabi repo list` | 登録済み・検出されたリポジトリの一覧 |
 | `rabi repo show` | リポジトリを確認 |
 | `rabi repo forget` | 登録だけを削除 |
-| `rabi trust` | フックの信頼設定 |
-| `rabi trust add` | フックを表示し、確認プロンプトなしで信頼を付与 |
+| `rabi workflow` | ワークフロー定義の操作 |
+| `rabi workflow list` | 組み込み・リポジトリ定義の一覧 |
+| `rabi workflow show` | YAML と解決済みの agent 設定を表示 |
+| `rabi workflow check` | 定義を実行せずに検証 |
+| `rabi trust` | フック・ワークフロー実行の信頼設定 |
+| `rabi trust add` | フック・ワークフローを表示し、確認プロンプトなしで信頼を付与 |
 | `rabi trust remove` | 信頼を取り消す |
 | `rabi trust list` | 信頼済みの Git 共通ディレクトリの一覧 |
 | `rabi config` | ユーザー設定の操作 |
@@ -112,13 +116,17 @@ rabi remove task/auth
 
 [JSON オブジェクトとコマンド別データ](docs/json.md)、[終了コードと復旧](docs/exit-codes.md)を参照してください。
 
+## ワークフロー定義
+
+`rabi workflow list`、`rabi workflow show NAME`、`rabi workflow check [NAME]` は組み込みの `default` と `.rabi/workflows/<name>.yaml` を、実行せず信頼も要求せずに確認します。`-R` 指定時は選択したプライマリ、それ以外は呼び出し元のチェックアウトから読みます。`rabi trust add` はフックとともにリポジトリのワークフローを列挙し、同じリポジトリ実行信頼を付与します。[ワークフロー定義](docs/workflows.md)を参照してください。
+
 ## 設定
 
 `rabi config` で `workspace-root`、`clone-root`、`discover-ghq`、`sync.strategy`、`sync.rewrite-published` を管理します。`-R/--repo REF` はパス、登録済みの名前、検出された名前でリポジトリを選びます。[設定・パス・リポジトリ登録](docs/configuration.md)を参照してください。
 
 ## フックと信頼
 
-リポジトリの `.rabi.toml` に setup・pre-remove フックを定義します。`.worktreeinclude` はプライマリからコピーする無視ファイルを選びます。`rabi trust add` で信頼を付与する前にフックを確認してください。信頼は Git 共通ディレクトリのパスに付与され、同じパスに clone し直しても取り消すまで有効です。[フック・信頼・セットアップの再試行](docs/hooks.md)を参照してください。
+リポジトリの `.rabi.toml` に setup・pre-remove フックを定義します。`.worktreeinclude` はプライマリからコピーする無視ファイルを選びます。`rabi trust add` で信頼を付与する前にフックとワークフロー定義を確認してください。信頼は Git 共通ディレクトリのパスに付与され、同じパスに clone し直しても取り消すまで有効です。[フック・信頼・セットアップの再試行](docs/hooks.md)を参照してください。
 
 ## FAQ
 
