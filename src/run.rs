@@ -57,6 +57,9 @@ pub(crate) struct Record {
     pub steps_started: u64,
     pub loops: BTreeMap<String, Loop>,
     pub workspace: Workspace,
+    /// Commit resolved from allocation's normalized base; older runs omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
     pub pr: Option<crate::metadata::WorktreeLink>,
     pub stop_reason: Option<StopReason>,
     pub started_at: String,
@@ -126,6 +129,7 @@ impl Record {
                 .map(|(name, max)| (name.clone(), Loop { used: 0, max: *max }))
                 .collect(),
             workspace,
+            base: None,
             pr: None,
             stop_reason: None,
             started_at: crate::metadata::iso_now(),
@@ -376,6 +380,7 @@ mod tests {
                 path: "/workspaces/topic".into(),
                 branch: Some("topic".into()),
             },
+            base: None,
             pr: None,
             stop_reason: None,
             started_at: crate::metadata::iso_now(),

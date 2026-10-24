@@ -316,6 +316,14 @@ impl Engine<'_> {
                 self.prepared = true;
                 // Retain the allocated workspace even when setup failed.
                 run::save(&self.context.git_root, record)?;
+                let base = allocation.source["base"]
+                    .as_str()
+                    .ok_or_else(|| Error::msg("Allocation did not return a base"))?;
+                record.base = Some(git::output(
+                    &["rev-parse", "--verify", &format!("{base}^{{commit}}")],
+                    Some(&self.context.source_checkout),
+                    true,
+                )?);
                 if allocation.setup.failed() || allocation.metadata_error.is_some() {
                     return Ok(Err(reason(
                         "operation_failed",
@@ -413,26 +421,43 @@ impl Engine<'_> {
                     ),
                 };
                 let merge_base = git::output(
-                    &["merge-base", self.request.base, "HEAD"],
+                    &[
+                        "merge-base",
+                        record
+                            .base
+                            .as_deref()
+                            .ok_or_else(|| Error::msg("Run base is missing"))?,
+                        "HEAD",
+                    ],
                     Some(workspace),
                     true,
                 )?;
-                let diff = git::output(
-                    &["diff", &format!("{merge_base}...HEAD")],
-                    Some(workspace),
-                    false,
-                )?;
+                let diff = git::output(&["diff", &merge_base, "--"], Some(workspace), false)?;
                 let mut prompt = format!(
                     "{instruction}\n\n# Task\n{}\n\n# Diff\n{diff}\n",
                     self.request.task
                 );
+                let untracked = git::output(
+                    &["ls-files", "--others", "--exclude-standard", "-z"],
+                    Some(workspace),
+                    false,
+                )?;
+                if !untracked.is_empty() {
+                    prompt.push_str("\n# Untracked paths\n");
+                    for path in untracked.split('\0').filter(|path| !path.is_empty()) {
+                        prompt.push_str(&crate::output::visible_text(path));
+                        prompt.push('\n');
+                    }
+                }
                 if matches!(mode, workflow::Mode::ReadOnly) {
                     prompt.push_str("\nRead only: do not edit files.\n");
                 }
-                if *output == Output::ReviewV1 || session.is_some() {
+                if *output == Output::ReviewV1
+                    || (matches!(mode, workflow::Mode::Edit) && !self.checks.is_empty())
+                {
                     prompt.push_str(&format!("\n# Latest checks\n{}\n", self.checks));
                 }
-                if session.is_some() {
+                if matches!(mode, workflow::Mode::Edit) {
                     if let Some(review) = &self.review {
                         prompt.push_str(&format!("\n# Latest review\n{review}\n"));
                     }

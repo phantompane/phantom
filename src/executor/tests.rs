@@ -34,7 +34,7 @@ case "$prompt" in
         case "$RABI_TEST_CASE" in
             verdict) printf 'No verdict here\n' > "$answer" ;;
             shared_limit) printf 'Review issue.\n判定: 要修正\n' > "$answer" ;;
-            review_repair) if [ ! -f "$root/reviewed" ]; then
+            review_repair|fresh_fix) if [ ! -f "$root/reviewed" ]; then
                 touch "$root/reviewed"
                 printf 'Please repair the review issue.\n判定: 要修正\n' > "$answer"
             else printf '判定: 問題なし\n\n' > "$answer"; fi ;;
@@ -42,6 +42,12 @@ case "$prompt" in
         esac ;;
     *)
         case "$RABI_TEST_CASE" in
+            dirty_diff)
+                printf 'working-tree-only\n' > tracked.txt
+                printf 'index-only\n' > staged.txt
+                git add staged.txt
+                printf 'untracked-content-not-for-prompt\n' > new-only.txt
+                printf 'ignored-content-not-for-prompt\n' > ignored.txt ;;
             dirty|allowed) printf 'uncommitted\n' > loose.txt ;;
             ignored) printf 'ignored\n' > ignored.txt ;;
             *) printf '%s\n' "$count" >> change.txt
@@ -111,6 +117,18 @@ fn scenario(name: &str) {
 #[test]
 fn immediate_pass_and_records() {
     scenario("pass");
+}
+#[test]
+fn regression_head_base_keeps_implementation_diff() {
+    scenario("base_head");
+}
+#[test]
+fn regression_allowed_dirty_changes_reach_next_agent() {
+    scenario("dirty_diff");
+}
+#[test]
+fn regression_fresh_repairs_receive_checks_and_review() {
+    scenario("fresh_fix");
 }
 #[test]
 fn definition_commands_execute_without_cli_checks() {
@@ -249,6 +267,7 @@ fn worker() {
     git::run(&["config", "user.name", "Test"], Some(&repo)).unwrap();
     git::run(&["config", "user.email", "test@example.test"], Some(&repo)).unwrap();
     fs::write(repo.join(".gitignore"), "ignored.txt\n").unwrap();
+    fs::write(repo.join("tracked.txt"), "original\n").unwrap();
     if case.starts_with("setup_") {
         fs::write(
             repo.join(".rabi.toml"),
@@ -262,6 +281,7 @@ fn worker() {
     }
     git::run(&["add", "."], Some(&repo)).unwrap();
     git::run(&["commit", "-qm", "chore: initial"], Some(&repo)).unwrap();
+    let initial_head = git::head_commit(&repo).unwrap();
     let context = crate::context::create_at(&repo).unwrap();
     let mut yaml = workflow::DEFAULT_YAML.replace("pass: push", "pass: succeeded");
     // Keep the future system actions unreachable except in their own tests.
@@ -283,10 +303,16 @@ fn worker() {
             .into();
         }
     }
-    if case == "allowed" {
+    if matches!(case.as_str(), "allowed" | "dirty_diff") {
         // All later steps see the same permitted dirty file.
         for step in definition.steps.values_mut() {
             step.allow_dirty = true;
+        }
+    }
+    if case == "fresh_fix" {
+        if let StepKind::Agent { context, .. } = &mut definition.steps.get_mut("fix").unwrap().kind
+        {
+            *context = workflow::Context::default();
         }
     }
     if case == "max_steps" {
@@ -317,7 +343,7 @@ fn worker() {
             .insert("ok".into(), Target::Step("stopped".into()));
     }
     let checks: Vec<String> = match case.as_str() {
-        "repair" | "resume_failure" | "shared_limit" => vec![
+        "repair" | "resume_failure" | "shared_limit" | "fresh_fix" => vec![
             "test \"$(cat change.txt)\" != 1".into(),
             "echo second-command".into(),
         ],
@@ -419,7 +445,7 @@ fn worker() {
             workflow: &workflow,
             task: TASK,
             checks: &checks,
-            base: "main",
+            base: if case == "base_head" { "HEAD" } else { "main" },
             name: "topic",
         },
     );
@@ -479,7 +505,7 @@ fn worker() {
     }
     let expected = match case.as_str() {
         "pass" | "repair" | "review_repair" | "allowed" | "ignored" | "list_commands"
-        | "blank_report" => None,
+        | "blank_report" | "base_head" | "dirty_diff" | "fresh_fix" => None,
         "limit" | "max_steps" | "shared_limit" => Some("limit"),
         "verdict" => Some("contract_invalid"),
         "dirty" | "check_dirty" | "setup_dirty" => Some("dirty_workspace"),
@@ -503,6 +529,45 @@ fn worker() {
         }
     );
     match case.as_str() {
+        "base_head" => {
+            assert_eq!(record.base.as_deref(), Some(initial_head.as_str()));
+            let implementation = run::load_attempt(&repo, &record.id, "implement", 2).unwrap();
+            assert_ne!(implementation.head, record.base);
+            let prompt = fs::read_to_string(dir.join("steps/004-review/prompt.md")).unwrap();
+            assert!(prompt.contains("diff --git a/change.txt b/change.txt"));
+            assert!(prompt.contains("+1"));
+            let start: Record =
+                serde_json::from_slice(&fs::read(root.join("call-1.run.json")).unwrap()).unwrap();
+            assert_eq!(start.base, record.base);
+        }
+        "dirty_diff" => {
+            let prompt = fs::read_to_string(dir.join("steps/004-review/prompt.md")).unwrap();
+            assert!(prompt.contains("diff --git a/tracked.txt b/tracked.txt"));
+            assert!(prompt.contains("+working-tree-only"));
+            assert!(prompt.contains("+index-only"));
+            assert!(prompt.contains("# Untracked paths\nnew-only.txt\n"));
+            assert!(!prompt.contains("untracked-content-not-for-prompt"));
+            assert!(!prompt.contains("ignored.txt"));
+            assert!(!prompt.contains("ignored-content-not-for-prompt"));
+        }
+        "fresh_fix" => {
+            assert_eq!(record.loops["repair"].used, 2);
+            for (call, number) in [(2, 4), (4, 7)] {
+                let args = fs::read_to_string(root.join(format!("call-{call}.args"))).unwrap();
+                assert!(!args.lines().any(|arg| arg == "resume"));
+                let prompt = fs::read_to_string(root.join(format!("call-{call}.prompt"))).unwrap();
+                assert!(prompt.contains("# Latest checks\nCommand:"));
+                assert!(prompt.contains(if call == 2 { "Exit: 1" } else { "Exit: 0" }));
+                let fix = run::load_attempt(&repo, &record.id, "fix", number).unwrap();
+                assert_eq!(fix.agent.unwrap().continued_from, None);
+                if call == 4 {
+                    assert!(prompt.contains("# Latest review\nPlease repair the review issue."));
+                }
+            }
+            let initial = fs::read_to_string(root.join("call-1.prompt")).unwrap();
+            assert!(!initial.contains("# Latest checks"));
+            assert!(!initial.contains("# Latest review"));
+        }
         "pass" | "ignored" | "allowed" => {
             assert_eq!(record.steps_started, 4);
             assert_eq!(record.loops["repair"].used, 0);
