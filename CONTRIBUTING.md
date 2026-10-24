@@ -136,7 +136,7 @@ To release a new version of rabi:
    cargo update -p rabi --precise <version>
    ```
 
-   Title the pull request `chore(version): vX.Y.Z`, for example `chore(version): v7.0.0-alpha.11`. `.github/workflows/tag-on-merge.yml` creates that git tag when the pull request merges into `main`. `ci.yml` and `release-compile.yml` do not bump the version.
+   Title the pull request `chore(version): vX.Y.Z`, for example `chore(version): v7.0.0`. `.github/workflows/tag-on-merge.yml` creates that git tag when the pull request merges into `main`. `ci.yml` and `release-compile.yml` do not bump the version.
 
 2. **Review and merge the version pull request**
    - Confirm `Cargo.toml` and `Cargo.lock` show the same version

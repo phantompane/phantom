@@ -63,17 +63,11 @@ mod tests {
 
     #[test]
     fn version_line_marks_the_rust_build() {
+        assert_eq!(format_version("7.0.0", None), "rabi v7.0.0+rust");
         assert_eq!(
-            format_version("7.0.0-alpha.11", None),
-            "rabi v7.0.0-alpha.11+rust"
+            format_version("7.0.0", Some("abc1234")),
+            "rabi v7.0.0+rust (abc1234)"
         );
-        assert_eq!(
-            format_version("7.0.0-alpha.11", Some("abc1234")),
-            "rabi v7.0.0-alpha.11+rust (abc1234)"
-        );
-        assert_ne!(
-            format_version("7.0.0-alpha.11", None),
-            "rabi v7.0.0-alpha.11"
-        );
+        assert_ne!(format_version("7.0.0", None), "rabi v7.0.0");
     }
 }
