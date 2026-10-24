@@ -73,16 +73,7 @@ impl Engine<'_> {
         // gh's create contract is a single PR URL. Extra text, multiple URLs or
         // malformed responses are undeterminable, even when the process exits 0.
         let output = fs::read_to_string(dir.join("stdout.log")).map_err(io)?;
-        let url = output.trim();
-        let link = crate::metadata::parse_link(url)?;
-        if crate::metadata::link_target(url).map(|(kind, _)| kind) != Some("pull")
-            || link.number.is_none()
-            || link.url.is_none()
-        {
-            return Err(Error::msg(
-                "Ambiguous gh pr create response: expected one PR URL",
-            ));
-        }
+        let link = created_pr_link(&output, &repo)?;
         record.pr = Some(link.clone());
         // Preserve the known external result before updating the workspace link.
         run::save(&self.context.git_root, record)?;
@@ -118,6 +109,54 @@ impl Engine<'_> {
         format!("## Summary\n\nTask:\n\n{}\nFinal agent report:\n\n{}\n## Testing\n\n{}\n{}\nUnverified items: consult the agent report and review responses above; rabi does not infer coverage.\n\n## Risk\n\nnot assessed. Human assessment is required; this PR remains draft.\n\n## How to revert\n\nAfter merging, revert the PR's commits with `git revert` (use `-m 1` for a merge commit), then run the checks above. Reverting code does not undo external effects from agents, checks or hooks, or remove the published branch/PR. Review those effects manually.\n\nRun: {}\n", quote(self.request.task), quote(&self.report),
             if self.checks.is_empty() { "Checks: not run.\n".into() } else { quote(&self.checks) }, reviews, record.id)
     }
+}
+
+fn created_pr_link(output: &str, repo: &str) -> Result<crate::metadata::WorktreeLink> {
+    let invalid = || {
+        Error::msg(
+            "Ambiguous gh pr create response: expected one PR URL for the selected repository",
+        )
+    };
+    let url = output.trim();
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .ok_or_else(invalid)?;
+    let (repository, number) = rest.rsplit_once("/pull/").ok_or_else(invalid)?;
+    let parts: Vec<_> = repository.split('/').collect();
+    // Match gh --repo's HOST/OWNER/REPO identity and an exact PR path. Do not
+    // accept credentials, empty authorities, extra path segments or URL suffixes.
+    if parts.len() != 3
+        || !parts[0].split('.').all(|label| {
+            !label.is_empty()
+                && label.starts_with(|c: char| c.is_ascii_alphanumeric())
+                && label.ends_with(|c: char| c.is_ascii_alphanumeric())
+                && label
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || c == b'-')
+        })
+        || !parts[1..].iter().all(|part| {
+            !part.is_empty()
+                && !matches!(*part, "." | "..")
+                && part
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+        })
+        || !repository.eq_ignore_ascii_case(repo)
+        || number.is_empty()
+        || !number.bytes().all(|c| c.is_ascii_digit())
+    {
+        return Err(invalid());
+    }
+    let number = number
+        .parse::<u64>()
+        .ok()
+        .filter(|n| *n > 0)
+        .ok_or_else(invalid)?;
+    Ok(crate::metadata::WorktreeLink {
+        number: Some(number),
+        url: Some(url.into()),
+    })
 }
 
 fn task_title(task: &str, name: &str) -> String {
@@ -178,6 +217,60 @@ fn task_title(task: &str, name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn created_pr_url_requires_selected_repository_authority_and_exact_path() {
+        for url in [
+            "https:///pull/42",
+            "https:///test/repo/pull/42",
+            "https://github.com/pull/42",
+            "https://github.com/test/repo/extra/pull/42",
+            "https://other.example/test/repo/pull/42",
+            "https://github.com/other/repo/pull/42",
+            "https://github.com/test/other/pull/42",
+            "https://github.com/test/repo/issues/42",
+            "https://user@github.com/test/repo/pull/42",
+            "https://github.com\\evil/test/repo/pull/42",
+            "https://github.com/test/repo/pull/42/",
+            "https://github.com/test/repo/pull/42?x=1",
+            "https://github.com/test/repo/pull/42#fragment",
+            "https://github.com/test/repo/pull/0",
+            "https://github.com/test/repo/pull/+42",
+            "https://github.com/test/repo/pull/18446744073709551616",
+            "https://github.com/test/repo/pull/",
+            "42",
+            "",
+            "created https://github.com/test/repo/pull/42",
+            "https://github.com/test/repo/pull/42\nhttps://github.com/test/repo/pull/43",
+        ] {
+            assert!(
+                created_pr_link(url, "github.com/test/repo").is_err(),
+                "{url}"
+            );
+        }
+        for (url, repo) in [
+            (
+                "https://github.com/test/repo/pull/42\n",
+                "github.com/test/repo",
+            ),
+            (
+                "http://ghe.example/Owner/Repo/pull/42",
+                "ghe.example/owner/repo",
+            ),
+        ] {
+            let link = created_pr_link(url, repo).unwrap();
+            assert_eq!(link.number, Some(42));
+            assert_eq!(link.url.as_deref(), Some(url.trim()));
+        }
+        for repo in [
+            "/test/repo",
+            "-host/test/repo",
+            "host//repo",
+            "host/test/..",
+        ] {
+            assert!(created_pr_link(&format!("https://{repo}/pull/42"), repo).is_err());
+        }
+    }
+
     #[test]
     fn title_uses_first_heading_or_workspace_fallback() {
         assert_eq!(

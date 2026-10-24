@@ -566,11 +566,9 @@ impl Engine<'_> {
                         },
                     );
                 }
-                if matches!(mode, workflow::Mode::Edit) {
-                    self.report = answer.clone();
-                    if self.review.is_some() {
-                        self.feedback.push_str(&format!("\nFix response ({}):\n{answer}\n", attempt.step));
-                    }
+                self.report = answer.clone();
+                if matches!(mode, workflow::Mode::Edit) && self.review.is_some() {
+                    self.feedback.push_str(&format!("\nFix response ({}):\n{answer}\n", attempt.step));
                 }
                 Ok(Ok("ok"))
             }

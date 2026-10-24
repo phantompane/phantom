@@ -32,9 +32,15 @@ pub(crate) fn push_branch(cwd: &Path, branch: &str) -> Result<process::Captured>
     process::raw_with_env(
         "git",
         &[
+            // Git applies the remote's mirror setting after parsing push flags,
+            // so --no-mirror alone cannot override remote.origin.mirror=true.
+            "-c",
+            "remote.origin.mirror=false",
             "push",
             "--porcelain",
             "--no-force",
+            "--no-follow-tags",
+            "--recurse-submodules=no",
             "--set-upstream",
             "origin",
             &format!("{reference}:{reference}"),

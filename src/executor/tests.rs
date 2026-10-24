@@ -30,6 +30,7 @@ fi
 printf 'diagnostic\n' >&2
 [ "$RABI_TEST_CASE" != nonzero ] || exit 9
 case "$prompt" in
+    SUMMARY*) printf 'Final summary.\nVerification gap: integration checks were not run.\n' > "$answer" ;;
     REVIEW*)
         case "$RABI_TEST_CASE" in
             verdict) printf 'No verdict here\n' > "$answer" ;;
@@ -212,6 +213,43 @@ fn failed_gh_stops_without_resend() {
 }
 
 #[test]
+fn read_only_final_report_replaces_implementation_report() {
+    scenario("draft_summary");
+}
+
+#[test]
+fn read_only_report_without_an_edit_step_is_published() {
+    scenario("draft_summary_only");
+}
+
+#[test]
+fn malformed_or_foreign_pr_urls_stop_without_resend() {
+    for case in ["draft_missing_host", "draft_wrong_repo", "draft_extra_path"] {
+        scenario(case);
+    }
+}
+
+#[test]
+fn push_follow_tags_does_not_publish_tags() {
+    scenario("push_follow_tags");
+}
+
+#[test]
+fn push_mirror_does_not_publish_other_refs() {
+    scenario("push_mirror");
+}
+
+#[test]
+fn push_refspec_and_default_do_not_publish_other_branches() {
+    scenario("push_refspec");
+}
+
+#[test]
+fn push_on_demand_does_not_publish_submodule_branches() {
+    scenario("push_recurse");
+}
+
+#[test]
 fn unsupported_provider_preflight() {
     scenario("unsupported");
 }
@@ -268,11 +306,105 @@ fn inspection(yaml: String) -> workflow::Inspection {
     }
 }
 
+fn push_with_unpublished_submodule(root: &Path) {
+    let sub = root.join("sub");
+    let sub_remote = root.join("sub-origin.git");
+    let repo = root.join("repo");
+    let remote = root.join("origin.git");
+    for path in [&repo, &sub, &remote, &sub_remote] {
+        fs::create_dir(path).unwrap();
+        let args = if path.extension().is_some_and(|ext| ext == "git") {
+            vec!["init", "--bare", "--template=", "-b", "main"]
+        } else {
+            vec!["init", "--template=", "-b", "main"]
+        };
+        git::run(&args, Some(path)).unwrap();
+        crate::test_git::configure_repo(path);
+        git::run(&["config", "user.name", "Test"], Some(path)).unwrap();
+        git::run(&["config", "user.email", "test@example.test"], Some(path)).unwrap();
+    }
+    git::run(
+        &["commit", "--allow-empty", "-qm", "chore: initial"],
+        Some(&sub),
+    )
+    .unwrap();
+    git::run(
+        &["remote", "add", "origin", sub_remote.to_str().unwrap()],
+        Some(&sub),
+    )
+    .unwrap();
+    git::run(&["push", "-u", "origin", "main"], Some(&sub)).unwrap();
+    let published_sub_head = git::head_commit(&sub).unwrap();
+    git::run(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_remote.to_str().unwrap(),
+            "module",
+        ],
+        Some(&repo),
+    )
+    .unwrap();
+    git::run(&["add", "."], Some(&repo)).unwrap();
+    git::run(&["commit", "-qm", "chore: add submodule"], Some(&repo)).unwrap();
+    git::run(
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+        Some(&repo),
+    )
+    .unwrap();
+    // Seed the superproject remote so recursive push examines a gitlink update.
+    git::run(&["push", "-u", "origin", "main"], Some(&repo)).unwrap();
+    let module = repo.join("module");
+    // The populated submodule has a new commit absent from its actual remote.
+    git::run(
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.test",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "feat: private submodule change",
+        ],
+        Some(&module),
+    )
+    .unwrap();
+    git::run(&["add", "."], Some(&repo)).unwrap();
+    git::run(&["commit", "-qm", "feat: update submodule"], Some(&repo)).unwrap();
+    git::run(
+        &["config", "push.recurseSubmodules", "on-demand"],
+        Some(&repo),
+    )
+    .unwrap();
+    let result = git::push_branch(&repo, "main").unwrap();
+    assert_eq!(result.code, 0, "{}\n{}", result.stdout, result.stderr);
+    assert_eq!(
+        git::head_commit(&remote).unwrap(),
+        git::head_commit(&repo).unwrap()
+    );
+    assert_eq!(
+        git::output(
+            &["for-each-ref", "--format=%(refname) %(objectname)"],
+            Some(&sub_remote),
+            true
+        )
+        .unwrap(),
+        format!("refs/heads/main {published_sub_head}")
+    );
+}
+
 #[test]
 #[ignore = "invoked in an isolated process by scenario tests"]
 fn worker() {
     let root = PathBuf::from(std::env::var_os("RABI_TEST_ROOT").unwrap());
     let case = std::env::var("RABI_TEST_CASE").unwrap();
+    if case == "push_recurse" {
+        push_with_unpublished_submodule(&root);
+        return;
+    }
     let repo = root.join("repo");
     fs::create_dir(&repo).unwrap();
     git::run(&["init", "--template=", "-b", "main"], Some(&repo)).unwrap();
@@ -301,7 +433,7 @@ fn worker() {
     git::run(&["add", "."], Some(&repo)).unwrap();
     git::run(&["commit", "-qm", "docs: review guidance"], Some(&repo)).unwrap();
     let initial_head = git::head_commit(&repo).unwrap_or(initial_head);
-    if case == "push" || case == "push_failure" {
+    if case.starts_with("push") {
         let remote = root.join("origin.git");
         git::run(
             &["init", "--bare", "--template=", remote.to_str().unwrap()],
@@ -313,6 +445,31 @@ fn worker() {
             Some(&repo),
         )
         .unwrap();
+        if matches!(
+            case.as_str(),
+            "push_follow_tags" | "push_mirror" | "push_refspec"
+        ) {
+            // A remote-only ref also proves the push does not mirror deletions.
+            git::run(&["push", "origin", "main:retained"], Some(&repo)).unwrap();
+            git::run(
+                &["tag", "-am", "Private release", "private-tag"],
+                Some(&repo),
+            )
+            .unwrap();
+            git::run(&["branch", "private-branch"], Some(&repo)).unwrap();
+            git::run(&["config", "push.followTags", "true"], Some(&repo)).unwrap();
+            if case == "push_mirror" {
+                git::run(&["config", "remote.origin.mirror", "true"], Some(&repo)).unwrap();
+            }
+            if case == "push_refspec" {
+                git::run(
+                    &["config", "remote.origin.push", "refs/heads/*:refs/heads/*"],
+                    Some(&repo),
+                )
+                .unwrap();
+                git::run(&["config", "push.default", "matching"], Some(&repo)).unwrap();
+            }
+        }
         if case == "push_failure" {
             let hook = remote.join("hooks/pre-receive");
             fs::create_dir_all(hook.parent().unwrap()).unwrap();
@@ -331,6 +488,9 @@ else
   case "$RABI_TEST_CASE" in
     draft_ambiguous) printf 'https://github.com/test/repo/pull/42\nhttps://github.com/test/repo/pull/43\n' ;;
     draft_failure) echo failed >&2; exit 9 ;;
+    draft_missing_host) printf 'https:///pull/42\n' ;;
+    draft_wrong_repo) printf 'https://github.com/other/repo/pull/42\n' ;;
+    draft_extra_path) printf 'https://github.com/test/repo/extra/pull/42\n' ;;
     *) printf 'https://github.com/test/repo/pull/42\n' ;;
   esac
 fi
@@ -339,7 +499,7 @@ fi
     let context = crate::context::create_at(&repo).unwrap();
     let mut yaml = workflow::DEFAULT_YAML.replace("pass: push", "pass: succeeded");
     // Publication is exercised only in dedicated local-remote/fake-gh tests.
-    if case == "push" || case == "push_failure" {
+    if case.starts_with("push") {
         yaml = yaml.replace("pass: succeeded", "pass: push");
     }
     if case.starts_with("draft") {
@@ -356,6 +516,31 @@ fi
             }
             .into();
         }
+    }
+    if case.starts_with("draft_summary") {
+        let mut summary = definition.steps["implement"].clone();
+        if let StepKind::Agent {
+            mode, instruction, ..
+        } = &mut summary.kind
+        {
+            *mode = workflow::Mode::ReadOnly;
+            *instruction = "SUMMARY".into();
+        }
+        summary
+            .transitions
+            .insert("ok".into(), Target::Step("draft".into()));
+        definition.steps.insert("summary".into(), summary);
+        let (previous, result) = if case == "draft_summary_only" {
+            ("prepare", "ok")
+        } else {
+            ("review", "pass")
+        };
+        definition
+            .steps
+            .get_mut(previous)
+            .unwrap()
+            .transitions
+            .insert(result.into(), Target::Step("summary".into()));
     }
     if matches!(case.as_str(), "allowed" | "dirty_diff") {
         // All later steps see the same permitted dirty file.
@@ -559,7 +744,9 @@ fi
     }
     let expected = match case.as_str() {
         "pass" | "repair" | "review_repair" | "allowed" | "ignored" | "list_commands"
-        | "blank_report" | "base_head" | "dirty_diff" | "fresh_fix" | "push" | "draft" => None,
+        | "blank_report" | "base_head" | "dirty_diff" | "fresh_fix" | "push" | "draft"
+        | "draft_summary" | "draft_summary_only" | "push_follow_tags" | "push_mirror"
+        | "push_refspec" => None,
         "limit" | "max_steps" | "shared_limit" => Some("limit"),
         "verdict" => Some("contract_invalid"),
         "dirty" | "check_dirty" | "setup_dirty" => Some("dirty_workspace"),
@@ -768,7 +955,8 @@ fi
             assert_eq!(record.steps_started, 4);
             assert_eq!(fs::read_to_string(root.join("calls")).unwrap(), "2");
         }
-        "push" | "draft" => {
+        "push" | "draft" | "draft_summary" | "draft_summary_only" | "push_follow_tags"
+        | "push_mirror" | "push_refspec" => {
             assert_eq!(record.pr.as_ref().unwrap().number, Some(42));
             let metadata = crate::metadata::load(&repo).unwrap();
             let workspace = metadata
@@ -784,10 +972,20 @@ fi
                 ["## Summary", "## Testing", "## Risk", "## How to revert"]
             );
             assert!(TASK.lines().all(|line| body.contains(&format!("> {line}"))));
-            assert!(body.contains("Implementation report."));
-            assert!(body.contains("Exit: 0"));
-            assert!(body.contains("判定: 問題なし"));
-            assert!(body.contains("reviewed SHA:"));
+            if case.starts_with("draft_summary") {
+                assert!(body.contains(
+                    "> Final summary.\n> Verification gap: integration checks were not run."
+                ));
+                assert!(!body.contains("Implementation report."));
+                assert!(!body.contains("Fix response (summary)"));
+            } else {
+                assert!(body.contains("Implementation report."));
+            }
+            if case != "draft_summary_only" {
+                assert!(body.contains("Exit: 0"));
+                assert!(body.contains("判定: 問題なし"));
+                assert!(body.contains("reviewed SHA:"));
+            }
             assert!(body.contains("not assessed"));
             assert_eq!(
                 fs::read_to_string(root.join("gh-calls")).unwrap(),
@@ -795,7 +993,7 @@ fi
             );
             let args = fs::read_to_string(root.join("gh-args")).unwrap();
             assert!(args.contains("--draft\n--repo\ngithub.com/test/repo\n--base\nmain\n--head\ntopic\n--title\nExample task\n--body-file\n"));
-            if case == "push" {
+            if case.starts_with("push") {
                 let workspace = Path::new(&record.workspace.path);
                 assert_eq!(
                     git::output(
@@ -820,9 +1018,23 @@ fi
                     .unwrap(),
                     git::head_commit(workspace).unwrap()
                 );
+                assert_eq!(
+                    git::output(
+                        &["for-each-ref", "--format=%(refname)"],
+                        Some(&root.join("origin.git")),
+                        true
+                    )
+                    .unwrap(),
+                    if case == "push" {
+                        "refs/heads/topic"
+                    } else {
+                        "refs/heads/retained\nrefs/heads/topic"
+                    }
+                );
             }
         }
-        "draft_ambiguous" | "draft_failure" => {
+        "draft_ambiguous" | "draft_failure" | "draft_missing_host" | "draft_wrong_repo"
+        | "draft_extra_path" => {
             assert!(record.pr.is_none());
             assert!(record
                 .stop_reason
@@ -833,6 +1045,10 @@ fi
                 fs::read_to_string(root.join("gh-calls")).unwrap(),
                 "create\n"
             );
+            assert!(crate::metadata::load(&repo)
+                .unwrap()
+                .values()
+                .all(|m| m.links.pr.is_none()));
         }
         "push_failure" => {
             assert!(record
