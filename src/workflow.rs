@@ -175,8 +175,6 @@ pub(crate) enum Cli {
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Action {
     Prepare,
-    Push,
-    DraftPr,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -594,11 +592,11 @@ mod tests {
         let inspected = builtin().inspect();
         assert!(inspected.valid(), "{:?}", inspected.diagnostics);
         let definition = inspected.definition.unwrap();
-        assert_eq!(definition.version, 4);
+        assert_eq!(definition.version, 5);
         assert_eq!(definition.limits.max_steps, 15);
         assert_eq!(definition.loops["repair"], 2);
-        assert_eq!(definition.steps.len(), 7);
-        assert_eq!(definition.agents().len(), 3);
+        assert_eq!(definition.steps.len(), 6);
+        assert_eq!(definition.agents().len(), 4);
         for agent in definition.agents().values() {
             assert_eq!(agent.provider, Provider::Codex);
             assert_eq!(agent.model.as_deref(), Some("gpt-6.1-sol"));

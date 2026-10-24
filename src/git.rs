@@ -26,30 +26,6 @@ pub fn run(args: &[&str], cwd: Option<&Path>) -> Result<()> {
         .map_err(repository_error)
 }
 
-/// Publish exactly the run branch and set its upstream, without force or retries.
-pub(crate) fn push_branch(cwd: &Path, branch: &str) -> Result<process::Captured> {
-    let reference = format!("refs/heads/{branch}");
-    process::raw_with_env(
-        "git",
-        &[
-            // Git applies the remote's mirror setting after parsing push flags,
-            // so --no-mirror alone cannot override remote.origin.mirror=true.
-            "-c",
-            "remote.origin.mirror=false",
-            "push",
-            "--porcelain",
-            "--no-force",
-            "--no-follow-tags",
-            "--recurse-submodules=no",
-            "--set-upstream",
-            "origin",
-            &format!("{reference}:{reference}"),
-        ],
-        Some(cwd),
-        &[("GIT_TERMINAL_PROMPT", "0")],
-    )
-}
-
 fn repository_error(error: Error) -> Error {
     if error
         .to_string()

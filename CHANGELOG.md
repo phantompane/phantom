@@ -4,15 +4,19 @@
 
 ### Added
 
-- Run trusted workflows in the foreground with `rabi run start` and inspect saved progress with `rabi run show`. Agents commit; rabi pushes without force and opens a draft PR. Review prompts include incremental rounds and prior responses; PR bodies record testing, review and unassessed risk.
+- Run trusted workflows in the foreground with `rabi run start` and inspect saved progress with `rabi run show`. Agents commit, push and open a draft PR through ordinary agent steps. Review prompts include incremental rounds and prior responses.
 
 - Inspect and validate built-in and repository YAML workflow definitions with `rabi workflow list/show/check`. `rabi trust add` lists repository workflows alongside hooks under the same execution trust.
 
 ### Changed
 
+- Remove workflow system actions `push` and `draft-pr` (unknown actions now fail validation). Default workflow version 5 ends with a fresh `publish` agent edit step. rabi passes publication facts and leaves PR body creation, pushing and PR creation to the agent, without verification or URL extraction/recording. Existing run schema 1 remains readable.
+
 - Codex workflow edit steps, including continued sessions, run in auto mode (`--approve-for-me`) so agents can commit in linked workspaces. Read-only steps keep `--sandbox read-only`.
 
 ### Fixed
+
+- End every review prompt with the mandatory exact verdict-line instruction, including when no findings are reported.
 
 - Display multiline run stop reasons with indented continuation lines, preserving control-character escaping and the original JSON message.
 

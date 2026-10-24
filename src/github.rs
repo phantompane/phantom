@@ -140,12 +140,6 @@ struct RepoIdentity {
     host: String,
 }
 
-/// Resolve gh's selected repository once; callers pass this identity explicitly.
-pub(crate) fn repository_name(cwd: &Path) -> Result<String> {
-    let repo = repo_info(cwd)?;
-    Ok(format!("{}/{}/{}", repo.host, repo.owner, repo.name))
-}
-
 fn repo_info(cwd: &Path) -> Result<RepoIdentity> {
     let captured = process::raw(
         "gh",

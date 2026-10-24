@@ -118,7 +118,7 @@ fn execute_created(
         reviews: BTreeMap::new(),
         feedback: String::new(),
         report: String::new(),
-        pr_base: None,
+        base_branch: None,
     };
     let mut next = definition.start.clone();
     loop {
@@ -277,13 +277,14 @@ struct Engine<'a> {
     reviews: BTreeMap<String, Review>,
     feedback: String,
     report: String,
-    pr_base: Option<String>,
+    base_branch: Option<String>,
 }
 
 struct Review {
     round: u64,
     head: String,
     base: String,
+    verdict: String,
 }
 
 type StepResult = std::result::Result<&'static str, StopReason>;
@@ -357,7 +358,8 @@ impl Engine<'_> {
                 let base = allocation.source["base"]
                     .as_str()
                     .ok_or_else(|| Error::msg("Allocation did not return a base"))?;
-                self.pr_base = base.strip_prefix("refs/heads/")
+                self.base_branch = base
+                    .strip_prefix("refs/heads/")
                     .or_else(|| base.strip_prefix("refs/remotes/origin/"))
                     .map(str::to_owned);
                 record.base = Some(git::output(
@@ -375,14 +377,6 @@ impl Engine<'_> {
                     )));
                 }
                 Ok(Ok("ok"))
-            }
-            StepKind::System { action: Action::Push } => {
-                self.push(record, attempt, dir).map(|()| Ok("ok"))
-                    .map_err(|error| Error::msg(format!("Push failed or outcome unknown; inspect origin before any manual retry: {error}")))
-            }
-            StepKind::System { action: Action::DraftPr } => {
-                self.draft_pr(record, attempt, dir).map(|()| Ok("ok"))
-                    .map_err(|error| Error::msg(format!("Draft PR failed or outcome unknown; inspect GitHub before any manual retry: {error}")))
             }
             StepKind::Check { commands } => {
                 let workspace = self.workspace(record)?;
@@ -473,8 +467,12 @@ impl Engine<'_> {
                 let head = git::output(&["rev-parse", "HEAD"], Some(workspace), true)?;
                 let previous = self.reviews.get(&attempt.step);
                 let diff_base = if *output == Output::ReviewV1 {
-                    previous.map(|review| review.head.as_str()).unwrap_or(&merge_base)
-                } else { &merge_base };
+                    previous
+                        .map(|review| review.head.as_str())
+                        .unwrap_or(&merge_base)
+                } else {
+                    &merge_base
+                };
                 let diff = if *output == Output::ReviewV1 && !step.allow_dirty {
                     git::output(&["diff", diff_base, &head, "--"], Some(workspace), false)?
                 } else {
@@ -486,20 +484,33 @@ impl Engine<'_> {
                 );
                 if *output == Output::ReviewV1 {
                     let round = previous.map(|review| review.round + 1).unwrap_or(1);
-                    let limit = step.transitions.get("revise").and_then(|target| match target {
-                        Target::Loop { name, .. } => self.definition.loops.get(name).map(|max| *max as u64 + 1),
-                        _ => None,
-                    });
-                    let merge_base = previous.map(|review| review.base.as_str()).unwrap_or(&merge_base);
+                    let limit = step
+                        .transitions
+                        .get("revise")
+                        .and_then(|target| match target {
+                            Target::Loop { name, .. } => {
+                                self.definition.loops.get(name).map(|max| *max as u64 + 1)
+                            }
+                            _ => None,
+                        });
+                    let merge_base = previous
+                        .map(|review| review.base.as_str())
+                        .unwrap_or(&merge_base);
                     prompt.push_str(&format!("\n# Review round {round} / {}\nInitial merge-base: {merge_base}\nReviewed HEAD: {head}\nReview command: git diff {diff_base} {head}\n", limit.map(|n| n.to_string()).unwrap_or_else(|| format!("max_steps {}", self.definition.limits.max_steps))));
                     for name in ["REVIEW.md", "AGENTS.md", "CLAUDE.md"] {
                         let path = workspace.join(name);
                         if path.is_file() {
-                            prompt.push_str(&format!("Read {} when reviewing.\n", crate::output::visible_text(&path.to_string_lossy())));
+                            prompt.push_str(&format!(
+                                "Read {} when reviewing.\n",
+                                crate::output::visible_text(&path.to_string_lossy())
+                            ));
                         }
                     }
                     prompt.push_str(REVIEW_INSTRUCTION);
-                    prompt.push_str(&format!("\n# Prior review answers and fix responses\n{}\n", self.feedback));
+                    prompt.push_str(&format!(
+                        "\n# Prior review answers and fix responses\n{}\n",
+                        self.feedback
+                    ));
                 }
                 let untracked = git::output(
                     &["ls-files", "--others", "--exclude-standard", "-z"],
@@ -526,6 +537,36 @@ impl Engine<'_> {
                         prompt.push_str(&format!("\n# Latest review\n{review}\n"));
                     }
                 }
+                prompt.push_str(&format!("\n# Run facts\nRun branch: {}\nBase branch: {}\nRequested base ref: {}\nRemote: origin\n",
+                    record.workspace.branch.as_deref().unwrap_or("unknown"),
+                    self.base_branch.as_deref().unwrap_or("unknown (resolve the requested base ref)"),
+                    self.request.base));
+                if matches!(mode, workflow::Mode::Edit) {
+                    prompt.push_str(&format!(
+                        "\n# Latest agent report\n{}\n\n# Review outcomes\n",
+                        self.report
+                    ));
+                    if self.reviews.is_empty() {
+                        prompt.push_str("No reviews performed.\n");
+                    }
+                    for (id, review) in &self.reviews {
+                        prompt.push_str(&format!(
+                            "Review {id}: verdict {}, reviewed HEAD {}, rounds {}\n",
+                            review.verdict, review.head, review.round
+                        ));
+                    }
+                    prompt.push_str(&format!(
+                        "\n# Review history and fix responses\n{}\n",
+                        self.feedback
+                    ));
+                    if self.checks.is_empty() {
+                        prompt.push_str("\nChecks not run.\n");
+                    }
+                }
+                // Keep the output contract last, after task, diff and all context.
+                if *output == Output::ReviewV1 {
+                    prompt.push_str(VERDICT_INSTRUCTION);
+                }
                 fs::write(dir.join("prompt.md"), prompt).map_err(io)?;
                 let mut command = provider::codex(&config, mode, workspace, dir, session)?;
                 let code = logged(&mut command, dir)?;
@@ -545,10 +586,35 @@ impl Engine<'_> {
                 session?;
                 let answer = fs::read_to_string(dir.join("answer.md")).map_err(io)?;
                 if *output == Output::ReviewV1 {
-                    let round = self.reviews.get(&attempt.step).map(|review| review.round + 1).unwrap_or(1);
-                    let base = self.reviews.get(&attempt.step).map(|review| review.base.clone()).unwrap_or(merge_base);
-                    self.reviews.insert(attempt.step.clone(), Review { round, head: head.clone(), base });
-                    self.feedback.push_str(&format!("\nReview {} round {round} at {head}:\n{answer}\n", attempt.step));
+                    let round = self
+                        .reviews
+                        .get(&attempt.step)
+                        .map(|review| review.round + 1)
+                        .unwrap_or(1);
+                    let base = self
+                        .reviews
+                        .get(&attempt.step)
+                        .map(|review| review.base.clone())
+                        .unwrap_or(merge_base);
+                    self.reviews.insert(
+                        attempt.step.clone(),
+                        Review {
+                            round,
+                            head: head.clone(),
+                            base,
+                            verdict: answer
+                                .lines()
+                                .rev()
+                                .find(|line| !line.trim().is_empty())
+                                .unwrap_or("")
+                                .trim()
+                                .into(),
+                        },
+                    );
+                    self.feedback.push_str(&format!(
+                        "\nReview {} round {round} at {head}:\n{answer}\n",
+                        attempt.step
+                    ));
                     self.review = Some(answer.clone());
                     return Ok(
                         match answer
@@ -568,7 +634,8 @@ impl Engine<'_> {
                 }
                 self.report = answer.clone();
                 if matches!(mode, workflow::Mode::Edit) && self.review.is_some() {
-                    self.feedback.push_str(&format!("\nFix response ({}):\n{answer}\n", attempt.step));
+                    self.feedback
+                        .push_str(&format!("\nFix response ({}):\n{answer}\n", attempt.step));
                 }
                 Ok(Ok("ok"))
             }
@@ -650,6 +717,7 @@ Unresolved Important findings require the final line 判定: 要修正.
 Only Nit/Pre-existing or no findings require the final line 判定: 問題なし.
 ";
 
-mod external;
+const VERDICT_INSTRUCTION: &str = "\nEven when there are no findings, the final line must be exactly 判定: 問題なし or 判定: 要修正.\n";
+
 #[cfg(test)]
 mod tests;

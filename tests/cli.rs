@@ -21241,15 +21241,15 @@ fn workflow_inspection_lists_sources_and_shows_the_complete_json_contract_withou
         assert_eq!(workflow["source"], source);
         assert_eq!(workflow["path"], path_value);
         assert_eq!(workflow["schemaVersion"], 1);
-        assert_eq!(workflow["version"], 4);
+        assert_eq!(workflow["version"], 5);
         assert_eq!(workflow["definition"]["start"], "prepare");
-        for name in ["implement", "fix", "review"] {
+        for name in ["implement", "fix", "review", "publish"] {
             assert_eq!(
                 workflow["agents"][name],
                 serde_json::json!({"provider":"codex","model":"gpt-6.1-sol","effort":"high"})
             );
         }
-        assert_eq!(workflow["agents"].as_object().unwrap().len(), 3);
+        assert_eq!(workflow["agents"].as_object().unwrap().len(), 4);
         let checked = repo
             .command(env!("CARGO_BIN_EXE_rabi"), &["workflow", "check", name])
             .env("RABI_OUTPUT", "json")
@@ -21265,7 +21265,7 @@ fn workflow_inspection_lists_sources_and_shows_the_complete_json_contract_withou
     }
     let shown = repo.rabi(&["workflow", "show", "custom"]);
     let shown = text(&shown.stdout);
-    assert!(shown.contains("Workflow: custom (repository), version 4"));
+    assert!(shown.contains("Workflow: custom (repository), version 5"));
     assert!(shown.contains("name: embedded-name"));
     assert!(shown.contains("Agent implement:"));
     assert!(!repo.repo.join("hook-ran").exists());
@@ -21626,22 +21626,10 @@ fn workflow_check_diagnoses_non_regular_files_and_accepts_regular_file_symlinks(
     assert_eq!(fs::read_to_string(external).unwrap(), DEFAULT_WORKFLOW);
 }
 
-fn run_tools(repo: &Repo, gh_result: &str) -> String {
-    let path = gh_path(
-        repo,
-        &format!(
-            r#"#!/bin/sh
-set -eu
-if [ "$1 $2" = 'repo view' ]; then
-    printf '{{"url":"https://github.com/example/repo","owner":{{"login":"example"}},"name":"repo"}}\n'
-else
-    printf 'create\n' >> "$RUN_TEST_ROOT/gh-calls"
-    printf '%s\n' "$@" > "$RUN_TEST_ROOT/gh-args"
-    {gh_result}
-fi
-"#
-        ),
-    );
+fn run_tools(repo: &Repo) -> String {
+    // Any rabi-side publication or PR inspection is a regression. The fake agent
+    // reports publication without running Git/gh; rabi advances on its result.
+    let path = gh_path(repo, "#!/bin/sh\necho unexpected-gh-call >&2\nexit 99\n");
     let codex = repo.root.join("bin/codex");
     fs::write(&codex, r#"#!/bin/sh
 set -eu
@@ -21659,6 +21647,8 @@ cat > "$RUN_TEST_ROOT/prompt"
 printf '{"type":"thread.started","thread_id":"test-thread"}\n'
 if [ "$readonly" = yes ]; then
     printf '0 actionable findings (Important: 0 / Nit: 0 / Pre-existing: 0).\n判定: 問題なし\n' > "$answer"
+elif head -n 1 "$RUN_TEST_ROOT/prompt" | command grep -q 'Publish the completed run'; then
+    printf 'Published: https://github.com/example/repo/pull/23\n' > "$answer"
 else
     printf 'implemented\n' >> change.txt
     git add change.txt
@@ -21672,27 +21662,21 @@ fi
 }
 
 #[test]
-fn run_start_end_to_end_publishes_and_show_reads_without_rewriting() {
+fn run_start_completes_agent_publish_and_show_reads_without_rewriting() {
     let repo = Repo::new();
-    let remote = repo.root.join("remote.git");
-    repo.git(&["init", "--bare", remote.to_str().unwrap()]);
-    repo.git(&["remote", "add", "origin", remote.to_str().unwrap()]);
-    repo.git(&["push", "--set-upstream", "origin", "main"]);
     fs::write(repo.repo.join("task.md"), "# Implement sample\nA task.\n").unwrap();
-    let path = run_tools(&repo, "printf 'https://github.com/example/repo/pull/23\\n'");
+    let path = run_tools(&repo);
     let started = repo
         .command(
             env!("CARGO_BIN_EXE_rabi"),
             &[
-                "-R",
-                repo.repo.to_str().unwrap(),
                 "run",
                 "start",
                 "task.md",
                 "--name",
                 "fix/example",
                 "--base",
-                "origin/main",
+                "main",
                 "--provider",
                 "codex",
                 "--model",
@@ -21717,61 +21701,37 @@ fn run_start_end_to_end_publishes_and_show_reads_without_rewriting() {
     let document = assert_envelope(&started, "run start");
     let run = &document["data"]["run"];
     assert_eq!(run["state"], "succeeded");
-    assert_eq!(run["stepsStarted"], 6);
-    assert_eq!(run["pr"]["number"], 23);
-    assert!(text(&started.stderr).contains("starting draft (6/15)"));
+    assert_eq!(run["stepsStarted"], 5);
+    assert!(run["pr"].is_null());
+    assert!(text(&started.stderr).contains("starting publish (5/15)"));
     assert!(!text(&started.stdout).contains("check-output"));
-    let workspace = Path::new(run["workspace"]["path"].as_str().unwrap());
-    let pushed = repo
-        .command(
-            "git",
-            &[
-                "--git-dir",
-                remote.to_str().unwrap(),
-                "rev-parse",
-                "refs/heads/fix/example",
-            ],
-        )
-        .output()
-        .unwrap();
-    let head = repo
-        .command(
-            "git",
-            &["-C", workspace.to_str().unwrap(), "rev-parse", "HEAD"],
-        )
-        .output()
-        .unwrap();
-    assert_eq!(pushed.stdout, head.stdout);
-    let upstream = repo
-        .command(
-            "git",
-            &[
-                "-C",
-                workspace.to_str().unwrap(),
-                "rev-parse",
-                "--abbrev-ref",
-                "@{upstream}",
-            ],
-        )
-        .output()
-        .unwrap();
-    assert_eq!(text(&upstream.stdout).trim(), "origin/fix/example");
-    let args = fs::read_to_string(repo.root.join("gh-args")).unwrap();
-    assert!(args.contains("--repo\ngithub.com/example/repo\n--base\nmain\n--head\nfix/example\n--title\nImplement sample\n"));
-    assert_eq!(
-        fs::read_to_string(repo.root.join("gh-calls")).unwrap(),
-        "create\n"
-    );
     assert!(fs::read_to_string(repo.root.join("codex-args"))
         .unwrap()
         .contains("-m\nexample-model\n"));
+    let prompt = fs::read_to_string(repo.root.join("prompt")).unwrap();
+    for expected in [
+        "Run branch: fix/example",
+        "Base branch: main",
+        "Remote: origin",
+        "DRAFT PR",
+        "check-output",
+        "verdict 判定: 問題なし",
+        "rounds 1",
+    ] {
+        assert!(prompt.contains(expected), "{prompt}");
+    }
     let shown_workspace = repo.rabi(&["show", "fix/example", "--json"]);
-    assert_eq!(
-        assert_envelope(&shown_workspace, "show")["data"]["workspace"]["links"]["pr"],
-        run["pr"]
+    assert!(
+        assert_envelope(&shown_workspace, "show")["data"]["workspace"]["links"]["pr"].is_null()
     );
     let id = run["id"].as_str().unwrap();
     let directory = Path::new(run["directory"].as_str().unwrap());
+    assert!(!directory.join("pr-body.md").exists());
+    assert!(
+        fs::read_to_string(directory.join("steps/005-publish/answer.md"))
+            .unwrap()
+            .contains("https://github.com/example/repo/pull/23")
+    );
     let original = fs::read(directory.join("run.json")).unwrap();
     let shown = repo
         .command(env!("CARGO_BIN_EXE_rabi"), &["run", "show", id, "--json"])
@@ -21782,63 +21742,26 @@ fn run_start_end_to_end_publishes_and_show_reads_without_rewriting() {
     assert_eq!(assert_envelope(&shown, "run show")["data"]["run"], *run);
     let shown = repo.rabi(&["run", "show", id]);
     assert!(shown.status.success());
-    for expected in [
-        "State: succeeded",
-        "Loop repair: 0/2",
-        "https://github.com/example/repo/pull/23",
-        "Records:",
-    ] {
+    for expected in ["State: succeeded", "Loop repair: 0/2", "Records:"] {
         assert!(text(&shown.stdout).contains(expected));
     }
     assert_eq!(fs::read(directory.join("run.json")).unwrap(), original);
 }
 
 #[test]
-fn run_stops_after_ambiguous_or_failed_gh_once_and_show_succeeds() {
-    for result in [
-        "printf 'unexpected output\\n'",
-        "echo gh-failed >&2; exit 1",
-    ] {
-        let repo = Repo::new();
-        let remote = repo.root.join("remote.git");
-        repo.git(&["init", "--bare", remote.to_str().unwrap()]);
-        repo.git(&["remote", "add", "origin", remote.to_str().unwrap()]);
-        fs::write(repo.repo.join("task.md"), "No heading\n").unwrap();
-        let path = run_tools(&repo, result);
-        let output = repo
-            .command(
-                env!("CARGO_BIN_EXE_rabi"),
-                &[
-                    "run", "start", "task.md", "--name", "topic", "--base", "main", "--check",
-                    "true", "--json",
-                ],
-            )
-            .env("PATH", path)
-            .env("RUN_TEST_ROOT", &repo.root)
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(6), "{}", text(&output.stdout));
-        let document = assert_envelope(&output, "run start");
-        assert_eq!(document["error"]["code"], "partial");
-        let run = &document["data"]["run"];
-        assert_eq!(run["state"], "stopped");
-        assert!(run["stopReason"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("Draft PR failed or outcome unknown"));
-        assert_eq!(
-            fs::read_to_string(repo.root.join("gh-calls")).unwrap(),
-            "create\n"
+fn workflow_check_rejects_removed_publication_actions() {
+    let repo = Repo::new();
+    for action in ["push", "draft-pr"] {
+        workflow_file(
+            &repo,
+            action,
+            &DEFAULT_WORKFLOW.replace("action: prepare", &format!("action: {action}")),
         );
-        assert!(fs::read_to_string(repo.root.join("gh-args"))
-            .unwrap()
-            .contains("--title\nWorkflow: topic\n"));
-        let shown = repo.rabi(&["run", "show", run["id"].as_str().unwrap(), "--json"]);
-        assert!(shown.status.success());
-        assert_eq!(assert_envelope(&shown, "run show")["ok"], true);
-        let shown = repo.rabi(&["run", "show", run["id"].as_str().unwrap()]);
-        assert!(text(&shown.stdout)
-            .contains("Stopped (operation_failed): Draft PR failed or outcome unknown"));
+        let checked = repo.rabi(&["workflow", "check", action, "--json"]);
+        assert_eq!(checked.status.code(), Some(2));
+        let doc = assert_envelope(&checked, "workflow check");
+        assert_eq!(doc["data"]["items"][0]["valid"], false);
+        assert!(text(&checked.stdout).contains("unknown variant"));
     }
 }
 
