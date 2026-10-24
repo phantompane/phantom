@@ -14,7 +14,7 @@ Give each task an isolated Git workspace (a linked worktree), so coding agents a
 Pin the installer and binary to the same release. This verifies SHA-256 and GitHub artifact attestations; attestation verification requires `gh`. The installer also needs `curl` and `tar`.
 
 ```sh
-curl -fsSL https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.10/install.sh \
+curl -fsSL https://github.com/yoiailabs/rabi/releases/download/v7.0.0-alpha.10/install.sh \
   | RABI_VERSION=v7.0.0-alpha.10 sh -s -- --prerelease --verify-attestation
 ```
 
@@ -23,12 +23,12 @@ Supports Linux and macOS on x64/arm64; use Linux binaries in WSL. Installs to `~
 Or build from source with Rust 1.89+, replacing `<TAG>` with a release tag such as `v7.0.0-alpha.10`:
 
 ```sh
-cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked rabi
+cargo install --git https://github.com/yoiailabs/rabi --tag <TAG> --locked rabi
 ```
 
 npm `@phantompane/cli` and Homebrew `phantom` are the older TypeScript v6.
 
-For v7.0.0-alpha.9 or v7.0.0-alpha.8, use that release's own installer (for example `https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.9/install.sh`); v7.0.0-alpha.7 and older have no installer. See [installation](docs/installation.md) for options, manual installs, and updates.
+For v7.0.0-alpha.10, v7.0.0-alpha.9 or v7.0.0-alpha.8, use that release's own installer (for example `https://github.com/yoiailabs/rabi/releases/download/v7.0.0-alpha.9/install.sh`); v7.0.0-alpha.7 and older have no installer. Attestation verification for v7.0.0-alpha.10 and earlier fails after the repository transfer; see [installation](docs/installation.md) for manual verification, options, and updates.
 
 ## Quick start
 

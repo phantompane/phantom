@@ -5,21 +5,21 @@
 For agents and CI, pin the installer and binary to the same release tag:
 
 ```sh
-curl -fsSL https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.10/install.sh | RABI_VERSION=v7.0.0-alpha.10 sh
+curl -fsSL https://github.com/yoiailabs/rabi/releases/download/v7.0.0-alpha.10/install.sh | RABI_VERSION=v7.0.0-alpha.10 sh
 ```
 
-To pin another release, replace `v7.0.0-alpha.10` in both places with a tag from the [Releases page](https://github.com/phantompane/phantom/releases); rabi releases start at v7.0.0-alpha.10. v7.0.0-alpha.9 and v7.0.0-alpha.8 must each be installed with that release's own `install.sh` at `https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh` (with `<TAG>` set to that release), using its original options and environment variables; v7.0.0-alpha.7 and older have no installer, so install them manually as described below. Pinned installs allow prereleases and make no GitHub API request.
+To pin another release, replace `v7.0.0-alpha.10` in both places with a tag from the [Releases page](https://github.com/yoiailabs/rabi/releases); rabi releases start at v7.0.0-alpha.10. v7.0.0-alpha.10, v7.0.0-alpha.9 and v7.0.0-alpha.8 must each be installed with that release's own `install.sh` at `https://github.com/yoiailabs/rabi/releases/download/<TAG>/install.sh` (with `<TAG>` set to that release), using its original options and environment variables; v7.0.0-alpha.7 and older have no installer, so install them manually as described below. Pinned installs allow prereleases and make no GitHub API request.
 
 Without a version pin, the installer selects the newest stable v7 release with a `rabi-` archive for the platform, skipping v6:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/yoiailabs/rabi/main/install.sh | sh
 ```
 
 While only matching v7 prereleases exist, it stops and names the newest matching prerelease. To allow that prerelease:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/main/install.sh | sh -s -- --prerelease
+curl -fsSL https://raw.githubusercontent.com/yoiailabs/rabi/main/install.sh | sh -s -- --prerelease
 ```
 
 Pass installer options with `sh -s -- [options]`; flags override environment variables.
@@ -33,6 +33,8 @@ Pass installer options with `sh -s -- [options]`; flags override environment var
 
 `GITHUB_TOKEN` is optional, only for GitHub API rate limits on unpinned installs; it is not sent to asset downloads. The installer needs `curl` and `tar`; on Alpine, run `apk add curl` first. It never prompts, uses no sudo, and does not edit shell profiles; it prints a PATH hint if needed. It always verifies SHA-256 and replaces the binary atomically. It refuses to replace a symlinked `rabi` managed by another tool; update with that tool or choose another install directory.
 
+Attestations for v7.0.0-alpha.10 and earlier remain under the old `phantompane` organization after the repository transfer. The current installer verifies against `yoiailabs/rabi` without a fallback: v7.0.0-alpha.10 downloads and passes SHA-256 verification, but fails with `--verify-attestation` (or `RABI_VERIFY_ATTESTATION=1`). Its release-pinned installer also fails attestation verification after the transfer. To verify these older artifacts manually, use `gh attestation verify <file> --owner phantompane`.
+
 Release binaries support Linux x64/arm64 (static musl builds for any distribution, including Alpine) and macOS x64/arm64. Windows is not supported; use WSL with the Linux binaries.
 
 ## Other installation methods
@@ -40,19 +42,19 @@ Release binaries support Linux x64/arm64 (static musl builds for any distributio
 With mise, pin a version from v7.0.0-alpha.10 or later; the repository also has older v6 TypeScript releases.
 
 ```sh
-mise use github:phantompane/phantom@<VERSION>
+mise use github:yoiailabs/rabi@<VERSION>
 ```
 
 Or build from source with Rust 1.89+ (the `rust-version` in `Cargo.toml`), replacing `<TAG>` with a release tag such as `v7.0.0-alpha.10`:
 
 ```sh
-cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked rabi
+cargo install --git https://github.com/yoiailabs/rabi --tag <TAG> --locked rabi
 ```
 
 For a manual install, download `rabi-v<VERSION>-<os>-<arch>.tar.gz` from Releases (`<VERSION>` omits the leading `v`; `<os>` is `linux` or `darwin`, and `<arch>` is `x64` or `arm64`). Some older releases use archive names such as `mabo-v<VERSION>-<os>-<arch>.tar.gz`, `maboroshi-v<VERSION>-<os>-<arch>.tar.gz` or `ptm-v<VERSION>-<os>-<arch>.tar.gz`; for those, download the archive listed on that release. `install.sh` supports only the `rabi-` archive name and requires exactly one valid entry for it in `SHA256SUMS`. Each current archive contains only `rabi` (older archives contain the binary named at that release); extract it and place it in a directory on PATH. For releases after v7.0.0-alpha.7, download `SHA256SUMS` from the same release and verify before extracting. To verify provenance with `gh` and check SHA-256 on Linux, run these in the download directory, substituting your archive name:
 
 ```sh
-gh attestation verify rabi-v<VERSION>-linux-x64.tar.gz --repo phantompane/phantom
+gh attestation verify rabi-v<VERSION>-linux-x64.tar.gz --repo yoiailabs/rabi
 grep " rabi-v<VERSION>-linux-x64.tar.gz$" SHA256SUMS | sha256sum -c -
 ```
 

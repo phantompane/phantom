@@ -8,6 +8,7 @@ description = "Isolated Git workspaces for parallel coding agents: local Git wor
 keywords = ["git", "worktree", "workspace", "agents", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 license = "MIT"
+repository = "https://github.com/yoiailabs/rabi"
 
 [[bin]]
 name = "rabi"

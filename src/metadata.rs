@@ -938,11 +938,11 @@ mod tests {
         let number = parse_link("#774").expect("number");
         assert_eq!(number.number, Some(774));
         assert!(number.url.is_none());
-        let url = parse_link("https://github.com/phantompane/phantom/pull/774").expect("url");
+        let url = parse_link("https://github.com/yoiailabs/rabi/pull/774").expect("url");
         assert_eq!(url.number, Some(774));
         assert!(url.url.unwrap().contains("/pull/774"));
         let issue =
-            parse_link("https://github.com/phantompane/phantom/issues/12?plain=1").expect("issue");
+            parse_link("https://github.com/yoiailabs/rabi/issues/12?plain=1").expect("issue");
         assert_eq!(issue.number, Some(12));
         assert!(parse_link("0").is_err());
         assert!(parse_link("not a link").is_err());
