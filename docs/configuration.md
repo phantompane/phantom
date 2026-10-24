@@ -83,7 +83,7 @@ Clone examples below follow the command help; they require network access. Run t
 
 ```sh
 mabo clone phantompane/phantom
-mabo clone git@github.com:phantompane/phantom.git --branch next
+mabo clone git@github.com:phantompane/phantom.git --branch develop
 mabo clone github.com/phantompane/phantom --depth 1
 mabo clone phantompane/phantom --update
 ```

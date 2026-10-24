@@ -127,11 +127,11 @@ mabo remove task/auth
 
 ## ステータス
 
-アルファ版です（上の注意を参照）。破壊的変更は [CHANGELOG](CHANGELOG.md) に記載しています。Rust 版の開発は `next` で行います。
+アルファ版です（上の注意を参照）。破壊的変更は [CHANGELOG](CHANGELOG.md) に記載しています。
 
 ## コントリビューション
 
-開発手順とチェックは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。プルリクエストの宛先は `next` です。
+開発手順とチェックは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。プルリクエストの宛先は `main` です。
 
 ## ライセンス
 

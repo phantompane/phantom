@@ -13,13 +13,13 @@ Replace `<TAG>` with a release tag, such as the newest `v7.*` on the [Releases p
 Without a version pin, the installer selects the newest stable v7 release with a `mabo-` archive for the platform, skipping v6:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/next/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/main/install.sh | sh
 ```
 
 While only matching v7 prereleases exist, it stops and names the newest matching prerelease. To allow that prerelease:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/next/install.sh | sh -s -- --prerelease
+curl -fsSL https://raw.githubusercontent.com/phantompane/phantom/main/install.sh | sh -s -- --prerelease
 ```
 
 Pass installer options with `sh -s -- [options]`; flags override environment variables.

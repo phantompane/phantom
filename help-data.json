@@ -742,7 +742,7 @@
         },
         {
           "description": "Clone an SSH URL and check out a branch",
-          "command": "mabo clone git@github.com:phantompane/phantom.git --branch next"
+          "command": "mabo clone git@github.com:phantompane/phantom.git --branch develop"
         },
         {
           "description": "Shallow clone and print the versioned JSON result",

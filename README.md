@@ -127,11 +127,11 @@ Repository `.mabo.toml` defines setup and pre-remove hooks; `.worktreeinclude` s
 
 ## Status
 
-Alpha (see the warning above). Breaking changes are listed in [CHANGELOG](CHANGELOG.md). Rust development happens on `next`.
+Alpha (see the warning above). Breaking changes are listed in [CHANGELOG](CHANGELOG.md).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development and checks. Open pull requests against `next`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and checks. Open pull requests against `main`.
 
 ## License
 
