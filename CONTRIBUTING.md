@@ -100,13 +100,26 @@ cargo test --locked
 - Never commit secrets or keys to the repository
 - Be careful with user input validation
 
-## 🚀 Pull Request Requirements
+## 🚀 Pull Request Process
 
 - Clear description of changes
 - Tests for new functionality
 - Documentation updates if applicable
 - All checks passing (`cargo fmt`, `cargo clippy --locked`, and `cargo test --locked`)
 - Follow existing code style
+
+### Review process
+
+This process applies to this repository. Use [REVIEW.md](REVIEW.md) for review output and [risk-tiers.md](risk-tiers.md) for merge decisions; these are development practices, not rabi CLI features.
+
+1. Implement and run the required checks above. Before opening a draft PR against `main`, obtain a fresh read-only Codex review of the full diff from a recorded initial merge-base to HEAD. Supply the task, completion criteria, repository guidance, and actual check results.
+2. Findings use [Important], [Nit], or [Pre-existing], with file:line evidence and bug class grouping. Respond to every finding: fixed, or declined with a reason. Fix the whole bug class, not just the reported instance. Any unresolved Important means a revise verdict (`判定: 要修正`); a declined Important needs reviewer agreement to be resolved.
+3. After fixes, rerun affected checks and review in a fresh read-only session. From round 2, review only the diff since the last reviewed HEAD, with necessary context and all prior findings and responses as input. Keep finding IDs and update their status. If history/base changes invalidate comparison, stop and explicitly restart full-diff review without resetting the round count.
+4. Allow at most three review rounds total. If round 3 does not pass, stop and reconsider the approach or splitting the change instead of a fourth round. Do not reset the count to continue the same approach.
+5. Any change touching trust, hooks, delete/remove (including gc), or sync also needs a separate fresh read-only review focused on security. Address its findings under the same response and Important rules before merging.
+6. After review passes, open the draft PR using the four template sections: Summary, Testing, Risk, How to revert. Record commands and observed results, gaps, reviewed HEAD SHA, and review results. Log the PR, reviewed SHAs, rounds-to-pass (or stopped and why), findings, and responses in the work log; put rounds-to-pass in Testing. Record the risk tier and reason in Risk.
+
+Low/medium changes may be merged by the development bot after required CI is green, Codex review passes, every finding has a response, and no Important remains open. High changes require Shuhei's approval for the specific HEAD SHA and cannot be merged by the bot. Unknown risk is high. Before merging, follow the current-HEAD checks and guarded squash command in [risk-tiers.md](risk-tiers.md); new commits require updated checks, review, risk assessment, and any required approval.
 
 ## 📚 Documentation
 
@@ -140,7 +153,7 @@ To release a new version of rabi:
 
 2. **Review and merge the version pull request**
    - Confirm `Cargo.toml` and `Cargo.lock` show the same version
-   - Merge once checks pass
+   - Obtain Shuhei's approval for the specific HEAD SHA and merge under [risk-tiers.md](risk-tiers.md); release/tag changes are high risk and cannot be merged by the bot
    - The merge tags `vX.Y.Z` on `main`. Publishing a GitHub release is a separate step
 
 3. **Create a GitHub release (builds release binaries)**
