@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-Nothing yet.
+- Move the repository to `yoiailabs/rabi`; old repository URLs redirect to the new location. `install.sh` now verifies attestations against `yoiailabs/rabi`. Attestations for v7.0.0-alpha.10 and earlier remain under the old organization; verify them manually with `gh attestation verify <file> --owner phantompane`.
 
 ## v7.0.0-alpha.10 (2026-10-24)
 

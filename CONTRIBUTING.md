@@ -27,8 +27,8 @@ Dependabot does not bump the Rust toolchain. The version is pinned in `rust-tool
 ### Getting Started
 
 ```bash
-git clone https://github.com/phantompane/phantom.git
-cd phantom
+git clone https://github.com/yoiailabs/rabi.git
+cd rabi
 cargo run --locked -- --help
 ```
 
@@ -155,7 +155,7 @@ To release a new version of rabi:
      --target main
    ```
 
-   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `rabi-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains only the `rabi` binary. `install.sh` supports only `rabi-v<version>-<os>-<arch>.tar.gz` archives. v7.0.0-alpha.9 and v7.0.0-alpha.8 must each be installed with that release's own `install.sh` at `https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh` (replace `<TAG>` with the release tag); v7.0.0-alpha.7 and older have no installer and must be installed manually. npm is not published. Monitor the workflow run in GitHub Actions.
+   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `rabi-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains only the `rabi` binary. `install.sh` supports only `rabi-v<version>-<os>-<arch>.tar.gz` archives. v7.0.0-alpha.10, v7.0.0-alpha.9 and v7.0.0-alpha.8 must each be installed with that release's own `install.sh` at `https://github.com/yoiailabs/rabi/releases/download/<TAG>/install.sh` (replace `<TAG>` with the release tag); v7.0.0-alpha.7 and older have no installer and must be installed manually. npm is not published. Monitor the workflow run in GitHub Actions.
 
 4. **Update release notes for clarity**
    - Review the auto-generated release notes using `gh release view v<version>`
@@ -199,7 +199,7 @@ To release a new version of rabi:
 
    ***
 
-   **Full Changelog**: https://github.com/phantompane/phantom/compare/v<previous>...v<version>
+   **Full Changelog**: https://github.com/yoiailabs/rabi/compare/v<previous>...v<version>
    EOF
    )"
 

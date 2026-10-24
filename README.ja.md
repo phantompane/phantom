@@ -11,24 +11,26 @@ rabi（ラビ、rabbit から） — コーディングエージェントの並�
 
 ## インストール
 
-インストーラーとバイナリを同じリリースに固定します。SHA-256 と GitHub アーティファクトのアテステーションを検証します。アテステーションの検証には `gh` が必要です。インストーラーには `curl` と `tar` も必要です。
+インストーラーとバイナリを同じリリースに固定します。インストーラーは常に SHA-256 を検証し、`curl` と `tar` を必要とします。
 
 ```sh
-curl -fsSL https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.10/install.sh \
-  | RABI_VERSION=v7.0.0-alpha.10 sh -s -- --prerelease --verify-attestation
+curl -fsSL https://github.com/yoiailabs/rabi/releases/download/v7.0.0-alpha.10/install.sh \
+  | RABI_VERSION=v7.0.0-alpha.10 sh -s -- --prerelease
 ```
+
+v7.0.0-alpha.10 では `--verify-attestation` を付けないでください。この版のインストーラーによるアテステーション検証は、リポジトリ移管後に失敗します。手動で検証するには、アーカイブをダウンロードし、`gh attestation verify <archive> --owner phantompane` を実行してください（`gh` が必要です）。
 
 Linux・macOS の x64/arm64 に対応しています。WSL では Linux バイナリを使ってください。sudo やシェル設定の変更なしで `~/.local/bin` にインストールします。`--prerelease` はバージョン未固定時のプレリリース選択を許可します。バージョン固定時は指定したプレリリースをそのまま使えます。
 
 ソースからのビルドには Rust 1.89 以降が必要です。`<TAG>` を `v7.0.0-alpha.10` などのリリースタグに置き換えてください。
 
 ```sh
-cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked rabi
+cargo install --git https://github.com/yoiailabs/rabi --tag <TAG> --locked rabi
 ```
 
 npm の `@phantompane/cli` と Homebrew の `phantom` は旧 TypeScript 版 v6 です。
 
-v7.0.0-alpha.9 または v7.0.0-alpha.8 は、そのリリース自身のインストーラー（例: `https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.9/install.sh`）を使ってください。v7.0.0-alpha.7 以前にはインストーラーがありません。オプション、手動インストール、更新方法は[インストールの詳細](docs/installation.md)を参照してください。
+v7.0.0-alpha.9、v7.0.0-alpha.8 は、そのリリース自身のインストーラー（例: `https://github.com/yoiailabs/rabi/releases/download/v7.0.0-alpha.9/install.sh`）を使ってください。v7.0.0-alpha.7 以前にはインストーラーがありません。手動検証、オプション、更新方法は[インストールの詳細](docs/installation.md)を参照してください。
 
 ## クイックスタート
 

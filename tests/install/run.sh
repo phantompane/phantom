@@ -54,6 +54,7 @@ mkdir "$root/releases/v7.0.0-alpha.8"
 printf '%064d  maboroshi-v7.0.0-alpha.8-linux-x64.tar.gz\n' 0 > "$root/releases/v7.0.0-alpha.8/SHA256SUMS"
 mkdir "$root/releases/v7.0.0-alpha.9"
 printf '%064d  mabo-v7.0.0-alpha.9-linux-x64.tar.gz\n' 0 > "$root/releases/v7.0.0-alpha.9/SHA256SUMS"
+makeRelease 7.0.0-alpha.10
 makeRelease 7.0.0
 makeRelease 7.1.0
 makeRelease 7.2.0-alpha.1
@@ -154,12 +155,16 @@ run 0
 assertVersion 7.0.0 "$HOME/.local/bin"
 unset RABI_VERSION
 
+# The rabi archive in alpha.10 remains installable with SHA-256 verification.
+run 0 --version 7.0.0-alpha.10
+assertVersion 7.0.0-alpha.10 "$HOME/.local/bin"
+
 # Legacy-only releases are refused with a release-specific installer hint.
 cp "$HOME/.local/bin/rabi" "$root/before"
 for legacyTag in 7.0.0-alpha.9 7.0.0-alpha.8; do
     runFail 1 "Missing, duplicate, or invalid SHA256SUMS line for rabi-v$legacyTag-linux-x64.tar.gz." --version "$legacyTag"
     contains "$root/stderr" "Install v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer:"
-    contains "$root/stderr" 'https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh'
+    contains "$root/stderr" 'https://github.com/yoiailabs/rabi/releases/download/<TAG>/install.sh'
     contains "$root/stderr" 'v7.0.0-alpha.7 and older have no installer.'
     unchanged
 done
@@ -209,7 +214,7 @@ for option in '' --prerelease; do
     if [ -n "$option" ]; then runFail 1 'No matching rabi release.' "$option"
     else runFail 1 'No matching rabi release.'; fi
     contains "$root/stderr" "Install v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer:"
-    contains "$root/stderr" 'https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh'
+    contains "$root/stderr" 'https://github.com/yoiailabs/rabi/releases/download/<TAG>/install.sh'
     unchanged
 done
 cat > "$root/api/releases?per_page=100" <<'JSON'
@@ -360,6 +365,11 @@ export TEST_GH_MODE=delay
 runFail 1 'Attestation verification failed' --version 7.0.0 --verify-attestation
 unchanged
 noAttestationProcesses
+# Older attestations are not retried against another repository or owner.
+runFail 1 'Attestation verification failed' --version 7.0.0-alpha.10 --verify-attestation
+unchanged
+noAttestationProcesses
+[ "$(sed -n '5p' "$root/gh-args")" = yoiailabs/rabi ] || fail 'Wrong gh repo for alpha.10'
 export TEST_GH_STATUS=0 RABI_VERIFY_ATTESTATION=1
 run 0 --version 7.0.0
 assertVersion 7.0.0 "$HOME/.local/bin"
@@ -368,7 +378,7 @@ noAttestationProcesses
 [ "$(sed -n '2p' "$root/gh-args")" = verify ] || fail 'Wrong gh subcommand'
 contains "$root/gh-args" '/rabi-v7.0.0-linux-x64.tar.gz'
 [ "$(sed -n '4p' "$root/gh-args")" = --repo ] || fail 'Wrong gh repo flag'
-[ "$(sed -n '5p' "$root/gh-args")" = phantompane/phantom ] || fail 'Wrong gh repo'
+[ "$(sed -n '5p' "$root/gh-args")" = yoiailabs/rabi ] || fail 'Wrong gh repo'
 [ "$(wc -l < "$root/gh-args" | tr -d ' ')" = 5 ] || fail 'Unexpected gh arguments'
 unset RABI_VERIFY_ATTESTATION
 # Capture stdout in a pipe as well as piping the script source: an uncancelled
@@ -453,8 +463,8 @@ for pair in 'Linux amd64' 'Linux aarch64' 'Darwin arm64' 'Darwin x86_64'; do
 done
 export TEST_OS=FreeBSD TEST_ARCH=x86_64
 runFail 1 'Unsupported platform' --version 7.0.0
-contains "$root/stderr" 'https://github.com/phantompane/phantom/releases'
-contains "$root/stderr" 'cargo install --git https://github.com/phantompane/phantom --tag 7.0.0 --locked rabi'
+contains "$root/stderr" 'https://github.com/yoiailabs/rabi/releases'
+contains "$root/stderr" 'cargo install --git https://github.com/yoiailabs/rabi --tag 7.0.0 --locked rabi'
 export TEST_OS=Linux TEST_ARCH=riscv64
 runFail 1 'Unsupported platform' --version 7.0.0
 unset TEST_OS TEST_ARCH
@@ -540,14 +550,14 @@ done
 [ "$redirectSafe:$tls" = yes:yes ] || exit 94
 [ "$connectTimeout:$speedLimit:$speedTime:$maxTime" = yes:yes:yes:yes ] || exit 97
 case $url in
-    'https://mirror.invalid/api/releases?per_page=100')
+    'https://mirror.invalid/api/releases?per_page=100'|'https://api.github.com/repos/yoiailabs/rabi/releases?per_page=100')
         kind=api
         [ "$auth" = yes ] || exit 95
         source=$TEST_ROOT/api/releases?per_page=100 ;;
-    https://mirror.invalid/download/*)
+    https://mirror.invalid/download/*|https://github.com/yoiailabs/rabi/releases/download/*)
         kind=asset
         [ "$auth" = no ] || exit 95
-        source=$TEST_ROOT/releases/${url#https://mirror.invalid/download/} ;;
+        source=$TEST_ROOT/releases/${url#*/download/} ;;
     *) exit 96 ;;
 esac
 printf 'curl %s auth=%s %s\n' "$kind" "$auth" "${url##*/}" >> "$TEST_ROOT/http-log"
@@ -575,11 +585,20 @@ curl asset auth=no rabi-v7.1.0-linux-x64.tar.gz" ] || fail 'Incorrect HTTP reque
 run 0 --version 7.0.0
 [ "$(cat "$root/http-log")" = "curl asset auth=no SHA256SUMS
 curl asset auth=no rabi-v7.0.0-linux-x64.tar.gz" ] || fail 'Pinned install called API or downloaded archive before checksums'
+# Default API and release URLs use the transferred repository too.
+unset RABI_RELEASE_BASE_URL RABI_API_URL
+: > "$root/http-log"
+run 0
+assertVersion 7.1.0 "$HOME/.local/bin"
+[ "$(cat "$root/http-log")" = "curl api auth=yes releases?per_page=100
+curl asset auth=no SHA256SUMS
+curl asset auth=no rabi-v7.1.0-linux-x64.tar.gz" ] || fail 'Incorrect default repository URLs'
+export RABI_RELEASE_BASE_URL=https://mirror.invalid/download RABI_API_URL=https://mirror.invalid/api
 cp "$HOME/.local/bin/rabi" "$root/before"
 for legacyTag in 7.0.0-alpha.9 7.0.0-alpha.8; do
     : > "$root/http-log"
     runFail 1 "Install v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer:" --version "$legacyTag"
-    contains "$root/stderr" 'https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh'
+    contains "$root/stderr" 'https://github.com/yoiailabs/rabi/releases/download/<TAG>/install.sh'
     unchanged
     [ "$(cat "$root/http-log")" = 'curl asset auth=no SHA256SUMS' ] || fail 'Downloaded a legacy archive'
 done

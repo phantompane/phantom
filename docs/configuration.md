@@ -82,8 +82,8 @@ rabi repo forget .
 Clone examples below follow the command help; they require network access. Run them independently, using a repository you can access:
 
 ```sh
-rabi clone phantompane/phantom
-rabi clone git@github.com:phantompane/phantom.git --branch develop
-rabi clone github.com/phantompane/phantom --depth 1
-rabi clone phantompane/phantom --update
+rabi clone yoiailabs/rabi
+rabi clone git@github.com:yoiailabs/rabi.git --branch develop
+rabi clone github.com/yoiailabs/rabi --depth 1
+rabi clone yoiailabs/rabi --update
 ```

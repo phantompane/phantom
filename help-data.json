@@ -738,19 +738,19 @@
       "examples": [
         {
           "description": "Clone owner/repo from github.com",
-          "command": "rabi clone phantompane/phantom"
+          "command": "rabi clone yoiailabs/rabi"
         },
         {
           "description": "Clone an SSH URL and check out a branch",
-          "command": "rabi clone git@github.com:phantompane/phantom.git --branch develop"
+          "command": "rabi clone git@github.com:yoiailabs/rabi.git --branch develop"
         },
         {
           "description": "Shallow clone and print the versioned JSON result",
-          "command": "rabi clone github.com/phantompane/phantom --depth 1 --json"
+          "command": "rabi clone github.com/yoiailabs/rabi --depth 1 --json"
         },
         {
           "description": "Fetch an existing checkout and register it",
-          "command": "rabi clone phantompane/phantom --update"
+          "command": "rabi clone yoiailabs/rabi --update"
         }
       ],
       "notes": [
@@ -1457,7 +1457,7 @@
           "description": "Change the purpose and leave links as they are"
         },
         {
-          "command": "rabi set feature-auth --pr https://github.com/phantompane/phantom/pull/774 --json",
+          "command": "rabi set feature-auth --pr https://github.com/yoiailabs/rabi/pull/774 --json",
           "description": "Link a pull request and print the workspace object"
         }
       ],

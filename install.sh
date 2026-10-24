@@ -7,6 +7,8 @@
 # Requires curl (Alpine: apk add curl).
 set -eu
 
+repo=yoiailabs/rabi
+
 usage() {
     cat <<'USAGE'
 Usage: sh install.sh [options]
@@ -22,7 +24,7 @@ USAGE
 
 fail() { printf 'rabi installer: %s\n' "$*" >&2; exit 1; }
 failRelease() {
-    fail "$* This installer supports only rabi- archives. Install v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer: https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh (replace <TAG> with the release tag); v7.0.0-alpha.7 and older have no installer."
+    fail "$* This installer supports only rabi- archives. Install v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer: https://github.com/$repo/releases/download/<TAG>/install.sh (replace <TAG> with the release tag); v7.0.0-alpha.7 and older have no installer."
 }
 usageError() { printf 'rabi installer: %s\n' "$*" >&2; exit 2; }
 progress() { printf '%s\n' "$*" >&2; }
@@ -48,7 +50,7 @@ stopWatchdog() {
 }
 
 verifyAttestation() {
-    GH_PROMPT_DISABLED=1 gh attestation verify "$tmp/$archive" --repo phantompane/phantom \
+    GH_PROMPT_DISABLED=1 gh attestation verify "$tmp/$archive" --repo "$repo" \
         </dev/null >"$tmp/attestation.log" 2>&1 &
     ghPid=$!
     (
@@ -255,7 +257,7 @@ main() {
     case $(uname -s) in Linux) os=linux ;; Darwin) os=darwin ;; *) os=unsupported ;; esac
     case $(uname -m) in x86_64|amd64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; *) arch=unsupported ;; esac
     if [ "$os" = unsupported ] || [ "$arch" = unsupported ]; then
-        fail "Unsupported platform. See https://github.com/phantompane/phantom/releases or use: cargo install --git https://github.com/phantompane/phantom --tag ${version:-<tag>} --locked rabi"
+        fail "Unsupported platform. See https://github.com/$repo/releases or use: cargo install --git https://github.com/$repo --tag ${version:-<tag>} --locked rabi"
     fi
     command -v curl >/dev/null 2>&1 ||
         fail 'curl is required. Install it with your package manager (Alpine: apk add curl).'
@@ -266,8 +268,8 @@ main() {
         command -v gh >/dev/null 2>&1 || fail '--verify-attestation requires gh on PATH.'
     fi
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/rabi-install.XXXXXXXX") || fail 'Cannot create temporary directory.'
-    base=${RABI_RELEASE_BASE_URL:-https://github.com/phantompane/phantom/releases/download}
-    api=${RABI_API_URL:-https://api.github.com/repos/phantompane/phantom}
+    base=${RABI_RELEASE_BASE_URL:-https://github.com/$repo/releases/download}
+    api=${RABI_API_URL:-https://api.github.com/repos/$repo}
     if [ -z "$version" ]; then
         progress 'Resolving rabi release...'
         download "${api%/}/releases?per_page=100" "$tmp/releases.json" api 2>/dev/null ||
