@@ -1,6 +1,6 @@
 schema_version: 1
 name: default
-version: 3
+version: 4
 workspace: new
 agent: {provider: codex, model: gpt-6.1-sol, effort: high}
 start: prepare
@@ -27,6 +27,7 @@ steps:
     context: {continue: implement}
     instruction: |
       Fix verification failures and review findings, report the results, and commit.
+      Respond to every prior finding with the fix or a reason for declining it.
       Let rabi handle push and PR creation.
     on: {ok: check}
   check:
@@ -41,6 +42,9 @@ steps:
     output: review-v1
     context: fresh
     instruction: |
+      Read REVIEW.md, AGENTS.md and CLAUDE.md when their paths are provided.
+      Start with counts; group findings by bug class with [Important]/[Nit]/[Pre-existing]
+      tags and file:line evidence. Unresolved Important findings require revise.
       Review the task and diff without editing. On the last line, write either
       "判定: 問題なし" or "判定: 要修正" as required by review-v1.
     on:

@@ -1,0 +1,77 @@
+schema_version: 1
+name: security-review
+version: 1
+workspace: new
+agent: {provider: codex, model: gpt-6.1-sol, effort: high}
+start: prepare
+limits: {max_steps: 18}
+loops: {repair: 2}
+steps:
+  prepare:
+    type: system
+    action: prepare
+    on: {ok: implement}
+  implement:
+    type: agent
+    mode: edit
+    output: report-v1
+    context: fresh
+    instruction: |
+      Implement the task and report changes and verification results.
+      Commit using Conventional Commits. Let rabi handle push and PR creation.
+    on: {ok: check}
+  fix:
+    type: agent
+    mode: edit
+    output: report-v1
+    context: {continue: implement}
+    instruction: |
+      Fix verification failures and review findings, report the results, and commit.
+      Respond to every prior finding with the fix or a reason for declining it.
+      Let rabi handle push and PR creation.
+    on: {ok: check}
+  check:
+    type: check
+    commands: cli
+    on:
+      pass: review
+      fail: {to: fix, loop: repair}
+  review:
+    type: agent
+    mode: read-only
+    output: review-v1
+    context: fresh
+    instruction: |
+      Read REVIEW.md, AGENTS.md and CLAUDE.md when their paths are provided.
+      Start with counts; group findings by bug class with [Important]/[Nit]/[Pre-existing]
+      tags and file:line evidence. Unresolved Important findings require revise.
+      Review the task and diff without editing. On the last line, write either
+      "判定: 問題なし" or "判定: 要修正" as required by review-v1.
+    on:
+      pass: security-review
+      revise: {to: fix, loop: repair}
+  security-review:
+    type: agent
+    mode: read-only
+    output: review-v1
+    context: fresh
+    agent: {provider: codex}
+    instruction: |
+      Independently review the change for security issues, without editing.
+      Read REVIEW.md, AGENTS.md and CLAUDE.md when paths are provided.
+      Give count-first findings with [Important]/[Nit]/[Pre-existing] tags and
+      file:line evidence, grouped by bug class. Evaluate trust boundaries,
+      command execution, secret exposure, filesystem writes and input validation.
+      Count unresolved Important findings and finish with 判定: 要修正 if any
+      remain, otherwise 判定: 問題なし. Explain false positives briefly.
+    on:
+      pass: push
+      revise: {to: fix, loop: repair}
+  push:
+    type: system
+    action: push
+    on: {ok: draft}
+  draft:
+    type: system
+    action: draft-pr
+    on: {ok: succeeded}

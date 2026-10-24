@@ -191,13 +191,26 @@ fn ignored_files_are_clean() {
     scenario("ignored");
 }
 #[test]
-fn push_is_unavailable() {
+fn push_sets_upstream_without_force() {
     scenario("push");
 }
 #[test]
-fn draft_is_unavailable() {
+fn draft_creates_pr_and_records_links() {
     scenario("draft");
 }
+#[test]
+fn failed_push_stops_without_pr() {
+    scenario("push_failure");
+}
+#[test]
+fn ambiguous_gh_stops_without_resend() {
+    scenario("draft_ambiguous");
+}
+#[test]
+fn failed_gh_stops_without_resend() {
+    scenario("draft_failure");
+}
+
 #[test]
 fn unsupported_provider_preflight() {
     scenario("unsupported");
@@ -282,13 +295,54 @@ fn worker() {
     git::run(&["add", "."], Some(&repo)).unwrap();
     git::run(&["commit", "-qm", "chore: initial"], Some(&repo)).unwrap();
     let initial_head = git::head_commit(&repo).unwrap();
+    for name in ["REVIEW.md", "AGENTS.md", "CLAUDE.md"] {
+        fs::write(repo.join(name), "Review guidance.\n").unwrap();
+    }
+    git::run(&["add", "."], Some(&repo)).unwrap();
+    git::run(&["commit", "-qm", "docs: review guidance"], Some(&repo)).unwrap();
+    let initial_head = git::head_commit(&repo).unwrap_or(initial_head);
+    if case == "push" || case == "push_failure" {
+        let remote = root.join("origin.git");
+        git::run(
+            &["init", "--bare", "--template=", remote.to_str().unwrap()],
+            Some(&repo),
+        )
+        .unwrap();
+        git::run(
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+            Some(&repo),
+        )
+        .unwrap();
+        if case == "push_failure" {
+            let hook = remote.join("hooks/pre-receive");
+            fs::create_dir_all(hook.parent().unwrap()).unwrap();
+            fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+            fs::set_permissions(hook, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    let gh = root.join("bin/gh");
+    fs::write(&gh, r#"#!/bin/sh
+set -eu
+if [ "$1 $2" = 'repo view' ]; then
+  printf '{"url":"https://github.com/test/repo","owner":{"login":"test"},"name":"repo"}\n'
+else
+  printf 'create\n' >> "$RABI_TEST_ROOT/gh-calls"
+  printf '%s\n' "$@" > "$RABI_TEST_ROOT/gh-args"
+  case "$RABI_TEST_CASE" in
+    draft_ambiguous) printf 'https://github.com/test/repo/pull/42\nhttps://github.com/test/repo/pull/43\n' ;;
+    draft_failure) echo failed >&2; exit 9 ;;
+    *) printf 'https://github.com/test/repo/pull/42\n' ;;
+  esac
+fi
+"#).unwrap();
+    fs::set_permissions(gh, fs::Permissions::from_mode(0o755)).unwrap();
     let context = crate::context::create_at(&repo).unwrap();
     let mut yaml = workflow::DEFAULT_YAML.replace("pass: push", "pass: succeeded");
-    // Keep the future system actions unreachable except in their own tests.
-    if case == "push" {
+    // Publication is exercised only in dedicated local-remote/fake-gh tests.
+    if case == "push" || case == "push_failure" {
         yaml = yaml.replace("pass: succeeded", "pass: push");
     }
-    if case == "draft" {
+    if case.starts_with("draft") {
         yaml = yaml.replace("pass: succeeded", "pass: draft");
     }
     // Use short instructions so the fake can distinguish the role.
@@ -505,7 +559,7 @@ fn worker() {
     }
     let expected = match case.as_str() {
         "pass" | "repair" | "review_repair" | "allowed" | "ignored" | "list_commands"
-        | "blank_report" | "base_head" | "dirty_diff" | "fresh_fix" => None,
+        | "blank_report" | "base_head" | "dirty_diff" | "fresh_fix" | "push" | "draft" => None,
         "limit" | "max_steps" | "shared_limit" => Some("limit"),
         "verdict" => Some("contract_invalid"),
         "dirty" | "check_dirty" | "setup_dirty" => Some("dirty_workspace"),
@@ -621,6 +675,29 @@ fn worker() {
             assert!(prompt.contains("Latest checks"));
             if case == "review_repair" {
                 assert!(prompt.contains("Please repair the review issue."));
+                let first = run::load_attempt(&repo, &record.id, "review", 4).unwrap();
+                let second = run::load_attempt(&repo, &record.id, "review", 7).unwrap();
+                let prompt = fs::read_to_string(dir.join("steps/007-review/prompt.md")).unwrap();
+                assert!(prompt.contains(&format!(
+                    "git diff {} {}",
+                    first.head.unwrap(),
+                    second.head.unwrap()
+                )));
+                assert!(prompt.contains("# Review round 2 / 3"));
+                assert!(prompt.contains("Please repair the review issue."));
+                assert!(prompt.contains("Fix response (fix):\nImplementation report."));
+                assert!(!prompt.contains("+1\n"));
+                for name in ["REVIEW.md", "AGENTS.md", "CLAUDE.md"] {
+                    assert!(prompt.contains(
+                        Path::new(&record.workspace.path)
+                            .join(name)
+                            .to_str()
+                            .unwrap()
+                    ));
+                }
+                for tag in ["[Important]", "[Nit]", "[Pre-existing]", "file:line"] {
+                    assert!(prompt.contains(tag));
+                }
             }
             let check = run::load_attempt(&repo, &record.id, "check", 3).unwrap();
             if case == "repair" {
@@ -629,6 +706,12 @@ fn worker() {
             }
         }
         "limit" => {
+            assert!(record
+                .stop_reason
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("Check failure exhausted"));
             assert_eq!(record.loops["repair"].used, 2);
             assert_eq!(record.steps_started, 7);
             assert_eq!(fs::read_to_string(root.join("calls")).unwrap(), "3");
@@ -642,6 +725,18 @@ fn worker() {
             }
         }
         "shared_limit" => {
+            assert!(record
+                .stop_reason
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("Review limit reached"));
+            assert!(record
+                .stop_reason
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("Reconsider the approach"));
             assert_eq!(record.loops["repair"].used, 2);
             assert_eq!(record.steps_started, 9);
             for call in [3, 5] {
@@ -673,11 +768,80 @@ fn worker() {
             assert_eq!(record.steps_started, 4);
             assert_eq!(fs::read_to_string(root.join("calls")).unwrap(), "2");
         }
-        "push" | "draft" => assert!(record
-            .stop_reason
-            .unwrap()
-            .message
-            .contains("not available yet")),
+        "push" | "draft" => {
+            assert_eq!(record.pr.as_ref().unwrap().number, Some(42));
+            let metadata = crate::metadata::load(&repo).unwrap();
+            let workspace = metadata
+                .values()
+                .find(|m| m.id == record.workspace.id)
+                .unwrap();
+            assert_eq!(workspace.links.pr, record.pr);
+            let body = fs::read_to_string(dir.join("pr-body.md")).unwrap();
+            assert_eq!(
+                body.lines()
+                    .filter(|line| line.starts_with("## "))
+                    .collect::<Vec<_>>(),
+                ["## Summary", "## Testing", "## Risk", "## How to revert"]
+            );
+            assert!(TASK.lines().all(|line| body.contains(&format!("> {line}"))));
+            assert!(body.contains("Implementation report."));
+            assert!(body.contains("Exit: 0"));
+            assert!(body.contains("判定: 問題なし"));
+            assert!(body.contains("reviewed SHA:"));
+            assert!(body.contains("not assessed"));
+            assert_eq!(
+                fs::read_to_string(root.join("gh-calls")).unwrap(),
+                "create\n"
+            );
+            let args = fs::read_to_string(root.join("gh-args")).unwrap();
+            assert!(args.contains("--draft\n--repo\ngithub.com/test/repo\n--base\nmain\n--head\ntopic\n--title\nExample task\n--body-file\n"));
+            if case == "push" {
+                let workspace = Path::new(&record.workspace.path);
+                assert_eq!(
+                    git::output(
+                        &["rev-parse", "--abbrev-ref", "@{upstream}"],
+                        Some(workspace),
+                        true
+                    )
+                    .unwrap(),
+                    "origin/topic"
+                );
+                assert_eq!(
+                    git::output(
+                        &[
+                            "--git-dir",
+                            root.join("origin.git").to_str().unwrap(),
+                            "rev-parse",
+                            "refs/heads/topic"
+                        ],
+                        None,
+                        true
+                    )
+                    .unwrap(),
+                    git::head_commit(workspace).unwrap()
+                );
+            }
+        }
+        "draft_ambiguous" | "draft_failure" => {
+            assert!(record.pr.is_none());
+            assert!(record
+                .stop_reason
+                .unwrap()
+                .message
+                .contains("Draft PR failed or outcome unknown"));
+            assert_eq!(
+                fs::read_to_string(root.join("gh-calls")).unwrap(),
+                "create\n"
+            );
+        }
+        "push_failure" => {
+            assert!(record
+                .stop_reason
+                .unwrap()
+                .message
+                .contains("Push failed or outcome unknown"));
+            assert!(!root.join("gh-calls").exists());
+        }
         "unrun_continue" => {
             assert_eq!(record.steps_started, 2);
             assert!(!root.join("calls").exists());

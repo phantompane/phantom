@@ -4,6 +4,8 @@
 
 ### Added
 
+- Run trusted workflows in the foreground with `rabi run start` and inspect saved progress with `rabi run show`. Agents commit; rabi pushes without force and opens a draft PR. Review prompts include incremental rounds and prior responses; PR bodies record testing, review and unassessed risk.
+
 - Inspect and validate built-in and repository YAML workflow definitions with `rabi workflow list/show/check`. `rabi trust add` lists repository workflows alongside hooks under the same execution trust.
 
 ## v7.0.0 (2026-10-24)
