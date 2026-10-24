@@ -5,10 +5,10 @@
 For agents and CI, pin the installer and binary to the same release tag:
 
 ```sh
-curl -fsSL https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh | RABI_VERSION=<TAG> sh
+curl -fsSL https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.10/install.sh | RABI_VERSION=v7.0.0-alpha.10 sh
 ```
 
-Replace `<TAG>` with a tag from the first release containing rabi or later on the [Releases page](https://github.com/phantompane/phantom/releases); that release has not been published yet. v7.0.0-alpha.9 and v7.0.0-alpha.8 must each be installed with that release's own `install.sh` at `https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh`, using its original options and environment variables; v7.0.0-alpha.7 and older have no installer, so install them manually as described below. Pinned installs allow prereleases and make no GitHub API request.
+To pin another release, replace `v7.0.0-alpha.10` in both places with a tag from the [Releases page](https://github.com/phantompane/phantom/releases); rabi releases start at v7.0.0-alpha.10. v7.0.0-alpha.9 and v7.0.0-alpha.8 must each be installed with that release's own `install.sh` at `https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh` (with `<TAG>` set to that release), using its original options and environment variables; v7.0.0-alpha.7 and older have no installer, so install them manually as described below. Pinned installs allow prereleases and make no GitHub API request.
 
 Without a version pin, the installer selects the newest stable v7 release with a `rabi-` archive for the platform, skipping v6:
 
@@ -37,13 +37,13 @@ Release binaries support Linux x64/arm64 (static musl builds for any distributio
 
 ## Other installation methods
 
-With mise, pin a version from the first release containing rabi or later; the repository also has older v6 TypeScript releases.
+With mise, pin a version from v7.0.0-alpha.10 or later; the repository also has older v6 TypeScript releases.
 
 ```sh
 mise use github:phantompane/phantom@<VERSION>
 ```
 
-Or build from source with Rust 1.89+ (the `rust-version` in `Cargo.toml`), using the same rabi release tag requirement:
+Or build from source with Rust 1.89+ (the `rust-version` in `Cargo.toml`), replacing `<TAG>` with a release tag such as `v7.0.0-alpha.10`:
 
 ```sh
 cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked rabi

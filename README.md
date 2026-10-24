@@ -11,16 +11,16 @@ Give each task an isolated Git workspace (a linked worktree), so coding agents a
 
 ## Install
 
-Pin the installer and binary to the same release. Replace `<TAG>` with a tag from the first release containing rabi or later; that release has not been published yet. This verifies SHA-256 and GitHub artifact attestations; attestation verification requires `gh`. The installer also needs `curl` and `tar`.
+Pin the installer and binary to the same release. This verifies SHA-256 and GitHub artifact attestations; attestation verification requires `gh`. The installer also needs `curl` and `tar`.
 
 ```sh
-curl -fsSL https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh \
-  | RABI_VERSION=<TAG> sh -s -- --prerelease --verify-attestation
+curl -fsSL https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.10/install.sh \
+  | RABI_VERSION=v7.0.0-alpha.10 sh -s -- --prerelease --verify-attestation
 ```
 
 Supports Linux and macOS on x64/arm64; use Linux binaries in WSL. Installs to `~/.local/bin` without sudo or shell-profile changes. `--prerelease` allows prereleases for unpinned installs; a version pin already permits them.
 
-Or build from source with Rust 1.89+, replacing `<TAG>` with a tag from the first release containing rabi or later:
+Or build from source with Rust 1.89+, replacing `<TAG>` with a release tag such as `v7.0.0-alpha.10`:
 
 ```sh
 cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked rabi
@@ -28,7 +28,7 @@ cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked 
 
 npm `@phantompane/cli` and Homebrew `phantom` are the older TypeScript v6.
 
-For v7.0.0-alpha.9 or v7.0.0-alpha.8, use that release's own installer at `https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh`; v7.0.0-alpha.7 and older have no installer. See [installation](docs/installation.md) for options, manual installs, and updates.
+For v7.0.0-alpha.9 or v7.0.0-alpha.8, use that release's own installer (for example `https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.9/install.sh`); v7.0.0-alpha.7 and older have no installer. See [installation](docs/installation.md) for options, manual installs, and updates.
 
 ## Quick start
 
