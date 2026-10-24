@@ -3,7 +3,7 @@
 rabi (ラビ, from "rabbit") — isolated Git workspaces for parallel coding agents.
 
 > [!WARNING]
-> rabi is under active development (v7 alpha). Commands, output, configuration and on-disk formats may change without backward compatibility until 7.0.0. It is not recommended for production use yet.
+> rabi is under active development (v7 beta). During the v7 beta, minor releases (7.x) may contain breaking changes, following the same rule as SemVer 0.x; patch releases (7.x.y) contain fixes only. Breaking changes are listed in [CHANGELOG](CHANGELOG.md).
 
 Give each task an isolated Git workspace (a linked worktree), so coding agents and humans can work in the same repository in parallel. rabi records why each checkout exists, provides machine-readable output, and checks preservation before cleanup. Unpreserved commits and dirty work require explicit permission to discard.
 
@@ -11,26 +11,25 @@ Give each task an isolated Git workspace (a linked worktree), so coding agents a
 
 ## Install
 
-Pin the installer and binary to the same release. The installer always verifies SHA-256 and needs `curl` and `tar`.
+Install the latest v7 release. The installer always verifies SHA-256 and needs `curl` and `tar`.
 
 ```sh
-curl -fsSL https://github.com/yoiailabs/rabi/releases/download/v7.0.0-alpha.10/install.sh \
-  | RABI_VERSION=v7.0.0-alpha.10 sh -s -- --prerelease
+curl -fsSL https://github.com/yoiailabs/rabi/releases/latest/download/install.sh | sh
 ```
 
-For v7.0.0-alpha.10, omit `--verify-attestation`: its installer fails attestation verification after the repository transfer. To verify its attestation manually, download the archive and run `gh attestation verify <archive> --owner phantompane` (requires `gh`).
+Use `sh -s -- --verify-attestation` to also verify artifact provenance (requires `gh`).
 
-Supports Linux and macOS on x64/arm64; use Linux binaries in WSL. Installs to `~/.local/bin` without sudo or shell-profile changes. `--prerelease` allows prereleases for unpinned installs; a version pin already permits them.
+Supports Linux and macOS on x64/arm64; use Linux binaries in WSL. Installs to `~/.local/bin` without sudo or shell-profile changes.
 
-Or build from source with Rust 1.89+, replacing `<TAG>` with a release tag such as `v7.0.0-alpha.10`:
+Or build from source with Rust 1.89+:
 
 ```sh
-cargo install --git https://github.com/yoiailabs/rabi --tag <TAG> --locked rabi
+cargo install --git https://github.com/yoiailabs/rabi --tag v7.0.0 --locked rabi
 ```
 
 npm `@phantompane/cli` and Homebrew `phantom` are the older TypeScript v6.
 
-For v7.0.0-alpha.9 or v7.0.0-alpha.8, use that release's own installer (for example `https://github.com/yoiailabs/rabi/releases/download/v7.0.0-alpha.9/install.sh`); v7.0.0-alpha.7 and older have no installer. See [installation](docs/installation.md) for manual verification, options, and updates.
+Agents and CI can pin with `RABI_VERSION=<TAG>` and the same tag's installer URL. See [installation](docs/installation.md) for pinned installs, older releases, manual verification, options, and updates.
 
 ## Quick start
 
@@ -129,7 +128,7 @@ Repository `.rabi.toml` defines setup and pre-remove hooks; `.worktreeinclude` s
 
 ## Status
 
-Alpha (see the warning above). Breaking changes are listed in [CHANGELOG](CHANGELOG.md).
+Beta (see the versioning policy above). Breaking changes are listed in [CHANGELOG](CHANGELOG.md).
 
 ## Contributing
 

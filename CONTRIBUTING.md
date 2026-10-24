@@ -121,6 +121,10 @@ When contributing documentation:
 
 ## 🚀 Release Process
 
+### Versioning
+
+During the v7 beta, minor releases (7.x) may contain breaking changes, following the same rule as SemVer 0.x; patch releases (7.x.y) contain fixes only. List breaking changes in [CHANGELOG.md](CHANGELOG.md) under `Changed (Breaking)` in the `Unreleased` section.
+
 To release a new version of rabi:
 
 1. **Open a version pull request against `main`**
@@ -141,18 +145,29 @@ To release a new version of rabi:
 
 3. **Create a GitHub release (builds release binaries)**
 
+   Publish stable 7.x releases without `--prerelease` and mark them Latest with `--latest`, even during the v7 beta. For prereleases, use `--prerelease --latest=false`.
+
    ```bash
-   # Create a release with automatically generated notes
+   # Create a stable release with automatically generated notes
    gh release create v<version> \
      --title "rabi v<version>" \
      --generate-notes \
-     --target main
+     --target main \
+     --latest
 
-   # Example for v1.3.0:
-   gh release create v1.3.0 \
-     --title "rabi v1.3.0" \
+   # Example for v7.0.0:
+   gh release create v7.0.0 \
+     --title "rabi v7.0.0" \
      --generate-notes \
-     --target main
+     --target main \
+     --latest
+
+   # Example prerelease:
+   gh release create v7.1.0-beta.1 \
+     --title "rabi v7.1.0-beta.1" \
+     --generate-notes \
+     --target main \
+     --prerelease --latest=false
    ```
 
    `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `rabi-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains only the `rabi` binary. `install.sh` supports only `rabi-v<version>-<os>-<arch>.tar.gz` archives. v7.0.0-alpha.10, v7.0.0-alpha.9 and v7.0.0-alpha.8 must each be installed with that release's own `install.sh` at `https://github.com/yoiailabs/rabi/releases/download/<TAG>/install.sh` (replace `<TAG>` with the release tag); v7.0.0-alpha.7 and older have no installer and must be installed manually. npm is not published. Monitor the workflow run in GitHub Actions.
