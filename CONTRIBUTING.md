@@ -20,7 +20,7 @@ Thank you for your interest in contributing to mabo! This guide will help you ge
 - Rust 1.99.1 (`rust-toolchain.toml`).
 - [mise](https://mise.jdx.dev/) is optional. `mise.toml` only aliases `fmt`, `clippy`, and `test`. It does not install Rust or other tools.
 
-Development happens on `next`. Open pull requests against `next`. `main` remains the previous TypeScript version.
+Development happens on `main`. Open pull requests against `main`.
 
 Dependabot does not bump the Rust toolchain. The version is pinned in `rust-toolchain.toml`, in the `toolchain:` input of `.github/workflows/ci.yml` and `release-compile.yml`, and in `RUSTUP_TOOLCHAIN` in `release-compile.yml`. Update all of those together, then run the checks below on the new compiler. `Cargo.toml` `rust-version` is the MSRV (1.89, required by uuid 1.28) and changes only when that floor moves.
 
@@ -29,7 +29,6 @@ Dependabot does not bump the Rust toolchain. The version is pinned in `rust-tool
 ```bash
 git clone https://github.com/phantompane/phantom.git
 cd phantom
-git checkout next
 cargo run --locked -- --help
 ```
 
@@ -124,7 +123,7 @@ When contributing documentation:
 
 To release a new version of mabo:
 
-1. **Open a version pull request against `next`**
+1. **Open a version pull request against `main`**
 
    Change the version by hand in a dedicated pull request. Do not bump it in a feature pull request. Edit `version` in `Cargo.toml` and the `mabo` package entry in `Cargo.lock` so they match.
 
@@ -133,12 +132,12 @@ To release a new version of mabo:
    cargo update -p mabo --precise <version>
    ```
 
-   Title the pull request `chore(version): vX.Y.Z`, for example `chore(version): v7.0.0-alpha.9`. `.github/workflows/tag-on-merge.yml` creates that git tag when the pull request merges into `next`. `ci.yml` and `release-compile.yml` do not bump the version.
+   Title the pull request `chore(version): vX.Y.Z`, for example `chore(version): v7.0.0-alpha.9`. `.github/workflows/tag-on-merge.yml` creates that git tag when the pull request merges into `main`. `ci.yml` and `release-compile.yml` do not bump the version.
 
 2. **Review and merge the version pull request**
    - Confirm `Cargo.toml` and `Cargo.lock` show the same version
    - Merge once checks pass
-   - The merge tags `vX.Y.Z` on `next`. Publishing a GitHub release is a separate step
+   - The merge tags `vX.Y.Z` on `main`. Publishing a GitHub release is a separate step
 
 3. **Create a GitHub release (builds release binaries)**
 
@@ -147,13 +146,13 @@ To release a new version of mabo:
    gh release create v<version> \
      --title "mabo v<version>" \
      --generate-notes \
-     --target next
+     --target main
 
    # Example for v1.3.0:
    gh release create v1.3.0 \
      --title "mabo v1.3.0" \
      --generate-notes \
-     --target next
+     --target main
    ```
 
    `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `mabo-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains only the `mabo` binary. `install.sh` supports only `mabo-v<version>-<os>-<arch>.tar.gz` archives. v7.0.0-alpha.8 must be installed with its own `install.sh` at `https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.8/install.sh`; v7.0.0-alpha.7 and older have no installer and must be installed manually. npm is not published. Monitor the workflow run in GitHub Actions.

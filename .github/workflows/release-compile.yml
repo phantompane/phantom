@@ -5,7 +5,7 @@ on:
     types:
       - published
   pull_request:
-    branches: [next]
+    branches: [main]
     paths:
       - .github/workflows/release-compile.yml
       - Cargo.toml

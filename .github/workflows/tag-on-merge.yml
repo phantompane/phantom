@@ -1,6 +1,6 @@
 name: Tag on merge
 
-# Version pull requests are opened by hand against next.
+# Version pull requests are opened by hand against main.
 # Merging a pull request titled `chore(version): vX.Y.Z` creates that git tag.
 # This workflow does not edit Cargo.toml.
 
@@ -9,8 +9,7 @@ on:
     types:
       - closed
     branches:
-      # Version tags are cut from next. main stays the TypeScript release.
-      - next
+      - main
 
 permissions:
   contents: write

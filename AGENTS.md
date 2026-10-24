@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 
 - mabo is a Rust CLI that manages local Git workspaces so many coding agents and humans can work independently in the same repository. The crate lives at the repository root (`Cargo.toml`, `src/`, `tests/`).
-- Development happens on `next`. `main` stays the previous TypeScript version.
+- Development happens on `main`. Open pull requests against `main`.
 - Modules follow the old package boundaries: `cli`, `worktree`, `git`, `config`, `preferences`, `projects`, `github`, `help`.
 - Command help text and bash/zsh/fish completions are generated from `help-data.json`; do not maintain separate command or flag lists. Selector completion queries `command mabo list --names` at completion time, honors -R/--repo, and silently ignores query failures. Quote candidates for shell input before insertion (Bash uses printf %q; zsh/fish use native completion quoting).
 - Keep README.md and README.ja.md aligned in sections, commands, flags, and examples. Document breaking CLI changes in CHANGELOG.md under Unreleased; verify CLI guidance against the implementation and tests. Keep the READMEs concise; detailed English reference material lives in `docs/` (commands, JSON, exit codes, installation, configuration, hooks, safety, sync, and shell integration). Documentation consistency checks live in tests/docs.rs.
@@ -15,7 +15,7 @@
 
 ## Build, Test, and Development Commands
 
-- Prerequisite: Rust 1.99.1, pinned in `rust-toolchain.toml`. The same version is pinned in `.github/workflows/ci.yml` and `release-compile.yml` (`toolchain` and `RUSTUP_TOOLCHAIN`). Dependabot reads `.github/dependabot.yml` only from the default branch, so Cargo and GitHub Actions updates start after `next` is merged into `main`. It does not bump `rust-toolchain.toml` or those workflow strings. To move the pin, change every one of those places together, then run fmt, clippy, and tests on the new compiler. Change `rust-version` in `Cargo.toml` only when the MSRV changes. It is 1.89 because uuid 1.28 declares `rust-version = "1.89.0"`.
+- Prerequisite: Rust 1.99.1, pinned in `rust-toolchain.toml`. The same version is pinned in `.github/workflows/ci.yml` and `release-compile.yml` (`toolchain` and `RUSTUP_TOOLCHAIN`). Dependabot opens Cargo and GitHub Actions updates from `.github/dependabot.yml`. It does not bump `rust-toolchain.toml` or those workflow strings. To move the pin, change every one of those places together, then run fmt, clippy, and tests on the new compiler. Change `rust-version` in `Cargo.toml` only when the MSRV changes. It is 1.89 because uuid 1.28 declares `rust-version = "1.89.0"`.
 - `mise.toml` defines optional task aliases. `mise run fmt`, `mise run clippy`, and `mise run test` run the same checks as CI. It does not install Rust or other tools.
 - The installed command is `mabo` (`mabo create`, `mabo --help`). The Cargo package name is `mabo`. There is no `ptm` or `phantom` binary.
 - Run the CLI: `cargo run --locked -- --help`.
@@ -40,7 +40,7 @@
 ## Commit & Pull Request Guidelines
 
 - Use conventional commits as in history: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`.
-- Do not bump `Cargo.toml` or `Cargo.lock` in a feature pull request. Change the version by hand in a dedicated pull request against `next`. See Releases.
+- Do not bump `Cargo.toml` or `Cargo.lock` in a feature pull request. Change the version by hand in a dedicated pull request against `main`. See Releases.
 - PRs should include a summary, verification steps, and CLI output for UX-facing changes.
 - Ensure `cargo fmt`, `cargo clippy --locked`, and `cargo test --locked` pass. Note known gaps in the PR body.
 
@@ -64,6 +64,6 @@
 
 ## Releases
 
-- The version lives in `Cargo.toml` and the `mabo` entry in `Cargo.lock`. Change it by hand in a dedicated pull request against `next`. Do not bump the version in other pull requests.
-- Title that pull request `chore(version): vX.Y.Z` (a prerelease such as `v7.0.0-alpha.9` is fine). Merging it into `next` creates the git tag. `.github/workflows/tag-on-merge.yml` reads the version from the title. It does not edit `Cargo.toml`.
-- `.github/workflows/release-compile.yml` runs on release publication and selected pull requests to `next` (dry run). It packages the version in `Cargo.toml` as `mabo-v<version>-<os>-<arch>.tar.gz` for linux/darwin x64/arm64, each containing only `mabo`. `install.sh` supports only `mabo-v<version>-<os>-<arch>.tar.gz` archives. v7.0.0-alpha.8 must be installed with its own `install.sh` at `https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.8/install.sh`; v7.0.0-alpha.7 and older have no installer and must be installed manually. Linux binaries use static musl. Releases upload all four archives, `install.sh` from the tag, and sorted `SHA256SUMS` covering those five files, with GitHub artifact attestations for all six assets. Before publishing, the finalize job installs the linux-x64 archive with `install.sh` from a local `file://` mirror of the assets. PR dry runs build and verify checksums without attesting or uploading to a release; only dry runs may skip a missing `install.sh`. npm is not published.
+- The version lives in `Cargo.toml` and the `mabo` entry in `Cargo.lock`. Change it by hand in a dedicated pull request against `main`. Do not bump the version in other pull requests.
+- Title that pull request `chore(version): vX.Y.Z` (a prerelease such as `v7.0.0-alpha.9` is fine). Merging it into `main` creates the git tag. `.github/workflows/tag-on-merge.yml` reads the version from the title. It does not edit `Cargo.toml`.
+- `.github/workflows/release-compile.yml` runs on release publication and selected pull requests to `main` (dry run). It packages the version in `Cargo.toml` as `mabo-v<version>-<os>-<arch>.tar.gz` for linux/darwin x64/arm64, each containing only `mabo`. `install.sh` supports only `mabo-v<version>-<os>-<arch>.tar.gz` archives. v7.0.0-alpha.8 must be installed with its own `install.sh` at `https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.8/install.sh`; v7.0.0-alpha.7 and older have no installer and must be installed manually. Linux binaries use static musl. Releases upload all four archives, `install.sh` from the tag, and sorted `SHA256SUMS` covering those five files, with GitHub artifact attestations for all six assets. Before publishing, the finalize job installs the linux-x64 archive with `install.sh` from a local `file://` mirror of the assets. PR dry runs build and verify checksums without attesting or uploading to a release; only dry runs may skip a missing `install.sh`. npm is not published.
