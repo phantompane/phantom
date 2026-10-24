@@ -114,11 +114,11 @@ rabi remove task/auth
 | 5 | 同期の競合 |
 | 6 | 永続的な変更後の部分的な完了 |
 
-[JSON オブジェクトとコマンド別データ](docs/json.md)、[終了コードと復旧](docs/exit-codes## ワークフロー定義
+[JSON オブジェクトとコマンド別データ](docs/json.md)、[終了コードと復旧](docs/exit-codes.md)を参照してください。
+
+## ワークフロー定義
 
 `rabi workflow list`、`rabi workflow show NAME`、`rabi workflow check [NAME]` は組み込みの `default` と `.rabi/workflows/<name>.yaml` を、実行せず信頼も要求せずに確認します。`-R` 指定時は選択したプライマリ、それ以外は呼び出し元のチェックアウトから読みます。`rabi trust add` はフックとともにリポジトリのワークフローを列挙し、同じリポジトリ実行信頼を付与します。[ワークフロー定義](docs/workflows.md)を参照してください。
-
-rds)を参照してください。
 
 ## 設定
 

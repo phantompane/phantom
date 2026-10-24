@@ -662,3 +662,51 @@ fn branch_and_detached_sources_preserve_trust_and_reuse_skips_authorization() {
         assert!(!path.join("setup-ran").exists());
     }
 }
+
+#[test]
+fn trust_add_records_bare_repositories_without_discovering_workflows() {
+    let repo = Repo::new();
+    let bare = repo.root.join("bare.git");
+    repo.git(&["init", "--bare", bare.to_str().unwrap()]);
+    // Discovery would fail if trust tried to treat the bare Git directory as
+    // a checkout. It must still be possible to grant common-directory trust.
+    fs::create_dir(bare.join(".rabi")).unwrap();
+    fs::write(bare.join(".rabi/workflows"), "not a workflow directory").unwrap();
+    let common = fs::canonicalize(&bare).unwrap();
+    for json in [false, true] {
+        let args = if json {
+            vec!["trust", "add", "--json"]
+        } else {
+            vec!["trust", "add"]
+        };
+        let output = repo
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
+            .current_dir(&bare)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            text(&output.stdout),
+            text(&output.stderr)
+        );
+        assert!(!text(&output.stderr).contains("workflows:"));
+        if json {
+            let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(document["schema"], 2);
+            assert_eq!(document["command"], "trust add");
+            assert_eq!(document["ok"], true);
+            assert_eq!(document["data"]["path"], common.to_str().unwrap());
+            assert!(document["data"]["trustedAt"].is_string());
+            assert_eq!(document["data"].as_object().unwrap().len(), 2);
+        } else {
+            assert_eq!(
+                text(&output.stdout),
+                format!("Trusted {}", common.display())
+            );
+        }
+        assert!(fs::read_to_string(trust_file(&repo))
+            .unwrap()
+            .contains(common.to_str().unwrap()));
+    }
+}

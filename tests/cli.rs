@@ -21584,3 +21584,49 @@ fn workflow_read_only_requires_a_capable_resolved_provider_and_honors_step_overr
         Some(2)
     );
 }
+
+#[test]
+fn workflow_check_diagnoses_non_regular_files_and_accepts_regular_file_symlinks() {
+    let repo = Repo::new();
+    let directory = repo.repo.join(".rabi/workflows/directory.yaml");
+    fs::create_dir_all(&directory).unwrap();
+    std::os::unix::fs::symlink(
+        &directory,
+        directory.with_file_name("linked-directory.yaml"),
+    )
+    .unwrap();
+    // Regular files reached through symlinks remain supported, including files
+    // outside the checkout. Only the file type determines whether it is read.
+    let external = repo.root.join("external.yaml");
+    fs::write(&external, DEFAULT_WORKFLOW).unwrap();
+    std::os::unix::fs::symlink(&external, directory.with_file_name("regular-link.yaml")).unwrap();
+    let checked = repo.rabi(&["workflow", "check", "--json"]);
+    assert_eq!(checked.status.code(), Some(2));
+    let document = assert_envelope(&checked, "workflow check");
+    let items = document["data"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 4);
+    for name in ["directory", "linked-directory"] {
+        let item = items.iter().find(|item| item["name"] == name).unwrap();
+        assert_eq!(item["valid"], false);
+        assert!(item["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| {
+                diagnostic["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("must be a regular file")
+            }));
+        let shown = repo.rabi(&["workflow", "show", name, "--json"]);
+        assert_eq!(shown.status.code(), Some(2));
+        assert!(json_value(&shown)["error"]["details"]["diagnostics"].is_array());
+    }
+    let linked = items
+        .iter()
+        .find(|item| item["name"] == "regular-link")
+        .unwrap();
+    assert_eq!(linked["valid"], true);
+    assert!(directory.is_dir());
+    assert_eq!(fs::read_to_string(external).unwrap(), DEFAULT_WORKFLOW);
+}

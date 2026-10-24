@@ -114,11 +114,11 @@ Use `--json` or `--output json` for one schema 2 envelope: `schema`, `command`, 
 | 5 | Sync conflict |
 | 6 | Partial persistent changes |
 
-See [JSON objects and per-command data](docs/json.md) and [exit codes and recovery## Workflow definitions
+See [JSON objects and per-command data](docs/json.md) and [exit codes and recovery](docs/exit-codes.md).
+
+## Workflow definitions
 
 `rabi workflow list`, `rabi workflow show NAME`, and `rabi workflow check [NAME]` inspect the built-in `default` and `.rabi/workflows/<name>.yaml` without executing them or requiring trust. `-R` uses the selected primary checkout; otherwise definitions come from the invoking checkout. `rabi trust add` lists repository workflows alongside hooks and grants the same repository execution trust. See [workflow definitions](docs/workflows.md).
-
-/json.md#run-records).
 
 ## Configuration
 

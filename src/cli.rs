@@ -2030,19 +2030,22 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
         visible_text(&project.project),
         trust::format_hooks(&project.setup, &project.pre_remove)
     );
-    let checkout = crate::git::top_level(&start)?;
-    let workflows = crate::workflow::list(&checkout)?;
-    errln!("workflows:");
-    for workflow in workflows
-        .iter()
-        .filter(|entry| entry.source == crate::workflow::Source::Repository)
-    {
-        if let Some(path) = &workflow.path {
-            errln!(
-                "  {}  {}",
-                visible_text(&workflow.name),
-                visible_text(&path.to_string_lossy())
-            );
+    // Bare repositories have no checkout; preserve their existing trust path
+    // without trying to discover checkout-local workflow definitions.
+    if let Ok(checkout) = crate::git::top_level(&start) {
+        let workflows = crate::workflow::list(&checkout)?;
+        errln!("workflows:");
+        for workflow in workflows
+            .iter()
+            .filter(|entry| entry.source == crate::workflow::Source::Repository)
+        {
+            if let Some(path) = &workflow.path {
+                errln!(
+                    "  {}  {}",
+                    visible_text(&workflow.name),
+                    visible_text(&path.to_string_lossy())
+                );
+            }
         }
     }
     errln!("Workflow agent steps and check commands, including built-in workflows, execute under this repository trust.");

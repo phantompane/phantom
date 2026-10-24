@@ -257,12 +257,7 @@ pub(crate) fn list(checkout: &Path) -> Result<Vec<Entry>> {
         let file =
             file.map_err(|error| Error::msg(format!("Failed to list workflows: {error}")))?;
         let path = file.path();
-        if path.extension().is_none_or(|extension| extension != "yaml")
-            || file
-                .file_type()
-                .map_err(|error| Error::msg(error.to_string()))?
-                .is_dir()
-        {
+        if path.extension().is_none_or(|extension| extension != "yaml") {
             continue;
         }
         if let Some(name) = path.file_stem() {
@@ -296,7 +291,15 @@ impl Entry {
         }
         let yaml = match &self.path {
             None => Ok(DEFAULT_YAML.to_owned()),
-            Some(path) => fs::read_to_string(path),
+            Some(path) => fs::metadata(path).and_then(|metadata| {
+                if metadata.is_file() {
+                    fs::read_to_string(path)
+                } else {
+                    Err(std::io::Error::other(
+                        "Workflow definition must be a regular file",
+                    ))
+                }
+            }),
         };
         let (yaml, definition) = match yaml {
             Ok(yaml) => {
