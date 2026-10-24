@@ -6,13 +6,13 @@
 
 ## Envelope examples
 
-These outputs were captured in an isolated repository. Only the temporary path prefix is shortened to `/tmp/…`; object fields are retained. `mabo path json-example --json` after creating that workspace returned:
+These outputs were captured in an isolated repository. Only the temporary path prefix is shortened to `/tmp/…`; object fields are retained. `rabi path json-example --json` after creating that workspace returned:
 
 ```json
 {
   "command": "path",
   "data": {
-    "path": "/tmp/…/d/mabo/workspaces/your-repo-e26da761/json-example"
+    "path": "/tmp/…/d/rabi/workspaces/your-repo-e26da761/json-example"
   },
   "error": null,
   "ok": true,
@@ -21,7 +21,7 @@ These outputs were captured in an isolated repository. Only the temporary path p
 }
 ```
 
-An absent workspace (`mabo show topic --json`) returned exit 3:
+An absent workspace (`rabi show topic --json`) returned exit 3:
 
 ```json
 {
@@ -41,9 +41,9 @@ An absent workspace (`mabo show topic --json`) returned exit 3:
 
 `refused` is the fallback when a safety refusal has no more specific cause. The same statuses apply to text output. Standalone `exec` preserves its child's exit status, including 128+signal. Create setup failures exit 6 and retain the workspace plus hook status in `data.setup.exitCode`. Metadata save and copy failures after creation also exit 6. Remove checks every selector and safety guard before removing anything. A later failure exits 6 after persistent removal, otherwise the cause exit code. Per-item results remain available for retries. Remove reports unknown selectors as exit 3 before any hooks or removal, including with `--dry-run`. After exit 6, use `error.details.retryCommand` (also shown in text) to retry only unfinished work; repeating the original command may exit 3 for completed targets.
 
-`MABO_OUTPUT=json|text` sets the default; empty means unset and other values exit 2. Explicit output flags override it. Unknown commands and missing commands after common options also return a usage envelope when JSON is selected. `list --names`/`--paths` (and repo `--names`/`--paths`) select text even with `MABO_OUTPUT=json`; explicitly combining it with JSON is a usage error. `exec`, `completions`, `shell-init` and text help through `--help` ignore `MABO_OUTPUT`. `--version` and `help` support JSON and honor the output mode. Explicit JSON output for `exec`, `completions` or `shell-init` is a usage error; arguments after the required `--` belong to the child.
+`RABI_OUTPUT=json|text` sets the default; empty means unset and other values exit 2. Explicit output flags override it. Unknown commands and missing commands after common options also return a usage envelope when JSON is selected. `list --names`/`--paths` (and repo `--names`/`--paths`) select text even with `RABI_OUTPUT=json`; explicitly combining it with JSON is a usage error. `exec`, `completions`, `shell-init` and text help through `--help` ignore `RABI_OUTPUT`. `--version` and `help` support JSON and honor the output mode. Explicit JSON output for `exec`, `completions` or `shell-init` is a usage error; arguments after the required `--` belong to the child.
 
-mabo never prompts in non-interactive mode: nonempty `CI`, JSON output, `--no-input`, `MABO_NO_INPUT` other than empty or `0`, or stdin/stderr without a TTY. Untrusted hooks refuse before changes with exit 4 and a `mabo trust add` / `create --no-setup` / `setup --no-hooks` hint. Network Git operations receive `GIT_TERMINAL_PROMPT=0`; repository hooks and gh read stdin from `/dev/null`. User commands (standalone `exec`) inherit stdin.
+rabi never prompts in non-interactive mode: nonempty `CI`, JSON output, `--no-input`, `RABI_NO_INPUT` other than empty or `0`, or stdin/stderr without a TTY. Untrusted hooks refuse before changes with exit 4 and a `rabi trust add` / `create --no-setup` / `setup --no-hooks` hint. Network Git operations receive `GIT_TERMINAL_PROMPT=0`; repository hooks and gh read stdin from `/dev/null`. User commands (standalone `exec`) inherit stdin.
 
 See [exit codes](exit-codes.md) for statuses and [sync](sync.md) for strategy and result fields.
 
@@ -53,7 +53,7 @@ See [exit codes](exit-codes.md) for statuses and [sync](sync.md) for strategy an
 
 `list`, `show`, `create`, `adopt`, `set`, `remove` share this object. Their data uses `workspace` or `workspaces` keys (including each `items` entry); sync reports its results under `main` and `items`. `path` is absolute. `head` is the full HEAD SHA, or null when Git has no HEAD. `branch` is null when HEAD is detached (`detached` is true). `base` is the commit-ish this command started from when it knows one; otherwise it is the recorded sync base (a full ref such as `refs/remotes/origin/main`), or null when no base is recorded. `list --json` exposes that recorded base. `dirty` is true for modified or staged tracked files (including submodule changes) or non-ignored untracked files, even when Git status display settings hide them. `kind` is `primary` for the repository's primary checkout and `workspace` for other workspaces.
 
-The `data.workspace` object captured from `mabo create json-example --base main --json` (with the [example hooks and copy patterns](hooks.md)) was:
+The `data.workspace` object captured from `rabi create json-example --base main --json` (with the [example hooks and copy patterns](hooks.md)) was:
 
 ```json
 {
@@ -74,7 +74,7 @@ The `data.workspace` object captured from `mabo create json-example --base main 
   "managed": true,
   "name": "json-example",
   "orphaned": false,
-  "path": "/tmp/…/d/mabo/workspaces/your-repo-e26da761/json-example",
+  "path": "/tmp/…/d/rabi/workspaces/your-repo-e26da761/json-example",
   "purpose": null,
   "repo": {
     "name": "your-repo",
@@ -90,11 +90,11 @@ The `data.workspace` object captured from `mabo create json-example --base main 
 }
 ```
 
-`id`, `purpose`, `base`, `createdAt`, `updatedAt`, `createdFrom`, `setup`, and `links` come from `mabo/workspaces/<id>.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `mabo create` writes a record. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `create --pr` or `create --issue` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `show`, `path`, `list`, and `exec` read metadata without changing record files. `remove` removes the record after Git removes the workspace. `create` replaces any record already stored at that path. `set` patches intent. Reusing an existing PR branch can add its missing PR link while preserving creation details. `create --json` includes `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the workspace exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 6 with `error.code` set to `partial` and the result retained in `data`. A corrupt workspace record makes `list`, `show`, and `exec` continue with null metadata for that record and a warning; other records remain readable. `create`, `setup`, `adopt`, `forget`, `remove`, `set`, `sync` refuse and leave the file unchanged. Sync validates metadata before fetching or updating any target. Concurrent first registrations for the same path are read as one record: the oldest `createdAt` wins, then the lexicographically smallest `id` breaks ties. All fields come from that record, and the next metadata write removes the extra files. `createdFrom` is the full commit the branch was created from, or the base tip sync last fast-forwarded it to while it had no commits of its own. `create` stores the new branch's HEAD. A record for a branch that already existed stores the oldest `refs/heads` reflog entry, or null when that reflog is missing. `set` and a later checkout leave it unchanged. Adopted records have `createdFrom` null. `mabo set` patches the fields you pass and leaves the others. A workspace Git created outside `mabo`, including the primary checkout, has null metadata fields until `set`, `adopt`, or PR reuse records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
+`id`, `purpose`, `base`, `createdAt`, `updatedAt`, `createdFrom`, `setup`, and `links` come from `rabi/workspaces/<id>.json` in the Git common directory (`git rev-parse --git-common-dir`). For a normal repository that directory is `.git`. `rabi create` writes a record. `links.pr` and `links.issue` are `{ "number", "url" }` or null. A number stores `url` as null. An http(s) URL stores the URL and a number parsed from `/pull/`, `/pulls/`, `/issues/`, or `/issue/` when one is present. `create --pr` or `create --issue` fills the matching link, including `https://<host>/<owner>/<repo>/pull/<number>` or `.../issues/<number>`. `show`, `path`, `list`, and `exec` read metadata without changing record files. `remove` removes the record after Git removes the workspace. `create` replaces any record already stored at that path. `set` patches intent. Reusing an existing PR branch can add its missing PR link while preserving creation details. `create --json` includes `metadata` as `{ "ok": true, "error": null }`. When saving the record fails after the workspace exists, `ok` is false, `error` explains why, copy and hooks still run, and the process exits 6 with `error.code` set to `partial` and the result retained in `data`. A corrupt workspace record makes `list`, `show`, and `exec` continue with null metadata for that record and a warning; other records remain readable. `create`, `setup`, `adopt`, `forget`, `remove`, `set`, `sync` refuse and leave the file unchanged. Sync validates metadata before fetching or updating any target. Concurrent first registrations for the same path are read as one record: the oldest `createdAt` wins, then the lexicographically smallest `id` breaks ties. All fields come from that record, and the next metadata write removes the extra files. `createdFrom` is the full commit the branch was created from, or the base tip sync last fast-forwarded it to while it had no commits of its own. `create` stores the new branch's HEAD. A record for a branch that already existed stores the oldest `refs/heads` reflog entry, or null when that reflog is missing. `set` and a later checkout leave it unchanged. Adopted records have `createdFrom` null. `rabi set` patches the fields you pass and leaves the others. A workspace Git created outside `rabi`, including the primary checkout, has null metadata fields until `set`, `adopt`, or PR reuse records it. Cleanup details (`prunable`, `locked`) can be added later without a new version.
 
 Workspace records contain `schema: 2`, an `id` of the form `ws_<uuid v4>`, `path`, an optional `name`, and the metadata fields above. JSON workspace objects include `id` (null for an unrecorded workspace). Each record is written atomically through a temporary file in the same directory, fsync, and rename. Deleting a record removes only its file. Concurrent additions of different records preserve both; concurrent updates of the same record use the last write.
 
-Repo registrations live in `$XDG_STATE_HOME/mabo/repos/<id>.json`, falling back to `~/.local/state/mabo/repos/<id>.json`. Their IDs have the form `proj_<uuid>`. Readers deduplicate registrations by root path, keeping the oldest `createdAt` (then the smallest ID on a tie). mabo uses no internal file locks; trust and user config remain single files replaced atomically.
+Repo registrations live in `$XDG_STATE_HOME/rabi/repos/<id>.json`, falling back to `~/.local/state/rabi/repos/<id>.json`. Their IDs have the form `proj_<uuid>`. Readers deduplicate registrations by root path, keeping the oldest `createdAt` (then the smallest ID on a tie). rabi uses no internal file locks; trust and user config remain single files replaced atomically.
 
 ## Per-command data
 
@@ -180,6 +180,6 @@ A failed clone uses the common error envelope. A destination that is not the exp
 
 ## Help and version discovery
 
-`mabo help [COMMAND...]` prints the same text as `--help`. `mabo help --json` puts the full contents of `help-data.json` in `data`, including `commands`, `helps`, `globalOptions`, `exitCodes`, `errorCodes`, `warningCodes`, and `schemaVersion: 2`. `mabo help repo show --json` adds `data.selected` for that command. This is separate from the envelope’s `schema`.
+`rabi help [COMMAND...]` prints the same text as `--help`. `rabi help --json` puts the full contents of `help-data.json` in `data`, including `commands`, `helps`, `globalOptions`, `exitCodes`, `errorCodes`, `warningCodes`, and `schemaVersion: 2`. `rabi help repo show --json` adds `data.selected` for that command. This is separate from the envelope’s `schema`.
 
-`--version` and `-v` show the application version. `mabo --version --json` uses `command: "--version"`; `data.version` contains the application version and `data.display` contains the text version line.
+`--version` and `-v` show the application version. `rabi --version --json` uses `command: "--version"`; `data.version` contains the application version and `data.display` contains the text version line.

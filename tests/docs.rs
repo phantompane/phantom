@@ -2,11 +2,11 @@ const README: &str = include_str!("../README.md");
 const README_JA: &str = include_str!("../README.ja.md");
 
 #[test]
-fn product_and_package_are_named_mabo() {
+fn product_and_package_are_named_rabi() {
     for document in [README, README_JA] {
-        assert_eq!(document.lines().next(), Some("# mabo"));
+        assert_eq!(document.lines().next(), Some("# rabi"));
     }
-    assert_eq!(env!("CARGO_PKG_NAME"), "mabo");
+    assert_eq!(env!("CARGO_PKG_NAME"), "rabi");
 }
 
 fn fenced_blocks(document: &str) -> Vec<Vec<&str>> {
@@ -32,7 +32,7 @@ fn fenced_blocks(document: &str) -> Vec<Vec<&str>> {
 fn readmes_cover_the_help_contract_and_share_examples() {
     let help: serde_json::Value = serde_json::from_str(include_str!("../help-data.json")).unwrap();
     for command in help["helps"].as_object().unwrap().keys() {
-        let entry = format!("`mabo {command}`");
+        let entry = format!("`rabi {command}`");
         for (name, document) in [("README.md", README), ("README.ja.md", README_JA)] {
             assert!(document.contains(&entry), "{name} is missing {entry}");
         }

@@ -1,5 +1,5 @@
 [package]
-name = "mabo"
+name = "rabi"
 version = "7.0.0-alpha.9"
 edition = "2021"
 rust-version = "1.89"
@@ -10,7 +10,7 @@ categories = ["command-line-utilities", "development-tools"]
 license = "MIT"
 
 [[bin]]
-name = "mabo"
+name = "rabi"
 path = "src/main.rs"
 
 [dependencies]

@@ -16,4 +16,4 @@
 
 Create may retain a workspace and exit 6 if metadata, copying, or setup fails. Read `data` before handling the error. A remove failure after persistent removal exits 6; use `error.details.retryCommand` after fixing the cause. Repeating the original remove command can exit 3 because completed targets have already gone. Sync uses exit 6 if another selected item changed before an error, conflict, or refusal.
 
-GC plans and protected skips succeed with exit 0. A warning does not by itself mean failure. The complete error and warning code lists are in `mabo help --json` (`data.errorCodes` and `data.warningCodes`). See [JSON](json.md), [safety](safety.md), and [sync](sync.md) for per-command details.
+GC plans and protected skips succeed with exit 0. A warning does not by itself mean failure. The complete error and warning code lists are in `rabi help --json` (`data.errorCodes` and `data.warningCodes`). See [JSON](json.md), [safety](safety.md), and [sync](sync.md) for per-command details.

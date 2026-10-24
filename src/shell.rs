@@ -62,10 +62,10 @@ pub(crate) fn completions(shell: Shell) -> Result<String> {
                     "value"
                 };
                 if fish {
-                    values.push_str(&format!("                case {pattern}\n                    set mabo_pending {pending}\n                    continue\n"));
+                    values.push_str(&format!("                case {pattern}\n                    set rabi_pending {pending}\n                    continue\n"));
                 } else {
                     values.push_str(&format!(
-                        "                {pattern}) mabo_pending={pending}; continue ;;\n"
+                        "                {pattern}) rabi_pending={pending}; continue ;;\n"
                     ));
                 }
             }
@@ -95,18 +95,18 @@ pub(crate) fn completions(shell: Shell) -> Result<String> {
             let next = shell.quote(&next);
             let help_mode = if *child == "help" {
                 if fish {
-                    "set mabo_help 1\n                    "
+                    "set rabi_help 1\n                    "
                 } else {
-                    "mabo_help=1; "
+                    "rabi_help=1; "
                 }
             } else {
                 ""
             };
             if fish {
-                commands.push_str(&format!("                case {pattern}\n                    {help_mode}set mabo_context {next}\n                    continue\n"));
+                commands.push_str(&format!("                case {pattern}\n                    {help_mode}set rabi_context {next}\n                    continue\n"));
             } else {
                 commands.push_str(&format!(
-                    "                {pattern}) {help_mode}mabo_context={next}; continue ;;\n"
+                    "                {pattern}) {help_mode}rabi_context={next}; continue ;;\n"
                 ));
             }
         }
@@ -138,9 +138,9 @@ pub(crate) fn completions(shell: Shell) -> Result<String> {
                     "one"
                 };
                 let query = if fish {
-                    "set -l mabo_names (command mabo $mabo_repo list --names 2>/dev/null | string collect)\n            test $pipestatus[1] -eq 0; or return 0\n            test -z \"$mabo_names\"; or printf '%s\\n' \"$mabo_names\""
+                    "set -l rabi_names (command rabi $rabi_repo list --names 2>/dev/null | string collect)\n            test $pipestatus[1] -eq 0; or return 0\n            test -z \"$rabi_names\"; or printf '%s\\n' \"$rabi_names\""
                 } else {
-                    "mabo_names=$(command mabo \"${mabo_repo[@]}\" list --names 2>/dev/null) || return 0\n            [ -z \"$mabo_names\" ] || printf '%s\\n' \"$mabo_names\""
+                    "rabi_names=$(command rabi \"${rabi_repo[@]}\" list --names 2>/dev/null) || return 0\n            [ -z \"$rabi_names\" ] || printf '%s\\n' \"$rabi_names\""
                 };
                 block(shell, &mut candidates, condition, query);
             }
@@ -190,14 +190,14 @@ fn conditional(shell: Shell, output: &mut String, condition: &str, rows: &[Strin
 fn block(shell: Shell, output: &mut String, condition: &str, body: &str) {
     let fish = matches!(shell, Shell::Fish);
     let condition = match (fish, condition) {
-        (true, "flags") => "test $mabo_stop -eq 0",
-        (true, "children") => "test $mabo_stop -eq 0; and test $mabo_count -eq 0",
-        (true, "one") => "test $mabo_help -eq 0; and test $mabo_count -eq 0",
-        (true, _) => "test $mabo_help -eq 0",
-        (false, "flags") => "[ \"$mabo_stop\" -eq 0 ]",
-        (false, "children") => "[ \"$mabo_stop\" -eq 0 ] && [ \"$mabo_count\" -eq 0 ]",
-        (false, "one") => "[ \"$mabo_help\" -eq 0 ] && [ \"$mabo_count\" -eq 0 ]",
-        (false, _) => "[ \"$mabo_help\" -eq 0 ]",
+        (true, "flags") => "test $rabi_stop -eq 0",
+        (true, "children") => "test $rabi_stop -eq 0; and test $rabi_count -eq 0",
+        (true, "one") => "test $rabi_help -eq 0; and test $rabi_count -eq 0",
+        (true, _) => "test $rabi_help -eq 0",
+        (false, "flags") => "[ \"$rabi_stop\" -eq 0 ]",
+        (false, "children") => "[ \"$rabi_stop\" -eq 0 ] && [ \"$rabi_count\" -eq 0 ]",
+        (false, "one") => "[ \"$rabi_help\" -eq 0 ] && [ \"$rabi_count\" -eq 0 ]",
+        (false, _) => "[ \"$rabi_help\" -eq 0 ]",
     };
     if fish {
         output.push_str(&format!(

@@ -658,7 +658,7 @@ fn resolve_data_dir(home: &str, xdg_state_home: Option<&str>) -> PathBuf {
         Some(state) if Path::new(state).is_absolute() => PathBuf::from(state),
         _ => PathBuf::from(home).join(".local").join("state"),
     };
-    base.join("mabo")
+    base.join("rabi")
 }
 
 fn normalize_root(path: &Path) -> Result<String> {
@@ -767,16 +767,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_data_dir_uses_xdg_state_home_mabo() {
+    fn default_data_dir_uses_xdg_state_home_rabi() {
         assert_eq!(
             resolve_data_dir("/home/user", Some("/var/state")),
-            PathBuf::from("/var/state/mabo")
+            PathBuf::from("/var/state/rabi")
         );
     }
 
     #[test]
-    fn default_data_dir_falls_back_to_home_local_state_mabo() {
-        let fallback = PathBuf::from("/home/user/.local/state/mabo");
+    fn default_data_dir_falls_back_to_home_local_state_rabi() {
+        let fallback = PathBuf::from("/home/user/.local/state/rabi");
         assert_eq!(resolve_data_dir("/home/user", None), fallback);
         assert_eq!(resolve_data_dir("/home/user", Some("")), fallback);
         assert_eq!(
@@ -847,7 +847,7 @@ mod tests {
     #[test]
     fn duplicate_roots_keep_oldest_registration_and_remove_together() {
         let dir =
-            std::env::temp_dir().join(format!("mabo-project-duplicate-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("rabi-project-duplicate-{}", uuid::Uuid::new_v4()));
         let store = ProjectRegistryStore::new(dir.clone());
         let (first, _) = store.add(Path::new("/work/duplicate")).unwrap();
         let mut older = first.clone();
@@ -1117,13 +1117,13 @@ mod tests {
             .expect("inside .git"),
             main
         );
-        let missing = resolve_directory_reference("/no/such/mabo-project", &dir, &home);
+        let missing = resolve_directory_reference("/no/such/rabi-project", &dir, &home);
         let missing = missing.expect_err("missing path");
         assert!(matches!(missing, Error::PathNotFound(_)));
         assert_eq!(missing.exit_code(), crate::error::NOT_FOUND);
         assert_eq!(
             missing.to_string(),
-            "Path '/no/such/mabo-project' does not exist"
+            "Path '/no/such/rabi-project' does not exist"
         );
         let option = resolve_project_ref("--json").expect_err("option");
         assert!(matches!(option, Error::Validation(_)));

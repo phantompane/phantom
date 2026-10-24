@@ -1,40 +1,40 @@
-# Generated from mabo's help-data.json; workspace names are queried on completion.
-_mabo_candidates() {
-    local mabo_context='' mabo_pending='' mabo_word mabo_count=0 mabo_stop=0 mabo_help=0 mabo_names
-    local -a mabo_repo=()
-    for mabo_word in "$@"; do
-        if [ -n "$mabo_pending" ]; then
-            [ "$mabo_pending" != repo ] || mabo_repo=(--repo "$mabo_word")
-            mabo_pending=''
+# Generated from rabi's help-data.json; workspace names are queried on completion.
+_rabi_candidates() {
+    local rabi_context='' rabi_pending='' rabi_word rabi_count=0 rabi_stop=0 rabi_help=0 rabi_names
+    local -a rabi_repo=()
+    for rabi_word in "$@"; do
+        if [ -n "$rabi_pending" ]; then
+            [ "$rabi_pending" != repo ] || rabi_repo=(--repo "$rabi_word")
+            rabi_pending=''
             continue
         fi
-        if [ "$mabo_stop" -eq 0 ]; then
-            case "$mabo_word" in
-                --) [ "$mabo_context" != exec ] || return 0; mabo_stop=1; continue ;;
-                --repo=*) mabo_repo=(--repo "${mabo_word#*=}"); continue ;;
-                -R?*) mabo_repo=(--repo "${mabo_word#-R}"); continue ;;
+        if [ "$rabi_stop" -eq 0 ]; then
+            case "$rabi_word" in
+                --) [ "$rabi_context" != exec ] || return 0; rabi_stop=1; continue ;;
+                --repo=*) rabi_repo=(--repo "${rabi_word#*=}"); continue ;;
+                -R?*) rabi_repo=(--repo "${rabi_word#-R}"); continue ;;
             esac
-            case "$mabo_context:$mabo_word" in
+            case "$rabi_context:$rabi_word" in
 @VALUE_OPTIONS@
             esac
-            case "$mabo_word" in -*) continue ;; esac
-            case "$mabo_context:$mabo_word" in
+            case "$rabi_word" in -*) continue ;; esac
+            case "$rabi_context:$rabi_word" in
 @COMMANDS@
             esac
         fi
-        mabo_count=$((mabo_count + 1))
+        rabi_count=$((rabi_count + 1))
     done
-    if [ -n "$mabo_pending" ]; then
-        if [ "$mabo_pending" = repo ]; then
-            mabo_names=$(command mabo repo list --names 2>/dev/null) || return 0
-            [ -z "$mabo_names" ] || printf '%s\n' "$mabo_names"
+    if [ -n "$rabi_pending" ]; then
+        if [ "$rabi_pending" = repo ]; then
+            rabi_names=$(command rabi repo list --names 2>/dev/null) || return 0
+            [ -z "$rabi_names" ] || printf '%s\n' "$rabi_names"
         fi
         return 0
     fi
-    if [ "$mabo_context" = exec ] && [ "$mabo_count" -gt 0 ]; then
+    if [ "$rabi_context" = exec ] && [ "$rabi_count" -gt 0 ]; then
         return 0
     fi
-    case "$mabo_context" in
+    case "$rabi_context" in
 @CANDIDATES@
     esac
     return 0

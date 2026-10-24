@@ -13,7 +13,7 @@ pub fn write_config(home: &Path) {
 
 pub fn command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
-    // Also reaches Git children (including those started by mabo) when the
+    // Also reaches Git children (including those started by rabi) when the
     // fixture does not use an isolated HOME. Local push receivers clear these
     // variables, so configure their repositories with configure_repo first.
     command

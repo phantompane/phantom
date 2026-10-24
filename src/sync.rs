@@ -842,17 +842,17 @@ fn base_unknown_item(context: &Context, tree: &worktree::WorktreeInfo) -> Item {
 fn set_base_hint(context: &Context, tree: &worktree::WorktreeInfo, reference: &str) -> String {
     if tree.name.starts_with('-') && !Path::new(&tree.path).is_dir() {
         format!(
-            "mabo -R {} set --base {reference} -- {}",
+            "rabi -R {} set --base {reference} -- {}",
             crate::allocation::shell_quote(&context.git_root),
             crate::allocation::shell_quote(&tree.name)
         )
     } else if tree.name.starts_with('-') {
         format!(
-            "(cd {} && mabo set . --base {reference})",
+            "(cd {} && rabi set . --base {reference})",
             crate::allocation::shell_quote(&tree.path)
         )
     } else {
-        format!("mabo set {} --base {reference}", tree.name)
+        format!("rabi set {} --base {reference}", tree.name)
     }
 }
 
@@ -1209,7 +1209,7 @@ fn sync_tree(
     {
         item.status(
             "integrated",
-            Some("Use mabo gc to remove landed workspaces".into()),
+            Some("Use rabi gc to remove landed workspaces".into()),
         );
         return Ok(item);
     }
@@ -1361,7 +1361,7 @@ fn sync_tree(
             base,
         ]
     };
-    let action = format!("mabo sync: fast-forward to {base}");
+    let action = format!("rabi sync: fast-forward to {base}");
     let result = if own.is_empty() {
         git::raw_git_with_env(path, &args, &[("GIT_REFLOG_ACTION", &action)])?
     } else {

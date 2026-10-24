@@ -74,7 +74,7 @@ jobs:
         if: matrix.asset_os == 'linux'
         shell: bash
         run: |
-          binary="target/${{ matrix.target }}/release/mabo"
+          binary="target/${{ matrix.target }}/release/rabi"
           description=$(file "$binary")
           echo "$description"
           if [[ "$description" != *"statically linked"* && "$description" != *"static-pie linked"* ]]; then
@@ -83,7 +83,7 @@ jobs:
           fi
           docker run --rm \
             --mount "type=bind,src=$PWD/target/${{ matrix.target }}/release,dst=/build,readonly" \
-            alpine:3.22 /build/mabo --version
+            alpine:3.22 /build/rabi --version
 
       # The archive name uses the version already committed in Cargo.toml.
       # Nothing in this workflow bumps that version.
@@ -91,8 +91,8 @@ jobs:
         shell: bash
         run: |
           version=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
-          archive="mabo-v${version}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}.tar.gz"
-          tar -C "target/${{ matrix.target }}/release" -czf "$archive" mabo
+          archive="rabi-v${version}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}.tar.gz"
+          tar -C "target/${{ matrix.target }}/release" -czf "$archive" rabi
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
 
       - name: Pass archive to finalize
@@ -132,10 +132,10 @@ jobs:
         run: |
           version=$(awk -F '"' '/^version = / { print $2; exit }' ../Cargo.toml)
           expected=(
-            "mabo-v${version}-darwin-arm64.tar.gz"
-            "mabo-v${version}-darwin-x64.tar.gz"
-            "mabo-v${version}-linux-arm64.tar.gz"
-            "mabo-v${version}-linux-x64.tar.gz"
+            "rabi-v${version}-darwin-arm64.tar.gz"
+            "rabi-v${version}-darwin-x64.tar.gz"
+            "rabi-v${version}-linux-arm64.tar.gz"
+            "rabi-v${version}-linux-x64.tar.gz"
           )
           # Compare the entire directory before adding installer/checksum files.
           if ! diff -u <(printf '%s\n' "${expected[@]}") \
@@ -175,9 +175,9 @@ jobs:
           mirror="$RUNNER_TEMP/mirror/v${version}"
           mkdir -p "$mirror"
           cp release-assets/* "$mirror/"
-          MABO_RELEASE_BASE_URL="file://$RUNNER_TEMP/mirror" MABO_INSTALL_DIR="$RUNNER_TEMP/bin" \
+          RABI_RELEASE_BASE_URL="file://$RUNNER_TEMP/mirror" RABI_INSTALL_DIR="$RUNNER_TEMP/bin" \
             sh release-assets/install.sh --version "v${version}" </dev/null
-          "$RUNNER_TEMP/bin/mabo" --version
+          "$RUNNER_TEMP/bin/rabi" --version
 
       - name: Attest release assets
         if: github.event_name == 'release'

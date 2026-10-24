@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn replaces_contents_and_cleans_temporary_after_failure() {
-        let dir = std::env::temp_dir().join(format!("mabo-atomic-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("rabi-atomic-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&dir).unwrap();
         let path = dir.join("state");
         fs::write(&path, "old").unwrap();

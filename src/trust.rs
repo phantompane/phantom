@@ -70,7 +70,7 @@ pub fn decide(facts: Facts) -> Decision {
 }
 
 pub fn trust_all() -> bool {
-    std::env::var("MABO_TRUST_ALL").ok().as_deref() == Some("1")
+    std::env::var("RABI_TRUST_ALL").ok().as_deref() == Some("1")
 }
 
 pub fn answer_is_yes(line: &str) -> bool {
@@ -219,7 +219,7 @@ pub fn format_hooks(setup: &[String], pre_remove: &[String]) -> String {
 
 pub fn refusal_message(project: &str, setup: &[String], pre_remove: &[String]) -> String {
     format!(
-        "Untrusted project: {}\n{}\nRefusing to run project hooks. Run `mabo trust add` or pass `--no-setup` (create) / `--no-hooks` (setup, delete, gc).",
+        "Untrusted project: {}\n{}\nRefusing to run project hooks. Run `rabi trust add` or pass `--no-setup` (create) / `--no-hooks` (setup, delete, gc).",
         visible_text(project),
         format_hooks(setup, pre_remove)
     )

@@ -312,7 +312,7 @@ const PR_FIELDS: &str = "state,number,url,headRefOid,headRefName";
 
 fn retirement_gh(cwd: &Path, args: &[&str]) -> Option<Value> {
     // Tests and callers may shorten the deadline, but cannot extend the bound.
-    let timeout = std::env::var("MABO_GH_TIMEOUT_MS")
+    let timeout = std::env::var("RABI_GH_TIMEOUT_MS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|millis| *millis > 0)

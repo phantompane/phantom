@@ -40,10 +40,10 @@ impl Repo {
         );
     }
 
-    fn mabo(&self, args: &[&str]) -> std::process::Output {
-        self.command(env!("CARGO_BIN_EXE_mabo"), args)
+    fn rabi(&self, args: &[&str]) -> std::process::Output {
+        self.command(env!("CARGO_BIN_EXE_rabi"), args)
             .output()
-            .expect("mabo")
+            .expect("rabi")
     }
 
     fn create_recorded(&self, args: &[&str]) -> std::process::Output {
@@ -59,11 +59,11 @@ impl Repo {
                 index += 1;
             }
         }
-        let created = self.mabo(&create);
+        let created = self.rabi(&create);
         assert!(created.status.success(), "{}", text(&created.stderr));
-        let set = self.mabo(&intent);
+        let set = self.rabi(&intent);
         assert!(set.status.success(), "{}", text(&set.stderr));
-        self.mabo(&["show", args[1], "--json"])
+        self.rabi(&["show", args[1], "--json"])
     }
 
     fn command(&self, program: &str, args: &[&str]) -> Command {
@@ -77,9 +77,9 @@ impl Repo {
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_DATA_HOME", self.root.join("xdg"))
             .env_remove("GHQ_ROOT")
-            .env_remove("MABO_OUTPUT")
-            .env_remove("MABO_NO_INPUT")
-            .env_remove("MABO_NAME_CANDIDATES")
+            .env_remove("RABI_OUTPUT")
+            .env_remove("RABI_NO_INPUT")
+            .env_remove("RABI_NAME_CANDIDATES")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
             .env_remove("GIT_CONFIG_COUNT")
@@ -87,9 +87,9 @@ impl Repo {
         if std::path::Path::new(program)
             .file_name()
             .and_then(|name| name.to_str())
-            == Some("mabo")
+            == Some("rabi")
         {
-            command.env("MABO_TRUST_ALL", "1");
+            command.env("RABI_TRUST_ALL", "1");
         }
         // Parallel `git init` hardlinks the shared template and can fail with
         // "File exists" on the hook samples. Give each repo an empty template.
@@ -109,8 +109,8 @@ impl Drop for Repo {
 }
 
 fn managed_directory(git_root: &Path, xdg: &Path) -> PathBuf {
-    let common = mabo::git::canonical_common_dir(git_root).expect("common dir");
-    mabo::paths::default_worktrees_directory(git_root, &common, xdg).path
+    let common = rabi::git::canonical_common_dir(git_root).expect("common dir");
+    rabi::paths::default_worktrees_directory(git_root, &common, xdg).path
 }
 
 fn managed(repo: &Repo, relative: &str) -> PathBuf {
@@ -143,10 +143,10 @@ fn closed_pipe() -> std::io::PipeWriter {
 
 fn assert_closed_stdout(repo: &Repo, args: &[&str], expected: i32) {
     let output = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), args)
+        .command(env!("CARGO_BIN_EXE_rabi"), args)
         .stdout(closed_pipe())
         .output()
-        .expect("mabo with closed stdout");
+        .expect("rabi with closed stdout");
     let stderr = text(&output.stderr);
     assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
     assert_eq!(output.status.code(), Some(expected), "{args:?}: {stderr}");
@@ -172,10 +172,10 @@ fn broken_pipe_large_list_stdout_preserves_success() {
             path.to_str().unwrap(),
             "HEAD",
         ]);
-        mabo::metadata::write(
+        rabi::metadata::write(
             &repo.repo,
             &path,
-            &mabo::metadata::MetadataInput {
+            &rabi::metadata::MetadataInput {
                 purpose: Some("x".repeat(1024)),
                 ..Default::default()
             },
@@ -183,7 +183,7 @@ fn broken_pipe_large_list_stdout_preserves_success() {
         .expect("workspace metadata");
     }
     for args in [vec!["list"], vec!["list", "--json"]] {
-        let normal = repo.mabo(&args);
+        let normal = repo.rabi(&args);
         assert!(normal.status.success(), "{}", text(&normal.stderr));
         assert!(normal.stdout.len() > 16 * 1024, "large output fixture");
         assert_closed_stdout(&repo, &args, 0);
@@ -194,12 +194,12 @@ fn broken_pipe_large_list_stdout_preserves_success() {
 fn broken_pipe_stderr_preserves_success_and_usage_status() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"true\"]\n",
     )
     .unwrap();
     assert!(repo
-        .mabo(&["create", "topic", "--no-setup"])
+        .rabi(&["create", "topic", "--no-setup"])
         .status
         .success());
     // Setup emits progress and succeeds; usage writes diagnostics and help.
@@ -207,11 +207,11 @@ fn broken_pipe_stderr_preserves_success_and_usage_status() {
         (vec!["setup", "topic", "--json"], 0),
         (vec!["not-a-command"], 2),
     ] {
-        let normal = repo.mabo(&args);
+        let normal = repo.rabi(&args);
         assert_eq!(normal.status.code(), Some(expected));
         assert!(!normal.stderr.is_empty());
         let output = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .stderr(closed_pipe())
             .output()
             .unwrap();
@@ -234,7 +234,7 @@ fn broken_pipe_progress_does_not_interrupt_create_or_setup() {
         for (last_hook, expected, state) in [("true", 0, "ok"), ("exit 7", 6, "failed")] {
             let repo = Repo::new();
             fs::write(
-                repo.repo.join(".mabo.toml"),
+                repo.repo.join(".rabi.toml"),
                 format!("[hooks]\nsetup = [\"touch setup-completed\", \"{last_hook}\"]\n"),
             )
             .unwrap();
@@ -243,7 +243,7 @@ fn broken_pipe_progress_does_not_interrupt_create_or_setup() {
             } else {
                 vec!["create", "topic"]
             };
-            let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), &args);
+            let mut command = repo.command(env!("CARGO_BIN_EXE_rabi"), &args);
             if json {
                 command.stderr(closed_pipe());
             } else {
@@ -257,7 +257,7 @@ fn broken_pipe_progress_does_not_interrupt_create_or_setup() {
                 "{}",
                 text(&output.stderr)
             );
-            let shown = repo.mabo(&["show", "topic", "--json"]);
+            let shown = repo.rabi(&["show", "topic", "--json"]);
             assert!(shown.status.success(), "{}", text(&shown.stderr));
             let document: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
             let path = document["data"]["workspace"]["path"].as_str().unwrap();
@@ -273,7 +273,7 @@ fn json_stderr_errors_are_included_before_emitting_the_envelope() {
     let repo = Repo::new();
     let args = ["config", "list", "--json"];
     let normal = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &args)
+        .command(env!("CARGO_BIN_EXE_rabi"), &args)
         .env("GIT_CONFIG_COUNT", "broken")
         .output()
         .unwrap();
@@ -283,7 +283,7 @@ fn json_stderr_errors_are_included_before_emitting_the_envelope() {
     assert!(!expected["warnings"].as_array().unwrap().is_empty());
 
     let output = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &args)
+        .command(env!("CARGO_BIN_EXE_rabi"), &args)
         .env("GIT_CONFIG_COUNT", "broken")
         .stderr(fs::File::options().write(true).open("/dev/full").unwrap())
         .output()
@@ -306,12 +306,12 @@ fn json_stderr_errors_preserve_mutations_and_override_partial_status() {
     for last_hook in ["true", "exit 7"] {
         let repo = Repo::new();
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             format!("[hooks]\nsetup = [\"touch setup-completed\", \"{last_hook}\"]\n"),
         )
         .unwrap();
         let output = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &["create", "topic", "--json"])
+            .command(env!("CARGO_BIN_EXE_rabi"), &["create", "topic", "--json"])
             .stderr(fs::File::options().write(true).open("/dev/full").unwrap())
             .output()
             .unwrap();
@@ -339,7 +339,7 @@ fn output_errors_other_than_broken_pipe_fail_without_panicking() {
     let repo = Repo::new();
     for args in [vec!["help"], vec!["help", "--json"], vec!["--help"]] {
         let output = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .stdout(fs::File::options().write(true).open("/dev/full").unwrap())
             .output()
             .unwrap();
@@ -349,27 +349,27 @@ fn output_errors_other_than_broken_pipe_fail_without_panicking() {
         assert_eq!(output.status.code(), Some(1));
     }
     let output = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["help"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["help"])
         .stdout(fs::File::options().write(true).open("/dev/full").unwrap())
         .stderr(closed_pipe())
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     let output = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["not-a-command"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["not-a-command"])
         .stderr(fs::File::options().write(true).open("/dev/full").unwrap())
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
 }
 
-fn mabo_color(
+fn rabi_color(
     repo: &Repo,
     args: &[&str],
     no_color: Option<&str>,
     force_color: Option<&str>,
 ) -> std::process::Output {
-    let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), args);
+    let mut command = repo.command(env!("CARGO_BIN_EXE_rabi"), args);
     command.env_remove("NO_COLOR").env_remove("FORCE_COLOR");
     if let Some(value) = no_color {
         command.env("NO_COLOR", value);
@@ -377,36 +377,36 @@ fn mabo_color(
     if let Some(value) = force_color {
         command.env("FORCE_COLOR", value);
     }
-    command.output().expect("mabo")
+    command.output().expect("rabi")
 }
 
 #[test]
 fn help_is_plain_when_stdout_is_not_a_tty() {
     let repo = Repo::new();
-    let help = mabo_color(&repo, &["--help"], None, None);
+    let help = rabi_color(&repo, &["--help"], None, None);
     assert!(help.status.success());
     assert!(
         !text(&help.stdout).contains('\u{1b}'),
         "piped help should not include ANSI color: {}",
         text(&help.stdout)
     );
-    let list = mabo_color(&repo, &["list", "--help"], None, None);
+    let list = rabi_color(&repo, &["list", "--help"], None, None);
     assert!(list.status.success());
     assert!(!text(&list.stdout).contains('\u{1b}'));
 
-    let forced = mabo_color(&repo, &["--help"], None, Some("1"));
+    let forced = rabi_color(&repo, &["--help"], None, Some("1"));
     assert!(
         text(&forced.stdout).contains('\u{1b}'),
         "FORCE_COLOR=1 should color piped help"
     );
 
-    let no_color = mabo_color(&repo, &["--help"], Some("1"), Some("1"));
+    let no_color = rabi_color(&repo, &["--help"], Some("1"), Some("1"));
     assert!(
         !text(&no_color.stdout).contains('\u{1b}'),
         "NO_COLOR disables color even when FORCE_COLOR is set"
     );
 
-    let disabled = mabo_color(&repo, &["create", "--pr", "--help"], None, Some("0"));
+    let disabled = rabi_color(&repo, &["create", "--pr", "--help"], None, Some("0"));
     assert!(!text(&disabled.stdout).contains('\u{1b}'));
 }
 
@@ -424,23 +424,23 @@ fn outside_a_git_repository_is_a_phantom_error() {
         &["gc"],
     ] {
         let output = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), args)
+            .command(env!("CARGO_BIN_EXE_rabi"), args)
             .current_dir(&outside)
             .output()
-            .expect("mabo");
+            .expect("rabi");
         let stderr = text(&output.stderr);
         assert!(
             !stderr.to_ascii_lowercase().contains("fatal:"),
             "{args:?} leaked git output: {stderr}"
         );
         assert!(
-            stderr.contains("Not a git repository. Run mabo from inside a Git repository."),
+            stderr.contains("Not a git repository. Run rabi from inside a Git repository."),
             "{args:?} stderr: {stderr}"
         );
         assert_eq!(output.status.code(), Some(3), "{args:?} stderr: {stderr}");
     }
     let help = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["--help"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["--help"])
         .current_dir(&outside)
         .output()
         .expect("help");
@@ -450,29 +450,29 @@ fn outside_a_git_repository_is_a_phantom_error() {
 #[test]
 fn version_help_and_unknown_command() {
     let repo = Repo::new();
-    let version = repo.mabo(&["--version"]);
+    let version = repo.rabi(&["--version"]);
     assert!(version.status.success());
     let version_line = text(&version.stdout);
     assert!(
-        version_line.starts_with("mabo v7.0.0-alpha.9+rust"),
+        version_line.starts_with("rabi v7.0.0-alpha.9+rust"),
         "{version_line}"
     );
     assert!(!version_line.contains("ptm"), "{version_line}");
-    assert_ne!(version_line, "mabo v7.0.0-alpha.9");
-    let subcommand = repo.mabo(&["-v"]);
+    assert_ne!(version_line, "rabi v7.0.0-alpha.9");
+    let subcommand = repo.rabi(&["-v"]);
     assert_eq!(text(&subcommand.stdout), version_line);
 
-    let help = repo.mabo(&["--help"]);
+    let help = repo.rabi(&["--help"]);
     assert!(help.status.success());
     let help_text = text(&help.stdout);
-    assert!(help_text.contains("mabo - Isolated Git workspaces for parallel coding agents"));
+    assert!(help_text.contains("rabi - Isolated Git workspaces for parallel coding agents"));
     assert!(!help_text.contains("Phantom"), "{help_text}");
-    assert!(help_text.contains("mabo <command> [options]"));
-    assert!(help_text.contains("Run 'mabo <command> --help'"));
+    assert!(help_text.contains("rabi <command> [options]"));
+    assert!(help_text.contains("Run 'rabi <command> --help'"));
     assert!(!help_text.contains("phantom <command>"));
 
     for args in [["--version", "--help"], ["repo", "--help"]] {
-        let command_help = repo.mabo(&args);
+        let command_help = repo.rabi(&args);
         assert!(command_help.status.success(), "{args:?}");
         let command_text = text(&command_help.stdout);
         assert!(
@@ -481,18 +481,18 @@ fn version_help_and_unknown_command() {
         );
     }
 
-    let where_help = repo.mabo(&["path", "--help"]);
+    let where_help = repo.rabi(&["path", "--help"]);
     assert!(where_help.status.success());
     let where_text = text(&where_help.stdout);
-    assert!(where_text.contains("mabo path"));
-    assert!(where_text.contains("mabo path [--repo <ref>] [SEL] [options]"));
+    assert!(where_text.contains("rabi path"));
+    assert!(where_text.contains("rabi path [--repo <ref>] [SEL] [options]"));
     assert!(!where_text.contains("phantom path"));
 
-    let missing_where = repo.mabo(&["path"]);
+    let missing_where = repo.rabi(&["path"]);
     assert_eq!(missing_where.status.code(), Some(0));
     assert!(same_dir(&text(&missing_where.stdout), &repo.repo));
 
-    let unknown = repo.mabo(&["nope"]);
+    let unknown = repo.rabi(&["nope"]);
     assert_eq!(unknown.status.code(), Some(2));
     assert!(text(&unknown.stderr).contains("Unknown command 'nope'"));
 }
@@ -513,7 +513,7 @@ fn linked_worktree_git_file_and_insteadof_canonical_name() {
     assert!(gitfile.is_file(), "{}", gitfile.display());
     let from_worktree = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["list", "-R", worktree.to_str().expect("worktree"), "--json"],
         )
         .output()
@@ -525,7 +525,7 @@ fn linked_worktree_git_file_and_insteadof_canonical_name() {
     );
     let from_gitfile = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["list", "-R", gitfile.to_str().expect("git file"), "--json"],
         )
         .output()
@@ -568,13 +568,13 @@ fn linked_worktree_git_file_and_insteadof_canonical_name() {
     );
     let added = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["repo", "add", project.to_str().expect("repo"), "--json"],
         )
         .output()
         .expect("repo add");
     assert!(added.status.success(), "{}", text(&added.stderr));
-    let catalog = repo.mabo(&["repo", "list", "--json"]);
+    let catalog = repo.rabi(&["repo", "list", "--json"]);
     assert!(catalog.status.success(), "{}", text(&catalog.stderr));
     let catalog = json_value(&catalog);
     let entry = catalog["data"]["repos"]
@@ -606,41 +606,41 @@ fn default_worktree_path(value: &serde_json::Value) -> String {
 #[test]
 fn create_list_where_delete_and_attach() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "feature/add-tests"]);
+    let created = repo.rabi(&["create", "feature/add-tests"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(text(&created.stdout).contains("Created workspace 'feature/add-tests' at "));
     let worktree = managed(&repo, "feature/add-tests");
     assert!(worktree.join("README.md").is_file());
     assert!(!repo.repo.join(".git/phantom").exists());
     assert!(!repo.repo.join(".git/ptm").exists());
-    assert!(repo.repo.join(".git/mabo/workspaces").is_dir());
+    assert!(repo.repo.join(".git/rabi/workspaces").is_dir());
 
-    let duplicate = repo.mabo(&["create", "feature/add-tests"]);
+    let duplicate = repo.rabi(&["create", "feature/add-tests"]);
     assert_eq!(duplicate.status.code(), Some(4));
     assert!(text(&duplicate.stderr).contains("already exists"));
 
-    let names = repo.mabo(&["list", "--names", "--kind", "workspace"]);
+    let names = repo.rabi(&["list", "--names", "--kind", "workspace"]);
     assert!(names.status.success(), "{}", text(&names.stderr));
     assert_eq!(text(&names.stdout), "feature/add-tests");
 
-    let empty = repo.mabo(&["list", "--kind", "workspace"]);
+    let empty = repo.rabi(&["list", "--kind", "workspace"]);
     let _ = empty;
-    let where_path = repo.mabo(&["path", "feature/add-tests"]);
+    let where_path = repo.rabi(&["path", "feature/add-tests"]);
     assert_eq!(where_path.status.code(), Some(0));
     assert_eq!(text(&where_path.stdout), worktree.to_string_lossy());
 
-    let missing = repo.mabo(&["path", "missing-worktree"]);
+    let missing = repo.rabi(&["path", "missing-worktree"]);
     assert_eq!(missing.status.code(), Some(3));
     assert!(text(&missing.stderr).contains("not found"));
 
     repo.git(&["branch", "existing-feature"]);
-    let attached = repo.mabo(&["create", "--branch", "existing-feature"]);
+    let attached = repo.rabi(&["create", "--branch", "existing-feature"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     assert!(text(&attached.stdout).contains("Created workspace 'existing-feature'"));
-    let missing_branch = repo.mabo(&["create", "--branch", "missing-branch"]);
+    let missing_branch = repo.rabi(&["create", "--branch", "missing-branch"]);
     assert_eq!(missing_branch.status.code(), Some(3));
 
-    let kept = repo.mabo(&["remove", "existing-feature", "--keep-branch"]);
+    let kept = repo.rabi(&["remove", "existing-feature", "--keep-branch"]);
     assert!(kept.status.success(), "{}", text(&kept.stderr));
     assert!(text(&kept.stdout).contains("kept its branch 'existing-feature'"));
     let branch = repo
@@ -649,19 +649,19 @@ fn create_list_where_delete_and_attach() {
         .expect("branch");
     assert!(text(&branch.stdout).contains("existing-feature"));
 
-    let deleted = repo.mabo(&["remove", "feature/add-tests"]);
+    let deleted = repo.rabi(&["remove", "feature/add-tests"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     assert!(text(&deleted.stdout).contains("and its branch 'feature/add-tests'"));
     assert!(!worktree.exists());
-    let missing_delete = repo.mabo(&["remove", "missing-worktree"]);
+    let missing_delete = repo.rabi(&["remove", "missing-worktree"]);
     assert_eq!(missing_delete.status.code(), Some(3));
 }
 
 #[test]
 fn invalid_config_names_the_file_and_the_problem() {
     let repo = Repo::new();
-    fs::write(repo.repo.join(".mabo.toml"), "[\n").expect("config");
-    let created = repo.mabo(&["create", "feature/bad-toml"]);
+    fs::write(repo.repo.join(".rabi.toml"), "[\n").expect("config");
+    let created = repo.rabi(&["create", "feature/bad-toml"]);
     let stderr = text(&created.stderr);
     assert!(
         !created.status.success(),
@@ -669,7 +669,7 @@ fn invalid_config_names_the_file_and_the_problem() {
         text(&created.stdout)
     );
     assert!(
-        stderr.contains(".mabo.toml"),
+        stderr.contains(".rabi.toml"),
         "stderr should name the file: {stderr}"
     );
     assert!(
@@ -679,28 +679,28 @@ fn invalid_config_names_the_file_and_the_problem() {
     assert!(!managed(&repo, "feature/bad-toml").exists());
 
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = \"pnpm install\"\n",
     )
     .expect("schema");
-    let created = repo.mabo(&["path", "feature/bad-toml"]);
+    let created = repo.rabi(&["path", "feature/bad-toml"]);
     let stderr = text(&created.stderr);
     assert!(!created.status.success(), "{}", text(&created.stdout));
-    assert!(stderr.contains(".mabo.toml"), "{stderr}");
+    assert!(stderr.contains(".rabi.toml"), "{stderr}");
     assert!(
         stderr.contains("setup") || stderr.contains("invalid type"),
         "{stderr}"
     );
 
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "worktreesDirectory = \".phantom\"\n",
     )
     .expect("unknown");
-    let created = repo.mabo(&["path", "feature/bad-toml"]);
+    let created = repo.rabi(&["path", "feature/bad-toml"]);
     let stderr = text(&created.stderr);
     assert!(!created.status.success(), "{}", text(&created.stdout));
-    assert!(stderr.contains(".mabo.toml"), "{stderr}");
+    assert!(stderr.contains(".rabi.toml"), "{stderr}");
     assert!(stderr.contains("worktreesDirectory"), "{stderr}");
 }
 
@@ -708,7 +708,7 @@ fn invalid_config_names_the_file_and_the_problem() {
 fn github_checkout_logs_the_post_create_hook() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"true\"]\n",
     )
     .expect("config");
@@ -731,7 +731,7 @@ fn github_checkout_logs_the_post_create_hook() {
     );
 
     let cli = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "--issue", "7"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "--issue", "7"])
         .env("PATH", &path)
         .output()
         .expect("cli");
@@ -752,11 +752,11 @@ fn github_checkout_logs_the_post_create_hook() {
 fn post_create_failure_reports_the_created_worktree() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"phantom-missing-setup-bin\"]\n",
     )
     .expect("config");
-    let created = repo.mabo(&["create", "feature/hooks"]);
+    let created = repo.rabi(&["create", "feature/hooks"]);
     let worktree = managed(&repo, "feature/hooks");
     assert!(
         worktree.join("README.md").is_file(),
@@ -785,7 +785,7 @@ fn post_create_failure_reports_the_created_worktree() {
     assert_eq!(created.status.code(), Some(6), "{stderr}");
 
     repo.git(&["branch", "existing-hook"]);
-    let attached = repo.mabo(&["create", "--branch", "existing-hook"]);
+    let attached = repo.rabi(&["create", "--branch", "existing-hook"]);
     let attached_path = managed(&repo, "existing-hook");
     assert!(attached_path.join("README.md").is_file());
     assert!(
@@ -808,11 +808,11 @@ fn copies_worktreeinclude_files_and_runs_post_create() {
     fs::write(repo.repo.join(".env.local"), "API_KEY=test-value\n").expect("env");
     fs::write(repo.repo.join(".worktreeinclude"), ".env.local\n").expect("include");
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"touch setup.txt\"]\n",
     )
     .expect("config");
-    let created = repo.mabo(&["create", "feature/config"]);
+    let created = repo.rabi(&["create", "feature/config"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -833,13 +833,13 @@ fn copies_worktreeinclude_files_and_runs_post_create() {
 fn hooks_run_in_order_stop_on_failure_and_export_root_path() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         r#"[hooks]
 setup = [
-  "printf '%s' \"$MABO_REPO_PATH\" > root-path.txt",
-  "printf '%s' \"$MABO\" > mabo-flag.txt",
-  "printf '%s' \"$MABO_WORKSPACE\" > mabo-name.txt",
-  "printf '%s' \"$MABO_WORKSPACE_PATH\" > mabo-path.txt",
+  "printf '%s' \"$RABI_REPO_PATH\" > root-path.txt",
+  "printf '%s' \"$RABI\" > rabi-flag.txt",
+  "printf '%s' \"$RABI_WORKSPACE\" > rabi-name.txt",
+  "printf '%s' \"$RABI_WORKSPACE_PATH\" > rabi-path.txt",
   "pwd > hook-cwd.txt",
   "touch first.txt",
   "false",
@@ -854,7 +854,7 @@ pre-remove = [
     )
     .expect("toml");
 
-    let created = repo.mabo(&["create", "feature/hooks-order"]);
+    let created = repo.rabi(&["create", "feature/hooks-order"]);
     let worktree = managed(&repo, "feature/hooks-order");
     assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
     assert_eq!(
@@ -862,15 +862,15 @@ pre-remove = [
         repo.repo.display().to_string()
     );
     assert_eq!(
-        fs::read_to_string(worktree.join("mabo-flag.txt")).expect("flag"),
+        fs::read_to_string(worktree.join("rabi-flag.txt")).expect("flag"),
         "1"
     );
     assert_eq!(
-        fs::read_to_string(worktree.join("mabo-name.txt")).expect("name"),
+        fs::read_to_string(worktree.join("rabi-name.txt")).expect("name"),
         "feature/hooks-order"
     );
     assert_eq!(
-        fs::read_to_string(worktree.join("mabo-path.txt")).expect("path"),
+        fs::read_to_string(worktree.join("rabi-path.txt")).expect("path"),
         worktree.display().to_string()
     );
     assert_eq!(
@@ -880,7 +880,7 @@ pre-remove = [
     assert!(worktree.join("first.txt").is_file());
     assert!(!worktree.join("skipped.txt").exists());
 
-    let deleted = repo.mabo(&[
+    let deleted = repo.rabi(&[
         "remove",
         "--discard-changes",
         "--delete-unpreserved-branch",
@@ -900,7 +900,7 @@ pre-remove = [
 #[test]
 fn hooks_follow_the_source_checkout_when_run_from_a_worktree() {
     let repo = Repo::new();
-    let source_created = repo.mabo(&["create", "feature/source"]);
+    let source_created = repo.rabi(&["create", "feature/source"]);
     assert!(
         source_created.status.success(),
         "{}\n{}",
@@ -909,15 +909,15 @@ fn hooks_follow_the_source_checkout_when_run_from_a_worktree() {
     );
     let source = managed(&repo, "feature/source");
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"touch from-main.txt\"]\npre-remove = [\"touch pre-from-main.txt\"]\n",
     )
     .expect("main hooks");
     fs::write(
-        source.join(".mabo.toml"),
+        source.join(".rabi.toml"),
         r#"[hooks]
-setup = ["printf '%s' \"$MABO_REPO_PATH\" > root-path.txt"]
-pre-remove = ["printf '%s' \"$MABO_REPO_PATH\" > \"$MABO_REPO_PATH/pre-root.txt\""]
+setup = ["printf '%s' \"$RABI_REPO_PATH\" > root-path.txt"]
+pre-remove = ["printf '%s' \"$RABI_REPO_PATH\" > \"$RABI_REPO_PATH/pre-root.txt\""]
 "#,
     )
     .expect("source hooks");
@@ -931,7 +931,7 @@ pre-remove = ["printf '%s' \"$MABO_REPO_PATH\" > \"$MABO_REPO_PATH/pre-root.txt\
     assert_ne!(source_path, repo.repo.display().to_string());
 
     let created = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "feature/child"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "feature/child"])
         .current_dir(&source)
         .output()
         .expect("create");
@@ -950,7 +950,7 @@ pre-remove = ["printf '%s' \"$MABO_REPO_PATH\" > \"$MABO_REPO_PATH/pre-root.txt\
 
     let deleted = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "remove",
                 "--discard-changes",
@@ -978,7 +978,7 @@ pre-remove = ["printf '%s' \"$MABO_REPO_PATH\" > \"$MABO_REPO_PATH/pre-root.txt\
 fn phantom_config_json_is_not_read() {
     let repo = Repo::new();
     fs::write(repo.repo.join("phantom.config.json"), "{").expect("json");
-    let created = repo.mabo(&["create", "feature/no-json"]);
+    let created = repo.rabi(&["create", "feature/no-json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -991,7 +991,7 @@ fn phantom_config_json_is_not_read() {
 #[test]
 fn preferences_and_project_registry() {
     let repo = Repo::new();
-    let set = repo.mabo(&["config", "set", "discover-ghq", "true"]);
+    let set = repo.rabi(&["config", "set", "discover-ghq", "true"]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     let set_stdout = text(&set.stdout);
     assert!(set_stdout.contains("discover-ghq"), "{set_stdout}");
@@ -999,16 +999,16 @@ fn preferences_and_project_registry() {
     assert!(
         set_stdout.contains(
             repo.home
-                .join(".config/mabo/config.toml")
+                .join(".config/rabi/config.toml")
                 .to_str()
                 .expect("path")
         ),
         "{set_stdout}"
     );
-    let get = repo.mabo(&["config", "get", "discover-ghq"]);
+    let get = repo.rabi(&["config", "get", "discover-ghq"]);
     assert_eq!(text(&get.stdout), "true");
 
-    let added = repo.mabo(&["repo", "add", "--json"]);
+    let added = repo.rabi(&["repo", "add", "--json"]);
     assert!(added.status.success(), "{}", text(&added.stderr));
     let value: serde_json::Value = serde_json::from_str(&text(&added.stdout)).expect("json");
     assert_eq!(value["data"]["status"], "added");
@@ -1018,8 +1018,8 @@ fn preferences_and_project_registry() {
         repo.repo.to_string_lossy().as_ref()
     );
 
-    repo.mabo(&["config", "set", "discover-ghq", "false"]);
-    let listed = repo.mabo(&["repo", "list", "--json"]);
+    repo.rabi(&["config", "set", "discover-ghq", "false"]);
+    let listed = repo.rabi(&["repo", "list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let catalog: serde_json::Value = serde_json::from_str(&text(&listed.stdout)).expect("catalog");
     assert_eq!(catalog["schema"], 2);
@@ -1031,14 +1031,14 @@ fn preferences_and_project_registry() {
     assert_eq!(catalog["data"]["repos"][0]["name"], "repo");
     assert_eq!(catalog["data"]["repos"][0]["canonicalName"], "repo");
 
-    let removed = repo.mabo(&[
+    let removed = repo.rabi(&[
         "repo",
         "forget",
         value["data"]["repo"]["id"].as_str().expect("id"),
         "--json",
     ]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
-    let empty = repo.mabo(&["repo", "list", "--json"]);
+    let empty = repo.rabi(&["repo", "list", "--json"]);
     let empty_catalog: serde_json::Value =
         serde_json::from_str(&text(&empty.stdout)).expect("empty");
     assert_eq!(
@@ -1048,12 +1048,12 @@ fn preferences_and_project_registry() {
 }
 
 #[test]
-fn project_registry_is_stored_under_xdg_state_home_mabo() {
+fn project_registry_is_stored_under_xdg_state_home_rabi() {
     let repo = Repo::new();
-    let added = repo.mabo(&["repo", "add", "--json"]);
+    let added = repo.rabi(&["repo", "add", "--json"]);
     assert!(added.status.success(), "{}", text(&added.stderr));
     let registry = fs::read_to_string(
-        fs::read_dir(repo.root.join("state/mabo/repos"))
+        fs::read_dir(repo.root.join("state/rabi/repos"))
             .unwrap()
             .next()
             .unwrap()
@@ -1063,20 +1063,20 @@ fn project_registry_is_stored_under_xdg_state_home_mabo() {
     .expect("registry");
     assert!(registry.contains("\"name\": \"repo\""));
 
-    let disabled = repo.mabo(&["config", "set", "discover-ghq", "false"]);
+    let disabled = repo.rabi(&["config", "set", "discover-ghq", "false"]);
     assert!(disabled.status.success(), "{}", text(&disabled.stderr));
-    let listed = repo.mabo(&["repo", "list", "--json"]);
+    let listed = repo.rabi(&["repo", "list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let catalog: serde_json::Value = serde_json::from_str(&text(&listed.stdout)).expect("catalog");
     assert_eq!(catalog["data"]["repos"].as_array().map(Vec::len), Some(1));
     assert_eq!(catalog["data"]["repos"][0]["name"], "repo");
     assert_eq!(catalog["data"]["repos"][0]["source"], "registry");
 
-    let help = repo.mabo(&["repo", "--help"]);
+    let help = repo.rabi(&["repo", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
     let help_text = text(&help.stdout);
-    assert!(help_text.contains("$XDG_STATE_HOME/mabo"));
-    assert!(help_text.contains("~/.local/state/mabo"));
+    assert!(help_text.contains("$XDG_STATE_HOME/rabi"));
+    assert!(help_text.contains("~/.local/state/rabi"));
     assert!(!help_text.contains("XDG_STATE_HOME/phantom"));
     assert!(!help_text.contains(".local/state/phantom"));
     assert!(!help_text.contains("XDG_STATE_HOME/ptm"));
@@ -1084,19 +1084,19 @@ fn project_registry_is_stored_under_xdg_state_home_mabo() {
 }
 
 #[test]
-fn project_registry_defaults_to_home_local_state_mabo() {
+fn project_registry_defaults_to_home_local_state_rabi() {
     let repo = Repo::new();
-    let disabled = repo.mabo(&["config", "set", "discover-ghq", "false"]);
+    let disabled = repo.rabi(&["config", "set", "discover-ghq", "false"]);
     assert!(disabled.status.success(), "{}", text(&disabled.stderr));
 
     let added = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["repo", "add", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["repo", "add", "--json"])
         .env_remove("XDG_STATE_HOME")
         .output()
         .expect("add");
     assert!(added.status.success(), "{}", text(&added.stderr));
     let registry = fs::read_to_string(
-        fs::read_dir(repo.home.join(".local/state/mabo/repos"))
+        fs::read_dir(repo.home.join(".local/state/rabi/repos"))
             .unwrap()
             .next()
             .unwrap()
@@ -1107,7 +1107,7 @@ fn project_registry_defaults_to_home_local_state_mabo() {
     assert!(registry.contains("\"name\": \"repo\""));
 
     let listed = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["repo", "list", "--names"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["repo", "list", "--names"])
         .env("XDG_STATE_HOME", "relative/state")
         .output()
         .expect("list");
@@ -1119,16 +1119,16 @@ fn project_registry_defaults_to_home_local_state_mabo() {
 #[test]
 fn preferences_file_uses_xdg_config_home() {
     let repo = Repo::new();
-    let path = repo.home.join(".config/mabo/config.toml");
+    let path = repo.home.join(".config/rabi/config.toml");
     let gitconfig = fs::read_to_string(repo.home.join(".gitconfig")).expect("gitconfig");
 
-    let missing = repo.mabo(&["config", "get", "discover-ghq"]);
+    let missing = repo.rabi(&["config", "get", "discover-ghq"]);
     assert!(missing.status.success(), "{}", text(&missing.stderr));
     let missing_stdout = text(&missing.stdout);
     assert_eq!(missing_stdout, "true");
     assert!(!path.exists());
 
-    let invalid_bool = repo.mabo(&["config", "set", "discover-ghq", "yes"]);
+    let invalid_bool = repo.rabi(&["config", "set", "discover-ghq", "yes"]);
     assert_eq!(invalid_bool.status.code(), Some(2));
     assert!(
         text(&invalid_bool.stderr).contains("true"),
@@ -1137,7 +1137,7 @@ fn preferences_file_uses_xdg_config_home() {
     );
     assert!(!path.exists());
 
-    let set = repo.mabo(&["config", "set", "workspace-root", "../spaces"]);
+    let set = repo.rabi(&["config", "set", "workspace-root", "../spaces"]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     let written = fs::read_to_string(&path).expect("config");
     assert!(
@@ -1154,7 +1154,7 @@ fn preferences_file_uses_xdg_config_home() {
         "# header\ndiscover-ghq = false # inline\n\n# separator\nworkspace-root = \"../spaces\"\n",
     )
     .expect("seed");
-    let updated = repo.mabo(&["config", "set", "discover-ghq", "true"]);
+    let updated = repo.rabi(&["config", "set", "discover-ghq", "true"]);
     assert!(updated.status.success(), "{}", text(&updated.stderr));
     let written = fs::read_to_string(&path).expect("updated");
     assert!(written.contains("# header"), "{written}");
@@ -1166,20 +1166,20 @@ fn preferences_file_uses_xdg_config_home() {
         "{written}"
     );
 
-    let removed = repo.mabo(&["config", "unset", "discover-ghq"]);
+    let removed = repo.rabi(&["config", "unset", "discover-ghq"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
     let written = fs::read_to_string(&path).expect("removed");
     assert!(!written.contains("discover-ghq"), "{written}");
     assert!(written.contains("# separator"), "{written}");
 
     fs::write(&path, "{\n").expect("invalid");
-    let invalid = repo.mabo(&["config", "get", "discover-ghq"]);
+    let invalid = repo.rabi(&["config", "get", "discover-ghq"]);
     assert_eq!(invalid.status.code(), Some(1));
     let stderr = text(&invalid.stderr);
     assert!(stderr.contains(path.to_str().expect("path")), "{stderr}");
 
     fs::write(&path, "editor = \"code\"\n").expect("unknown");
-    let unknown = repo.mabo(&["config", "get", "discover-ghq"]);
+    let unknown = repo.rabi(&["config", "get", "discover-ghq"]);
     assert_eq!(unknown.status.code(), Some(1));
     let stderr = text(&unknown.stderr);
     assert!(stderr.contains("editor"), "{stderr}");
@@ -1188,7 +1188,7 @@ fn preferences_file_uses_xdg_config_home() {
     fs::remove_file(&path).expect("cleanup");
     repo.git(&["config", "--global", "phantom.keepBranch", "true"]);
     repo.git(&["config", "--global", "ptm.keepBranch", "true"]);
-    let ignored = repo.mabo(&["config", "get", "discover-ghq"]);
+    let ignored = repo.rabi(&["config", "get", "discover-ghq"]);
     assert!(ignored.status.success(), "{}", text(&ignored.stderr));
     assert!(text(&ignored.stdout) == "true", "{}", text(&ignored.stdout));
     assert!(!path.exists());
@@ -1197,7 +1197,7 @@ fn preferences_file_uses_xdg_config_home() {
 #[test]
 fn reports_when_only_the_default_worktree_exists() {
     let repo = Repo::new();
-    let result = repo.mabo(&["list", "--kind", "workspace"]);
+    let result = repo.rabi(&["list", "--kind", "workspace"]);
     assert_eq!(result.status.code(), Some(0), "{}", text(&result.stderr));
     assert!(text(&result.stdout).contains("No linked workspaces found"));
 }
@@ -1205,7 +1205,7 @@ fn reports_when_only_the_default_worktree_exists() {
 #[test]
 fn project_add_from_a_linked_worktree_is_idempotent() {
     let repo = Repo::new();
-    let added = repo.mabo(&["repo", "add", "--json"]);
+    let added = repo.rabi(&["repo", "add", "--json"]);
     assert!(added.status.success(), "{}", text(&added.stderr));
     let value: serde_json::Value = serde_json::from_str(&text(&added.stdout)).expect("json");
     let linked = repo.root.join("linked-worktree");
@@ -1218,7 +1218,7 @@ fn project_add_from_a_linked_worktree_is_idempotent() {
     ]);
     let again = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["repo", "add", linked.to_str().expect("path"), "--json"],
         )
         .current_dir(&linked)
@@ -1238,7 +1238,7 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
     let ghq = bin.join("ghq");
     fs::write(
         &ghq,
-        "#!/bin/sh\nif [ \"$1\" != \"list\" ] || [ \"$2\" != \"--full-path\" ]; then\n  exit 2\nfi\nprintf \"%s\\n\" \"$MABO_TEST_GHQ_PROJECT\"\n",
+        "#!/bin/sh\nif [ \"$1\" != \"list\" ] || [ \"$2\" != \"--full-path\" ]; then\n  exit 2\nfi\nprintf \"%s\\n\" \"$RABI_TEST_GHQ_PROJECT\"\n",
     )
     .expect("ghq");
     use std::os::unix::fs::PermissionsExt;
@@ -1251,9 +1251,9 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
         std::env::var("PATH").unwrap_or_default()
     );
     let discovered = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["repo", "list", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["repo", "list", "--json"])
         .env("PATH", &path)
-        .env("MABO_TEST_GHQ_PROJECT", &repo.repo)
+        .env("RABI_TEST_GHQ_PROJECT", &repo.repo)
         .output()
         .expect("list");
     assert!(discovered.status.success(), "{}", text(&discovered.stderr));
@@ -1272,13 +1272,13 @@ fn project_list_discovers_ghq_and_warns_when_discovery_fails() {
     .expect("fail");
     fs::set_permissions(&ghq, perms).expect("chmod");
     let added = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["repo", "add", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["repo", "add", "--json"])
         .env("PATH", &path)
         .output()
         .expect("add");
     assert!(added.status.success(), "{}", text(&added.stderr));
     let warned = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["repo", "list", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["repo", "list", "--json"])
         .env("PATH", &path)
         .output()
         .expect("warn");
@@ -1324,12 +1324,12 @@ fn worktreeinclude_copies_only_matching_gitignored_files() {
 
     let created = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "copied", "--copy-file", "notes.log"],
         )
         .current_dir(repo.repo.join("nested"))
         .output()
-        .expect("mabo");
+        .expect("rabi");
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -1350,7 +1350,7 @@ fn worktreeinclude_copies_only_matching_gitignored_files() {
     assert!(!worktree.join("from-config.local").exists());
 
     repo.git(&["branch", "attached"]);
-    let attached = repo.mabo(&["create", "--branch", "attached"]);
+    let attached = repo.rabi(&["create", "--branch", "attached"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     let attached_path = managed(&repo, "attached");
     assert_eq!(read_copy(&attached_path.join("secret.env")), "secret\n");
@@ -1377,10 +1377,10 @@ fn copies_gitignored_files_from_primary_even_from_another_checkout() {
     fs::write(source.join("secret.env"), "from-source\n").expect("source env");
 
     let created = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "copied"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "copied"])
         .current_dir(&source)
         .output()
-        .expect("mabo");
+        .expect("rabi");
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -1430,7 +1430,7 @@ fn copy_file_globs_ignore_brackets_in_the_repository_path() {
     git(&["commit", "-m", "initial"]);
     fs::write(repo_dir.join(".gitignore"), "*.env\n").expect("gitignore");
     fs::write(repo_dir.join("kept.env"), "kept\n").expect("kept");
-    let output = Command::new(env!("CARGO_BIN_EXE_mabo"))
+    let output = Command::new(env!("CARGO_BIN_EXE_rabi"))
         .args(["create", "copied", "--copy-file", "*.env"])
         .current_dir(&repo_dir)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -1439,7 +1439,7 @@ fn copy_file_globs_ignore_brackets_in_the_repository_path() {
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_DATA_HOME", root.join("xdg"))
         .output()
-        .expect("mabo");
+        .expect("rabi");
     assert!(output.status.success(), "{}", text(&output.stderr));
     assert_eq!(
         fs::read_to_string(
@@ -1454,7 +1454,7 @@ fn copy_file_globs_ignore_brackets_in_the_repository_path() {
 #[test]
 fn concurrent_project_add_processes_keep_every_record() {
     let repo = Repo::new();
-    repo.mabo(&["config", "set", "discover-ghq", "false"]);
+    repo.rabi(&["config", "set", "discover-ghq", "false"]);
     let mut children = Vec::new();
     for index in 0..6 {
         let path = repo.root.join(format!("project-{index}"));
@@ -1467,7 +1467,7 @@ fn concurrent_project_add_processes_keep_every_record() {
         assert!(init.status.success(), "{}", text(&init.stderr));
         let child = repo
             .command(
-                env!("CARGO_BIN_EXE_mabo"),
+                env!("CARGO_BIN_EXE_rabi"),
                 &["repo", "add", path.to_str().expect("path"), "--json"],
             )
             .stdout(std::process::Stdio::piped())
@@ -1480,7 +1480,7 @@ fn concurrent_project_add_processes_keep_every_record() {
         let output = child.wait_with_output().expect("wait");
         assert!(output.status.success(), "{}", text(&output.stderr));
     }
-    let listed = repo.mabo(&["repo", "list", "--names"]);
+    let listed = repo.rabi(&["repo", "list", "--names"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let names = text(&listed.stdout);
     for index in 0..6 {
@@ -1489,7 +1489,7 @@ fn concurrent_project_add_processes_keep_every_record() {
 }
 
 #[test]
-fn create_and_attach_exec_export_mabo_env() {
+fn create_and_attach_exec_export_rabi_env() {
     let repo = Repo::new();
     for (name, branch) in [("new-env", false), ("existing-env", true)] {
         if branch {
@@ -1500,14 +1500,14 @@ fn create_and_attach_exec_export_mabo_env() {
         } else {
             vec!["create", name]
         };
-        assert!(repo.mabo(&args).status.success());
-        let output = repo.mabo(&[
+        assert!(repo.rabi(&args).status.success());
+        let output = repo.rabi(&[
             "exec",
             name,
             "--",
             "sh",
             "-c",
-            "printf '%s\n' \"$MABO\" \"$MABO_WORKSPACE\" \"$MABO_WORKSPACE_PATH\"",
+            "printf '%s\n' \"$RABI\" \"$RABI_WORKSPACE\" \"$RABI_WORKSPACE_PATH\"",
         ]);
         assert!(output.status.success());
         assert_eq!(
@@ -1520,7 +1520,7 @@ fn create_and_attach_exec_export_mabo_env() {
 #[test]
 fn parent_cleanup_failure_still_deletes_the_branch() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "cursor/foo"]);
+    let created = repo.rabi(&["create", "cursor/foo"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let root = managed_root(&repo);
     use std::os::unix::fs::PermissionsExt;
@@ -1529,7 +1529,7 @@ fn parent_cleanup_failure_still_deletes_the_branch() {
     perms.set_mode(0o555);
     fs::set_permissions(&root, perms).expect("chmod");
 
-    let deleted = repo.mabo(&["remove", "cursor/foo"]);
+    let deleted = repo.rabi(&["remove", "cursor/foo"]);
     assert!(
         deleted.status.success(),
         "cleanup must not fail the delete\n{}\n{}",
@@ -1569,39 +1569,39 @@ impl Drop for ModeReset<'_> {
 #[test]
 fn delete_removes_empty_parents_but_keeps_the_project_directory_and_marker() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "cursor/foo"]);
+    let created = repo.rabi(&["create", "cursor/foo"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let project = managed_root(&repo);
-    let marker_path = project.join(mabo::paths::PROJECT_MARKER);
+    let marker_path = project.join(rabi::paths::PROJECT_MARKER);
     let marker = fs::read(&marker_path).expect("marker");
-    let ceiling = project.parent().expect("mabo/workspaces");
+    let ceiling = project.parent().expect("rabi/workspaces");
     let parent = project.join("cursor");
     assert!(parent.join("foo").is_dir());
-    let deleted = repo.mabo(&["remove", "cursor/foo"]);
+    let deleted = repo.rabi(&["remove", "cursor/foo"]);
     assert!(deleted.status.success(), "{}", text(&deleted.stderr));
     assert!(!parent.join("foo").exists());
     assert!(!parent.exists(), "empty parent directory should be removed");
     assert!(project.is_dir(), "empty project directory should stay");
     assert_eq!(fs::read(&marker_path).expect("retained marker"), marker);
-    assert!(ceiling.is_dir(), "mabo/workspaces should stay");
+    assert!(ceiling.is_dir(), "rabi/workspaces should stay");
 
-    assert!(repo.mabo(&["create", "cursor/foo"]).status.success());
-    assert!(repo.mabo(&["create", "cursor/bar"]).status.success());
-    assert!(repo.mabo(&["remove", "cursor/foo"]).status.success());
+    assert!(repo.rabi(&["create", "cursor/foo"]).status.success());
+    assert!(repo.rabi(&["create", "cursor/bar"]).status.success());
+    assert!(repo.rabi(&["remove", "cursor/foo"]).status.success());
     assert!(parent.join("bar").is_dir());
     assert!(parent.is_dir(), "parent still holds another workspace");
     assert!(
         project.is_dir(),
         "project directory still holds a workspace"
     );
-    assert!(repo.mabo(&["remove", "cursor/bar"]).status.success());
+    assert!(repo.rabi(&["remove", "cursor/bar"]).status.success());
     assert!(!parent.exists());
     assert!(project.is_dir());
     assert_eq!(fs::read(&marker_path).expect("retained marker"), marker);
     assert!(ceiling.is_dir());
 
-    assert!(repo.mabo(&["create", "a/b/c"]).status.success());
-    assert!(repo.mabo(&["remove", "a/b/c"]).status.success());
+    assert!(repo.rabi(&["create", "a/b/c"]).status.success());
+    assert!(repo.rabi(&["remove", "a/b/c"]).status.success());
     assert!(!managed(&repo, "a").exists());
     assert!(ceiling.is_dir());
 }
@@ -1622,10 +1622,10 @@ fn detached_worktree_keeps_its_directory_name() {
         .output()
         .expect("rev-parse");
     let sha = text(&head.stdout);
-    let names = repo.mabo(&["list", "--names", "--kind", "workspace"]);
+    let names = repo.rabi(&["list", "--names", "--kind", "workspace"]);
     assert!(names.status.success(), "{}", text(&names.stderr));
     assert_eq!(text(&names.stdout), "next");
-    let listed = repo.mabo(&["list", "--kind", "workspace"]);
+    let listed = repo.rabi(&["list", "--kind", "workspace"]);
     assert!(
         text(&listed.stdout)
             .lines()
@@ -1639,7 +1639,7 @@ fn detached_worktree_keeps_its_directory_name() {
         text(&listed.stdout)
     );
 
-    let found = repo.mabo(&["path", "next"]);
+    let found = repo.rabi(&["path", "next"]);
     assert_eq!(found.status.code(), Some(0), "{}", text(&found.stderr));
     assert_eq!(text(&found.stdout), worktree.to_string_lossy());
 
@@ -1652,7 +1652,7 @@ fn detached_worktree_keeps_its_directory_name() {
         .output()
         .expect("commit");
     assert!(moved.status.success(), "{}", text(&moved.stderr));
-    let names_after = repo.mabo(&["list", "--names", "--kind", "workspace"]);
+    let names_after = repo.rabi(&["list", "--names", "--kind", "workspace"]);
     assert_eq!(text(&names_after.stdout), "next");
 
     repo.git(&[
@@ -1663,12 +1663,12 @@ fn detached_worktree_keeps_its_directory_name() {
         managed(&repo, "alias").to_str().expect("path"),
         "HEAD",
     ]);
-    let by_directory = repo.mabo(&["path", "alias"]);
-    let by_branch = repo.mabo(&["path", "topic"]);
+    let by_directory = repo.rabi(&["path", "alias"]);
+    let by_branch = repo.rabi(&["path", "topic"]);
     let alias = managed(&repo, "alias");
     assert_eq!(text(&by_directory.stdout), alias.to_string_lossy());
     assert_eq!(text(&by_branch.stdout), alias.to_string_lossy());
-    let both = repo.mabo(&["list", "--names", "--kind", "workspace"]);
+    let both = repo.rabi(&["list", "--names", "--kind", "workspace"]);
     let listed_names = text(&both.stdout);
     assert!(listed_names.contains("next"), "{listed_names}");
     assert!(listed_names.contains("alias"), "{listed_names}");
@@ -1697,7 +1697,7 @@ fn directory_name_is_preferred_over_another_worktrees_branch() {
         "HEAD",
     ]);
 
-    let found = repo.mabo(&["path", "topic"]);
+    let found = repo.rabi(&["path", "topic"]);
     assert_eq!(found.status.code(), Some(0), "{}", text(&found.stderr));
     assert_eq!(
         text(&found.stdout),
@@ -1705,7 +1705,7 @@ fn directory_name_is_preferred_over_another_worktrees_branch() {
         "directory name should win over branch topic checked out at a"
     );
 
-    let deleted = repo.mabo(&["remove", "topic", "--keep-branch"]);
+    let deleted = repo.rabi(&["remove", "topic", "--keep-branch"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -1812,7 +1812,7 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
     ]);
     let output = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--pr", "7", "--reuse"],
         )
         .env("PATH", &path)
@@ -1843,7 +1843,7 @@ fn pr_checkout_requires_the_branch_not_only_the_directory() {
     ]);
     let again = matching
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--pr", "7", "--reuse"],
         )
         .env("PATH", &matching_path)
@@ -1935,7 +1935,7 @@ fn assert_worktree_object(value: &serde_json::Value, name: &str, path: &std::pat
 fn worktree_json_covers_list_where_create_attach_and_delete() {
     let repo = Repo::new();
     let head = full_head(&repo);
-    let empty = repo.mabo(&["list", "--json", "--kind", "workspace"]);
+    let empty = repo.rabi(&["list", "--json", "--kind", "workspace"]);
     assert!(empty.status.success(), "{}", text(&empty.stderr));
     let empty_json = json_value(&empty);
     assert_eq!(empty_json["schema"], 2);
@@ -1945,7 +1945,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     );
     assert!(text(&empty.stderr).is_empty(), "{}", text(&empty.stderr));
 
-    let created = repo.mabo(&["create", "feature/json", "--json", "--base", "HEAD"]);
+    let created = repo.rabi(&["create", "feature/json", "--json", "--base", "HEAD"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let created_json = json_value(&created);
     assert_eq!(created_json["schema"], 2);
@@ -1968,7 +1968,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     assert!(created_json["data"]["exec"].is_null());
     assert!(!text(&created.stdout).contains("Created workspace"));
 
-    let duplicate = repo.mabo(&["create", "feature/json", "--json"]);
+    let duplicate = repo.rabi(&["create", "feature/json", "--json"]);
     assert_eq!(duplicate.status.code(), Some(4));
     let duplicate_json = json_value(&duplicate);
     assert_eq!(duplicate_json["error"]["code"], "exists");
@@ -1979,11 +1979,11 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
         text(&duplicate.stderr)
     );
 
-    let both = repo.mabo(&["list", "--json", "--names"]);
+    let both = repo.rabi(&["list", "--json", "--names"]);
     assert_eq!(both.status.code(), Some(2));
     assert_eq!(json_value(&both)["error"]["code"], "usage");
 
-    let listed = repo.mabo(&["list", "--json"]);
+    let listed = repo.rabi(&["list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
     let worktrees = listed_json["data"]["workspaces"]
@@ -2002,7 +2002,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
 
     let worktree = managed(&repo, "feature/json");
     fs::write(worktree.join("README.md"), "dirty\n").expect("dirty");
-    let dirty = repo.mabo(&["list", "--json", "--kind", "workspace"]);
+    let dirty = repo.rabi(&["list", "--json", "--kind", "workspace"]);
     let dirty_json = json_value(&dirty);
     assert_eq!(dirty_json["data"]["workspaces"][0]["dirty"], true);
     assert_eq!(
@@ -2010,7 +2010,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
         Some(1)
     );
 
-    let located = repo.mabo(&["show", "feature/json", "--json"]);
+    let located = repo.rabi(&["show", "feature/json", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
     let located_json = json_value(&located);
     assert_eq!(located_json["schema"], 2);
@@ -2021,7 +2021,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     );
     assert!(!text(&located.stdout).contains("feature/json ("));
 
-    let missing = repo.mabo(&["show", "missing-worktree", "--json"]);
+    let missing = repo.rabi(&["show", "missing-worktree", "--json"]);
     assert_eq!(missing.status.code(), Some(3));
     let missing_json = json_value(&missing);
     assert_eq!(missing_json["schema"], 2);
@@ -2038,7 +2038,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     );
 
     repo.git(&["branch", "existing-json"]);
-    let attached = repo.mabo(&["create", "--branch", "existing-json", "--json"]);
+    let attached = repo.rabi(&["create", "--branch", "existing-json", "--json"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     let attached_json = json_value(&attached);
     assert_worktree_object(
@@ -2054,7 +2054,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     assert!(attached_json["data"]["copy"]["error"].is_null());
     assert!(attached_json["data"]["exec"].is_null());
 
-    let kept = repo.mabo(&["remove", "existing-json", "--keep-branch", "--json"]);
+    let kept = repo.rabi(&["remove", "existing-json", "--keep-branch", "--json"]);
     assert!(kept.status.success(), "{}", text(&kept.stderr));
     let kept_json = json_value(&kept);
     assert!(kept_json["error"].is_null());
@@ -2074,10 +2074,10 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     fs::write(worktree.join("README.md"), "# phantom\n").expect("restore");
     repo.git(&["branch", "second-json"]);
     assert!(repo
-        .mabo(&["create", "--branch", "second-json"])
+        .rabi(&["create", "--branch", "second-json"])
         .status
         .success());
-    let partial = repo.mabo(&["remove", "feature/json", "missing-json", "--json"]);
+    let partial = repo.rabi(&["remove", "feature/json", "missing-json", "--json"]);
     assert_eq!(partial.status.code(), Some(3));
     let document = json_value(&partial);
     assert_eq!(document["data"]["items"].as_array().unwrap().len(), 2);
@@ -2088,7 +2088,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
     let outside = repo.root.join("outside");
     fs::create_dir_all(&outside).expect("outside");
     let not_repo = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["list", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["list", "--json"])
         .current_dir(&outside)
         .output()
         .expect("list");
@@ -2102,7 +2102,7 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
         text(&not_repo.stderr)
     );
 
-    let project_modes = repo.mabo(&["repo", "list", "--json", "--names"]);
+    let project_modes = repo.rabi(&["repo", "list", "--json", "--names"]);
     assert_eq!(project_modes.status.code(), Some(2));
     assert_eq!(json_value(&project_modes)["error"]["code"], "usage");
     assert_eq!(json_value(&project_modes)["schema"], 2);
@@ -2112,11 +2112,11 @@ fn worktree_json_covers_list_where_create_attach_and_delete() {
 fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"echo HOOK_STDOUT_MARKER\"]\npre-remove = [\"echo PRE_DELETE_MARKER\"]\n",
     )
     .expect("hooks");
-    let created = repo.mabo(&["create", "feature/hooks-json", "--json"]);
+    let created = repo.rabi(&["create", "feature/hooks-json", "--json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -2128,14 +2128,14 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     assert!(text(&created.stderr)
         .lines()
         .any(|line| line == "HOOK_STDOUT_MARKER"));
-    let executed = repo.mabo(&["exec", "feature/hooks-json", "--", "echo", "EXEC_MARKER"]);
+    let executed = repo.rabi(&["exec", "feature/hooks-json", "--", "echo", "EXEC_MARKER"]);
     assert!(executed.status.success());
     assert_eq!(text(&executed.stdout), "EXEC_MARKER");
     assert_eq!(created_json["data"]["setup"]["ran"], true);
     assert_eq!(created_json["data"]["setup"]["ok"], true);
     assert_eq!(created_json["data"]["setup"]["exitCode"], 0);
 
-    let deleted = repo.mabo(&[
+    let deleted = repo.rabi(&[
         "remove",
         "--discard-changes",
         "--delete-unpreserved-branch",
@@ -2151,11 +2151,11 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     );
 
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"echo HOOK_FAIL_MARKER\", \"exit 7\"]\n",
     )
     .expect("failing hook");
-    let failed = repo.mabo(&["create", "feature/hook-fail", "--json"]);
+    let failed = repo.rabi(&["create", "feature/hook-fail", "--json"]);
     assert_eq!(failed.status.code(), Some(6), "{}", text(&failed.stderr));
     let failed_json = json_value(&failed);
     assert_eq!(failed_json["data"]["setup"]["ok"], false);
@@ -2169,12 +2169,12 @@ fn json_mode_keeps_hook_and_exec_output_off_stdout() {
     assert!(text(&failed.stderr).contains("HOOK_FAIL_MARKER"));
     assert!(managed(&repo, "feature/hook-fail/README.md").is_file());
 
-    fs::write(repo.repo.join(".mabo.toml"), "").expect("clear hooks");
+    fs::write(repo.repo.join(".rabi.toml"), "").expect("clear hooks");
     assert!(repo
-        .mabo(&["create", "feature/exec-fail", "--json"])
+        .rabi(&["create", "feature/exec-fail", "--json"])
         .status
         .success());
-    let exec_failed = repo.mabo(&[
+    let exec_failed = repo.rabi(&[
         "exec",
         "feature/exec-fail",
         "--",
@@ -2199,7 +2199,7 @@ fn json_reports_detached_head_and_copy_errors() {
         detached.to_str().expect("path"),
         "HEAD",
     ]);
-    let listed = repo.mabo(&["list", "--json", "--kind", "workspace"]);
+    let listed = repo.rabi(&["list", "--json", "--kind", "workspace"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let entry = &json_value(&listed)["data"]["workspaces"][0];
     assert_eq!(entry["name"], "next");
@@ -2209,7 +2209,7 @@ fn json_reports_detached_head_and_copy_errors() {
     assert_eq!(entry["kind"], "workspace");
 
     std::os::unix::fs::symlink("elsewhere", repo.repo.join(".worktreeinclude")).expect("symlink");
-    let created = repo.mabo(&["create", "feature/copy", "--json"]);
+    let created = repo.rabi(&["create", "feature/copy", "--json"]);
     assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
     let created_json = json_value(&created);
     assert!(!created_json["data"]["copy"]["error"].is_null());
@@ -2232,7 +2232,7 @@ fn project_parse_errors_keep_the_validation_exit_code() {
         &["repo", "forget", "--unknown", "--json"],
     ];
     for args in cases {
-        let output = repo.mabo(args);
+        let output = repo.rabi(args);
         assert_eq!(
             output.status.code(),
             Some(2),
@@ -2264,7 +2264,7 @@ fn project_parse_errors_keep_the_validation_exit_code() {
 fn json_unborn_head_is_null() {
     let repo = Repo::new();
     repo.git(&["update-ref", "-d", "HEAD"]);
-    let listed = repo.mabo(&["list", "--json"]);
+    let listed = repo.rabi(&["list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
     let worktrees = listed_json["data"]["workspaces"]
@@ -2280,7 +2280,7 @@ fn json_unborn_head_is_null() {
         worktrees[0]["head"]
     );
 
-    let located = repo.mabo(&["show", "main", "--json"]);
+    let located = repo.rabi(&["show", "main", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
     let located_json = json_value(&located);
     assert!(
@@ -2313,7 +2313,7 @@ fn argument_errors_are_validation_for_every_command() {
         &["clone", "owner/repo", "--json", "--depth"],
     ];
     for args in cases {
-        let output = repo.mabo(args);
+        let output = repo.rabi(args);
         assert_eq!(
             output.status.code(),
             Some(2),
@@ -2351,7 +2351,7 @@ fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
         &["create", "--branch", "a/../x"],
         &["create", "--branch", "a/../x", "--json"],
     ] {
-        let output = repo.mabo(args);
+        let output = repo.rabi(args);
         assert_eq!(
             output.status.code(),
             Some(2),
@@ -2375,16 +2375,16 @@ fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
     }
     assert!(!managed(&repo, "a/../x").exists());
 
-    let missing_delete = repo.mabo(&["remove", "nope"]);
+    let missing_delete = repo.rabi(&["remove", "nope"]);
     assert_eq!(missing_delete.status.code(), Some(3));
-    let missing_json = repo.mabo(&["remove", "nope", "--json"]);
+    let missing_json = repo.rabi(&["remove", "nope", "--json"]);
     assert_eq!(missing_json.status.code(), Some(3));
     let missing_value = json_value(&missing_json);
     assert_eq!(missing_value["error"]["code"], "not_found");
     assert!(missing_value["error"].get("exitCode").is_none());
-    assert_eq!(repo.mabo(&["path", "nope"]).status.code(), Some(3));
+    assert_eq!(repo.rabi(&["path", "nope"]).status.code(), Some(3));
     assert_eq!(
-        repo.mabo(&["exec", "nope", "--", "true"]).status.code(),
+        repo.rabi(&["exec", "nope", "--", "true"]).status.code(),
         Some(3)
     );
 }
@@ -2392,10 +2392,10 @@ fn invalid_names_are_validation_and_missing_worktrees_exit_not_found() {
 #[test]
 fn json_exec_signal_and_spawn_failure_return_the_worktree() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "child", "--json"]).status.success());
-    let signal = repo.mabo(&["exec", "child", "--", "sh", "-c", "kill -TERM $$"]);
+    assert!(repo.rabi(&["create", "child", "--json"]).status.success());
+    let signal = repo.rabi(&["exec", "child", "--", "sh", "-c", "kill -TERM $$"]);
     assert_eq!(signal.status.code(), Some(143));
-    let missing = repo.mabo(&["exec", "child", "--", "missing-mabo-child-command"]);
+    let missing = repo.rabi(&["exec", "child", "--", "missing-rabi-child-command"]);
     assert!(!missing.status.success());
     assert!(managed(&repo, "child").exists());
 }
@@ -2404,11 +2404,11 @@ fn json_exec_signal_and_spawn_failure_return_the_worktree() {
 fn json_post_create_signal_and_spawn_return_the_worktree() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"kill -TERM $$\"]\n",
     )
     .expect("hooks");
-    let created = repo.mabo(&["create", "h", "--json"]);
+    let created = repo.rabi(&["create", "h", "--json"]);
     assert_eq!(
         created.status.code(),
         Some(6),
@@ -2427,7 +2427,7 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     assert!(managed(&repo, "h/README.md").is_file());
 
     repo.git(&["branch", "attach-hook"]);
-    let attached = repo.mabo(&["create", "--branch", "attach-hook", "--json"]);
+    let attached = repo.rabi(&["create", "--branch", "attach-hook", "--json"]);
     assert_eq!(
         attached.status.code(),
         Some(6),
@@ -2445,13 +2445,13 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     assert_eq!(attached_json["data"]["setup"]["exitCode"], 143);
 
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"true\"]\n",
     )
     .expect("spawn hook");
     let spawned = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "hook-spawn", "--json"],
         )
         .env("SHELL", "/nonexistent")
@@ -2482,7 +2482,7 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     repo.git(&["branch", "attach-hook-spawn"]);
     let attach_spawn = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--branch", "attach-hook-spawn", "--json"],
         )
         .env("SHELL", "/nonexistent")
@@ -2499,11 +2499,11 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     assert!(managed(&repo, "attach-hook-spawn/README.md").is_file());
 
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\npre-remove = [\"kill -TERM $$\"]\n",
     )
     .expect("pre-remove signal");
-    let deleted = repo.mabo(&[
+    let deleted = repo.rabi(&[
         "remove",
         "--discard-changes",
         "--delete-unpreserved-branch",
@@ -2530,13 +2530,13 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
     assert!(managed(&repo, "h").is_dir());
 
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\npre-remove = [\"true\"]\n",
     )
     .expect("pre-remove spawn");
     let pre_spawn = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "remove",
                 "--discard-changes",
@@ -2569,13 +2569,13 @@ fn json_post_create_signal_and_spawn_return_the_worktree() {
 fn detached_exec_resolves_the_created_path_with_a_configured_root() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["config", "set", "workspace-root", "custom"])
+        .rabi(&["config", "set", "workspace-root", "custom"])
         .status
         .success());
-    let output = repo.mabo(&["create", "detached", "--detach", "--json"]);
+    let output = repo.rabi(&["create", "detached", "--detach", "--json"]);
     assert!(output.status.success(), "{}", text(&output.stderr));
     let path = repo.repo.join("custom/detached");
-    let ran = repo.mabo(&["exec", "detached", "--", "pwd"]);
+    let ran = repo.rabi(&["exec", "detached", "--", "pwd"]);
     assert!(ran.status.success());
     assert!(paths_match(&text(&ran.stdout), &path));
 }
@@ -2583,10 +2583,10 @@ fn detached_exec_resolves_the_created_path_with_a_configured_root() {
 #[test]
 fn create_issue_refreshes_the_workspace_after_a_hook_detaches_head() {
     let repo = Repo::new();
-    let set = repo.mabo(&["config", "set", "workspace-root", "../spaces"]);
+    let set = repo.rabi(&["config", "set", "workspace-root", "../spaces"]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"test \\\"$(git branch --show-current)\\\" = issues/7 && git checkout -q --detach\"]\n",
     )
     .expect("detach hook");
@@ -2613,7 +2613,7 @@ fi
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
     let checkout = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--issue", "7", "--json"],
         )
         .env("PATH", path)
@@ -2645,7 +2645,7 @@ fi
         .expect("detached HEAD");
     assert!(head.status.success(), "{}", text(&head.stderr));
     assert_eq!(text(&head.stdout), "HEAD");
-    let ran = repo.mabo(&["exec", "issues/7", "--", "pwd"]);
+    let ran = repo.rabi(&["exec", "issues/7", "--", "pwd"]);
     assert!(ran.status.success(), "{}", text(&ran.stderr));
     assert!(paths_match(&text(&ran.stdout), &directory));
 }
@@ -2672,7 +2672,7 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     );
     let checkout = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--issue", "7", "--json"],
         )
         .env("PATH", &path)
@@ -2714,7 +2714,7 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
 
     let missing = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--pr", "--json", "--output=json"],
         )
         .env("PATH", &path)
@@ -2736,7 +2736,7 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
     ]);
     let again = matching
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &matching_path)
@@ -2768,10 +2768,10 @@ fn github_checkout_json_reports_issue_and_existing_pull_request() {
 #[test]
 fn exec_passes_command_options_through() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "feature/exec-flags"]);
+    let created = repo.rabi(&["create", "feature/exec-flags"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
 
-    let direct = repo.mabo(&[
+    let direct = repo.rabi(&[
         "exec",
         "feature/exec-flags",
         "--",
@@ -2787,7 +2787,7 @@ fn exec_passes_command_options_through() {
     );
     assert_eq!(text(&direct.stdout), "feature/exec-flags");
 
-    let separated = repo.mabo(&[
+    let separated = repo.rabi(&[
         "exec",
         "feature/exec-flags",
         "--",
@@ -2798,7 +2798,7 @@ fn exec_passes_command_options_through() {
     assert!(separated.status.success(), "{}", text(&separated.stderr));
     assert_eq!(text(&separated.stdout), "feature/exec-flags");
 
-    let nested = repo.mabo(&[
+    let nested = repo.rabi(&[
         "exec",
         "feature/exec-flags",
         "--",
@@ -2822,13 +2822,13 @@ fn exec_passes_command_options_through() {
         text(&nested.stdout),
         "--show-current\n-n\n--\n--keep\n--help"
     );
-    assert!(!text(&nested.stdout).contains("mabo exec <workspace-name>"));
+    assert!(!text(&nested.stdout).contains("rabi exec <workspace-name>"));
 
-    let help = repo.mabo(&["exec", "--help"]);
+    let help = repo.rabi(&["exec", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
-    assert!(text(&help.stdout).contains("mabo exec [--repo <ref>] [SEL] -- COMMAND [ARG...]"));
+    assert!(text(&help.stdout).contains("rabi exec [--repo <ref>] [SEL] -- COMMAND [ARG...]"));
 
-    let early = repo.mabo(&["exec", "--show-current", "feature/exec-flags", "true"]);
+    let early = repo.rabi(&["exec", "--show-current", "feature/exec-flags", "true"]);
     assert_eq!(early.status.code(), Some(2));
     assert!(text(&early.stderr).contains("Unknown option '--show-current'"));
 }
@@ -2842,12 +2842,12 @@ fn exec_help_skips_output_values_and_preserves_child_help() {
         vec!["--output=text", "exec", "--help"],
         vec!["exec", "--output=text", "--help"],
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert!(out.status.success(), "{args:?}: {}", text(&out.stderr));
-        assert!(text(&out.stdout).contains("mabo exec [--repo <ref>] [SEL] -- COMMAND [ARG...]"));
+        assert!(text(&out.stdout).contains("rabi exec [--repo <ref>] [SEL] -- COMMAND [ARG...]"));
         assert!(out.stderr.is_empty());
     }
-    let value = repo.mabo(&["exec", "--output", "--help"]);
+    let value = repo.rabi(&["exec", "--output", "--help"]);
     assert_eq!(value.status.code(), Some(2));
     assert!(text(&value.stderr).contains("Invalid output mode"));
 
@@ -2861,7 +2861,7 @@ fn exec_help_skips_output_values_and_preserves_child_help() {
             args.push("main");
             args.push("--");
             args.extend(["printf", "%s", "--help"]);
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert!(out.status.success(), "{args:?}: {}", text(&out.stderr));
             assert_eq!(text(&out.stdout), "--help", "{args:?}");
             assert!(out.stderr.is_empty());
@@ -2877,9 +2877,9 @@ fn create_and_attach_exec_pass_command_options_through() {
         vec!["create", "new"],
         vec!["create", "--branch", "existing"],
     ] {
-        assert!(repo.mabo(&args).status.success());
+        assert!(repo.rabi(&args).status.success());
         let name = args.last().unwrap();
-        let output = repo.mabo(&["exec", name, "--", "printf", "%s", "--json --repo --help"]);
+        let output = repo.rabi(&["exec", name, "--", "printf", "%s", "--json --repo --help"]);
         assert!(output.status.success());
         assert_eq!(text(&output.stdout), "--json --repo --help");
     }
@@ -2888,9 +2888,9 @@ fn create_and_attach_exec_pass_command_options_through() {
 #[test]
 fn exec_preserves_the_child_exit_code() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "feature/exec"]);
+    let created = repo.rabi(&["create", "feature/exec"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let output = repo.mabo(&["exec", "feature/exec", "--", "sh", "-c", "exit 4"]);
+    let output = repo.rabi(&["exec", "feature/exec", "--", "sh", "-c", "exit 4"]);
     assert_eq!(output.status.code(), Some(4));
     assert!(text(&output.stderr).contains("failed with exit code 4"));
 }
@@ -2908,14 +2908,14 @@ fn clone_registration_failure_preserves_completed_clone_and_fetch_results() {
         ]);
         let root = repo.root.join("clones");
         assert!(repo
-            .mabo(&["config", "set", "clone-root", root.to_str().expect("root")])
+            .rabi(&["config", "set", "clone-root", root.to_str().expect("root")])
             .status
             .success());
         append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
 
         // A file at the records-directory path prevents registration writes,
         // including when tests run as a user that can bypass Unix permissions.
-        let registry = repo.root.join("state/mabo/repos");
+        let registry = repo.root.join("state/rabi/repos");
         fs::create_dir_all(registry.parent().expect("state dir")).expect("state dir");
         fs::write(&registry, "blocked registry\n").expect("block registry");
         let destination = root.join("github.com/example/widget");
@@ -2935,7 +2935,7 @@ fn clone_registration_failure_preserves_completed_clone_and_fetch_results() {
             if json {
                 args.push("--json");
             }
-            let output = repo.mabo(&args);
+            let output = repo.rabi(&args);
             assert_eq!(
                 output.status.code(),
                 Some(status),
@@ -2991,7 +2991,7 @@ fn clone_registration_failure_preserves_completed_clone_and_fetch_results() {
             }
         }
         fs::remove_file(&registry).expect("unblock registry");
-        let retried = repo.mabo(&["clone", "example/widget", "--json"]);
+        let retried = repo.rabi(&["clone", "example/widget", "--json"]);
         assert!(retried.status.success(), "{}", text(&retried.stderr));
         let value = json_value(&retried);
         assert_eq!(value["data"]["cloned"], false);
@@ -3012,19 +3012,19 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
         bare.to_str().expect("bare"),
     ]);
     let root = repo.root.join("clones");
-    let set = repo.mabo(&["config", "set", "clone-root", root.to_str().expect("root")]);
+    let set = repo.rabi(&["config", "set", "clone-root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
 
-    let help = repo.mabo(&["clone", "--help"]);
+    let help = repo.rabi(&["clone", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
     let help_text = text(&help.stdout);
-    assert!(help_text.contains("mabo clone"));
+    assert!(help_text.contains("rabi clone"));
     assert!(help_text.contains("--update"));
     assert!(help_text.contains("--branch <value>"));
     assert!(help_text.contains("~/ghq"));
 
-    let missing = repo.mabo(&["clone", "--json"]);
+    let missing = repo.rabi(&["clone", "--json"]);
     assert_eq!(missing.status.code(), Some(2));
     let missing_json: serde_json::Value =
         serde_json::from_str(&text(&missing.stdout)).expect("usage json");
@@ -3032,7 +3032,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     assert_eq!(missing_json["error"]["code"], "usage");
     assert!(missing_json["error"].get("exitCode").is_none());
 
-    let bad_depth = repo.mabo(&["clone", "example/widget", "--depth", "0", "--json"]);
+    let bad_depth = repo.rabi(&["clone", "example/widget", "--depth", "0", "--json"]);
     assert_eq!(
         bad_depth.status.code(),
         Some(2),
@@ -3043,7 +3043,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
         serde_json::from_str(&text(&bad_depth.stdout)).expect("depth json");
     assert_eq!(bad_depth_json["error"]["code"], "usage");
 
-    let bad_url = repo.mabo(&["clone", "not a repo", "--json"]);
+    let bad_url = repo.rabi(&["clone", "not a repo", "--json"]);
     assert_eq!(bad_url.status.code(), Some(2));
     let bad_url_json: serde_json::Value =
         serde_json::from_str(&text(&bad_url.stdout)).expect("url json");
@@ -3053,7 +3053,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
         .unwrap_or_default()
         .contains("not a repo"));
 
-    let cloned = repo.mabo(&[
+    let cloned = repo.rabi(&[
         "clone",
         "example/widget",
         "--branch",
@@ -3103,7 +3103,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     assert_eq!(text(&shallow.stdout), "true");
 
     fs::write(destination.join("local.txt"), "keep\n").expect("marker");
-    let again = repo.mabo(&["clone", "git@github.com:example/widget.git"]);
+    let again = repo.rabi(&["clone", "git@github.com:example/widget.git"]);
     assert!(again.status.success(), "{}", text(&again.stderr));
     let again_text = text(&again.stdout);
     assert!(
@@ -3115,7 +3115,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
         fs::read_to_string(destination.join("local.txt")).expect("marker"),
         "keep\n"
     );
-    let listed = repo.mabo(&["repo", "list", "--json"]);
+    let listed = repo.rabi(&["repo", "list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let catalog: serde_json::Value = serde_json::from_str(&text(&listed.stdout)).expect("catalog");
     let registered = catalog["data"]["repos"]
@@ -3128,7 +3128,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     assert_eq!(registered["name"], "widget");
     assert_eq!(registered["canonicalName"], "github.com/example/widget");
 
-    let updated = repo.mabo(&[
+    let updated = repo.rabi(&[
         "clone",
         "https://github.com/example/widget.git",
         "--update",
@@ -3154,7 +3154,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     );
 
     let created = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "topic"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "topic"])
         .current_dir(&destination)
         .output()
         .expect("worktree");
@@ -3190,7 +3190,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
         .output()
         .expect("remote");
     assert!(remote.status.success(), "{}", text(&remote.stderr));
-    let mismatch = repo.mabo(&["clone", "example/other", "--json"]);
+    let mismatch = repo.rabi(&["clone", "example/other", "--json"]);
     assert_eq!(
         mismatch.status.code(),
         Some(2),
@@ -3211,7 +3211,7 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
 
     let empty = root.join("github.com/example/empty");
     fs::create_dir_all(&empty).expect("empty");
-    let not_repo = repo.mabo(&["clone", "example/empty"]);
+    let not_repo = repo.rabi(&["clone", "example/empty"]);
     assert_eq!(
         not_repo.status.code(),
         Some(2),
@@ -3220,9 +3220,9 @@ fn clone_from_a_local_bare_repo_is_idempotent_and_json() {
     );
     assert!(text(&not_repo.stderr).contains("not a Git repository"));
 
-    let removed = repo.mabo(&["repo", "forget", "widget"]);
+    let removed = repo.rabi(&["repo", "forget", "widget"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
-    let discovered = repo.mabo(&["repo", "list", "--json"]);
+    let discovered = repo.rabi(&["repo", "list", "--json"]);
     assert!(discovered.status.success(), "{}", text(&discovered.stderr));
     let discovered_json: serde_json::Value =
         serde_json::from_str(&text(&discovered.stdout)).expect("discovered");
@@ -3252,10 +3252,10 @@ fn clone_root_resolution_order() {
     let second_root = repo.root.join("second-root");
     let env_root = repo.root.join("from-env");
     let default_root = repo.home.join("ghq");
-    let invalid = repo.mabo(&["config", "set", "clone-root", "relative/path"]);
+    let invalid = repo.rabi(&["config", "set", "clone-root", "relative/path"]);
     assert_eq!(invalid.status.code(), Some(2), "{}", text(&invalid.stderr));
     assert!(text(&invalid.stderr).contains("absolute"));
-    let set = repo.mabo(&[
+    let set = repo.rabi(&[
         "config",
         "set",
         "clone-root",
@@ -3277,7 +3277,7 @@ fn clone_root_resolution_order() {
     assert!(!env_root.join("github.com/example/widget").exists());
     assert!(!second_root.join("github.com/example/widget").exists());
 
-    let removed = repo.mabo(&["config", "unset", "clone-root"]);
+    let removed = repo.rabi(&["config", "unset", "clone-root"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
     let from_git = clone_widget(&repo, Some(&env_root));
     assert_clone_landed(&from_git, &git_root);
@@ -3305,10 +3305,10 @@ fn clone_names_the_remote_origin_when_default_remote_name_is_upstream() {
     append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
     repo.git(&["config", "--global", "clone.defaultRemoteName", "upstream"]);
     let root = repo.root.join("clones");
-    let set = repo.mabo(&["config", "set", "clone-root", root.to_str().expect("root")]);
+    let set = repo.rabi(&["config", "set", "clone-root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
 
-    let cloned = repo.mabo(&["clone", "example/widget", "--json"]);
+    let cloned = repo.rabi(&["clone", "example/widget", "--json"]);
     assert!(
         cloned.status.success(),
         "{}\n{}",
@@ -3324,7 +3324,7 @@ fn clone_names_the_remote_origin_when_default_remote_name_is_upstream() {
     assert!(remotes.status.success(), "{}", text(&remotes.stderr));
     assert_eq!(text(&remotes.stdout), "origin");
 
-    let again = repo.mabo(&["clone", "example/widget", "--update", "--json"]);
+    let again = repo.rabi(&["clone", "example/widget", "--update", "--json"]);
     assert!(
         again.status.success(),
         "{}\n{}",
@@ -3353,10 +3353,10 @@ fn clone_lowercases_remote_url_host() {
     append_instead_of(&repo, &bare, "https://GitHub.com/example/widget.git");
     append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
     let root = repo.root.join("clones");
-    let set = repo.mabo(&["config", "set", "clone-root", root.to_str().expect("root")]);
+    let set = repo.rabi(&["config", "set", "clone-root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
 
-    let cloned = repo.mabo(&["clone", "https://GitHub.com/example/widget.git", "--json"]);
+    let cloned = repo.rabi(&["clone", "https://GitHub.com/example/widget.git", "--json"]);
     assert!(
         cloned.status.success(),
         "{}\n{}",
@@ -3380,11 +3380,11 @@ fn clone_lowercases_remote_url_host() {
 fn clone_overlong_owner_is_validation() {
     let repo = Repo::new();
     let root = repo.root.join("clones");
-    let set = repo.mabo(&["config", "set", "clone-root", root.to_str().expect("root")]);
+    let set = repo.rabi(&["config", "set", "clone-root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     let owner = "o".repeat(256);
     let source = format!("example.com/{owner}/widget");
-    let output = repo.mabo(&["clone", &source, "--json"]);
+    let output = repo.rabi(&["clone", &source, "--json"]);
     assert_eq!(
         output.status.code(),
         Some(2),
@@ -3406,7 +3406,7 @@ fn clone_overlong_owner_is_validation() {
 fn clone_overlong_name_with_existing_parent_is_validation() {
     let repo = Repo::new();
     let root = repo.root.join("clones");
-    let set = repo.mabo(&["config", "set", "clone-root", root.to_str().expect("root")]);
+    let set = repo.rabi(&["config", "set", "clone-root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
 
     let host = root.join("github.com");
@@ -3425,7 +3425,7 @@ fn clone_overlong_name_with_existing_parent_is_validation() {
 }
 
 fn assert_clone_validation(repo: &Repo, source: &str) {
-    let output = repo.mabo(&["clone", source, "--json"]);
+    let output = repo.rabi(&["clone", source, "--json"]);
     assert_eq!(
         output.status.code(),
         Some(2),
@@ -3459,9 +3459,9 @@ fn clone_surfaces_unreadable_git_config_for_an_existing_checkout() {
     ]);
     append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
     let root = repo.root.join("clones");
-    let set = repo.mabo(&["config", "set", "clone-root", root.to_str().expect("root")]);
+    let set = repo.rabi(&["config", "set", "clone-root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
-    let cloned = repo.mabo(&["clone", "example/widget", "--json"]);
+    let cloned = repo.rabi(&["clone", "example/widget", "--json"]);
     assert!(
         cloned.status.success(),
         "{}\n{}",
@@ -3473,7 +3473,7 @@ fn clone_surfaces_unreadable_git_config_for_an_existing_checkout() {
     fs::write(&broken, "[[[[ not valid\n").expect("config");
     let again = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["clone", "example/widget", "--json"],
         )
         .env("GIT_CONFIG_GLOBAL", &broken)
@@ -3514,23 +3514,23 @@ fn clone_removes_stale_staging_directories() {
     ]);
     append_instead_of(&repo, &bare, "https://github.com/example/widget.git");
     let root = repo.root.join("clones");
-    let set = repo.mabo(&["config", "set", "clone-root", root.to_str().expect("root")]);
+    let set = repo.rabi(&["config", "set", "clone-root", root.to_str().expect("root")]);
     assert!(set.status.success(), "{}", text(&set.stderr));
     let owner = root.join("github.com").join("example");
     fs::create_dir_all(&owner).expect("owner");
     let dead_pid = unused_pid();
-    let dead = owner.join(format!(".mabo-clone-{dead_pid}-{}", uuid_token()));
+    let dead = owner.join(format!(".rabi-clone-{dead_pid}-{}", uuid_token()));
     fs::create_dir_all(dead.join(".git")).expect("dead");
     fs::write(dead.join("payload.txt"), "stale").expect("payload");
     let live = owner.join(format!(
-        ".mabo-clone-{}-{}",
+        ".rabi-clone-{}-{}",
         std::process::id(),
         uuid_token()
     ));
     fs::create_dir_all(&live).expect("live");
     fs::write(live.join("payload.txt"), "live").expect("live");
 
-    let cloned = repo.mabo(&["clone", "example/widget", "--json"]);
+    let cloned = repo.rabi(&["clone", "example/widget", "--json"]);
     assert!(
         cloned.status.success(),
         "{}\n{}",
@@ -3548,7 +3548,7 @@ fn clone_removes_stale_staging_directories() {
 #[test]
 fn clone_rejects_file_urls() {
     let repo = Repo::new();
-    let output = repo.mabo(&["clone", "file:///tmp/repo.git", "--json"]);
+    let output = repo.rabi(&["clone", "file:///tmp/repo.git", "--json"]);
     assert_eq!(output.status.code(), Some(2), "{}", text(&output.stdout));
     let value: serde_json::Value = serde_json::from_str(&text(&output.stdout)).expect("json");
     assert_eq!(value["error"]["code"], "usage");
@@ -3602,7 +3602,7 @@ fn append_instead_of(repo: &Repo, bare: &std::path::Path, url: &str) {
 
 fn clone_widget(repo: &Repo, ghq_root: Option<&std::path::Path>) -> std::process::Output {
     let mut command = repo.command(
-        env!("CARGO_BIN_EXE_mabo"),
+        env!("CARGO_BIN_EXE_rabi"),
         &["clone", "example/widget", "--json"],
     );
     if let Some(root) = ghq_root {
@@ -3688,7 +3688,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
     let repo = Repo::new();
     let path_env = silent_ghq_path(&repo);
     let clones = repo.root.join("clones");
-    let set = repo.mabo(&[
+    let set = repo.rabi(&[
         "config",
         "set",
         "clone-root",
@@ -3716,11 +3716,11 @@ fn project_option_resolves_paths_suffixes_and_errors() {
         "https://gitlab.com/other/renamed.git",
     );
     let run = |args: &[&str], cwd: &std::path::Path| {
-        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+        repo.command(env!("CARGO_BIN_EXE_rabi"), args)
             .env("PATH", &path_env)
             .current_dir(cwd)
             .output()
-            .expect("mabo")
+            .expect("rabi")
     };
 
     let catalog = run(&["repo", "list", "--json"], &repo.home);
@@ -3821,7 +3821,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
     assert_eq!(prefix.status.code(), Some(3), "{}", text(&prefix.stdout));
     assert_eq!(json_value(&prefix)["error"]["code"], "not_found");
 
-    let created = repo.mabo(&["create", "feature"]);
+    let created = repo.rabi(&["create", "feature"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let worktree = managed(&repo, "feature");
     let nested = worktree.join("nested");
@@ -3843,7 +3843,7 @@ fn project_option_resolves_paths_suffixes_and_errors() {
     assert!(same_dir(&text(&dotted.stdout), &repo.repo));
     let tilde = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["path", "--repo", "~/repo", "main"],
         )
         .env("PATH", &path_env)
@@ -4012,7 +4012,7 @@ fn exec_project_option_passes_later_options_to_the_command() {
     let repo = Repo::new();
     let path_env = silent_ghq_path(&repo);
     let clones = repo.root.join("clones");
-    let set = repo.mabo(&[
+    let set = repo.rabi(&[
         "config",
         "set",
         "clone-root",
@@ -4025,11 +4025,11 @@ fn exec_project_option_passes_later_options_to_the_command() {
         "https://github.com/acme/ptm805exec.git",
     );
     let run = |args: &[&str]| {
-        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+        repo.command(env!("CARGO_BIN_EXE_rabi"), args)
             .env("PATH", &path_env)
             .current_dir(&repo.home)
             .output()
-            .expect("mabo")
+            .expect("rabi")
     };
     let created = run(&["create", "--repo", "acme/ptm805exec", "foo"]);
     assert!(
@@ -4147,16 +4147,16 @@ fn project_option_ignores_the_callers_config_and_matches_directory_names() {
         ],
     );
     for path in [&tool, &localname] {
-        let added = repo.mabo(&["repo", "add", path.to_str().expect("path"), "--json"]);
+        let added = repo.rabi(&["repo", "add", path.to_str().expect("path"), "--json"]);
         assert!(added.status.success(), "{}", text(&added.stderr));
     }
-    fs::write(repo.repo.join(".mabo.toml"), "not = [\n").expect("invalid config");
+    fs::write(repo.repo.join(".rabi.toml"), "not = [\n").expect("invalid config");
 
     let run = |args: &[&str]| {
-        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+        repo.command(env!("CARGO_BIN_EXE_rabi"), args)
             .env("PATH", &path_env)
             .output()
-            .expect("mabo")
+            .expect("rabi")
     };
     let listed = run(&["list", "-R", "tool"]);
     assert!(
@@ -4165,7 +4165,7 @@ fn project_option_ignores_the_callers_config_and_matches_directory_names() {
         text(&listed.stdout),
         text(&listed.stderr)
     );
-    assert!(!text(&listed.stderr).contains("Invalid .mabo.toml"));
+    assert!(!text(&listed.stderr).contains("Invalid .rabi.toml"));
     assert!(
         text(&listed.stdout).contains("h1"),
         "{}",
@@ -4184,7 +4184,7 @@ fn project_option_ignores_the_callers_config_and_matches_directory_names() {
     assert!(managed_directory(&tool, &repo.root.join("xdg"))
         .join("z1")
         .is_dir());
-    assert!(!text(&created.stderr).contains("Invalid .mabo.toml"));
+    assert!(!text(&created.stderr).contains("Invalid .rabi.toml"));
     assert!(!managed(&repo, "z1").exists());
 
     let by_directory = run(&["path", "-R", "localname", "main"]);
@@ -4231,14 +4231,14 @@ fn project_option_ignores_the_callers_config_and_matches_directory_names() {
 
     let help = run(&["exec", "--repo", "tool", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
-    assert!(text(&help.stdout).contains("mabo exec"));
+    assert!(text(&help.stdout).contains("rabi exec"));
     assert!(!text(&help.stderr).contains("Unknown option"));
 }
 
 #[test]
 fn github_checkout_project_passes_the_selected_host() {
     let repo = Repo::new();
-    fs::write(repo.repo.join(".mabo.toml"), "not = [\n").expect("invalid config");
+    fs::write(repo.repo.join(".rabi.toml"), "not = [\n").expect("invalid config");
     let tool = repo.root.join("ghe-tool");
     fs::create_dir_all(&tool).expect("tool");
     git_at(&repo, &tool, &["init", "-b", "main"]);
@@ -4267,7 +4267,7 @@ fn github_checkout_project_passes_the_selected_host() {
     let gh = bin.join("gh");
     fs::write(
         &gh,
-        "#!/bin/sh\nprintf '%s\\n' \"pwd=$(pwd)\" >> \"$MABO_GH_LOG\"\nprintf '%s\\n' \"$*\" >> \"$MABO_GH_LOG\"\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' \"$MABO_GH_REPO_JSON\"\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":3}'\nexit 0\n",
+        "#!/bin/sh\nprintf '%s\\n' \"pwd=$(pwd)\" >> \"$RABI_GH_LOG\"\nprintf '%s\\n' \"$*\" >> \"$RABI_GH_LOG\"\nif [ \"$1\" = \"repo\" ]; then\n  printf '%s\\n' \"$RABI_GH_REPO_JSON\"\n  exit 0\nfi\nprintf '%s\\n' '{\"number\":3}'\nexit 0\n",
     )
     .expect("gh");
     use std::os::unix::fs::PermissionsExt;
@@ -4281,7 +4281,7 @@ fn github_checkout_project_passes_the_selected_host() {
     );
     let checkout = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "create", "-R",
                 tool.to_str().expect("tool"),
@@ -4290,9 +4290,9 @@ fn github_checkout_project_passes_the_selected_host() {
             ],
         )
         .env("PATH", &path_env)
-        .env("MABO_GH_LOG", &log)
+        .env("RABI_GH_LOG", &log)
         .env(
-            "MABO_GH_REPO_JSON",
+            "RABI_GH_REPO_JSON",
             r#"{"url":"https://ghe.corp.example/acme/tool","owner":{"login":"acme"},"name":"tool"}"#,
         )
         .output()
@@ -4303,7 +4303,7 @@ fn github_checkout_project_passes_the_selected_host() {
         text(&checkout.stdout),
         text(&checkout.stderr)
     );
-    assert!(!text(&checkout.stderr).contains("Invalid .mabo.toml"));
+    assert!(!text(&checkout.stderr).contains("Invalid .rabi.toml"));
     assert!(managed_directory(&tool, &repo.root.join("xdg"))
         .join("issues/3")
         .is_dir());
@@ -4320,12 +4320,12 @@ fn github_checkout_project_passes_the_selected_host() {
 
     fs::write(&log, "").expect("truncate");
     let local = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "--issue", "4"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "--issue", "4"])
         .current_dir(&tool)
         .env("PATH", &path_env)
-        .env("MABO_GH_LOG", &log)
+        .env("RABI_GH_LOG", &log)
         .env(
-            "MABO_GH_REPO_JSON",
+            "RABI_GH_REPO_JSON",
             r#"{"url":"https://ghe.corp.example/acme/tool","owner":{"login":"acme"},"name":"tool"}"#,
         )
         .output()
@@ -4359,7 +4359,7 @@ fn github_checkout_project_passes_the_selected_host() {
     fs::write(&log, "").expect("truncate");
     let aliased = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "create",
                 "-R",
@@ -4369,9 +4369,9 @@ fn github_checkout_project_passes_the_selected_host() {
             ],
         )
         .env("PATH", &path_env)
-        .env("MABO_GH_LOG", &log)
+        .env("RABI_GH_LOG", &log)
         .env(
-            "MABO_GH_REPO_JSON",
+            "RABI_GH_REPO_JSON",
             r#"{"url":"https://github.com/acme/tool","owner":{"login":"acme"},"name":"tool"}"#,
         )
         .output()
@@ -4411,10 +4411,10 @@ fn relative_origin_is_not_a_github_project_name() {
         &project,
         &["remote", "add", "origin", "backups/widget.git"],
     );
-    let added = repo.mabo(&["repo", "add", project.to_str().expect("path"), "--json"]);
+    let added = repo.rabi(&["repo", "add", project.to_str().expect("path"), "--json"]);
     assert!(added.status.success(), "{}", text(&added.stderr));
     let listed = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["repo", "list", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["repo", "list", "--json"])
         .env("PATH", &path_env)
         .output()
         .expect("list");
@@ -4433,7 +4433,7 @@ fn relative_origin_is_not_a_github_project_name() {
         .contains("github.com"));
     let matched = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["show", "-R", "github.com/backups/widget", "main", "--json"],
         )
         .env("PATH", &path_env)
@@ -4443,7 +4443,7 @@ fn relative_origin_is_not_a_github_project_name() {
     assert_eq!(json_value(&matched)["error"]["code"], "not_found");
     let by_name = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["path", "-R", "ptm805local", "main"],
         )
         .env("PATH", &path_env)
@@ -4452,7 +4452,7 @@ fn relative_origin_is_not_a_github_project_name() {
     assert!(by_name.status.success(), "{}", text(&by_name.stderr));
     assert!(same_dir(&text(&by_name.stdout), &project));
 
-    let git_dir = repo.mabo(&[
+    let git_dir = repo.rabi(&[
         "path",
         "-R",
         repo.repo.join(".git").to_str().expect("git"),
@@ -4465,7 +4465,7 @@ fn relative_origin_is_not_a_github_project_name() {
         text(&git_dir.stderr)
     );
     assert!(same_dir(&text(&git_dir.stdout), &repo.repo));
-    let objects = repo.mabo(&[
+    let objects = repo.rabi(&[
         "path",
         "-R",
         repo.repo.join(".git/objects").to_str().expect("objects"),
@@ -4481,17 +4481,17 @@ fn workspace_intent_is_recorded_updated_and_removed() {
     let repo = Repo::new();
     let created = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "feature", "--purpose", "fix the flake", "--json"],
         )
         .output()
         .unwrap();
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(repo
-        .mabo(&["set", "feature", "--pr", "774"])
+        .rabi(&["set", "feature", "--pr", "774"])
         .status
         .success());
-    let created = json_value(&repo.mabo(&["show", "feature", "--json"]));
+    let created = json_value(&repo.rabi(&["show", "feature", "--json"]));
     let workspace = &created["data"]["workspace"];
     assert!(workspace.get("owner").is_none());
     assert!(workspace.get("ownerRelation").is_none());
@@ -4499,8 +4499,8 @@ fn workspace_intent_is_recorded_updated_and_removed() {
     assert_eq!(workspace["purpose"], "fix the flake");
     assert_eq!(workspace["links"]["pr"]["number"], 774);
     assert_eq!(workspace["createdFrom"], workspace["head"]);
-    assert!(text(&repo.mabo(&["list"]).stdout).contains("fix the flake"));
-    let updated = repo.mabo(&[
+    assert!(text(&repo.rabi(&["list"]).stdout).contains("fix the flake"));
+    let updated = repo.rabi(&[
         "set",
         "feature",
         "--purpose",
@@ -4522,21 +4522,21 @@ fn workspace_intent_is_recorded_updated_and_removed() {
         updated["data"]["workspace"]["createdFrom"],
         workspace["createdFrom"]
     );
-    assert_eq!(repo.mabo(&["set", "feature"]).status.code(), Some(2));
+    assert_eq!(repo.rabi(&["set", "feature"]).status.code(), Some(2));
     assert_eq!(
-        repo.mabo(&["set", "missing", "--purpose", "task"])
+        repo.rabi(&["set", "missing", "--purpose", "task"])
             .status
             .code(),
         Some(3)
     );
     assert_eq!(
-        repo.mabo(&["set", "feature", "--pr", "invalid"])
+        repo.rabi(&["set", "feature", "--pr", "invalid"])
             .status
             .code(),
         Some(2)
     );
     repo.git(&["branch", "side"]);
-    let attached = repo.mabo(&[
+    let attached = repo.rabi(&[
         "create",
         "--branch",
         "side",
@@ -4551,7 +4551,7 @@ fn workspace_intent_is_recorded_updated_and_removed() {
     assert_eq!(attached["data"]["workspace"]["purpose"], "review");
     assert!(attached["data"]["workspace"].get("owner").is_none());
     assert!(attached["data"]["workspace"].get("lastUsedAt").is_none());
-    let deleted = repo.mabo(&["remove", "feature", "--keep-branch", "--json"]);
+    let deleted = repo.rabi(&["remove", "feature", "--keep-branch", "--json"]);
     assert!(deleted.status.success());
     let deleted = json_value(&deleted);
     assert_eq!(
@@ -4564,7 +4564,7 @@ fn workspace_intent_is_recorded_updated_and_removed() {
     assert!(deleted["data"]["items"][0]["workspace"]
         .get("lastUsedAt")
         .is_none());
-    assert!(!text(&repo.mabo(&["list", "--names"]).stdout).contains("feature"));
+    assert!(!text(&repo.rabi(&["list", "--names"]).stdout).contains("feature"));
 }
 
 #[test]
@@ -4579,7 +4579,7 @@ fn github_recheckout_keeps_the_original_intent() {
     ]);
     let created = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "topic", "--purpose", "original task", "--json"],
         )
         .output()
@@ -4589,7 +4589,7 @@ fn github_recheckout_keeps_the_original_intent() {
         .as_str()
         .expect("created")
         .to_string();
-    let file = repo.repo.join(".git/mabo/workspaces");
+    let file = repo.repo.join(".git/rabi/workspaces");
     let mut document: serde_json::Value =
         serde_json::from_str(&records::read_to_string(&file).expect("store")).expect("json");
     document["worktrees"][0]["lastUsedAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
@@ -4602,11 +4602,11 @@ fn github_recheckout_keeps_the_original_intent() {
     )
     .expect("rewrite");
 
-    assert!(repo.mabo(&["set", "topic", "--pr", "7"]).status.success());
+    assert!(repo.rabi(&["set", "topic", "--pr", "7"]).status.success());
     let path = fake_gh_for_topic_pr(&repo);
     let again = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "create",
                 "--pr",
@@ -4628,7 +4628,7 @@ fn github_recheckout_keeps_the_original_intent() {
     assert_eq!(again_json["data"]["workspace"]["createdAt"], created_at);
     assert!(again_json["data"]["workspace"].get("lastUsedAt").is_none());
     assert_eq!(again_json["data"]["workspace"]["links"]["pr"]["number"], 7);
-    let listed = repo.mabo(&["list", "--json", "--kind", "workspace"]);
+    let listed = repo.rabi(&["list", "--json", "--kind", "workspace"]);
     assert_eq!(
         json_value(&listed)["data"]["workspaces"]
             .as_array()
@@ -4642,11 +4642,11 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     let corrupt = Repo::new();
     publish_pr_topic(&corrupt);
     let corrupt_path = fake_gh_for_topic_pr(&corrupt);
-    let file = corrupt.repo.join(".git/mabo/workspaces");
+    let file = corrupt.repo.join(".git/rabi/workspaces");
     fs::create_dir_all(file.parent().expect("dir")).expect("dir");
     records::write(&file, "{not json").expect("corrupt");
     let refused = corrupt
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "--pr", "7"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "--pr", "7"])
         .env("PATH", &corrupt_path)
         .output()
         .expect("checkout");
@@ -4670,7 +4670,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     let locked = Repo::new();
     publish_pr_topic(&locked);
     let locked_path = fake_gh_for_topic_pr(&locked);
-    let metadata_dir = locked.repo.join(".git/mabo/workspaces");
+    let metadata_dir = locked.repo.join(".git/rabi/workspaces");
     fs::create_dir_all(&metadata_dir).expect("dir");
     let store = r#"{"worktrees": []}"#;
     records::write(&metadata_dir, store).expect("store");
@@ -4682,7 +4682,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     let _restore = ModeReset(&metadata_dir);
     let unwritable = locked
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &locked_path)
@@ -4723,7 +4723,7 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
     let ready_path = fake_gh_for_topic_pr(&ready);
     let checked_out = ready
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &ready_path)
@@ -4758,16 +4758,16 @@ fn github_checkout_refuses_before_fetch_when_the_metadata_store_is_unusable() {
 #[test]
 fn delete_refuses_when_metadata_is_not_writable() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "doomed", "--purpose", "creator", "--json"]);
+    let created = repo.rabi(&["create", "doomed", "--purpose", "creator", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let metadata_dir = repo.repo.join(".git/mabo/workspaces");
+    let metadata_dir = repo.repo.join(".git/rabi/workspaces");
     let store = records::read_to_string(&metadata_dir).expect("store");
     use std::os::unix::fs::PermissionsExt;
     let mut locked = fs::metadata(&metadata_dir).expect("meta").permissions();
     locked.set_mode(0o555);
     fs::set_permissions(&metadata_dir, locked).expect("chmod");
     let _restore = ModeReset(&metadata_dir);
-    let deleted = repo.mabo(&["remove", "doomed", "--keep-branch", "--json"]);
+    let deleted = repo.rabi(&["remove", "doomed", "--keep-branch", "--json"]);
     assert_eq!(deleted.status.code(), Some(1), "{}", text(&deleted.stdout));
     let deleted_json = json_value(&deleted);
     assert!(deleted_json["error"]["message"]
@@ -4783,7 +4783,7 @@ fn delete_refuses_when_metadata_is_not_writable() {
 #[test]
 fn create_replaces_a_record_left_by_git_worktree_remove() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "feature", "--purpose", "old task", "--json"]);
+    let created = repo.rabi(&["create", "feature", "--purpose", "old task", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let created_at = json_value(&created)["data"]["workspace"]["createdAt"]
         .as_str()
@@ -4792,17 +4792,17 @@ fn create_replaces_a_record_left_by_git_worktree_remove() {
     let path = managed(&repo, "feature");
     repo.git(&["worktree", "remove", path.to_str().expect("path")]);
     repo.git(&["branch", "-D", "feature"]);
-    let again = repo.mabo(&["create", "feature", "--purpose", "new task", "--json"]);
+    let again = repo.rabi(&["create", "feature", "--purpose", "new task", "--json"]);
     assert!(again.status.success(), "{}", text(&again.stderr));
     let again_json = json_value(&again);
 
     assert_eq!(again_json["data"]["workspace"]["purpose"], "new task");
     assert_ne!(again_json["data"]["workspace"]["createdAt"], created_at);
     assert_eq!(again_json["data"]["metadata"]["ok"], true);
-    let listed = repo.mabo(&["list", "--names", "--kind", "workspace"]);
+    let listed = repo.rabi(&["list", "--names", "--kind", "workspace"]);
     assert_eq!(text(&listed.stdout), "feature");
     assert_eq!(
-        json_value(&repo.mabo(&["list", "--json", "--kind", "workspace"]))["data"]["workspaces"]
+        json_value(&repo.rabi(&["list", "--json", "--kind", "workspace"]))["data"]["workspaces"]
             .as_array()
             .map(Vec::len),
         Some(1)
@@ -4815,16 +4815,16 @@ fn create_replaces_a_record_left_by_git_worktree_remove() {
 fn metadata_save_failure_after_create_still_runs_hooks() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"touch hook-ran\"]\n",
     )
     .expect("hooks");
     let created = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "feature", "--purpose", "creator", "--json"],
         )
-        .env("MABO_TEST_FAIL_METADATA_SAVE", "1")
+        .env("RABI_TEST_FAIL_METADATA_SAVE", "1")
         .output()
         .expect("create");
     assert_eq!(created.status.code(), Some(6), "{}", text(&created.stdout));
@@ -4851,23 +4851,23 @@ fn metadata_save_failure_after_create_still_runs_hooks() {
 #[test]
 fn readers_warn_on_corrupt_metadata_and_still_run() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "feature", "--purpose", "creator", "--json"]);
+    let created = repo.rabi(&["create", "feature", "--purpose", "creator", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let id = json_value(&created)["data"]["workspace"]["id"]
         .as_str()
         .expect("workspace id")
         .to_string();
     assert!(repo
-        .mabo(&["create", "healthy", "--purpose", "reader"])
+        .rabi(&["create", "healthy", "--purpose", "reader"])
         .status
         .success());
     let file = repo
         .repo
-        .join(".git/mabo/workspaces")
+        .join(".git/rabi/workspaces")
         .join(format!("{id}.json"));
     fs::write(&file, "{not json").expect("corrupt");
 
-    let listed = repo.mabo(&["list", "--json", "--kind", "workspace"]);
+    let listed = repo.rabi(&["list", "--json", "--kind", "workspace"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let listed_json = json_value(&listed);
     assert_eq!(listed_json["data"]["workspaces"][0]["name"], "feature");
@@ -4886,15 +4886,15 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
         .expect("warnings")
         .is_empty());
 
-    let located = repo.mabo(&["show", "feature", "--json"]);
+    let located = repo.rabi(&["show", "feature", "--json"]);
     assert!(located.status.success(), "{}", text(&located.stderr));
     assert!(json_value(&located)["data"]["workspace"]["purpose"].is_null());
     assert!(text(&located.stderr).contains("invalid JSON"));
-    let human = repo.mabo(&["path", "feature"]);
+    let human = repo.rabi(&["path", "feature"]);
     assert!(human.status.success());
     assert!(text(&human.stdout).starts_with('/'));
 
-    let ran = repo.mabo(&["exec", "feature", "--", "true"]);
+    let ran = repo.rabi(&["exec", "feature", "--", "true"]);
     assert!(ran.status.success(), "{}", text(&ran.stderr));
     assert!(text(&ran.stderr).contains("invalid JSON"));
 
@@ -4902,10 +4902,10 @@ fn readers_warn_on_corrupt_metadata_and_still_run() {
 }
 
 #[test]
-fn exec_command_json_flag_does_not_switch_mabo_to_json() {
+fn exec_command_json_flag_does_not_switch_rabi_to_json() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "child"]).status.success());
-    let out = repo.mabo(&["exec", "child", "--", "printf", "%s", "--json"]);
+    assert!(repo.rabi(&["create", "child"]).status.success());
+    let out = repo.rabi(&["exec", "child", "--", "printf", "%s", "--json"]);
     assert!(out.status.success());
     assert_eq!(text(&out.stdout), "--json");
 }
@@ -4913,7 +4913,7 @@ fn exec_command_json_flag_does_not_switch_mabo_to_json() {
 #[test]
 fn separate_git_dir_creates_the_default_worktree_under_xdg() {
     let root = std::env::temp_dir().join(format!(
-        "mabo-sep-default-{}-{}",
+        "rabi-sep-default-{}-{}",
         std::process::id(),
         uuid()
     ));
@@ -4966,7 +4966,7 @@ fn separate_git_dir_creates_the_default_worktree_under_xdg() {
     git(&["commit", "-m", "initial"]);
     assert!(checkout.join(".git").is_file(), ".git is a gitdir file");
 
-    let created = std::process::Command::new(env!("CARGO_BIN_EXE_mabo"))
+    let created = std::process::Command::new(env!("CARGO_BIN_EXE_rabi"))
         .args(["create", "feature", "--json"])
         .current_dir(&checkout)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -4974,10 +4974,10 @@ fn separate_git_dir_creates_the_default_worktree_under_xdg() {
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_DATA_HOME", root.join("xdg"))
-        .env_remove("MABO_OUTPUT")
-        .env_remove("MABO_NO_INPUT")
+        .env_remove("RABI_OUTPUT")
+        .env_remove("RABI_NO_INPUT")
         .output()
-        .expect("mabo");
+        .expect("rabi");
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -4989,15 +4989,15 @@ fn separate_git_dir_creates_the_default_worktree_under_xdg() {
     let worktree = managed_directory(&checkout, &root.join("xdg")).join("feature");
     assert_worktree_object(&created_json["data"]["workspace"], "feature", &worktree);
     assert!(worktree.is_dir());
-    assert!(!sep.join("mabo").join("workspaces").join("feature").exists());
-    assert!(sep.join("mabo").join("workspaces").is_dir());
+    assert!(!sep.join("rabi").join("workspaces").join("feature").exists());
+    assert!(sep.join("rabi").join("workspaces").is_dir());
     assert!(checkout.join(".git").is_file(), ".git stayed a gitdir file");
     let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
 fn separate_git_dir_writes_metadata_in_the_common_dir() {
-    let root = std::env::temp_dir().join(format!("mabo-sep-{}-{}", std::process::id(), uuid()));
+    let root = std::env::temp_dir().join(format!("rabi-sep-{}-{}", std::process::id(), uuid()));
     let home = root.join("home");
     let checkout = root.join("checkout");
     let sep = root.join("sep.git");
@@ -5045,8 +5045,8 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
     git(&["commit", "-m", "initial"]);
     assert!(checkout.join(".git").is_file(), ".git is a gitdir file");
 
-    let mabo = |args: &[&str]| {
-        std::process::Command::new(env!("CARGO_BIN_EXE_mabo"))
+    let rabi = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_rabi"))
             .args(args)
             .current_dir(&checkout)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -5054,19 +5054,19 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
-            .env_remove("MABO_OUTPUT")
-            .env_remove("MABO_NO_INPUT")
+            .env_remove("RABI_OUTPUT")
+            .env_remove("RABI_NO_INPUT")
             .output()
-            .expect("mabo")
+            .expect("rabi")
     };
-    let pref = mabo(&[
+    let pref = rabi(&[
         "config",
         "set",
         "workspace-root",
         worktrees.to_str().expect("worktrees"),
     ]);
     assert!(pref.status.success(), "{}", text(&pref.stderr));
-    let created = mabo(&["create", "feature", "--purpose", "sep", "--json"]);
+    let created = rabi(&["create", "feature", "--purpose", "sep", "--json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -5074,7 +5074,7 @@ fn separate_git_dir_writes_metadata_in_the_common_dir() {
         text(&created.stderr)
     );
     assert!(worktrees.join("feature").is_dir());
-    let store = sep.join("mabo").join("workspaces");
+    let store = sep.join("rabi").join("workspaces");
     let document: serde_json::Value =
         serde_json::from_str(&records::read_to_string(&store).expect("common store"))
             .expect("json");
@@ -5095,7 +5095,7 @@ struct SeparateCheckout {
 
 impl SeparateCheckout {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!("mabo-sep-root-{}", uuid()));
+        let root = std::env::temp_dir().join(format!("rabi-sep-root-{}", uuid()));
         let home = root.join("home");
         let checkout = root.join("deep").join("checkout");
         let git_dir = root.join("var").join("sep.git");
@@ -5141,10 +5141,10 @@ impl SeparateCheckout {
         );
     }
 
-    fn mabo(&self, cwd: &Path, args: &[&str]) -> std::process::Output {
-        self.command(env!("CARGO_BIN_EXE_mabo"), args, cwd)
+    fn rabi(&self, cwd: &Path, args: &[&str]) -> std::process::Output {
+        self.command(env!("CARGO_BIN_EXE_rabi"), args, cwd)
             .output()
-            .expect("mabo")
+            .expect("rabi")
     }
 
     fn command(&self, program: &str, args: &[&str], cwd: &Path) -> Command {
@@ -5158,8 +5158,8 @@ impl SeparateCheckout {
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_DATA_HOME", self.root.join("xdg"))
             .env_remove("GHQ_ROOT")
-            .env_remove("MABO_OUTPUT")
-            .env_remove("MABO_NO_INPUT")
+            .env_remove("RABI_OUTPUT")
+            .env_remove("RABI_NO_INPUT")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
             .env_remove("GIT_CONFIG_COUNT")
@@ -5167,9 +5167,9 @@ impl SeparateCheckout {
         if std::path::Path::new(program)
             .file_name()
             .and_then(|name| name.to_str())
-            == Some("mabo")
+            == Some("rabi")
         {
-            command.env("MABO_TRUST_ALL", "1");
+            command.env("RABI_TRUST_ALL", "1");
         }
         if program.ends_with("git") && args.first() == Some(&"init") {
             let template = self.root.join("git-template");
@@ -5189,7 +5189,7 @@ impl Drop for SeparateCheckout {
 #[test]
 fn separate_git_dir_delete_current_removes_the_linked_worktree() {
     let repo = SeparateCheckout::new();
-    let created = repo.mabo(&repo.checkout, &["create", "linked"]);
+    let created = repo.rabi(&repo.checkout, &["create", "linked"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -5203,11 +5203,11 @@ fn separate_git_dir_delete_current_removes_the_linked_worktree() {
     );
     assert!(!repo
         .git_dir
-        .join("mabo")
+        .join("rabi")
         .join("workspaces")
         .join("linked")
         .exists());
-    let deleted = repo.mabo(&linked, &["remove", "."]);
+    let deleted = repo.rabi(&linked, &["remove", "."]);
     let stdout = text(&deleted.stdout);
     let stderr = text(&deleted.stderr);
     assert!(
@@ -5251,12 +5251,12 @@ fn separate_git_dir_delete_current_removes_the_linked_worktree() {
 #[test]
 fn separate_git_dir_relative_worktrees_directory_joins_the_main_checkout() {
     let repo = SeparateCheckout::new();
-    let pref = repo.mabo(
+    let pref = repo.rabi(
         &repo.checkout,
         &["config", "set", "workspace-root", "../wt"],
     );
     assert!(pref.status.success(), "{}", text(&pref.stderr));
-    let first = repo.mabo(&repo.checkout, &["create", "r1"]);
+    let first = repo.rabi(&repo.checkout, &["create", "r1"]);
     assert!(
         first.status.success(),
         "{}\n{}",
@@ -5268,7 +5268,7 @@ fn separate_git_dir_relative_worktrees_directory_joins_the_main_checkout() {
         first_path.is_dir(),
         "from the main checkout, ../wt is deep/wt"
     );
-    let second = repo.mabo(&first_path, &["create", "r2"]);
+    let second = repo.rabi(&first_path, &["create", "r2"]);
     let stdout = text(&second.stdout);
     let stderr = text(&second.stderr);
     assert!(second.status.success(), "{stdout}\n{stderr}");
@@ -5296,7 +5296,7 @@ fn separate_git_dir_relative_worktrees_directory_joins_the_main_checkout() {
 
 #[test]
 fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() {
-    let root = std::env::temp_dir().join(format!("mabo-sub-root-{}", uuid()));
+    let root = std::env::temp_dir().join(format!("rabi-sub-root-{}", uuid()));
     let home = root.join("home");
     let remote = root.join("remote");
     let superproject = root.join("super");
@@ -5358,8 +5358,8 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
         String::from_utf8_lossy(&added.stderr)
     );
     git(&superproject, &["commit", "-m", "add submodule"]);
-    let mabo = |cwd: &Path, args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_mabo"))
+    let rabi = |cwd: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_rabi"))
             .args(args)
             .current_dir(cwd)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -5367,12 +5367,12 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
-            .env_remove("MABO_OUTPUT")
-            .env_remove("MABO_NO_INPUT")
+            .env_remove("RABI_OUTPUT")
+            .env_remove("RABI_NO_INPUT")
             .output()
-            .expect("mabo")
+            .expect("rabi")
     };
-    let created = mabo(&checkout, &["create", "linked"]);
+    let created = rabi(&checkout, &["create", "linked"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -5384,7 +5384,7 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
         .join(".git/modules/sub/custom/workspaces/linked")
         .exists());
     assert!(linked.is_dir());
-    let deleted = mabo(&linked, &["remove", "."]);
+    let deleted = rabi(&linked, &["remove", "."]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -5393,13 +5393,13 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
     );
     assert!(!linked.exists());
     assert!(checkout.join(".git").is_file(), "submodule checkout stays");
-    let pref = mabo(&checkout, &["config", "set", "workspace-root", "../wt"]);
+    let pref = rabi(&checkout, &["config", "set", "workspace-root", "../wt"]);
     assert!(pref.status.success(), "{}", text(&pref.stderr));
-    let first = mabo(&checkout, &["create", "r1"]);
+    let first = rabi(&checkout, &["create", "r1"]);
     assert!(first.status.success(), "{}", text(&first.stderr));
     let first_path = superproject.join("wt").join("r1");
     assert!(first_path.is_dir());
-    let second = mabo(&first_path, &["create", "r2"]);
+    let second = rabi(&first_path, &["create", "r2"]);
     assert!(
         second.status.success(),
         "{}\n{}",
@@ -5413,7 +5413,7 @@ fn submodule_delete_current_and_relative_directory_use_the_submodule_checkout() 
 
 #[test]
 fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
-    let root = std::env::temp_dir().join(format!("mabo-ambiguous-{}", uuid()));
+    let root = std::env::temp_dir().join(format!("rabi-ambiguous-{}", uuid()));
     let home = root.join("home");
     let real = root.join("zz-real");
     let copy = root.join("aa-copy");
@@ -5469,8 +5469,8 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
             linked.to_str().expect("linked"),
         ],
     );
-    let mabo = |cwd: &Path, args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_mabo"))
+    let rabi = |cwd: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_rabi"))
             .args(args)
             .current_dir(cwd)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -5478,14 +5478,14 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
-            .env_remove("MABO_OUTPUT")
-            .env_remove("MABO_NO_INPUT")
+            .env_remove("RABI_OUTPUT")
+            .env_remove("RABI_NO_INPUT")
             .output()
-            .expect("mabo")
+            .expect("rabi")
     };
 
     for checkout in [&copy, &real] {
-        let here = mabo(checkout, &["list", "--json"]);
+        let here = rabi(checkout, &["list", "--json"]);
         assert!(
             here.status.success(),
             "running inside {} should use that checkout\n{}\n{}",
@@ -5500,7 +5500,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
             main["path"]
         );
         assert_eq!(main["kind"], "primary");
-        let ran = mabo(checkout, &["exec", "main", "--", "pwd"]);
+        let ran = rabi(checkout, &["exec", "main", "--", "pwd"]);
         assert!(ran.status.success(), "{}", text(&ran.stderr));
         assert!(
             paths_match(text(&ran.stdout).trim(), checkout),
@@ -5509,7 +5509,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
         );
     }
 
-    let listed = mabo(&linked, &["list"]);
+    let listed = rabi(&linked, &["list"]);
     assert_eq!(
         listed.status.code(),
         Some(1),
@@ -5524,7 +5524,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
     assert!(!stderr.to_ascii_lowercase().contains("fatal:"), "{stderr}");
     assert!(text(&listed.stdout).is_empty(), "{}", text(&listed.stdout));
 
-    let json_error = mabo(&linked, &["list", "--json"]);
+    let json_error = rabi(&linked, &["list", "--json"]);
     assert_eq!(json_error.status.code(), Some(1));
     assert!(
         text(&json_error.stderr).is_empty(),
@@ -5548,7 +5548,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
         &real,
         &["config", "core.worktree", real.to_str().expect("real")],
     );
-    let resolved = mabo(&linked, &["list", "--json"]);
+    let resolved = rabi(&linked, &["list", "--json"]);
     assert!(
         resolved.status.success(),
         "{}\n{}",
@@ -5562,7 +5562,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
         main["path"]
     );
     assert_eq!(main["kind"], "primary");
-    let ran = mabo(&linked, &["exec", "main", "--", "pwd"]);
+    let ran = rabi(&linked, &["exec", "main", "--", "pwd"]);
     assert!(
         ran.status.success(),
         "{}\n{}",
@@ -5579,7 +5579,7 @@ fn ambiguous_gitfiles_fail_until_core_worktree_is_set() {
 
 #[test]
 fn missing_separate_checkout_names_the_git_dir() {
-    let root = std::env::temp_dir().join(format!("mabo-missing-checkout-{}", uuid()));
+    let root = std::env::temp_dir().join(format!("rabi-missing-checkout-{}", uuid()));
     let home = root.join("home");
     let checkout = root.join("deep").join("checkout");
     let git_dir = root.join("var").join("sep.git");
@@ -5607,7 +5607,7 @@ fn missing_separate_checkout_names_the_git_dir() {
         String::from_utf8_lossy(&init.stderr)
     );
     fs::remove_dir_all(&checkout).expect("remove checkout");
-    let listed = Command::new(env!("CARGO_BIN_EXE_mabo"))
+    let listed = Command::new(env!("CARGO_BIN_EXE_rabi"))
         .args(["list", "--json"])
         .current_dir(&git_dir)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -5615,10 +5615,10 @@ fn missing_separate_checkout_names_the_git_dir() {
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_DATA_HOME", root.join("xdg"))
-        .env_remove("MABO_OUTPUT")
-        .env_remove("MABO_NO_INPUT")
+        .env_remove("RABI_OUTPUT")
+        .env_remove("RABI_NO_INPUT")
         .output()
-        .expect("mabo");
+        .expect("rabi");
     assert_eq!(
         listed.status.code(),
         Some(1),
@@ -5645,12 +5645,12 @@ fn missing_separate_checkout_names_the_git_dir() {
 
 #[test]
 fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
-    let root = std::env::temp_dir().join(format!("mabo-far-checkout-{}", uuid()));
+    let root = std::env::temp_dir().join(format!("rabi-far-checkout-{}", uuid()));
     let home = root.join("home");
     fs::create_dir_all(home.join(".config/git")).expect("home");
     test_git::write_config(&home);
-    let mabo = |cwd: &Path, args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_mabo"))
+    let rabi = |cwd: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_rabi"))
             .args(args)
             .current_dir(cwd)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -5658,12 +5658,12 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
-            .env_remove("MABO_OUTPUT")
-            .env_remove("MABO_NO_INPUT")
+            .env_remove("RABI_OUTPUT")
+            .env_remove("RABI_NO_INPUT")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM")
             .output()
-            .expect("mabo")
+            .expect("rabi")
     };
     let init_checkout = |checkout: &Path, git_dir: &Path| {
         fs::create_dir_all(checkout).expect("checkout");
@@ -5715,7 +5715,7 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
     }
     let wide_checkout = root.join("src").join("proj");
     init_checkout(&wide_checkout, &root.join(".gitdirs").join("proj.git"));
-    let listed = mabo(&wide_checkout, &["list", "--json"]);
+    let listed = rabi(&wide_checkout, &["list", "--json"]);
     assert!(
         listed.status.success(),
         "list from a checkout beside wide siblings\n{}\n{}",
@@ -5738,7 +5738,7 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
         .join("5")
         .join("6");
     init_checkout(&deep_checkout, &root.join("deep.git"));
-    let deep = mabo(&deep_checkout, &["list", "--json"]);
+    let deep = rabi(&deep_checkout, &["list", "--json"]);
     assert!(
         deep.status.success(),
         "list from a checkout six levels down\n{}\n{}",
@@ -5758,7 +5758,7 @@ fn separate_git_dir_outside_the_search_lists_from_the_checkout() {
 #[test]
 fn core_worktree_without_a_gitfile_names_that_path() {
     let repo = SeparateCheckout::new();
-    let created = repo.mabo(&repo.checkout, &["create", "linked"]);
+    let created = repo.rabi(&repo.checkout, &["create", "linked"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -5769,7 +5769,7 @@ fn core_worktree_without_a_gitfile_names_that_path() {
     fs::create_dir_all(&empty).expect("empty");
     repo.git(&["config", "core.worktree", empty.to_str().expect("empty")]);
     let linked = managed_directory(&repo.checkout, &repo.root.join("xdg")).join("linked");
-    let listed = repo.mabo(&linked, &["list"]);
+    let listed = repo.rabi(&linked, &["list"]);
     assert_eq!(
         listed.status.code(),
         Some(1),
@@ -5782,7 +5782,7 @@ fn core_worktree_without_a_gitfile_names_that_path() {
     assert!(stderr.contains("gitfile"), "{stderr}");
     assert!(!stderr.contains("Set the main checkout"), "{stderr}");
     assert!(!stderr.to_ascii_lowercase().contains("fatal:"), "{stderr}");
-    let json = repo.mabo(&linked, &["list", "--json"]);
+    let json = repo.rabi(&linked, &["list", "--json"]);
     assert_eq!(json.status.code(), Some(1));
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let message = json_value(&json)["error"]["message"]
@@ -5800,7 +5800,7 @@ fn core_worktree_without_a_gitfile_names_that_path() {
 #[test]
 fn separate_git_dir_lists_and_execs_the_main_checkout() {
     let repo = SeparateCheckout::new();
-    let created = repo.mabo(&repo.checkout, &["create", "linked"]);
+    let created = repo.rabi(&repo.checkout, &["create", "linked"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -5813,7 +5813,7 @@ fn separate_git_dir_lists_and_execs_the_main_checkout() {
 
 #[test]
 fn submodule_lists_and_execs_the_main_checkout() {
-    let root = std::env::temp_dir().join(format!("mabo-sub-list-{}", uuid()));
+    let root = std::env::temp_dir().join(format!("rabi-sub-list-{}", uuid()));
     let home = root.join("home");
     let remote = root.join("remote");
     let superproject = root.join("super");
@@ -5875,8 +5875,8 @@ fn submodule_lists_and_execs_the_main_checkout() {
         String::from_utf8_lossy(&added.stderr)
     );
     git(&superproject, &["commit", "-m", "add submodule"]);
-    let mabo = |cwd: &Path, args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_mabo"))
+    let rabi = |cwd: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_rabi"))
             .args(args)
             .current_dir(cwd)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -5884,12 +5884,12 @@ fn submodule_lists_and_execs_the_main_checkout() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("XDG_DATA_HOME", root.join("xdg"))
-            .env_remove("MABO_OUTPUT")
-            .env_remove("MABO_NO_INPUT")
+            .env_remove("RABI_OUTPUT")
+            .env_remove("RABI_NO_INPUT")
             .output()
-            .expect("mabo")
+            .expect("rabi")
     };
-    let created = mabo(&checkout, &["create", "linked"]);
+    let created = rabi(&checkout, &["create", "linked"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -5898,13 +5898,13 @@ fn submodule_lists_and_execs_the_main_checkout() {
     );
     let git_dir = superproject.join(".git").join("modules").join("sub");
     let linked = managed_directory(&checkout, &root.join("xdg")).join("linked");
-    assert!(git_dir.join("mabo").join("workspaces").is_dir());
+    assert!(git_dir.join("rabi").join("workspaces").is_dir());
     assert!(!git_dir
-        .join("mabo")
+        .join("rabi")
         .join("workspaces")
         .join("linked")
         .exists());
-    let listed = mabo(&linked, &["list"]);
+    let listed = rabi(&linked, &["list"]);
     assert!(
         listed.status.success(),
         "{}\n{}",
@@ -5918,7 +5918,7 @@ fn submodule_lists_and_execs_the_main_checkout() {
             .any(|line| line.trim_start().starts_with("main  main")),
         "main entry should be the submodule checkout\n{stdout}"
     );
-    let json = mabo(&linked, &["list", "--json"]);
+    let json = rabi(&linked, &["list", "--json"]);
     assert!(json.status.success(), "{}", text(&json.stderr));
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let main = default_worktree(&json_value(&json));
@@ -5928,7 +5928,7 @@ fn submodule_lists_and_execs_the_main_checkout() {
         main["path"]
     );
     assert_eq!(main["kind"], "primary");
-    let hidden = mabo(&linked, &["list", "--kind", "workspace", "--json"]);
+    let hidden = rabi(&linked, &["list", "--kind", "workspace", "--json"]);
     assert!(hidden.status.success(), "{}", text(&hidden.stderr));
     let hidden_rows = json_value(&hidden)["data"]["workspaces"]
         .as_array()
@@ -5943,7 +5943,7 @@ fn submodule_lists_and_execs_the_main_checkout() {
         hidden_rows.iter().any(|row| row["name"] == "linked"),
         "{hidden_rows:?}"
     );
-    let ran = mabo(&linked, &["exec", "main", "--", "pwd"]);
+    let ran = rabi(&linked, &["exec", "main", "--", "pwd"]);
     assert!(
         ran.status.success(),
         "{}\n{}",
@@ -5959,14 +5959,14 @@ fn submodule_lists_and_execs_the_main_checkout() {
 }
 
 #[test]
-fn running_inside_dot_git_returns_a_mabo_error() {
+fn running_inside_dot_git_returns_a_rabi_error() {
     let repo = Repo::new();
     for cwd in [repo.repo.join(".git"), repo.repo.join(".git").join("refs")] {
         let listed = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &["list"])
+            .command(env!("CARGO_BIN_EXE_rabi"), &["list"])
             .current_dir(&cwd)
             .output()
-            .expect("mabo");
+            .expect("rabi");
         assert_eq!(
             listed.status.code(),
             Some(1),
@@ -5981,10 +5981,10 @@ fn running_inside_dot_git_returns_a_mabo_error() {
         assert!(text(&listed.stdout).is_empty(), "{}", text(&listed.stdout));
 
         let json = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &["list", "--json"])
+            .command(env!("CARGO_BIN_EXE_rabi"), &["list", "--json"])
             .current_dir(&cwd)
             .output()
-            .expect("mabo");
+            .expect("rabi");
         assert_eq!(json.status.code(), Some(1), "{}", cwd.display());
         assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
         let error = json_value(&json);
@@ -6002,7 +6002,7 @@ fn running_inside_dot_git_returns_a_mabo_error() {
 }
 
 fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path, git_dir: &Path) {
-    let listed = repo.mabo(linked, &["list"]);
+    let listed = repo.rabi(linked, &["list"]);
     assert!(
         listed.status.success(),
         "{}\n{}",
@@ -6018,7 +6018,7 @@ fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path,
         !stdout.contains("sep.git"),
         "human list should not show the git dir\n{stdout}"
     );
-    let json = repo.mabo(linked, &["list", "--json"]);
+    let json = repo.rabi(linked, &["list", "--json"]);
     assert!(json.status.success(), "{}", text(&json.stderr));
     assert!(text(&json.stderr).is_empty(), "{}", text(&json.stderr));
     let document = json_value(&json);
@@ -6038,7 +6038,7 @@ fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path,
         main["path"]
     );
     assert_eq!(main["kind"], "primary");
-    let hidden = repo.mabo(linked, &["list", "--kind", "workspace"]);
+    let hidden = repo.rabi(linked, &["list", "--kind", "workspace"]);
     assert!(hidden.status.success(), "{}", text(&hidden.stderr));
     let hidden_text = text(&hidden.stdout);
     assert!(
@@ -6046,7 +6046,7 @@ fn assert_main_checkout(repo: &SeparateCheckout, linked: &Path, checkout: &Path,
         "workspace-only list still shows main\n{hidden_text}"
     );
     assert!(hidden_text.contains("linked"), "{hidden_text}");
-    let ran = repo.mabo(linked, &["exec", "main", "--", "pwd"]);
+    let ran = repo.rabi(linked, &["exec", "main", "--", "pwd"]);
     assert!(
         ran.status.success(),
         "{}\n{}",
@@ -6098,9 +6098,9 @@ fn worktree_registered(repo: &Repo, name: &str) -> bool {
 }
 
 fn reserve_project_dir(git_root: &Path, xdg: &Path) {
-    let common = mabo::git::canonical_common_dir(git_root).expect("common dir");
-    let directory = mabo::paths::default_worktrees_directory(git_root, &common, xdg).path;
-    mabo::paths::ensure_worktrees_directory(&directory, Some(&common)).expect("project dir");
+    let common = rabi::git::canonical_common_dir(git_root).expect("common dir");
+    let directory = rabi::paths::default_worktrees_directory(git_root, &common, xdg).path;
+    rabi::paths::ensure_worktrees_directory(&directory, Some(&common)).expect("project dir");
 }
 
 fn land_branch(repo: &Repo, name: &str) {
@@ -6153,7 +6153,7 @@ fn squash_onto_main(repo: &Repo, name: &str) {
 }
 
 fn clear_created_from(repo: &Repo, name: &str) {
-    let file = repo.repo.join(".git/mabo/workspaces");
+    let file = repo.repo.join(".git/rabi/workspaces");
     let mut document: serde_json::Value =
         serde_json::from_str(&records::read_to_string(&file).expect("store")).expect("json");
     let records = document["worktrees"].as_array_mut().expect("records");
@@ -6180,7 +6180,7 @@ fn clear_created_from(repo: &Repo, name: &str) {
 }
 
 fn age_metadata(repo: &Repo, name: &str) {
-    let file = repo.repo.join(".git/mabo/workspaces");
+    let file = repo.repo.join(".git/rabi/workspaces");
     let mut document: serde_json::Value =
         serde_json::from_str(&records::read_to_string(&file).expect("store")).expect("json");
     let records = document["worktrees"].as_array_mut().expect("records");
@@ -6203,9 +6203,9 @@ fn age_metadata(repo: &Repo, name: &str) {
 #[test]
 fn gc_dry_run_keeps_a_merged_worktree_until_apply() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "feature"]).status.success());
+    assert!(repo.rabi(&["create", "feature"]).status.success());
     land_branch(&repo, "feature");
-    let plan = repo.mabo(&["gc"]);
+    let plan = repo.rabi(&["gc"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let planned = text(&plan.stdout);
     assert!(
@@ -6216,7 +6216,7 @@ fn gc_dry_run_keeps_a_merged_worktree_until_apply() {
     assert!(worktree_dir(&repo, "feature").is_dir());
     assert!(branch_listed(&repo, "feature"));
 
-    let applied = repo.mabo(&["gc", "--apply"]);
+    let applied = repo.rabi(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let removed = text(&applied.stdout);
     assert!(removed.contains("removed feature [merged]"), "{removed}");
@@ -6224,7 +6224,7 @@ fn gc_dry_run_keeps_a_merged_worktree_until_apply() {
     assert!(!branch_listed(&repo, "feature"));
     assert!(!worktree_registered(&repo, "feature"));
 
-    let again = repo.mabo(&["gc", "--apply"]);
+    let again = repo.rabi(&["gc", "--apply"]);
     assert!(again.status.success(), "{}", text(&again.stderr));
     assert!(text(&again.stdout).contains("Nothing to clean up."));
 }
@@ -6233,11 +6233,11 @@ fn gc_dry_run_keeps_a_merged_worktree_until_apply() {
 fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "feature", "--purpose", "grok"])
+        .rabi(&["create", "feature", "--purpose", "grok"])
         .status
         .success());
     land_branch(&repo, "feature");
-    let plan = repo.mabo(&["gc", "--json"]);
+    let plan = repo.rabi(&["gc", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     assert!(text(&plan.stderr).is_empty(), "{}", text(&plan.stderr));
     let document = json_value(&plan);
@@ -6258,7 +6258,7 @@ fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
         .unwrap()
         .ends_with("/feature"));
 
-    let bad = repo.mabo(&["gc", "--older-than", "14", "--json"]);
+    let bad = repo.rabi(&["gc", "--older-than", "14", "--json"]);
     assert_eq!(bad.status.code(), Some(2));
     assert!(text(&bad.stderr).is_empty(), "{}", text(&bad.stderr));
     let error = json_value(&bad);
@@ -6270,21 +6270,21 @@ fn gc_json_reports_the_plan_and_rejects_a_bad_duration() {
 #[test]
 fn gc_skips_dirty_unpushed_and_current_workspaces() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "dirty"]).status.success());
+    assert!(repo.rabi(&["create", "dirty"]).status.success());
     land_branch(&repo, "dirty");
     fs::write(worktree_dir(&repo, "dirty").join("local.txt"), "x\n").expect("dirty");
-    assert!(repo.mabo(&["create", "wip"]).status.success());
+    assert!(repo.rabi(&["create", "wip"]).status.success());
     commit_in_worktree(&repo, "wip");
-    assert!(repo.mabo(&["create", "here"]).status.success());
+    assert!(repo.rabi(&["create", "here"]).status.success());
     land_branch(&repo, "here");
     assert!(repo
-        .mabo(&["create", "bob", "--purpose", "bob"])
+        .rabi(&["create", "bob", "--purpose", "bob"])
         .status
         .success());
     commit_in_worktree(&repo, "bob");
     age_metadata(&repo, "bob");
 
-    let plan = repo.mabo(&["gc"]);
+    let plan = repo.rabi(&["gc"]);
     assert!(
         plan.status.success(),
         "{}\n{}",
@@ -6298,14 +6298,14 @@ fn gc_skips_dirty_unpushed_and_current_workspaces() {
     assert!(!planned.contains("bob"), "{planned}");
     assert!(worktree_dir(&repo, "dirty").is_dir());
 
-    let aged = repo.mabo(&["gc", "--older-than", "14d"]);
+    let aged = repo.rabi(&["gc", "--older-than", "14d"]);
     assert!(aged.status.success(), "{}", text(&aged.stderr));
     let aged_text = text(&aged.stdout);
     assert!(aged_text.contains("Nothing to clean up."), "{aged_text}");
     assert!(!aged_text.contains("would remove dirty"), "{aged_text}");
 
     let current = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["gc", "--apply"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["gc", "--apply"])
         .current_dir(worktree_dir(&repo, "here"))
         .output()
         .expect("gc");
@@ -6322,7 +6322,7 @@ fn gc_skips_dirty_unpushed_and_current_workspaces() {
     assert!(worktree_dir(&repo, "here").is_dir());
     assert!(worktree_dir(&repo, "dirty").is_dir());
 
-    let forced = repo.mabo(&["gc", "--apply"]);
+    let forced = repo.rabi(&["gc", "--apply"]);
     assert!(forced.status.success(), "{}", text(&forced.stderr));
     let forced_text = text(&forced.stdout);
     assert!(
@@ -6342,14 +6342,14 @@ fn gc_skips_dirty_unpushed_and_current_workspaces() {
 #[test]
 fn gc_drops_a_missing_directory_and_keeps_an_unpushed_branch() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "gone"]).status.success());
+    assert!(repo.rabi(&["create", "gone"]).status.success());
     land_branch(&repo, "gone");
-    assert!(repo.mabo(&["create", "local"]).status.success());
+    assert!(repo.rabi(&["create", "local"]).status.success());
     commit_in_worktree(&repo, "local");
     fs::remove_dir_all(worktree_dir(&repo, "gone")).expect("rm gone");
     fs::remove_dir_all(worktree_dir(&repo, "local")).expect("rm local");
 
-    let applied = repo.mabo(&["gc", "--apply"]);
+    let applied = repo.rabi(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let text = text(&applied.stdout);
     assert!(text.contains("removed gone [merged, orphaned]"), "{text}");
@@ -6364,9 +6364,9 @@ fn gc_drops_a_missing_directory_and_keeps_an_unpushed_branch() {
 fn gc_skips_missing_registration_with_changed_branch_or_head() {
     for change in ["branch", "head"] {
         let repo = Repo::new();
-        assert!(repo.mabo(&["create", "a-trigger"]).status.success());
+        assert!(repo.rabi(&["create", "a-trigger"]).status.success());
         land_branch(&repo, "a-trigger");
-        assert!(repo.mabo(&["create", "z-local"]).status.success());
+        assert!(repo.rabi(&["create", "z-local"]).status.success());
         commit_in_worktree(&repo, "z-local");
         repo.git(&["branch", "replacement", "main"]);
         let original = text(
@@ -6386,11 +6386,11 @@ fn gc_skips_missing_registration_with_changed_branch_or_head() {
             "git update-ref refs/heads/z-local main".to_string()
         };
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             format!("[hooks]\npre-remove = [\"{command}\"]\n"),
         )
         .unwrap();
-        let out = repo.mabo(&["gc", "--apply", "--json"]);
+        let out = repo.rabi(&["gc", "--apply", "--json"]);
         let doc = json_value(&out);
         assert!(branch_listed(&repo, "z-local"), "{change}: {doc}");
         assert!(worktree_registered(&repo, "z-local"), "{change}: {doc}");
@@ -6459,7 +6459,7 @@ printf '%s\n' '{{"state":"MERGED"}}'
         );
         let out = repo
             .command(
-                env!("CARGO_BIN_EXE_mabo"),
+                env!("CARGO_BIN_EXE_rabi"),
                 &["gc", "--closed-pr", "--apply", "--apply", "--json"],
             )
             .env("PATH", path)
@@ -6508,10 +6508,10 @@ fn gc_rechecks_pull_request_link_after_pre_remove_hooks() {
     // still rechecked after hooks, so removing the PR link revokes eligibility.
     let hook = format!(
         "'{}' set topic --unset pr",
-        env!("CARGO_BIN_EXE_mabo").replace('\'', "'\"'\"'")
+        env!("CARGO_BIN_EXE_rabi").replace('\'', "'\"'\"'")
     );
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         format!(
             "[hooks]\npre-remove = [{}]\n",
             serde_json::to_string(&hook).unwrap()
@@ -6525,7 +6525,7 @@ fn gc_rechecks_pull_request_link_after_pre_remove_hooks() {
     );
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["gc", "--closed-pr", "--apply", "--json"],
         )
         .env("PATH", path)
@@ -6576,7 +6576,7 @@ fn gc_closed_pull_request_with_unpreserved_history_is_skipped() {
     );
 
     let plan = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["gc", "--closed-pr", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["gc", "--closed-pr", "--json"])
         .env("PATH", &path)
         .output()
         .expect("gc");
@@ -6595,7 +6595,7 @@ fn gc_closed_pull_request_with_unpreserved_history_is_skipped() {
 
     let forced = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["gc", "--closed-pr", "--apply", "--json"],
         )
         .env("PATH", &path)
@@ -6620,7 +6620,7 @@ fn gc_metadata_io_failure_after_removal_exits_partial_for_a_single_candidate() {
     for missing in [false, true] {
         for json in [false, true] {
             let repo = Repo::new();
-            assert!(repo.mabo(&["create", "feature"]).status.success());
+            assert!(repo.rabi(&["create", "feature"]).status.success());
             land_branch(&repo, "feature");
             if missing {
                 fs::remove_dir_all(worktree_dir(&repo, "feature")).expect("missing checkout");
@@ -6658,10 +6658,10 @@ esac
                 args.push("--json");
             }
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
                 .env("PATH", std::env::join_paths(paths).expect("paths"))
                 .env("REAL_GIT", &real_git)
-                .env("METADATA_DIR", repo.repo.join(".git/mabo/workspaces"))
+                .env("METADATA_DIR", repo.repo.join(".git/rabi/workspaces"))
                 .output()
                 .expect("gc");
             assert_eq!(
@@ -6694,14 +6694,14 @@ esac
 #[test]
 fn gc_failure_before_removal_exits_failure() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "feature"]).status.success());
+    assert!(repo.rabi(&["create", "feature"]).status.success());
     land_branch(&repo, "feature");
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\npre-remove = [\"exit 42\"]\n",
     )
     .expect("hook");
-    let out = repo.mabo(&["gc", "--merged", "--apply", "--json"]);
+    let out = repo.rabi(&["gc", "--merged", "--apply", "--json"]);
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(assert_envelope(&out, "gc")["error"]["code"], "failed");
     assert!(worktree_dir(&repo, "feature").is_dir());
@@ -6711,22 +6711,22 @@ fn gc_failure_before_removal_exits_failure() {
 #[test]
 fn gc_runs_pre_delete_hooks_only_when_applying() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "feature"]).status.success());
+    assert!(repo.rabi(&["create", "feature"]).status.success());
     land_branch(&repo, "feature");
-    assert!(repo.mabo(&["create", "other"]).status.success());
+    assert!(repo.rabi(&["create", "other"]).status.success());
     land_branch(&repo, "other");
     fs::write(
-        repo.repo.join(".mabo.toml"),
-        "[hooks]\npre-remove = [\"test \\\"$MABO_WORKSPACE\\\" != feature && touch \\\"$MABO_REPO_PATH/hooked\\\"\"]\n",
+        repo.repo.join(".rabi.toml"),
+        "[hooks]\npre-remove = [\"test \\\"$RABI_WORKSPACE\\\" != feature && touch \\\"$RABI_REPO_PATH/hooked\\\"\"]\n",
     )
     .expect("hooks");
 
-    let plan = repo.mabo(&["gc"]);
+    let plan = repo.rabi(&["gc"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     assert!(!repo.repo.join("hooked").exists());
     assert!(worktree_dir(&repo, "feature").is_dir());
 
-    let applied = repo.mabo(&["gc", "--apply", "--json"]);
+    let applied = repo.rabi(&["gc", "--apply", "--json"]);
     assert_eq!(applied.status.code(), Some(6), "{}", text(&applied.stdout));
     assert!(
         text(&applied.stderr).is_empty()
@@ -6774,7 +6774,7 @@ fn gh_path(repo: &Repo, body: &str) -> String {
 #[test]
 fn gc_apply_removes_a_merged_worktree_when_another_remote_branch_is_ahead() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "feature"]).status.success());
+    assert!(repo.rabi(&["create", "feature"]).status.success());
     land_branch(&repo, "feature");
     let bare = repo.root.join("origin.git");
     repo.git(&["init", "--bare", bare.to_str().expect("bare")]);
@@ -6787,7 +6787,7 @@ fn gc_apply_removes_a_merged_worktree_when_another_remote_branch_is_ahead() {
     repo.git(&["push", "origin", "ahead"]);
     repo.git(&["checkout", "main"]);
 
-    let applied = repo.mabo(&["gc", "--apply"]);
+    let applied = repo.rabi(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("removed feature [merged]"), "{output}");
@@ -6810,7 +6810,7 @@ fn gc_does_not_remove_a_worktree_checked_out_on_the_default_branch() {
     repo.git(&["push", "origin", "main"]);
     repo.git(&["remote", "set-head", "origin", "main"]);
     repo.git(&["checkout", "-b", "dev"]);
-    let attached = repo.mabo(&["create", "--branch", "main"]);
+    let attached = repo.rabi(&["create", "--branch", "main"]);
     assert!(
         attached.status.success(),
         "{}\n{}",
@@ -6818,7 +6818,7 @@ fn gc_does_not_remove_a_worktree_checked_out_on_the_default_branch() {
         text(&attached.stderr)
     );
 
-    let applied = repo.mabo(&["gc", "--apply"]);
+    let applied = repo.rabi(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(
@@ -6834,7 +6834,7 @@ fn gc_does_not_remove_a_worktree_checked_out_on_the_default_branch() {
 fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
     let repo = Repo::new();
     repo.git(&["config", "core.logAllRefUpdates", "false"]);
-    let created = repo.mabo(&["create", "fresh", "--json"]);
+    let created = repo.rabi(&["create", "fresh", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let head = json_value(&created)["data"]["workspace"]["head"]
         .as_str()
@@ -6846,7 +6846,7 @@ fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
     );
     repo.git(&["commit", "--allow-empty", "-m", "advance"]);
 
-    let applied = repo.mabo(&["gc", "--apply"]);
+    let applied = repo.rabi(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("Nothing to clean up."), "{output}");
@@ -6859,7 +6859,7 @@ fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
     );
 
     age_metadata(&repo, "fresh");
-    let aged = repo.mabo(&["gc", "--older-than", "14d", "--apply"]);
+    let aged = repo.rabi(&["gc", "--older-than", "14d", "--apply"]);
     assert!(aged.status.success(), "{}", text(&aged.stderr));
     let aged_text = text(&aged.stdout);
     assert!(aged_text.contains("Nothing to clean up."), "{aged_text}");
@@ -6870,13 +6870,13 @@ fn gc_keeps_a_fresh_worktree_when_the_branch_reflog_is_missing() {
 #[test]
 fn gc_removes_a_merged_worktree_when_the_branch_reflog_is_missing() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "feature"]).status.success());
+    assert!(repo.rabi(&["create", "feature"]).status.success());
     land_branch(&repo, "feature");
     let reflog = repo.repo.join(".git/logs/refs/heads/feature");
     assert!(reflog.is_file(), "feature reflog");
     fs::remove_file(&reflog).expect("remove reflog");
 
-    let applied = repo.mabo(&["gc", "--apply"]);
+    let applied = repo.rabi(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("removed feature [merged]"), "{output}");
@@ -6893,10 +6893,10 @@ fn gc_removes_an_attached_branch_that_already_moved_past_its_creation_commit() {
     repo.git(&["commit", "-m", "landed"]);
     repo.git(&["checkout", "main"]);
     repo.git(&["merge", "--ff-only", "landed"]);
-    let attached = repo.mabo(&["create", "--branch", "landed"]);
+    let attached = repo.rabi(&["create", "--branch", "landed"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
 
-    let applied = repo.mabo(&["gc", "--apply"]);
+    let applied = repo.rabi(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("removed landed [merged]"), "{output}");
@@ -6916,10 +6916,10 @@ fn gc_removes_an_attached_merged_branch_when_its_reflog_is_missing() {
     let reflog = repo.repo.join(".git/logs/refs/heads/landed");
     assert!(reflog.is_file(), "landed reflog");
     fs::remove_file(&reflog).expect("remove reflog");
-    let attached = repo.mabo(&["create", "--branch", "landed"]);
+    let attached = repo.rabi(&["create", "--branch", "landed"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
 
-    let applied = repo.mabo(&["gc", "--apply"]);
+    let applied = repo.rabi(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("removed landed [merged]"), "{output}");
@@ -6930,10 +6930,10 @@ fn gc_removes_an_attached_merged_branch_when_its_reflog_is_missing() {
 #[test]
 fn gc_keeps_an_older_record_by_its_reflog_when_created_from_is_absent() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "fresh"]).status.success());
+    assert!(repo.rabi(&["create", "fresh"]).status.success());
     clear_created_from(&repo, "fresh");
 
-    let applied = repo.mabo(&["gc", "--apply"]);
+    let applied = repo.rabi(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("Nothing to clean up."), "{output}");
@@ -6944,13 +6944,13 @@ fn gc_keeps_an_older_record_by_its_reflog_when_created_from_is_absent() {
 #[test]
 fn gc_keeps_a_worktree_still_at_its_creation_point() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "fresh"]).status.success());
+    assert!(repo.rabi(&["create", "fresh"]).status.success());
     assert!(repo
-        .mabo(&["create", "theirs", "--purpose", "other"])
+        .rabi(&["create", "theirs", "--purpose", "other"])
         .status
         .success());
 
-    let applied = repo.mabo(&["gc", "--apply"]);
+    let applied = repo.rabi(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let output = text(&applied.stdout);
     assert!(output.contains("Nothing to clean up."), "{output}");
@@ -6960,7 +6960,7 @@ fn gc_keeps_a_worktree_still_at_its_creation_point() {
     assert!(branch_listed(&repo, "theirs"));
 
     age_metadata(&repo, "fresh");
-    let aged = repo.mabo(&["gc", "--older-than", "14d", "--apply"]);
+    let aged = repo.rabi(&["gc", "--older-than", "14d", "--apply"]);
     assert!(aged.status.success(), "{}", text(&aged.stderr));
     let aged_text = text(&aged.stdout);
     assert!(aged_text.contains("Nothing to clean up."), "{aged_text}");
@@ -7005,7 +7005,7 @@ fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
 
     let applied = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["gc", "--closed-pr", "--apply", "--json"],
         )
         .env("PATH", &path)
@@ -7050,16 +7050,16 @@ fn gc_views_pull_requests_by_url_and_reports_an_unconfirmed_number() {
 fn removing_the_last_worktree_keeps_the_project_marker_for_the_next_create() {
     for gc in [false, true] {
         let repo = Repo::new();
-        assert!(repo.mabo(&["create", "feature/last"]).status.success());
+        assert!(repo.rabi(&["create", "feature/last"]).status.success());
         let project = managed_root(&repo);
-        let marker_path = project.join(mabo::paths::PROJECT_MARKER);
+        let marker_path = project.join(rabi::paths::PROJECT_MARKER);
         let marker = fs::read(&marker_path).expect("marker");
         let removed = if gc {
             commit_file(&repo, "feature/last", "landed.txt", "landed\n");
             repo.git(&["merge", "--ff-only", "feature/last"]);
-            repo.mabo(&["gc", "--apply", "--merged", "--json"])
+            repo.rabi(&["gc", "--apply", "--merged", "--json"])
         } else {
-            repo.mabo(&["remove", "feature/last", "--json"])
+            repo.rabi(&["remove", "feature/last", "--json"])
         };
         assert!(
             removed.status.success(),
@@ -7075,7 +7075,7 @@ fn removing_the_last_worktree_keeps_the_project_marker_for_the_next_create() {
         assert!(project.is_dir());
         assert_eq!(fs::read(&marker_path).expect("retained marker"), marker);
         assert_eq!(fs::read_dir(&project).expect("project dir").count(), 1);
-        let created = repo.mabo(&["create", "next", "--json"]);
+        let created = repo.rabi(&["create", "next", "--json"]);
         assert!(
             created.status.success(),
             "{} {}",
@@ -7091,8 +7091,8 @@ fn removing_the_last_worktree_keeps_the_project_marker_for_the_next_create() {
 fn deleting_the_last_worktree_between_directory_claim_and_git_add_keeps_the_marker() {
     use std::os::unix::fs::PermissionsExt;
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "last"]).status.success());
-    let marker_path = managed_root(&repo).join(mabo::paths::PROJECT_MARKER);
+    assert!(repo.rabi(&["create", "last"]).status.success());
+    let marker_path = managed_root(&repo).join(rabi::paths::PROJECT_MARKER);
     let marker = fs::read(&marker_path).expect("marker");
     let real_git = std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
         .map(|dir| dir.join("git"))
@@ -7108,7 +7108,7 @@ fn deleting_the_last_worktree_between_directory_claim_and_git_add_keeps_the_mark
         r#"#!/bin/sh
 case " $* " in
   *" worktree add "*)
-    "$MABO_BIN" remove last --json > "$DELETE_RESULT" || exit $?
+    "$RABI_BIN" remove last --json > "$DELETE_RESULT" || exit $?
     ;;
 esac
 exec "$REAL_GIT" "$@"
@@ -7123,12 +7123,12 @@ exec "$REAL_GIT" "$@"
     let delete_result = repo.root.join("delete.json");
     let created = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "replacement", "--json"],
         )
         .env("PATH", std::env::join_paths(paths).expect("paths"))
         .env("REAL_GIT", real_git)
-        .env("MABO_BIN", env!("CARGO_BIN_EXE_mabo"))
+        .env("RABI_BIN", env!("CARGO_BIN_EXE_rabi"))
         .env("DELETE_RESULT", &delete_result)
         .output()
         .expect("create");
@@ -7144,7 +7144,7 @@ exec "$REAL_GIT" "$@"
     assert!(!managed(&repo, "last").exists());
     assert!(managed(&repo, "replacement").join("README.md").is_file());
     assert_eq!(fs::read(&marker_path).expect("retained marker"), marker);
-    let next = repo.mabo(&["create", "next", "--json"]);
+    let next = repo.rabi(&["create", "next", "--json"]);
     assert!(
         next.status.success(),
         "{} {}",
@@ -7156,7 +7156,7 @@ exec "$REAL_GIT" "$@"
 #[test]
 fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "feature", "--json"]);
+    let created = repo.rabi(&["create", "feature", "--json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -7172,15 +7172,15 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
         &path
     ));
     assert!(!repo.repo.join("custom/workspaces/feature").exists());
-    assert!(repo.repo.join(".git/mabo/workspaces").is_dir());
-    let common = mabo::git::canonical_common_dir(&repo.repo).expect("common dir");
+    assert!(repo.repo.join(".git/rabi/workspaces").is_dir());
+    let common = rabi::git::canonical_common_dir(&repo.repo).expect("common dir");
     let marker =
-        fs::read_to_string(managed_root(&repo).join(mabo::paths::PROJECT_MARKER)).expect("marker");
+        fs::read_to_string(managed_root(&repo).join(rabi::paths::PROJECT_MARKER)).expect("marker");
     assert_eq!(marker.trim_end(), common.to_string_lossy());
 
-    let preference = repo.mabo(&["config", "set", "workspace-root", "../custom-wt"]);
+    let preference = repo.rabi(&["config", "set", "workspace-root", "../custom-wt"]);
     assert!(preference.status.success(), "{}", text(&preference.stderr));
-    let custom = repo.mabo(&["create", "custom"]);
+    let custom = repo.rabi(&["create", "custom"]);
     assert!(
         custom.status.success(),
         "{}\n{}",
@@ -7190,7 +7190,7 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
     let custom_path = repo.root.join("custom-wt").join("custom");
     assert!(custom_path.join("README.md").is_file());
     assert!(!managed(&repo, "custom").exists());
-    let removed = repo.mabo(&["remove", "custom"]);
+    let removed = repo.rabi(&["remove", "custom"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
     assert!(!custom_path.exists());
     assert!(
@@ -7207,20 +7207,20 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
         unmanaged.to_str().expect("unmanaged"),
         "HEAD",
     ]);
-    let names = repo.mabo(&["list", "--names", "--kind", "workspace"]);
+    let names = repo.rabi(&["list", "--names", "--kind", "workspace"]);
     assert!(names.status.success(), "{}", text(&names.stderr));
     let listed = text(&names.stdout);
     assert!(listed.lines().any(|line| line == "feature"), "{listed}");
     assert!(listed.lines().any(|line| line == "unmanaged"), "{listed}");
-    let found = repo.mabo(&["path", "unmanaged"]);
+    let found = repo.rabi(&["path", "unmanaged"]);
     assert!(found.status.success(), "{}", text(&found.stderr));
     assert!(paths_match(text(&found.stdout).trim(), &unmanaged));
-    let refused = repo.mabo(&["remove", "unmanaged", "--keep-branch"]);
+    let refused = repo.rabi(&["remove", "unmanaged", "--keep-branch"]);
     assert!(!refused.status.success(), "{}", text(&refused.stdout));
     assert_eq!(refused.status.code(), Some(1), "{}", text(&refused.stderr));
     let refused_text = text(&refused.stderr);
     assert!(
-        refused_text.contains("not created by mabo"),
+        refused_text.contains("not created by rabi"),
         "{refused_text}"
     );
     assert!(
@@ -7234,7 +7234,7 @@ fn new_worktrees_land_under_xdg_and_a_preference_still_wins() {
 fn relative_xdg_data_home_uses_the_home_fallback() {
     let repo = Repo::new();
     let created = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "feature"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "feature"])
         .env("XDG_DATA_HOME", "relative/data")
         .output()
         .expect("create");
@@ -7244,7 +7244,7 @@ fn relative_xdg_data_home_uses_the_home_fallback() {
         text(&created.stdout),
         text(&created.stderr)
     );
-    let data_home = mabo::paths::data_home(Some(&repo.home), Some(Path::new("relative/data")))
+    let data_home = rabi::paths::data_home(Some(&repo.home), Some(Path::new("relative/data")))
         .expect("fallback");
     assert_eq!(data_home, repo.home.join(".local/share"));
     assert!(managed_directory(&repo.repo, &data_home)
@@ -7260,11 +7260,11 @@ fn a_project_directory_owned_by_another_repository_is_refused() {
     let directory = managed_root(&repo);
     fs::create_dir_all(&directory).expect("project dir");
     fs::write(
-        directory.join(mabo::paths::PROJECT_MARKER),
+        directory.join(rabi::paths::PROJECT_MARKER),
         "/other/repo/.git\n",
     )
     .expect("foreign marker");
-    let created = repo.mabo(&["create", "feature"]);
+    let created = repo.rabi(&["create", "feature"]);
     assert!(!created.status.success(), "{}", text(&created.stdout));
     let message = format!("{}\n{}", text(&created.stdout), text(&created.stderr));
     assert!(message.contains("belongs to"), "{message}");
@@ -7276,8 +7276,8 @@ fn a_project_directory_owned_by_another_repository_is_refused() {
 fn two_clones_do_not_share_a_worktree_directory() {
     let first = Repo::new();
     let second = Repo::new();
-    assert!(first.mabo(&["create", "feature"]).status.success());
-    assert!(second.mabo(&["create", "feature"]).status.success());
+    assert!(first.rabi(&["create", "feature"]).status.success());
+    assert!(second.rabi(&["create", "feature"]).status.success());
     let left = managed_root(&first);
     let right = managed_root(&second);
     assert_ne!(left, right);
@@ -7294,11 +7294,11 @@ fn symlink_checkout_shares_the_project_directory() {
     let repo = Repo::new();
     let link = repo.root.join("link-name");
     std::os::unix::fs::symlink(&repo.repo, &link).expect("symlink");
-    let created = repo.mabo(&["create", "from-real"]);
+    let created = repo.rabi(&["create", "from-real"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let via_link = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "create",
                 "--repo",
@@ -7328,7 +7328,7 @@ fn symlink_checkout_shares_the_project_directory() {
     );
     let deleted = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "remove",
                 "--repo",
@@ -7352,19 +7352,19 @@ fn symlink_checkout_shares_the_project_directory() {
 fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["config", "set", "workspace-root", "custom/workspaces",])
+        .rabi(&["config", "set", "workspace-root", "custom/workspaces",])
         .status
         .success());
-    let created = repo.mabo(&["create", "feature/topic"]);
+    let created = repo.rabi(&["create", "feature/topic"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let topic = repo.repo.join("custom/workspaces/feature/topic");
     let parent = repo.repo.join("custom/workspaces/feature");
     assert!(topic.is_dir());
     assert!(repo
-        .mabo(&["config", "unset", "workspace-root"])
+        .rabi(&["config", "unset", "workspace-root"])
         .status
         .success());
-    let deleted = repo.mabo(&["remove", "feature/topic"]);
+    let deleted = repo.rabi(&["remove", "feature/topic"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -7377,7 +7377,7 @@ fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
 
     let other = repo.root.join("other-xdg");
     let elsewhere_created = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "elsewhere"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "elsewhere"])
         .env("XDG_DATA_HOME", &other)
         .output()
         .expect("elsewhere");
@@ -7390,7 +7390,7 @@ fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
     let elsewhere = managed_directory(&repo.repo, &other).join("elsewhere");
     assert!(elsewhere.is_dir());
     fs::write(elsewhere.join("dirty.txt"), "dirty\n").expect("dirty");
-    let blocked = repo.mabo(&["remove", "elsewhere"]);
+    let blocked = repo.rabi(&["remove", "elsewhere"]);
     assert!(!blocked.status.success(), "{}", text(&blocked.stdout));
     assert!(
         text(&blocked.stderr).contains("uncommitted"),
@@ -7399,7 +7399,7 @@ fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
     );
     assert!(elsewhere.is_dir());
     fs::remove_file(elsewhere.join("dirty.txt")).expect("clean");
-    let removed = repo.mabo(&["remove", "elsewhere"]);
+    let removed = repo.rabi(&["remove", "elsewhere"]);
     assert!(
         removed.status.success(),
         "{}\n{}",
@@ -7431,19 +7431,19 @@ fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
         assert!(output.status.success(), "{}", text(&output.stderr));
     }
     repo.git(&["merge", "--ff-only", "stray"]);
-    let refused = repo.mabo(&["remove", "stray"]);
+    let refused = repo.rabi(&["remove", "stray"]);
     assert!(!refused.status.success(), "{}", text(&refused.stdout));
     assert_eq!(refused.status.code(), Some(1), "{}", text(&refused.stderr));
     let refused_text = text(&refused.stderr);
     assert!(
-        refused_text.contains("not created by mabo"),
+        refused_text.contains("not created by rabi"),
         "{refused_text}"
     );
     assert!(
         refused_text.contains(&format!("git worktree remove {}", stray.display())),
         "{refused_text}"
     );
-    let cleaned = repo.mabo(&["gc", "--apply"]);
+    let cleaned = repo.rabi(&["gc", "--apply"]);
     assert!(cleaned.status.success(), "{}", text(&cleaned.stderr));
     assert!(
         !text(&cleaned.stdout).contains("stray"),
@@ -7457,10 +7457,10 @@ fn recorded_worktrees_outside_the_resolved_directory_can_be_deleted() {
 fn gc_removes_a_merged_recorded_worktree_outside_the_resolved_directory() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["config", "set", "workspace-root", "custom/workspaces",])
+        .rabi(&["config", "set", "workspace-root", "custom/workspaces",])
         .status
         .success());
-    let created = repo.mabo(&["create", "landed"]);
+    let created = repo.rabi(&["create", "landed"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let landed = repo.repo.join("custom/workspaces/landed");
     fs::write(landed.join("landed.txt"), "landed\n").expect("note");
@@ -7474,10 +7474,10 @@ fn gc_removes_a_merged_recorded_worktree_outside_the_resolved_directory() {
     }
     repo.git(&["merge", "--ff-only", "landed"]);
     assert!(repo
-        .mabo(&["config", "unset", "workspace-root"])
+        .rabi(&["config", "unset", "workspace-root"])
         .status
         .success());
-    let applied = repo.mabo(&["gc", "--apply"]);
+    let applied = repo.rabi(&["gc", "--apply"]);
     assert!(
         applied.status.success(),
         "{}\n{}",
@@ -7497,24 +7497,24 @@ fn gc_removes_a_merged_recorded_worktree_outside_the_resolved_directory() {
 fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["config", "set", "workspace-root", "custom/workspaces",])
+        .rabi(&["config", "set", "workspace-root", "custom/workspaces",])
         .status
         .success());
-    let detached = repo.mabo(&["create", "next", "--detach"]);
+    let detached = repo.rabi(&["create", "next", "--detach"]);
     assert!(
         detached.status.success(),
         "{}\n{}",
         text(&detached.stdout),
         text(&detached.stderr)
     );
-    let nested = repo.mabo(&["create", "feature/topic", "--detach"]);
+    let nested = repo.rabi(&["create", "feature/topic", "--detach"]);
     assert!(
         nested.status.success(),
         "{}\n{}",
         text(&nested.stdout),
         text(&nested.stderr)
     );
-    let branched = repo.mabo(&["create", "kept"]);
+    let branched = repo.rabi(&["create", "kept"]);
     assert!(
         branched.status.success(),
         "{}\n{}",
@@ -7523,7 +7523,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
     );
     repo.git(&["branch", "-m", "kept", "moved"]);
     assert!(repo
-        .mabo(&["config", "unset", "workspace-root"])
+        .rabi(&["config", "unset", "workspace-root"])
         .status
         .success());
 
@@ -7544,7 +7544,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
     let sha = text(&head.stdout);
     repo.git(&["merge", "--ff-only", &sha]);
 
-    let names = repo.mabo(&["list", "--names", "--kind", "workspace"]);
+    let names = repo.rabi(&["list", "--names", "--kind", "workspace"]);
     assert!(names.status.success(), "{}", text(&names.stderr));
     let listed = text(&names.stdout);
     assert!(listed.lines().any(|line| line == "next"), "{listed}");
@@ -7556,31 +7556,31 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
     assert!(!listed.lines().any(|line| line == sha), "{listed}");
     assert!(!listed.lines().any(|line| line == "moved"), "{listed}");
 
-    let found = repo.mabo(&["path", "next"]);
+    let found = repo.rabi(&["path", "next"]);
     assert!(found.status.success(), "{}", text(&found.stderr));
     assert!(paths_match(text(&found.stdout).trim(), &next));
-    let found_topic = repo.mabo(&["path", "feature/topic"]);
+    let found_topic = repo.rabi(&["path", "feature/topic"]);
     assert!(
         found_topic.status.success(),
         "{}",
         text(&found_topic.stderr)
     );
     assert!(paths_match(text(&found_topic.stdout).trim(), &topic));
-    let found_kept = repo.mabo(&["path", "kept"]);
+    let found_kept = repo.rabi(&["path", "kept"]);
     assert!(found_kept.status.success(), "{}", text(&found_kept.stderr));
     assert!(paths_match(text(&found_kept.stdout).trim(), &kept));
 
-    let ran = repo.mabo(&["exec", "next", "--", "true"]);
+    let ran = repo.rabi(&["exec", "next", "--", "true"]);
     assert!(ran.status.success(), "{}", text(&ran.stderr));
-    let marked = repo.mabo(&["set", "feature/topic", "--purpose", "review"]);
+    let marked = repo.rabi(&["set", "feature/topic", "--purpose", "review"]);
     assert!(marked.status.success(), "{}", text(&marked.stderr));
     let listed = text(
         &repo
-            .mabo(&["list", "--names", "--kind", "workspace"])
+            .rabi(&["list", "--names", "--kind", "workspace"])
             .stdout,
     );
     assert!(listed.lines().any(|name| name == "feature/topic"));
-    assert!(text(&repo.mabo(&["list"]).stdout).contains("review"));
+    assert!(text(&repo.rabi(&["list"]).stdout).contains("review"));
 
     let stray = repo.root.join("stray-detached");
     repo.git(&[
@@ -7598,7 +7598,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
     let stray_sha = text(&stray_head.stdout);
     let after_stray = text(
         &repo
-            .mabo(&["list", "--names", "--kind", "workspace"])
+            .rabi(&["list", "--names", "--kind", "workspace"])
             .stdout,
     );
     assert!(
@@ -7610,7 +7610,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         "{after_stray}"
     );
 
-    let deleted = repo.mabo(&["remove", "kept", "--keep-branch"]);
+    let deleted = repo.rabi(&["remove", "kept", "--keep-branch"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -7628,7 +7628,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         text(&moved.stdout)
     );
 
-    let file = repo.repo.join(".git/mabo/workspaces");
+    let file = repo.repo.join(".git/rabi/workspaces");
     let mut document: serde_json::Value =
         serde_json::from_str(&records::read_to_string(&file).expect("store")).expect("store json");
     for record in document["worktrees"].as_array_mut().expect("records") {
@@ -7648,7 +7648,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         ),
     )
     .expect("rewrite");
-    let planned = repo.mabo(&["gc", "--older-than", "1d", "--json"]);
+    let planned = repo.rabi(&["gc", "--older-than", "1d", "--json"]);
     assert!(planned.status.success(), "{}", text(&planned.stderr));
     let candidates = json_value(&planned)["data"]["items"]
         .as_array()
@@ -7659,7 +7659,7 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
         .find(|entry| entry["name"] == "next")
         .expect("gc names the detached workspace next");
     assert_eq!(next_row["action"], "wouldRemove");
-    let applied = repo.mabo(&["gc", "--older-than", "1d", "--apply", "--json"]);
+    let applied = repo.rabi(&["gc", "--older-than", "1d", "--apply", "--json"]);
     assert!(
         applied.status.success(),
         "{}\n{}",
@@ -7680,9 +7680,9 @@ fn recorded_worktrees_outside_the_directory_keep_metadata_names() {
 #[test]
 fn delete_requests_the_same_worktree_once() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "a"]).status.success());
-    assert!(repo.mabo(&["create", "b"]).status.success());
-    let deleted = repo.mabo(&["remove", "a", "b", "a"]);
+    assert!(repo.rabi(&["create", "a"]).status.success());
+    assert!(repo.rabi(&["create", "b"]).status.success());
+    let deleted = repo.rabi(&["remove", "a", "b", "a"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -7708,9 +7708,9 @@ fn delete_requests_the_same_worktree_once() {
     assert!(!managed(&repo, "a").exists());
     assert!(!managed(&repo, "b").exists());
 
-    assert!(repo.mabo(&["create", "alias"]).status.success());
+    assert!(repo.rabi(&["create", "alias"]).status.success());
     repo.git(&["branch", "-m", "alias", "topic"]);
-    let once = repo.mabo(&["remove", "alias", "topic"]);
+    let once = repo.rabi(&["remove", "alias", "topic"]);
     assert!(
         once.status.success(),
         "{}\n{}",
@@ -7738,12 +7738,12 @@ fn delete_requests_the_same_worktree_once() {
 #[test]
 fn list_paths_are_absolute_from_an_unrelated_directory() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "inside"]).status.success());
+    assert!(repo.rabi(&["create", "inside"]).status.success());
     let deep = repo.home.join("a/b/c");
     fs::create_dir_all(&deep).unwrap();
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "list",
                 "--repo",
@@ -7766,7 +7766,7 @@ fn list_paths_are_absolute_from_an_unrelated_directory() {
 #[test]
 fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "feature", "--purpose", "alice", "--json"]);
+    let created = repo.rabi(&["create", "feature", "--purpose", "alice", "--json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -7804,18 +7804,18 @@ fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
     let gitdir = repo.repo.join(".git/worktrees/feature/gitdir");
     fs::write(&gitdir, format!("{}\n", spelled.join(".git").display())).expect("gitdir");
 
-    let listed = repo.mabo(&["list", "--json", "--kind", "workspace"]);
+    let listed = repo.rabi(&["list", "--json", "--kind", "workspace"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let entry = &json_value(&listed)["data"]["workspaces"][0];
     assert_eq!(entry["purpose"], "alice");
     assert_eq!(entry["createdFrom"], created_from);
     assert_eq!(entry["createdAt"], created_at);
-    let plan = repo.mabo(&["gc", "--json"]);
+    let plan = repo.rabi(&["gc", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let candidate = &json_value(&plan)["data"]["items"][0];
     assert!(candidate.get("owner").is_none());
     assert_eq!(candidate["name"], "feature");
-    let deleted = repo.mabo(&["remove", "feature", "--json"]);
+    let deleted = repo.rabi(&["remove", "feature", "--json"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -7829,11 +7829,11 @@ fn symlink_spelling_keeps_metadata_and_preserves_the_project_directory() {
     assert!(!real.exists());
     assert!(
         managed_root(&repo)
-            .join(mabo::paths::PROJECT_MARKER)
+            .join(rabi::paths::PROJECT_MARKER)
             .is_file(),
         "last workspace deletion should keep the project directory and marker"
     );
-    let store = records::read_to_string(repo.repo.join(".git/mabo/workspaces")).unwrap_or_default();
+    let store = records::read_to_string(repo.repo.join(".git/rabi/workspaces")).unwrap_or_default();
     assert!(!store.contains("alice"), "{store}");
 }
 
@@ -7845,10 +7845,10 @@ fn symlinked_xdg_data_home_create_attach_and_exec_succeed() {
     fs::create_dir_all(&real).expect("real xdg");
     std::os::unix::fs::symlink(&real, &link).expect("xdg link");
     let run = |args: &[&str]| {
-        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+        repo.command(env!("CARGO_BIN_EXE_rabi"), args)
             .env("XDG_DATA_HOME", &link)
             .output()
-            .expect("mabo")
+            .expect("rabi")
     };
     let created = run(&["create", "a", "--json"]);
     assert!(
@@ -7908,7 +7908,7 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
     fs::create_dir_all(&real).expect("real xdg");
     std::os::unix::fs::symlink(&real, &link).expect("xdg link");
     let created = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "feature"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "feature"])
         .env("XDG_DATA_HOME", &link)
         .output()
         .expect("create");
@@ -7920,7 +7920,7 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
     );
     let project = managed_directory(&repo.repo, &real);
     let via_link = link
-        .join("mabo")
+        .join("rabi")
         .join("workspaces")
         .join(project.file_name().expect("project name"))
         .join("feature");
@@ -7955,14 +7955,14 @@ fn delete_current_recognizes_a_worktree_created_through_a_symlink() {
         std::env::var("PATH").unwrap_or_default()
     );
     let with_logical_top = |args: &[&str]| {
-        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+        repo.command(env!("CARGO_BIN_EXE_rabi"), args)
             .env("XDG_DATA_HOME", &link)
             .env("PATH", &path_env)
             .env("REAL_TOP", &canonical)
             .env("LOGICAL_TOP", &via_link)
             .current_dir(&via_link)
             .output()
-            .expect("mabo")
+            .expect("rabi")
     };
     let deleted = with_logical_top(&["remove", "."]);
     assert!(
@@ -7989,7 +7989,7 @@ fn recheckout_through_a_symlink_keeps_intent_and_creation_details() {
         "origin",
         "https://github.com/acme/demo.git",
     ]);
-    let created = repo.mabo(&["create", "issues/7", "--purpose", "keep me", "--json"]);
+    let created = repo.rabi(&["create", "issues/7", "--purpose", "keep me", "--json"]);
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -7997,7 +7997,7 @@ fn recheckout_through_a_symlink_keeps_intent_and_creation_details() {
         text(&created.stderr)
     );
     assert!(repo
-        .mabo(&["set", "issues/7", "--issue", "7"])
+        .rabi(&["set", "issues/7", "--issue", "7"])
         .status
         .success());
     let created_json = json_value(&created);
@@ -8053,7 +8053,7 @@ fn recheckout_through_a_symlink_keeps_intent_and_creation_details() {
     );
     let again = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "create",
                 "--issue",
@@ -8101,14 +8101,14 @@ fn empty_commit(repo: &Repo, dir: &Path, message: &str) {
 #[test]
 fn delete_refuses_a_branch_with_unpushed_commits() {
     let repo = Repo::new();
-    let help = repo.mabo(&["remove", "--help"]);
+    let help = repo.rabi(&["remove", "--help"]);
     assert!(help.status.success(), "{}", text(&help.stderr));
     let help_text = text(&help.stdout);
     assert!(help_text.contains("unpreserved"), "{help_text}");
-    assert!(repo.mabo(&["create", "u"]).status.success());
+    assert!(repo.rabi(&["create", "u"]).status.success());
     let worktree = managed(&repo, "u");
     empty_commit(&repo, &worktree, "x");
-    let out = repo.mabo(&["remove", "u", "--json"]);
+    let out = repo.rabi(&["remove", "u", "--json"]);
     assert_eq!(out.status.code(), Some(0));
     let document = json_value(&out);
     assert_eq!(
@@ -8118,12 +8118,12 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     assert_eq!(document["warnings"][0]["code"], "branch_kept_unpreserved");
     assert!(!worktree.exists());
     assert!(branch_listed(&repo, "u"));
-    assert!(repo.mabo(&["create", "--branch", "u"]).status.success());
+    assert!(repo.rabi(&["create", "--branch", "u"]).status.success());
 
-    assert!(repo.mabo(&["create", "kept"]).status.success());
+    assert!(repo.rabi(&["create", "kept"]).status.success());
     let kept_dir = managed(&repo, "kept");
     empty_commit(&repo, &kept_dir, "keep");
-    let kept = repo.mabo(&["remove", "kept", "--keep-branch"]);
+    let kept = repo.rabi(&["remove", "kept", "--keep-branch"]);
     assert!(
         kept.status.success(),
         "{}\n{}",
@@ -8134,7 +8134,7 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     assert!(!kept_dir.exists());
     assert!(branch_listed(&repo, "kept"));
 
-    let forced = repo.mabo(&[
+    let forced = repo.rabi(&[
         "remove",
         "u",
         "--discard-changes",
@@ -8155,11 +8155,11 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     repo.git(&["remote", "add", "origin", bare.to_str().expect("origin")]);
     repo.git(&["push", "-u", "origin", "main"]);
 
-    assert!(repo.mabo(&["create", "shipped"]).status.success());
+    assert!(repo.rabi(&["create", "shipped"]).status.success());
     let shipped = managed(&repo, "shipped");
     empty_commit(&repo, &shipped, "ship");
     repo.git(&["push", "-u", "origin", "shipped"]);
-    let removed = repo.mabo(&["remove", "shipped"]);
+    let removed = repo.rabi(&["remove", "shipped"]);
     assert!(
         removed.status.success(),
         "{}\n{}",
@@ -8169,12 +8169,12 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     assert!(!shipped.exists());
     assert!(!branch_listed(&repo, "shipped"));
 
-    assert!(repo.mabo(&["create", "behind"]).status.success());
+    assert!(repo.rabi(&["create", "behind"]).status.success());
     let behind = managed(&repo, "behind");
     empty_commit(&repo, &behind, "first");
     repo.git(&["push", "-u", "origin", "behind"]);
     empty_commit(&repo, &behind, "second");
-    let behind_kept = repo.mabo(&["remove", "behind", "--json"]);
+    let behind_kept = repo.rabi(&["remove", "behind", "--json"]);
     assert_eq!(behind_kept.status.code(), Some(0));
     assert_eq!(
         json_value(&behind_kept)["data"]["items"][0]["branchKeptReason"],
@@ -8183,11 +8183,11 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
     assert!(!behind.exists());
     assert!(branch_listed(&repo, "behind"));
 
-    assert!(repo.mabo(&["create", "landed"]).status.success());
+    assert!(repo.rabi(&["create", "landed"]).status.success());
     commit_in_worktree(&repo, "landed");
     repo.git(&["merge", "--ff-only", "landed"]);
     repo.git(&["push", "origin", "main"]);
-    let landed = repo.mabo(&["remove", "landed"]);
+    let landed = repo.rabi(&["remove", "landed"]);
     assert!(
         landed.status.success(),
         "{}\n{}",
@@ -8201,9 +8201,9 @@ fn delete_refuses_a_branch_with_unpushed_commits() {
 #[test]
 fn delete_refuses_when_unpushed_commits_cannot_be_checked() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "mystery"]).status.success());
+    assert!(repo.rabi(&["create", "mystery"]).status.success());
     repo.git(&["branch", "-m", "main", "trunk"]);
-    let out = repo.mabo(&["remove", "mystery", "--json"]);
+    let out = repo.rabi(&["remove", "mystery", "--json"]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         json_value(&out)["data"]["items"][0]["branchKeptReason"],
@@ -8216,13 +8216,13 @@ fn delete_refuses_when_unpushed_commits_cannot_be_checked() {
 #[test]
 fn gc_and_delete_accept_a_squash_merged_branch_whose_remote_is_gone() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "feature"]).status.success());
+    assert!(repo.rabi(&["create", "feature"]).status.success());
     commit_in_worktree(&repo, "feature");
     commit_file(&repo, "feature", "more.txt", "more\n");
     publish_branch(&repo, "feature");
     squash_onto_main(&repo, "feature");
 
-    let plan = repo.mabo(&["gc"]);
+    let plan = repo.rabi(&["gc"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let planned = text(&plan.stdout);
     assert!(
@@ -8232,7 +8232,7 @@ fn gc_and_delete_accept_a_squash_merged_branch_whose_remote_is_gone() {
     assert!(worktree_dir(&repo, "feature").is_dir());
     assert!(branch_listed(&repo, "feature"));
 
-    let deleted = repo.mabo(&["remove", "feature"]);
+    let deleted = repo.rabi(&["remove", "feature"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -8251,19 +8251,19 @@ fn gc_and_delete_accept_a_squash_merged_branch_whose_remote_is_gone() {
 #[test]
 fn delete_refuses_a_squash_merged_branch_with_a_later_commit() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "feature"]).status.success());
+    assert!(repo.rabi(&["create", "feature"]).status.success());
     commit_in_worktree(&repo, "feature");
     publish_branch(&repo, "feature");
     squash_onto_main(&repo, "feature");
     commit_file(&repo, "feature", "later.txt", "later\n");
 
-    let plan = repo.mabo(&["gc"]);
+    let plan = repo.rabi(&["gc"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let planned = text(&plan.stdout);
     assert!(!planned.contains("would remove feature"), "{planned}");
     assert!(worktree_dir(&repo, "feature").is_dir());
     assert!(branch_listed(&repo, "feature"));
-    let removed = repo.mabo(&["remove", "feature", "--json"]);
+    let removed = repo.rabi(&["remove", "feature", "--json"]);
     assert_eq!(removed.status.code(), Some(0));
     assert_eq!(
         json_value(&removed)["data"]["items"][0]["branchKeptReason"],
@@ -8276,7 +8276,7 @@ fn delete_refuses_a_squash_merged_branch_with_a_later_commit() {
 #[test]
 fn gc_and_delete_accept_a_rebase_merged_branch() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "feature"]).status.success());
+    assert!(repo.rabi(&["create", "feature"]).status.success());
     commit_in_worktree(&repo, "feature");
     commit_file(&repo, "feature", "more.txt", "more\n");
     publish_branch(&repo, "feature");
@@ -8285,7 +8285,7 @@ fn gc_and_delete_accept_a_rebase_merged_branch() {
     repo.git(&["push", "origin", "main"]);
     repo.git(&["push", "origin", "--delete", "feature"]);
 
-    let plan = repo.mabo(&["gc"]);
+    let plan = repo.rabi(&["gc"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let planned = text(&plan.stdout);
     assert!(
@@ -8293,7 +8293,7 @@ fn gc_and_delete_accept_a_rebase_merged_branch() {
         "{planned}"
     );
 
-    let deleted = repo.mabo(&["remove", "feature"]);
+    let deleted = repo.rabi(&["remove", "feature"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -8307,13 +8307,13 @@ fn gc_and_delete_accept_a_rebase_merged_branch() {
 #[test]
 fn gc_applies_a_squash_merged_branch_with_no_remote_and_keeps_a_local_one() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "local"]).status.success());
+    assert!(repo.rabi(&["create", "local"]).status.success());
     commit_in_worktree(&repo, "local");
-    assert!(repo.mabo(&["create", "squashed"]).status.success());
+    assert!(repo.rabi(&["create", "squashed"]).status.success());
     commit_in_worktree(&repo, "squashed");
     squash_onto_main(&repo, "squashed");
 
-    let applied = repo.mabo(&["gc", "--apply"]);
+    let applied = repo.rabi(&["gc", "--apply"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let removed = text(&applied.stdout);
     assert!(removed.contains("removed squashed [merged]"), "{removed}");
@@ -8327,11 +8327,11 @@ fn gc_applies_a_squash_merged_branch_with_no_remote_and_keeps_a_local_one() {
 #[test]
 fn delete_refuses_the_worktree_that_contains_the_current_directory() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "inside"]).status.success());
+    assert!(repo.rabi(&["create", "inside"]).status.success());
     let path = managed(&repo, "inside");
     fs::create_dir(path.join("sub")).unwrap();
     let out = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["remove", ".", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["remove", ".", "--json"])
         .current_dir(path.join("sub"))
         .output()
         .unwrap();
@@ -8343,7 +8343,7 @@ fn delete_refuses_the_worktree_that_contains_the_current_directory() {
 #[test]
 fn delete_and_gc_keep_a_branch_shadowed_by_a_tag() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "v1"]).status.success());
+    assert!(repo.rabi(&["create", "v1"]).status.success());
     empty_commit(&repo, &managed(&repo, "v1"), "only on the branch");
     let commit = text(
         &repo
@@ -8353,10 +8353,10 @@ fn delete_and_gc_keep_a_branch_shadowed_by_a_tag() {
             .stdout,
     );
     repo.git(&["tag", "v1", "main"]);
-    let gc = repo.mabo(&["gc", "--merged", "--apply", "--json"]);
+    let gc = repo.rabi(&["gc", "--merged", "--apply", "--json"]);
     assert_eq!(json_value(&gc)["data"]["items"], serde_json::json!([]));
     assert!(managed(&repo, "v1").exists());
-    let out = repo.mabo(&["remove", "v1", "--json"]);
+    let out = repo.rabi(&["remove", "v1", "--json"]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         json_value(&out)["data"]["items"][0]["branchKeptReason"],
@@ -8377,18 +8377,18 @@ fn delete_and_gc_keep_a_branch_shadowed_by_a_tag() {
 #[test]
 fn delete_refuses_a_detached_worktree_until_force() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "dt", "--detach"]).status.success());
+    assert!(repo.rabi(&["create", "dt", "--detach"]).status.success());
     let path = managed(&repo, "dt");
     empty_commit(&repo, &path, "unpreserved detached commit");
     for flags in [vec![], vec!["--keep-branch"], vec!["--discard-changes"]] {
         let mut args = vec!["remove", "dt", "--json"];
         args.extend(flags);
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(4));
         assert_eq!(json_value(&out)["error"]["code"], "unpreserved");
         assert!(path.exists());
     }
-    let out = repo.mabo(&["remove", "dt", "--delete-unpreserved-branch", "--json"]);
+    let out = repo.rabi(&["remove", "dt", "--delete-unpreserved-branch", "--json"]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(json_value(&out)["data"]["items"][0]["branchDeleted"], false);
     assert!(!path.exists());
@@ -8399,15 +8399,15 @@ fn delete_checks_every_name_before_removing_any() {
     let repo = Repo::new();
     let marker = repo.root.join("hook-ran");
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         format!("[hooks]\npre-remove = [\"touch {}\"]\n", marker.display()),
     )
     .unwrap();
     for name in ["a", "b"] {
-        assert!(repo.mabo(&["create", name]).status.success());
+        assert!(repo.rabi(&["create", name]).status.success());
     }
     fs::write(managed(&repo, "b/dirty"), "changes").unwrap();
-    let out = repo.mabo(&["remove", "a", "b", "--json"]);
+    let out = repo.rabi(&["remove", "a", "b", "--json"]);
     assert_eq!(out.status.code(), Some(4));
     let doc = json_value(&out);
     assert_eq!(doc["data"]["items"].as_array().unwrap().len(), 2);
@@ -8415,7 +8415,7 @@ fn delete_checks_every_name_before_removing_any() {
     assert!(managed(&repo, "a").is_dir());
     assert!(managed(&repo, "b").is_dir());
     assert!(!marker.exists());
-    let out = repo.mabo(&["remove", "a", "bad..name", "--json"]);
+    let out = repo.rabi(&["remove", "a", "bad..name", "--json"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(managed(&repo, "a").is_dir());
     assert!(!marker.exists());
@@ -8424,9 +8424,9 @@ fn delete_checks_every_name_before_removing_any() {
 #[test]
 fn gc_keeps_the_current_worktree_when_its_parent_was_replaced_by_a_symlink() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "here"]).status.success());
+    assert!(repo.rabi(&["create", "here"]).status.success());
     land_branch(&repo, "here");
-    assert!(repo.mabo(&["create", "gone"]).status.success());
+    assert!(repo.rabi(&["create", "gone"]).status.success());
     land_branch(&repo, "gone");
     let parent = managed_root(&repo);
     let moved = repo.root.join("moved-parent");
@@ -8435,7 +8435,7 @@ fn gc_keeps_the_current_worktree_when_its_parent_was_replaced_by_a_symlink() {
     let here = parent.join("here");
     assert!(here.is_dir());
     let applied = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["gc", "--apply"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["gc", "--apply"])
         .current_dir(&here)
         .output()
         .expect("gc");
@@ -8474,7 +8474,7 @@ fn gc_keeps_the_current_worktree_when_its_parent_was_replaced_by_a_symlink() {
 #[test]
 fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basename() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "dup"]).status.success());
+    assert!(repo.rabi(&["create", "dup"]).status.success());
     let outside = repo.root.join("x").join("dup");
     fs::create_dir_all(outside.parent().expect("parent")).expect("x");
     repo.git(&[
@@ -8485,7 +8485,7 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
         outside.to_str().expect("outside"),
         "HEAD",
     ]);
-    let marked = repo.mabo(&["set", "zz", "--purpose", "a"]);
+    let marked = repo.rabi(&["set", "zz", "--purpose", "a"]);
     assert!(
         marked.status.success(),
         "{}\n{}",
@@ -8497,7 +8497,7 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
         "{}",
         text(&marked.stdout)
     );
-    let found = repo.mabo(&["path", "dup"]);
+    let found = repo.rabi(&["path", "dup"]);
     assert!(
         found.status.success(),
         "{}\n{}",
@@ -8508,7 +8508,7 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
         text(&found.stdout).trim(),
         &managed(&repo, "dup")
     ));
-    let outside_where = repo.mabo(&["path", "zz"]);
+    let outside_where = repo.rabi(&["path", "zz"]);
     assert!(
         outside_where.status.success(),
         "{}\n{}",
@@ -8516,11 +8516,11 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
         text(&outside_where.stderr)
     );
     assert!(paths_match(text(&outside_where.stdout).trim(), &outside));
-    let stored = records::read_to_string(repo.repo.join(".git/mabo/workspaces")).expect("meta");
+    let stored = records::read_to_string(repo.repo.join(".git/rabi/workspaces")).expect("meta");
     assert!(stored.contains("\"name\": \"zz\""), "{stored}");
     let names = text(
         &repo
-            .mabo(&["list", "--names", "--kind", "workspace"])
+            .rabi(&["list", "--names", "--kind", "workspace"])
             .stdout,
     );
     assert!(names.lines().any(|line| line == "dup"), "{names}");
@@ -8539,7 +8539,7 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
         loose.to_str().expect("loose"),
         "HEAD",
     ]);
-    assert!(repo.mabo(&["create", "loose"]).status.success());
+    assert!(repo.rabi(&["create", "loose"]).status.success());
     let head = repo
         .command("git", &["rev-parse", "--short=7", "HEAD"])
         .current_dir(&loose)
@@ -8547,14 +8547,14 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
         .expect("short head");
     assert!(head.status.success(), "{}", text(&head.stderr));
     let sha = text(&head.stdout);
-    let detached = repo.mabo(&["set", &sha, "--purpose", "b"]);
+    let detached = repo.rabi(&["set", &sha, "--purpose", "b"]);
     assert!(
         detached.status.success(),
         "{}\n{}",
         text(&detached.stdout),
         text(&detached.stderr)
     );
-    let found_loose = repo.mabo(&["path", "loose"]);
+    let found_loose = repo.rabi(&["path", "loose"]);
     assert!(
         found_loose.status.success(),
         "{}",
@@ -8564,10 +8564,10 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
         text(&found_loose.stdout).trim(),
         &managed(&repo, "loose")
     ));
-    let found_sha = repo.mabo(&["path", &sha]);
+    let found_sha = repo.rabi(&["path", &sha]);
     assert!(found_sha.status.success(), "{}", text(&found_sha.stderr));
     assert!(paths_match(text(&found_sha.stdout).trim(), &loose));
-    let stored = records::read_to_string(repo.repo.join(".git/mabo/workspaces")).expect("meta");
+    let stored = records::read_to_string(repo.repo.join(".git/rabi/workspaces")).expect("meta");
     assert!(stored.contains(&format!("\"name\": \"{sha}\"")), "{stored}");
     fs::write(loose.join("later.txt"), "later\n").expect("later");
     for args in [vec!["add", "later.txt"], vec!["commit", "-m", "later"]] {
@@ -8588,7 +8588,7 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
     assert_ne!(later_sha, sha);
     let names_after = text(
         &repo
-            .mabo(&["list", "--names", "--kind", "workspace"])
+            .rabi(&["list", "--names", "--kind", "workspace"])
             .stdout,
     );
     assert!(names_after.lines().any(|line| line == sha), "{names_after}");
@@ -8596,7 +8596,7 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
         !names_after.lines().any(|line| line == later_sha),
         "{names_after}"
     );
-    let still = repo.mabo(&["path", &sha]);
+    let still = repo.rabi(&["path", &sha]);
     assert!(still.status.success(), "{}", text(&still.stderr));
     assert!(paths_match(text(&still.stdout).trim(), &loose));
 }
@@ -8605,7 +8605,7 @@ fn meta_set_records_an_outside_worktree_by_branch_instead_of_a_colliding_basenam
 fn meta_set_records_outside_worktrees_despite_orphaned_names() {
     for layout in [false, true] {
         let repo = Repo::new();
-        let records_path = repo.repo.join(".git/mabo/workspaces");
+        let records_path = repo.repo.join(".git/rabi/workspaces");
         let missing = repo.root.join("missing");
         fs::create_dir_all(records_path.parent().expect("parent")).expect("directory");
         let records = serde_json::json!({
@@ -8627,12 +8627,12 @@ fn meta_set_records_outside_worktrees_despite_orphaned_names() {
             outside.to_str().expect("path"),
             "HEAD",
         ]);
-        let marked = repo.mabo(&["set", "shared", "--purpose", "a"]);
+        let marked = repo.rabi(&["set", "shared", "--purpose", "a"]);
         assert!(marked.status.success(), "{}", text(&marked.stderr));
-        let found = repo.mabo(&["path", "shared"]);
+        let found = repo.rabi(&["path", "shared"]);
         assert!(found.status.success(), "{}", text(&found.stderr));
         assert!(paths_match(text(&found.stdout).trim(), &outside));
-        let listed = repo.mabo(&["list", "--json", "--kind", "workspace"]);
+        let listed = repo.rabi(&["list", "--json", "--kind", "workspace"]);
         assert!(listed.status.success(), "{}", text(&listed.stderr));
         let document: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("json");
         let worktrees = document["data"]["workspaces"]
@@ -8649,7 +8649,7 @@ fn meta_set_records_outside_worktrees_despite_orphaned_names() {
                 .count(),
             1
         );
-        let cleaned = repo.mabo(&["gc", "--apply"]);
+        let cleaned = repo.rabi(&["gc", "--apply"]);
         assert!(cleaned.status.success(), "{}", text(&cleaned.stderr));
         let records: serde_json::Value =
             serde_json::from_slice(&records::read(&records_path).expect("records")).expect("json");
@@ -8664,8 +8664,8 @@ fn meta_set_records_outside_worktrees_despite_orphaned_names() {
 #[test]
 fn meta_set_refuses_to_record_an_outside_worktree_under_a_taken_name() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "dup"]).status.success());
-    let outside = repo.root.join("mabo/workspaces/dup");
+    assert!(repo.rabi(&["create", "dup"]).status.success());
+    let outside = repo.root.join("rabi/workspaces/dup");
     fs::create_dir_all(outside.parent().expect("parent")).expect("parent");
     repo.git(&[
         "worktree",
@@ -8675,9 +8675,9 @@ fn meta_set_refuses_to_record_an_outside_worktree_under_a_taken_name() {
         outside.to_str().expect("outside"),
         "HEAD",
     ]);
-    let meta_path = repo.repo.join(".git/mabo/workspaces");
+    let meta_path = repo.repo.join(".git/rabi/workspaces");
     let before = records::read(&meta_path).expect("before");
-    let marked = repo.mabo(&["set", "zz", "--purpose", "a"]);
+    let marked = repo.rabi(&["set", "zz", "--purpose", "a"]);
     assert_eq!(
         marked.status.code(),
         Some(1),
@@ -8692,7 +8692,7 @@ fn meta_set_refuses_to_record_an_outside_worktree_under_a_taken_name() {
     );
     let stored = records::read(&meta_path).expect("after");
     assert_eq!(stored, before, "a refused set rewrote records");
-    let found = repo.mabo(&["path", "dup"]);
+    let found = repo.rabi(&["path", "dup"]);
     assert!(
         found.status.success(),
         "{}\n{}",
@@ -8724,7 +8724,7 @@ fn a_record_without_a_stored_name_keeps_the_folder_name() {
         .expect("head");
     assert!(head.status.success(), "{}", text(&head.stderr));
     let sha = text(&head.stdout);
-    let meta = repo.repo.join(".git/mabo/workspaces");
+    let meta = repo.repo.join(".git/rabi/workspaces");
     fs::create_dir_all(meta.parent().expect("meta dir")).expect("meta dir");
     let fixture = serde_json::json!({"worktrees": [{
         "schema": 2, "id": format!("ws_{}", uuid::Uuid::new_v4()),
@@ -8733,7 +8733,7 @@ fn a_record_without_a_stored_name_keeps_the_folder_name() {
     records::write(&meta, serde_json::to_vec(&fixture).unwrap()).expect("record");
     let names = text(
         &repo
-            .mabo(&["list", "--names", "--kind", "workspace"])
+            .rabi(&["list", "--names", "--kind", "workspace"])
             .stdout,
     );
     assert!(names.lines().any(|line| line == "next"), "{names}");
@@ -8742,18 +8742,18 @@ fn a_record_without_a_stored_name_keeps_the_folder_name() {
     // orphan detection, retaining the checkout for the remaining selector tests.
     let parked = repo.root.join("parked-next");
     fs::rename(&next, &parked).unwrap();
-    let plan = repo.mabo(&["gc", "--older-than", "14d"]);
+    let plan = repo.rabi(&["gc", "--older-than", "14d"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let planned = text(&plan.stdout);
     assert!(planned.contains("would remove next"), "{planned}");
     assert!(!planned.contains(&sha), "{planned}");
     fs::rename(&parked, &next).unwrap();
-    let found = repo.mabo(&["path", "next"]);
+    let found = repo.rabi(&["path", "next"]);
     assert!(found.status.success(), "{}", text(&found.stderr));
     assert!(paths_match(text(&found.stdout).trim(), &next));
-    let ran = repo.mabo(&["exec", "next", "--", "true"]);
+    let ran = repo.rabi(&["exec", "next", "--", "true"]);
     assert!(ran.status.success(), "{}", text(&ran.stderr));
-    let marked = repo.mabo(&["set", "next", "--purpose", "ada"]);
+    let marked = repo.rabi(&["set", "next", "--purpose", "ada"]);
     assert!(marked.status.success(), "{}", text(&marked.stderr));
     assert!(
         text(&marked.stdout).contains("next"),
@@ -8762,10 +8762,10 @@ fn a_record_without_a_stored_name_keeps_the_folder_name() {
     );
     let stored = records::read_to_string(&meta).expect("after set");
     assert!(!stored.contains("\"name\""), "{stored}");
-    let still = repo.mabo(&["path", "next"]);
+    let still = repo.rabi(&["path", "next"]);
     assert!(still.status.success(), "{}", text(&still.stderr));
     assert!(paths_match(text(&still.stdout).trim(), &next));
-    let deleted = repo.mabo(&["remove", "next"]);
+    let deleted = repo.rabi(&["remove", "next"]);
     assert!(
         deleted.status.success(),
         "{}\n{}",
@@ -8831,18 +8831,18 @@ fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
         repo.root.join("missing.git").to_str().expect("missing"),
     ]);
 
-    let created = repo.mabo(&["create", "feature/teammate"]);
+    let created = repo.rabi(&["create", "feature/teammate"]);
     assert_eq!(created.status.code(), Some(4), "{}", text(&created.stderr));
     assert_eq!(
         text(&created.stderr),
-        "Branch 'feature/teammate' already exists as a remote-tracking branch (origin). Run `mabo create --branch feature/teammate`."
+        "Branch 'feature/teammate' already exists as a remote-tracking branch (origin). Run `rabi create --branch feature/teammate`."
     );
-    let remote_json = repo.mabo(&["create", "feature/teammate", "--json"]);
+    let remote_json = repo.rabi(&["create", "feature/teammate", "--json"]);
     assert_eq!(remote_json.status.code(), Some(4));
     assert_eq!(json_value(&remote_json)["error"]["code"], "exists_remote");
     assert!(local_branch(&repo, "feature/teammate").is_empty());
 
-    let attached = repo.mabo(&["create", "--branch", "feature/teammate"]);
+    let attached = repo.rabi(&["create", "--branch", "feature/teammate"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     assert!(text(&attached.stdout).contains("Created workspace 'feature/teammate'"));
     assert_eq!(
@@ -8854,7 +8854,7 @@ fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
         .is_file());
 
     for command in ["create", "create --branch"] {
-        let exists_json = repo.mabo(
+        let exists_json = repo.rabi(
             &command
                 .split_whitespace()
                 .chain(["feature/teammate", "--json"])
@@ -8863,13 +8863,13 @@ fn create_refuses_a_remote_tracking_name_and_attach_tracks_it() {
         assert_eq!(exists_json.status.code(), Some(4));
         assert_eq!(json_value(&exists_json)["error"]["code"], "exists");
     }
-    let again = repo.mabo(&["create", "--branch", "feature/teammate"]);
+    let again = repo.rabi(&["create", "--branch", "feature/teammate"]);
     assert_eq!(again.status.code(), Some(4));
     assert_eq!(
         text(&again.stderr),
         "Workspace 'feature/teammate' already exists"
     );
-    let shadowed = repo.mabo(&["create", "feature/teammate"]);
+    let shadowed = repo.rabi(&["create", "feature/teammate"]);
     assert_eq!(shadowed.status.code(), Some(4));
     assert_eq!(
         text(&shadowed.stderr),
@@ -8885,12 +8885,12 @@ fn create_with_multiple_remotes_suggests_working_qualified_attach_commands() {
         publish_tracking_branch(&repo, "origin", "feature/teammate");
         publish_tracking_branch(&repo, "upstream", "feature/teammate");
 
-        let created = repo.mabo(&["create", "feature/teammate"]);
+        let created = repo.rabi(&["create", "feature/teammate"]);
         assert_eq!(created.status.code(), Some(4), "{}", text(&created.stderr));
         let message = text(&created.stderr);
         assert_eq!(
             message,
-            "Branch 'feature/teammate' already exists as a remote-tracking branch (origin, upstream). Run `mabo create --branch origin/feature/teammate` or `mabo create --branch upstream/feature/teammate`."
+            "Branch 'feature/teammate' already exists as a remote-tracking branch (origin, upstream). Run `rabi create --branch origin/feature/teammate` or `rabi create --branch upstream/feature/teammate`."
         );
         assert!(local_branch(&repo, "feature/teammate").is_empty());
         assert!(!managed(&repo, "feature/teammate").exists());
@@ -8898,10 +8898,10 @@ fn create_with_multiple_remotes_suggests_working_qualified_attach_commands() {
         let qualified = format!("{remote}/feature/teammate");
         let command = message
             .split('`')
-            .find(|command| *command == format!("mabo create --branch {qualified}"))
+            .find(|command| *command == format!("rabi create --branch {qualified}"))
             .expect("suggested attach command");
         let args: Vec<_> = command.split_whitespace().skip(1).collect();
-        let attached = repo.mabo(&args);
+        let attached = repo.rabi(&args);
         assert!(attached.status.success(), "{}", text(&attached.stderr));
         assert!(text(&attached.stdout).contains("Created workspace 'feature/teammate'"));
         assert_eq!(upstream_name(&repo, "feature/teammate"), qualified);
@@ -8916,7 +8916,7 @@ fn attach_qualified_remote_drops_the_remote_prefix() {
     let repo = Repo::new();
     repo.git(&["config", "branch.autoSetupMerge", "false"]);
     publish_tracking_branch(&repo, "origin", "feature/teammate");
-    let attached = repo.mabo(&["create", "--branch", "origin/feature/teammate"]);
+    let attached = repo.rabi(&["create", "--branch", "origin/feature/teammate"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     assert!(text(&attached.stdout).contains("Created workspace 'feature/teammate'"));
     assert_eq!(
@@ -8934,18 +8934,18 @@ fn attach_qualified_remote_allows_special_characters_in_the_remote_name() {
     publish_tracking_branch(&repo, "origin", "feature");
     publish_tracking_branch(&repo, "user@host", "feature");
 
-    let ambiguous = repo.mabo(&["create", "--branch", "feature"]);
+    let ambiguous = repo.rabi(&["create", "--branch", "feature"]);
     assert_eq!(ambiguous.status.code(), Some(2));
     assert!(text(&ambiguous.stderr).contains("origin, user@host"));
 
-    let attached = repo.mabo(&["create", "--branch", "user@host/feature"]);
+    let attached = repo.rabi(&["create", "--branch", "user@host/feature"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     assert!(text(&attached.stdout).contains("Created workspace 'feature'"));
     assert_eq!(upstream_name(&repo, "feature"), "user@host/feature");
     assert!(managed(&repo, "feature").join("README.md").is_file());
     assert!(local_branch(&repo, "user@host/feature").is_empty());
 
-    let invalid = repo.mabo(&["create", "--branch", "invalid@name"]);
+    let invalid = repo.rabi(&["create", "--branch", "invalid@name"]);
     assert_eq!(invalid.status.code(), Some(2), "{}", text(&invalid.stderr));
     assert!(text(&invalid.stderr).contains("Workspace name can only contain"));
 }
@@ -8956,7 +8956,7 @@ fn attach_lists_every_remote_that_has_the_name() {
     repo.git(&["config", "branch.autoSetupMerge", "false"]);
     publish_tracking_branch(&repo, "origin", "solo");
     publish_tracking_branch(&repo, "upstream", "solo");
-    let attached = repo.mabo(&["create", "--branch", "solo"]);
+    let attached = repo.rabi(&["create", "--branch", "solo"]);
     assert_eq!(
         attached.status.code(),
         Some(2),
@@ -8965,12 +8965,12 @@ fn attach_lists_every_remote_that_has_the_name() {
     );
     assert_eq!(
         text(&attached.stderr),
-        "Branch 'solo' exists on more than one remote (origin, upstream). Run `mabo create --branch <remote>/solo`."
+        "Branch 'solo' exists on more than one remote (origin, upstream). Run `rabi create --branch <remote>/solo`."
     );
     assert!(local_branch(&repo, "solo").is_empty());
     assert!(!managed(&repo, "solo").exists());
 
-    let chosen = repo.mabo(&["create", "--branch", "upstream/solo"]);
+    let chosen = repo.rabi(&["create", "--branch", "upstream/solo"]);
     assert!(chosen.status.success(), "{}", text(&chosen.stderr));
     assert_eq!(upstream_name(&repo, "solo"), "upstream/solo");
     assert!(managed(&repo, "solo").is_dir());
@@ -8986,7 +8986,7 @@ fn attach_uses_the_local_branch_when_it_already_exists() {
         "feature/teammate",
         "origin/feature/teammate",
     ]);
-    let attached = repo.mabo(&["create", "--branch", "feature/teammate"]);
+    let attached = repo.rabi(&["create", "--branch", "feature/teammate"]);
     assert!(attached.status.success(), "{}", text(&attached.stderr));
     let upstream = repo
         .command(
@@ -9005,7 +9005,7 @@ fn attach_uses_the_local_branch_when_it_already_exists() {
 fn create_still_fails_for_a_local_branch_that_is_not_on_a_remote() {
     let repo = Repo::new();
     repo.git(&["branch", "lonely"]);
-    let created = repo.mabo(&["create", "lonely"]);
+    let created = repo.rabi(&["create", "lonely"]);
     assert_eq!(created.status.code(), Some(4), "{}", text(&created.stderr));
     assert!(text(&created.stderr).contains("Branch 'lonely' already exists"));
     assert!(text(&created.stderr).contains("create --branch"));
@@ -9014,7 +9014,7 @@ fn create_still_fails_for_a_local_branch_that_is_not_on_a_remote() {
 #[test]
 fn help_describes_remote_aware_attach_and_create() {
     let repo = Repo::new();
-    let attach_help = repo.mabo(&["create", "--help"]);
+    let attach_help = repo.rabi(&["create", "--help"]);
     assert!(
         attach_help.status.success(),
         "{}",
@@ -9024,11 +9024,11 @@ fn help_describes_remote_aware_attach_and_create() {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    assert!(attach.contains("mabo does not fetch"));
+    assert!(attach.contains("rabi does not fetch"));
     assert!(attach.contains("create --branch exits 2 and lists those remotes"));
     assert!(!attach.contains("must already exist locally"));
     assert!(!attach.contains("first checkout the branch with git"));
-    let create_help = repo.mabo(&["create", "--help"]);
+    let create_help = repo.rabi(&["create", "--help"]);
     assert!(
         create_help.status.success(),
         "{}",
@@ -9038,9 +9038,9 @@ fn help_describes_remote_aware_attach_and_create() {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    assert!(create.contains("mabo create --branch <name>"));
+    assert!(create.contains("rabi create --branch <name>"));
     assert!(create.contains("refused with exit 4"));
-    let meta = repo.mabo(&["set", "--help"]);
+    let meta = repo.rabi(&["set", "--help"]);
     assert!(meta.status.success());
     assert!(text(&meta.stdout).contains("A missing name exits 3"));
 }
@@ -9052,10 +9052,10 @@ fn nameless_create_skips_a_remote_tracking_candidate() {
     let repo = Repo::new();
     publish_tracking_branch(&repo, "origin", "bold-badger");
     let created = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create"])
-        .env("MABO_NAME_CANDIDATES", "bold-badger,calm-comet")
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create"])
+        .env("RABI_NAME_CANDIDATES", "bold-badger,calm-comet")
         .output()
-        .expect("mabo");
+        .expect("rabi");
     assert!(
         created.status.success(),
         "{}\n{}",
@@ -9090,7 +9090,7 @@ fn assert_generated_name_skips_adopted_alias(detach: bool) {
     ] {
         let repo = Repo::new();
         let path = if inside_root {
-            let seed = repo.mabo(&["create", "seed", "--json"]);
+            let seed = repo.rabi(&["create", "seed", "--json"]);
             assert!(seed.status.success(), "{}", text(&seed.stdout));
             managed(&repo, "directory-name")
         } else {
@@ -9104,7 +9104,7 @@ fn assert_generated_name_skips_adopted_alias(detach: bool) {
             path.to_str().unwrap(),
             "main",
         ]);
-        let adopted = repo.mabo(&[
+        let adopted = repo.rabi(&[
             "adopt",
             path.to_str().unwrap(),
             "--name",
@@ -9117,17 +9117,17 @@ fn assert_generated_name_skips_adopted_alias(detach: bool) {
             "orphaned" => repo.git(&["worktree", "remove", path.to_str().unwrap()]),
             _ => {}
         }
-        let records_before = mabo::metadata::load_strict(&repo.repo).expect("records");
+        let records_before = rabi::metadata::load_strict(&repo.repo).expect("records");
         let args = if detach {
             vec!["create", "--detach", "--json"]
         } else {
             vec!["create", "--json"]
         };
         let created = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
-            .env("MABO_NAME_CANDIDATES", "calm-comet,bold-badger")
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
+            .env("RABI_NAME_CANDIDATES", "calm-comet,bold-badger")
             .output()
-            .expect("mabo");
+            .expect("rabi");
         assert!(
             created.status.success(),
             "inside_root={inside_root}, state={state}: {}\n{}",
@@ -9144,7 +9144,7 @@ fn assert_generated_name_skips_adopted_alias(detach: bool) {
         assert!(managed(&repo, "bold-badger").is_dir());
         assert!(!managed(&repo, "calm-comet").exists());
         assert!(local_branch(&repo, "calm-comet").is_empty());
-        let records_after = mabo::metadata::load_strict(&repo.repo).expect("records");
+        let records_after = rabi::metadata::load_strict(&repo.repo).expect("records");
         for (path, record) in records_before {
             assert_eq!(records_after.get(&path), Some(&record));
         }
@@ -9194,7 +9194,7 @@ fn create_sets_no_upstream_from_the_base() {
     // tracks a remote-tracking base. Create must refuse both.
     repo.git(&["config", "branch.autoSetupMerge", "always"]);
 
-    let remote = repo.mabo(&["create", "x", "--base", "origin/next"]);
+    let remote = repo.rabi(&["create", "x", "--base", "origin/next"]);
     assert!(
         remote.status.success(),
         "{}\n{}",
@@ -9203,7 +9203,7 @@ fn create_sets_no_upstream_from_the_base() {
     );
     assert_no_upstream(&repo, "x");
 
-    let local = repo.mabo(&["create", "from-local", "--base", "local-base"]);
+    let local = repo.rabi(&["create", "from-local", "--base", "local-base"]);
     assert!(
         local.status.success(),
         "{}\n{}",
@@ -9212,7 +9212,7 @@ fn create_sets_no_upstream_from_the_base() {
     );
     assert_no_upstream(&repo, "from-local");
 
-    let default_base = repo.mabo(&["create", "from-head"]);
+    let default_base = repo.rabi(&["create", "from-head"]);
     assert!(
         default_base.status.success(),
         "{}\n{}",
@@ -9226,7 +9226,7 @@ fn create_sets_no_upstream_from_the_base() {
 fn orphaned_records_are_listed_and_deleted_without_hooks_or_branch_changes() {
     let repo = Repo::new();
     for name in ["gone", "json-gone"] {
-        let created = repo.mabo(&["create", name]);
+        let created = repo.rabi(&["create", name]);
         assert!(created.status.success(), "{}", text(&created.stderr));
         repo.git(&[
             "worktree",
@@ -9235,16 +9235,16 @@ fn orphaned_records_are_listed_and_deleted_without_hooks_or_branch_changes() {
         ]);
     }
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\npre-remove = [\"exit 99\"]\n",
     )
     .expect("hooks");
-    let listed = repo.mabo(&["list"]);
+    let listed = repo.rabi(&["list"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     assert!(text(&listed.stdout)
         .lines()
         .any(|line| line.trim_start().starts_with("gone  ") && line.ends_with("[orphaned]")));
-    let listed = repo.mabo(&["list", "--json"]);
+    let listed = repo.rabi(&["list", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     let document = json_value(&listed);
     let entries = document["data"]["workspaces"]
@@ -9270,7 +9270,7 @@ fn orphaned_records_are_listed_and_deleted_without_hooks_or_branch_changes() {
         } else {
             vec![command, "gone"]
         };
-        let output = repo.mabo(&args);
+        let output = repo.rabi(&args);
         assert!(!output.status.success());
         assert!(
             text(&output.stderr).contains("orphaned"),
@@ -9278,29 +9278,29 @@ fn orphaned_records_are_listed_and_deleted_without_hooks_or_branch_changes() {
             text(&output.stderr)
         );
     }
-    let deleted = repo.mabo(&["remove", "gone"]);
+    let deleted = repo.rabi(&["remove", "gone"]);
     assert_eq!(deleted.status.code(), Some(0), "{}", text(&deleted.stderr));
     assert!(text(&deleted.stdout).contains("already gone; removed only the stale record"));
     assert!(branch_listed(&repo, "gone"));
-    let deleted = repo.mabo(&["remove", "json-gone", "--json"]);
+    let deleted = repo.rabi(&["remove", "json-gone", "--json"]);
     assert_eq!(deleted.status.code(), Some(0), "{}", text(&deleted.stderr));
     let document = json_value(&deleted);
     assert_eq!(document["data"]["items"][0]["workspace"]["orphaned"], true);
     assert_eq!(document["data"]["items"][0]["branchDeleted"], false);
     assert!(branch_listed(&repo, "json-gone"));
     let records: serde_json::Value = serde_json::from_slice(
-        &records::read(repo.repo.join(".git/mabo/workspaces")).expect("records"),
+        &records::read(repo.repo.join(".git/rabi/workspaces")).expect("records"),
     )
     .expect("json");
     assert_eq!(records["worktrees"], serde_json::json!([]));
-    assert_eq!(repo.mabo(&["remove", "gone"]).status.code(), Some(3));
+    assert_eq!(repo.rabi(&["remove", "gone"]).status.code(), Some(3));
 }
 
 #[test]
 fn delete_prefers_a_live_worktree_over_an_orphaned_record_with_the_same_name() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "shared"]).status.success());
-    let records_path = repo.repo.join(".git/mabo/workspaces");
+    assert!(repo.rabi(&["create", "shared"]).status.success());
+    let records_path = repo.repo.join(".git/rabi/workspaces");
     let mut records: serde_json::Value =
         serde_json::from_slice(&records::read(&records_path).expect("records")).expect("json");
     let missing = repo.root.join("missing");
@@ -9309,7 +9309,7 @@ fn delete_prefers_a_live_worktree_over_an_orphaned_record_with_the_same_name() {
         .expect("records")
         .push(serde_json::json!({"schema": 2, "id": format!("ws_{}", uuid::Uuid::new_v4()), "path": missing, "name": "shared"}));
     records::write(&records_path, serde_json::to_vec(&records).expect("json")).expect("records");
-    let deleted = repo.mabo(&["remove", "shared"]);
+    let deleted = repo.rabi(&["remove", "shared"]);
     assert_eq!(deleted.status.code(), Some(0), "{}", text(&deleted.stderr));
     assert!(!managed(&repo, "shared").exists());
     let records: serde_json::Value =
@@ -9324,7 +9324,7 @@ fn delete_prefers_a_live_worktree_over_an_orphaned_record_with_the_same_name() {
 #[test]
 fn ambiguous_orphaned_names_leave_all_records_untouched() {
     let repo = Repo::new();
-    let records_path = repo.repo.join(".git/mabo/workspaces");
+    let records_path = repo.repo.join(".git/rabi/workspaces");
     fs::create_dir_all(records_path.parent().expect("parent")).expect("directory");
     let records = serde_json::json!({
                 "worktrees": [
@@ -9335,7 +9335,7 @@ fn ambiguous_orphaned_names_leave_all_records_untouched() {
     let original = serde_json::to_vec(&records).expect("json");
     records::write(&records_path, &original).expect("records");
     let before = records::read(&records_path).expect("snapshot");
-    let deleted = repo.mabo(&["remove", "shared"]);
+    let deleted = repo.rabi(&["remove", "shared"]);
     assert!(!deleted.status.success());
     assert!(text(&deleted.stderr).contains("More than one workspace is named"));
     assert_eq!(records::read(records_path).expect("records"), before);
@@ -9429,10 +9429,10 @@ fn unresolved_usage_errors_honor_json_output_and_explicit_text() {
         (vec!["--json", "--output"], "text", ""),
     ] {
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
-            .env("MABO_OUTPUT", mode)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
+            .env("RABI_OUTPUT", mode)
             .output()
-            .expect("mabo");
+            .expect("rabi");
         assert_eq!(
             out.status.code(),
             Some(2),
@@ -9448,20 +9448,20 @@ fn unresolved_usage_errors_honor_json_output_and_explicit_text() {
         vec!["--output", "text"],
     ] {
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
-            .env("MABO_OUTPUT", "json")
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
+            .env("RABI_OUTPUT", "json")
             .output()
-            .expect("mabo");
+            .expect("rabi");
         assert_eq!(out.status.code(), Some(2));
         assert!(out.stdout.is_empty());
         assert!(text(&out.stderr).contains("USAGE"));
     }
     for args in [vec!["--help"], vec!["list", "--help"]] {
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
-            .env("MABO_OUTPUT", "json")
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
+            .env("RABI_OUTPUT", "json")
             .output()
-            .expect("mabo");
+            .expect("rabi");
         assert!(out.status.success());
         assert!(serde_json::from_slice::<serde_json::Value>(&out.stdout).is_err());
     }
@@ -9485,10 +9485,10 @@ fn unsupported_listing_modes_preserve_usage_output() {
             args.push(flag);
             args.extend(output_args);
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
-                .env("MABO_OUTPUT", "json")
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
+                .env("RABI_OUTPUT", "json")
                 .output()
-                .expect("mabo");
+                .expect("rabi");
             assert_eq!(out.status.code(), Some(2), "{args:?}");
             let value = assert_envelope(&out, command);
             assert_eq!(value["error"]["code"], "usage");
@@ -9507,22 +9507,22 @@ fn unsupported_listing_modes_preserve_usage_output() {
             .chain([flag, "--output", "text"])
             .collect::<Vec<_>>();
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
-            .env("MABO_OUTPUT", "json")
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
+            .env("RABI_OUTPUT", "json")
             .output()
-            .expect("mabo");
+            .expect("rabi");
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         assert!(serde_json::from_slice::<serde_json::Value>(&out.stdout).is_err());
         assert!(!out.stderr.is_empty());
     }
 
-    assert!(repo.mabo(&["repo", "add"]).status.success());
+    assert!(repo.rabi(&["repo", "add"]).status.success());
     for flag in ["--names", "--paths"] {
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &["repo", "list", flag])
-            .env("MABO_OUTPUT", "json")
+            .command(env!("CARGO_BIN_EXE_rabi"), &["repo", "list", flag])
+            .env("RABI_OUTPUT", "json")
             .output()
-            .expect("mabo");
+            .expect("rabi");
         assert!(out.status.success(), "{}", text(&out.stderr));
         if flag == "--names" {
             assert_eq!(text(&out.stdout), "repo");
@@ -9554,7 +9554,7 @@ fn every_json_command_uses_the_same_error_envelope() {
     ] {
         let mut args = command.split_whitespace().collect::<Vec<_>>();
         args.extend(["--json", "--unknown-option"]);
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(
             out.status.code(),
             Some(2),
@@ -9571,10 +9571,10 @@ fn every_json_command_uses_the_same_error_envelope() {
 fn output_environment_and_explicit_modes_have_deterministic_precedence() {
     let repo = Repo::new();
     let run = |args: &[&str], mode: &str| {
-        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
-            .env("MABO_OUTPUT", mode)
+        repo.command(env!("CARGO_BIN_EXE_rabi"), args)
+            .env("RABI_OUTPUT", mode)
             .output()
-            .expect("mabo")
+            .expect("rabi")
     };
     assert_envelope(&run(&["list"], "json"), "list");
     let out = run(&["list", "--output", "text"], "json");
@@ -9621,7 +9621,7 @@ fn non_interactive_git_gets_prompt_control_and_hooks_preserve_user_stdin() {
         "refs/remotes/origin/main",
     ]);
     let out = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["sync", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["sync", "--json"])
         .env(
             "PATH",
             format!(
@@ -9641,17 +9641,17 @@ fn non_interactive_git_gets_prompt_control_and_hooks_preserve_user_stdin() {
     );
     assert_eq!(fs::read_to_string(&marker).expect("network git ran"), "0");
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"if read ignored; then exit 94; fi; echo HOOK_EOF\"]\n",
     )
     .expect("hook");
     let mut child = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "stdin", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "stdin", "--json"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("mabo");
+        .expect("rabi");
     child
         .stdin
         .take()
@@ -9697,7 +9697,7 @@ fn successful_json_commands_share_the_envelope_and_preserve_payload_keys() {
         (&["remove", "topic", "--json"], "remove", "items"),
     ];
     for (args, command, key) in cases {
-        let out = repo.mabo(args);
+        let out = repo.rabi(args);
         assert!(
             out.status.success(),
             "{command}: {} {}",
@@ -9714,7 +9714,7 @@ fn successful_json_commands_share_the_envelope_and_preserve_payload_keys() {
     let gh_path = fake_gh_for_topic_pr(&repo);
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &gh_path)
@@ -9725,7 +9725,7 @@ fn successful_json_commands_share_the_envelope_and_preserve_payload_keys() {
     assert!(value["data"]["workspace"].is_object());
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &gh_path)
@@ -9749,7 +9749,7 @@ fn standalone_exec_preserves_stdin_for_gh_and_signal_statuses() {
     let repo = Repo::new();
     let path = gh_path(&repo, "#!/bin/sh\nread line; printf '%s' \"$line\"");
     let mut child = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["exec", "main", "--", "gh"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["exec", "main", "--", "gh"])
         .env("PATH", path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -9765,32 +9765,32 @@ fn standalone_exec_preserves_stdin_for_gh_and_signal_statuses() {
     let out = child.wait_with_output().expect("exec result");
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stdout), "sentinel");
-    let out = repo.mabo(&["exec", "main", "--", "sh", "-c", "kill -TERM $$"]);
+    let out = repo.rabi(&["exec", "main", "--", "sh", "-c", "kill -TERM $$"]);
     assert_eq!(out.status.code(), Some(143));
 }
 
 #[test]
 fn delete_partial_results_and_late_common_option_errors_keep_the_contract() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "first"]).status.success());
-    assert!(repo.mabo(&["create", "second"]).status.success());
+    assert!(repo.rabi(&["create", "first"]).status.success());
+    assert!(repo.rabi(&["create", "second"]).status.success());
     fs::write(
-        repo.repo.join(".mabo.toml"),
-        "[hooks]\npre-remove = [\"if [ \\\"$MABO_WORKSPACE\\\" = second ]; then exit 42; fi\"]\n",
+        repo.repo.join(".rabi.toml"),
+        "[hooks]\npre-remove = [\"if [ \\\"$RABI_WORKSPACE\\\" = second ]; then exit 42; fi\"]\n",
     )
     .expect("hook");
-    let out = repo.mabo(&["remove", "first", "second", "--json"]);
+    let out = repo.rabi(&["remove", "first", "second", "--json"]);
     assert_eq!(out.status.code(), Some(6));
     let value = assert_envelope(&out, "remove");
     assert_eq!(value["error"]["code"], "partial");
     assert_eq!(value["data"]["items"].as_array().expect("items").len(), 2);
     assert!(!managed(&repo, "first").exists());
     assert!(managed(&repo, "second").exists());
-    let out = repo.mabo(&["remove", "second", "--json"]);
+    let out = repo.rabi(&["remove", "second", "--json"]);
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(assert_envelope(&out, "remove")["error"]["code"], "failed");
     {
-        let out = repo.mabo(&["create", "late", "--output", "bad", "--json"]);
+        let out = repo.rabi(&["create", "late", "--output", "bad", "--json"]);
         assert_eq!(out.status.code(), Some(2));
         assert_eq!(assert_envelope(&out, "create")["error"]["code"], "usage");
     }
@@ -9799,9 +9799,9 @@ fn delete_partial_results_and_late_common_option_errors_keep_the_contract() {
 #[test]
 fn common_options_can_precede_the_command_path() {
     let repo = Repo::new();
-    assert_envelope(&repo.mabo(&["--output", "json", "list"]), "list");
-    assert_envelope(&repo.mabo(&["--json", "repo", "list"]), "repo list");
-    let out = repo.mabo(&["--no-input", "exec", "main", "--", "printf", "%s", "--json"]);
+    assert_envelope(&repo.rabi(&["--output", "json", "list"]), "list");
+    assert_envelope(&repo.rabi(&["--json", "repo", "list"]), "repo list");
+    let out = repo.rabi(&["--no-input", "exec", "main", "--", "printf", "%s", "--json"]);
     assert!(out.status.success());
     assert_eq!(text(&out.stdout), "--json");
 }
@@ -9816,10 +9816,10 @@ fn unsupported_exec_options_do_not_hide_json_usage_requests() {
                 .chain([exec, "ignored", "--json"])
                 .collect::<Vec<_>>();
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
-                .env("MABO_OUTPUT", "text")
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
+                .env("RABI_OUTPUT", "text")
                 .output()
-                .expect("mabo");
+                .expect("rabi");
             assert_eq!(out.status.code(), Some(2), "{args:?}");
             let key = if command == "repo bogus" {
                 "repo"
@@ -9876,10 +9876,10 @@ fn invalid_usage_preserves_json_across_all_command_groups() {
             args.push(invalid);
             args.extend(output_args.iter().copied());
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
-                .env("MABO_OUTPUT", env_mode)
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
+                .env("RABI_OUTPUT", env_mode)
                 .output()
-                .expect("mabo");
+                .expect("rabi");
             assert_eq!(
                 out.status.code(),
                 Some(2),
@@ -9907,10 +9907,10 @@ fn resolved_text_usage_errors_never_reenable_json() {
     ] {
         for env_mode in ["text", "json"] {
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
-                .env("MABO_OUTPUT", env_mode)
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
+                .env("RABI_OUTPUT", env_mode)
                 .output()
-                .expect("mabo");
+                .expect("rabi");
             assert_eq!(out.status.code(), Some(2), "{args:?}");
             assert!(out.stdout.is_empty(), "{args:?}: {}", text(&out.stdout));
             assert!(!out.stderr.is_empty(), "{args:?}");
@@ -9940,7 +9940,7 @@ fn help_requests_skip_option_values_and_reject_missing_values() {
                 .chain(["--json"])
                 .chain(output)
                 .collect::<Vec<_>>();
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(out.status.code(), Some(2), "{args:?}");
             let value = assert_envelope(&out, command);
             assert_eq!(value["error"]["code"], "usage");
@@ -9960,7 +9960,7 @@ fn help_requests_skip_option_values_and_reject_missing_values() {
             .split_whitespace()
             .chain(["--json", option, "--help"])
             .collect::<Vec<_>>();
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
     }
@@ -9977,10 +9977,10 @@ fn help_requests_skip_option_values_and_reject_missing_values() {
             .chain(["--help", option])
             .collect::<Vec<_>>();
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
-            .env("MABO_OUTPUT", "json")
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
+            .env("RABI_OUTPUT", "json")
             .output()
-            .expect("mabo");
+            .expect("rabi");
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
     }
@@ -9995,15 +9995,15 @@ fn output_and_help_scan_respects_command_option_arity_and_child_boundaries() {
         vec!["repo", "list", "--bogus", "--json"],
         vec!["gc", "--closed-pr", "--json", "--bogus"], // --closed-pr is a flag here.
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         assert_eq!(json_value(&out)["error"]["code"], "usage");
     }
-    let out = repo.mabo(&["list", "--repo", "alice", "--", "--json", "--help"]);
+    let out = repo.rabi(&["list", "--repo", "alice", "--", "--json", "--help"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(out.stdout.is_empty());
     assert!(text(&out.stderr).contains("Unexpected argument"));
-    let out = repo.mabo(&["create", "--purpose=--help", "--output=text"]);
+    let out = repo.rabi(&["create", "--purpose=--help", "--output=text"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(out.stdout.is_empty());
     assert!(text(&out.stderr).contains("looks like an option"));
@@ -10012,9 +10012,9 @@ fn output_and_help_scan_respects_command_option_arity_and_child_boundaries() {
 #[test]
 fn json_dirty_refusal_keeps_its_specific_cause() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "dirty"]).status.success());
+    assert!(repo.rabi(&["create", "dirty"]).status.success());
     fs::write(managed(&repo, "dirty/local.txt"), "uncommitted").unwrap();
-    let refused = repo.mabo(&["remove", "dirty", "--json"]);
+    let refused = repo.rabi(&["remove", "dirty", "--json"]);
     assert_eq!(refused.status.code(), Some(4));
     assert_eq!(json_value(&refused)["error"]["code"], "dirty");
     assert!(managed(&repo, "dirty").is_dir());
@@ -10036,7 +10036,7 @@ fn create_and_attach_setup_failures_report_text_and_json_without_duplicate_cause
                 }
                 if cause == "postCreate" {
                     fs::write(
-                        repo.repo.join(".mabo.toml"),
+                        repo.repo.join(".rabi.toml"),
                         "[hooks]\nsetup = [\"exit 23\"]\n",
                     )
                     .unwrap();
@@ -10048,9 +10048,9 @@ fn create_and_attach_setup_failures_report_text_and_json_without_duplicate_cause
                 if json {
                     args.push("--json");
                 }
-                let mut process = repo.command(env!("CARGO_BIN_EXE_mabo"), &args);
+                let mut process = repo.command(env!("CARGO_BIN_EXE_rabi"), &args);
                 if cause == "metadata" {
-                    process.env("MABO_TEST_FAIL_METADATA_SAVE", "1");
+                    process.env("RABI_TEST_FAIL_METADATA_SAVE", "1");
                 }
                 let output = process.output().unwrap();
                 let stderr = text(&output.stderr);
@@ -10097,7 +10097,7 @@ fn every_command_help_uses_workspace_vocabulary() {
     for command in commands {
         let mut args: Vec<_> = command.split_whitespace().collect();
         args.push("--help");
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert!(out.status.success(), "{command}: {}", text(&out.stderr));
         // These are retained interface and file names, not entity vocabulary.
         // No Git diagnostic wording is currently needed in help.
@@ -10118,7 +10118,7 @@ fn every_command_help_uses_workspace_vocabulary() {
 
 fn workspace_env_script(output: &Path) -> String {
     format!(
-        "printf '%s\\n' \"$MABO\" \"$MABO_WORKSPACE\" \"$MABO_WORKSPACE_ID\" \"$MABO_WORKSPACE_PATH\" \"$MABO_REPO_PATH\" > '{}'",
+        "printf '%s\\n' \"$RABI\" \"$RABI_WORKSPACE\" \"$RABI_WORKSPACE_ID\" \"$RABI_WORKSPACE_PATH\" \"$RABI_REPO_PATH\" > '{}'",
         output.display()
     )
 }
@@ -10136,7 +10136,7 @@ fn assert_workspace_env(output: &Path, repo: &Repo, name: &str, path: &Path, id:
 #[test]
 fn hooks_and_exec_export_workspace_identity() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "source"]).status.success());
+    assert!(repo.rabi(&["create", "source"]).status.success());
     let source = managed(&repo, "source");
     let post = repo.root.join("post-env");
     let pre = repo.root.join("pre-env");
@@ -10146,17 +10146,17 @@ fn hooks_and_exec_export_workspace_identity() {
         serde_json::to_string(&workspace_env_script(&post)).unwrap(),
         serde_json::to_string(&workspace_env_script(&pre)).unwrap()
     );
-    fs::write(source.join(".mabo.toml"), hook_config).unwrap();
-    // A linked source must determine the hook config, while MABO_REPO_PATH
+    fs::write(source.join(".rabi.toml"), hook_config).unwrap();
+    // A linked source must determine the hook config, while RABI_REPO_PATH
     // always identifies the primary checkout. All inherited context is stale.
     let run = |args: &[&str]| {
-        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+        repo.command(env!("CARGO_BIN_EXE_rabi"), args)
             .current_dir(&source)
-            .env("MABO", "stale")
-            .env("MABO_WORKSPACE", "stale")
-            .env("MABO_WORKSPACE_ID", "stale")
-            .env("MABO_WORKSPACE_PATH", "/stale")
-            .env("MABO_REPO_PATH", "/stale")
+            .env("RABI", "stale")
+            .env("RABI_WORKSPACE", "stale")
+            .env("RABI_WORKSPACE_ID", "stale")
+            .env("RABI_WORKSPACE_PATH", "/stale")
+            .env("RABI_REPO_PATH", "/stale")
             .output()
             .unwrap()
     };
@@ -10186,14 +10186,14 @@ fn hooks_and_exec_export_workspace_identity() {
 fn recorded_custom_directories_remain_usable_after_preference_changes() {
     for layout in ["xdg", "git"] {
         let repo = Repo::new();
-        let common = mabo::git::canonical_common_dir(&repo.repo).unwrap();
-        let project = mabo::paths::project_directory_name("repo", &common);
+        let common = rabi::git::canonical_common_dir(&repo.repo).unwrap();
+        let project = rabi::paths::project_directory_name("repo", &common);
         let custom_root = if layout == "xdg" {
             repo.root.join("custom/workspaces").join(project)
         } else {
             repo.repo.join("custom/trees")
         };
-        let set = repo.mabo(&[
+        let set = repo.rabi(&[
             "config",
             "set",
             "workspace-root",
@@ -10201,7 +10201,7 @@ fn recorded_custom_directories_remain_usable_after_preference_changes() {
         ]);
         assert!(set.status.success(), "{}", text(&set.stderr));
         for name in ["feature/delete", "feature/gc"] {
-            let out = repo.mabo(&["create", name, "--base", "main", "--json"]);
+            let out = repo.rabi(&["create", name, "--base", "main", "--json"]);
             let doc = assert_envelope(&out, "create");
             assert!(out.status.success(), "{doc}");
             assert_eq!(
@@ -10210,10 +10210,10 @@ fn recorded_custom_directories_remain_usable_after_preference_changes() {
             );
         }
         assert!(repo
-            .mabo(&["config", "unset", "workspace-root"])
+            .rabi(&["config", "unset", "workspace-root"])
             .status
             .success());
-        let listed = assert_envelope(&repo.mabo(&["list", "--json"]), "list");
+        let listed = assert_envelope(&repo.rabi(&["list", "--json"]), "list");
         for name in ["feature/delete", "feature/gc"] {
             let row = listed["data"]["workspaces"]
                 .as_array()
@@ -10223,13 +10223,13 @@ fn recorded_custom_directories_remain_usable_after_preference_changes() {
                 .expect("recorded workspace in list");
             assert_eq!(row["kind"], "workspace");
             assert_eq!(row["path"], custom_root.join(name).to_str().unwrap());
-            let located = assert_envelope(&repo.mabo(&["show", name, "--json"]), "show");
+            let located = assert_envelope(&repo.rabi(&["show", name, "--json"]), "show");
             assert_eq!(located["data"]["workspace"]["path"], row["path"]);
         }
         fs::write(repo.repo.join("updated"), "new base\n").unwrap();
         repo.git(&["add", "updated"]);
         repo.git(&["commit", "-m", "advance base"]);
-        let sync = repo.mabo(&["sync", "--all", "--json"]);
+        let sync = repo.rabi(&["sync", "--all", "--json"]);
         let doc = assert_envelope(&sync, "sync");
         assert!(sync.status.success(), "{doc}");
         assert_eq!(doc["data"]["items"].as_array().unwrap().len(), 2);
@@ -10240,7 +10240,7 @@ fn recorded_custom_directories_remain_usable_after_preference_changes() {
                 "recorded workspace must not move"
             );
         }
-        let out = repo.mabo(&["remove", "feature/delete", "--json"]);
+        let out = repo.rabi(&["remove", "feature/delete", "--json"]);
         assert!(out.status.success(), "{}", text(&out.stdout));
         assert_envelope(&out, "remove");
         assert!(!custom_root.join("feature/delete").exists());
@@ -10250,7 +10250,7 @@ fn recorded_custom_directories_remain_usable_after_preference_changes() {
             "retire this workspace",
         );
         repo.git(&["merge", "--ff-only", "refs/heads/feature/gc"]);
-        let dir = repo.repo.join(".git/mabo/workspaces");
+        let dir = repo.repo.join(".git/rabi/workspaces");
         for entry in fs::read_dir(&dir).unwrap() {
             let file = entry.unwrap().path();
             let mut record: serde_json::Value =
@@ -10258,7 +10258,7 @@ fn recorded_custom_directories_remain_usable_after_preference_changes() {
             record["createdAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
             fs::write(file, serde_json::to_vec(&record).unwrap()).unwrap();
         }
-        let out = repo.mabo(&["gc", "--apply", "--older-than", "1m", "--json"]);
+        let out = repo.rabi(&["gc", "--apply", "--older-than", "1m", "--json"]);
         let doc = assert_envelope(&out, "gc");
         assert!(out.status.success(), "{doc}");
         assert!(
@@ -10270,12 +10270,12 @@ fn recorded_custom_directories_remain_usable_after_preference_changes() {
             "{doc}"
         );
         assert!(!custom_root.join("feature/gc").exists());
-        let out = repo.mabo(&["create", "fresh", "--json"]);
+        let out = repo.rabi(&["create", "fresh", "--json"]);
         let doc = assert_envelope(&out, "create");
         assert!(out.status.success(), "{doc}");
         assert!(
             Path::new(doc["data"]["workspace"]["path"].as_str().unwrap())
-                .starts_with(repo.root.join("xdg/mabo/workspaces"))
+                .starts_with(repo.root.join("xdg/rabi/workspaces"))
         );
     }
 }
@@ -10291,7 +10291,7 @@ fn outer_run(
     if json {
         argv.push("--json");
     }
-    let out = repo.mabo(&argv);
+    let out = repo.rabi(&argv);
     assert_eq!(
         out.status.code(),
         Some(status),
@@ -10322,7 +10322,7 @@ fn outer_repo_commands_text_json_and_exit_codes() {
             "https://github.com/acme/widget.git",
         ]);
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             "[hooks]\nsetup = [\"true\"]\n",
         )
         .unwrap();
@@ -10371,7 +10371,7 @@ fn outer_repo_commands_text_json_and_exit_codes() {
         assert!(repo.repo.join(".git").is_dir());
         for (args, command, status) in [
             (
-                vec!["repo", "add", "/definitely/missing/mabo"],
+                vec!["repo", "add", "/definitely/missing/rabi"],
                 "repo add",
                 3,
             ),
@@ -10397,11 +10397,11 @@ fn outer_repo_catalog_filters_registration_and_discovery() {
     fs::create_dir_all(&discovered).unwrap();
     git_at(&repo, &discovered, &["init", "-b", "main"]);
     let ghq_path = silent_ghq_path(&repo);
-    assert!(repo.mabo(&["repo", "add"]).status.success());
+    assert!(repo.rabi(&["repo", "add"]).status.success());
     for (filter, name) in [("--registered", "repo"), ("--discovered", "discovered")] {
         for mode in ["--names", "--paths", "--json"] {
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &["repo", "list", filter, mode])
+                .command(env!("CARGO_BIN_EXE_rabi"), &["repo", "list", filter, mode])
                 .env("PATH", &ghq_path)
                 .output()
                 .unwrap();
@@ -10425,10 +10425,10 @@ fn outer_repo_catalog_filters_registration_and_discovery() {
         }
     }
     assert!(repo
-        .mabo(&["config", "set", "discover-ghq", "false"])
+        .rabi(&["config", "set", "discover-ghq", "false"])
         .status
         .success());
-    let out = repo.mabo(&["repo", "list", "--discovered", "--json"]);
+    let out = repo.rabi(&["repo", "list", "--discovered", "--json"]);
     assert_eq!(
         assert_envelope(&out, "repo list")["data"]["repos"],
         serde_json::json!([])
@@ -10451,7 +10451,7 @@ fn outer_config_commands_text_json_sources_and_exit_codes() {
             assert_eq!(config["workspace-root"]["value"], serde_json::Value::Null);
             assert_eq!(config["discover-ghq"]["value"], true);
             assert!(config.get("keep-branch").is_none());
-            for key in mabo::preferences::SUPPORTED_KEYS {
+            for key in rabi::preferences::SUPPORTED_KEYS {
                 assert_eq!(config[key]["source"], "default");
             }
         }
@@ -10511,7 +10511,7 @@ fn outer_config_commands_text_json_sources_and_exit_codes() {
         ] {
             outer_run(&repo, &args, json, command, status);
         }
-        let path = repo.home.join(".config/mabo/config.toml");
+        let path = repo.home.join(".config/rabi/config.toml");
         fs::write(path, "bad = [\n").unwrap();
         outer_run(&repo, &["config", "list"], json, "config list", 1);
     }
@@ -10522,7 +10522,7 @@ fn outer_clone_root_sources_match_the_existing_resolution_chain() {
     let repo = Repo::new();
     let get = |env_root: Option<&str>| {
         let mut command = repo.command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["config", "get", "clone-root", "--sources", "--json"],
         );
         if let Some(value) = env_root {
@@ -10546,7 +10546,7 @@ fn outer_clone_root_sources_match_the_existing_resolution_chain() {
     assert_eq!(value["source"], "default");
     assert_eq!(value["detail"], "ghq.root");
     assert!(repo
-        .mabo(&["config", "set", "clone-root", "~/config"])
+        .rabi(&["config", "set", "clone-root", "~/config"])
         .status
         .success());
     let value = get(Some("~/env"));
@@ -10559,19 +10559,19 @@ fn outer_trust_commands_text_json_and_exit_codes() {
     for json in [false, true] {
         let repo = Repo::new();
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             "[hooks]\nsetup = [\"echo hook-visible\"]\n",
         )
         .unwrap();
-        assert!(repo.mabo(&["repo", "add"]).status.success());
+        assert!(repo.rabi(&["repo", "add"]).status.success());
         let run = |args: &[&str], command: &str, status: i32| {
             let mut argv = args.to_vec();
             if json {
                 argv.push("--json");
             }
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &argv)
-                .env_remove("MABO_TRUST_ALL")
+                .command(env!("CARGO_BIN_EXE_rabi"), &argv)
+                .env_remove("RABI_TRUST_ALL")
                 .output()
                 .unwrap();
             assert_eq!(
@@ -10590,7 +10590,7 @@ fn outer_trust_commands_text_json_and_exit_codes() {
         assert!(!managed(&repo, "refused").exists());
         assert!(
             format!("{} {}", text(&untrusted.stdout), text(&untrusted.stderr))
-                .contains("mabo trust add")
+                .contains("rabi trust add")
         );
         let add = run(&["trust", "add", "repo"], "trust add", 0);
         assert!(text(&add.stderr).contains("echo hook-visible"));
@@ -10636,7 +10636,7 @@ fn outer_trust_output_escapes_repository_control_characters() {
         fs::rename(&repo.repo, &renamed).unwrap();
         repo.repo = renamed;
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             "[hooks]\nsetup = [\"echo hook-visible\"]\n",
         )
         .unwrap();
@@ -10659,8 +10659,8 @@ fn outer_trust_output_escapes_repository_control_characters() {
                 argv.push("--json");
             }
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &argv)
-                .env_remove("MABO_TRUST_ALL")
+                .command(env!("CARGO_BIN_EXE_rabi"), &argv)
+                .env_remove("RABI_TRUST_ALL")
                 .output()
                 .unwrap();
             assert!(out.status.success(), "{argv:?}: {out:?}");
@@ -10736,14 +10736,14 @@ fn outer_repo_output_escapes_repository_control_characters() {
             format!("'{visible_name}' ({visible_root})"),
         ),
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert!(out.status.success(), "{args:?}: {out:?}");
         let stdout = text(&out.stdout);
         if !stdout.contains(&expected) || stdout.contains(name) || stdout.contains('\u{1b}') {
             failures.push(format!("{args:?}: {stdout:?}"));
         }
         if args == ["repo", "show"] {
-            let shown = repo.mabo(&["repo", "show", "--json"]);
+            let shown = repo.rabi(&["repo", "show", "--json"]);
             let envelope = assert_envelope(&shown, "repo show");
             assert_eq!(envelope["data"]["repo"]["root"], root);
             assert_eq!(envelope["data"]["repo"]["name"], name);
@@ -10762,7 +10762,7 @@ fn outer_discovery_and_ambiguity_escape_repository_paths() {
     fs::rename(&repo.repo, &checkout).unwrap();
     repo.repo = checkout.clone();
     assert!(repo
-        .mabo(&["config", "set", "clone-root", clone_root.to_str().unwrap()])
+        .rabi(&["config", "set", "clone-root", clone_root.to_str().unwrap()])
         .status
         .success());
     let raw = checkout.to_str().unwrap();
@@ -10781,12 +10781,12 @@ fn outer_discovery_and_ambiguity_escape_repository_paths() {
             "widget".into(),
         ),
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert!(out.status.success(), "{args:?}: {out:?}");
         assert_eq!(text(&out.stdout), expected, "{args:?}");
         assert!(!text(&out.stderr).contains('\u{1b}'), "{args:?}: {out:?}");
     }
-    let out = repo.mabo(&["repo", "add", "--json"]);
+    let out = repo.rabi(&["repo", "add", "--json"]);
     assert!(out.status.success(), "{out:?}");
     assert_eq!(
         assert_envelope(&out, "repo add")["data"]["repo"]["rootPath"],
@@ -10801,14 +10801,14 @@ fn outer_discovery_and_ambiguity_escape_repository_paths() {
         other.to_str().unwrap(),
     ]);
     assert!(repo
-        .mabo(&["repo", "add", other.to_str().unwrap()])
+        .rabi(&["repo", "add", other.to_str().unwrap()])
         .status
         .success());
     for (args, command, lines) in [
         (vec!["repo", "show", "widget"], "repo show", 3),
         (vec!["repo", "forget", "widget"], "repo forget", 1),
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(2), "{args:?}: {out:?}");
         let stderr = text(&out.stderr);
         assert!(!stderr.contains('\u{1b}'), "{args:?}: {stderr:?}");
@@ -10818,7 +10818,7 @@ fn outer_discovery_and_ambiguity_escape_repository_paths() {
         }
         let mut args = args;
         args.push("--json");
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(2));
         let value = assert_envelope(&out, command);
         assert_eq!(value["error"]["code"], "ambiguous");
@@ -10846,7 +10846,7 @@ fn outer_config_output_escapes_paths_in_values_and_sources() {
         vec!["config", "unset", "workspace-root"],
     ] {
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .env("XDG_CONFIG_HOME", &directory)
             .output()
             .unwrap();
@@ -10874,7 +10874,7 @@ fn outer_diagnostics_escape_repository_names_and_paths() {
         (vec!["trust", "add", path], "trust add", path),
         (vec!["trust", "remove", path], "trust remove", path),
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(3), "{args:?}: {out:?}");
         let stderr = text(&out.stderr);
         let visible = reference
@@ -10885,7 +10885,7 @@ fn outer_diagnostics_escape_repository_names_and_paths() {
         assert!(!stderr.contains('\u{1b}'), "{args:?}: {stderr:?}");
         let mut json_args = args;
         json_args.push("--json");
-        let out = repo.mabo(&json_args);
+        let out = repo.rabi(&json_args);
         assert_eq!(out.status.code(), Some(3));
         let value = assert_envelope(&out, command);
         assert!(value["error"]["message"]
@@ -10899,7 +10899,7 @@ fn outer_diagnostics_escape_repository_names_and_paths() {
     let path = silent_ghq_path(&repo);
     fs::write(
         repo.root.join("bin/ghq"),
-        "#!/bin/sh\nprintf '%s\\n' \"$MABO_TEST_DIAGNOSTIC\" >&2\nexit 17\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$RABI_TEST_DIAGNOSTIC\" >&2\nexit 17\n",
     )
     .unwrap();
     for json in [false, true] {
@@ -10908,9 +10908,9 @@ fn outer_diagnostics_escape_repository_names_and_paths() {
             args.push("--json");
         }
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .env("PATH", &path)
-            .env("MABO_TEST_DIAGNOSTIC", &directory)
+            .env("RABI_TEST_DIAGNOSTIC", &directory)
             .output()
             .unwrap();
         assert!(out.status.success(), "{args:?}: {out:?}");
@@ -10933,7 +10933,7 @@ fn outer_diagnostics_escape_repository_names_and_paths() {
 #[test]
 fn outer_global_repo_selection_works_before_commands_and_preserves_child_arguments() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["repo", "add"]).status.success());
+    assert!(repo.rabi(&["repo", "add"]).status.success());
     for args in [
         vec!["-R", "repo", "list", "--json"],
         vec!["--repo=repo", "list", "--json"],
@@ -10942,7 +10942,7 @@ fn outer_global_repo_selection_works_before_commands_and_preserves_child_argumen
         vec!["list", "-R", "repo", "--json"],
     ] {
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .current_dir(&repo.home)
             .output()
             .unwrap();
@@ -10958,7 +10958,7 @@ fn outer_global_repo_selection_works_before_commands_and_preserves_child_argumen
         );
     }
     let out = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["-R", "repo", "list"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["-R", "repo", "list"])
         .current_dir(&repo.home)
         .output()
         .unwrap();
@@ -10984,7 +10984,7 @@ fn outer_global_repo_selection_works_before_commands_and_preserves_child_argumen
         );
         outer_run(&repo, &["list", "--repo="], json, "list", 2);
     }
-    let out = repo.mabo(&[
+    let out = repo.rabi(&[
         "-R",
         "repo",
         "exec",
@@ -11002,16 +11002,16 @@ fn outer_global_repo_selection_works_before_commands_and_preserves_child_argumen
 fn outer_parent_commands_require_subcommands_in_json_and_show_text_help() {
     let repo = Repo::new();
     for (command, key) in [("trust", "trust"), ("repo", "repo"), ("config", "config")] {
-        let help = repo.mabo(&[command, "--help"]);
+        let help = repo.rabi(&[command, "--help"]);
         assert_eq!(help.status.code(), Some(0));
         assert!(help.stderr.is_empty());
         assert!(text(&help.stdout).contains("USAGE"));
         for args in [vec![command], vec![command, "--output", "text"]] {
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
-                .env("MABO_OUTPUT", if args.len() == 1 { "text" } else { "json" })
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
+                .env("RABI_OUTPUT", if args.len() == 1 { "text" } else { "json" })
                 .output()
-                .expect("mabo");
+                .expect("rabi");
             assert_eq!(out.status.code(), Some(0), "{args:?}");
             assert_eq!(out.stdout, help.stdout, "{args:?}");
             assert!(out.stderr.is_empty(), "{args:?}");
@@ -11024,10 +11024,10 @@ fn outer_parent_commands_require_subcommands_in_json_and_show_text_help() {
             (vec![command, "--no-input"], "json"),
         ] {
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
-                .env("MABO_OUTPUT", mode)
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
+                .env("RABI_OUTPUT", mode)
                 .output()
-                .expect("mabo");
+                .expect("rabi");
             assert_eq!(
                 out.status.code(),
                 Some(2),
@@ -11049,7 +11049,7 @@ fn outer_parent_commands_require_subcommands_in_json_and_show_text_help() {
 #[test]
 fn outer_help_flags_ignore_output_environment() {
     let repo = Repo::new();
-    let expected = repo.mabo(&["help", "help"]);
+    let expected = repo.rabi(&["help", "help"]);
     assert_eq!(expected.status.code(), Some(0));
     assert!(text(&expected.stdout).contains("USAGE"));
     for mode in ["json", "invalid"] {
@@ -11060,10 +11060,10 @@ fn outer_help_flags_ignore_output_environment() {
             vec!["--json", "help", "--help"],
         ] {
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
-                .env("MABO_OUTPUT", mode)
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
+                .env("RABI_OUTPUT", mode)
                 .output()
-                .expect("mabo");
+                .expect("rabi");
             assert_eq!(
                 out.status.code(),
                 Some(0),
@@ -11081,7 +11081,7 @@ fn outer_help_and_version_contracts_text_json_and_exit_codes() {
     let repo = Repo::new();
     let expected: serde_json::Value =
         serde_json::from_str(include_str!("../help-data.json")).unwrap();
-    let out = repo.mabo(&["help", "--json"]);
+    let out = repo.rabi(&["help", "--json"]);
     assert_eq!(out.status.code(), Some(0));
     let value = assert_envelope(&out, "help");
     assert_eq!(value["data"], expected);
@@ -11089,7 +11089,7 @@ fn outer_help_and_version_contracts_text_json_and_exit_codes() {
     assert_eq!(expected["exitCodes"].as_object().unwrap().len(), 7);
     for (code, exit) in expected["errorCodes"].as_object().unwrap() {
         assert_eq!(
-            mabo::error::exit_for_code(code),
+            rabi::error::exit_for_code(code),
             exit.as_i64().unwrap() as i32
         );
     }
@@ -11133,10 +11133,10 @@ fn outer_help_and_version_contracts_text_json_and_exit_codes() {
         if command == "--version" {
             help_args = vec!["help", "--", "--version"];
         }
-        let text_help = repo.mabo(&help_args);
+        let text_help = repo.rabi(&help_args);
         let mut flag_args: Vec<_> = command.split_whitespace().collect();
         flag_args.push("--help");
-        let flag_help = repo.mabo(&flag_args);
+        let flag_help = repo.rabi(&flag_args);
         assert_eq!(
             text_help.status.code(),
             Some(0),
@@ -11157,27 +11157,27 @@ fn outer_help_and_version_contracts_text_json_and_exit_codes() {
             "{command}"
         );
     }
-    let out = repo.mabo(&["help", "repo", "show", "--json"]);
+    let out = repo.rabi(&["help", "repo", "show", "--json"]);
     assert_eq!(
         assert_envelope(&out, "help")["data"]["selected"],
         expected["helps"]["repo show"]
     );
     assert_eq!(
-        text(&repo.mabo(&["help"]).stdout),
-        text(&repo.mabo(&["--help"]).stdout)
+        text(&repo.rabi(&["help"]).stdout),
+        text(&repo.rabi(&["--help"]).stdout)
     );
     for args in [
         vec!["--version", "--json"],
         vec!["-v", "--json"],
         vec!["--json", "--version"],
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(0));
         let value = assert_envelope(&out, "--version");
         assert_eq!(value["data"]["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(
             value["data"]["display"],
-            text(&repo.mabo(&["--version"]).stdout)
+            text(&repo.rabi(&["--version"]).stdout)
         );
     }
     for json in [false, true] {
@@ -11208,9 +11208,9 @@ fn outer_repo_forget_ambiguous_canonical_suffix_is_usage_and_keeps_registrations
             "https://github.com/two/widget.git",
         ],
     );
-    assert!(repo.mabo(&["repo", "add"]).status.success());
+    assert!(repo.rabi(&["repo", "add"]).status.success());
     assert!(repo
-        .mabo(&["repo", "add", second.to_str().unwrap()])
+        .rabi(&["repo", "add", second.to_str().unwrap()])
         .status
         .success());
     for json in [false, true] {
@@ -11276,7 +11276,7 @@ fn unknown_commands_and_options_are_usage_errors() {
             if json {
                 argv.push("--json");
             }
-            let out = repo.mabo(&argv);
+            let out = repo.rabi(&argv);
             assert_eq!(out.status.code(), Some(2), "{argv:?}: {out:?}");
             let message = if json {
                 let doc = assert_envelope(&out, command);
@@ -11292,16 +11292,16 @@ fn unknown_commands_and_options_are_usage_errors() {
         }
     }
     // A help request follows the same precedence for every unknown option.
-    let help = repo.mabo(&["list", "--help"]);
+    let help = repo.rabi(&["list", "--help"]);
     assert!(help.status.success());
     for flag in ["--bogus", "--owner"] {
-        let out = repo.mabo(&["list", flag, "--help"]);
+        let out = repo.rabi(&["list", flag, "--help"]);
         assert!(out.status.success(), "{out:?}");
         assert_eq!(out.stdout, help.stdout);
         assert!(out.stderr.is_empty());
     }
-    assert!(repo.mabo(&["create", "child"]).status.success());
-    let out = repo.mabo(&["exec", "child", "--", "printf", "%s", "--owner"]);
+    assert!(repo.rabi(&["create", "child"]).status.success());
+    let out = repo.rabi(&["exec", "child", "--", "printf", "%s", "--owner"]);
     assert!(out.status.success(), "{out:?}");
     assert_eq!(text(&out.stdout), "--owner");
 }
@@ -11309,7 +11309,7 @@ fn unknown_commands_and_options_are_usage_errors() {
 #[test]
 fn unknown_config_keys_are_rejected_without_rewriting() {
     let repo = Repo::new();
-    let path = repo.home.join(".config/mabo/config.toml");
+    let path = repo.home.join(".config/rabi/config.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     for key in [
         "bogus",
@@ -11326,7 +11326,7 @@ fn unknown_config_keys_are_rejected_without_rewriting() {
             vec!["config", "set", "discover-ghq", "false"],
             vec!["config", "unset", "discover-ghq"],
         ] {
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
             assert!(
                 text(&out.stderr).contains(&format!("Unknown key '{key}'")),
@@ -11340,8 +11340,8 @@ fn unknown_config_keys_are_rejected_without_rewriting() {
 #[test]
 fn inspection_list_and_exec_leave_record_bytes_and_mtime_unchanged() {
     let repo = Repo::new();
-    let created = json_value(&repo.mabo(&["create", "feature", "--purpose", "task", "--json"]));
-    let dir = repo.repo.join(".git/mabo/workspaces");
+    let created = json_value(&repo.rabi(&["create", "feature", "--purpose", "task", "--json"]));
+    let dir = repo.repo.join(".git/rabi/workspaces");
     let file = dir.join(format!(
         "{}.json",
         created["data"]["workspace"]["id"].as_str().unwrap()
@@ -11367,7 +11367,7 @@ fn inspection_list_and_exec_leave_record_bytes_and_mtime_unchanged() {
         vec!["exec", "feature", "--", "true"],
         vec!["exec", "feature", "--", "sh", "-c", "exit 17"],
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(
             out.status.code(),
             Some(if args.last() == Some(&"exit 17") {
@@ -11390,14 +11390,14 @@ fn inspection_list_and_exec_leave_record_bytes_and_mtime_unchanged() {
 #[test]
 fn gc_age_selection_uses_creation_time() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "old"]).status.success());
+    assert!(repo.rabi(&["create", "old"]).status.success());
     land_branch(&repo, "old");
-    let dir = repo.repo.join(".git/mabo/workspaces");
+    let dir = repo.repo.join(".git/rabi/workspaces");
     let mut record =
         serde_json::from_slice::<serde_json::Value>(&records::read(&dir).unwrap()).unwrap();
     record["worktrees"][0]["createdAt"] = serde_json::json!("2000-01-01T00:00:00.000Z");
     records::write(&dir, serde_json::to_vec(&record).unwrap()).unwrap();
-    let out = repo.mabo(&["gc", "--older-than", "14d", "--json"]);
+    let out = repo.rabi(&["gc", "--older-than", "14d", "--json"]);
     assert!(out.status.success(), "{out:?}");
     let doc = json_value(&out);
     let candidates = doc["data"]["items"].as_array().unwrap();
@@ -11430,7 +11430,7 @@ fn selectors_resolve_linked_workspaces_across_inspection_and_mutations() {
         let cwd = path.join("nested");
         fs::create_dir_all(&cwd).unwrap();
         let run = |args: &[&str]| {
-            repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+            repo.command(env!("CARGO_BIN_EXE_rabi"), args)
                 .current_dir(&cwd)
                 .output()
                 .unwrap()
@@ -11500,7 +11500,7 @@ fn selectors_fail_before_side_effects_for_missing_ambiguous_and_foreign_dot() {
         .unwrap()
         .status
         .success());
-    let records = repo.repo.join(".git/mabo/workspaces");
+    let records = repo.repo.join(".git/rabi/workspaces");
     let before = records::read(&records).unwrap();
     for command in ["show", "path", "set", "exec", "sync", "remove"] {
         for (selector, code, error) in [
@@ -11523,7 +11523,7 @@ fn selectors_fail_before_side_effects_for_missing_ambiguous_and_foreign_dot() {
             if command != "exec" {
                 args.push("--json");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(
                 out.status.code(),
                 Some(code),
@@ -11552,7 +11552,7 @@ fn selectors_fail_before_side_effects_for_missing_ambiguous_and_foreign_dot() {
             args.push("--json");
         }
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .current_dir(&repo.home)
             .output()
             .unwrap();
@@ -11579,7 +11579,7 @@ fn primary_and_unmanaged_checkout_inspection_and_default_exec() {
     ]);
     for (cwd, kind) in [(&repo.repo, "primary"), (&unmanaged, "workspace")] {
         let run = |args: &[&str]| {
-            repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+            repo.command(env!("CARGO_BIN_EXE_rabi"), args)
                 .current_dir(cwd)
                 .output()
                 .unwrap()
@@ -11622,7 +11622,7 @@ fn primary_and_unmanaged_checkout_inspection_and_default_exec() {
 #[test]
 fn set_unset_takes_one_field_and_preserves_the_following_selector() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "feature/auth"]).status.success());
+    assert!(repo.rabi(&["create", "feature/auth"]).status.success());
     for args in [
         vec!["set", "--unset", "purpose", "feature/auth", "--json"],
         vec!["set", "--unset=purpose", "feature/auth", "--json"],
@@ -11646,7 +11646,7 @@ fn set_unset_takes_one_field_and_preserves_the_following_selector() {
         ],
     ] {
         assert!(repo
-            .mabo(&[
+            .rabi(&[
                 "set",
                 "feature/auth",
                 "--purpose",
@@ -11658,7 +11658,7 @@ fn set_unset_takes_one_field_and_preserves_the_following_selector() {
             ])
             .status
             .success());
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(
             out.status.code(),
             Some(0),
@@ -11675,7 +11675,7 @@ fn set_unset_takes_one_field_and_preserves_the_following_selector() {
             assert_eq!(workspace["base"], "refs/heads/main");
         }
         assert_eq!(workspace["links"]["pr"]["number"], 42);
-        let primary = assert_envelope(&repo.mabo(&["show", "--json"]), "show");
+        let primary = assert_envelope(&repo.rabi(&["show", "--json"]), "show");
         assert!(primary["data"]["workspace"]["id"].is_null());
     }
 }
@@ -11683,9 +11683,9 @@ fn set_unset_takes_one_field_and_preserves_the_following_selector() {
 #[test]
 fn set_updates_and_unsets_every_intent_field_atomically() {
     let repo = Repo::new();
-    let created = json_value(&repo.mabo(&["create", "intent", "--json"]));
+    let created = json_value(&repo.rabi(&["create", "intent", "--json"]));
     let run = |args: &[&str]| {
-        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+        repo.command(env!("CARGO_BIN_EXE_rabi"), args)
             .current_dir(managed(&repo, "intent"))
             .output()
             .unwrap()
@@ -11715,7 +11715,7 @@ fn set_updates_and_unsets_every_intent_field_atomically() {
         created["data"]["workspace"]["createdAt"]
     );
     assert!(workspace["updatedAt"].is_string());
-    let records = repo.repo.join(".git/mabo/workspaces");
+    let records = repo.repo.join(".git/rabi/workspaces");
     for args in [
         vec!["set", "--unset", "unknown", "--json"],
         vec!["set", "--base", "does-not-exist", "--json"],
@@ -11764,7 +11764,7 @@ fn inspection_usage_keeps_stdout_clean() {
         vec!["list", "--kind", "bogus"],
         vec!["exec", "main", "true"],
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         assert!(out.stdout.is_empty(), "{args:?}: {}", text(&out.stdout));
         if args[0] == "exec" {
@@ -11773,8 +11773,8 @@ fn inspection_usage_keeps_stdout_clean() {
     }
     // Exec ignores the output default even for a missing command delimiter.
     let out = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["exec", "main", "true"])
-        .env("MABO_OUTPUT", "json")
+        .command(env!("CARGO_BIN_EXE_rabi"), &["exec", "main", "true"])
+        .env("RABI_OUTPUT", "json")
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
@@ -11785,7 +11785,7 @@ fn inspection_usage_keeps_stdout_clean() {
 #[test]
 fn inspection_leaves_orphaned_checkout_observations_null() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "gone", "--base", "main"]);
+    let created = repo.rabi(&["create", "gone", "--base", "main"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     repo.git(&["branch", "--set-upstream-to=main", "gone"]);
     let path = managed(&repo, "gone");
@@ -11799,7 +11799,7 @@ fn inspection_leaves_orphaned_checkout_observations_null() {
         };
         fs::write(&trace, "").unwrap();
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .env("GIT_TRACE2_EVENT", &trace)
             .output()
             .unwrap();
@@ -11859,7 +11859,7 @@ fn assert_inspection_uses_checkout_config(include: bool) {
         "refs/remotes/origin/checkout-upstream",
         "HEAD",
     ]);
-    let created = repo.mabo(&["create", "local", "--base", "main", "--json"]);
+    let created = repo.rabi(&["create", "local", "--base", "main", "--json"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     let path = managed(&repo, "local");
     repo.git(&["config", "branch.local.remote", "origin"]);
@@ -11920,7 +11920,7 @@ fn assert_inspection_uses_checkout_config(include: bool) {
         "refs/heads/checkout-upstream"
     );
     assert_eq!(upstream_name(&repo, "local"), "origin/checkout-upstream");
-    let store = repo.repo.join(".git/mabo/workspaces");
+    let store = repo.repo.join(".git/rabi/workspaces");
     let before = records::read(&store).unwrap();
     for gone in [false, true] {
         if gone {
@@ -11934,7 +11934,7 @@ fn assert_inspection_uses_checkout_config(include: bool) {
                     vec!["list", "--json"]
                 };
                 let out = repo
-                    .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                    .command(env!("CARGO_BIN_EXE_rabi"), &args)
                     .current_dir(cwd)
                     .output()
                     .unwrap();
@@ -11990,7 +11990,7 @@ fn list_filters_current_links_upstream_and_all_known_repositories() {
         .success());
     for path in [&repo.repo, &second] {
         assert!(repo
-            .mabo(&["repo", "add", path.to_str().unwrap()])
+            .rabi(&["repo", "add", path.to_str().unwrap()])
             .status
             .success());
     }
@@ -12024,7 +12024,7 @@ fn list_filters_current_links_upstream_and_all_known_repositories() {
     repo.git(&["add", "behind"]);
     repo.git(&["commit", "-m", "behind"]);
     let run = |args: &[&str]| {
-        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+        repo.command(env!("CARGO_BIN_EXE_rabi"), args)
             .current_dir(&path)
             .output()
             .unwrap()
@@ -12045,10 +12045,10 @@ fn list_filters_current_links_upstream_and_all_known_repositories() {
     ] {
         let out = repo
             .command(
-                env!("CARGO_BIN_EXE_mabo"),
+                env!("CARGO_BIN_EXE_rabi"),
                 &["list", "--kind", "workspace", flag],
             )
-            .env("MABO_OUTPUT", "json")
+            .env("RABI_OUTPUT", "json")
             .output()
             .unwrap();
         assert_eq!(text(&out.stdout), expected);
@@ -12102,7 +12102,7 @@ fn linked_urls_respect_repository_identity_and_url_navigation() {
         "https://github.com/acme/demo/pull/42",
         "https://github.com/acme/demo/issues/73?plain=1#details",
     ] {
-        let out = repo.mabo(&["show", selector, "--json"]);
+        let out = repo.rabi(&["show", selector, "--json"]);
         assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
         assert_eq!(
             json_value(&out)["data"]["workspace"]["repo"]["name"],
@@ -12113,7 +12113,7 @@ fn linked_urls_respect_repository_identity_and_url_navigation() {
         "https://github.com/other/demo/pull/42",
         "https://github.com/acme/demo/issues/42",
     ] {
-        let out = repo.mabo(&["show", selector, "--json"]);
+        let out = repo.rabi(&["show", selector, "--json"]);
         assert_eq!(out.status.code(), Some(3));
         assert_eq!(json_value(&out)["error"]["code"], "not_found");
     }
@@ -12124,13 +12124,13 @@ fn linked_urls_respect_repository_identity_and_url_navigation() {
         "https://github.com/acme/demo/tree/42",
     ] {
         assert_eq!(
-            repo.mabo(&["show", selector, "--json"]).status.code(),
+            repo.rabi(&["show", selector, "--json"]).status.code(),
             Some(2),
             "{selector}"
         );
     }
     assert!(repo
-        .mabo(&[
+        .rabi(&[
             "set",
             "linked",
             "--pr",
@@ -12139,7 +12139,7 @@ fn linked_urls_respect_repository_identity_and_url_navigation() {
         .status
         .success());
     assert_eq!(
-        repo.mabo(&[
+        repo.rabi(&[
             "show",
             "https://github.com/acme/demo/pull/42?diff=split#discussion",
             "--json"
@@ -12153,15 +12153,15 @@ fn linked_urls_respect_repository_identity_and_url_navigation() {
 #[test]
 fn dot_primary_can_be_set_and_synced_and_is_protected_from_deletion() {
     let repo = Repo::new();
-    let out = repo.mabo(&["set", "--purpose", "primary context", "--json"]);
+    let out = repo.rabi(&["set", "--purpose", "primary context", "--json"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let value = assert_envelope(&out, "set");
     assert_eq!(value["data"]["workspace"]["kind"], "primary");
     assert_eq!(value["data"]["workspace"]["managed"], false);
     assert_eq!(value["data"]["workspace"]["purpose"], "primary context");
-    let out = repo.mabo(&["sync", ".", "--json"]);
+    let out = repo.rabi(&["sync", ".", "--json"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stdout));
-    let out = repo.mabo(&[
+    let out = repo.rabi(&[
         "remove",
         ".",
         "--discard-changes",
@@ -12185,12 +12185,12 @@ fn all_repos_uses_enabled_discovery_without_importing_workspace_records() {
         .unwrap()
         .status
         .success());
-    assert!(repo.mabo(&["repo", "add"]).status.success());
+    assert!(repo.rabi(&["repo", "add"]).status.success());
     assert!(repo
-        .mabo(&["config", "set", "clone-root", clones.to_str().unwrap()])
+        .rabi(&["config", "set", "clone-root", clones.to_str().unwrap()])
         .status
         .success());
-    let out = repo.mabo(&["list", "--all-repos", "--json"]);
+    let out = repo.rabi(&["list", "--all-repos", "--json"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let value = assert_envelope(&out, "list");
     assert_eq!(value["data"]["repos"].as_array().unwrap().len(), 2);
@@ -12200,10 +12200,10 @@ fn all_repos_uses_enabled_discovery_without_importing_workspace_records() {
         .iter()
         .any(|r| r["name"] == "github.com/acme/discovered"));
     assert!(repo
-        .mabo(&["config", "set", "discover-ghq", "false"])
+        .rabi(&["config", "set", "discover-ghq", "false"])
         .status
         .success());
-    let out = repo.mabo(&["list", "--all-repos", "--json"]);
+    let out = repo.rabi(&["list", "--all-repos", "--json"]);
     assert_eq!(
         json_value(&out)["data"]["repos"].as_array().unwrap().len(),
         1
@@ -12213,7 +12213,7 @@ fn all_repos_uses_enabled_discovery_without_importing_workspace_records() {
         vec!["list", "--names", "--paths"],
         vec!["list", "--paths", "--json"],
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(2));
     }
 }
@@ -12235,16 +12235,16 @@ fn delete_link_selector_cannot_change_paths_after_a_hook_relinks_it() {
         .unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
     let script = format!(
-        "test \"$MABO_WORKSPACE\" = one && '{}' set one --unset pr && '{}' set two --pr 42",
-        env!("CARGO_BIN_EXE_mabo"),
-        env!("CARGO_BIN_EXE_mabo")
+        "test \"$RABI_WORKSPACE\" = one && '{}' set one --unset pr && '{}' set two --pr 42",
+        env!("CARGO_BIN_EXE_rabi"),
+        env!("CARGO_BIN_EXE_rabi")
     );
     let config = format!(
-        "[hooks]\npre-remove = [{}, \"printf '%s\\n' \\\"$MABO_WORKSPACE_PATH\\\" > hook-target\"]\n",
+        "[hooks]\npre-remove = [{}, \"printf '%s\\n' \\\"$RABI_WORKSPACE_PATH\\\" > hook-target\"]\n",
         serde_json::to_string(&script).unwrap()
     );
-    fs::write(repo.repo.join(".mabo.toml"), config).unwrap();
-    let out = repo.mabo(&[
+    fs::write(repo.repo.join(".rabi.toml"), config).unwrap();
+    let out = repo.rabi(&[
         "remove",
         "pr:42",
         "--discard-changes",
@@ -12263,7 +12263,7 @@ fn delete_link_selector_cannot_change_paths_after_a_hook_relinks_it() {
     );
     assert!(!second.join("hook-target").exists());
     assert_eq!(
-        json_value(&repo.mabo(&["show", "pr:42", "--json"]))["data"]["workspace"]["name"],
+        json_value(&repo.rabi(&["show", "pr:42", "--json"]))["data"]["workspace"]["name"],
         "two"
     );
 }
@@ -12271,13 +12271,13 @@ fn delete_link_selector_cannot_change_paths_after_a_hook_relinks_it() {
 #[test]
 fn set_invalid_base_reports_a_clear_error_without_git_stderr() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "topic"]).status.success());
+    assert!(repo.rabi(&["create", "topic"]).status.success());
     for json in [false, true] {
         let mut args = vec!["set", "topic", "--base", "does-not-exist"];
         if json {
             args.push("--json");
         }
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(2));
         let message = if json {
             let doc = assert_envelope(&out, "set");
@@ -12299,18 +12299,18 @@ fn set_invalid_base_reports_a_clear_error_without_git_stderr() {
 #[test]
 fn delete_stops_before_next_hook_when_checkout_directory_is_replaced() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "topic"]).status.success());
+    assert!(repo.rabi(&["create", "topic"]).status.success());
     let path = managed(&repo, "topic");
-    let replace = "mv \"$MABO_WORKSPACE_PATH\" \"$MABO_WORKSPACE_PATH.old\" && mkdir \"$MABO_WORKSPACE_PATH\" && cp \"$MABO_WORKSPACE_PATH.old/.git\" \"$MABO_WORKSPACE_PATH/.git\"";
+    let replace = "mv \"$RABI_WORKSPACE_PATH\" \"$RABI_WORKSPACE_PATH.old\" && mkdir \"$RABI_WORKSPACE_PATH\" && cp \"$RABI_WORKSPACE_PATH.old/.git\" \"$RABI_WORKSPACE_PATH/.git\"";
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         format!(
             "[hooks]\npre-remove = [{}, \"touch second-hook-ran\"]\n",
             serde_json::to_string(replace).unwrap()
         ),
     )
     .unwrap();
-    let out = repo.mabo(&[
+    let out = repo.rabi(&[
         "remove",
         "topic",
         "--discard-changes",
@@ -12346,20 +12346,20 @@ fn assert_delete_with_hooks(record_in_hook: bool) {
     }
     if !record_in_hook {
         for path in &paths {
-            mabo::metadata::write(&repo.repo, path, &Default::default()).unwrap();
+            rabi::metadata::write(&repo.repo, path, &Default::default()).unwrap();
         }
     }
     let first = if record_in_hook {
-        format!("'{}' set . --purpose recorded", env!("CARGO_BIN_EXE_mabo"))
+        format!("'{}' set . --purpose recorded", env!("CARGO_BIN_EXE_rabi"))
     } else {
         "true".to_owned()
     };
     let commands = [
         first,
-        "printf '%s\\n' \"$MABO_WORKSPACE\" >> \"$MABO_REPO_PATH/hooks-ran\"".to_owned(),
+        "printf '%s\\n' \"$RABI_WORKSPACE\" >> \"$RABI_REPO_PATH/hooks-ran\"".to_owned(),
     ];
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         format!(
             "[hooks]\npre-remove = {}\n",
             serde_json::to_string(&commands).unwrap()
@@ -12367,10 +12367,10 @@ fn assert_delete_with_hooks(record_in_hook: bool) {
     )
     .unwrap();
     // Exercise persisted trust rather than the test helper's trust-all override.
-    assert!(repo.mabo(&["trust", "add"]).status.success());
+    assert!(repo.rabi(&["trust", "add"]).status.success());
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "remove",
                 "one",
@@ -12381,7 +12381,7 @@ fn assert_delete_with_hooks(record_in_hook: bool) {
                 "--json",
             ],
         )
-        .env_remove("MABO_TRUST_ALL")
+        .env_remove("RABI_TRUST_ALL")
         .output()
         .unwrap();
     assert_eq!(
@@ -12396,7 +12396,7 @@ fn assert_delete_with_hooks(record_in_hook: bool) {
         "one\ntwo\n"
     );
     assert!(paths.iter().all(|path| !path.exists()));
-    let records = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
+    let records = records::read(repo.repo.join(".git/rabi/workspaces")).unwrap();
     let records: serde_json::Value = serde_json::from_slice(&records).unwrap();
     assert!(records["worktrees"].as_array().unwrap().is_empty());
 }
@@ -12406,21 +12406,21 @@ fn delete_stops_when_a_new_record_is_replaced_between_hooks() {
     let repo = Repo::new();
     let path = managed(&repo, "topic");
     repo.git(&["worktree", "add", "-b", "topic", path.to_str().unwrap()]);
-    let bin = env!("CARGO_BIN_EXE_mabo");
+    let bin = env!("CARGO_BIN_EXE_rabi");
     let commands = [
         format!("'{bin}' set . --purpose recorded"),
-        format!("rm \"$MABO_REPO_PATH/.git/mabo/workspaces/$MABO_WORKSPACE_ID.json\" && '{bin}' set . --purpose replacement"),
+        format!("rm \"$RABI_REPO_PATH/.git/rabi/workspaces/$RABI_WORKSPACE_ID.json\" && '{bin}' set . --purpose replacement"),
         "touch third-hook-ran".to_owned(),
     ];
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         format!(
             "[hooks]\npre-remove = {}\n",
             serde_json::to_string(&commands).unwrap()
         ),
     )
     .unwrap();
-    let out = repo.mabo(&[
+    let out = repo.rabi(&[
         "remove",
         "topic",
         "--discard-changes",
@@ -12436,7 +12436,7 @@ fn delete_stops_when_a_new_record_is_replaced_between_hooks() {
     );
     assert!(path.is_dir());
     assert!(!path.join("third-hook-ran").exists());
-    let out = repo.mabo(&["show", "topic", "--json"]);
+    let out = repo.rabi(&["show", "topic", "--json"]);
     assert_eq!(
         assert_envelope(&out, "show")["data"]["workspace"]["purpose"],
         "replacement"
@@ -12466,7 +12466,7 @@ fn selector_urls_strip_the_final_link_suffix_for_reserved_repository_names() {
                 .status
                 .success());
             for selector in [url.clone(), format!("{url}/?plain=1#details")] {
-                let out = repo.mabo(&["show", &selector, "--json"]);
+                let out = repo.rabi(&["show", &selector, "--json"]);
                 assert_eq!(
                     out.status.code(),
                     Some(0),
@@ -12480,7 +12480,7 @@ fn selector_urls_strip_the_final_link_suffix_for_reserved_repository_names() {
                 );
             }
             let foreign = format!("https://github.com/other/{repo_name}/{kind}/{number}");
-            let out = repo.mabo(&["show", &foreign, "--json"]);
+            let out = repo.rabi(&["show", &foreign, "--json"]);
             assert_eq!(out.status.code(), Some(3));
             assert_eq!(assert_envelope(&out, "show")["error"]["code"], "not_found");
         }
@@ -12520,7 +12520,7 @@ fn selector_urls_use_the_terminal_pair_for_selection_and_deletion() {
                 .status
                 .success());
             for selector in [url.clone(), format!("{url}/?plain=1#details")] {
-                let out = repo.mabo(&["show", &selector, "--json"]);
+                let out = repo.rabi(&["show", &selector, "--json"]);
                 assert_eq!(
                     out.status.code(),
                     Some(0),
@@ -12534,7 +12534,7 @@ fn selector_urls_use_the_terminal_pair_for_selection_and_deletion() {
                     "{selector}, url_link={url_link}"
                 );
             }
-            let out = repo.mabo(&[
+            let out = repo.rabi(&[
                 "remove",
                 &url,
                 "--discard-changes",
@@ -12573,7 +12573,7 @@ fn create_and_set_save_link_numbers_from_the_terminal_pair() {
             let out = if command == "create" {
                 repo.create_recorded(&[command, "linked", flag, &url, "--json"])
             } else {
-                repo.mabo(&[command, "linked", flag, &url, "--json"])
+                repo.rabi(&[command, "linked", flag, &url, "--json"])
             };
             assert_eq!(
                 out.status.code(),
@@ -12587,7 +12587,7 @@ fn create_and_set_save_link_numbers_from_the_terminal_pair() {
                     ["workspace"];
             assert_eq!(workspace["links"][field]["number"], number);
             assert_eq!(workspace["links"][field]["url"], url);
-            let out = repo.mabo(&["show", "linked", "--json"]);
+            let out = repo.rabi(&["show", "linked", "--json"]);
             assert_eq!(
                 assert_envelope(&out, "show")["data"]["workspace"]["links"][field]["number"],
                 number
@@ -12610,7 +12610,7 @@ fn delete_current_does_not_revalidate_the_resolved_branch_name() {
     ]);
     fs::write(tree.join("dirty"), "local changes\n").unwrap();
     let refused = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["remove", "."])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["remove", "."])
         .current_dir(&tree)
         .output()
         .unwrap();
@@ -12618,7 +12618,7 @@ fn delete_current_does_not_revalidate_the_resolved_branch_name() {
     assert!(text(&refused.stderr).contains("topic+fix"));
     fs::remove_file(tree.join("dirty")).unwrap();
     let out = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["remove", ".", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["remove", ".", "--json"])
         .current_dir(&tree)
         .output()
         .unwrap();
@@ -12664,7 +12664,7 @@ fn assert_github_recreates_orphaned_checkout(issue: bool) {
     }
     let checkout = || {
         repo.command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "create",
                 if issue { "--issue" } else { "--pr" },
@@ -12688,7 +12688,7 @@ fn assert_github_recreates_orphaned_checkout(issue: bool) {
     if issue {
         repo.git(&["branch", "-D", branch]);
     }
-    let stale = repo.mabo(&["show", branch, "--json"]);
+    let stale = repo.rabi(&["show", branch, "--json"]);
     assert!(stale.status.success(), "{}", text(&stale.stdout));
     assert_eq!(json_value(&stale)["data"]["workspace"]["orphaned"], true);
 
@@ -12710,7 +12710,7 @@ fn assert_github_recreates_orphaned_checkout(issue: bool) {
         assert!(directory.join("topic.txt").is_file());
         assert_eq!(upstream_name(&repo, branch), "origin/topic");
     }
-    let listed = repo.mabo(&["list", "--kind", "workspace", "--json"]);
+    let listed = repo.rabi(&["list", "--kind", "workspace", "--json"]);
     assert!(listed.status.success(), "{}", text(&listed.stdout));
     let listed = json_value(&listed);
     assert_eq!(
@@ -12739,7 +12739,7 @@ fn github_reuse_propagates_orphan_ambiguity_and_git_read_errors() {
                 )
                 .expect("issue");
             }
-            let file = repo.repo.join(".git/mabo/workspaces");
+            let file = repo.repo.join(".git/rabi/workspaces");
             let body = serde_json::json!({"worktrees": [
                 {"schema": 2, "id": format!("ws_{}", uuid::Uuid::new_v4()), "path": repo.root.join("missing-one"), "name": name},
                 {"schema": 2, "id": format!("ws_{}", uuid::Uuid::new_v4()), "path": repo.root.join("missing-two"), "name": name}
@@ -12769,13 +12769,13 @@ exec "$REAL_GIT" "$@"
                 fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).expect("chmod");
             }
             fs::write(
-                repo.repo.join(".mabo.toml"),
+                repo.repo.join(".rabi.toml"),
                 "[hooks]\nsetup = [\"touch should-not-run\"]\n",
             )
             .expect("hooks");
             let result = repo
                 .command(
-                    env!("CARGO_BIN_EXE_mabo"),
+                    env!("CARGO_BIN_EXE_rabi"),
                     &[
                         "create",
                         if issue { "--issue" } else { "--pr" },
@@ -12786,7 +12786,7 @@ exec "$REAL_GIT" "$@"
                 )
                 .env("PATH", &path)
                 .env("REAL_GIT", text(&real_git.stdout))
-                .env_remove("MABO_TRUST_ALL")
+                .env_remove("RABI_TRUST_ALL")
                 .output()
                 .expect("checkout");
             assert_eq!(
@@ -12830,7 +12830,7 @@ fn github_reuses_plain_git_checkout_with_a_git_only_branch_name() {
         "HEAD",
     ]);
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"touch should-not-run\"]\n",
     )
     .expect("hooks");
@@ -12840,11 +12840,11 @@ fn github_reuses_plain_git_checkout_with_a_git_only_branch_name() {
         .expect("list");
     let result = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &path)
-        .env_remove("MABO_TRUST_ALL")
+        .env_remove("RABI_TRUST_ALL")
         .output()
         .expect("checkout");
     assert!(
@@ -12870,7 +12870,7 @@ fn github_reuses_plain_git_checkout_with_a_git_only_branch_name() {
         .expect("list");
     assert_eq!(before.stdout, after.stdout);
     assert!(!managed(&repo, "topic+fix").exists());
-    let linked = repo.mabo(&["path", "pr:7"]);
+    let linked = repo.rabi(&["path", "pr:7"]);
     assert!(linked.status.success(), "{}", text(&linked.stderr));
     assert!(paths_match(&text(&linked.stdout), &checkout));
 }
@@ -12902,13 +12902,13 @@ fn github_propagates_ambiguous_internal_lookups() {
             ]);
         }
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             "[hooks]\nsetup = [\"touch should-not-run\"]\n",
         )
         .expect("hooks");
         let result = repo
             .command(
-                env!("CARGO_BIN_EXE_mabo"),
+                env!("CARGO_BIN_EXE_rabi"),
                 &[
                     "create",
                     if issue { "--issue" } else { "--pr" },
@@ -12918,7 +12918,7 @@ fn github_propagates_ambiguous_internal_lookups() {
                 ],
             )
             .env("PATH", &path)
-            .env_remove("MABO_TRUST_ALL")
+            .env_remove("RABI_TRUST_ALL")
             .output()
             .expect("checkout");
         assert_eq!(
@@ -12929,7 +12929,7 @@ fn github_propagates_ambiguous_internal_lookups() {
             text(&result.stderr)
         );
         assert_eq!(json_value(&result)["error"]["code"], "ambiguous");
-        assert!(!repo.repo.join(".git/maboroshi").exists());
+        assert!(!repo.repo.join(".git/rabi").exists());
     }
 }
 
@@ -12947,7 +12947,7 @@ fn gc_removes_a_recorded_git_only_branch_name() {
     ]);
     let recorded = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["set", "--purpose", "internal lookup"],
         )
         .current_dir(&checkout)
@@ -12955,7 +12955,7 @@ fn gc_removes_a_recorded_git_only_branch_name() {
         .expect("record");
     assert!(recorded.status.success(), "{}", text(&recorded.stderr));
     land_branch(&repo, "topic+fix");
-    let result = repo.mabo(&["gc", "--apply"]);
+    let result = repo.rabi(&["gc", "--apply"]);
     assert!(
         result.status.success(),
         "{}\n{}",
@@ -12984,7 +12984,7 @@ fn user_selectors_still_reject_git_only_branch_names() {
         vec!["remove", "topic+fix", "--json"],
         vec!["exec", "topic+fix", "--", "true"],
     ] {
-        let result = repo.mabo(&args);
+        let result = repo.rabi(&args);
         assert_eq!(
             result.status.code(),
             Some(2),
@@ -13015,7 +13015,7 @@ fn github_attaches_a_git_only_head_branch_without_user_name_validation() {
     fs::write(&gh, script.replace("\"topic\"", "\"topic+fix\"")).expect("PR head");
     let result = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--pr", "7", "--reuse", "--json"],
         )
         .env("PATH", &path)
@@ -13040,11 +13040,11 @@ fn unified_create_reuse_is_idempotent_and_never_repeats_setup() {
     fs::write(repo.repo.join(".gitignore"), "secret\n").unwrap();
     fs::write(repo.repo.join("secret"), "first").unwrap();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"echo setup >> calls; exit 21\"]\n",
     )
     .unwrap();
-    let first = repo.mabo(&[
+    let first = repo.rabi(&[
         "create",
         "retry",
         "--base",
@@ -13062,12 +13062,12 @@ fn unified_create_reuse_is_idempotent_and_never_repeats_setup() {
         first["data"]["copy"]["copied"],
         serde_json::json!(["secret"])
     );
-    let records = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
+    let records = records::read(repo.repo.join(".git/rabi/workspaces")).unwrap();
     fs::write(repo.repo.join("secret"), "changed").unwrap();
     for _ in 0..2 {
         let out = repo
             .command(
-                env!("CARGO_BIN_EXE_mabo"),
+                env!("CARGO_BIN_EXE_rabi"),
                 &[
                     "create",
                     "retry",
@@ -13079,7 +13079,7 @@ fn unified_create_reuse_is_idempotent_and_never_repeats_setup() {
                     "--json",
                 ],
             )
-            .env_remove("MABO_TRUST_ALL")
+            .env_remove("RABI_TRUST_ALL")
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", text(&out.stdout));
@@ -13101,7 +13101,7 @@ fn unified_create_reuse_is_idempotent_and_never_repeats_setup() {
         "first"
     );
     assert_eq!(
-        records::read(repo.repo.join(".git/mabo/workspaces")).unwrap(),
+        records::read(repo.repo.join(".git/rabi/workspaces")).unwrap(),
         records
     );
     repo.git(&["branch", "another"]);
@@ -13113,7 +13113,7 @@ fn unified_create_reuse_is_idempotent_and_never_repeats_setup() {
         vec!["create", "retry", "--detach", "--reuse", "--json"],
         vec!["create", "retry", "--json"],
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
         assert_eq!(json_value(&out)["error"]["code"], "exists");
     }
@@ -13137,13 +13137,13 @@ fn unified_create_uses_the_default_base_and_supports_named_branch_and_detach() {
             .unwrap()
             .stdout,
     );
-    let out = repo.mabo(&["create", "from-default", "--json"]);
+    let out = repo.rabi(&["create", "from-default", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stdout));
     let doc = json_value(&out);
     assert_eq!(doc["data"]["workspace"]["head"], default_head);
     assert_eq!(doc["data"]["workspace"]["base"], "refs/remotes/origin/main");
     for _ in 0..2 {
-        let out = repo.mabo(&[
+        let out = repo.rabi(&[
             "create", "snapshot", "--detach", "--base", "main", "--reuse", "--json",
         ]);
         assert!(out.status.success(), "{}", text(&out.stdout));
@@ -13155,7 +13155,7 @@ fn unified_create_uses_the_default_base_and_supports_named_branch_and_detach() {
     }
     repo.git(&["branch", "existing"]);
     for _ in 0..2 {
-        let out = repo.mabo(&[
+        let out = repo.rabi(&[
             "create", "review", "--branch", "existing", "--issue", "12", "--reuse", "--json",
         ]);
         assert!(out.status.success(), "{}", text(&out.stdout));
@@ -13213,7 +13213,7 @@ fn assert_review10_source_url_case_variants(pr: bool) {
         let url = format!("https://{repository}/{kind}/7{suffix}");
         let out = repo
             .command(
-                env!("CARGO_BIN_EXE_mabo"),
+                env!("CARGO_BIN_EXE_rabi"),
                 &[
                     "create",
                     "review",
@@ -13253,7 +13253,7 @@ fn review10_create_rejects_foreign_repository_host_and_source_kind_urls() {
         &gh,
         script.replace(
             "#!/bin/sh\n",
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$MABO_REVIEW10_GH_LOG\"\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$RABI_REVIEW10_GH_LOG\"\n",
         ),
     )
     .unwrap();
@@ -13275,7 +13275,7 @@ fn review10_create_rejects_foreign_repository_host_and_source_kind_urls() {
             fs::write(&log, "").unwrap();
             let out = repo
                 .command(
-                    env!("CARGO_BIN_EXE_mabo"),
+                    env!("CARGO_BIN_EXE_rabi"),
                     &[
                         "create",
                         "review",
@@ -13285,7 +13285,7 @@ fn review10_create_rejects_foreign_repository_host_and_source_kind_urls() {
                     ],
                 )
                 .env("PATH", &path)
-                .env("MABO_REVIEW10_GH_LOG", &log)
+                .env("RABI_REVIEW10_GH_LOG", &log)
                 .output()
                 .unwrap();
             assert_eq!(out.status.code(), Some(2), "{url}: {}", text(&out.stdout));
@@ -13295,7 +13295,7 @@ fn review10_create_rejects_foreign_repository_host_and_source_kind_urls() {
                 "repo view --json url,owner,name\n"
             );
             assert!(!managed(&repo, "review").exists());
-            assert!(!repo.repo.join(".git/mabo/workspaces").exists());
+            assert!(!repo.repo.join(".git/rabi/workspaces").exists());
         }
     }
 }
@@ -13312,7 +13312,7 @@ fn unified_create_issue_defaults_and_pr_issue_links() {
     )
     .unwrap();
     let run = |args: &[&str]| {
-        repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+        repo.command(env!("CARGO_BIN_EXE_rabi"), args)
             .env("PATH", &path)
             .output()
             .unwrap()
@@ -13382,13 +13382,13 @@ fn adopt_and_forget_preserve_git_and_skip_setup() {
     ]);
     fs::write(outside.join("local"), "keep").unwrap();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"touch setup-ran\"]\npre-remove = [\"exit 23\"]\n",
     )
     .unwrap();
     let adopt = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "adopt",
                 outside.to_str().unwrap(),
@@ -13405,7 +13405,7 @@ fn adopt_and_forget_preserve_git_and_skip_setup() {
                 "--json",
             ],
         )
-        .env_remove("MABO_TRUST_ALL")
+        .env_remove("RABI_TRUST_ALL")
         .output()
         .unwrap();
     assert!(adopt.status.success(), "{}", text(&adopt.stdout));
@@ -13422,11 +13422,11 @@ fn adopt_and_forget_preserve_git_and_skip_setup() {
     );
     assert_eq!(doc["data"]["workspace"]["base"], "refs/heads/main");
     assert!(!outside.join("setup-ran").exists());
-    let again = repo.mabo(&["adopt", outside.to_str().unwrap(), "--json"]);
+    let again = repo.rabi(&["adopt", outside.to_str().unwrap(), "--json"]);
     assert_eq!(again.status.code(), Some(4));
     assert_eq!(json_value(&again)["error"]["code"], "exists");
     assert!(repo
-        .mabo(&["set", "main", "--issue", "99"])
+        .rabi(&["set", "main", "--issue", "99"])
         .status
         .success());
     let before = repo
@@ -13434,7 +13434,7 @@ fn adopt_and_forget_preserve_git_and_skip_setup() {
         .output()
         .unwrap()
         .stdout;
-    let forgotten = repo.mabo(&["forget", "pr:12", "issue:34", ".", "--json"]);
+    let forgotten = repo.rabi(&["forget", "pr:12", "issue:34", ".", "--json"]);
     assert!(forgotten.status.success(), "{}", text(&forgotten.stdout));
     let doc = assert_envelope(&forgotten, "forget");
     let items = doc["data"]["items"].as_array().unwrap();
@@ -13450,11 +13450,11 @@ fn adopt_and_forget_preserve_git_and_skip_setup() {
     assert_eq!(fs::read_to_string(outside.join("local")).unwrap(), "keep");
     assert!(branch_listed(&repo, "topic+fix"));
     assert!(
-        records::read_to_string(repo.repo.join(".git/mabo/workspaces"))
+        records::read_to_string(repo.repo.join(".git/rabi/workspaces"))
             .unwrap()
             .contains("\"worktrees\": []")
     );
-    let show = repo.mabo(&["show", ".", "--json"]);
+    let show = repo.rabi(&["show", ".", "--json"]);
     assert_eq!(
         json_value(&show)["data"]["workspace"]["purpose"],
         serde_json::Value::Null
@@ -13481,12 +13481,12 @@ fn adopt_rejects_foreign_primary_subdirectories_missing_paths_and_name_collision
         &plain.join("subdir"),
         &repo.root.join("missing"),
     ] {
-        let out = repo.mabo(&["adopt", path.to_str().unwrap(), "--base", "main", "--json"]);
+        let out = repo.rabi(&["adopt", path.to_str().unwrap(), "--base", "main", "--json"]);
         assert_eq!(out.status.code(), Some(3), "{}", text(&out.stdout));
         assert_eq!(json_value(&out)["error"]["code"], "not_found");
     }
-    assert!(repo.mabo(&["create", "taken"]).status.success());
-    let out = repo.mabo(&[
+    assert!(repo.rabi(&["create", "taken"]).status.success());
+    let out = repo.rabi(&[
         "adopt",
         plain.to_str().unwrap(),
         "--name",
@@ -13494,7 +13494,7 @@ fn adopt_rejects_foreign_primary_subdirectories_missing_paths_and_name_collision
         "--json",
     ]);
     assert_eq!(out.status.code(), Some(4));
-    let out = repo.mabo(&[
+    let out = repo.rabi(&[
         "adopt",
         plain.to_str().unwrap(),
         "--base",
@@ -13503,10 +13503,10 @@ fn adopt_rejects_foreign_primary_subdirectories_missing_paths_and_name_collision
     ]);
     assert_eq!(out.status.code(), Some(2));
     assert!(repo
-        .mabo(&["adopt", plain.to_str().unwrap()])
+        .rabi(&["adopt", plain.to_str().unwrap()])
         .status
         .success());
-    assert!(repo.mabo(&["forget", "existing"]).status.success());
+    assert!(repo.rabi(&["forget", "existing"]).status.success());
     assert!(plain.exists());
     assert!(branch_listed(&repo, "existing"));
 }
@@ -13522,7 +13522,7 @@ fn unified_create_rejects_conflicting_sources() {
         vec!["--detach", "--pr", "7"],
     ] {
         let args = [vec!["create", "feature", "--json"], args].concat();
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(2), "{}", text(&out.stdout));
         assert_eq!(json_value(&out)["error"]["code"], "usage");
     }
@@ -13532,12 +13532,12 @@ fn unified_create_rejects_conflicting_sources() {
 fn unified_create_branch_accepts_git_only_names_with_an_explicit_workspace_name() {
     let repo = Repo::new();
     repo.git(&["branch", "topic+fix"]);
-    let out = repo.mabo(&["create", "review", "--branch", "topic+fix", "--json"]);
+    let out = repo.rabi(&["create", "review", "--branch", "topic+fix", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stdout));
     let doc = json_value(&out);
     assert_eq!(doc["data"]["workspace"]["name"], "review");
     assert_eq!(doc["data"]["workspace"]["branch"], "topic+fix");
-    let out = repo.mabo(&[
+    let out = repo.rabi(&[
         "create",
         "review",
         "--branch",
@@ -13553,26 +13553,26 @@ fn unified_create_branch_accepts_git_only_names_with_an_explicit_workspace_name(
 fn create_reuse_and_adopt_do_not_treat_a_missing_directory_as_a_live_workspace() {
     let repo = Repo::new();
     repo.git(&["branch", "existing"]);
-    let out = repo.mabo(&["create", "--branch", "existing", "--json"]);
+    let out = repo.rabi(&["create", "--branch", "existing", "--json"]);
     assert!(out.status.success());
     let directory = managed(&repo, "existing");
     fs::remove_dir_all(&directory).unwrap();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"true\"]\n",
     )
     .unwrap();
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--branch", "existing", "--reuse", "--json"],
         )
-        .env_remove("MABO_TRUST_ALL")
+        .env_remove("RABI_TRUST_ALL")
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(4));
     assert_eq!(json_value(&out)["error"]["code"], "untrusted");
-    let out = repo.mabo(&["adopt", directory.to_str().unwrap(), "--json"]);
+    let out = repo.rabi(&["adopt", directory.to_str().unwrap(), "--json"]);
     assert_eq!(out.status.code(), Some(3));
     assert_eq!(json_value(&out)["error"]["code"], "not_found");
 }
@@ -13589,19 +13589,19 @@ fn adopt_forget_and_create_escape_control_characters_in_paths() {
         outside.to_str().unwrap(),
         "main",
     ]);
-    let out = repo.mabo(&["adopt", outside.to_str().unwrap(), "--name", "review"]);
+    let out = repo.rabi(&["adopt", outside.to_str().unwrap(), "--name", "review"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(text(&out.stdout).contains("existing\\u{a}\\u{1b}[31m"));
     assert!(!text(&out.stdout).contains('\u{1b}'));
-    let out = repo.mabo(&["forget", "review"]);
+    let out = repo.rabi(&["forget", "review"]);
     assert!(out.status.success());
     assert_eq!(text(&out.stdout), "Forgot workspace 'review'");
     let root = repo.root.join("new\n\u{1b}[31m");
     assert!(repo
-        .mabo(&["config", "set", "workspace-root", root.to_str().unwrap()])
+        .rabi(&["config", "set", "workspace-root", root.to_str().unwrap()])
         .status
         .success());
-    let out = repo.mabo(&["create", "escaped"]);
+    let out = repo.rabi(&["create", "escaped"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(text(&out.stdout).contains("new\\u{a}\\u{1b}[31m"));
     assert!(!text(&out.stdout).contains('\u{1b}'));
@@ -13611,15 +13611,15 @@ fn adopt_forget_and_create_escape_control_characters_in_paths() {
 fn create_reuse_propagates_corrupt_record_errors() {
     let repo = Repo::new();
     repo.git(&["branch", "existing"]);
-    let created = repo.mabo(&["create", "--branch", "existing", "--json"]);
+    let created = repo.rabi(&["create", "--branch", "existing", "--json"]);
     assert!(created.status.success());
     let id = json_value(&created)["data"]["workspace"]["id"]
         .as_str()
         .unwrap()
         .to_owned();
-    let file = repo.repo.join(format!(".git/mabo/workspaces/{id}.json"));
+    let file = repo.repo.join(format!(".git/rabi/workspaces/{id}.json"));
     fs::write(&file, "{invalid").unwrap();
-    let out = repo.mabo(&["create", "--branch", "existing", "--reuse", "--json"]);
+    let out = repo.rabi(&["create", "--branch", "existing", "--reuse", "--json"]);
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(json_value(&out)["error"]["code"], "failed");
     assert_eq!(fs::read_to_string(file).unwrap(), "{invalid");
@@ -13632,20 +13632,20 @@ fn review2_branch_usage_compares_branches_when_workspace_names_cross() {
         let repo = Repo::new();
         repo.git(&["branch", "feature"]);
         repo.git(&["branch", "review"]);
-        let first = repo.mabo(&["create", "review", "--branch", "feature", "--json"]);
+        let first = repo.rabi(&["create", "review", "--branch", "feature", "--json"]);
         assert!(first.status.success(), "{}", text(&first.stdout));
         let mut args = vec!["create", "second", "--branch", "review", "--json"];
         if reuse {
             args.push("--reuse");
         }
-        let second = repo.mabo(&args);
+        let second = repo.rabi(&args);
         assert!(second.status.success(), "{}", text(&second.stdout));
         let doc = assert_envelope(&second, "create");
         assert_eq!(doc["data"]["workspace"]["name"], "second");
         assert_eq!(doc["data"]["workspace"]["branch"], "review");
         assert_eq!(doc["data"]["source"]["reused"], false);
         for branch in ["feature", "review", "main"] {
-            let out = repo.mabo(&["create", "third", "--branch", branch, "--json"]);
+            let out = repo.rabi(&["create", "third", "--branch", branch, "--json"]);
             assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
             assert_eq!(json_value(&out)["error"]["code"], "exists");
         }
@@ -13660,17 +13660,17 @@ fn review2_pr_usage_compares_branches_when_workspace_names_cross() {
         let path = fake_gh_for_topic_pr(&repo);
         publish_pr_topic(&repo);
         repo.git(&["branch", "feature"]);
-        let first = repo.mabo(&["create", "topic", "--branch", "feature", "--json"]);
+        let first = repo.rabi(&["create", "topic", "--branch", "feature", "--json"]);
         assert!(first.status.success(), "{}", text(&first.stdout));
         let mut args = vec!["create", "second", "--pr", "7", "--json"];
         if reuse {
             args.push("--reuse");
         }
         let run = |args: &[&str]| {
-            repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+            repo.command(env!("CARGO_BIN_EXE_rabi"), args)
                 .env("PATH", &path)
                 .output()
-                .expect("mabo")
+                .expect("rabi")
         };
         let second = run(&args);
         assert!(second.status.success(), "{}", text(&second.stdout));
@@ -13692,11 +13692,11 @@ fn review2_reuse_with_an_explicit_name_does_not_reuse_a_branch_alias() {
         let repo = Repo::new();
         let path = fake_gh_for_topic_pr(&repo);
         publish_pr_topic(&repo);
-        let first = repo.mabo(&["create", "review", "--branch", "origin/topic", "--json"]);
+        let first = repo.rabi(&["create", "review", "--branch", "origin/topic", "--json"]);
         assert!(first.status.success(), "{}", text(&first.stdout));
         let out = repo
             .command(
-                env!("CARGO_BIN_EXE_mabo"),
+                env!("CARGO_BIN_EXE_rabi"),
                 &[
                     "create",
                     "topic",
@@ -13708,11 +13708,11 @@ fn review2_reuse_with_an_explicit_name_does_not_reuse_a_branch_alias() {
             )
             .env("PATH", &path)
             .output()
-            .expect("mabo");
+            .expect("rabi");
         assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
         assert_eq!(json_value(&out)["error"]["code"], "exists");
         assert!(!managed(&repo, "topic").exists());
-        let reused = repo.mabo(&["create", "review", "--branch", "topic", "--reuse", "--json"]);
+        let reused = repo.rabi(&["create", "review", "--branch", "topic", "--reuse", "--json"]);
         assert!(reused.status.success(), "{}", text(&reused.stdout));
         assert_eq!(json_value(&reused)["data"]["source"]["reused"], true);
     }
@@ -13722,13 +13722,13 @@ fn review2_reuse_with_an_explicit_name_does_not_reuse_a_branch_alias() {
 fn review2_explicit_detached_name_can_match_another_workspaces_branch() {
     let repo = Repo::new();
     repo.git(&["branch", "feature"]);
-    let first = repo.mabo(&["create", "review", "--branch", "feature", "--json"]);
+    let first = repo.rabi(&["create", "review", "--branch", "feature", "--json"]);
     assert!(first.status.success(), "{}", text(&first.stdout));
-    let new = repo.mabo(&["create", "feature", "--json"]);
+    let new = repo.rabi(&["create", "feature", "--json"]);
     assert_eq!(new.status.code(), Some(4));
     assert_eq!(json_value(&new)["error"]["code"], "exists_remote");
     for reused in [false, true] {
-        let out = repo.mabo(&["create", "feature", "--detach", "--reuse", "--json"]);
+        let out = repo.rabi(&["create", "feature", "--detach", "--reuse", "--json"]);
         assert!(out.status.success(), "{}", text(&out.stdout));
         let doc = assert_envelope(&out, "create");
         assert_eq!(doc["data"]["workspace"]["name"], "feature");
@@ -13778,7 +13778,7 @@ fn review1_create_rejects_names_outside_the_workspace_root_for_every_source() {
             ]
             .concat();
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
                 .env("PATH", &path)
                 .output()
                 .unwrap();
@@ -13830,7 +13830,7 @@ fn review1_create_rejects_destination_escaping_through_a_parent_symlink() {
         fs::create_dir_all(&outside).unwrap();
         symlink(&outside, root.join("escape")).unwrap();
         assert!(repo
-            .mabo(&["config", "set", "workspace-root", root.to_str().unwrap()])
+            .rabi(&["config", "set", "workspace-root", root.to_str().unwrap()])
             .status
             .success());
         let args = [
@@ -13840,7 +13840,7 @@ fn review1_create_rejects_destination_escaping_through_a_parent_symlink() {
         ]
         .concat();
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .env("PATH", gh_path)
             .output()
             .unwrap();
@@ -13866,7 +13866,7 @@ fn review1_reuse_links_resolve_bare_numbers_in_the_selected_repository() {
     ]);
     repo.git(&["branch", "existing"]);
     let run = |issue: &str| {
-        repo.mabo(&[
+        repo.rabi(&[
             "create", "review", "--branch", "existing", "--issue", issue, "--reuse", "--json",
         ])
     };
@@ -13889,7 +13889,7 @@ fn review1_reuse_links_resolve_bare_numbers_in_the_selected_repository() {
         assert!(out.status.success(), "{reference}: {}", text(&out.stdout));
     }
     assert!(repo
-        .mabo(&[
+        .rabi(&[
             "set",
             "review",
             "--issue",
@@ -13907,7 +13907,7 @@ fn review1_reuse_links_share_terminal_url_normalization_with_selectors() {
     repo.git(&["branch", "existing"]);
     // The earlier /pull/123 belongs to owner/repo, not the subject number.
     let url = "https://git.example.com/pull/123/issues/42";
-    let out = repo.mabo(&[
+    let out = repo.rabi(&[
         "create", "review", "--branch", "existing", "--issue", url, "--json",
     ]);
     assert!(out.status.success(), "{}", text(&out.stdout));
@@ -13915,9 +13915,9 @@ fn review1_reuse_links_share_terminal_url_normalization_with_selectors() {
         "https://git.example.com/pull/123/issues/42/?plain=1#details",
         "https://git.example.com/pull/123/issue/42#details",
     ] {
-        let show = repo.mabo(&["show", url, "--json"]);
+        let show = repo.rabi(&["show", url, "--json"]);
         assert!(show.status.success(), "{}", text(&show.stdout));
-        let out = repo.mabo(&[
+        let out = repo.rabi(&[
             "create", "review", "--branch", "existing", "--issue", url, "--reuse", "--json",
         ]);
         assert!(out.status.success(), "{}", text(&out.stdout));
@@ -13937,7 +13937,7 @@ fn review1_adopt_name_is_used_inside_the_workspace_root() {
         tree.to_str().unwrap(),
         "main",
     ]);
-    let out = repo.mabo(&[
+    let out = repo.rabi(&[
         "adopt",
         tree.to_str().unwrap(),
         "--name",
@@ -13947,7 +13947,7 @@ fn review1_adopt_name_is_used_inside_the_workspace_root() {
     assert!(out.status.success(), "{}", text(&out.stdout));
     assert_eq!(json_value(&out)["data"]["workspace"]["name"], "review");
     for command in ["show", "path", "forget"] {
-        let out = repo.mabo(&[command, "review", "--json"]);
+        let out = repo.rabi(&[command, "review", "--json"]);
         assert!(out.status.success(), "{command}: {}", text(&out.stdout));
     }
     assert!(tree.is_dir());
@@ -13958,7 +13958,7 @@ fn review1_existing_branch_creation_does_not_require_a_default_or_source_head() 
     let repo = Repo::new();
     repo.git(&["branch", "-m", "develop"]);
     repo.git(&["checkout", "--orphan", "unborn"]);
-    let out = repo.mabo(&["create", "review", "--branch", "develop", "--json"]);
+    let out = repo.rabi(&["create", "review", "--branch", "develop", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stdout));
     let doc = json_value(&out);
     assert_eq!(doc["data"]["workspace"]["branch"], "develop");
@@ -13976,7 +13976,7 @@ fn review9_pr_unknown_base_stays_unknown_after_default_returns() {
     repo.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--pr", "7", "--json"],
         )
         .env("PATH", path)
@@ -14002,10 +14002,10 @@ fn review9_pr_unknown_base_stays_unknown_after_default_returns() {
     repo.git(&["commit", "-m", "advance default"]);
     // Keep sync local so the PR's former remote default cannot hide the fallback.
     repo.git(&["remote", "remove", "origin"]);
-    let store = repo.repo.join(".git/mabo/workspaces");
+    let store = repo.repo.join(".git/rabi/workspaces");
     let record_before = records::read(&store).unwrap();
     for selector in ["topic", "--all"] {
-        let out = repo.mabo(&["sync", selector, "--json"]);
+        let out = repo.rabi(&["sync", selector, "--json"]);
         assert!(out.status.success(), "{}", text(&out.stdout));
         let doc = json_value(&out);
         assert_eq!(doc["data"]["items"][0]["status"], "base-unknown", "{doc}");
@@ -14026,7 +14026,7 @@ fn review1_pr_creation_does_not_require_a_default_or_source_head() {
     repo.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "--pr", "7", "--json"],
         )
         .env("PATH", path)
@@ -14055,7 +14055,7 @@ fn review3_reuse_rejects_a_prunable_checkout_with_a_missing_git_file() {
         } else if source == "detach" {
             create.push("--detach");
         }
-        let out = repo.mabo(&create);
+        let out = repo.rabi(&create);
         assert!(out.status.success(), "{}", text(&out.stdout));
         let directory = managed(&repo, "review");
         fs::remove_file(directory.join(".git")).unwrap();
@@ -14066,9 +14066,9 @@ fn review3_reuse_rejects_a_prunable_checkout_with_a_missing_git_file() {
             .unwrap();
         assert!(text(&listed.stdout).contains("prunable"));
         let records_before =
-            records::read_to_string(repo.repo.join(".git/mabo/workspaces")).unwrap();
+            records::read_to_string(repo.repo.join(".git/rabi/workspaces")).unwrap();
         create.push("--reuse");
-        let out = repo.mabo(&create);
+        let out = repo.rabi(&create);
         assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
         let doc = assert_envelope(&out, "create");
         assert_eq!(doc["error"]["code"], "failed");
@@ -14079,7 +14079,7 @@ fn review3_reuse_rejects_a_prunable_checkout_with_a_missing_git_file() {
         );
         assert!(message.contains(".git"), "{message}");
         assert_eq!(
-            records::read_to_string(repo.repo.join(".git/mabo/workspaces")).unwrap(),
+            records::read_to_string(repo.repo.join(".git/rabi/workspaces")).unwrap(),
             records_before
         );
         assert!(directory.is_dir());
@@ -14091,10 +14091,10 @@ fn review3_reuse_rejects_a_prunable_checkout_with_a_missing_git_file() {
 fn review3_reuse_rejects_git_discovery_falling_back_to_the_parent_checkout() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["config", "set", "workspace-root", "workspaces"])
+        .rabi(&["config", "set", "workspace-root", "workspaces"])
         .status
         .success());
-    assert!(repo.mabo(&["create", "review"]).status.success());
+    assert!(repo.rabi(&["create", "review"]).status.success());
     let directory = repo.repo.join("workspaces/review");
     fs::remove_file(directory.join(".git")).unwrap();
     let observed = repo
@@ -14104,7 +14104,7 @@ fn review3_reuse_rejects_git_discovery_falling_back_to_the_parent_checkout() {
         .unwrap();
     assert!(observed.status.success());
     assert_eq!(Path::new(&text(&observed.stdout)), repo.repo);
-    let out = repo.mabo(&["create", "review", "--reuse", "--json"]);
+    let out = repo.rabi(&["create", "review", "--reuse", "--json"]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
     assert_eq!(assert_envelope(&out, "create")["error"]["code"], "failed");
 }
@@ -14113,8 +14113,8 @@ fn review3_reuse_rejects_git_discovery_falling_back_to_the_parent_checkout() {
 fn review3_reuse_rejects_a_checkout_pointing_to_a_foreign_common_directory() {
     let repo = Repo::new();
     let foreign = Repo::new();
-    assert!(repo.mabo(&["create", "review"]).status.success());
-    assert!(foreign.mabo(&["create", "other"]).status.success());
+    assert!(repo.rabi(&["create", "review"]).status.success());
+    assert!(foreign.rabi(&["create", "other"]).status.success());
     let directory = managed(&repo, "review");
     fs::copy(
         managed(&foreign, "other").join(".git"),
@@ -14128,14 +14128,14 @@ fn review3_reuse_rejects_a_checkout_pointing_to_a_foreign_common_directory() {
         .unwrap();
     assert!(observed.status.success());
     assert_eq!(Path::new(&text(&observed.stdout)), directory);
-    let out = repo.mabo(&["create", "review", "--reuse", "--json"]);
+    let out = repo.rabi(&["create", "review", "--reuse", "--json"]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
     assert_eq!(assert_envelope(&out, "create")["error"]["code"], "failed");
 }
 
 fn assert_reuse_rejects_swapped_git_dir(primary: bool) {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "review"]).status.success());
+    assert!(repo.rabi(&["create", "review"]).status.success());
     let directory = managed(&repo, "review");
     if primary {
         fs::write(
@@ -14144,7 +14144,7 @@ fn assert_reuse_rejects_swapped_git_dir(primary: bool) {
         )
         .unwrap();
     } else {
-        assert!(repo.mabo(&["create", "other"]).status.success());
+        assert!(repo.rabi(&["create", "other"]).status.success());
         fs::copy(managed(&repo, "other").join(".git"), directory.join(".git")).unwrap();
     }
     let observed = repo
@@ -14164,18 +14164,18 @@ fn assert_reuse_rejects_swapped_git_dir(primary: bool) {
         text(&actual_branch.stdout),
         if primary { "main" } else { "other" }
     );
-    let records_before = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
+    let records_before = records::read(repo.repo.join(".git/rabi/workspaces")).unwrap();
     let gitfile_before = fs::read(directory.join(".git")).unwrap();
     for source in [vec![], vec!["--branch", "review"]] {
         let mut args = vec!["create", "review", "--reuse", "--json"];
         args.extend(source);
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
         let doc = assert_envelope(&out, "create");
         assert_eq!(doc["error"]["code"], "failed");
         assert!(doc["error"]["message"].as_str().unwrap().contains(".git"));
         assert_eq!(
-            records::read(repo.repo.join(".git/mabo/workspaces")).unwrap(),
+            records::read(repo.repo.join(".git/rabi/workspaces")).unwrap(),
             records_before
         );
         assert_eq!(fs::read(directory.join(".git")).unwrap(), gitfile_before);
@@ -14224,7 +14224,7 @@ fn review5_user_names_reject_reserved_selectors_without_records() {
             } else {
                 vec!["create", name, "--detach", "--json"]
             };
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(
                 out.status.code(),
                 Some(2),
@@ -14232,7 +14232,7 @@ fn review5_user_names_reject_reserved_selectors_without_records() {
                 text(&out.stdout)
             );
             assert_eq!(assert_envelope(&out, command)["error"]["code"], "usage");
-            assert!(!repo.repo.join(".git/mabo/workspaces").exists());
+            assert!(!repo.repo.join(".git/rabi/workspaces").exists());
             assert!(directory.join(".git").is_file());
         }
     }
@@ -14250,14 +14250,14 @@ fn review3_forget_matches_show_and_list_after_record_removal() {
         let repo = Repo::new();
         let (selector, after_selector, expected_managed) = match location {
             "inside" => {
-                assert!(repo.mabo(&["create", "review"]).status.success());
+                assert!(repo.rabi(&["create", "review"]).status.success());
                 ("review", "review", true)
             }
             "outside" => {
                 let outside = repo.root.join("plain");
                 repo.git(&["worktree", "add", "-b", "review", outside.to_str().unwrap()]);
                 assert!(repo
-                    .mabo(&["adopt", outside.to_str().unwrap()])
+                    .rabi(&["adopt", outside.to_str().unwrap()])
                     .status
                     .success());
                 ("review", "review", false)
@@ -14277,7 +14277,7 @@ fn review3_forget_matches_show_and_list_after_record_removal() {
                     directory.to_str().unwrap(),
                 ]);
                 assert!(repo
-                    .mabo(&["adopt", directory.to_str().unwrap(), "--name", "review"])
+                    .rabi(&["adopt", directory.to_str().unwrap(), "--name", "review"])
                     .status
                     .success());
                 (
@@ -14289,7 +14289,7 @@ fn review3_forget_matches_show_and_list_after_record_removal() {
             _ => (".", ".", false),
         };
         assert!(repo
-            .mabo(&[
+            .rabi(&[
                 "set",
                 selector,
                 "--purpose",
@@ -14303,13 +14303,13 @@ fn review3_forget_matches_show_and_list_after_record_removal() {
             ])
             .status
             .success());
-        let out = repo.mabo(&["forget", selector, "issue:12", "--json"]);
+        let out = repo.rabi(&["forget", selector, "issue:12", "--json"]);
         assert!(out.status.success(), "{}", text(&out.stdout));
         let forgotten = assert_envelope(&out, "forget");
-        let show = repo.mabo(&["show", after_selector, "--json"]);
+        let show = repo.rabi(&["show", after_selector, "--json"]);
         assert!(show.status.success(), "{}", text(&show.stdout));
         let shown = assert_envelope(&show, "show");
-        let list = repo.mabo(&["list", "--json"]);
+        let list = repo.rabi(&["list", "--json"]);
         assert!(list.status.success(), "{}", text(&list.stdout));
         let listed = assert_envelope(&list, "list");
         let tree = &shown["data"]["workspace"];
@@ -14355,13 +14355,13 @@ fn review1_forget_returns_the_workspace_after_removing_its_record() {
         "--json",
     ]);
     assert!(out.status.success());
-    let out = repo.mabo(&["forget", "review", "issue:12", "--json"]);
+    let out = repo.rabi(&["forget", "review", "issue:12", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stdout));
     let doc = json_value(&out);
     for item in doc["data"]["items"].as_array().unwrap() {
         assert_eq!(item["ok"], true);
         let tree = &item["workspace"];
-        let shown = repo.mabo(&["show", "review", "--json"]);
+        let shown = repo.rabi(&["show", "review", "--json"]);
         assert!(shown.status.success());
         assert_eq!(tree, &json_value(&shown)["data"]["workspace"]);
         for field in [
@@ -14412,7 +14412,7 @@ fn assert_adopt_rejects_swapped_git_dir(primary: bool) {
     assert!(observed.status.success());
     assert_eq!(Path::new(&text(&observed.stdout)), directory);
     assert_eq!(
-        mabo::git::canonical_common_dir(&directory).unwrap(),
+        rabi::git::canonical_common_dir(&directory).unwrap(),
         repo.repo.join(".git")
     );
     let branch = repo
@@ -14423,7 +14423,7 @@ fn assert_adopt_rejects_swapped_git_dir(primary: bool) {
     assert!(branch.status.success());
     assert_eq!(text(&branch.stdout), if primary { "main" } else { "other" });
     let gitfile = fs::read(directory.join(".git")).unwrap();
-    let out = repo.mabo(&[
+    let out = repo.rabi(&[
         "adopt",
         directory.to_str().unwrap(),
         "--name",
@@ -14432,7 +14432,7 @@ fn assert_adopt_rejects_swapped_git_dir(primary: bool) {
     ]);
     assert!(!out.status.success(), "{}", text(&out.stdout));
     assert_eq!(assert_envelope(&out, "adopt")["error"]["code"], "not_found");
-    assert!(!repo.repo.join(".git/mabo/workspaces").exists());
+    assert!(!repo.repo.join(".git/rabi/workspaces").exists());
     assert_eq!(fs::read(directory.join(".git")).unwrap(), gitfile);
 }
 
@@ -14475,12 +14475,12 @@ fn assert_review11_primary_refused(pr: bool, named: bool) {
             repo.git(&["checkout", "-b", "topic", "origin/topic"]);
         }
         if recorded {
-            let out = repo.mabo(&["set", ".", "--purpose", "Primary intent", "--json"]);
+            let out = repo.rabi(&["set", ".", "--purpose", "Primary intent", "--json"]);
             assert!(out.status.success(), "{}", text(&out.stdout));
         }
-        let before = json_value(&repo.mabo(&["show", ".", "--json"]));
+        let before = json_value(&repo.rabi(&["show", ".", "--json"]));
         let primary_name = before["data"]["workspace"]["name"].as_str().unwrap();
-        let record_path = repo.repo.join(".git/mabo/workspaces");
+        let record_path = repo.repo.join(".git/rabi/workspaces");
         let records_before = records::read(&record_path).ok();
         let mut args = vec!["create"];
         if named {
@@ -14492,7 +14492,7 @@ fn assert_review11_primary_refused(pr: bool, named: bool) {
             "--json",
         ]);
         let run = |args: &[&str]| {
-            repo.command(env!("CARGO_BIN_EXE_mabo"), args)
+            repo.command(env!("CARGO_BIN_EXE_rabi"), args)
                 .env("PATH", &path)
                 .output()
                 .unwrap()
@@ -14519,7 +14519,7 @@ fn assert_review11_primary_refused(pr: bool, named: bool) {
             assert_envelope(&reuse, "create")["error"],
             refused_doc["error"]
         );
-        assert_eq!(json_value(&repo.mabo(&["show", ".", "--json"])), before);
+        assert_eq!(json_value(&repo.rabi(&["show", ".", "--json"])), before);
         assert!(!managed(&repo, primary_name).exists());
     }
 }
@@ -14568,7 +14568,7 @@ fn assert_review11_stale_registration_skipped(adopt: bool, directory: bool) {
     } else {
         vec!["create", "--branch", "topic", "--reuse", "--json"]
     };
-    let out = repo.mabo(&args);
+    let out = repo.rabi(&args);
     assert!(out.status.success(), "{}", text(&out.stdout));
     let doc = assert_envelope(&out, if adopt { "adopt" } else { "create" });
     let tree = &doc["data"]["workspace"];
@@ -14580,7 +14580,7 @@ fn assert_review11_stale_registration_skipped(adopt: bool, directory: bool) {
         assert_eq!(tree["createdAt"], serde_json::Value::Null);
     } else {
         assert_eq!(doc["data"]["source"]["reused"], true);
-        assert!(!repo.repo.join(".git/mabo/workspaces").exists());
+        assert!(!repo.repo.join(".git/rabi/workspaces").exists());
     }
     assert_eq!(fs::read(checkout.join(".git")).unwrap(), gitfile);
     assert!(stale.exists());
@@ -14621,13 +14621,13 @@ fn assert_rejects_symlink_to_registered_workspace_entry(command: &str, gitfile: 
     for recorded in [false, true] {
         let repo = Repo::new();
         for name in ["b", "a"] {
-            assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+            assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
         }
         if !recorded || command == "adopt" {
-            assert!(repo.mabo(&["forget", "a"]).status.success());
+            assert!(repo.rabi(&["forget", "a"]).status.success());
         }
         if command == "adopt" && !recorded {
-            assert!(repo.mabo(&["forget", "b"]).status.success());
+            assert!(repo.rabi(&["forget", "b"]).status.success());
         }
         let a = managed(&repo, "a");
         let b = managed(&repo, "b");
@@ -14656,7 +14656,7 @@ fn assert_rejects_symlink_to_registered_workspace_entry(command: &str, gitfile: 
         fs::write(repo.repo.join("existing.env"), "primary value").unwrap();
         fs::write(b.join("existing.env"), "keep b value").unwrap();
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             "[hooks]\nsetup = ['touch hook-ran']\n",
         )
         .unwrap();
@@ -14686,7 +14686,7 @@ fn assert_rejects_symlink_to_registered_workspace_entry(command: &str, gitfile: 
         };
         let a_before = snapshot(&a);
         let b_before = snapshot(&b);
-        let records_path = repo.repo.join(".git/mabo/workspaces");
+        let records_path = repo.repo.join(".git/rabi/workspaces");
         let records_before = snapshot(&records_path);
         let args = match command {
             "setup-no-hooks" => vec!["setup", "a", "--no-hooks", "--json"],
@@ -14695,7 +14695,7 @@ fn assert_rejects_symlink_to_registered_workspace_entry(command: &str, gitfile: 
             "adopt" => vec!["adopt", a.to_str().unwrap(), "--name", "adopted", "--json"],
             _ => panic!("Unknown command"),
         };
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         let unchanged = snapshot(&b) == b_before && snapshot(&records_path) == records_before;
         assert_eq!(
             out.status.code(),
@@ -14729,10 +14729,10 @@ fn setup_reuse_and_adopt_allow_symlinked_parent_directories() {
     fs::create_dir(&real).unwrap();
     std::os::unix::fs::symlink(&real, &via).unwrap();
     assert!(repo
-        .mabo(&["config", "set", "workspace-root", via.to_str().unwrap()])
+        .rabi(&["config", "set", "workspace-root", via.to_str().unwrap()])
         .status
         .success());
-    assert!(repo.mabo(&["create", "a", "--no-setup"]).status.success());
+    assert!(repo.rabi(&["create", "a", "--no-setup"]).status.success());
     // Preserve a symlink spelling in Git's independent registration, too.
     fs::write(
         repo.repo.join(".git/worktrees/a/gitdir"),
@@ -14753,7 +14753,7 @@ fn setup_reuse_and_adopt_allow_symlinked_parent_directories() {
         vec!["adopt", via_a.to_str().unwrap(), "--json"],
     ] {
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .current_dir(&primary_alias)
             .output()
             .unwrap();
@@ -14796,21 +14796,21 @@ fn assert_setup_rejects_replaced_checkout(replacement: &str) {
             let repo = Repo::new();
             let foreign = Repo::new();
             assert!(repo
-                .mabo(&["config", "set", "workspace-root", "workspaces"])
+                .rabi(&["config", "set", "workspace-root", "workspaces"])
                 .status
                 .success());
             assert!(repo
-                .mabo(&["create", "target", "--no-setup"])
+                .rabi(&["create", "target", "--no-setup"])
                 .status
                 .success());
             if !recorded {
-                assert!(repo.mabo(&["forget", "target"]).status.success());
+                assert!(repo.rabi(&["forget", "target"]).status.success());
             }
             fs::write(repo.repo.join(".gitignore"), "*.env\n").unwrap();
             fs::write(repo.repo.join(".worktreeinclude"), "*.env\n").unwrap();
             fs::write(repo.repo.join("secret.env"), "primary secret").unwrap();
             fs::write(
-                repo.repo.join(".mabo.toml"),
+                repo.repo.join(".rabi.toml"),
                 "[hooks]\nsetup = ['git add README.md; touch hook-ran']\n",
             )
             .unwrap();
@@ -14833,7 +14833,7 @@ fn assert_setup_rejects_replaced_checkout(replacement: &str) {
                 _ => panic!("Unknown replacement"),
             }
             fs::write(target.join("README.md"), "changed in target\n").unwrap();
-            let records_path = repo.repo.join(".git/mabo/workspaces");
+            let records_path = repo.repo.join(".git/rabi/workspaces");
             let records_before = records::read(&records_path).unwrap();
             let head_before = fs::read(repo.repo.join(".git/HEAD")).unwrap();
             let index_before = fs::read(repo.repo.join(".git/index")).unwrap();
@@ -14842,7 +14842,7 @@ fn assert_setup_rejects_replaced_checkout(replacement: &str) {
             if no_hooks {
                 args.push("--no-hooks");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(
                 out.status.code(),
                 Some(1),
@@ -14886,7 +14886,7 @@ fn setup_and_create_escape_copy_failure_diagnostics() {
             fs::write(repo.repo.join(directory).join(filename), "secret").unwrap();
             if command == "setup" {
                 assert!(repo
-                    .mabo(&["create", "target", "--no-setup"])
+                    .rabi(&["create", "target", "--no-setup"])
                     .status
                     .success());
             }
@@ -14894,7 +14894,7 @@ fn setup_and_create_escape_copy_failure_diagnostics() {
             if json {
                 args.push("--json");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(
                 out.status.code(),
                 Some(if command == "setup" { 1 } else { 6 })
@@ -14927,18 +14927,18 @@ fn setup_source_checkout_rejects_another_repository_before_changes() {
     let repo = Repo::new();
     let other = Repo::new();
     assert!(repo
-        .mabo(&["create", "target", "--no-setup"])
+        .rabi(&["create", "target", "--no-setup"])
         .status
         .success());
-    let before = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
+    let before = records::read(repo.repo.join(".git/rabi/workspaces")).unwrap();
     fs::write(repo.repo.join(".gitignore"), "*.env\n").unwrap();
     fs::write(repo.repo.join("secret.env"), "secret").unwrap();
     fs::write(
-        other.repo.join(".mabo.toml"),
+        other.repo.join(".rabi.toml"),
         "[hooks]\nsetup = ['touch wrong-hook']\n",
     )
     .unwrap();
-    let out = repo.mabo(&[
+    let out = repo.rabi(&[
         "setup",
         "target",
         "--source-checkout",
@@ -14953,7 +14953,7 @@ fn setup_source_checkout_rejects_another_repository_before_changes() {
         .unwrap()
         .contains("selected repository"));
     assert_eq!(
-        records::read(repo.repo.join(".git/mabo/workspaces")).unwrap(),
+        records::read(repo.repo.join(".git/rabi/workspaces")).unwrap(),
         before
     );
     assert!(!managed(&repo, "target/secret.env").exists());
@@ -14970,7 +14970,7 @@ fn setup_retry_hint_preserves_linked_source_hooks() {
             let fallback = mode != 0;
             let repo = Repo::new();
             assert!(repo
-                .mabo(&["create", "source", "--no-setup"])
+                .rabi(&["create", "source", "--no-setup"])
                 .status
                 .success());
             let source = managed(&repo, "source");
@@ -14989,12 +14989,12 @@ fn setup_retry_hint_preserves_linked_source_hooks() {
                 path
             });
             fs::write(
-                repo.repo.join(".mabo.toml"),
+                repo.repo.join(".rabi.toml"),
                 "[hooks]\nsetup = ['touch primary-hook']\n",
             )
             .unwrap();
             fs::write(
-                source.join(".mabo.toml"),
+                source.join(".rabi.toml"),
                 "[hooks]\nsetup = ['test -f ready && touch source-hook']\n",
             )
             .unwrap();
@@ -15006,10 +15006,10 @@ fn setup_retry_hint_preserves_linked_source_hooks() {
             if json {
                 args.push("--json");
             }
-            let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), &args);
+            let mut command = repo.command(env!("CARGO_BIN_EXE_rabi"), &args);
             command.current_dir(&source);
             if mode == 2 {
-                command.env("MABO_TEST_FAIL_METADATA_SAVE", "1");
+                command.env("RABI_TEST_FAIL_METADATA_SAVE", "1");
             }
             if let Some(path) = gh_path {
                 command.env("PATH", path);
@@ -15029,7 +15029,7 @@ fn setup_retry_hint_preserves_linked_source_hooks() {
             assert!(target.join("source-hook").is_file(), "{hint}");
             assert!(!target.join("primary-hook").exists(), "{hint}");
             let shown = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &["show", ".", "--json"])
+                .command(env!("CARGO_BIN_EXE_rabi"), &["show", ".", "--json"])
                 .current_dir(&target)
                 .output()
                 .unwrap();
@@ -15084,7 +15084,7 @@ fn setup_retry_hint_preserves_copy_patterns_after_copy_failure() {
             if json {
                 args.push("--json");
             }
-            let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), &args);
+            let mut command = repo.command(env!("CARGO_BIN_EXE_rabi"), &args);
             if let Some(path) = gh_path {
                 command.env("PATH", path);
             }
@@ -15092,7 +15092,7 @@ fn setup_retry_hint_preserves_copy_patterns_after_copy_failure() {
             assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
             let target = managed(&repo, name);
             let shown = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &["show", "--json"])
+                .command(env!("CARGO_BIN_EXE_rabi"), &["show", "--json"])
                 .current_dir(&target)
                 .output()
                 .unwrap();
@@ -15126,7 +15126,7 @@ fn setup_retry_hint_preserves_copy_patterns_after_copy_failure() {
             assert_eq!(hint.starts_with("(cd "), fallback, "{hint}");
             assert_eq!(hint.matches(" --copy-file ").count(), 3, "{hint}");
             let shown = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &["show", "--json"])
+                .command(env!("CARGO_BIN_EXE_rabi"), &["show", "--json"])
                 .current_dir(&target)
                 .output()
                 .unwrap();
@@ -15142,7 +15142,7 @@ fn setup_retry_hint_escapes_copy_patterns_in_text_and_json() {
     for json in [false, true] {
         let repo = Repo::new();
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             "[hooks]\nsetup = ['exit 1']\n",
         )
         .unwrap();
@@ -15157,7 +15157,7 @@ fn setup_retry_hint_escapes_copy_patterns_in_text_and_json() {
         if json {
             args.push("--json");
         }
-        let created = repo.mabo(&args);
+        let created = repo.rabi(&args);
         assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
         let hint = setup_retry_hint(&created, json);
         assert!(!hint.chars().any(char::is_control), "{hint:?}");
@@ -15189,7 +15189,7 @@ fn setup_retry_hint_resolves_pr_names_and_ambiguous_links() {
                     .success());
             }
             fs::write(
-                repo.repo.join(".mabo.toml"),
+                repo.repo.join(".rabi.toml"),
                 "[hooks]\nsetup = [\"test -f ready && touch hook-ran\"]\n",
             )
             .unwrap();
@@ -15198,7 +15198,7 @@ fn setup_retry_hint_resolves_pr_names_and_ambiguous_links() {
                 args.push("--json");
             }
             let created = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
                 .env("PATH", &path)
                 .output()
                 .unwrap();
@@ -15219,7 +15219,7 @@ fn setup_retry_hint_resolves_pr_names_and_ambiguous_links() {
             } else {
                 assert!(hint.ends_with("setup 'pr:7'"), "{hint}");
             }
-            let listed = json_value(&repo.mabo(&["list", "--json"]));
+            let listed = json_value(&repo.rabi(&["list", "--json"]));
             let workspace = listed["data"]["workspaces"]
                 .as_array()
                 .unwrap()
@@ -15253,10 +15253,10 @@ fn setup_retry_hint(out: &std::process::Output, json: bool) -> String {
 }
 
 fn run_setup_retry_hint(repo: &Repo, cwd: &Path, hint: &str) -> std::process::Output {
-    let binary_dir = Path::new(env!("CARGO_BIN_EXE_mabo")).parent().unwrap();
+    let binary_dir = Path::new(env!("CARGO_BIN_EXE_rabi")).parent().unwrap();
     repo.command("bash", &["-c", hint])
         .current_dir(cwd)
-        .env("MABO_TRUST_ALL", "1")
+        .env("RABI_TRUST_ALL", "1")
         .env(
             "PATH",
             format!(
@@ -15284,7 +15284,7 @@ fn setup_retry_hint_preserves_selected_repository_from_any_directory() {
                 let other = Repo::new();
                 let outside = repo.root.join("outside");
                 fs::create_dir(&outside).unwrap();
-                let decoy = repo.mabo(&[
+                let decoy = repo.rabi(&[
                     "-R",
                     other.repo.to_str().unwrap(),
                     "create",
@@ -15292,15 +15292,15 @@ fn setup_retry_hint_preserves_selected_repository_from_any_directory() {
                     "--no-setup",
                 ]);
                 assert!(decoy.status.success(), "{}", text(&decoy.stderr));
-                let other_records = other.repo.join(".git/mabo/workspaces");
+                let other_records = other.repo.join(".git/rabi/workspaces");
                 let before = records::read(&other_records).unwrap();
                 fs::write(
-                    other.repo.join(".mabo.toml"),
+                    other.repo.join(".rabi.toml"),
                     "[hooks]\nsetup = [\"touch wrong-target\"]\n",
                 )
                 .unwrap();
                 fs::write(
-                    repo.repo.join(".mabo.toml"),
+                    repo.repo.join(".rabi.toml"),
                     "[hooks]\nsetup = [\"test -f ready && touch hook-ran\"]\n",
                 )
                 .unwrap();
@@ -15309,7 +15309,7 @@ fn setup_retry_hint_preserves_selected_repository_from_any_directory() {
                     args.push("--json");
                 }
                 let created = repo
-                    .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                    .command(env!("CARGO_BIN_EXE_rabi"), &args)
                     .current_dir(&outside)
                     .output()
                     .unwrap();
@@ -15332,7 +15332,7 @@ fn setup_retry_hint_preserves_selected_repository_from_any_directory() {
                     text(&retried.stderr)
                 );
                 assert!(managed(&repo, "lifecycle/hook-ran").is_file());
-                let shown = repo.mabo(&["show", "lifecycle", "--json"]);
+                let shown = repo.rabi(&["show", "lifecycle", "--json"]);
                 assert_eq!(
                     json_value(&shown)["data"]["workspace"]["setup"]["state"],
                     "ok"
@@ -15357,7 +15357,7 @@ fn setup_retry_hint_works_without_saved_links() {
         let script = fs::read_to_string(&gh).unwrap();
         fs::write(&gh, script.replace("\"topic\"", "\"topic+fix\"")).unwrap();
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             "[hooks]\nsetup = [\"test -f ready && touch hook-ran\"]\n",
         )
         .unwrap();
@@ -15366,9 +15366,9 @@ fn setup_retry_hint_works_without_saved_links() {
             args.push("--json");
         }
         let created = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .env("PATH", &path)
-            .env("MABO_TEST_FAIL_METADATA_SAVE", "1")
+            .env("RABI_TEST_FAIL_METADATA_SAVE", "1")
             .output()
             .unwrap();
         assert_eq!(created.status.code(), Some(6), "{}", text(&created.stderr));
@@ -15389,7 +15389,7 @@ fn setup_retry_hint_works_without_saved_links() {
         assert!(hint.starts_with("(cd "), "{hint}");
         assert!(managed(&repo, "topic+fix/hook-ran").is_file());
         let shown = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &["show", "--json"])
+            .command(env!("CARGO_BIN_EXE_rabi"), &["show", "--json"])
             .current_dir(managed(&repo, "topic+fix"))
             .output()
             .unwrap();
@@ -15404,24 +15404,24 @@ fn setup_retry_hint_works_without_saved_links() {
 fn setup_lifecycle_failure_retry_and_shared_state() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"test -f ready\"]\n",
     )
     .unwrap();
-    let out = repo.mabo(&["create", "lifecycle", "--json"]);
+    let out = repo.rabi(&["create", "lifecycle", "--json"]);
     assert_eq!(out.status.code(), Some(6), "{}", text(&out.stderr));
     let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(doc["data"]["workspace"]["setup"]["state"], "failed");
     assert_eq!(doc["data"]["setup"]["exitCode"], 1);
     assert_eq!(
         setup_retry_hint(&out, true),
-        format!("cd '{}' && mabo setup 'lifecycle'", repo.repo.display())
+        format!("cd '{}' && rabi setup 'lifecycle'", repo.repo.display())
     );
     let path = managed(&repo, "lifecycle");
-    assert!(text(&repo.mabo(&["list"]).stdout).contains("setup:failed"));
-    let records = repo.repo.join(".git/mabo/workspaces");
+    assert!(text(&repo.rabi(&["list"]).stdout).contains("setup:failed"));
+    let records = repo.repo.join(".git/rabi/workspaces");
     let before = records::read(&records).unwrap();
-    let reused = repo.mabo(&["create", "lifecycle", "--reuse", "--json"]);
+    let reused = repo.rabi(&["create", "lifecycle", "--reuse", "--json"]);
     assert!(reused.status.success(), "{}", text(&reused.stderr));
     assert_eq!(
         json_value(&reused)["data"]["workspace"]["setup"]["state"],
@@ -15429,7 +15429,7 @@ fn setup_lifecycle_failure_retry_and_shared_state() {
     );
     assert_eq!(records::read(&records).unwrap(), before);
     fs::write(path.join("ready"), "").unwrap();
-    let retry = repo.mabo(&["setup", "lifecycle", "--json"]);
+    let retry = repo.rabi(&["setup", "lifecycle", "--json"]);
     assert!(retry.status.success(), "{}", text(&retry.stderr));
     let doc: serde_json::Value = serde_json::from_slice(&retry.stdout).unwrap();
     assert_eq!(doc["data"]["setup"]["state"], "ok");
@@ -15437,7 +15437,7 @@ fn setup_lifecycle_failure_retry_and_shared_state() {
         vec!["show", "lifecycle", "--json"],
         vec!["set", "lifecycle", "--purpose", "done", "--json"],
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert!(out.status.success(), "{}", text(&out.stderr));
         let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(doc["data"]["workspace"]["setup"]["state"], "ok");
@@ -15452,11 +15452,11 @@ fn setup_lifecycle_skip_and_conflicting_copy_flag() {
     fs::write(repo.repo.join(".worktreeinclude"), "*.env\n").unwrap();
     fs::write(repo.repo.join("secret.env"), "secret").unwrap();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"touch hook-ran\"]\n",
     )
     .unwrap();
-    let out = repo.mabo(&[
+    let out = repo.rabi(&[
         "create",
         "bad",
         "--no-setup",
@@ -15467,7 +15467,7 @@ fn setup_lifecycle_skip_and_conflicting_copy_flag() {
     assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
     assert!(text(&out.stdout).contains("--no-setup"));
     assert!(!managed(&repo, "bad").exists());
-    let out = repo.mabo(&["create", "skip", "--no-setup", "--json"]);
+    let out = repo.rabi(&["create", "skip", "--no-setup", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(doc["data"]["workspace"]["setup"]["state"], "skipped");
@@ -15476,10 +15476,10 @@ fn setup_lifecycle_skip_and_conflicting_copy_flag() {
     assert!(!managed(&repo, "skip").join("hook-ran").exists());
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["setup", "skip", "--no-hooks", "--json"],
         )
-        .env_remove("MABO_TRUST_ALL")
+        .env_remove("RABI_TRUST_ALL")
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
@@ -15490,26 +15490,26 @@ fn setup_lifecycle_skip_and_conflicting_copy_flag() {
 #[test]
 fn setup_lifecycle_trust_refusal_and_primary_are_read_only() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "target", "--json"]).status.success());
+    assert!(repo.rabi(&["create", "target", "--json"]).status.success());
     fs::write(repo.repo.join(".gitignore"), "*.env\n").unwrap();
     fs::write(repo.repo.join(".worktreeinclude"), "*.env\n").unwrap();
     fs::write(repo.repo.join("secret.env"), "secret").unwrap();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"touch hook-ran\"]\n",
     )
     .unwrap();
-    let records = repo.repo.join(".git/mabo/workspaces");
+    let records = repo.repo.join(".git/rabi/workspaces");
     let before: Vec<_> = fs::read_dir(&records)
         .unwrap()
         .map(|e| fs::read(e.unwrap().path()).unwrap())
         .collect();
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["setup", "target", "--no-input", "--json"],
         )
-        .env_remove("MABO_TRUST_ALL")
+        .env_remove("RABI_TRUST_ALL")
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(4), "{}", text(&out.stderr));
@@ -15522,12 +15522,12 @@ fn setup_lifecycle_trust_refusal_and_primary_are_read_only() {
     assert_eq!(before, after);
     assert!(!managed(&repo, "target").join("secret.env").exists());
     assert!(!managed(&repo, "target").join("hook-ran").exists());
-    let out = repo.mabo(&["setup", "--json"]);
+    let out = repo.rabi(&["setup", "--json"]);
     assert_eq!(out.status.code(), Some(4));
     let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(doc["error"]["code"], "primary");
     assert_eq!(
-        repo.mabo(&["setup", "missing", "--json"]).status.code(),
+        repo.rabi(&["setup", "missing", "--json"]).status.code(),
         Some(3)
     );
 }
@@ -15537,7 +15537,7 @@ fn setup_lifecycle_rejects_unknown_hook_keys() {
     let repo = Repo::new();
     for key in ["bogus", "post-create", "pre-delete"] {
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             format!("[hooks]\n{key} = []\n"),
         )
         .unwrap();
@@ -15548,7 +15548,7 @@ fn setup_lifecycle_rejects_unknown_hook_keys() {
             vec!["remove", "target", "--json"],
             vec!["gc", "--json"],
         ] {
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(
                 out.status.code(),
                 Some(1),
@@ -15575,7 +15575,7 @@ fn setup_lifecycle_copies_from_primary_from_other_checkout_and_subdirectory() {
     fs::write(repo.repo.join("secret.env"), "primary").unwrap();
     fs::write(repo.repo.join("secret.extra"), "extra").unwrap();
     assert!(repo
-        .mabo(&["create", "caller", "--no-setup"])
+        .rabi(&["create", "caller", "--no-setup"])
         .status
         .success());
     let caller = managed(&repo, "caller");
@@ -15584,7 +15584,7 @@ fn setup_lifecycle_copies_from_primary_from_other_checkout_and_subdirectory() {
     fs::create_dir(caller.join("sub")).unwrap();
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "target", "--copy-file", "*.extra", "--json"],
         )
         .current_dir(caller.join("sub"))
@@ -15604,7 +15604,7 @@ fn setup_lifecycle_copies_from_primary_from_other_checkout_and_subdirectory() {
     fs::remove_file(target.join("secret.extra")).unwrap();
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "setup",
                 "target",
@@ -15632,10 +15632,10 @@ fn setup_lifecycle_copies_from_primary_from_other_checkout_and_subdirectory() {
 fn setup_lifecycle_interrupted_is_display_only() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "interrupted", "--json"])
+        .rabi(&["create", "interrupted", "--json"])
         .status
         .success());
-    let record = fs::read_dir(repo.repo.join(".git/mabo/workspaces"))
+    let record = fs::read_dir(repo.repo.join(".git/rabi/workspaces"))
         .unwrap()
         .map(|e| e.unwrap().path())
         .find(|p| p.extension().is_some_and(|e| e == "json"))
@@ -15645,16 +15645,16 @@ fn setup_lifecycle_interrupted_is_display_only() {
     doc["setup"] = serde_json::json!({"state":"running", "at":"2026-10-21T00:00:00Z", "error":null, "pid":unused_pid(), "host":text(&host.stdout)});
     fs::write(&record, serde_json::to_vec(&doc).unwrap()).unwrap();
     let before = fs::read(&record).unwrap();
-    let out = repo.mabo(&["show", "interrupted", "--json"]);
+    let out = repo.rabi(&["show", "interrupted", "--json"]);
     assert!(out.status.success());
     let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(doc["data"]["workspace"]["setup"]["state"], "interrupted");
     assert_eq!(before, fs::read(&record).unwrap());
-    let out = repo.mabo(&["list"]);
+    let out = repo.rabi(&["list"]);
     assert!(text(&out.stdout).contains("setup:interrupted"));
     assert_eq!(before, fs::read(&record).unwrap());
     assert!(repo
-        .mabo(&["setup", "interrupted", "--json"])
+        .rabi(&["setup", "interrupted", "--json"])
         .status
         .success());
     let doc: serde_json::Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
@@ -15665,13 +15665,13 @@ fn setup_lifecycle_interrupted_is_display_only() {
 fn setup_lifecycle_running_is_saved_before_hooks_and_process_fields_stay_internal() {
     let repo = Repo::new();
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         r#"[hooks]
-setup = ['cat "$MABO_REPO_PATH/.git/mabo/workspaces/$MABO_WORKSPACE_ID.json" > observed.json']
+setup = ['cat "$RABI_REPO_PATH/.git/rabi/workspaces/$RABI_WORKSPACE_ID.json" > observed.json']
 "#,
     )
     .unwrap();
-    let out = repo.mabo(&["create", "observe", "--json"]);
+    let out = repo.rabi(&["create", "observe", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let observed: serde_json::Value =
         serde_json::from_slice(&fs::read(managed(&repo, "observe/observed.json")).unwrap())
@@ -15688,16 +15688,16 @@ setup = ['cat "$MABO_REPO_PATH/.git/mabo/workspaces/$MABO_WORKSPACE_ID.json" > o
 fn setup_lifecycle_copy_failure_stops_hooks_and_is_retryable() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "copy-retry", "--no-setup"])
+        .rabi(&["create", "copy-retry", "--no-setup"])
         .status
         .success());
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"touch hook-ran\"]\n",
     )
     .unwrap();
     std::os::unix::fs::symlink("missing", repo.repo.join(".worktreeinclude")).unwrap();
-    let out = repo.mabo(&["setup", "copy-retry", "--json"]);
+    let out = repo.rabi(&["setup", "copy-retry", "--json"]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let doc = json_value(&out);
     assert_eq!(doc["data"]["workspace"]["setup"]["state"], "failed");
@@ -15705,16 +15705,16 @@ fn setup_lifecycle_copy_failure_stops_hooks_and_is_retryable() {
     assert!(doc["data"]["copy"]["error"].is_string());
     assert!(!managed(&repo, "copy-retry/hook-ran").exists());
     fs::remove_file(repo.repo.join(".worktreeinclude")).unwrap();
-    let out = repo.mabo(&["setup", "copy-retry", "--json"]);
+    let out = repo.rabi(&["setup", "copy-retry", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(json_value(&out)["data"]["setup"]["state"], "ok");
     assert!(managed(&repo, "copy-retry/hook-ran").is_file());
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\nsetup = [\"exit 42\"]\n",
     )
     .unwrap();
-    let out = repo.mabo(&["setup", "copy-retry", "--json"]);
+    let out = repo.rabi(&["setup", "copy-retry", "--json"]);
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(json_value(&out)["data"]["setup"]["exitCode"], 42);
 }
@@ -15730,14 +15730,14 @@ fn setup_lifecycle_unknown_adopt_and_null_after_forget() {
         "external",
         external.to_str().unwrap(),
     ]);
-    let out = repo.mabo(&["adopt", external.to_str().unwrap(), "--json"]);
+    let out = repo.rabi(&["adopt", external.to_str().unwrap(), "--json"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
         json_value(&out)["data"]["workspace"]["setup"],
         serde_json::json!({"state":"unknown", "at":null, "error":null})
     );
     // A pre-P6 individual record has no setup field.
-    let record = fs::read_dir(repo.repo.join(".git/mabo/workspaces"))
+    let record = fs::read_dir(repo.repo.join(".git/rabi/workspaces"))
         .unwrap()
         .map(|e| e.unwrap().path())
         .find(|p| p.extension().is_some_and(|e| e == "json"))
@@ -15746,13 +15746,13 @@ fn setup_lifecycle_unknown_adopt_and_null_after_forget() {
     doc.as_object_mut().unwrap().remove("setup");
     fs::write(&record, serde_json::to_vec(&doc).unwrap()).unwrap();
     let before = fs::read(&record).unwrap();
-    let out = repo.mabo(&["show", "external", "--json"]);
+    let out = repo.rabi(&["show", "external", "--json"]);
     assert_eq!(
         json_value(&out)["data"]["workspace"]["setup"]["state"],
         "unknown"
     );
     assert_eq!(before, fs::read(&record).unwrap());
-    let out = repo.mabo(&["forget", "external", "--json"]);
+    let out = repo.rabi(&["forget", "external", "--json"]);
     assert!(out.status.success());
     assert!(json_value(&out)["data"]["items"][0]["workspace"]["setup"].is_null());
 }
@@ -15761,15 +15761,15 @@ fn setup_lifecycle_unknown_adopt_and_null_after_forget() {
 fn setup_lifecycle_default_dot_and_selectors_match_inspection() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "target", "--no-setup"])
+        .rabi(&["create", "target", "--no-setup"])
         .status
         .success());
-    assert!(repo.mabo(&["set", "target", "--pr", "7"]).status.success());
+    assert!(repo.rabi(&["set", "target", "--pr", "7"]).status.success());
     let path = managed(&repo, "target/sub");
     fs::create_dir(&path).unwrap();
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["setup", "--no-hooks", "--json"],
         )
         .current_dir(&path)
@@ -15777,13 +15777,13 @@ fn setup_lifecycle_default_dot_and_selectors_match_inspection() {
         .unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(json_value(&out)["data"]["workspace"]["name"], "target");
-    let out = repo.mabo(&["setup", "pr:7", "--json"]);
+    let out = repo.rabi(&["setup", "pr:7", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
         json_value(&out)["data"]["workspace"]["setup"]["state"],
         "ok"
     );
-    let listed = repo.mabo(&["list", "--json"]);
+    let listed = repo.rabi(&["list", "--json"]);
     let doc = json_value(&listed);
     let target = doc["data"]["workspaces"]
         .as_array()
@@ -15798,11 +15798,11 @@ fn setup_lifecycle_default_dot_and_selectors_match_inspection() {
 fn setup_lifecycle_pre_remove_runs_for_delete_and_gc() {
     for command in ["remove", "gc"] {
         let repo = Repo::new();
-        assert!(repo.mabo(&["create", "target"]).status.success());
+        assert!(repo.rabi(&["create", "target"]).status.success());
         land_branch(&repo, "target");
         let marker = repo.root.join("pre-remove-ran");
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             format!("[hooks]\npre-remove = ['touch {}']\n", marker.display()),
         )
         .unwrap();
@@ -15811,7 +15811,7 @@ fn setup_lifecycle_pre_remove_runs_for_delete_and_gc() {
         } else {
             vec!["gc", "--apply", "--merged", "--json"]
         };
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert!(out.status.success(), "{}", text(&out.stderr));
         assert!(marker.is_file(), "{command}: {}", text(&out.stdout));
         assert!(!managed(&repo, "target").exists());
@@ -15830,22 +15830,22 @@ fn setup_lifecycle_adopted_record_keeps_setup_unknown_until_explicit_run() {
         external.to_str().unwrap(),
     ]);
     assert!(repo
-        .mabo(&["adopt", external.to_str().unwrap()])
+        .rabi(&["adopt", external.to_str().unwrap()])
         .status
         .success());
-    let out = repo.mabo(&["show", "external", "--json"]);
+    let out = repo.rabi(&["show", "external", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
         json_value(&out)["data"]["workspace"]["setup"]["state"],
         "unknown"
     );
-    let out = repo.mabo(&["set", "external", "--purpose", "updated", "--json"]);
+    let out = repo.rabi(&["set", "external", "--purpose", "updated", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
         json_value(&out)["data"]["workspace"]["setup"]["state"],
         "unknown"
     );
-    let out = repo.mabo(&["setup", "external", "--json"]);
+    let out = repo.rabi(&["setup", "external", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
         json_value(&out)["data"]["workspace"]["setup"]["state"],
@@ -15857,7 +15857,7 @@ fn setup_lifecycle_adopted_record_keeps_setup_unknown_until_explicit_run() {
 fn retirement_remove_keeps_unpreserved_branch_but_branch_alone_is_not_a_workspace() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "local", "--no-setup"])
+        .rabi(&["create", "local", "--no-setup"])
         .status
         .success());
     let path = managed_root(&repo).join("local");
@@ -15873,14 +15873,14 @@ fn retirement_remove_keeps_unpreserved_branch_but_branch_alone_is_not_a_workspac
         .expect("commit")
         .status
         .success());
-    let out = repo.mabo(&["remove", "local", "--json"]);
+    let out = repo.rabi(&["remove", "local", "--json"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let value = assert_envelope(&out, "remove");
     assert_eq!(value["data"]["items"][0]["removed"], true);
     assert_eq!(value["data"]["items"][0]["branchKeptReason"], "unpreserved");
     assert_eq!(value["warnings"][0]["code"], "branch_kept_unpreserved");
     assert!(branch_listed(&repo, "local"));
-    let retry = repo.mabo(&["remove", "local", "--json"]);
+    let retry = repo.rabi(&["remove", "local", "--json"]);
     assert_eq!(retry.status.code(), Some(3));
     assert_eq!(json_value(&retry)["error"]["code"], "not_found");
 }
@@ -15889,7 +15889,7 @@ fn retirement_remove_keeps_unpreserved_branch_but_branch_alone_is_not_a_workspac
 fn retirement_ignored_content_is_clean_and_removed_without_discard_changes() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "safe", "--no-setup"])
+        .rabi(&["create", "safe", "--no-setup"])
         .status
         .success());
     let path = managed_root(&repo).join("safe");
@@ -15897,7 +15897,7 @@ fn retirement_ignored_content_is_clean_and_removed_without_discard_changes() {
     fs::write(repo.repo.join(".git/info/exclude"), "secret\n").expect("ignore");
     fs::write(path.join("secret"), "keep me").expect("secret");
     assert_retirement_dirty(&repo, "safe", false);
-    let out = repo.mabo(&["remove", "safe", "--dry-run", "--json"]);
+    let out = repo.rabi(&["remove", "safe", "--dry-run", "--json"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(json_value(&out)["data"]["plan"], true);
     assert_eq!(json_value(&out)["data"]["items"][0]["removed"], false);
@@ -15905,7 +15905,7 @@ fn retirement_ignored_content_is_clean_and_removed_without_discard_changes() {
     assert_eq!(json_value(&out)["warnings"], serde_json::json!([]));
     assert!(path.join("secret").exists());
     assert!(branch_listed(&repo, "safe"));
-    let out = repo.mabo(&["remove", "safe", "--json"]);
+    let out = repo.rabi(&["remove", "safe", "--json"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stdout));
     let doc = assert_envelope(&out, "remove");
     assert_eq!(doc["data"]["items"][0]["removed"], true);
@@ -15922,7 +15922,7 @@ fn assert_retirement_dirty(repo: &Repo, name: &str, dirty: bool) {
         } else {
             vec!["list", "--kind", "workspace", "--json"]
         };
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert!(out.status.success(), "{}", text(&out.stdout));
         let doc = assert_envelope(&out, command);
         let workspace = if command == "show" {
@@ -15947,7 +15947,7 @@ fn retirement_ignored_content_does_not_hide_uncommitted_work() {
         fs::create_dir_all(repo.repo.join(".git/info")).unwrap();
         fs::write(repo.repo.join(".git/info/exclude"), "target/\n").unwrap();
         assert!(repo
-            .mabo(&["create", "dirty", "--no-setup"])
+            .rabi(&["create", "dirty", "--no-setup"])
             .status
             .success());
         land_branch(&repo, "dirty");
@@ -15983,7 +15983,7 @@ fn retirement_ignored_content_does_not_hide_uncommitted_work() {
             if dry_run {
                 args.push("--dry-run");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(
                 out.status.code(),
                 Some(4),
@@ -16006,7 +16006,7 @@ fn retirement_ignored_content_does_not_hide_uncommitted_work() {
             if apply {
                 args.push("--apply");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert!(out.status.success(), "{}", text(&out.stdout));
             let doc = assert_envelope(&out, "gc");
             assert_eq!(doc["data"]["items"][0]["action"], "skipped");
@@ -16016,7 +16016,7 @@ fn retirement_ignored_content_does_not_hide_uncommitted_work() {
                 .contains("--discard-changes"));
             assert!(path.exists());
         }
-        let out = repo.mabo(&["remove", "dirty", "--discard-changes", "--json"]);
+        let out = repo.rabi(&["remove", "dirty", "--discard-changes", "--json"]);
         assert!(out.status.success(), "{}", text(&out.stdout));
         assert!(!path.exists());
     }
@@ -16032,7 +16032,7 @@ fn retirement_ignored_content_does_not_skip_gc_plan_or_apply() {
     )
     .unwrap();
     assert!(repo
-        .mabo(&["create", "landed", "--no-setup"])
+        .rabi(&["create", "landed", "--no-setup"])
         .status
         .success());
     land_branch(&repo, "landed");
@@ -16047,7 +16047,7 @@ fn retirement_ignored_content_does_not_skip_gc_plan_or_apply() {
         if apply {
             args.push("--apply");
         }
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert!(out.status.success(), "{}", text(&out.stdout));
         let doc = assert_envelope(&out, "gc");
         assert_eq!(doc["data"]["plan"], !apply);
@@ -16068,7 +16068,7 @@ fn retirement_ignored_nested_repository_is_removed_with_workspace() {
     fs::create_dir_all(repo.repo.join(".git/info")).unwrap();
     fs::write(repo.repo.join(".git/info/exclude"), "vendor/\n").unwrap();
     assert!(repo
-        .mabo(&["create", "nested", "--no-setup"])
+        .rabi(&["create", "nested", "--no-setup"])
         .status
         .success());
     let path = managed(&repo, "nested");
@@ -16082,7 +16082,7 @@ fn retirement_ignored_nested_repository_is_removed_with_workspace() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     fs::write(nested.join("local"), "nested repository contents\n").unwrap();
     assert_retirement_dirty(&repo, "nested", false);
-    let out = repo.mabo(&["remove", "nested", "--json"]);
+    let out = repo.rabi(&["remove", "nested", "--json"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stdout));
     assert_eq!(
         assert_envelope(&out, "remove")["warnings"],
@@ -16109,7 +16109,7 @@ fn retirement_populated_submodule_repo() -> Repo {
     fs::create_dir_all(repo.repo.join(".git/info")).unwrap();
     fs::write(repo.repo.join(".git/info/exclude"), "cache\n").unwrap();
     assert!(repo
-        .mabo(&["create", "submodule", "--no-setup"])
+        .rabi(&["create", "submodule", "--no-setup"])
         .status
         .success());
     land_branch(&repo, "submodule");
@@ -16138,17 +16138,17 @@ fn retirement_populated_submodule_repo() -> Repo {
 fn retirement_populated_submodule_requires_discard_before_any_removal() {
     let repo = retirement_populated_submodule_repo();
     assert!(repo
-        .mabo(&["create", "clean", "--no-setup"])
+        .rabi(&["create", "clean", "--no-setup"])
         .status
         .success());
     let path = managed(&repo, "submodule");
     let marker = repo.root.join("hook-ran");
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         format!("[hooks]\npre-remove = ['touch {}']\n", marker.display()),
     )
     .unwrap();
-    let record_dir = repo.repo.join(".git/mabo/workspaces");
+    let record_dir = repo.repo.join(".git/rabi/workspaces");
     let before = records::read(&record_dir).unwrap();
     for dry_run in [false, true] {
         for json in [false, true] {
@@ -16159,7 +16159,7 @@ fn retirement_populated_submodule_requires_discard_before_any_removal() {
             if json {
                 args.push("--json");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(
                 out.status.code(),
                 Some(4),
@@ -16200,7 +16200,7 @@ fn retirement_populated_submodule_requires_discard_before_any_removal() {
             assert!(path.join("cache").exists());
         }
     }
-    let plan = repo.mabo(&[
+    let plan = repo.rabi(&[
         "remove",
         "submodule",
         "--discard-changes",
@@ -16210,7 +16210,7 @@ fn retirement_populated_submodule_requires_discard_before_any_removal() {
     assert!(plan.status.success(), "{}", text(&plan.stdout));
     assert!(path.is_dir());
     assert!(!marker.exists());
-    let out = repo.mabo(&["remove", "submodule", "--discard-changes", "--json"]);
+    let out = repo.rabi(&["remove", "submodule", "--discard-changes", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stdout));
     assert_eq!(
         assert_envelope(&out, "remove")["data"]["items"][0]["removed"],
@@ -16228,18 +16228,18 @@ fn retirement_populated_submodule_is_skipped_by_gc_plan_and_apply() {
     let path = managed(&repo, "submodule");
     let marker = repo.root.join("hook-ran");
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         format!("[hooks]\npre-remove = ['touch {}']\n", marker.display()),
     )
     .unwrap();
-    let record_dir = repo.repo.join(".git/mabo/workspaces");
+    let record_dir = repo.repo.join(".git/rabi/workspaces");
     let before = records::read(&record_dir).unwrap();
     for apply in [false, true] {
         let mut args = vec!["gc", "--merged", "--json"];
         if apply {
             args.push("--apply");
         }
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert!(out.status.success(), "{}", text(&out.stdout));
         let doc = assert_envelope(&out, "gc");
         let item = &doc["data"]["items"][0];
@@ -16302,7 +16302,7 @@ fn retirement_submodule_layouts_follow_git_removal_guard() {
             if dry_run {
                 args.push("--dry-run");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             let expected = if layout == "uninitialized" { 0 } else { 4 };
             assert_eq!(
                 out.status.code(),
@@ -16316,7 +16316,7 @@ fn retirement_submodule_layouts_follow_git_removal_guard() {
             }
         }
         if layout != "uninitialized" {
-            let out = repo.mabo(&["remove", "submodule", "--discard-changes", "--json"]);
+            let out = repo.rabi(&["remove", "submodule", "--discard-changes", "--json"]);
             assert!(out.status.success(), "{layout}: {}", text(&out.stdout));
         }
         assert!(!path.exists(), "{layout}");
@@ -16362,7 +16362,7 @@ fn retirement_ignored_content_does_not_hide_submodule_changes() {
             if dry_run {
                 args.push("--dry-run");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(
                 out.status.code(),
                 Some(4),
@@ -16376,7 +16376,7 @@ fn retirement_ignored_content_does_not_hide_submodule_changes() {
             if apply {
                 args.push("--apply");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert!(out.status.success(), "{}", text(&out.stdout));
             assert_eq!(
                 assert_envelope(&out, "gc")["data"]["items"][0]["action"],
@@ -16395,7 +16395,7 @@ fn retirement_ignored_content_does_not_hide_submodule_changes() {
         }
         assert!(path.join("cache").exists());
     }
-    let out = repo.mabo(&["remove", "submodule", "--discard-changes", "--json"]);
+    let out = repo.rabi(&["remove", "submodule", "--discard-changes", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stdout));
     assert_eq!(
         assert_envelope(&out, "remove")["data"]["items"][0]["removed"],
@@ -16412,7 +16412,7 @@ fn retirement_ignored_content_does_not_force_remove_late_untracked_files() {
     for gc in [false, true] {
         let repo = Repo::new();
         assert!(repo
-            .mabo(&["create", "race", "--no-setup"])
+            .rabi(&["create", "race", "--no-setup"])
             .status
             .success());
         land_branch(&repo, "race");
@@ -16452,7 +16452,7 @@ exec "$REAL_GIT" "$@"
             vec!["remove", "race", "--json"]
         };
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .env("PATH", search_path)
             .env("REAL_GIT", text(&real_git.stdout))
             .env("RACE_PATH", &path)
@@ -16495,7 +16495,7 @@ fn assert_retirement_hook_loses_directory(gc: bool, keep_branch: bool) {
     for move_directory in [false, true] {
         let repo = Repo::new();
         assert!(repo
-            .mabo(&["create", "topic", "--no-setup"])
+            .rabi(&["create", "topic", "--no-setup"])
             .status
             .success());
         commit_in_worktree(&repo, "topic");
@@ -16505,14 +16505,14 @@ fn assert_retirement_hook_loses_directory(gc: bool, keep_branch: bool) {
         }
         let path = managed(&repo, "topic");
         let head = retirement_head_at(&repo, &path);
-        let records = mabo::metadata::load_strict(&repo.repo).unwrap();
+        let records = rabi::metadata::load_strict(&repo.repo).unwrap();
         let command = if move_directory {
-            r#"cd "$MABO_REPO_PATH" && mv -- "$MABO_WORKSPACE_PATH" "$MABO_WORKSPACE_PATH.moved""#
+            r#"cd "$RABI_REPO_PATH" && mv -- "$RABI_WORKSPACE_PATH" "$RABI_WORKSPACE_PATH.moved""#
         } else {
-            r#"cd "$MABO_REPO_PATH" && rm -rf -- "$MABO_WORKSPACE_PATH""#
+            r#"cd "$RABI_REPO_PATH" && rm -rf -- "$RABI_WORKSPACE_PATH""#
         };
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             format!(
                 "[hooks]\npre-remove = [{}]\n",
                 serde_json::to_string(command).unwrap()
@@ -16527,7 +16527,7 @@ fn assert_retirement_hook_loses_directory(gc: bool, keep_branch: bool) {
         if keep_branch {
             args.push("--keep-branch");
         }
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert!(!path.exists(), "hook must remove or move the directory");
         assert!(branch_listed(&repo, "topic"), "{}", text(&out.stdout));
         let tip = repo
@@ -16538,7 +16538,7 @@ fn assert_retirement_hook_loses_directory(gc: bool, keep_branch: bool) {
         assert!(!out.status.success(), "{}", text(&out.stdout));
         assert!(worktree_registered(&repo, "topic"));
         assert_eq!(
-            serde_json::to_value(mabo::metadata::load_strict(&repo.repo).unwrap()).unwrap(),
+            serde_json::to_value(rabi::metadata::load_strict(&repo.repo).unwrap()).unwrap(),
             serde_json::to_value(&records).unwrap(),
         );
         if move_directory {
@@ -16562,18 +16562,18 @@ fn retirement_remove_rejects_missing_path_before_resolved_name() {
 fn assert_retirement_missing_remove_path(name_first: bool) {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "topic", "--no-setup"])
+        .rabi(&["create", "topic", "--no-setup"])
         .status
         .success());
     let path = managed(&repo, "topic");
     fs::write(path.join("precious"), "keep this\n").unwrap();
     let marker = repo.root.join("hook-ran");
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         format!("[hooks]\npre-remove = ['touch {}']\n", marker.display()),
     )
     .unwrap();
-    let records = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
+    let records = records::read(repo.repo.join(".git/rabi/workspaces")).unwrap();
     let missing_path = repo.root.join("missing");
     for dry_run in [true, false] {
         for json in [false, true] {
@@ -16595,7 +16595,7 @@ fn assert_retirement_missing_remove_path(name_first: bool) {
             if json {
                 args.push("--json");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(
                 out.status.code(),
                 Some(3),
@@ -16611,7 +16611,7 @@ fn assert_retirement_missing_remove_path(name_first: bool) {
             assert!(branch_listed(&repo, "topic"));
             assert!(!marker.exists());
             assert_eq!(
-                records::read(repo.repo.join(".git/mabo/workspaces")).unwrap(),
+                records::read(repo.repo.join(".git/rabi/workspaces")).unwrap(),
                 records
             );
             if json {
@@ -16645,7 +16645,7 @@ fn retirement_review6_gc_keeps_synced_branch_with_same_named_tag_using_reflog() 
 fn assert_retirement_creation_with_tag(clear_creation: bool, synced: bool) {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "topic", "--no-setup"])
+        .rabi(&["create", "topic", "--no-setup"])
         .status
         .success());
     repo.git(&["checkout", "-b", "tag-source"]);
@@ -16659,7 +16659,7 @@ fn assert_retirement_creation_with_tag(clear_creation: bool, synced: bool) {
             .current_dir(managed(&repo, "topic"))
             .env(
                 "GIT_REFLOG_ACTION",
-                "mabo sync: fast-forward to refs/heads/main",
+                "rabi sync: fast-forward to refs/heads/main",
             )
             .output()
             .unwrap();
@@ -16668,13 +16668,13 @@ fn assert_retirement_creation_with_tag(clear_creation: bool, synced: bool) {
     if clear_creation {
         clear_created_from(&repo, "topic");
     }
-    let records = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
+    let records = records::read(repo.repo.join(".git/rabi/workspaces")).unwrap();
     for apply in [false, true] {
         let mut args = vec!["gc", "--merged", "--json"];
         if apply {
             args.push("--apply");
         }
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
         assert_eq!(
             json_value(&out)["data"]["items"],
@@ -16686,7 +16686,7 @@ fn assert_retirement_creation_with_tag(clear_creation: bool, synced: bool) {
         assert!(worktree_registered(&repo, "topic"));
         assert!(branch_listed(&repo, "topic"));
         assert_eq!(
-            records::read(repo.repo.join(".git/mabo/workspaces")).unwrap(),
+            records::read(repo.repo.join(".git/rabi/workspaces")).unwrap(),
             records
         );
     }
@@ -16698,7 +16698,7 @@ fn retirement_review6_existing_branch_creation_uses_full_reflog_ref() {
     let creation = retirement_head_at(&repo, &repo.repo);
     repo.git(&["branch", "topic", "refs/heads/main"]);
     repo.git(&["tag", "topic", "refs/heads/main"]);
-    let out = repo.mabo(&["create", "--branch", "topic", "--no-setup", "--json"]);
+    let out = repo.rabi(&["create", "--branch", "topic", "--no-setup", "--json"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
         json_value(&out)["data"]["workspace"]["createdFrom"],
@@ -16711,7 +16711,7 @@ fn retirement_review6_gc_default_uses_full_remote_ref_with_same_named_tag() {
     for ambiguous_refs in ["false", "true"] {
         let repo = Repo::new();
         assert!(repo
-            .mabo(&["create", "topic", "--no-setup"])
+            .rabi(&["create", "topic", "--no-setup"])
             .status
             .success());
         land_branch(&repo, "topic");
@@ -16726,13 +16726,13 @@ fn retirement_review6_gc_default_uses_full_remote_ref_with_same_named_tag() {
         repo.git(&["tag", "origin/main", "refs/heads/tag-source"]);
         repo.git(&["checkout", "refs/heads/main"]);
         repo.git(&["config", "core.warnAmbiguousRefs", ambiguous_refs]);
-        let shown = repo.mabo(&["repo", "show", "--json"]);
+        let shown = repo.rabi(&["repo", "show", "--json"]);
         assert!(shown.status.success(), "{}", text(&shown.stderr));
         assert_eq!(
             json_value(&shown)["data"]["repo"]["defaultBranch"],
             "origin/main"
         );
-        let out = repo.mabo(&["gc", "--merged", "--apply", "--json"]);
+        let out = repo.rabi(&["gc", "--merged", "--apply", "--json"]);
         assert!(out.status.success(), "{}", text(&out.stderr));
         assert_eq!(
             json_value(&out)["data"]["items"][0]["action"],
@@ -16787,13 +16787,13 @@ fn assert_retirement_reapplication(detached: bool, preserved: bool) {
         // Keep the existing contract: ordered rebase evidence survives later
         // base edits, even when the complete squash and base-tip checks fail.
         retirement_replay_file(&repo, &repo.repo, "a", Some("later\n"), "later edit");
-        let plan = repo.mabo(&["gc", "--merged", "--json"]);
+        let plan = repo.rabi(&["gc", "--merged", "--json"]);
         assert!(plan.status.success(), "{}", text(&plan.stdout));
         assert_eq!(
             json_value(&plan)["data"]["items"][0]["action"],
             "wouldRemove"
         );
-        let removed = repo.mabo(&["remove", "replay", "--json"]);
+        let removed = repo.rabi(&["remove", "replay", "--json"]);
         assert!(removed.status.success(), "{}", text(&removed.stdout));
         assert!(!path.exists());
         assert!(!worktree_registered(&repo, "replay"));
@@ -16848,7 +16848,7 @@ fn retirement_replay_workspace(repo: &Repo, detached: bool) -> PathBuf {
     if detached {
         args.push("--detach");
     }
-    let created = repo.mabo(&args);
+    let created = repo.rabi(&args);
     assert!(created.status.success(), "{}", text(&created.stderr));
     managed(repo, "replay")
 }
@@ -16871,19 +16871,19 @@ fn retirement_replay_file(
 
 fn assert_retirement_replay_is_unpreserved(repo: &Repo, detached: bool) {
     let head = retirement_head_at(repo, &managed(repo, "replay"));
-    let records = records::read(repo.repo.join(".git/mabo/workspaces")).unwrap();
+    let records = records::read(repo.repo.join(".git/rabi/workspaces")).unwrap();
     for apply in [false, true] {
         let mut args = vec!["gc", "--merged", "--json"];
         if apply {
             args.push("--apply");
         }
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert!(out.status.success(), "{}", text(&out.stdout));
         assert_eq!(json_value(&out)["data"]["items"], serde_json::json!([]));
         assert!(worktree_registered(repo, "replay"));
         assert_eq!(retirement_head_at(repo, &managed(repo, "replay")), head);
         assert_eq!(
-            records::read(repo.repo.join(".git/mabo/workspaces")).unwrap(),
+            records::read(repo.repo.join(".git/rabi/workspaces")).unwrap(),
             records
         );
     }
@@ -16911,7 +16911,7 @@ fn retirement_review5_gc_reuses_integration_observation() {
 fn assert_retirement_batches_long_history(gc: bool) {
     let repo = Repo::new();
     for name in ["local", "other", "rebased"] {
-        assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+        assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
         commit_file(&repo, name, &format!("{name}.txt"), "first\n");
     }
     let first = retirement_head_at(&repo, &managed(&repo, "rebased"));
@@ -16946,7 +16946,7 @@ fn assert_retirement_batches_long_history(gc: bool) {
             vec!["remove", "local", "other", "rebased", "--dry-run", "--json"]
         };
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .env("GIT_TRACE2_EVENT", &trace)
             .output()
             .unwrap();
@@ -17000,7 +17000,7 @@ fn assert_retirement_batches_long_history(gc: bool) {
 fn retirement_tree_entries_preserve_rebased_work_after_later_base_edits() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "rebased", "--no-setup"])
+        .rabi(&["create", "rebased", "--no-setup"])
         .status
         .success());
     commit_file(&repo, "rebased", "patch.txt", "first\n");
@@ -17020,13 +17020,13 @@ fn retirement_tree_entries_preserve_rebased_work_after_later_base_edits() {
     fs::write(repo.repo.join("patch.txt"), "later base edit\n").unwrap();
     repo.git(&["add", "."]);
     repo.git(&["commit", "-m", "later edit"]);
-    let out = repo.mabo(&["gc", "--merged", "--json"]);
+    let out = repo.rabi(&["gc", "--merged", "--json"]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         json_value(&out)["data"]["items"][0]["action"],
         "wouldRemove"
     );
-    let out = repo.mabo(&["remove", "rebased", "--json"]);
+    let out = repo.rabi(&["remove", "rebased", "--json"]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(json_value(&out)["data"]["items"][0]["branchDeleted"], true);
 }
@@ -17035,14 +17035,14 @@ fn retirement_tree_entries_preserve_rebased_work_after_later_base_edits() {
 fn retirement_dry_run_preserves_git_and_record_bytes() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "squash", "--no-setup"])
+        .rabi(&["create", "squash", "--no-setup"])
         .status
         .success());
     commit_in_worktree(&repo, "squash");
     squash_onto_main(&repo, "squash");
     let marker = repo.root.join("dry-run-hook");
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         format!("[hooks]\npre-remove = [\"touch {}\"]\n", marker.display()),
     )
     .unwrap();
@@ -17079,7 +17079,7 @@ fn retirement_dry_run_preserves_git_and_record_bytes() {
         vec!["remove", "squash", "--dry-run", "--json"],
         vec!["gc", "--merged", "--json"],
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(0), "{}", text(&out.stdout));
         assert_eq!(json_value(&out)["data"]["plan"], true);
         let after = snapshot(&repo.repo.join(".git"));
@@ -17101,12 +17101,12 @@ fn retirement_dry_run_preserves_git_and_record_bytes() {
 fn retirement_gc_age_filters_evidence_and_excludes_unknown_creation_time() {
     let repo = Repo::new();
     for name in ["old", "recent", "unknown", "age-only"] {
-        assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+        assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
         if name != "age-only" {
             land_branch(&repo, name);
         }
     }
-    let dir = repo.repo.join(".git/mabo/workspaces");
+    let dir = repo.repo.join(".git/rabi/workspaces");
     for entry in fs::read_dir(&dir).unwrap() {
         let file = entry.unwrap().path();
         let mut record: serde_json::Value =
@@ -17124,7 +17124,7 @@ fn retirement_gc_age_filters_evidence_and_excludes_unknown_creation_time() {
     ] {
         let mut args = vec!["gc", "--json"];
         args.extend(flags);
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(0));
         let doc = json_value(&out);
         let items = doc["data"]["items"].as_array().unwrap();
@@ -17138,15 +17138,15 @@ fn retirement_gc_age_filters_evidence_and_excludes_unknown_creation_time() {
 fn retirement_remove_partial_result_retries_only_unfinished_targets() {
     let repo = Repo::new();
     for name in ["one", "two", "three"] {
-        assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+        assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
     }
     fs::write(
-        repo.repo.join(".mabo.toml"),
-        "[hooks]\npre-remove = [\"test \\\"$MABO_WORKSPACE\\\" != two\"]\n",
+        repo.repo.join(".rabi.toml"),
+        "[hooks]\npre-remove = [\"test \\\"$RABI_WORKSPACE\\\" != two\"]\n",
     )
     .unwrap();
     let args = ["remove", "one", "two", "three", "--json"];
-    let out = repo.mabo(&args);
+    let out = repo.rabi(&args);
     assert_eq!(out.status.code(), Some(6), "{}", text(&out.stdout));
     let doc = json_value(&out);
     assert_eq!(doc["data"]["items"].as_array().unwrap().len(), 3);
@@ -17158,8 +17158,8 @@ fn retirement_remove_partial_result_retries_only_unfinished_targets() {
         .as_str()
         .expect("retry command");
     assert!(!hint.contains("'one'"));
-    fs::remove_file(repo.repo.join(".mabo.toml")).unwrap();
-    let out = repo.mabo(&args);
+    fs::remove_file(repo.repo.join(".rabi.toml")).unwrap();
+    let out = repo.rabi(&args);
     assert_eq!(out.status.code(), Some(3), "{}", text(&out.stdout));
     assert!(managed(&repo, "two").exists());
     let out = run_setup_retry_hint(&repo, &repo.home, hint);
@@ -17202,7 +17202,7 @@ fn retirement_gc_closed_pr_and_missing_gh_report_separate_skip_hints() {
     );
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["gc", "--closed-pr", "--apply", "--json"],
         )
         .env("PATH", &fake)
@@ -17232,7 +17232,7 @@ fn retirement_gc_closed_pr_and_missing_gh_report_separate_skip_hints() {
         .unwrap();
     std::os::unix::fs::symlink(text(&git.stdout), bin.join("git")).unwrap();
     let out = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["gc", "--closed-pr", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["gc", "--closed-pr", "--json"])
         .env("PATH", bin)
         .output()
         .unwrap();
@@ -17249,12 +17249,12 @@ fn retirement_gc_closed_pr_and_missing_gh_report_separate_skip_hints() {
 fn retirement_bugbot_gc_keeps_live_unregistered_records() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "unregistered", "--no-setup"])
+        .rabi(&["create", "unregistered", "--no-setup"])
         .status
         .success());
     let pr = "https://github.com/acme/demo/pull/7";
     assert!(repo
-        .mabo(&["set", "unregistered", "--pr", pr])
+        .rabi(&["set", "unregistered", "--pr", pr])
         .status
         .success());
     let fake = gh_path(
@@ -17272,9 +17272,9 @@ fn retirement_bugbot_gc_keeps_live_unregistered_records() {
             .stdout,
     );
     fs::remove_dir_all(admin).unwrap();
-    let record_dir = repo.repo.join(".git/mabo/workspaces");
+    let record_dir = repo.repo.join(".git/rabi/workspaces");
     let before = records::read(&record_dir).unwrap();
-    let listed = repo.mabo(&["list", "--json"]);
+    let listed = repo.rabi(&["list", "--json"]);
     assert!(listed.status.success());
     assert!(!json_value(&listed)["data"]["workspaces"]
         .as_array()
@@ -17291,7 +17291,7 @@ fn retirement_bugbot_gc_keeps_live_unregistered_records() {
                 args.push("--apply");
             }
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
                 .env("PATH", &fake)
                 .output()
                 .unwrap();
@@ -17309,7 +17309,7 @@ fn retirement_bugbot_gc_keeps_live_unregistered_records() {
             if !apply {
                 args.push("--dry-run");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(out.status.code(), Some(0), "{}", text(&out.stdout));
             assert_eq!(json_value(&out)["data"]["items"][0]["alreadyGone"], true);
             assert_eq!(json_value(&out)["data"]["items"][0]["removed"], false);
@@ -17323,42 +17323,42 @@ fn retirement_bugbot_gc_keeps_live_unregistered_records() {
     }
     // The same record becomes orphaned only after its directory is truly gone.
     fs::remove_dir_all(&path).unwrap();
-    let plan = repo.mabo(&["gc", "--orphaned", "--json"]);
+    let plan = repo.rabi(&["gc", "--orphaned", "--json"]);
     assert_eq!(plan.status.code(), Some(0));
     assert_eq!(
         json_value(&plan)["data"]["items"][0]["action"],
         "wouldRemove"
     );
     assert_eq!(records::read(&record_dir).unwrap(), before);
-    let out = repo.mabo(&["gc", "--orphaned", "--apply", "--json"]);
+    let out = repo.rabi(&["gc", "--orphaned", "--apply", "--json"]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(json_value(&out)["data"]["items"][0]["action"], "removed");
     assert!(branch_listed(&repo, "unregistered"));
-    assert!(mabo::metadata::load_strict(&repo.repo).unwrap().is_empty());
+    assert!(rabi::metadata::load_strict(&repo.repo).unwrap().is_empty());
 }
 
 #[test]
 fn retirement_bugbot_remove_reports_all_preflight_refusals() {
     let repo = Repo::new();
     for name in ["clean", "dirty-one", "dirty-two"] {
-        assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+        assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
     }
     for name in ["dirty-one", "dirty-two"] {
         fs::write(managed(&repo, name).join("precious"), "keep this\n").unwrap();
     }
     assert!(repo
-        .mabo(&["create", "detached", "--detach", "--no-setup"])
+        .rabi(&["create", "detached", "--detach", "--no-setup"])
         .status
         .success());
     commit_file(&repo, "detached", "committed", "unpreserved\n");
     let head = retirement_head_at(&repo, &managed(&repo, "detached"));
     let marker = repo.root.join("hook-ran");
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         format!("[hooks]\npre-remove = ['touch {}']\n", marker.display()),
     )
     .unwrap();
-    let record_dir = repo.repo.join(".git/mabo/workspaces");
+    let record_dir = repo.repo.join(".git/rabi/workspaces");
     let before = records::read(&record_dir).unwrap();
     for invalid_first in [false, true] {
         for dry_run in [false, true] {
@@ -17383,7 +17383,7 @@ fn retirement_bugbot_remove_reports_all_preflight_refusals() {
                 if json {
                     args.push("--json");
                 }
-                let out = repo.mabo(&args);
+                let out = repo.rabi(&args);
                 assert_eq!(
                     out.status.code(),
                     Some(if invalid_first { 2 } else { 4 }),
@@ -17450,7 +17450,7 @@ fn retirement_bugbot_remove_reports_all_preflight_refusals() {
 fn retirement_tree_comparison_keeps_distinct_non_utf8_changes() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "bytes", "--no-setup"])
+        .rabi(&["create", "bytes", "--no-setup"])
         .status
         .success());
     let path = managed(&repo, "bytes");
@@ -17460,7 +17460,7 @@ fn retirement_tree_comparison_keeps_distinct_non_utf8_changes() {
     fs::write(repo.repo.join("bytes.txt"), [0x81, b'\n']).unwrap();
     repo.git(&["add", "."]);
     repo.git(&["commit", "-m", "different bytes"]);
-    let out = repo.mabo(&["remove", "bytes", "--json"]);
+    let out = repo.rabi(&["remove", "bytes", "--json"]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(json_value(&out)["data"]["items"][0]["branchDeleted"], false);
     assert_eq!(
@@ -17474,16 +17474,16 @@ fn retirement_tree_comparison_keeps_distinct_non_utf8_changes() {
 fn retirement_gc_skips_dirty_content_created_by_pre_remove_hook() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "hook-dirty", "--no-setup"])
+        .rabi(&["create", "hook-dirty", "--no-setup"])
         .status
         .success());
     land_branch(&repo, "hook-dirty");
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\npre-remove = [\"printf precious > dirty\"]\n",
     )
     .unwrap();
-    let out = repo.mabo(&["gc", "--merged", "--apply", "--json"]);
+    let out = repo.rabi(&["gc", "--merged", "--apply", "--json"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stdout));
     let doc = json_value(&out);
     assert_eq!(doc["data"]["items"][0]["action"], "skipped");
@@ -17501,7 +17501,7 @@ fn retirement_gc_skips_dirty_content_created_by_pre_remove_hook() {
 fn retirement_primary_is_refused_with_every_destructive_permission() {
     let repo = Repo::new();
     for selector in [".", "main"] {
-        let out = repo.mabo(&[
+        let out = repo.rabi(&[
             "remove",
             selector,
             "--discard-changes",
@@ -17522,7 +17522,7 @@ fn retirement_review_keeps_unique_merge_conflict_resolution() {
     repo.git(&["commit", "-m", "common conflict file"]);
     repo.git(&["branch", "side"]);
     assert!(repo
-        .mabo(&["create", "merge", "--no-setup"])
+        .rabi(&["create", "merge", "--no-setup"])
         .status
         .success());
     commit_file(&repo, "merge", "conflict.txt", "left\n");
@@ -17553,10 +17553,10 @@ fn retirement_review_keeps_unique_merge_conflict_resolution() {
     assert!(text(&cherry.stdout)
         .lines()
         .all(|line| line.starts_with("- ")));
-    let gc = repo.mabo(&["gc", "--merged", "--apply", "--json"]);
+    let gc = repo.rabi(&["gc", "--merged", "--apply", "--json"]);
     assert!(gc.status.success(), "{}", text(&gc.stdout));
     assert!(path.exists(), "{}", text(&gc.stdout));
-    let removed = repo.mabo(&["remove", "merge", "--json"]);
+    let removed = repo.rabi(&["remove", "merge", "--json"]);
     assert!(removed.status.success());
     assert_eq!(
         json_value(&removed)["data"]["items"][0]["branchKeptReason"],
@@ -17596,7 +17596,7 @@ fn assert_retirement_keeps_other_block(rebased: bool, detached: bool) {
     if detached {
         args.push("--detach");
     }
-    assert!(repo.mabo(&args).status.success());
+    assert!(repo.rabi(&args).status.success());
     let changed_block = block.replace("line 8\n", "changed\n");
     commit_file(
         &repo,
@@ -17652,7 +17652,7 @@ fn retirement_review3_accepts_exact_trees_despite_diff_settings() {
     fs::write(&order, "z*\na*\n").unwrap();
     repo.git(&["config", "diff.orderFile", order.to_str().unwrap()]);
     assert!(repo
-        .mabo(&["create", "exact", "--no-setup"])
+        .rabi(&["create", "exact", "--no-setup"])
         .status
         .success());
     let old = full_head(&repo);
@@ -17679,13 +17679,13 @@ fn retirement_review3_accepts_exact_trees_despite_diff_settings() {
     empty_commit(&repo, &repo.repo, "side divergence");
     repo.git(&["checkout", "main"]);
     repo.git(&["merge", "--no-ff", "side", "-m", "base merge"]);
-    let plan = repo.mabo(&["gc", "--merged", "--json"]);
+    let plan = repo.rabi(&["gc", "--merged", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stdout));
     assert_eq!(
         json_value(&plan)["data"]["items"][0]["action"],
         "wouldRemove"
     );
-    let removed = repo.mabo(&["remove", "exact", "--json"]);
+    let removed = repo.rabi(&["remove", "exact", "--json"]);
     assert!(removed.status.success(), "{}", text(&removed.stdout));
     assert_eq!(
         json_value(&removed)["data"]["items"][0]["branchDeleted"],
@@ -17715,7 +17715,7 @@ fn assert_retirement_keeps_gitlink(key: &str, value: &str) {
             if detached {
                 args.push("--detach");
             }
-            assert!(repo.mabo(&args).status.success());
+            assert!(repo.rabi(&args).status.success());
             let path = managed(&repo, "gitlink");
             git_at(
                 &repo,
@@ -17756,7 +17756,7 @@ fn retirement_head_at(repo: &Repo, path: &Path) -> String {
 fn assert_retirement_review3_keeps_workspace(repo: &Repo, name: &str, detached: bool) {
     let path = managed(repo, name);
     let head = retirement_head_at(repo, &path);
-    let dry_run = repo.mabo(&["remove", name, "--dry-run", "--json"]);
+    let dry_run = repo.rabi(&["remove", name, "--dry-run", "--json"]);
     if detached {
         assert_eq!(dry_run.status.code(), Some(4), "{}", text(&dry_run.stdout));
         assert_eq!(json_value(&dry_run)["error"]["code"], "unpreserved");
@@ -17767,11 +17767,11 @@ fn assert_retirement_review3_keeps_workspace(repo: &Repo, name: &str, detached: 
             "unpreserved"
         );
     }
-    let gc = repo.mabo(&["gc", "--merged", "--apply", "--json"]);
+    let gc = repo.rabi(&["gc", "--merged", "--apply", "--json"]);
     assert!(gc.status.success(), "{}", text(&gc.stdout));
     assert!(path.is_dir(), "{}", text(&gc.stdout));
     assert_eq!(retirement_head_at(repo, &path), head);
-    let removed = repo.mabo(&["remove", name, "--json"]);
+    let removed = repo.rabi(&["remove", name, "--json"]);
     if detached {
         assert_eq!(removed.status.code(), Some(4), "{}", text(&removed.stdout));
         assert_eq!(json_value(&removed)["error"]["code"], "unpreserved");
@@ -17803,7 +17803,7 @@ fn retirement_review_keeps_meaningful_whitespace_in_cherry() {
 fn assert_retirement_preserves_whitespace(cherry_only: bool) {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "whitespace", "--no-setup"])
+        .rabi(&["create", "whitespace", "--no-setup"])
         .status
         .success());
     commit_file(
@@ -17825,14 +17825,14 @@ fn assert_retirement_preserves_whitespace(cherry_only: bool) {
     if cherry_only {
         repo.git(&["cherry-pick", "whitespace"]);
     }
-    let gc = repo.mabo(&["gc", "--merged", "--apply", "--json"]);
+    let gc = repo.rabi(&["gc", "--merged", "--apply", "--json"]);
     assert!(gc.status.success(), "{}", text(&gc.stdout));
     assert!(
         managed(&repo, "whitespace").exists(),
         "cherry_only={cherry_only}: {}",
         text(&gc.stdout)
     );
-    let removed = repo.mabo(&["remove", "whitespace", "--json"]);
+    let removed = repo.rabi(&["remove", "whitespace", "--json"]);
     assert!(removed.status.success());
     assert_eq!(
         json_value(&removed)["data"]["items"][0]["branchKeptReason"],
@@ -17854,7 +17854,7 @@ fn retirement_review_gc_keeps_missing_detached_registration_and_head() {
 fn assert_retirement_keeps_missing_detached(command: &str) {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "detached", "--detach", "--no-setup"])
+        .rabi(&["create", "detached", "--detach", "--no-setup"])
         .status
         .success());
     let path = managed(&repo, "detached");
@@ -17869,7 +17869,7 @@ fn assert_retirement_keeps_missing_detached(command: &str) {
     let admin = PathBuf::from(text(&admin.stdout));
     let head = fs::read(admin.join("HEAD")).unwrap();
     let reflog = fs::read(admin.join("logs/HEAD")).unwrap();
-    let record_dir = repo.repo.join(".git/mabo/workspaces");
+    let record_dir = repo.repo.join(".git/rabi/workspaces");
     let records_before = records::read(&record_dir).unwrap();
     fs::remove_dir_all(&path).unwrap();
     if command == "remove" {
@@ -17878,7 +17878,7 @@ fn assert_retirement_keeps_missing_detached(command: &str) {
             if dry_run {
                 args.push("--dry-run");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(out.status.code(), Some(4), "{}", text(&out.stdout));
             assert_eq!(json_value(&out)["error"]["code"], "unpreserved");
         }
@@ -17888,7 +17888,7 @@ fn assert_retirement_keeps_missing_detached(command: &str) {
             if apply {
                 args.push("--apply");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert!(out.status.success(), "{}", text(&out.stdout));
             assert_eq!(json_value(&out)["data"]["items"][0]["action"], "skipped");
             assert!(json_value(&out)["data"]["items"][0]["detail"]
@@ -17900,7 +17900,7 @@ fn assert_retirement_keeps_missing_detached(command: &str) {
     assert_eq!(fs::read(admin.join("HEAD")).unwrap(), head);
     assert_eq!(fs::read(admin.join("logs/HEAD")).unwrap(), reflog);
     assert_eq!(records::read(&record_dir).unwrap(), records_before);
-    let permitted = repo.mabo(&[
+    let permitted = repo.rabi(&[
         "remove",
         "detached",
         "--delete-unpreserved-branch",
@@ -17946,7 +17946,7 @@ fn retirement_review_gc_hint_pins_selected_repository() {
         let other = Repo::new();
         for root in [&repo.repo, &other.repo] {
             let created =
-                repo.mabo(&["-R", root.to_str().unwrap(), "create", "same", "--no-setup"]);
+                repo.rabi(&["-R", root.to_str().unwrap(), "create", "same", "--no-setup"]);
             assert!(created.status.success(), "{}", text(&created.stderr));
         }
         land_branch(&repo, "same");
@@ -17964,7 +17964,7 @@ fn retirement_review_gc_hint_pins_selected_repository() {
             args.push("--json");
         }
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .current_dir(&other.repo)
             .output()
             .unwrap();
@@ -17999,7 +17999,7 @@ fn retirement_review_gc_hint_resolves_git_only_name() {
             path.to_str().unwrap(),
             "HEAD",
         ]);
-        let adopted = repo.mabo(&["adopt", path.to_str().unwrap()]);
+        let adopted = repo.rabi(&["adopt", path.to_str().unwrap()]);
         assert!(adopted.status.success(), "{}", text(&adopted.stderr));
         land_branch(&repo, "topic+fix");
         fs::write(path.join("dirty"), "target\n").unwrap();
@@ -18007,7 +18007,7 @@ fn retirement_review_gc_hint_resolves_git_only_name() {
         if json {
             args.push("--json");
         }
-        let hint = retirement_review_gc_hint(&repo.mabo(&args), json);
+        let hint = retirement_review_gc_hint(&repo.rabi(&args), json);
         let removed = run_setup_retry_hint(&repo, &repo.repo, &hint);
         assert!(
             removed.status.success(),
@@ -18023,7 +18023,7 @@ fn retirement_review_gc_hint_resolves_git_only_name() {
 fn retirement_review_already_gone_is_visible_in_text_only() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "missing", "--no-setup"])
+        .rabi(&["create", "missing", "--no-setup"])
         .status
         .success());
     let path = managed(&repo, "missing");
@@ -18033,18 +18033,18 @@ fn retirement_review_already_gone_is_visible_in_text_only() {
         .output()
         .unwrap();
     fs::remove_dir_all(text(&admin.stdout)).unwrap();
-    let record_dir = repo.repo.join(".git/mabo/workspaces");
+    let record_dir = repo.repo.join(".git/rabi/workspaces");
     let before = records::read(&record_dir).unwrap();
     for args in [
         vec!["remove", "missing"],
         vec!["remove", "missing", "--dry-run"],
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(out.status.code(), Some(0));
         assert_eq!(text(&out.stdout), "Workspace 'missing' is already gone");
         assert!(out.stderr.is_empty());
     }
-    let json = repo.mabo(&["remove", "missing", "--json"]);
+    let json = repo.rabi(&["remove", "missing", "--json"]);
     assert_eq!(json.status.code(), Some(0));
     let item = &json_value(&json)["data"]["items"][0];
     assert_eq!(item["alreadyGone"], true);
@@ -18071,12 +18071,12 @@ fn assert_retirement_plan_suppresses_fsmonitor(gc: bool) {
     use std::os::unix::fs::PermissionsExt;
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "landed", "--no-setup"])
+        .rabi(&["create", "landed", "--no-setup"])
         .status
         .success());
     land_branch(&repo, "landed");
     assert!(repo
-        .mabo(&["create", "dirty", "--no-setup"])
+        .rabi(&["create", "dirty", "--no-setup"])
         .status
         .success());
     land_branch(&repo, "dirty");
@@ -18085,7 +18085,7 @@ fn assert_retirement_plan_suppresses_fsmonitor(gc: bool) {
     let hook = repo.root.join("fsmonitor-hook");
     fs::write(
         &hook,
-        "#!/bin/sh\nprintf invoked >> \"$MABO_TEST_FSMONITOR_MARKER\"\nprintf 'token\\0'\n",
+        "#!/bin/sh\nprintf invoked >> \"$RABI_TEST_FSMONITOR_MARKER\"\nprintf 'token\\0'\n",
     )
     .unwrap();
     fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
@@ -18093,7 +18093,7 @@ fn assert_retirement_plan_suppresses_fsmonitor(gc: bool) {
     // Prove that this fixture actually runs and writes through the hook.
     let status = repo
         .command("git", &["--no-optional-locks", "status", "--porcelain"])
-        .env("MABO_TEST_FSMONITOR_MARKER", &marker)
+        .env("RABI_TEST_FSMONITOR_MARKER", &marker)
         .output()
         .unwrap();
     assert!(status.status.success());
@@ -18120,8 +18120,8 @@ fn assert_retirement_plan_suppresses_fsmonitor(gc: bool) {
                 args.push("--json");
             }
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
-                .env("MABO_TEST_FSMONITOR_MARKER", &marker)
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
+                .env("RABI_TEST_FSMONITOR_MARKER", &marker)
                 .output()
                 .unwrap();
             assert_eq!(
@@ -18150,20 +18150,20 @@ fn retirement_review2_gc_keeps_fresh_detached_workspace() {
     for unknown_creation in [false, true] {
         let repo = Repo::new();
         assert!(repo
-            .mabo(&["create", "review", "--detach", "--no-setup"])
+            .rabi(&["create", "review", "--detach", "--no-setup"])
             .status
             .success());
         if unknown_creation {
             clear_created_from(&repo, "review");
         }
-        let record_dir = repo.repo.join(".git/mabo/workspaces");
+        let record_dir = repo.repo.join(".git/rabi/workspaces");
         let before = records::read(&record_dir).unwrap();
         for args in [
             vec!["gc", "--merged", "--json"],
             vec!["gc", "--json"],
             vec!["gc", "--apply", "--json"],
         ] {
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert!(out.status.success(), "{}", text(&out.stdout));
             assert_eq!(
                 json_value(&out)["data"]["items"],
@@ -18182,7 +18182,7 @@ fn retirement_review2_gc_keeps_landed_detached_with_unknown_creation() {
     for creation in ["missing", "invalid", "unrecorded"] {
         let repo = Repo::new();
         assert!(repo
-            .mabo(&["create", "review", "--detach", "--no-setup"])
+            .rabi(&["create", "review", "--detach", "--no-setup"])
             .status
             .success());
         commit_in_worktree(&repo, "review");
@@ -18194,11 +18194,11 @@ fn retirement_review2_gc_keeps_landed_detached_with_unknown_creation() {
         assert!(head.status.success());
         repo.git(&["merge", "--ff-only", &text(&head.stdout)]);
         if creation == "unrecorded" {
-            assert!(repo.mabo(&["forget", "review"]).status.success());
+            assert!(repo.rabi(&["forget", "review"]).status.success());
         } else if creation == "missing" {
             clear_created_from(&repo, "review");
         } else {
-            let store = repo.repo.join(".git/mabo/workspaces");
+            let store = repo.repo.join(".git/rabi/workspaces");
             let mut document: serde_json::Value =
                 serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
             document["worktrees"][0]["createdFrom"] =
@@ -18209,7 +18209,7 @@ fn retirement_review2_gc_keeps_landed_detached_with_unknown_creation() {
             vec!["gc", "--merged", "--json"],
             vec!["gc", "--apply", "--json"],
         ] {
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert!(out.status.success(), "{}", text(&out.stdout));
             assert_eq!(
                 json_value(&out)["data"]["items"],
@@ -18227,11 +18227,11 @@ fn retirement_review2_gc_keeps_landed_detached_with_unknown_creation() {
 fn retirement_review2_gc_removes_detached_only_after_known_work_lands() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "review", "--detach", "--no-setup"])
+        .rabi(&["create", "review", "--detach", "--no-setup"])
         .status
         .success());
     commit_in_worktree(&repo, "review");
-    let plan = repo.mabo(&["gc", "--merged", "--json"]);
+    let plan = repo.rabi(&["gc", "--merged", "--json"]);
     assert!(plan.status.success());
     assert_eq!(json_value(&plan)["data"]["items"], serde_json::json!([]));
     let head = repo
@@ -18241,7 +18241,7 @@ fn retirement_review2_gc_removes_detached_only_after_known_work_lands() {
         .unwrap();
     assert!(head.status.success());
     repo.git(&["merge", "--ff-only", &text(&head.stdout)]);
-    let plan = repo.mabo(&["gc", "--merged", "--json"]);
+    let plan = repo.rabi(&["gc", "--merged", "--json"]);
     assert!(plan.status.success());
     let doc = json_value(&plan);
     assert_eq!(doc["data"]["items"][0]["action"], "wouldRemove");
@@ -18249,7 +18249,7 @@ fn retirement_review2_gc_removes_detached_only_after_known_work_lands() {
         doc["data"]["items"][0]["reasons"],
         serde_json::json!(["merged"])
     );
-    let applied = repo.mabo(&["gc", "--merged", "--apply", "--json"]);
+    let applied = repo.rabi(&["gc", "--merged", "--apply", "--json"]);
     assert!(applied.status.success(), "{}", text(&applied.stdout));
     assert_eq!(
         json_value(&applied)["data"]["items"][0]["action"],
@@ -18284,10 +18284,10 @@ fn retirement_review2_gc_hint_accepts_leading_hyphen_alias() {
                         "HEAD",
                     ]);
                 }
-                let adopted = repo.mabo(&["adopt", path.to_str().unwrap()]);
+                let adopted = repo.rabi(&["adopt", path.to_str().unwrap()]);
                 assert!(adopted.status.success(), "{}", text(&adopted.stderr));
                 persist_retirement_hyphen_alias(&repo);
-                assert!(repo.mabo(&["show", "--", "-alias"]).status.success());
+                assert!(repo.rabi(&["show", "--", "-alias"]).status.success());
                 if unpreserved {
                     commit_in_worktree(&repo, "topic");
                     fs::remove_dir_all(&path).unwrap();
@@ -18309,7 +18309,7 @@ fn retirement_review2_gc_hint_accepts_leading_hyphen_alias() {
                 if json {
                     args.push("--json");
                 }
-                let hint = retirement_review_gc_hint(&repo.mabo(&args), json);
+                let hint = retirement_review_gc_hint(&repo.rabi(&args), json);
                 assert_eq!(
                     hint.contains("--delete-unpreserved-branch"),
                     unpreserved,
@@ -18333,7 +18333,7 @@ fn retirement_review2_gc_hint_accepts_leading_hyphen_alias() {
 fn persist_retirement_hyphen_alias(repo: &Repo) {
     // The current CLI rejects option-like --name values, but recorded aliases
     // (including imported metadata) are valid selectors and must remain usable.
-    let store = repo.repo.join(".git/mabo/workspaces");
+    let store = repo.repo.join(".git/rabi/workspaces");
     let mut document: serde_json::Value =
         serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
     document["worktrees"][0]["name"] = serde_json::json!("-alias");
@@ -18345,36 +18345,36 @@ fn retirement_review2_sync_base_hints_accept_leading_hyphen_alias() {
     for missing_base in [false, true] {
         let repo = Repo::new();
         assert!(repo
-            .mabo(&["create", "topic", "--no-setup"])
+            .rabi(&["create", "topic", "--no-setup"])
             .status
             .success());
         if missing_base {
             repo.git(&["branch", "obsolete"]);
             assert!(repo
-                .mabo(&["set", "topic", "--base", "obsolete"])
+                .rabi(&["set", "topic", "--base", "obsolete"])
                 .status
                 .success());
             repo.git(&["branch", "-D", "obsolete"]);
         } else {
             assert!(repo
-                .mabo(&["set", "topic", "--unset", "base"])
+                .rabi(&["set", "topic", "--unset", "base"])
                 .status
                 .success());
         }
         persist_retirement_hyphen_alias(&repo);
         let other = Repo::new();
         assert!(other
-            .mabo(&["create", "topic", "--no-setup"])
+            .rabi(&["create", "topic", "--no-setup"])
             .status
             .success());
         assert!(other
-            .mabo(&["set", "topic", "--unset", "base"])
+            .rabi(&["set", "topic", "--unset", "base"])
             .status
             .success());
         persist_retirement_hyphen_alias(&other);
         let out = repo
             .command(
-                env!("CARGO_BIN_EXE_mabo"),
+                env!("CARGO_BIN_EXE_rabi"),
                 &[
                     "-R",
                     repo.repo.to_str().unwrap(),
@@ -18412,12 +18412,12 @@ fn retirement_review2_sync_base_hints_accept_leading_hyphen_alias() {
             text(&set.stdout),
             text(&set.stderr)
         );
-        let show = repo.mabo(&["show", "--json", "--", "-alias"]);
+        let show = repo.rabi(&["show", "--json", "--", "-alias"]);
         assert_eq!(
             json_value(&show)["data"]["workspace"]["base"],
             "refs/heads/main"
         );
-        let decoy = other.mabo(&["show", "--json", "--", "-alias"]);
+        let decoy = other.rabi(&["show", "--json", "--", "-alias"]);
         assert!(json_value(&decoy)["data"]["workspace"]["base"].is_null());
     }
 }
@@ -18445,7 +18445,7 @@ fn retirement_review4_rejects_symbolic_upstream_to_own_branch() {
 fn assert_retirement_rejects_self_evidence(evidence: &str) {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "topic", "--no-setup"])
+        .rabi(&["create", "topic", "--no-setup"])
         .status
         .success());
     commit_file(&repo, "topic", "precious", "only on topic\n");
@@ -18455,7 +18455,7 @@ fn assert_retirement_rejects_self_evidence(evidence: &str) {
             repo.git(&["branch", "alias"]);
         }
         assert!(repo
-            .mabo(&["set", "topic", "--base", base])
+            .rabi(&["set", "topic", "--base", base])
             .status
             .success());
     } else {
@@ -18482,7 +18482,7 @@ fn retirement_review4_rejects_detached_head_and_unrooted_commit_bases() {
     for base in ["HEAD", "oid", "worktree-head"] {
         let repo = Repo::new();
         assert!(repo
-            .mabo(&["create", "topic", "--detach", "--no-setup"])
+            .rabi(&["create", "topic", "--detach", "--no-setup"])
             .status
             .success());
         commit_file(&repo, "topic", "precious", "only in detached HEAD\n");
@@ -18507,7 +18507,7 @@ fn retirement_review4_rejects_detached_head_and_unrooted_commit_bases() {
         };
         // Exercise imported/raw metadata as well as the OID produced by normalizing
         // --base HEAD in a detached checkout. HEAD must not prove its own retention.
-        let store = repo.repo.join(".git/mabo/workspaces");
+        let store = repo.repo.join(".git/rabi/workspaces");
         let mut document: serde_json::Value =
             serde_json::from_slice(&records::read(&store).unwrap()).unwrap();
         document["worktrees"][0]["base"] = serde_json::json!(reference);
@@ -18532,7 +18532,7 @@ fn retirement_review4_accepts_independent_refs_at_same_commit() {
     ] {
         let repo = Repo::new();
         assert!(repo
-            .mabo(&["create", "topic", "--no-setup"])
+            .rabi(&["create", "topic", "--no-setup"])
             .status
             .success());
         commit_file(&repo, "topic", "precious", "saved independently\n");
@@ -18563,11 +18563,11 @@ fn retirement_review4_accepts_independent_refs_at_same_commit() {
                 _ => "saved",
             };
             assert!(repo
-                .mabo(&["set", "topic", "--base", base])
+                .rabi(&["set", "topic", "--base", base])
                 .status
                 .success());
         }
-        let out = repo.mabo(&["remove", "topic", "--json"]);
+        let out = repo.rabi(&["remove", "topic", "--json"]);
         assert!(out.status.success(), "{evidence}: {}", text(&out.stdout));
         assert_eq!(
             json_value(&out)["data"]["items"][0]["branchDeleted"],
@@ -18603,7 +18603,7 @@ fn assert_retirement_missing_git_only_hint(kind: &str) {
                 "HEAD",
             ]);
             if kind != "unrecorded" {
-                let out = repo.mabo(&["adopt", path.to_str().unwrap(), "--issue", "17"]);
+                let out = repo.rabi(&["adopt", path.to_str().unwrap(), "--issue", "17"]);
                 assert!(out.status.success(), "{}", text(&out.stderr));
                 if kind == "ambiguous" {
                     let decoy = managed(&repo, "decoy");
@@ -18615,7 +18615,7 @@ fn assert_retirement_missing_git_only_hint(kind: &str) {
                         decoy.to_str().unwrap(),
                         "HEAD",
                     ]);
-                    let adopted = repo.mabo(&["adopt", decoy.to_str().unwrap(), "--issue", "17"]);
+                    let adopted = repo.rabi(&["adopt", decoy.to_str().unwrap(), "--issue", "17"]);
                     assert!(adopted.status.success(), "{}", text(&adopted.stderr));
                 }
             }
@@ -18643,7 +18643,7 @@ fn assert_retirement_missing_git_only_hint(kind: &str) {
                 args.push("--apply");
             }
             let out = repo
-                .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                .command(env!("CARGO_BIN_EXE_rabi"), &args)
                 .current_dir(&other.repo)
                 .output()
                 .unwrap();
@@ -18678,11 +18678,11 @@ fn assert_retirement_missing_git_only_hint(kind: &str) {
 fn retirement_review4_sync_missing_directory_hint_can_set_base() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "topic", "--no-setup"])
+        .rabi(&["create", "topic", "--no-setup"])
         .status
         .success());
     assert!(repo
-        .mabo(&["set", "topic", "--unset", "base"])
+        .rabi(&["set", "topic", "--unset", "base"])
         .status
         .success());
     persist_retirement_hyphen_alias(&repo);
@@ -18690,7 +18690,7 @@ fn retirement_review4_sync_missing_directory_hint_can_set_base() {
     let other = Repo::new();
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "-R",
                 repo.repo.to_str().unwrap(),
@@ -18725,7 +18725,7 @@ fn retirement_review4_sync_missing_directory_hint_can_set_base() {
         text(&set.stdout),
         text(&set.stderr)
     );
-    let show = repo.mabo(&["show", "--json", "--", "-alias"]);
+    let show = repo.rabi(&["show", "--json", "--", "-alias"]);
     assert_eq!(
         json_value(&show)["data"]["workspace"]["base"],
         "refs/heads/main"
@@ -18736,15 +18736,15 @@ fn retirement_review4_sync_missing_directory_hint_can_set_base() {
 fn retirement_remove_unknown_selectors_preflight_all_targets_without_hooks() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "known", "--no-setup"])
+        .rabi(&["create", "known", "--no-setup"])
         .status
         .success());
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         "[hooks]\npre-remove = [\"touch hook-ran\"]\n",
     )
     .unwrap();
-    let records_dir = repo.repo.join(".git/mabo/workspaces");
+    let records_dir = repo.repo.join(".git/rabi/workspaces");
     let before = records::read(&records_dir).unwrap();
     let missing_path = repo.root.join("missing path's $(touch injected)");
     let unregistered_path = managed(&repo, "unregistered-directory");
@@ -18776,7 +18776,7 @@ fn retirement_remove_unknown_selectors_preflight_all_targets_without_hooks() {
                 if json {
                     args.push("--json");
                 }
-                let out = repo.mabo(&args);
+                let out = repo.rabi(&args);
                 assert_eq!(
                     out.status.code(),
                     Some(3),
@@ -18818,7 +18818,7 @@ fn retirement_remove_unknown_selectors_preflight_all_targets_without_hooks() {
     }
     // Each spelling also fails by itself, without relying on another missing name.
     for selector in selectors {
-        let out = repo.mabo(&["remove", selector, "--json"]);
+        let out = repo.rabi(&["remove", selector, "--json"]);
         assert_eq!(
             out.status.code(),
             Some(3),
@@ -18847,14 +18847,14 @@ fn retirement_remove_already_gone_requires_metadata_or_git_registration() {
                 .success());
             let path = managed(&repo, "gone");
             if !recorded {
-                assert!(repo.mabo(&["forget", "gone"]).status.success());
+                assert!(repo.rabi(&["forget", "gone"]).status.success());
             }
             fs::remove_dir_all(&path).unwrap();
             if !registered {
                 repo.git(&["worktree", "prune", "--expire", "now"]);
             }
             fs::write(
-                repo.repo.join(".mabo.toml"),
+                repo.repo.join(".rabi.toml"),
                 "[hooks]\npre-remove = [\"exit 99\"]\n",
             )
             .unwrap();
@@ -18874,7 +18874,7 @@ fn retirement_remove_already_gone_requires_metadata_or_git_registration() {
                     args.push("--dry-run");
                 }
                 args.extend(selectors.iter().copied());
-                let out = repo.mabo(&args);
+                let out = repo.rabi(&args);
                 assert_eq!(
                     out.status.code(),
                     Some(if recorded || registered { 0 } else { 3 }),
@@ -18919,11 +18919,11 @@ fn retirement_remove_retry_quotes_repository_and_preserves_permission_flags() {
                     path.to_str().unwrap(),
                 ]);
                 assert!(repo
-                    .mabo(&["adopt", path.to_str().unwrap()])
+                    .rabi(&["adopt", path.to_str().unwrap()])
                     .status
                     .success());
             } else {
-                let out = repo.mabo(&["create", "--no-setup", "--", name]);
+                let out = repo.rabi(&["create", "--no-setup", "--", name]);
                 assert!(
                     out.status.success(),
                     "{} {}",
@@ -18936,8 +18936,8 @@ fn retirement_remove_retry_quotes_repository_and_preserves_permission_flags() {
         }
         // The second hook fails only after the first workspace is removed.
         fs::write(
-            repo.repo.join(".mabo.toml"),
-            "[hooks]\npre-remove = [\"test \\\"$MABO_WORKSPACE\\\" != -remaining || exit 1\"]\n",
+            repo.repo.join(".rabi.toml"),
+            "[hooks]\npre-remove = [\"test \\\"$RABI_WORKSPACE\\\" != -remaining || exit 1\"]\n",
         )
         .unwrap();
         let mut args = vec![
@@ -18953,7 +18953,7 @@ fn retirement_remove_retry_quotes_repository_and_preserves_permission_flags() {
             args.push("--json");
         }
         args.extend(["--", "done", "-remaining", "last"]);
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(
             out.status.code(),
             Some(6),
@@ -18976,7 +18976,7 @@ fn retirement_remove_retry_quotes_repository_and_preserves_permission_flags() {
             assert!(hint.contains(flag), "{hint}");
         }
         assert!(!hint.contains("'done'"));
-        fs::remove_file(repo.repo.join(".mabo.toml")).unwrap();
+        fs::remove_file(repo.repo.join(".rabi.toml")).unwrap();
         let out = run_setup_retry_hint(&repo, &repo.home, &hint);
         assert_eq!(
             out.status.code(),
@@ -18996,7 +18996,7 @@ fn retirement_remove_retry_pins_output_over_environment_defaults() {
     for json in [false, true] {
         let repo = Repo::new();
         for name in ["done", "remaining"] {
-            assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+            assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
         }
         let remaining = managed(&repo, "remaining");
         repo.git(&["worktree", "lock", remaining.to_str().unwrap()]);
@@ -19004,11 +19004,11 @@ fn retirement_remove_retry_pins_output_over_environment_defaults() {
         let output = if json { "json" } else { "text" };
         let out = repo
             .command(
-                env!("CARGO_BIN_EXE_mabo"),
+                env!("CARGO_BIN_EXE_rabi"),
                 &["remove", "done", "remaining", "--output", output],
             )
-            .env("MABO_OUTPUT", env_output)
-            .env("MABO_NO_INPUT", "1")
+            .env("RABI_OUTPUT", env_output)
+            .env("RABI_NO_INPUT", "1")
             .output()
             .unwrap();
         assert_eq!(
@@ -19023,7 +19023,7 @@ fn retirement_remove_retry_pins_output_over_environment_defaults() {
         let hint = setup_retry_hint(&out, json);
         repo.git(&["worktree", "unlock", remaining.to_str().unwrap()]);
         // Execute the displayed command unchanged under the original defaults.
-        let script = format!("export MABO_OUTPUT={env_output} MABO_NO_INPUT=1\n{hint}");
+        let script = format!("export RABI_OUTPUT={env_output} RABI_NO_INPUT=1\n{hint}");
         let retried = run_setup_retry_hint(&repo, &repo.home, &script);
         assert_eq!(
             retried.status.code(),
@@ -19047,7 +19047,7 @@ fn retirement_remove_retry_pins_output_over_environment_defaults() {
         assert!(hint.contains(if json { " --json " } else { " --output text " }));
         assert!(hint.contains(" --no-input "));
         assert!(!remaining.exists());
-        assert!(mabo::metadata::load_strict(&repo.repo).unwrap().is_empty());
+        assert!(rabi::metadata::load_strict(&repo.repo).unwrap().is_empty());
     }
 }
 
@@ -19055,7 +19055,7 @@ fn retirement_remove_retry_pins_output_over_environment_defaults() {
 fn retirement_remove_missing_wins_over_other_preflight_errors() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "dirty", "--no-setup"])
+        .rabi(&["create", "dirty", "--no-setup"])
         .status
         .success());
     fs::write(managed(&repo, "dirty/changed"), "keep").unwrap();
@@ -19066,7 +19066,7 @@ fn retirement_remove_missing_wins_over_other_preflight_errors() {
                 args.push("--dry-run");
             }
             args.extend(selectors);
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(out.status.code(), Some(3), "{}", text(&out.stdout));
             assert_eq!(json_value(&out)["error"]["code"], "not_found");
             assert!(managed(&repo, "dirty/changed").is_file());
@@ -19080,7 +19080,7 @@ fn retirement_remove_branch_delete_failure_keeps_branch_and_continues() {
         for force in [false, true] {
             let repo = Repo::new();
             for name in ["branch-failure", "last"] {
-                assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+                assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
             }
             let lock = repo.repo.join(".git/refs/heads/branch-failure.lock");
             fs::write(&lock, "locked").unwrap();
@@ -19091,7 +19091,7 @@ fn retirement_remove_branch_delete_failure_keeps_branch_and_continues() {
             if force {
                 args.push("--delete-unpreserved-branch");
             }
-            let out = repo.mabo(&args);
+            let out = repo.rabi(&args);
             assert_eq!(
                 out.status.code(),
                 Some(0),
@@ -19102,7 +19102,7 @@ fn retirement_remove_branch_delete_failure_keeps_branch_and_continues() {
             assert!(branch_listed(&repo, "branch-failure"));
             assert!(!managed(&repo, "branch-failure").exists());
             assert!(!managed(&repo, "last").exists());
-            assert!(mabo::metadata::load_strict(&repo.repo).unwrap().is_empty());
+            assert!(rabi::metadata::load_strict(&repo.repo).unwrap().is_empty());
             if json {
                 let doc = json_value(&out); // Parsing the entire stdout rejects multiple documents.
                 assert_eq!(doc["ok"], true);
@@ -19131,9 +19131,9 @@ fn retirement_remove_branch_failure_and_unfinished_targets_use_one_retry() {
     for json in [false, true] {
         let repo = Repo::new();
         for name in ["branch-failure", "remaining", "last"] {
-            assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+            assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
         }
-        fs::write(repo.repo.join(".mabo.toml"), "[hooks]\npre-remove = ['test \"$MABO_WORKSPACE\" != last || test -f \"$MABO_REPO_PATH/allow-remove\"']\n").unwrap();
+        fs::write(repo.repo.join(".rabi.toml"), "[hooks]\npre-remove = ['test \"$RABI_WORKSPACE\" != last || test -f \"$RABI_REPO_PATH/allow-remove\"']\n").unwrap();
         let lock = repo.repo.join(".git/refs/heads/branch-failure.lock");
         fs::write(&lock, "locked").unwrap();
         let remaining = managed(&repo, "remaining");
@@ -19142,7 +19142,7 @@ fn retirement_remove_branch_failure_and_unfinished_targets_use_one_retry() {
         if json {
             args.push("--json");
         }
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(
             out.status.code(),
             Some(6),
@@ -19161,7 +19161,7 @@ fn retirement_remove_branch_failure_and_unfinished_targets_use_one_retry() {
             assert_eq!(doc["data"]["items"][2]["error"]["code"], "not_attempted");
         }
         let hint = setup_retry_hint(&out, json);
-        assert_eq!(hint.matches("mabo ").count(), 1, "{hint}");
+        assert_eq!(hint.matches("rabi ").count(), 1, "{hint}");
         assert_eq!(hint.matches(" && ").count(), 1, "{hint}");
         assert!(hint.contains("-R ") && hint.contains(" remove "), "{hint}");
         assert!(!hint.contains("branch-failure"), "{hint}");
@@ -19184,7 +19184,7 @@ fn retirement_remove_branch_failure_and_unfinished_targets_use_one_retry() {
             assert_eq!(doc["data"]["items"][0]["removed"], true);
         }
         let next = setup_retry_hint(&retried, json);
-        assert_eq!(next.matches("mabo ").count(), 1, "{next}");
+        assert_eq!(next.matches("rabi ").count(), 1, "{next}");
         assert!(
             !next.contains("branch-failure") && !next.contains("remaining"),
             "{next}"
@@ -19203,7 +19203,7 @@ fn retirement_remove_branch_failure_and_unfinished_targets_use_one_retry() {
         }
         assert!(!managed(&repo, "last").exists());
         assert!(branch_listed(&repo, "branch-failure"));
-        assert!(mabo::metadata::load_strict(&repo.repo).unwrap().is_empty());
+        assert!(rabi::metadata::load_strict(&repo.repo).unwrap().is_empty());
     }
 }
 
@@ -19211,13 +19211,13 @@ fn retirement_remove_branch_failure_and_unfinished_targets_use_one_retry() {
 fn retirement_remove_review3_retry_runs_in_shell_with_deleted_cwd() {
     let repo = Repo::new();
     for name in ["source", "remaining"] {
-        assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+        assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
     }
     let source = managed(&repo, "source");
     let remaining = managed(&repo, "remaining");
     repo.git(&["worktree", "lock", remaining.to_str().unwrap()]);
     let script = r#"
-mabo remove . remaining --no-hooks 2> "$3"
+rabi remove . remaining --no-hooks 2> "$3"
 status=$?
 test "$status" -eq 6 || exit 90
 test ! -d "$4" || exit 91
@@ -19234,7 +19234,7 @@ done < "$3"
 test -n "$retry" || exit 93
 eval "$retry"
 "#;
-    let binary_dir = Path::new(env!("CARGO_BIN_EXE_mabo")).parent().unwrap();
+    let binary_dir = Path::new(env!("CARGO_BIN_EXE_rabi")).parent().unwrap();
     let out = repo
         .command(
             "bash",
@@ -19249,7 +19249,7 @@ eval "$retry"
             ],
         )
         .current_dir(&source)
-        .env("MABO_TRUST_ALL", "1")
+        .env("RABI_TRUST_ALL", "1")
         .env(
             "PATH",
             format!(
@@ -19322,7 +19322,7 @@ fn assert_remove_metadata_failure_retry(
         std::os::unix::fs::symlink(&real, &via).unwrap();
         if kind == "workspace-root" {
             assert!(repo
-                .mabo(&["config", "set", "workspace-root", via.to_str().unwrap()])
+                .rabi(&["config", "set", "workspace-root", via.to_str().unwrap()])
                 .status
                 .success());
             via
@@ -19333,18 +19333,18 @@ fn assert_remove_metadata_failure_retry(
         managed_root(&repo)
     };
     for name in ["metadata-failure", "last"] {
-        assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+        assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
     }
     if symlink_root.is_some() {
         let canonical = fs::canonicalize(workspace_root.join("metadata-failure")).unwrap();
-        let stored = mabo::metadata::matching_path(&repo.repo, &canonical)
+        let stored = rabi::metadata::matching_path(&repo.repo, &canonical)
             .unwrap()
             .unwrap();
         assert_eq!(Path::new(&stored), workspace_root.join("metadata-failure"));
         assert_ne!(Path::new(&stored), canonical);
     }
     if !recorded {
-        assert!(repo.mabo(&["forget", "metadata-failure"]).status.success());
+        assert!(repo.rabi(&["forget", "metadata-failure"]).status.success());
     }
     if orphaned {
         fs::remove_dir_all(workspace_root.join("metadata-failure")).unwrap();
@@ -19352,12 +19352,12 @@ fn assert_remove_metadata_failure_retry(
     let source = workspace_root.join("metadata-failure");
     if hook_source {
         fs::write(
-            source.join(".mabo.toml"),
-            "[hooks]\npre-remove = ['printf x >> \"$MABO_REPO_PATH/source-hooks\"']\n",
+            source.join(".rabi.toml"),
+            "[hooks]\npre-remove = ['printf x >> \"$RABI_REPO_PATH/source-hooks\"']\n",
         )
         .unwrap();
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             "[hooks]\npre-remove = ['touch unexpected-primary-hook; exit 1']\n",
         )
         .unwrap();
@@ -19390,7 +19390,7 @@ esac
     )
     .unwrap();
     fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
-    let metadata_dir = repo.repo.join(".git/mabo/workspaces");
+    let metadata_dir = repo.repo.join(".git/rabi/workspaces");
     let mut args = vec!["remove", "metadata-failure", "last", "--no-hooks"];
     if hook_source {
         args = vec!["remove", "last", "metadata-failure", "--discard-changes"];
@@ -19399,7 +19399,7 @@ esac
         args.push("--json");
     }
     let out = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &args)
+        .command(env!("CARGO_BIN_EXE_rabi"), &args)
         .env(
             "PATH",
             format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
@@ -19459,17 +19459,17 @@ esac
 fn retirement_remove_path_and_name_aliases_deduplicate_before_hooks() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "target", "--no-setup"])
+        .rabi(&["create", "target", "--no-setup"])
         .status
         .success());
     let path = managed(&repo, "target");
     let marker = repo.repo.join("hook-count");
     fs::write(
-        repo.repo.join(".mabo.toml"),
-        "[hooks]\npre-remove = ['printf x >> \"$MABO_REPO_PATH/hook-count\"']\n",
+        repo.repo.join(".rabi.toml"),
+        "[hooks]\npre-remove = ['printf x >> \"$RABI_REPO_PATH/hook-count\"']\n",
     )
     .unwrap();
-    let relative = format!("./{}", mabo::paths::relative(&repo.repo, &path));
+    let relative = format!("./{}", rabi::paths::relative(&repo.repo, &path));
     for dry_run in [true, false] {
         let mut args = vec![
             "remove",
@@ -19481,7 +19481,7 @@ fn retirement_remove_path_and_name_aliases_deduplicate_before_hooks() {
         if dry_run {
             args.push("--dry-run");
         }
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert_eq!(
             out.status.code(),
             Some(0),
@@ -19504,17 +19504,17 @@ fn retirement_remove_source_checkout_rejects_another_repository_before_changes()
     let repo = Repo::new();
     let other = Repo::new();
     assert!(repo
-        .mabo(&["create", "target", "--no-setup"])
+        .rabi(&["create", "target", "--no-setup"])
         .status
         .success());
-    let store = repo.repo.join(".git/mabo/workspaces");
+    let store = repo.repo.join(".git/rabi/workspaces");
     let before = records::read(&store).unwrap();
     fs::write(
-        other.repo.join(".mabo.toml"),
+        other.repo.join(".rabi.toml"),
         "[hooks]\npre-remove = ['touch wrong-hook']\n",
     )
     .unwrap();
-    let out = repo.mabo(&[
+    let out = repo.rabi(&[
         "remove",
         "target",
         "--source-checkout",
@@ -19539,13 +19539,13 @@ fn retirement_remove_source_checkout_rejects_another_repository_before_changes()
 fn retirement_remove_retry_preserves_linked_source_hooks() {
     let repo = Repo::new();
     for name in ["source", "done", "remaining"] {
-        assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+        assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
     }
     let source = managed(&repo, "source");
-    fs::write(source.join(".mabo.toml"), "[hooks]\npre-remove = ['test \"$MABO_WORKSPACE\" != remaining || test -f \"$MABO_REPO_PATH/allow-remove\"', 'printf x >> \"$MABO_REPO_PATH/source-hooks\"']\n").unwrap();
+    fs::write(source.join(".rabi.toml"), "[hooks]\npre-remove = ['test \"$RABI_WORKSPACE\" != remaining || test -f \"$RABI_REPO_PATH/allow-remove\"', 'printf x >> \"$RABI_REPO_PATH/source-hooks\"']\n").unwrap();
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["remove", "done", "remaining", "--json"],
         )
         .current_dir(&source)
@@ -19555,13 +19555,13 @@ fn retirement_remove_retry_preserves_linked_source_hooks() {
     let hint = setup_retry_hint(&out, true);
     assert!(
         hint.starts_with(&format!(
-            "cd '{}' && mabo -R '{}' remove",
+            "cd '{}' && rabi -R '{}' remove",
             repo.repo.display(),
             repo.repo.display()
         )),
         "{hint}"
     );
-    assert_eq!(hint.matches("mabo ").count(), 1, "{hint}");
+    assert_eq!(hint.matches("rabi ").count(), 1, "{hint}");
     fs::write(repo.repo.join("allow-remove"), "allow").unwrap();
     let out = run_setup_retry_hint(&repo, &repo.home, &hint);
     assert_eq!(
@@ -19584,12 +19584,12 @@ fn retirement_remove_review_retry_survives_removed_source_without_enabling_prima
     for (json, no_hooks) in [(false, true), (true, true), (false, false), (true, false)] {
         let repo = Repo::new();
         for name in ["source", "remaining", "last"] {
-            assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+            assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
         }
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             r#"[hooks]
-pre-remove = ['touch "$MABO_REPO_PATH/unexpected-primary-hook"; exit 1']
+pre-remove = ['touch "$RABI_REPO_PATH/unexpected-primary-hook"; exit 1']
 "#,
         )
         .unwrap();
@@ -19605,7 +19605,7 @@ pre-remove = ['touch "$MABO_REPO_PATH/unexpected-primary-hook"; exit 1']
             args.push("--json");
         }
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
             .current_dir(&source)
             .output()
             .unwrap();
@@ -19644,21 +19644,21 @@ pre-remove = ['touch "$MABO_REPO_PATH/unexpected-primary-hook"; exit 1']
 fn retirement_remove_review_retains_hook_source_until_other_targets_finish() {
     let repo = Repo::new();
     for name in ["done", "source", "remaining", "last"] {
-        assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+        assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
     }
     let source = managed(&repo, "source");
     let remaining = managed(&repo, "remaining");
     fs::write(
-        source.join(".mabo.toml"),
+        source.join(".rabi.toml"),
         r#"[hooks]
-pre-remove = ['printf "%s\n" "$MABO_WORKSPACE" >> "$MABO_REPO_PATH/hooks-ran"']
+pre-remove = ['printf "%s\n" "$RABI_WORKSPACE" >> "$RABI_REPO_PATH/hooks-ran"']
 "#,
     )
     .unwrap();
     repo.git(&["worktree", "lock", remaining.to_str().unwrap()]);
     let out = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &[
                 "remove",
                 "done",
@@ -19704,7 +19704,7 @@ fn retirement_remove_review_resolves_paths_before_deleting_current_checkout() {
     for relative in [false, true] {
         let repo = Repo::new();
         for name in ["source", "other"] {
-            assert!(repo.mabo(&["create", name, "--no-setup"]).status.success());
+            assert!(repo.rabi(&["create", name, "--no-setup"]).status.success());
         }
         let source = managed(&repo, "source");
         let other = managed(&repo, "other");
@@ -19715,7 +19715,7 @@ fn retirement_remove_review_resolves_paths_before_deleting_current_checkout() {
         };
         let out = repo
             .command(
-                env!("CARGO_BIN_EXE_mabo"),
+                env!("CARGO_BIN_EXE_rabi"),
                 &["remove", ".", selector, "--no-hooks", "--json"],
             )
             .current_dir(&source)
@@ -19742,7 +19742,7 @@ fn retirement_remove_review_resolves_paths_before_deleting_current_checkout() {
 fn retirement_remove_review_dot_resolves_record_after_registration_disappears() {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "unregistered", "--no-setup"])
+        .rabi(&["create", "unregistered", "--no-setup"])
         .status
         .success());
     let path = managed(&repo, "unregistered");
@@ -19758,7 +19758,7 @@ fn retirement_remove_review_dot_resolves_record_after_registration_disappears() 
             .stdout,
     );
     fs::remove_dir_all(admin).unwrap();
-    let record_dir = repo.repo.join(".git/mabo/workspaces");
+    let record_dir = repo.repo.join(".git/rabi/workspaces");
     let before = records::read(&record_dir).unwrap();
     for cwd in [&path, &nested] {
         for selector in [".", "unregistered", path.to_str().unwrap(), "./.."] {
@@ -19777,7 +19777,7 @@ fn retirement_remove_review_dot_resolves_record_after_registration_disappears() 
                     args.push("--dry-run");
                 }
                 let out = repo
-                    .command(env!("CARGO_BIN_EXE_mabo"), &args)
+                    .command(env!("CARGO_BIN_EXE_rabi"), &args)
                     .current_dir(cwd)
                     .output()
                     .unwrap();
@@ -19808,7 +19808,7 @@ fn shell_commands_output_and_usage_contract() {
     let repo = Repo::new();
     for command in ["completions", "shell-init"] {
         for shell in ["bash", "zsh", "fish"] {
-            let normal = repo.mabo(&[command, shell]);
+            let normal = repo.rabi(&[command, shell]);
             assert!(
                 normal.status.success(),
                 "{command} {shell}: {}",
@@ -19817,8 +19817,8 @@ fn shell_commands_output_and_usage_contract() {
             assert!(!normal.stdout.is_empty());
             for mode in ["json", "invalid"] {
                 let output = repo
-                    .command(env!("CARGO_BIN_EXE_mabo"), &[command, shell])
-                    .env("MABO_OUTPUT", mode)
+                    .command(env!("CARGO_BIN_EXE_rabi"), &[command, shell])
+                    .env("RABI_OUTPUT", mode)
                     .output()
                     .unwrap();
                 assert!(output.status.success(), "{}", text(&output.stderr));
@@ -19832,7 +19832,7 @@ fn shell_commands_output_and_usage_contract() {
             ] {
                 let mut args = vec![command, shell];
                 args.extend(flags);
-                let output = repo.mabo(&args);
+                let output = repo.rabi(&args);
                 assert_eq!(output.status.code(), Some(2), "{args:?}");
                 assert!(output.stdout.is_empty());
                 assert!(text(&output.stderr).contains("JSON"));
@@ -19844,7 +19844,7 @@ fn shell_commands_output_and_usage_contract() {
             vec![command, "powershell"],
             vec![command, "bash", "extra"],
         ] {
-            let output = repo.mabo(&args);
+            let output = repo.rabi(&args);
             assert_eq!(output.status.code(), Some(2));
             assert!(output.stdout.is_empty());
             let error = text(&output.stderr);
@@ -19853,10 +19853,10 @@ fn shell_commands_output_and_usage_contract() {
                 "{error}"
             );
         }
-        let help = repo.mabo(&["help", command]);
+        let help = repo.rabi(&["help", command]);
         assert!(help.status.success());
         assert!(text(&help.stdout).contains("bash|zsh|fish"));
-        let help = repo.mabo(&["help", command, "--json"]);
+        let help = repo.rabi(&["help", command, "--json"]);
         let value: serde_json::Value = serde_json::from_slice(&help.stdout).unwrap();
         assert_eq!(value["schema"], 2);
         assert_eq!(value["data"]["selected"]["name"], command);
@@ -19879,7 +19879,7 @@ fn fish_shell_smoke() {
 fn shell_available(shell: &str) -> bool {
     match Command::new(shell).arg("--version").output() {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            mabo::output::stderr(format_args!(
+            rabi::output::stderr(format_args!(
                 "SKIP {shell} shell smoke: {shell} is not installed\n"
             ));
             return false;
@@ -19896,11 +19896,11 @@ fn bash_completion_quotes_shell_input() {
     }
     let repo = Repo::new();
     let completions = repo.root.join("completions.bash");
-    fs::write(&completions, repo.mabo(&["completions", "bash"]).stdout).unwrap();
+    fs::write(&completions, repo.rabi(&["completions", "bash"]).stdout).unwrap();
     let bin = repo.root.join("bin");
     fs::create_dir(&bin).unwrap();
     #[cfg(unix)]
-    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_mabo"), bin.join("mabo")).unwrap();
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_rabi"), bin.join("rabi")).unwrap();
     let path = std::env::join_paths(
         std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
@@ -19932,26 +19932,26 @@ fn bash_completion_quotes_shell_input() {
     {
         for expected in name.split('\n') {
             let script = r#"
-source "$MABO_TEST_COMPLETIONS"
-if [ "$MABO_TEST_MOCK" = 1 ]; then
-    _mabo_candidates() { printf '%s\n' "$MABO_TEST_NAME"; }
+source "$RABI_TEST_COMPLETIONS"
+if [ "$RABI_TEST_MOCK" = 1 ]; then
+    _rabi_candidates() { printf '%s\n' "$RABI_TEST_NAME"; }
 fi
-COMP_WORDS=(mabo path "$MABO_TEST_EXPECTED"); COMP_CWORD=2; _mabo
+COMP_WORDS=(rabi path "$RABI_TEST_EXPECTED"); COMP_CWORD=2; _rabi
 [ "${#COMPREPLY[@]}" = 1 ] || exit 40
-mabo() { printf '%s\0' "$@" > "$MABO_TEST_ARGS"; }
-eval "mabo path ${COMPREPLY[0]}"
+rabi() { printf '%s\0' "$@" > "$RABI_TEST_ARGS"; }
+eval "rabi path ${COMPREPLY[0]}"
 "#;
             let output = repo
                 .command("bash", &["--noprofile", "--norc", "-c", script])
                 .env("PATH", &path)
-                .env("MABO_TEST_COMPLETIONS", &completions)
-                .env("MABO_TEST_NAME", name)
-                .env("MABO_TEST_EXPECTED", expected)
+                .env("RABI_TEST_COMPLETIONS", &completions)
+                .env("RABI_TEST_NAME", name)
+                .env("RABI_TEST_EXPECTED", expected)
                 .env(
-                    "MABO_TEST_MOCK",
+                    "RABI_TEST_MOCK",
                     if names.contains(&name) { "0" } else { "1" },
                 )
-                .env("MABO_TEST_ARGS", repo.root.join("args"))
+                .env("RABI_TEST_ARGS", repo.root.join("args"))
                 .output()
                 .unwrap();
             assert!(
@@ -19995,18 +19995,18 @@ fn shell_smoke(shell: &str) {
     fs::create_dir(&parent).unwrap();
     let target = parent.join("-workspace");
     let name = "-workspace";
-    let config = repo.mabo(&["config", "set", "workspace-root", parent.to_str().unwrap()]);
+    let config = repo.rabi(&["config", "set", "workspace-root", parent.to_str().unwrap()]);
     assert!(config.status.success(), "{}", text(&config.stderr));
-    let output = repo.mabo(&["create", "--detach", "--no-setup", "--", name]);
+    let output = repo.rabi(&["create", "--detach", "--no-setup", "--", name]);
     assert!(output.status.success(), "{}", text(&output.stderr));
-    let ordinary = repo.mabo(&["create", "ordinary", "--detach", "--no-setup"]);
+    let ordinary = repo.rabi(&["create", "ordinary", "--detach", "--no-setup"]);
     assert!(ordinary.status.success(), "{}", text(&ordinary.stderr));
     let bin = repo.root.join("bin");
     fs::create_dir(&bin).unwrap();
     #[cfg(unix)]
-    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_mabo"), bin.join("mabo")).unwrap();
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_rabi"), bin.join("rabi")).unwrap();
     for command in ["shell-init", "completions"] {
-        let output = repo.mabo(&[command, shell]);
+        let output = repo.rabi(&[command, shell]);
         assert!(output.status.success(), "{}", text(&output.stderr));
         let file = repo.root.join(format!("{command}.{shell}"));
         fs::write(&file, output.stdout).unwrap();
@@ -20028,115 +20028,115 @@ fn shell_smoke(shell: &str) {
     }
     let script = if shell == "fish" {
         r#"
-source "$MABO_TEST_INIT"
-source "$MABO_TEST_COMPLETIONS"
+source "$RABI_TEST_INIT"
+source "$RABI_TEST_COMPLETIONS"
 set -l start "$PWD"
-mabo cd missing 2> "$MABO_TEST_ERROR"
+rabi cd missing 2> "$RABI_TEST_ERROR"
 set -l result $status
 test $result -eq 3; or exit 11
 test "$PWD" = "$start"; or exit 12
-mabo -R "$MABO_TEST_REPO" cd -- "$MABO_TEST_NAME"; or exit 13
-test "$PWD" = "$MABO_TEST_TARGET"; or exit 14
+rabi -R "$RABI_TEST_REPO" cd -- "$RABI_TEST_NAME"; or exit 13
+test "$PWD" = "$RABI_TEST_TARGET"; or exit 14
 builtin cd -- "$start"
-mabo cd --repo="$MABO_TEST_REPO" -- "$MABO_TEST_NAME"; or exit 15
-test "$PWD" = "$MABO_TEST_TARGET"; or exit 16
+rabi cd --repo="$RABI_TEST_REPO" -- "$RABI_TEST_NAME"; or exit 15
+test "$PWD" = "$RABI_TEST_TARGET"; or exit 16
 builtin cd -- "$start"
-mabo cd; or exit 19
+rabi cd; or exit 19
 test "$PWD" = "$start"; or exit 20
-mabo exec -- sh -c 'exit 23'
+rabi exec -- sh -c 'exit 23'
 test $status -eq 23; or exit 21
-mabo exec -- printf '%s\n' 'space argument' '' '-leading' > "$MABO_TEST_ARGS"; or exit 17
-complete -C 'mabo ' > "$MABO_TEST_COMMANDS"
-complete -C 'mabo path ' > "$MABO_TEST_NAMES"
-complete -C 'mabo repo ' > "$MABO_TEST_CHILDREN"
-complete -C 'mabo sync --' > "$MABO_TEST_FLAGS"
+rabi exec -- printf '%s\n' 'space argument' '' '-leading' > "$RABI_TEST_ARGS"; or exit 17
+complete -C 'rabi ' > "$RABI_TEST_COMMANDS"
+complete -C 'rabi path ' > "$RABI_TEST_NAMES"
+complete -C 'rabi repo ' > "$RABI_TEST_CHILDREN"
+complete -C 'rabi sync --' > "$RABI_TEST_FLAGS"
 # The token under the cursor is a prefix to complete, not a consumed word.
-complete -C 'mabo pat' | string match -q -r '^path\t'; or exit 41
-complete -C 'mabo path ordin' | string match -q -r '^ordinary$'; or exit 42
+complete -C 'rabi pat' | string match -q -r '^path\t'; or exit 41
+complete -C 'rabi path ordin' | string match -q -r '^ordinary$'; or exit 42
 "#
     } else {
         r#"
 if [ -n "$ZSH_VERSION" ]; then
-    fpath=("$MABO_TEST_INSECURE_FPATH" $fpath)
+    fpath=("$RABI_TEST_INSECURE_FPATH" $fpath)
     autoload -Uz compinit compaudit
-    compaudit > "$MABO_TEST_RESULTS/compaudit" 2>&1 && exit 35
+    compaudit > "$RABI_TEST_RESULTS/compaudit" 2>&1 && exit 35
     # Only this test fixture bypasses the host's completion-directory audit.
     compinit -u -D || exit 10
 fi
-source "$MABO_TEST_INIT"
-source "$MABO_TEST_COMPLETIONS"
+source "$RABI_TEST_INIT"
+source "$RABI_TEST_COMPLETIONS"
 start=$PWD
-mabo cd missing 2> "$MABO_TEST_ERROR"
+rabi cd missing 2> "$RABI_TEST_ERROR"
 result=$?
 [ "$result" -eq 3 ] || exit 11
 [ "$PWD" = "$start" ] || exit 12
-mabo -R "$MABO_TEST_REPO" cd -- "$MABO_TEST_NAME" || exit 13
-[ "$PWD" = "$MABO_TEST_TARGET" ] || exit 14
+rabi -R "$RABI_TEST_REPO" cd -- "$RABI_TEST_NAME" || exit 13
+[ "$PWD" = "$RABI_TEST_TARGET" ] || exit 14
 builtin cd -- "$start"
-mabo cd --repo="$MABO_TEST_REPO" -- "$MABO_TEST_NAME" || exit 15
-[ "$PWD" = "$MABO_TEST_TARGET" ] || exit 16
+rabi cd --repo="$RABI_TEST_REPO" -- "$RABI_TEST_NAME" || exit 15
+[ "$PWD" = "$RABI_TEST_TARGET" ] || exit 16
 builtin cd -- "$start"
-mabo cd || exit 19
+rabi cd || exit 19
 [ "$PWD" = "$start" ] || exit 20
-mabo exec -- sh -c 'exit 23'
+rabi exec -- sh -c 'exit 23'
 [ "$?" -eq 23 ] || exit 21
-mabo exec -- printf '%s\n' 'space argument' '' '-leading' > "$MABO_TEST_ARGS" || exit 17
+rabi exec -- printf '%s\n' 'space argument' '' '-leading' > "$RABI_TEST_ARGS" || exit 17
 if [ -n "$ZSH_VERSION" ]; then
-    [ "${_comps[mabo]}" = _mabo ] || exit 18
+    [ "${_comps[rabi]}" = _rabi ] || exit 18
     # Stub only the ZLE presentation; exercise the registered adapter.
-    _describe() { print -rl -- "${mabo_entries[@]}"; }
-    words=(mabo ''); CURRENT=2; _mabo > "$MABO_TEST_COMMANDS"
-    words=(mabo path ''); CURRENT=3; _mabo > "$MABO_TEST_NAMES"
-    words=(mabo repo ''); CURRENT=3; _mabo > "$MABO_TEST_CHILDREN"
-    words=(mabo sync --); CURRENT=3; _mabo > "$MABO_TEST_FLAGS"
+    _describe() { print -rl -- "${rabi_entries[@]}"; }
+    words=(rabi ''); CURRENT=2; _rabi > "$RABI_TEST_COMMANDS"
+    words=(rabi path ''); CURRENT=3; _rabi > "$RABI_TEST_NAMES"
+    words=(rabi repo ''); CURRENT=3; _rabi > "$RABI_TEST_CHILDREN"
+    words=(rabi sync --); CURRENT=3; _rabi > "$RABI_TEST_FLAGS"
 else
-    complete -p mabo || exit 18
-    COMP_WORDS=(mabo ''); COMP_CWORD=1; _mabo
-    printf '%s\n' "${COMPREPLY[@]}" > "$MABO_TEST_COMMANDS"
-    COMP_WORDS=(mabo path ''); COMP_CWORD=2; _mabo
-    printf '%s\n' "${COMPREPLY[@]}" > "$MABO_TEST_NAMES"
-    COMP_WORDS=(mabo repo ''); COMP_CWORD=2; _mabo
-    printf '%s\n' "${COMPREPLY[@]}" > "$MABO_TEST_CHILDREN"
-    COMP_WORDS=(mabo sync --); COMP_CWORD=2; _mabo
-    printf '%s\n' "${COMPREPLY[@]}" > "$MABO_TEST_FLAGS"
+    complete -p rabi || exit 18
+    COMP_WORDS=(rabi ''); COMP_CWORD=1; _rabi
+    printf '%s\n' "${COMPREPLY[@]}" > "$RABI_TEST_COMMANDS"
+    COMP_WORDS=(rabi path ''); COMP_CWORD=2; _rabi
+    printf '%s\n' "${COMPREPLY[@]}" > "$RABI_TEST_NAMES"
+    COMP_WORDS=(rabi repo ''); COMP_CWORD=2; _rabi
+    printf '%s\n' "${COMPREPLY[@]}" > "$RABI_TEST_CHILDREN"
+    COMP_WORDS=(rabi sync --); COMP_CWORD=2; _rabi
+    printf '%s\n' "${COMPREPLY[@]}" > "$RABI_TEST_FLAGS"
 fi
 "#
     };
     let mut script = script.to_string();
     script.push_str(r#"
-mabo cd ordinary || exit 29
-test "$PWD" = "$MABO_TEST_ORDINARY" || exit 30
-builtin cd -- "$MABO_TEST_REPO"
-mabo "-R$MABO_TEST_REPO" cd -- "$MABO_TEST_NAME" || exit 22
-test "$PWD" = "$MABO_TEST_TARGET" || exit 24
-builtin cd -- "$MABO_TEST_REPO"
-mabo --repo="$MABO_TEST_REPO" cd -- "$MABO_TEST_NAME" || exit 25
-test "$PWD" = "$MABO_TEST_TARGET" || exit 26
-builtin cd -- "$MABO_TEST_REPO"
-mabo cd "$MABO_TEST_TARGET" || exit 27
-test "$PWD" = "$MABO_TEST_TARGET" || exit 28
-mabo cd "$MABO_TEST_NEWLINE_TARGET" || exit 31
-test "$PWD" = "$MABO_TEST_NEWLINE_TARGET" || exit 32
-builtin cd -- "$MABO_TEST_REPO"
-mabo cd "$MABO_TEST_NEWLINES_TARGET" || exit 33
-test "$PWD" = "$MABO_TEST_NEWLINES_TARGET" || exit 34
+rabi cd ordinary || exit 29
+test "$PWD" = "$RABI_TEST_ORDINARY" || exit 30
+builtin cd -- "$RABI_TEST_REPO"
+rabi "-R$RABI_TEST_REPO" cd -- "$RABI_TEST_NAME" || exit 22
+test "$PWD" = "$RABI_TEST_TARGET" || exit 24
+builtin cd -- "$RABI_TEST_REPO"
+rabi --repo="$RABI_TEST_REPO" cd -- "$RABI_TEST_NAME" || exit 25
+test "$PWD" = "$RABI_TEST_TARGET" || exit 26
+builtin cd -- "$RABI_TEST_REPO"
+rabi cd "$RABI_TEST_TARGET" || exit 27
+test "$PWD" = "$RABI_TEST_TARGET" || exit 28
+rabi cd "$RABI_TEST_NEWLINE_TARGET" || exit 31
+test "$PWD" = "$RABI_TEST_NEWLINE_TARGET" || exit 32
+builtin cd -- "$RABI_TEST_REPO"
+rabi cd "$RABI_TEST_NEWLINES_TARGET" || exit 33
+test "$PWD" = "$RABI_TEST_NEWLINES_TARGET" || exit 34
 builtin cd -- "$HOME"
-_mabo_candidates -R "$MABO_TEST_REPO" path -- > "$MABO_TEST_RESULTS/repo-short"
-_mabo_candidates --repo="$MABO_TEST_REPO" path -- > "$MABO_TEST_RESULTS/repo-long"
-_mabo_candidates "-R$MABO_TEST_REPO" path -- > "$MABO_TEST_RESULTS/repo-attached"
-_mabo_candidates --repo "$HOME/missing-repo" path -- > "$MABO_TEST_RESULTS/failed-query"
-_mabo_candidates exec -- > "$MABO_TEST_RESULTS/exec-boundary"
-_mabo_candidates exec workspace > "$MABO_TEST_RESULTS/exec-selector"
-_mabo_candidates path -- "$MABO_TEST_NAME" > "$MABO_TEST_RESULTS/single-selector"
-_mabo_candidates -R "$MABO_TEST_REPO" remove -- "$MABO_TEST_NAME" > "$MABO_TEST_RESULTS/multiple-selectors"
-_mabo_candidates -R "$MABO_TEST_REPO" setup --copy-file pattern -- > "$MABO_TEST_RESULTS/value-consumed"
-_mabo_candidates setup --copy-file > "$MABO_TEST_RESULTS/value-pending"
+_rabi_candidates -R "$RABI_TEST_REPO" path -- > "$RABI_TEST_RESULTS/repo-short"
+_rabi_candidates --repo="$RABI_TEST_REPO" path -- > "$RABI_TEST_RESULTS/repo-long"
+_rabi_candidates "-R$RABI_TEST_REPO" path -- > "$RABI_TEST_RESULTS/repo-attached"
+_rabi_candidates --repo "$HOME/missing-repo" path -- > "$RABI_TEST_RESULTS/failed-query"
+_rabi_candidates exec -- > "$RABI_TEST_RESULTS/exec-boundary"
+_rabi_candidates exec workspace > "$RABI_TEST_RESULTS/exec-selector"
+_rabi_candidates path -- "$RABI_TEST_NAME" > "$RABI_TEST_RESULTS/single-selector"
+_rabi_candidates -R "$RABI_TEST_REPO" remove -- "$RABI_TEST_NAME" > "$RABI_TEST_RESULTS/multiple-selectors"
+_rabi_candidates -R "$RABI_TEST_REPO" setup --copy-file pattern -- > "$RABI_TEST_RESULTS/value-consumed"
+_rabi_candidates setup --copy-file > "$RABI_TEST_RESULTS/value-pending"
 "#);
     let contract: serde_json::Value =
         serde_json::from_str(include_str!("../help-data.json")).unwrap();
     for (index, key) in contract["helps"].as_object().unwrap().keys().enumerate() {
         script.push_str(&format!(
-            "_mabo_candidates {key} > \"$MABO_TEST_RESULTS/contract-{index}\"\n"
+            "_rabi_candidates {key} > \"$RABI_TEST_RESULTS/contract-{index}\"\n"
         ));
     }
     let path = std::env::join_paths(
@@ -20162,29 +20162,29 @@ _mabo_candidates setup --copy-file > "$MABO_TEST_RESULTS/value-pending"
     let output = command
         .env("PATH", path)
         .env("ZDOTDIR", &repo.home)
-        .env("MABO_TEST_INSECURE_FPATH", &insecure_fpath)
-        .env("MABO_TEST_NEWLINE_TARGET", repo.root.join("trailing\n"))
-        .env("MABO_TEST_NEWLINES_TARGET", repo.root.join("trailing\n\n"))
-        .env("MABO_OUTPUT", "json")
+        .env("RABI_TEST_INSECURE_FPATH", &insecure_fpath)
+        .env("RABI_TEST_NEWLINE_TARGET", repo.root.join("trailing\n"))
+        .env("RABI_TEST_NEWLINES_TARGET", repo.root.join("trailing\n\n"))
+        .env("RABI_OUTPUT", "json")
         .env(
-            "MABO_TEST_INIT",
+            "RABI_TEST_INIT",
             repo.root.join(format!("shell-init.{shell}")),
         )
         .env(
-            "MABO_TEST_COMPLETIONS",
+            "RABI_TEST_COMPLETIONS",
             repo.root.join(format!("completions.{shell}")),
         )
-        .env("MABO_TEST_RESULTS", &repo.root)
-        .env("MABO_TEST_REPO", &repo.repo)
-        .env("MABO_TEST_TARGET", &target)
-        .env("MABO_TEST_ORDINARY", parent.join("ordinary"))
-        .env("MABO_TEST_NAME", name)
-        .env("MABO_TEST_ERROR", repo.root.join("error"))
-        .env("MABO_TEST_ARGS", repo.root.join("args"))
-        .env("MABO_TEST_COMMANDS", repo.root.join("commands"))
-        .env("MABO_TEST_NAMES", repo.root.join("names"))
-        .env("MABO_TEST_CHILDREN", repo.root.join("children"))
-        .env("MABO_TEST_FLAGS", repo.root.join("flags"))
+        .env("RABI_TEST_RESULTS", &repo.root)
+        .env("RABI_TEST_REPO", &repo.repo)
+        .env("RABI_TEST_TARGET", &target)
+        .env("RABI_TEST_ORDINARY", parent.join("ordinary"))
+        .env("RABI_TEST_NAME", name)
+        .env("RABI_TEST_ERROR", repo.root.join("error"))
+        .env("RABI_TEST_ARGS", repo.root.join("args"))
+        .env("RABI_TEST_COMMANDS", repo.root.join("commands"))
+        .env("RABI_TEST_NAMES", repo.root.join("names"))
+        .env("RABI_TEST_CHILDREN", repo.root.join("children"))
+        .env("RABI_TEST_FLAGS", repo.root.join("flags"))
         .output()
         .unwrap();
     assert!(
@@ -20202,7 +20202,7 @@ _mabo_candidates setup --copy-file > "$MABO_TEST_RESULTS/value-pending"
         fs::read_to_string(repo.root.join("args")).unwrap(),
         "space argument\n\n-leading\n"
     );
-    let lookup_failure = repo.mabo(&["path", "--output", "text", "missing"]);
+    let lookup_failure = repo.rabi(&["path", "--output", "text", "missing"]);
     assert_eq!(lookup_failure.status.code(), Some(3));
     assert_eq!(
         fs::read(repo.root.join("error")).unwrap(),
@@ -20273,12 +20273,12 @@ _mabo_candidates setup --copy-file > "$MABO_TEST_RESULTS/value-pending"
 fn merged_pr_fixture(link: Option<&str>) -> Repo {
     let repo = Repo::new();
     assert!(repo
-        .mabo(&["create", "topic", "--no-setup"])
+        .rabi(&["create", "topic", "--no-setup"])
         .status
         .success());
     commit_file(&repo, "topic", "work.txt", "topic work\n");
     if let Some(link) = link {
-        assert!(repo.mabo(&["set", "topic", "--pr", link]).status.success());
+        assert!(repo.rabi(&["set", "topic", "--pr", link]).status.success());
     }
     repo
 }
@@ -20314,7 +20314,7 @@ case "$1 $2" in
 esac
 "#,
     );
-    let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), args);
+    let mut command = repo.command(env!("CARGO_BIN_EXE_rabi"), args);
     command
         .env("PATH", path)
         .env("GH_CALLS", repo.root.join("gh-calls"))
@@ -20592,9 +20592,9 @@ fn merged_pr_remove_gh_failures_keep_branch() {
         let path = gh_path(&repo, &format!("#!/bin/sh\n{body}\n"));
         let started = std::time::Instant::now();
         let out = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &["remove", "topic", "--json"])
+            .command(env!("CARGO_BIN_EXE_rabi"), &["remove", "topic", "--json"])
             .env("PATH", path)
-            .env("MABO_GH_TIMEOUT_MS", "50")
+            .env("RABI_GH_TIMEOUT_MS", "50")
             .output()
             .unwrap();
         assert!(
@@ -20618,7 +20618,7 @@ fn merged_pr_remove_gh_failures_keep_branch() {
         .unwrap();
     std::os::unix::fs::symlink(text(&git.stdout), bin.join("git")).unwrap();
     let out = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["remove", "topic", "--json"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["remove", "topic", "--json"])
         .env("PATH", bin)
         .output()
         .unwrap();
@@ -20689,10 +20689,10 @@ fn merged_pr_gc_merged_candidates_share_queries_and_recheck_local_tips() {
         let head = retirement_head_at(&repo, &managed(&repo, "topic"));
         repo.git(&["branch", "copy", "topic"]);
         assert!(repo
-            .mabo(&["create", "copy", "--branch", "copy", "--no-setup"])
+            .rabi(&["create", "copy", "--branch", "copy", "--no-setup"])
             .status
             .success());
-        assert!(repo.mabo(&["set", "copy", "--pr", "7"]).status.success());
+        assert!(repo.rabi(&["set", "copy", "--pr", "7"]).status.success());
         let response = merged_pr_response(&head, "MERGED");
         let args = if apply {
             vec!["gc", "--merged", "--closed-pr", "--apply", "--json"]
@@ -20751,7 +20751,7 @@ fn merged_pr_local_proof_avoids_gh_and_noninteractive_stdin_is_null() {
         true
     );
     assert!(!repo.root.join("gh-calls").exists());
-    for env in ["MABO_NO_INPUT", "CI", "NO_TTY"] {
+    for env in ["RABI_NO_INPUT", "CI", "NO_TTY"] {
         let repo = merged_pr_fixture(Some("7"));
         let response = merged_pr_response(
             &retirement_head_at(&repo, &managed(&repo, "topic")),
@@ -20787,7 +20787,7 @@ fn merged_pr_query_failures_are_cached_and_gc_reports_unavailable() {
         let started = std::time::Instant::now();
         let out = merged_pr_command(&repo, &["gc", "--merged", "--apply", "--json"], &response)
             .env("GH_PR_FAILURE", failure)
-            .env("MABO_GH_TIMEOUT_MS", "200")
+            .env("RABI_GH_TIMEOUT_MS", "200")
             .output()
             .unwrap();
         assert!(
@@ -20826,11 +20826,11 @@ fn merged_pr_after_base_edit_and_squash_proves_retirement() {
     repo.git(&["add", "work.txt"]);
     repo.git(&["commit", "-m", "original file"]);
     assert!(repo
-        .mabo(&["create", "topic", "--no-setup"])
+        .rabi(&["create", "topic", "--no-setup"])
         .status
         .success());
     commit_file(&repo, "topic", "work.txt", "start\ntopic\n");
-    assert!(repo.mabo(&["set", "topic", "--pr", "7"]).status.success());
+    assert!(repo.rabi(&["set", "topic", "--pr", "7"]).status.success());
     let head = retirement_head_at(&repo, &managed(&repo, "topic"));
     for (body, message) in [
         ("base\nstart\n", "base edit after PR creation"),
@@ -20869,7 +20869,7 @@ fn merged_pr_cached_proof_does_not_cover_new_local_commits_after_hooks() {
         let head = retirement_head_at(&repo, &managed(&repo, "topic"));
         let hook = "printf 'new unpublished work\\n' > later.txt && git add later.txt && git commit -m later";
         fs::write(
-            repo.repo.join(".mabo.toml"),
+            repo.repo.join(".rabi.toml"),
             format!(
                 "[hooks]\npre-remove = [{}]\n",
                 serde_json::to_string(hook).unwrap()
@@ -20911,14 +20911,14 @@ fn merged_pr_cached_proof_does_not_cover_new_local_commits_after_hooks() {
 fn current_storage_ignores_unsupported_stores_without_changing_them() {
     let repo = Repo::new();
     let ignored = [
-        repo.home.join(".config/maboroshi/config.toml"),
-        repo.root.join("state/maboroshi/trust.toml"),
-        repo.root.join("state/maboroshi/repos/proj_ignored.json"),
-        repo.root.join("state/maboroshi/projects.json"),
+        repo.home.join(".config/mabo/config.toml"),
+        repo.root.join("state/mabo/trust.toml"),
+        repo.root.join("state/mabo/repos/proj_ignored.json"),
         repo.root.join("state/mabo/projects.json"),
-        repo.repo.join(".git/maboroshi/workspaces/ws_ignored.json"),
-        repo.repo.join(".git/maboroshi/worktrees.json"),
+        repo.root.join("state/rabi/projects.json"),
+        repo.repo.join(".git/mabo/workspaces/ws_ignored.json"),
         repo.repo.join(".git/mabo/worktrees.json"),
+        repo.repo.join(".git/rabi/worktrees.json"),
     ];
     for path in &ignored {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -20948,7 +20948,7 @@ fn current_storage_ignores_unsupported_stores_without_changing_them() {
         vec!["set", "current", "--purpose", "current format", "--json"],
         vec!["remove", "current", "--json"],
     ] {
-        let out = repo.mabo(&args);
+        let out = repo.rabi(&args);
         assert!(
             out.status.success(),
             "{args:?}: {} {}",
@@ -20966,16 +20966,16 @@ fn current_storage_ignores_unsupported_stores_without_changing_them() {
             assert_eq!(fs::metadata(path).unwrap().modified().unwrap(), *modified);
         }
     }
-    assert!(repo.home.join(".config/mabo/config.toml").is_file());
-    assert!(repo.root.join("state/mabo/trust.toml").is_file());
+    assert!(repo.home.join(".config/rabi/config.toml").is_file());
+    assert!(repo.root.join("state/rabi/trust.toml").is_file());
     assert_eq!(
-        fs::read_dir(repo.root.join("state/mabo/repos"))
+        fs::read_dir(repo.root.join("state/rabi/repos"))
             .unwrap()
             .count(),
         1
     );
-    assert!(managed_root(&repo).join(".mabo-common-dir").is_file());
-    assert!(repo.repo.join(".git/mabo/workspaces").is_dir());
+    assert!(managed_root(&repo).join(".rabi-common-dir").is_file());
+    assert!(repo.repo.join(".git/rabi/workspaces").is_dir());
 }
 
 #[test]
@@ -20993,7 +20993,7 @@ fn config_and_state_xdg_defaults_apply_to_reads_and_writes() {
             repo.home.join(".local/state")
         };
         let run = |args: &[&str]| {
-            let mut command = repo.command(env!("CARGO_BIN_EXE_mabo"), args);
+            let mut command = repo.command(env!("CARGO_BIN_EXE_rabi"), args);
             for (key, base) in [
                 ("XDG_CONFIG_HOME", &config_base),
                 ("XDG_STATE_HOME", &state_base),
@@ -21025,8 +21025,8 @@ fn config_and_state_xdg_defaults_apply_to_reads_and_writes() {
         run(&["config", "get", "discover-ghq"]);
         run(&["repo", "list"]);
         run(&["trust", "list"]);
-        assert!(!config_base.join("mabo").exists());
-        assert!(!state_base.join("mabo").exists());
+        assert!(!config_base.join("rabi").exists());
+        assert!(!state_base.join("rabi").exists());
         run(&["config", "set", "discover-ghq", "false"]);
         assert_eq!(
             text(&run(&["config", "get", "discover-ghq"]).stdout),
@@ -21034,10 +21034,10 @@ fn config_and_state_xdg_defaults_apply_to_reads_and_writes() {
         );
         run(&["repo", "add"]);
         run(&["trust", "add"]);
-        assert!(config_base.join("mabo/config.toml").is_file());
-        assert!(state_base.join("mabo/trust.toml").is_file());
+        assert!(config_base.join("rabi/config.toml").is_file());
+        assert!(state_base.join("rabi/trust.toml").is_file());
         assert_eq!(
-            fs::read_dir(state_base.join("mabo/repos")).unwrap().count(),
+            fs::read_dir(state_base.join("rabi/repos")).unwrap().count(),
             1
         );
         assert!(!repo.repo.join("relative").exists());
@@ -21047,19 +21047,19 @@ fn config_and_state_xdg_defaults_apply_to_reads_and_writes() {
 #[test]
 fn unsupported_layouts_require_a_current_record_to_be_managed() {
     let repo = Repo::new();
-    let common = mabo::git::canonical_common_dir(&repo.repo).unwrap();
-    let project = mabo::paths::project_directory_name("repo", &common);
+    let common = rabi::git::canonical_common_dir(&repo.repo).unwrap();
+    let project = rabi::paths::project_directory_name("repo", &common);
     let roots = [
-        repo.root.join("xdg/maboroshi/workspaces").join(&project),
-        repo.root.join("xdg/maboroshi/worktrees").join(&project),
-        repo.repo.join(".git/maboroshi/worktrees"),
+        repo.root.join("xdg/mabo/workspaces").join(&project),
+        repo.root.join("xdg/mabo/worktrees").join(&project),
+        repo.repo.join(".git/mabo/worktrees"),
         repo.repo.join(".git/ptm/worktrees"),
     ];
     for (index, root) in roots.iter().enumerate() {
         let path = root.join("feature/nested");
         let branch = format!("outside-{index}");
         repo.git(&["worktree", "add", "-b", &branch, path.to_str().unwrap()]);
-        let out = repo.mabo(&["show", path.to_str().unwrap(), "--json"]);
+        let out = repo.rabi(&["show", path.to_str().unwrap(), "--json"]);
         assert!(out.status.success());
         let workspace = &json_value(&out)["data"]["workspace"];
         assert_eq!(workspace["managed"], false);
@@ -21068,15 +21068,15 @@ fn unsupported_layouts_require_a_current_record_to_be_managed() {
             vec!["remove", path.to_str().unwrap(), "--dry-run"],
             vec!["remove", path.to_str().unwrap()],
         ] {
-            assert!(!repo.mabo(&args).status.success());
+            assert!(!repo.rabi(&args).status.success());
             assert!(path.is_dir());
         }
-        let plan = json_value(&repo.mabo(&["gc", "--json"]));
+        let plan = json_value(&repo.rabi(&["gc", "--json"]));
         assert!(plan["data"]["items"].as_array().unwrap().is_empty());
-        let out = repo.mabo(&["adopt", path.to_str().unwrap(), "--json"]);
+        let out = repo.rabi(&["adopt", path.to_str().unwrap(), "--json"]);
         assert!(out.status.success(), "{}", text(&out.stdout));
         assert_eq!(json_value(&out)["data"]["workspace"]["managed"], true);
-        let out = repo.mabo(&["remove", path.to_str().unwrap(), "--json"]);
+        let out = repo.rabi(&["remove", path.to_str().unwrap(), "--json"]);
         assert!(out.status.success(), "{}", text(&out.stdout));
         assert!(!path.exists());
     }

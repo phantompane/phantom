@@ -1,15 +1,15 @@
 # Load after compinit, as with other zsh completion functions.
-_mabo() {
-    local mabo_entry mabo_name mabo_description
-    local -a mabo_entries=()
-    for mabo_entry in "${(@f)$(_mabo_candidates "${words[@]:1:$((CURRENT - 2))}")}"; do
-        mabo_name=${mabo_entry%%$'\t'*}
-        mabo_description=''
-        [[ "$mabo_entry" != *$'\t'* ]] || mabo_description=${mabo_entry#*$'\t'}
-        mabo_entries+=("${mabo_name//:/\\:}:$mabo_description")
+_rabi() {
+    local rabi_entry rabi_name rabi_description
+    local -a rabi_entries=()
+    for rabi_entry in "${(@f)$(_rabi_candidates "${words[@]:1:$((CURRENT - 2))}")}"; do
+        rabi_name=${rabi_entry%%$'\t'*}
+        rabi_description=''
+        [[ "$rabi_entry" != *$'\t'* ]] || rabi_description=${rabi_entry#*$'\t'}
+        rabi_entries+=("${rabi_name//:/\\:}:$rabi_description")
     done
-    _describe 'mabo' mabo_entries
+    _describe 'rabi' rabi_entries
 }
 if (( $+functions[compdef] )); then
-    compdef _mabo mabo
+    compdef _rabi rabi
 fi

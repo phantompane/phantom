@@ -74,14 +74,14 @@
     },
     {
       "name": "shell-init",
-      "description": "Output a shell function for mabo cd in bash, zsh or fish"
+      "description": "Output a shell function for rabi cd in bash, zsh or fish"
     }
   ],
   "helps": {
     "create": {
       "name": "create",
       "description": "Create a workspace from a new branch, existing branch, pull request, issue, or detached commit",
-      "usage": "mabo create [NAME] [--base REF | --branch BRANCH | --pr REF] [--issue REF] [--detach] [options]",
+      "usage": "rabi create [NAME] [--base REF | --branch BRANCH | --pr REF] [--issue REF] [--detach] [options]",
       "options": [
         {
           "name": "repo",
@@ -134,12 +134,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -166,42 +166,42 @@
       "examples": [
         {
           "description": "Create a new workspace with an auto-generated name",
-          "command": "mabo create"
+          "command": "rabi create"
         },
         {
           "description": "Create a new workspace named 'feature-auth'",
-          "command": "mabo create feature-auth"
+          "command": "rabi create feature-auth"
         },
         {
           "description": "Create a workspace and copy environment files",
-          "command": "mabo create staging --copy-file .env --copy-file database.yml"
+          "command": "rabi create staging --copy-file .env --copy-file database.yml"
         },
         {
           "description": "Create a workspace from main branch",
-          "command": "mabo create feature-new --base main"
+          "command": "rabi create feature-new --base main"
         },
         {
           "description": "Create a workspace from remote branch",
-          "command": "mabo create hotfix --base origin/production"
+          "command": "rabi create hotfix --base origin/production"
         },
         {
-          "command": "mabo create --branch origin/feature",
+          "command": "rabi create --branch origin/feature",
           "description": "Track an observed remote branch"
         },
         {
-          "command": "mabo create --pr 123",
+          "command": "rabi create --pr 123",
           "description": "Check out a pull request"
         },
         {
-          "command": "mabo create --issue 456 --base main",
+          "command": "rabi create --issue 456 --base main",
           "description": "Create a workspace for an issue"
         },
         {
-          "command": "mabo create review --detach --base main",
+          "command": "rabi create review --detach --base main",
           "description": "Create a detached checkout"
         },
         {
-          "command": "mabo create feature --reuse",
+          "command": "rabi create feature --reuse",
           "description": "Retry allocation without repeating setup"
         }
       ],
@@ -211,28 +211,28 @@
         ".worktreeinclude and --copy-file use gitignore syntax. A file is copied only when it matches and is gitignored, so tracked files are never duplicated",
         "Files that already exist in the new workspace are left unchanged",
         "Symlinks are skipped and are not followed. A .worktreeinclude symlink is not read",
-        ".mabo.toml is read from the invoking checkout, or from the selected primary checkout when -R/--repo is supplied. [hooks] setup commands run in the new workspace, in order, and stop at the first failure",
-        "setup hooks run only after the repository is trusted. On a terminal, mabo shows the project path and the hook commands and asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, nonempty CI, --no-input or MABO_NO_INPUT being enabled, or --json fails before creating the workspace. An empty value counts as unset. Run mabo trust add or pass --no-setup. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
-        "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
-        "New workspaces are created under $XDG_DATA_HOME/mabo/workspaces/<checkout>-<hash> (default ~/.local/share/mabo/workspaces/...). <checkout> is the canonical primary checkout directory name, so a symlink uses the same directory. <hash> is the first 8 hex digits of the SHA-256 of the canonical Git common directory. A relative XDG_DATA_HOME is ignored. workspace-root overrides this and is joined to the repository root",
-        "Purpose and links are stored in mabo/workspaces/<id>.json under the Git common directory",
-        "Config and state live only under mabo paths. Project markers use .mabo-common-dir; clone staging uses .mabo-clone-",
+        ".rabi.toml is read from the invoking checkout, or from the selected primary checkout when -R/--repo is supplied. [hooks] setup commands run in the new workspace, in order, and stop at the first failure",
+        "setup hooks run only after the repository is trusted. On a terminal, rabi shows the project path and the hook commands and asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, nonempty CI, --no-input or RABI_NO_INPUT being enabled, or --json fails before creating the workspace. An empty value counts as unset. Run rabi trust add or pass --no-setup. RABI_TRUST_ALL=1 trusts every repository for that process and writes nothing",
+        "Hooks and exec receive RABI=1, RABI_WORKSPACE (the workspace name), RABI_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), RABI_WORKSPACE_PATH (the absolute workspace path), and RABI_REPO_PATH (the primary checkout path)",
+        "New workspaces are created under $XDG_DATA_HOME/rabi/workspaces/<checkout>-<hash> (default ~/.local/share/rabi/workspaces/...). <checkout> is the canonical primary checkout directory name, so a symlink uses the same directory. <hash> is the first 8 hex digits of the SHA-256 of the canonical Git common directory. A relative XDG_DATA_HOME is ignored. workspace-root overrides this and is joined to the repository root",
+        "Purpose and links are stored in rabi/workspaces/<id>.json under the Git common directory",
+        "Config and state live only under rabi paths. Project markers use .rabi-common-dir; clone staging uses .rabi-clone-",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
-        "When no local branch has that name and exactly one configured remote already has it, create --branch creates the local branch tracking that remote. mabo does not fetch.",
+        "When no local branch has that name and exactly one configured remote already has it, create --branch creates the local branch tracking that remote. rabi does not fetch.",
         "When more than one configured remote has the name, create --branch exits 2 and lists those remotes. Pass <remote>/<name>. The remote is a configured remote name. A slash in a branch name is not itself a remote.",
         "<remote>/<name> attaches local branch <name> when that remote is configured and the remote-tracking ref exists. The workspace name omits the remote. An existing local branch keeps its upstream.",
-        "A new branch name already present locally or in locally observed remote-tracking refs is refused with exit 4 exists_remote. Use mabo create --branch <name>. mabo does not fetch for this check.",
+        "A new branch name already present locally or in locally observed remote-tracking refs is refused with exit 4 exists_remote. Use rabi create --branch <name>. rabi does not fetch for this check.",
         "An existing workspace is refused with exit 4 exists unless --reuse matches its source (base/branch/PR and requested issue). Reuse never runs hooks or copies files and preserves existing purpose and creation details; PR reuse can add a missing PR link.",
         "Same-repository PRs use the head branch; fork PRs use owner/head. Fork or deleted heads are fetched from pull/N/head without an upstream. --base, --branch, and --pr are mutually exclusive; --detach cannot accompany --branch or --pr.",
         "--json returns workspace, source (kind new/branch/pr/issue/detach and source details), setup (state, at, ran, ok, command, exitCode, signal, error), copy (copied paths, error), and metadata (ok, error). Failures after checkout creation exit 6.",
         "--no-setup skips copying and hooks; it conflicts with --copy-file.",
-        "Copy files from the primary checkout. After exit 6, run the retry command from the error: cd '/absolute/source/checkout' && mabo setup 'SELECTOR'. It preserves the original hook configuration and all --copy-file patterns, using a uniquely resolving name or PR/issue selector. If no selector resolves uniquely, the hint uses (cd WORKSPACE && mabo setup . --source-checkout SOURCE). Run hints in bash or zsh; control characters use ANSI-C quoting ($'...'). --reuse never repeats setup."
+        "Copy files from the primary checkout. After exit 6, run the retry command from the error: cd '/absolute/source/checkout' && rabi setup 'SELECTOR'. It preserves the original hook configuration and all --copy-file patterns, using a uniquely resolving name or PR/issue selector. If no selector resolves uniquely, the hint uses (cd WORKSPACE && rabi setup . --source-checkout SOURCE). Run hints in bash or zsh; control characters use ANSI-C quoting ($'...'). --reuse never repeats setup."
       ]
     },
     "list": {
       "name": "list",
       "description": "List all workspaces",
-      "usage": "mabo list [--repo <ref>] [options]",
+      "usage": "rabi list [--repo <ref>] [options]",
       "options": [
         {
           "name": "repo",
@@ -254,12 +254,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -286,22 +286,22 @@
       "examples": [
         {
           "description": "List all workspaces",
-          "command": "mabo list"
+          "command": "rabi list"
         },
         {
           "description": "List only workspace names",
-          "command": "mabo list --names"
+          "command": "rabi list --names"
         },
         {
           "description": "List only workspaces",
-          "command": "mabo list --kind workspace"
+          "command": "rabi list --kind workspace"
         }
       ],
       "notes": [
         "Includes the primary checkout (kind:primary); filter with --kind workspace or --kind primary.",
         "Human output has a repository header and current (*), name, branch, ahead/behind, upstream:gone, dirty, PR/issue and purpose columns.",
         "Includes orphaned records, marked [orphaned] and orphaned:true in JSON.",
-        "--names and --paths select text output even with MABO_OUTPUT=json. They cannot be combined with each other or explicit JSON.",
+        "--names and --paths select text output even with RABI_OUTPUT=json. They cannot be combined with each other or explicit JSON.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
         "Workspace JSON includes setup {state, at, error}, or null when unrecorded. Text lists show setup:STATE whenever state is not ok. Interrupted is an observation only, with no locking or in-use detection."
       ]
@@ -309,7 +309,7 @@
     "gc": {
       "name": "gc",
       "description": "Plan stale workspace cleanup; remove eligible candidates with --apply",
-      "usage": "mabo gc [--merged] [--closed-pr] [--orphaned] [--older-than D] [--apply] [--keep-branch] [--no-hooks]",
+      "usage": "rabi gc [--merged] [--closed-pr] [--orphaned] [--older-than D] [--apply] [--keep-branch] [--no-hooks]",
       "options": [
         {
           "name": "repo",
@@ -362,12 +362,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -379,39 +379,39 @@
       "examples": [
         {
           "description": "Plan all three criteria",
-          "command": "mabo gc"
+          "command": "rabi gc"
         },
         {
           "description": "Apply safe retirements",
-          "command": "mabo gc --apply"
+          "command": "rabi gc --apply"
         },
         {
           "description": "Narrow merged candidates by creation age",
-          "command": "mabo gc --merged --older-than 14d --apply"
+          "command": "rabi gc --merged --older-than 14d --apply"
         },
         {
           "description": "Inspect closed PR candidates",
-          "command": "mabo gc --closed-pr"
+          "command": "rabi gc --closed-pr"
         }
       ],
       "notes": [
         "With no criterion, --merged, --closed-pr, and --orphaned are all enabled. --older-than only narrows them by createdAt; null creation times are excluded. Without merged PR evidence, a workspace still at its creation commit is not merged.",
         "Without --apply, return plan:true and exit 0 even for protected candidates. data.items entries contain workspace, reasons, action (wouldRemove, removed, skipped, failed), and detail.",
-        "After local preservation checks fail, remove and gc can use GitHub evidence for a named branch. A recorded PR (`set --pr` or `create --pr`) must be `MERGED`, and its `headRefOid` must equal the local tip or contain it as an ancestor. Ancestry is checked only when that PR commit already exists locally; nothing is fetched. Partial clones (`extensions.partialClone` configured or any remote with `promisor=true`) require an exact tip match and skip PR object and ancestry probes on every Git version. A recorded URL is passed to `gh` and must match the checkout repository resolved by `gh repo view`; number-only links use that repository. Unlinked branches use one `gh pr list --head BRANCH --state merged --limit 2` query and require exactly one result with the same head name and exact tip ID; ancestry is never used. Repository identity is resolved once per command. Missing or unauthenticated `gh`, failed queries, invalid JSON, ambiguous identities, and timeouts keep the existing local verdict. Each gh call has a 10-second deadline (shorten it with positive `MABO_GH_TIMEOUT_MS`); authentication prompts are disabled and non-interactive stdin is `/dev/null`. Remote responses, including failures, are cached for the command, while local tips and ancestry are rechecked after hooks. JSON items add `preservationReason`: `merged_pr` for GitHub proof, `local` for remove's local proof, otherwise null or absent. Text details identify merged-PR proof. These rules also apply to plans.",
-        "Plans and --apply follow remove safety rules: dirty means modified/staged tracked files (including submodule changes) or non-ignored untracked files, matching list/show. Ignored files do not count as dirty and are deleted with the workspace without warning or permission; this also deletes nested Git repositories inside ignored directories (for example, ignored vendor/x/.git). Dirty and unpreserved candidates are skipped; detail gives a targeted mabo remove NAME --discard-changes or mabo remove NAME --delete-unpreserved-branch hint. Permissions are separate and never implied by gc.",
-        "Even when clean, workspaces with populated submodules or retained submodule data are refused during remove preflight (exit 4 dirty, including --dry-run) and skipped by gc (plan and --apply) with a mabo remove NAME --discard-changes hint; review the submodule contents, including unpushed commits, before using that permission.",
+        "After local preservation checks fail, remove and gc can use GitHub evidence for a named branch. A recorded PR (`set --pr` or `create --pr`) must be `MERGED`, and its `headRefOid` must equal the local tip or contain it as an ancestor. Ancestry is checked only when that PR commit already exists locally; nothing is fetched. Partial clones (`extensions.partialClone` configured or any remote with `promisor=true`) require an exact tip match and skip PR object and ancestry probes on every Git version. A recorded URL is passed to `gh` and must match the checkout repository resolved by `gh repo view`; number-only links use that repository. Unlinked branches use one `gh pr list --head BRANCH --state merged --limit 2` query and require exactly one result with the same head name and exact tip ID; ancestry is never used. Repository identity is resolved once per command. Missing or unauthenticated `gh`, failed queries, invalid JSON, ambiguous identities, and timeouts keep the existing local verdict. Each gh call has a 10-second deadline (shorten it with positive `RABI_GH_TIMEOUT_MS`); authentication prompts are disabled and non-interactive stdin is `/dev/null`. Remote responses, including failures, are cached for the command, while local tips and ancestry are rechecked after hooks. JSON items add `preservationReason`: `merged_pr` for GitHub proof, `local` for remove's local proof, otherwise null or absent. Text details identify merged-PR proof. These rules also apply to plans.",
+        "Plans and --apply follow remove safety rules: dirty means modified/staged tracked files (including submodule changes) or non-ignored untracked files, matching list/show. Ignored files do not count as dirty and are deleted with the workspace without warning or permission; this also deletes nested Git repositories inside ignored directories (for example, ignored vendor/x/.git). Dirty and unpreserved candidates are skipped; detail gives a targeted rabi remove NAME --discard-changes or rabi remove NAME --delete-unpreserved-branch hint. Permissions are separate and never implied by gc.",
+        "Even when clean, workspaces with populated submodules or retained submodule data are refused during remove preflight (exit 4 dirty, including --dry-run) and skipped by gc (plan and --apply) with a rabi remove NAME --discard-changes hint; review the submodule contents, including unpushed commits, before using that permission.",
         "Orphaned records are dropped without deleting checkout files or branches. The current workspace, primary checkout, default branch, and Git-locked checkouts are protected.",
         "Live removal runs trusted [hooks] pre-remove and rechecks the target afterwards. gc never asks for trust; untrusted hooks are skipped unless --no-hooks. A failed candidate does not prevent later candidates from being reported. Failures exit 6 after persistent removal, otherwise 1.",
         "Closed PRs are queried with gh using recorded URLs when available. Missing gh or an unavailable status is reported as unavailable.",
         "Rerunning gc --apply is idempotent; already retired workspaces are no longer candidates.",
-        "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
+        "Hooks and exec receive RABI=1, RABI_WORKSPACE (the workspace name), RABI_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), RABI_WORKSPACE_PATH (the absolute workspace path), and RABI_REPO_PATH (the primary checkout path)",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "trust": {
       "name": "trust",
       "description": "Manage repository hook trust",
-      "usage": "mabo trust <add|remove|list> [options]",
+      "usage": "rabi trust <add|remove|list> [options]",
       "options": [
         {
           "name": "repo",
@@ -427,12 +427,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -446,7 +446,7 @@
     "trust remove": {
       "name": "trust remove",
       "description": "Remove hook trust for a repository",
-      "usage": "mabo trust remove [REPO] [options]",
+      "usage": "rabi trust remove [REPO] [options]",
       "options": [
         {
           "name": "repo",
@@ -462,12 +462,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -483,7 +483,7 @@
     "exec": {
       "name": "exec",
       "description": "Execute a command in a workspace directory",
-      "usage": "mabo exec [--repo <ref>] [SEL] -- COMMAND [ARG...]",
+      "usage": "rabi exec [--repo <ref>] [SEL] -- COMMAND [ARG...]",
       "options": [
         {
           "name": "repo",
@@ -495,7 +495,7 @@
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -506,30 +506,30 @@
       ],
       "examples": [
         {
-          "command": "mabo exec -- git status",
+          "command": "rabi exec -- git status",
           "description": "Run in the current checkout"
         },
         {
-          "command": "mabo exec feature-auth -- npm test",
+          "command": "rabi exec feature-auth -- npm test",
           "description": "Run in a named workspace"
         },
         {
-          "command": "mabo -R owner/repo exec pr:774 -- git status",
+          "command": "rabi -R owner/repo exec pr:774 -- git status",
           "description": "Run in an already-linked workspace"
         }
       ],
       "notes": [
         "SEL is a name, . (the checkout containing cwd), pr:N, issue:N, a PR/issue URL, or an absolute path / path starting with ./ or ../. PR and issue selectors find already-linked workspaces only. No match exits 3; multiple matches exit 2 (ambiguous). A dot selector with a different --repo exits 2. Outside any repository exits 3.",
         "SEL defaults to .; -- before COMMAND is required. Put --repo before SEL. Every argument after -- is passed unchanged to the child.",
-        "The child exit code and stdin are preserved. MABO_OUTPUT is ignored; explicit --json is refused.",
-        "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
+        "The child exit code and stdin are preserved. RABI_OUTPUT is ignored; explicit --json is refused.",
+        "Hooks and exec receive RABI=1, RABI_WORKSPACE (the workspace name), RABI_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), RABI_WORKSPACE_PATH (the absolute workspace path), and RABI_REPO_PATH (the primary checkout path)",
         "exec reads records without rewriting them. Orphaned workspaces are refused."
       ]
     },
     "config": {
       "name": "config",
       "description": "Read and write user configuration",
-      "usage": "mabo config <get|set|unset|list> [options]",
+      "usage": "rabi config <get|set|unset|list> [options]",
       "options": [
         {
           "name": "repo",
@@ -545,12 +545,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -562,13 +562,13 @@
       "notes": [
         "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
         "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true.",
-        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
+        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .rabi.toml. Invalid values exit 2."
       ]
     },
     "config get": {
       "name": "config get",
       "description": "Show an effective config value",
-      "usage": "mabo config get KEY [--sources] [options]",
+      "usage": "rabi config get KEY [--sources] [options]",
       "options": [
         {
           "name": "repo",
@@ -589,12 +589,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -606,13 +606,13 @@
       "notes": [
         "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
         "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true.",
-        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
+        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .rabi.toml. Invalid values exit 2."
       ]
     },
     "config set": {
       "name": "config set",
       "description": "Set a user config value",
-      "usage": "mabo config set KEY VALUE [options]",
+      "usage": "rabi config set KEY VALUE [options]",
       "options": [
         {
           "name": "repo",
@@ -628,12 +628,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -645,13 +645,13 @@
       "notes": [
         "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
         "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true.",
-        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
+        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .rabi.toml. Invalid values exit 2."
       ]
     },
     "config unset": {
       "name": "config unset",
       "description": "Unset a user config value",
-      "usage": "mabo config unset KEY [options]",
+      "usage": "rabi config unset KEY [options]",
       "options": [
         {
           "name": "repo",
@@ -667,12 +667,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -684,13 +684,13 @@
       "notes": [
         "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
         "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true.",
-        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
+        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .rabi.toml. Invalid values exit 2."
       ]
     },
     "clone": {
       "name": "clone",
       "description": "Clone a Git repository into the ghq-compatible layout and register it",
-      "usage": "mabo clone <url|host/owner/repo|owner/repo> [options]",
+      "usage": "rabi clone <url|host/owner/repo|owner/repo> [options]",
       "options": [
         {
           "name": "repo",
@@ -721,12 +721,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -738,32 +738,32 @@
       "examples": [
         {
           "description": "Clone owner/repo from github.com",
-          "command": "mabo clone phantompane/phantom"
+          "command": "rabi clone phantompane/phantom"
         },
         {
           "description": "Clone an SSH URL and check out a branch",
-          "command": "mabo clone git@github.com:phantompane/phantom.git --branch develop"
+          "command": "rabi clone git@github.com:phantompane/phantom.git --branch develop"
         },
         {
           "description": "Shallow clone and print the versioned JSON result",
-          "command": "mabo clone github.com/phantompane/phantom --depth 1 --json"
+          "command": "rabi clone github.com/phantompane/phantom --depth 1 --json"
         },
         {
           "description": "Fetch an existing checkout and register it",
-          "command": "mabo clone phantompane/phantom --update"
+          "command": "rabi clone phantompane/phantom --update"
         }
       ],
       "notes": [
         "owner/repo uses github.com. host/owner/repo uses that host.",
         "https URLs, http URLs, ssh:// URLs, and scp-style git@host:owner/repo paths are accepted. A trailing .git suffix is optional.",
         "The repository is placed at <root>/<host>/<owner>/<repo>. The host is lowercased, and a URL port is part of that directory (example.net:9443).",
-        "The root is the clone-root key in $XDG_CONFIG_HOME/mabo/config.toml, otherwise the first git config ghq.root value, otherwise $GHQ_ROOT, otherwise ~/ghq. A configured root is used without reading git config. A git config read failure warns and falls through to $GHQ_ROOT or ~/ghq.",
-        "When that path is already the same repository root, mabo registers it and prints the path instead of cloning again. --update fetches origin in that case.",
+        "The root is the clone-root key in $XDG_CONFIG_HOME/rabi/config.toml, otherwise the first git config ghq.root value, otherwise $GHQ_ROOT, otherwise ~/ghq. A configured root is used without reading git config. A git config read failure warns and falls through to $GHQ_ROOT or ~/ghq.",
+        "When that path is already the same repository root, rabi registers it and prints the path instead of cloning again. --update fetches origin in that case.",
         "remoteUrl omits http and https userinfo, including a token used as the username. ssh and scp-style URLs keep the login name. file:// URLs and absolute scp-style paths are rejected.",
         "--branch and --depth apply only when cloning. updated is true only when an existing repository was fetched.",
         "If the path exists but is not that repository, the command exits 2 with a usage error.",
-        "After clone or fetch, mabo registers the repository. Registration failure exits 6 (partial) if a checkout was created or fetched, retaining repo.root, cloned, and updated in data; otherwise it exits 1. Retrying can register the existing checkout. New workspaces for that repository are created under $XDG_DATA_HOME/mabo/workspaces/<checkout>-<hash> unless workspace-root is set.",
-        "Authentication is left to Git. mabo does not call gh.",
+        "After clone or fetch, rabi registers the repository. Registration failure exits 6 (partial) if a checkout was created or fetched, retaining repo.root, cloned, and updated in data; otherwise it exits 1. Retrying can register the existing checkout. New workspaces for that repository are created under $XDG_DATA_HOME/rabi/workspaces/<checkout>-<hash> unless workspace-root is set.",
+        "Authentication is left to Git. rabi does not call gh.",
         "Git progress is written to stderr. With --json, stdout is the schema 2 envelope; data contains: repo {root, name, remoteUrl}, cloned, and updated.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
@@ -771,7 +771,7 @@
     "--version": {
       "name": "--version",
       "description": "Show the application version",
-      "usage": "mabo --version [--json]",
+      "usage": "rabi --version [--json]",
       "options": [
         {
           "name": "repo",
@@ -787,12 +787,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -808,7 +808,7 @@
     "repo": {
       "name": "repo",
       "description": "Register, discover, and inspect repositories",
-      "usage": "mabo repo <add|list|show|forget> [options]",
+      "usage": "rabi repo <add|list|show|forget> [options]",
       "options": [
         {
           "name": "repo",
@@ -824,12 +824,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -840,13 +840,13 @@
       ],
       "notes": [
         "Forgetting a registration leaves repository files and workspaces intact. Discovered repos can still appear.",
-        "Registrations live in $XDG_STATE_HOME/mabo/repos/<id>.json. The default is ~/.local/state/mabo/repos/<id>.json."
+        "Registrations live in $XDG_STATE_HOME/rabi/repos/<id>.json. The default is ~/.local/state/rabi/repos/<id>.json."
       ]
     },
     "repo add": {
       "name": "repo add",
-      "description": "Register a Git repository as a mabo repo",
-      "usage": "mabo repo add [path] [options]",
+      "description": "Register a Git repository as a rabi repo",
+      "usage": "rabi repo add [path] [options]",
       "options": [
         {
           "name": "repo",
@@ -862,12 +862,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -880,13 +880,13 @@
         "When path is omitted, the selected repository or current checkout is used.",
         "Adding an already registered repository succeeds without creating a duplicate.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
-        "Repository records live in $XDG_STATE_HOME/mabo/repos/<id>.json (default ~/.local/state/mabo/repos/<id>.json), with proj_<uuid> IDs. Duplicate roots are read once, using the oldest createdAt."
+        "Repository records live in $XDG_STATE_HOME/rabi/repos/<id>.json (default ~/.local/state/rabi/repos/<id>.json), with proj_<uuid> IDs. Duplicate roots are read once, using the oldest createdAt."
       ]
     },
     "repo list": {
       "name": "repo list",
-      "description": "List registered and discovered mabo repos",
-      "usage": "mabo repo list [--registered|--discovered] [--names|--paths] [options]",
+      "description": "List registered and discovered rabi repos",
+      "usage": "rabi repo list [--registered|--discovered] [--names|--paths] [options]",
       "options": [
         {
           "name": "repo",
@@ -912,12 +912,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "registered",
@@ -943,13 +943,13 @@
         "The clone root is the clone-root config key, then the first git config ghq.root value, then $GHQ_ROOT, then ~/ghq.",
         "ghq is optional. Checkouts under the clone root are still discovered when it is not installed.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
-        "Repository records live in $XDG_STATE_HOME/mabo/repos/<id>.json (default ~/.local/state/mabo/repos/<id>.json), with proj_<uuid> IDs. Duplicate roots are read once, using the oldest createdAt."
+        "Repository records live in $XDG_STATE_HOME/rabi/repos/<id>.json (default ~/.local/state/rabi/repos/<id>.json), with proj_<uuid> IDs. Duplicate roots are read once, using the oldest createdAt."
       ]
     },
     "repo forget": {
       "name": "repo forget",
-      "description": "Remove a Git repository from mabo's registry",
-      "usage": "mabo repo forget <id|name|path> [options]",
+      "description": "Remove a Git repository from rabi's registry",
+      "usage": "rabi repo forget <id|name|path> [options]",
       "options": [
         {
           "name": "repo",
@@ -965,12 +965,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -985,13 +985,13 @@
         "This command never deletes the Git repository or its workspaces.",
         "A repository discovered through ghq remains visible after its registry record is removed.",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
-        "Repository records live in $XDG_STATE_HOME/mabo/repos/<id>.json (default ~/.local/state/mabo/repos/<id>.json), with proj_<uuid> IDs. Duplicate roots are read once, using the oldest createdAt."
+        "Repository records live in $XDG_STATE_HOME/rabi/repos/<id>.json (default ~/.local/state/rabi/repos/<id>.json), with proj_<uuid> IDs. Duplicate roots are read once, using the oldest createdAt."
       ]
     },
     "sync": {
       "name": "sync",
       "description": "Fetch and sync selected workspaces; advance primary explicitly with --main",
-      "usage": "mabo sync [SEL... | --all | --main] [--auto | --rebase | --merge] [--rewrite-published] [--keep-conflicts] [--dry-run]",
+      "usage": "rabi sync [SEL... | --all | --main] [--auto | --rebase | --merge] [--rewrite-published] [--keep-conflicts] [--dry-run]",
       "options": [
         {
           "name": "repo",
@@ -1047,12 +1047,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1063,23 +1063,23 @@
       ],
       "examples": [
         {
-          "command": "mabo sync",
+          "command": "rabi sync",
           "description": "Sync only the current workspace; in primary, fast-forward only if on the default branch"
         },
         {
-          "command": "mabo sync --all --json",
+          "command": "rabi sync --all --json",
           "description": "Sync every workspace in this repository"
         },
         {
-          "command": "mabo sync feature/auth --merge --keep-conflicts",
+          "command": "rabi sync feature/auth --merge --keep-conflicts",
           "description": "Merge and resolve conflicts manually for a single workspace"
         },
         {
-          "command": "mabo sync . --main --dry-run --json",
+          "command": "rabi sync . --main --dry-run --json",
           "description": "Fetch and plan current workspace plus primary checkout"
         },
         {
-          "command": "mabo sync feature/auth --rebase --rewrite-published",
+          "command": "rabi sync feature/auth --rebase --rewrite-published",
           "description": "Explicitly allow rebasing published history; may require a force push later"
         }
       ],
@@ -1090,7 +1090,7 @@
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses",
         "SEL and --all are mutually exclusive. --main alone selects only primary; sync . --main also syncs the current workspace. Primary on another branch skips with not-default-branch. --keep-conflicts requires exactly one workspace integration target (the optional primary update is ff-only).",
         "Both execution and dry runs use ordinary git fetch in the invoking repository. Before any fetch or integration, sync checks every configured fetch refspec of every involved remote and refuses with exit 4 refused if a positive refspec has a destination outside refs/remotes/ (including explicit refs/tags/ destinations and mirror mappings). Negative exclusions do not relax this conservative check; a missing or empty destination only writes FETCH_HEAD and is allowed. Use a tracking destination under refs/remotes/ for custom namespaces. Sync also refuses any existing symbolic ref visible to git for-each-ref under refs/remotes/ or refs/tags/ that points outside refs/remotes/; repair or remove the alias before retrying. Dangling symbolic refs are omitted by Git's enumeration and are not detected: this is a known limit shared with plain git fetch. Git retains its configured pruning, automatic tag following, negative exclusions and followRemoteHEAD behavior; automatic tag following is not an explicit fetch refspec. Combined dry runs evaluate local bases against tips planned for primary and earlier workspaces, in selection order. Planned branch tips are keyed by full refs: the short branch name refs/heads/a maps to refs/heads/refs/heads/a, independently of branch a at refs/heads/a. When an earlier planned tip is unknown, dependent items report updated, after:null, strategy:null and a dependency explanation in detail, without deciding against the old base.",
-        "Strategy precedence: --auto/--rebase/--merge, then user config sync.strategy, then auto. Rewrite permission: --rewrite-published or user config sync.rewrite-published (default false). Publication evidence includes observed remote-tracking refs, configured fetch destinations and the workspace upstream, even independent local branch refs or destinations of remotes not fetched by this sync. Only the current branch itself is excluded. Personal sync policy is rejected in .mabo.toml. Items expose strategySource and rewriteSource independently.",
+        "Strategy precedence: --auto/--rebase/--merge, then user config sync.strategy, then auto. Rewrite permission: --rewrite-published or user config sync.rewrite-published (default false). Publication evidence includes observed remote-tracking refs, configured fetch destinations and the workspace upstream, even independent local branch refs or destinations of remotes not fetched by this sync. Only the current branch itself is excluded. Personal sync policy is rejected in .rabi.toml. Items expose strategySource and rewriteSource independently.",
         "data is {plan, items:[{workspace,status,strategy,strategySource,rewriteAllowed,rewriteSource,rewrotePublished,before,after,conflicts,detail,code}], main:item|null}. Planned merge/rebase after is null when the future commit ID is unknown; rewrotePublished remains false in plans. Statuses: updated, up-to-date, dirty, diverged, integrated, detached, base-gone, base-unknown, conflict, refused, failed; primary also has not-default-branch.",
         "Rebasing published commits without permission exits 4 published with --rewrite-published guidance. Actual rewrites emit published_rewritten with the workspace name: updating the existing remote branch may require a force push."
       ]
@@ -1098,7 +1098,7 @@
     "repo show": {
       "name": "repo show",
       "description": "Inspect a repository and its primary checkout",
-      "usage": "mabo repo show [REF] [options]",
+      "usage": "rabi repo show [REF] [options]",
       "options": [
         {
           "name": "repo",
@@ -1114,12 +1114,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1129,13 +1129,13 @@
         }
       ],
       "notes": [
-        "Defaults to -R/--repo, or the current repository. Shows root, name, defaultBranch, configPresent (.mabo.toml), trusted, and workspaceRoot."
+        "Defaults to -R/--repo, or the current repository. Shows root, name, defaultBranch, configPresent (.rabi.toml), trusted, and workspaceRoot."
       ]
     },
     "config list": {
       "name": "config list",
       "description": "Show all effective config values",
-      "usage": "mabo config list [--sources] [options]",
+      "usage": "rabi config list [--sources] [options]",
       "options": [
         {
           "name": "repo",
@@ -1156,12 +1156,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1173,13 +1173,13 @@
       "notes": [
         "Keys: workspace-root, clone-root, discover-ghq, sync.strategy, sync.rewrite-published. Config layering: flags, environment, user config, defaults. Sync strategy and rewrite flags override user policy. See clone-root for its fallback chain.",
         "workspace-root: absolute, ~/, or relative to the repository root; unset uses the XDG workspace layout. clone-root: absolute or ~/; default chain is git config ghq.root, GHQ_ROOT, ~/ghq. discover-ghq defaults true.",
-        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .mabo.toml. Invalid values exit 2."
+        "User sync policy: sync.strategy = auto|rebase|merge (default auto); sync.rewrite-published = true|false (default false). Stored under [sync] in user config.toml, never in repository .rabi.toml. Invalid values exit 2."
       ]
     },
     "trust add": {
       "name": "trust add",
       "description": "Show hooks and trust a repository without prompting",
-      "usage": "mabo trust add [REPO] [options]",
+      "usage": "rabi trust add [REPO] [options]",
       "options": [
         {
           "name": "repo",
@@ -1195,12 +1195,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1216,7 +1216,7 @@
     "trust list": {
       "name": "trust list",
       "description": "List trusted repository common directories",
-      "usage": "mabo trust list [options]",
+      "usage": "rabi trust list [options]",
       "options": [
         {
           "name": "repo",
@@ -1232,12 +1232,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1251,7 +1251,7 @@
     "help": {
       "name": "help",
       "description": "Show command help or the complete machine-readable command contract",
-      "usage": "mabo help [COMMAND...] [--json]",
+      "usage": "rabi help [COMMAND...] [--json]",
       "options": [
         {
           "name": "repo",
@@ -1267,12 +1267,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1288,7 +1288,7 @@
     "show": {
       "name": "show",
       "description": "Inspect a workspace and its intent and observed state",
-      "usage": "mabo show [--repo <ref>] [SEL] [options]",
+      "usage": "rabi show [--repo <ref>] [SEL] [options]",
       "options": [
         {
           "name": "repo",
@@ -1305,12 +1305,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1321,11 +1321,11 @@
       ],
       "examples": [
         {
-          "command": "mabo show pr:774",
+          "command": "rabi show pr:774",
           "description": "Select an already-linked workspace"
         },
         {
-          "command": "mabo show",
+          "command": "rabi show",
           "description": "Inspect the current checkout"
         }
       ],
@@ -1339,7 +1339,7 @@
     "path": {
       "name": "path",
       "description": "Output only the filesystem path of a workspace",
-      "usage": "mabo path [--repo <ref>] [SEL] [options]",
+      "usage": "rabi path [--repo <ref>] [SEL] [options]",
       "options": [
         {
           "name": "repo",
@@ -1356,12 +1356,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1372,11 +1372,11 @@
       ],
       "examples": [
         {
-          "command": "mabo path pr:774",
+          "command": "rabi path pr:774",
           "description": "Select an already-linked workspace"
         },
         {
-          "command": "mabo path",
+          "command": "rabi path",
           "description": "Inspect the current checkout"
         }
       ],
@@ -1389,7 +1389,7 @@
     },
     "set": {
       "name": "set",
-      "usage": "mabo set [--repo <ref>] [SEL] [options]",
+      "usage": "rabi set [--repo <ref>] [SEL] [options]",
       "description": "Update workspace purpose, base and links",
       "options": [
         {
@@ -1431,12 +1431,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1453,11 +1453,11 @@
       ],
       "examples": [
         {
-          "command": "mabo set feature-auth --purpose 'land the fix'",
+          "command": "rabi set feature-auth --purpose 'land the fix'",
           "description": "Change the purpose and leave links as they are"
         },
         {
-          "command": "mabo set feature-auth --pr https://github.com/phantompane/phantom/pull/774 --json",
+          "command": "rabi set feature-auth --pr https://github.com/phantompane/phantom/pull/774 --json",
           "description": "Link a pull request and print the workspace object"
         }
       ],
@@ -1473,7 +1473,7 @@
     "adopt": {
       "name": "adopt",
       "description": "Manage an existing linked checkout without running setup",
-      "usage": "mabo adopt PATH [--name NAME] [--base REF] [--purpose TEXT] [--pr REF] [--issue REF]",
+      "usage": "rabi adopt PATH [--name NAME] [--base REF] [--purpose TEXT] [--pr REF] [--issue REF]",
       "options": [
         {
           "name": "repo",
@@ -1490,12 +1490,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1540,7 +1540,7 @@
     "forget": {
       "name": "forget",
       "description": "Drop workspace records while preserving checkouts and branches",
-      "usage": "mabo forget SEL...",
+      "usage": "rabi forget SEL...",
       "options": [
         {
           "name": "repo",
@@ -1557,12 +1557,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1578,7 +1578,7 @@
     "setup": {
       "name": "setup",
       "description": "Prepare a workspace again: copy ignored files from the primary checkout, then run trusted setup hooks",
-      "usage": "mabo setup [SEL] [--copy-file PAT] [--no-hooks] [--source-checkout PATH]",
+      "usage": "rabi setup [SEL] [--copy-file PAT] [--no-hooks] [--source-checkout PATH]",
       "options": [
         {
           "name": "repo",
@@ -1597,7 +1597,7 @@
         {
           "name": "source-checkout",
           "type": "string",
-          "description": "Read .mabo.toml from this checkout in the same repository, preserving the original hooks when retrying setup . from the target workspace. Copies still come from the primary checkout",
+          "description": "Read .rabi.toml from this checkout in the same repository, preserving the original hooks when retrying setup . from the target workspace. Copies still come from the primary checkout",
           "example": "--source-checkout /absolute/source/checkout"
         },
         {
@@ -1613,12 +1613,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1630,18 +1630,18 @@
       "examples": [
         {
           "description": "Retry setup after a partial create",
-          "command": "mabo setup feature-auth"
+          "command": "rabi setup feature-auth"
         },
         {
           "description": "Copy files only in the current workspace",
-          "command": "mabo setup --no-hooks --copy-file \"*.env\""
+          "command": "rabi setup --no-hooks --copy-file \"*.env\""
         }
       ],
       "notes": [
         "SEL defaults to dot and follows the shared selector rules. The primary checkout is refused with exit 4 primary. Missing targets exit 3.",
         "Copy .worktreeinclude and --copy-file matches from the primary checkout. Only gitignored files are copied; existing files are preserved and symlinks are skipped.",
-        "Before copying or updating records, untrusted hooks refuse with exit 4 untrusted. Use mabo trust add, MABO_TRUST_ALL=1, or --no-hooks for copying only. Non-interactive runs never prompt.",
-        ".mabo.toml is read from --source-checkout when supplied, otherwise from the invoking checkout (the selected primary checkout with -R/--repo). [hooks] setup runs after copying; write hooks to tolerate repeated execution.",
+        "Before copying or updating records, untrusted hooks refuse with exit 4 untrusted. Use rabi trust add, RABI_TRUST_ALL=1, or --no-hooks for copying only. Non-interactive runs never prompt.",
+        ".rabi.toml is read from --source-checkout when supplied, otherwise from the invoking checkout (the selected primary checkout with -R/--repo). [hooks] setup runs after copying; write hooks to tolerate repeated execution.",
         "Setup records state, at and error: pending, running, ok, failed or skipped. Records without setup information, including adopted records, report unknown; unrecorded workspaces report null. A running attempt whose pid is gone on the same host displays interrupted without rewriting the record or blocking operations.",
         "JSON data contains workspace, setup (state, at, error, ran, ok, command, exitCode, signal), and copy (copied, error). Hook and copy failures exit 1; create setup failures exit 6 with a shell-quoted retry command that preserves the original source checkout and copy patterns and selects the created workspace uniquely."
       ]
@@ -1649,7 +1649,7 @@
     "remove": {
       "name": "remove",
       "description": "Retire workspaces, deleting branches only when preserved",
-      "usage": "mabo remove SEL... [--keep-branch] [--delete-unpreserved-branch] [--discard-changes] [--no-hooks] [--source-checkout PATH] [--dry-run]",
+      "usage": "rabi remove SEL... [--keep-branch] [--delete-unpreserved-branch] [--discard-changes] [--no-hooks] [--source-checkout PATH] [--dry-run]",
       "options": [
         {
           "name": "repo",
@@ -1696,12 +1696,12 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Output text or json. Overrides MABO_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
+          "description": "Output text or json. Overrides RABI_OUTPUT (text or json; empty means unset). --json is an alias for --output json"
         },
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, MABO_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
+          "description": "Never prompt for input. Also enabled by nonempty CI, JSON output, RABI_NO_INPUT other than empty or 0, or stdin/stderr without a TTY"
         },
         {
           "name": "help",
@@ -1713,45 +1713,45 @@
       "examples": [
         {
           "description": "Retire a workspace",
-          "command": "mabo remove feature-auth"
+          "command": "rabi remove feature-auth"
         },
         {
           "description": "Retire the current workspace",
-          "command": "mabo remove ."
+          "command": "rabi remove ."
         },
         {
           "description": "Preview removal",
-          "command": "mabo remove feature-auth --dry-run"
+          "command": "rabi remove feature-auth --dry-run"
         },
         {
           "description": "Discard working files explicitly",
-          "command": "mabo remove experimental --discard-changes"
+          "command": "rabi remove experimental --discard-changes"
         },
         {
           "description": "Delete an unpreserved branch explicitly",
-          "command": "mabo remove experimental --delete-unpreserved-branch"
+          "command": "rabi remove experimental --delete-unpreserved-branch"
         }
       ],
       "notes": [
         "SEL is a name, ., pr:N, issue:N, a PR/issue URL, or an absolute path / path starting with ./ or ../. Selectors are required; remove . selects the current workspace. Ambiguous selectors exit 2. The primary checkout always exits 4 primary.",
         "All selectors and safety guards are checked before any hooks or removal. A selector with neither metadata nor a matching Git worktree exits 3 not_found, including with --dry-run; any unknown target aborts all removal and text lists every unknown selector. Modified/staged tracked files (including submodule changes) and non-ignored untracked files exit 4 dirty unless --discard-changes, matching list/show regardless of Git status display settings. Ignored files do not count as dirty and are deleted with the workspace without warning or permission, including with gc --apply. This rule also applies to remove --dry-run and gc plans. Known limitation: nested Git repositories inside ignored directories (for example, vendor/x/.git under ignored vendor/) are also deleted. Unpreserved detached commits exit 4 unpreserved unless --delete-unpreserved-branch.",
-        "Even when clean, workspaces with populated submodules or retained submodule data are refused during remove preflight (exit 4 dirty, including --dry-run) and skipped by gc (plan and --apply) with a mabo remove NAME --discard-changes hint; review the submodule contents, including unpushed commits, before using that permission.",
-        "After local preservation checks fail, remove and gc can use GitHub evidence for a named branch. A recorded PR (`set --pr` or `create --pr`) must be `MERGED`, and its `headRefOid` must equal the local tip or contain it as an ancestor. Ancestry is checked only when that PR commit already exists locally; nothing is fetched. Partial clones (`extensions.partialClone` configured or any remote with `promisor=true`) require an exact tip match and skip PR object and ancestry probes on every Git version. A recorded URL is passed to `gh` and must match the checkout repository resolved by `gh repo view`; number-only links use that repository. Unlinked branches use one `gh pr list --head BRANCH --state merged --limit 2` query and require exactly one result with the same head name and exact tip ID; ancestry is never used. Repository identity is resolved once per command. Missing or unauthenticated `gh`, failed queries, invalid JSON, ambiguous identities, and timeouts keep the existing local verdict. Each gh call has a 10-second deadline (shorten it with positive `MABO_GH_TIMEOUT_MS`); authentication prompts are disabled and non-interactive stdin is `/dev/null`. Remote responses, including failures, are cached for the command, while local tips and ancestry are rechecked after hooks. JSON items add `preservationReason`: `merged_pr` for GitHub proof, `local` for remove's local proof, otherwise null or absent. Text details identify merged-PR proof. These rules also apply to plans.",
+        "Even when clean, workspaces with populated submodules or retained submodule data are refused during remove preflight (exit 4 dirty, including --dry-run) and skipped by gc (plan and --apply) with a rabi remove NAME --discard-changes hint; review the submodule contents, including unpushed commits, before using that permission.",
+        "After local preservation checks fail, remove and gc can use GitHub evidence for a named branch. A recorded PR (`set --pr` or `create --pr`) must be `MERGED`, and its `headRefOid` must equal the local tip or contain it as an ancestor. Ancestry is checked only when that PR commit already exists locally; nothing is fetched. Partial clones (`extensions.partialClone` configured or any remote with `promisor=true`) require an exact tip match and skip PR object and ancestry probes on every Git version. A recorded URL is passed to `gh` and must match the checkout repository resolved by `gh repo view`; number-only links use that repository. Unlinked branches use one `gh pr list --head BRANCH --state merged --limit 2` query and require exactly one result with the same head name and exact tip ID; ancestry is never used. Repository identity is resolved once per command. Missing or unauthenticated `gh`, failed queries, invalid JSON, ambiguous identities, and timeouts keep the existing local verdict. Each gh call has a 10-second deadline (shorten it with positive `RABI_GH_TIMEOUT_MS`); authentication prompts are disabled and non-interactive stdin is `/dev/null`. Remote responses, including failures, are cached for the command, while local tips and ancestry are rechecked after hooks. JSON items add `preservationReason`: `merged_pr` for GitHub proof, `local` for remove's local proof, otherwise null or absent. Text details identify merged-PR proof. These rules also apply to plans.",
         "Branches are deleted only if integrated into their recorded base (merge, or squash/rebase verified by exact tree entries) or exactly matching their own upstream, or covered by verified merged PR evidence. Squash/rebase evidence uses non-merge commits on the base first-parent history: one complete squash transition, or a distinct base commit for every workspace commit in ancestor-to-tip order, without reusing evidence. Local preservation requires an independent ref in the common Git directory after symbolic-ref resolution; the retiring ref, detached HEAD, and bare commit IDs are insufficient. Otherwise the branch is kept with warning branch_kept_unpreserved and branchKeptReason: unpreserved. --keep-branch always keeps a branch; --delete-unpreserved-branch explicitly allows deleting it.",
         "--dry-run returns plan:true and items with removed:false, wouldRemove and wouldDeleteBranch, without hooks or mutations. JSON data.items contains workspace, removed, branchDeleted, branchKeptReason, detail (the Git error when branch deletion fails), alreadyGone, and error.",
         "If branch deletion fails after checkout removal, remove keeps the branch with warning branch_kept_delete_failed, branchKeptReason: delete_failed, and the Git error in the item detail. This does not fail the item or stop later targets; branch-only failures exit 0 and have no retry command. Decide on any later branch cleanup with Git.",
-        "A failure after persistent removal exits 6 and retains every item result. Completed removals also remove their records, so repeating the original command may exit 3. Fix the cause, then run error.details.retryCommand, also shown as Retry with in text. The retry is one invocation: cd <primary> && mabo -R <primary> remove [flags] -- <unfinished paths>. It selects only unfinished checkout or record work, preserves permission flags and output mode, and protects selectors with --. Run hints in bash or zsh; paths are shell-quoted and control characters use ANSI-C quoting. Metadata cleanup is retried only for recorded targets, using the absolute path spelling saved in the record before removal. Location selectors are fixed before removal. A linked checkout supplying pre-remove hooks is removed last; retries preserve its configuration with --source-checkout PATH, which must belong to the selected repository. Once that source is removed, only record cleanup remains and retries disable hooks. Retries add --no-hooks when the original command disabled hooks or its source had no pre-remove hooks, preserving hook non-execution even if primary defines hooks. With -R PRIMARY, dot also resolves a recorded checkout whose Git registration disappeared.",
+        "A failure after persistent removal exits 6 and retains every item result. Completed removals also remove their records, so repeating the original command may exit 3. Fix the cause, then run error.details.retryCommand, also shown as Retry with in text. The retry is one invocation: cd <primary> && rabi -R <primary> remove [flags] -- <unfinished paths>. It selects only unfinished checkout or record work, preserves permission flags and output mode, and protects selectors with --. Run hints in bash or zsh; paths are shell-quoted and control characters use ANSI-C quoting. Metadata cleanup is retried only for recorded targets, using the absolute path spelling saved in the record before removal. Location selectors are fixed before removal. A linked checkout supplying pre-remove hooks is removed last; retries preserve its configuration with --source-checkout PATH, which must belong to the selected repository. Once that source is removed, only record cleanup remains and retries disable hooks. Retries add --no-hooks when the original command disabled hooks or its source had no pre-remove hooks, preserving hook non-execution even if primary defines hooks. With -R PRIMARY, dot also resolves a recorded checkout whose Git registration disappeared.",
         "alreadyGone:true requires evidence: a missing directory with metadata and/or an eligible Git registration succeeds, cleaning stale records/registrations without hooks or branch deletion. A record with remaining files but no Git registration also succeeds with alreadyGone:true while retaining files, record and branch. A branch alone or an unregistered directory without a record is insufficient evidence. Removal is limited to linked workspaces inside the resolved directory or recorded paths. Unrecorded external checkouts are refused. Empty parents are cleaned up only below the resolved workspace directory.",
-        ".mabo.toml is read from --source-checkout when supplied, otherwise from the invoking checkout (the selected primary checkout with -R/--repo). [hooks] pre-remove commands run in the workspace before it is removed, in order, and stop at the first failure",
-        "Hooks and exec receive MABO=1, MABO_WORKSPACE (the workspace name), MABO_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), MABO_WORKSPACE_PATH (the absolute workspace path), and MABO_REPO_PATH (the primary checkout path)",
-        "pre-remove hooks run only after the repository is trusted. On a terminal, mabo asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, nonempty CI, --no-input or MABO_NO_INPUT being enabled, or --json fails before deleting. An empty value counts as unset. Run mabo trust add or pass --no-hooks. MABO_TRUST_ALL=1 trusts every repository for that process and writes nothing",
+        ".rabi.toml is read from --source-checkout when supplied, otherwise from the invoking checkout (the selected primary checkout with -R/--repo). [hooks] pre-remove commands run in the workspace before it is removed, in order, and stop at the first failure",
+        "Hooks and exec receive RABI=1, RABI_WORKSPACE (the workspace name), RABI_WORKSPACE_ID (the ws_ ID, or empty if unrecorded), RABI_WORKSPACE_PATH (the absolute workspace path), and RABI_REPO_PATH (the primary checkout path)",
+        "pre-remove hooks run only after the repository is trusted. On a terminal, rabi asks 'Trust this project and run its hooks? [y/N]'. No, a non-terminal, stdin or stderr not being a terminal, nonempty CI, --no-input or RABI_NO_INPUT being enabled, or --json fails before deleting. An empty value counts as unset. Run rabi trust add or pass --no-hooks. RABI_TRUST_ALL=1 trusts every repository for that process and writes nothing",
         "All JSON uses schema 2: {schema:2, command, ok, data, warnings:[{code,message}], error:null|{code,message,details?}}. data preserves partial results and has no top-level version/schema. Parsers must ignore unknown fields. Exit codes: 0 success, 1 operational failure, 2 usage/ambiguous, 3 not found/not repository, 4 safety refusal (dirty/unpreserved/published/exists/exists_remote/untrusted; refused when the cause is unknown), 5 sync conflict, 6 partial persistent changes. Standalone exec preserves child statuses"
       ]
     },
     "completions": {
       "name": "completions",
       "description": "Output a completion script for bash, zsh or fish",
-      "usage": "mabo completions bash|zsh|fish",
+      "usage": "rabi completions bash|zsh|fish",
       "options": [
         {
           "name": "repo",
@@ -1762,7 +1762,7 @@
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt; also enabled by CI, JSON, MABO_NO_INPUT, or no stdin/stderr TTY"
+          "description": "Never prompt; also enabled by CI, JSON, RABI_NO_INPUT, or no stdin/stderr TTY"
         },
         {
           "name": "help",
@@ -1773,24 +1773,24 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Only text output is supported. Explicit --json or --output json exits 2. MABO_OUTPUT is ignored"
+          "description": "Only text output is supported. Explicit --json or --output json exits 2. RABI_OUTPUT is ignored"
         }
       ],
       "notes": [
-        "Writes a raw shell script to stdout. Missing or unknown shells exit 2; choose bash, zsh or fish. MABO_OUTPUT is ignored; explicit --json or --output json exits 2.",
-        "Commands, subcommands and flags are generated from this help contract. Workspace selector candidates come from command mabo list --names; query failures silently produce no candidates. -R/--repo selects the repository for workspace candidates. In zsh, run compinit before loading completions."
+        "Writes a raw shell script to stdout. Missing or unknown shells exit 2; choose bash, zsh or fish. RABI_OUTPUT is ignored; explicit --json or --output json exits 2.",
+        "Commands, subcommands and flags are generated from this help contract. Workspace selector candidates come from command rabi list --names; query failures silently produce no candidates. -R/--repo selects the repository for workspace candidates. In zsh, run compinit before loading completions."
       ],
       "examples": [
         {
           "description": "Load the generated script in bash",
-          "command": "eval \"$(mabo completions bash)\""
+          "command": "eval \"$(rabi completions bash)\""
         }
       ]
     },
     "shell-init": {
       "name": "shell-init",
-      "description": "Output a shell function for mabo cd in bash, zsh or fish",
-      "usage": "mabo shell-init bash|zsh|fish",
+      "description": "Output a shell function for rabi cd in bash, zsh or fish",
+      "usage": "rabi shell-init bash|zsh|fish",
       "options": [
         {
           "name": "repo",
@@ -1801,7 +1801,7 @@
         {
           "name": "no-input",
           "type": "boolean",
-          "description": "Never prompt; also enabled by CI, JSON, MABO_NO_INPUT, or no stdin/stderr TTY"
+          "description": "Never prompt; also enabled by CI, JSON, RABI_NO_INPUT, or no stdin/stderr TTY"
         },
         {
           "name": "help",
@@ -1812,17 +1812,17 @@
         {
           "name": "output",
           "type": "string",
-          "description": "Only text output is supported. Explicit --json or --output json exits 2. MABO_OUTPUT is ignored"
+          "description": "Only text output is supported. Explicit --json or --output json exits 2. RABI_OUTPUT is ignored"
         }
       ],
       "notes": [
-        "Writes a raw shell script to stdout. Missing or unknown shells exit 2; choose bash, zsh or fish. MABO_OUTPUT is ignored; explicit --json or --output json exits 2.",
-        "Defines only the mabo shell function: mabo cd [SEL] [-R REF] resolves command mabo path, then changes directory only on success. Repository options may also precede cd. Use -- before a selector beginning with a hyphen. Other commands pass their arguments through unchanged. Completions must be loaded separately; no sessions or panes are created."
+        "Writes a raw shell script to stdout. Missing or unknown shells exit 2; choose bash, zsh or fish. RABI_OUTPUT is ignored; explicit --json or --output json exits 2.",
+        "Defines only the rabi shell function: rabi cd [SEL] [-R REF] resolves command rabi path, then changes directory only on success. Repository options may also precede cd. Use -- before a selector beginning with a hyphen. Other commands pass their arguments through unchanged. Completions must be loaded separately; no sessions or panes are created."
       ],
       "examples": [
         {
           "description": "Load the generated script in bash",
-          "command": "eval \"$(mabo shell-init bash)\""
+          "command": "eval \"$(rabi shell-init bash)\""
         }
       ]
     }
@@ -1837,7 +1837,7 @@
     {
       "name": "output",
       "type": "string",
-      "description": "Select text or json on JSON-capable commands; overrides MABO_OUTPUT"
+      "description": "Select text or json on JSON-capable commands; overrides RABI_OUTPUT"
     },
     {
       "name": "json",
@@ -1847,7 +1847,7 @@
     {
       "name": "no-input",
       "type": "boolean",
-      "description": "Never prompt; also enabled by CI, JSON, MABO_NO_INPUT, or no stdin/stderr TTY"
+      "description": "Never prompt; also enabled by CI, JSON, RABI_NO_INPUT, or no stdin/stderr TTY"
     },
     {
       "name": "help",

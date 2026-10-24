@@ -2,7 +2,22 @@
 
 ## Unreleased
 
-Nothing yet.
+### Changed (Breaking)
+
+- Rename the product, command and Cargo package from mabo to **rabi** (ラビ, from "rabbit"). Install from source with `cargo install --git https://github.com/phantompane/phantom --tag <TAG> --locked rabi`, using a tag from the first release containing rabi or later.
+- Read and write only rabi paths: user config at `~/.config/rabi` (`$XDG_CONFIG_HOME/rabi`), state at `$XDG_STATE_HOME/rabi` (default `~/.local/state/rabi`), new workspace directories at `$XDG_DATA_HOME/rabi/workspaces` (default `~/.local/share/rabi/workspaces`), and workspace records at `<git-common-dir>/rabi` (normally `.git/rabi`). Repository config is `.rabi.toml`; environment variables are `RABI_*` and the child-process marker is `RABI=1`. Project directory markers and clone staging prefixes are `.rabi-common-dir` and `.rabi-clone-`.
+- Release assets are `rabi-v<version>-<os>-<arch>.tar.gz`, containing only `rabi`. `install.sh` accepts only `rabi-` archives. Install v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer at `https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh`; v7.0.0-alpha.7 and older have no installer.
+- No aliases, fallbacks or automatic migration: mabo data, config and environment variables are ignored. Alpha users must move their own configuration and records or recreate them. For default paths, with no existing destination, for example:
+
+  ```sh
+  mv ~/.config/mabo ~/.config/rabi
+  mv ~/.local/state/mabo ~/.local/state/rabi
+  # In each primary checkout (use the Git common directory for linked checkouts):
+  mv .git/mabo .git/rabi
+  mv .mabo.toml .rabi.toml
+  ```
+
+  Adjust paths for XDG overrides. Existing checkout paths saved in records can stay in place. If reusing a project workspace directory in the new default data layout, rename its `.mabo-common-dir` to `.rabi-common-dir`. To relocate checkouts, use `git worktree move`, drop stale records with `rabi forget OLD_PATH`, then record new paths with `rabi adopt NEW_PATH`; moving directories alone leaves Git registrations and saved absolute paths stale. Update scripts, hook commands and shell integration to use rabi and `RABI_*`.
 
 ## v7.0.0-alpha.9 (2026-10-24)
 

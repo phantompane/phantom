@@ -1,66 +1,66 @@
-# Generated from mabo's help-data.json; workspace names are queried on completion.
-function _mabo_candidates
-    set -l mabo_context ''
-    set -l mabo_pending ''
-    set -l mabo_count 0
-    set -l mabo_stop 0
-    set -l mabo_help 0
-    set -l mabo_repo
-    for mabo_word in $argv
-        if test -n "$mabo_pending"
-            if test "$mabo_pending" = repo
-                set mabo_repo --repo "$mabo_word"
+# Generated from rabi's help-data.json; workspace names are queried on completion.
+function _rabi_candidates
+    set -l rabi_context ''
+    set -l rabi_pending ''
+    set -l rabi_count 0
+    set -l rabi_stop 0
+    set -l rabi_help 0
+    set -l rabi_repo
+    for rabi_word in $argv
+        if test -n "$rabi_pending"
+            if test "$rabi_pending" = repo
+                set rabi_repo --repo "$rabi_word"
             end
-            set mabo_pending ''
+            set rabi_pending ''
             continue
         end
-        if test $mabo_stop -eq 0
-            switch "$mabo_word"
+        if test $rabi_stop -eq 0
+            switch "$rabi_word"
                 case --
-                    test "$mabo_context" != exec; or return 0
-                    set mabo_stop 1
+                    test "$rabi_context" != exec; or return 0
+                    set rabi_stop 1
                     continue
                 case '--repo=*'
-                    set mabo_repo --repo (string sub -s 8 -- "$mabo_word")
+                    set rabi_repo --repo (string sub -s 8 -- "$rabi_word")
                     continue
                 case '-R*'
-                    if test "$mabo_word" != -R
-                        set mabo_repo --repo (string sub -s 3 -- "$mabo_word")
+                    if test "$rabi_word" != -R
+                        set rabi_repo --repo (string sub -s 3 -- "$rabi_word")
                         continue
                     end
             end
-            switch "$mabo_context:$mabo_word"
+            switch "$rabi_context:$rabi_word"
 @VALUE_OPTIONS@
             end
-            if string match -q -- '-*' "$mabo_word"
+            if string match -q -- '-*' "$rabi_word"
                 continue
             end
-            switch "$mabo_context:$mabo_word"
+            switch "$rabi_context:$rabi_word"
 @COMMANDS@
             end
         end
-        set mabo_count (math $mabo_count + 1)
+        set rabi_count (math $rabi_count + 1)
     end
-    if test -n "$mabo_pending"
-        if test "$mabo_pending" = repo
-            set -l mabo_names (command mabo repo list --names 2>/dev/null | string collect)
+    if test -n "$rabi_pending"
+        if test "$rabi_pending" = repo
+            set -l rabi_names (command rabi repo list --names 2>/dev/null | string collect)
             test $pipestatus[1] -eq 0; or return 0
-            test -z "$mabo_names"; or printf '%s\n' "$mabo_names"
+            test -z "$rabi_names"; or printf '%s\n' "$rabi_names"
         end
         return 0
     end
-    if test "$mabo_context" = exec; and test $mabo_count -gt 0
+    if test "$rabi_context" = exec; and test $rabi_count -gt 0
         return 0
     end
-    switch "$mabo_context"
+    switch "$rabi_context"
 @CANDIDATES@
     end
     return 0
 end
 
-function __mabo_complete
-    set -l mabo_tokens (commandline -opc)
-    set -e mabo_tokens[1]
-    _mabo_candidates $mabo_tokens
+function __rabi_complete
+    set -l rabi_tokens (commandline -opc)
+    set -e rabi_tokens[1]
+    _rabi_candidates $rabi_tokens
 end
-complete -c mabo -f -a '(__mabo_complete)'
+complete -c rabi -f -a '(__rabi_complete)'

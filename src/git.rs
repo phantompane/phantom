@@ -374,8 +374,8 @@ pub fn top_level(cwd: &Path) -> Result<PathBuf> {
 }
 
 /// Checkout the command is running in: `git rev-parse --show-toplevel` of the
-/// current directory. `.mabo.toml` and `.worktreeinclude` are read from here,
-/// and hooks receive this path as `MABO_REPO_PATH`.
+/// current directory. `.rabi.toml` and `.worktreeinclude` are read from here,
+/// and hooks receive this path as `RABI_REPO_PATH`.
 pub fn source_checkout(fallback: &Path) -> PathBuf {
     let Ok(cwd) = std::env::current_dir() else {
         return fallback.to_path_buf();
@@ -1250,7 +1250,7 @@ mod tests {
     #[test]
     fn review11_registration_scan_still_refuses_an_unregistered_checkout() {
         let root =
-            std::env::temp_dir().join(format!("mabo-git-registration-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("rabi-git-registration-{}", uuid::Uuid::new_v4()));
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         run(&["init", "--template=", "-b", "main"], Some(&repo)).unwrap();

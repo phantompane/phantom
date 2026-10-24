@@ -146,7 +146,7 @@ fn shell_script(args: &[String], key: &str) -> Result<i32> {
     let parsed = args::parse(args, &command_options(key), true)?;
     let [shell] = parsed.positionals.as_slice() else {
         return Err(Error::validation(format!(
-            "Usage: mabo {key} bash|zsh|fish"
+            "Usage: rabi {key} bash|zsh|fish"
         )));
     };
     let shell = crate::shell::Shell::parse(shell)?;
@@ -234,7 +234,7 @@ fn sync(args: &[String]) -> Result<i32> {
 fn create(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &command_options("create"), true)?;
     if parsed.positionals.len() > 1 {
-        return Err(Error::validation("Usage: mabo create [NAME] [options]"));
+        return Err(Error::validation("Usage: rabi create [NAME] [options]"));
     }
     if parsed.flag("no-setup") && parsed.flag("copy-file") {
         return Err(Error::validation(
@@ -265,7 +265,7 @@ fn setup(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &command_options("setup"), true)?;
     if parsed.positionals.len() > 1 {
         return Err(Error::validation(
-            "Usage: mabo setup [SEL] [--copy-file PAT] [--no-hooks] [--source-checkout PATH]",
+            "Usage: rabi setup [SEL] [--copy-file PAT] [--no-hooks] [--source-checkout PATH]",
         ));
     }
     let context = if let Some(source) = single_value(&parsed, "source-checkout")? {
@@ -289,7 +289,7 @@ fn setup(args: &[String]) -> Result<i32> {
 fn adopt(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &command_options("adopt"), true)?;
     if parsed.positionals.len() != 1 {
-        return Err(Error::validation("Usage: mabo adopt PATH [options]"));
+        return Err(Error::validation("Usage: rabi adopt PATH [options]"));
     }
     let context = command_context(&parsed)?;
     let mut input = metadata_input(&parsed)?;
@@ -315,7 +315,7 @@ fn adopt(args: &[String]) -> Result<i32> {
 fn forget(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &command_options("forget"), true)?;
     if parsed.positionals.is_empty() {
-        return Err(Error::validation("Usage: mabo forget SEL..."));
+        return Err(Error::validation("Usage: rabi forget SEL..."));
     }
     let context = command_context(&parsed)?;
     // Resolve every selector before dropping links that later selectors might need.
@@ -530,7 +530,7 @@ fn list(args: &[String]) -> Result<i32> {
 fn inspect(args: &[String], path_only: bool) -> Result<i32> {
     let parsed = args::parse(args, &command_options("show"), true)?;
     if parsed.positionals.len() > 1 {
-        return Err(Error::validation("Usage: mabo show/path [SEL]"));
+        return Err(Error::validation("Usage: rabi show/path [SEL]"));
     }
     let context = command_context(&parsed)?;
     if let Some(warning) = metadata::read_problem(&context.git_root) {
@@ -548,7 +548,7 @@ fn inspect(args: &[String], path_only: bool) -> Result<i32> {
     )?;
     if path_only && tree.orphaned {
         return Err(Error::msg(
-            "Workspace is orphaned: its directory is gone. Use mabo show to inspect its record.",
+            "Workspace is orphaned: its directory is gone. Use rabi show to inspect its record.",
         ));
     }
     if crate::output::json() {
@@ -672,7 +672,7 @@ fn remove(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &command_options("remove"), true)?;
     if parsed.positionals.is_empty() {
         return Err(Error::validation(
-            "Use `mabo remove SEL...`; use `mabo remove .` for the current workspace.",
+            "Use `rabi remove SEL...`; use `rabi remove .` for the current workspace.",
         ));
     }
     let dry_run = parsed.flag("dry-run");
@@ -929,7 +929,7 @@ fn remove_retry_command(
     targets: &[String],
 ) -> String {
     let mut command = format!(
-        "cd {} && mabo -R {} remove",
+        "cd {} && rabi -R {} remove",
         crate::allocation::shell_quote(&context.git_root),
         crate::allocation::shell_quote(&context.git_root)
     );
@@ -975,17 +975,17 @@ fn remove_retry_command(
 
 fn exec(args: &[String]) -> Result<i32> {
     let Some(separator) = args.iter().position(|arg| arg == "--") else {
-        // Validate mabo options before the workspace selector.
+        // Validate rabi options before the workspace selector.
         args::parse_with(args, &command_options("exec"), true, Some(1))?;
         return Err(Error::validation(
-            "Usage: mabo exec [SEL] -- COMMAND [ARG...]",
+            "Usage: rabi exec [SEL] -- COMMAND [ARG...]",
         ));
     };
     let parsed = args::parse_with(&args[..separator], &command_options("exec"), true, Some(1))?;
     let command_args = &args[separator + 1..];
     if parsed.positionals.len() > 1 || command_args.is_empty() {
         return Err(Error::validation(
-            "Usage: mabo exec [SEL] -- COMMAND [ARG...]",
+            "Usage: rabi exec [SEL] -- COMMAND [ARG...]",
         ));
     }
     let context = command_context(&parsed)?;
@@ -1032,9 +1032,9 @@ fn config_read(args: &[String], list: bool) -> Result<i32> {
     selected_repository(&parsed)?;
     if parsed.positionals.len() != usize::from(!list) {
         return Err(Error::validation(if list {
-            "Usage: mabo config list [--sources]"
+            "Usage: rabi config list [--sources]"
         } else {
-            "Usage: mabo config get KEY [--sources]"
+            "Usage: rabi config get KEY [--sources]"
         }));
     }
     let keys = if list {
@@ -1090,7 +1090,7 @@ fn config_set(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &command_options("config set"), true)?;
     selected_repository(&parsed)?;
     if parsed.positionals.len() != 2 {
-        return Err(Error::validation("Usage: mabo config set KEY VALUE"));
+        return Err(Error::validation("Usage: rabi config set KEY VALUE"));
     }
     let key = &parsed.positionals[0];
     let value = &parsed.positionals[1];
@@ -1125,7 +1125,7 @@ fn config_unset(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &command_options("config unset"), true)?;
     selected_repository(&parsed)?;
     if parsed.positionals.len() != 1 {
-        return Err(Error::validation("Usage: mabo config unset KEY"));
+        return Err(Error::validation("Usage: rabi config unset KEY"));
     }
     let key = &parsed.positionals[0];
     preferences::require_key(key)?;
@@ -1180,7 +1180,7 @@ fn clone_cmd(args: &[String]) -> Result<i32> {
     };
     if parsed.positionals.len() != 1 {
         return fail_with(&Error::validation(
-                "Usage: mabo clone <url|host/owner/repo|owner/repo> [--branch <branch>] [--depth <n>] [--update] [--json]",
+                "Usage: rabi clone <url|host/owner/repo|owner/repo> [--branch <branch>] [--depth <n>] [--update] [--json]",
             ), VALIDATION);
     }
     selected_repository(&parsed)?;
@@ -1235,7 +1235,7 @@ fn project_add(args: &[String]) -> Result<i32> {
     };
     if parsed.positionals.len() > 1 {
         return fail_with(
-            &Error::msg("Usage: mabo repo add [path] [--json]"),
+            &Error::msg("Usage: rabi repo add [path] [--json]"),
             VALIDATION,
         );
     }
@@ -1374,7 +1374,7 @@ fn project_remove(args: &[String]) -> Result<i32> {
     };
     if parsed.positionals.len() != 1 {
         return fail_with(
-            &Error::msg("Usage: mabo repo remove <id|name|path> [--json]"),
+            &Error::msg("Usage: rabi repo remove <id|name|path> [--json]"),
             VALIDATION,
         );
     }
@@ -1426,7 +1426,7 @@ fn project_remove(args: &[String]) -> Result<i32> {
 fn repo_show(args: &[String]) -> Result<i32> {
     let parsed = args::parse(args, &command_options("repo show"), true)?;
     if parsed.positionals.len() > 1 {
-        return Err(Error::validation("Usage: mabo repo show [REF]"));
+        return Err(Error::validation("Usage: rabi repo show [REF]"));
     }
     let selected = selected_repository(&parsed)?;
     let root = match parsed.positionals.first() {
@@ -1444,13 +1444,13 @@ fn repo_show(args: &[String]) -> Result<i32> {
     let trusted = trust::trust_all() || trust::is_trusted_root(&root)?;
     let value = serde_json::json!({"repo": {
         "root": root, "name": name, "defaultBranch": default_branch,
-        "configPresent": root.join(".mabo.toml").is_file(), "trusted": trusted,
+        "configPresent": root.join(".rabi.toml").is_file(), "trusted": trusted,
         "workspaceRoot": context.worktrees_directory,
     }});
     if crate::output::json() {
         emit_json(&value)
     } else {
-        outln!("{}\nPrimary checkout: {}\nDefault branch: {}\n.mabo.toml: {}\nTrusted: {trusted}\nWorkspace root: {}", visible_text(&name), visible_text(&root.to_string_lossy()), visible_text(default_branch.as_deref().unwrap_or("unknown")), root.join(".mabo.toml").is_file(), visible_text(&context.worktrees_directory.to_string_lossy()));
+        outln!("{}\nPrimary checkout: {}\nDefault branch: {}\n.rabi.toml: {}\nTrusted: {trusted}\nWorkspace root: {}", visible_text(&name), visible_text(&root.to_string_lossy()), visible_text(default_branch.as_deref().unwrap_or("unknown")), root.join(".rabi.toml").is_file(), visible_text(&context.worktrees_directory.to_string_lossy()));
         Ok(SUCCESS)
     }
 }
@@ -1515,7 +1515,7 @@ fn set(args: &[String]) -> Result<i32> {
         Err(error) => return fail_with(&error, error.exit_code()),
     };
     if parsed.positionals.len() > 1 {
-        return fail_with(&Error::msg("Usage: mabo set [SEL] [options]"), VALIDATION);
+        return fail_with(&Error::msg("Usage: rabi set [SEL] [options]"), VALIDATION);
     }
     let mut input = match metadata_input(&parsed) {
         Ok(input) => input,
@@ -1833,7 +1833,7 @@ fn trust_cmd(args: &[String]) -> Result<i32> {
     };
     if parsed.positionals.len() > 1 {
         return fail_with(
-            &Error::validation("Usage: mabo trust add [REPO]"),
+            &Error::validation("Usage: rabi trust add [REPO]"),
             VALIDATION,
         );
     }
@@ -1875,7 +1875,7 @@ fn untrust_cmd(args: &[String]) -> Result<i32> {
     };
     if parsed.positionals.len() > 1 {
         return fail_with(
-            &Error::validation("Usage: mabo trust remove [REPO]"),
+            &Error::validation("Usage: rabi trust remove [REPO]"),
             VALIDATION,
         );
     }
@@ -2317,7 +2317,7 @@ mod forget_tests {
 
     impl Fixture {
         fn new() -> Self {
-            let root = std::env::temp_dir().join(format!("mabo-forget-{}", uuid::Uuid::new_v4()));
+            let root = std::env::temp_dir().join(format!("rabi-forget-{}", uuid::Uuid::new_v4()));
             let repo = root.join("repo");
             fs::create_dir_all(&repo).unwrap();
             git::run(&["init", "--template=", "-b", "main"], Some(&repo)).unwrap();
@@ -2380,7 +2380,7 @@ mod forget_tests {
         fn record_path(&self, index: usize) -> PathBuf {
             self.context
                 .git_root
-                .join(".git/mabo/workspaces")
+                .join(".git/rabi/workspaces")
                 .join(format!(
                     "{}.json",
                     self.trees[index].metadata.id.as_ref().unwrap()

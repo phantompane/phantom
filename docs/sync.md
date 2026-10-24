@@ -20,7 +20,7 @@ Both execution and dry runs use ordinary `git fetch` in the invoking repository.
 
 Strategy precedence is `--auto`/`--rebase`/`--merge`, user `sync.strategy`, then `auto`. Auto rebases when none of the workspace's own commits (`base..branch`) is reachable from an observed remote-tracking ref, configured fetch destination, or upstream; otherwise it merges. Independent local branch destinations count too, including those of remotes not fetched by this sync; only the current branch itself is excluded from publication evidence. An explicit rebase refuses published commits with exit 4 `published` and a `--rewrite-published` hint, unless `--rewrite-published` or user `sync.rewrite-published=true` allows it. Permission does not select a strategy: auto still merges published work. Items report `strategySource` (`flag`, `config`, `default`) separately from `rewriteAllowed` and `rewriteSource` (`flag`, `config`, or null). Explicit config false has source `config`.
 
-When published history is actually rebased, `rewrotePublished:true` and a `published_rewritten` warning identify the workspace: “updating the existing remote branch may require a force push”. Sync leaves the remote branch and upstream settings untouched. Personal policy belongs in [user configuration](configuration.md), never in repository `.mabo.toml`.
+When published history is actually rebased, `rewrotePublished:true` and a `published_rewritten` warning identify the workspace: “updating the existing remote branch may require a force push”. Sync leaves the remote branch and upstream settings untouched. Personal policy belongs in [user configuration](configuration.md), never in repository `.rabi.toml`.
 
 ## Integration guards
 
@@ -41,11 +41,11 @@ Statuses: `updated`, `up-to-date`, `dirty`, `diverged`, `integrated`, `detached`
 From primary, with `feature/auth` and `feature/tests` already created with base `main`:
 
 ```sh
-mabo sync feature/auth feature/tests --merge
-mabo sync --all --main --dry-run --json
-mabo sync feature/auth --rebase --rewrite-published
-mabo sync feature/auth --keep-conflicts
-mabo set feature/auth --base main
+rabi sync feature/auth feature/tests --merge
+rabi sync --all --main --dry-run --json
+rabi sync feature/auth --rebase --rewrite-published
+rabi sync feature/auth --keep-conflicts
+rabi set feature/auth --base main
 ```
 
 `--rewrite-published` is explicit permission to rewrite published commits. Use it only when that is intended. See [the JSON contract](json.md) for item fields and [exit codes](exit-codes.md) for partial completion.
