@@ -21241,15 +21241,15 @@ fn workflow_inspection_lists_sources_and_shows_the_complete_json_contract_withou
         assert_eq!(workflow["source"], source);
         assert_eq!(workflow["path"], path_value);
         assert_eq!(workflow["schemaVersion"], 1);
-        assert_eq!(workflow["version"], 3);
+        assert_eq!(workflow["version"], 5);
         assert_eq!(workflow["definition"]["start"], "prepare");
-        for name in ["implement", "fix", "review"] {
+        for name in ["implement", "fix", "review", "publish"] {
             assert_eq!(
                 workflow["agents"][name],
                 serde_json::json!({"provider":"codex","model":"gpt-6.1-sol","effort":"high"})
             );
         }
-        assert_eq!(workflow["agents"].as_object().unwrap().len(), 3);
+        assert_eq!(workflow["agents"].as_object().unwrap().len(), 4);
         let checked = repo
             .command(env!("CARGO_BIN_EXE_rabi"), &["workflow", "check", name])
             .env("RABI_OUTPUT", "json")
@@ -21265,7 +21265,7 @@ fn workflow_inspection_lists_sources_and_shows_the_complete_json_contract_withou
     }
     let shown = repo.rabi(&["workflow", "show", "custom"]);
     let shown = text(&shown.stdout);
-    assert!(shown.contains("Workflow: custom (repository), version 3"));
+    assert!(shown.contains("Workflow: custom (repository), version 5"));
     assert!(shown.contains("name: embedded-name"));
     assert!(shown.contains("Agent implement:"));
     assert!(!repo.repo.join("hook-ran").exists());
@@ -21420,7 +21420,7 @@ fn workflow_selection_follows_invoking_checkout_and_selected_primary_and_trust_l
 }
 
 #[test]
-fn workflow_help_completion_unknown_names_and_retired_run_commands_use_existing_contracts() {
+fn workflow_and_run_help_completion_and_usage_use_existing_contracts() {
     let repo = Repo::new();
     for command in ["show", "check"] {
         let out = repo.rabi(&["workflow", command, "missing", "--json"]);
@@ -21440,12 +21440,6 @@ fn workflow_help_completion_unknown_names_and_retired_run_commands_use_existing_
         let out = repo.rabi(&json_args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         assert_eq!(json_value(&out)["error"]["code"], "usage");
-        if args[0] == "run" {
-            assert!(json_value(&out)["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("Unknown command"));
-        }
     }
     let help = repo.rabi(&["help", "workflow", "show", "--json"]);
     assert_eq!(
@@ -21453,16 +21447,17 @@ fn workflow_help_completion_unknown_names_and_retired_run_commands_use_existing_
         "workflow show"
     );
     let doc = json_value(&help);
-    assert!(doc["data"]["helps"].get("run").is_none());
-    assert!(doc["data"]["helps"].get("run show").is_none());
+    assert!(doc["data"]["helps"].get("run").is_some());
+    assert!(doc["data"]["helps"].get("run show").is_some());
+    assert!(doc["data"]["helps"].get("run start").is_some());
     for shell in ["bash", "zsh", "fish"] {
         let out = repo.rabi(&["completions", shell]);
         assert!(out.status.success());
         let script = text(&out.stdout);
         assert!(script.contains("workflow show"));
         assert!(script.contains("workflow check"));
-        assert!(!script.contains("run show"));
-        assert!(!script.contains("run start"));
+        assert!(script.contains("run show"));
+        assert!(script.contains("run start"));
     }
 }
 
@@ -21629,4 +21624,267 @@ fn workflow_check_diagnoses_non_regular_files_and_accepts_regular_file_symlinks(
     assert_eq!(linked["valid"], true);
     assert!(directory.is_dir());
     assert_eq!(fs::read_to_string(external).unwrap(), DEFAULT_WORKFLOW);
+}
+
+fn run_tools(repo: &Repo) -> String {
+    // Any rabi-side publication or PR inspection is a regression. The fake agent
+    // reports publication without running Git/gh; rabi advances on its result.
+    let path = gh_path(repo, "#!/bin/sh\necho unexpected-gh-call >&2\nexit 99\n");
+    let codex = repo.root.join("bin/codex");
+    fs::write(&codex, r#"#!/bin/sh
+set -eu
+answer=
+readonly=no
+printf '%s\n' "$@" >> "$RUN_TEST_ROOT/codex-args"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o) shift; answer=$1 ;;
+        read-only) readonly=yes ;;
+    esac
+    shift
+done
+cat > "$RUN_TEST_ROOT/prompt"
+printf '{"type":"thread.started","thread_id":"test-thread"}\n'
+if [ "$readonly" = yes ]; then
+    printf '0 actionable findings (Important: 0 / Nit: 0 / Pre-existing: 0).\n判定: 問題なし\n' > "$answer"
+elif head -n 1 "$RUN_TEST_ROOT/prompt" | command grep -q 'Publish the completed run'; then
+    printf 'Published: https://github.com/example/repo/pull/23\n' > "$answer"
+else
+    printf 'implemented\n' >> change.txt
+    git add change.txt
+    git -c user.name=Test -c user.email=test@example.com commit -qm 'feat: task'
+    printf 'Changed change.txt; checks recorded by rabi.\n' > "$answer"
+fi
+"#).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(codex, fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+#[test]
+fn run_start_completes_agent_publish_and_show_reads_without_rewriting() {
+    let repo = Repo::new();
+    fs::write(repo.repo.join("task.md"), "# Implement sample\nA task.\n").unwrap();
+    let path = run_tools(&repo);
+    let started = repo
+        .command(
+            env!("CARGO_BIN_EXE_rabi"),
+            &[
+                "run",
+                "start",
+                "task.md",
+                "--name",
+                "fix/example",
+                "--base",
+                "main",
+                "--provider",
+                "codex",
+                "--model",
+                "example-model",
+                "--check",
+                "test -f change.txt",
+                "--check",
+                "echo check-output",
+                "--json",
+            ],
+        )
+        .env("PATH", &path)
+        .env("RUN_TEST_ROOT", &repo.root)
+        .output()
+        .unwrap();
+    assert!(
+        started.status.success(),
+        "{}\n{}",
+        text(&started.stdout),
+        text(&started.stderr)
+    );
+    let document = assert_envelope(&started, "run start");
+    let run = &document["data"]["run"];
+    assert_eq!(run["state"], "succeeded");
+    assert_eq!(run["stepsStarted"], 5);
+    assert!(run["pr"].is_null());
+    assert!(text(&started.stderr).contains("starting publish (5/15)"));
+    assert!(!text(&started.stdout).contains("check-output"));
+    assert!(fs::read_to_string(repo.root.join("codex-args"))
+        .unwrap()
+        .contains("-m\nexample-model\n"));
+    let prompt = fs::read_to_string(repo.root.join("prompt")).unwrap();
+    for expected in [
+        "Run branch: fix/example",
+        "Base branch: main",
+        "Remote: origin",
+        "DRAFT PR",
+        "check-output",
+        "verdict 判定: 問題なし",
+        "rounds 1",
+    ] {
+        assert!(prompt.contains(expected), "{prompt}");
+    }
+    let shown_workspace = repo.rabi(&["show", "fix/example", "--json"]);
+    assert!(
+        assert_envelope(&shown_workspace, "show")["data"]["workspace"]["links"]["pr"].is_null()
+    );
+    let id = run["id"].as_str().unwrap();
+    let directory = Path::new(run["directory"].as_str().unwrap());
+    assert!(!directory.join("pr-body.md").exists());
+    assert!(
+        fs::read_to_string(directory.join("steps/005-publish/answer.md"))
+            .unwrap()
+            .contains("https://github.com/example/repo/pull/23")
+    );
+    let original = fs::read(directory.join("run.json")).unwrap();
+    let shown = repo
+        .command(env!("CARGO_BIN_EXE_rabi"), &["run", "show", id, "--json"])
+        .env_remove("RABI_TRUST_ALL")
+        .output()
+        .unwrap();
+    assert!(shown.status.success());
+    assert_eq!(assert_envelope(&shown, "run show")["data"]["run"], *run);
+    let shown = repo.rabi(&["run", "show", id]);
+    assert!(shown.status.success());
+    for expected in ["State: succeeded", "Loop repair: 0/2", "Records:"] {
+        assert!(text(&shown.stdout).contains(expected));
+    }
+    assert_eq!(fs::read(directory.join("run.json")).unwrap(), original);
+}
+
+#[test]
+fn workflow_check_rejects_removed_publication_actions() {
+    let repo = Repo::new();
+    for action in ["push", "draft-pr"] {
+        workflow_file(
+            &repo,
+            action,
+            &DEFAULT_WORKFLOW.replace("action: prepare", &format!("action: {action}")),
+        );
+        let checked = repo.rabi(&["workflow", "check", action, "--json"]);
+        assert_eq!(checked.status.code(), Some(2));
+        let doc = assert_envelope(&checked, "workflow check");
+        assert_eq!(doc["data"]["items"][0]["valid"], false);
+        assert!(text(&checked.stdout).contains("unknown variant"));
+    }
+}
+
+#[test]
+fn run_show_formats_multiline_stop_reasons_and_escapes_other_controls() {
+    let repo = Repo::new();
+    let id = format!("run_{}", uuid::Uuid::new_v4());
+    let directory = repo.repo.join(".git/rabi/runs").join(&id);
+    fs::create_dir_all(&directory).unwrap();
+    for (message, expected) in [
+        ("", "Stopped (operation_failed): \nRecords:"),
+        (
+            "Cannot commit",
+            "Stopped (operation_failed): Cannot commit\nRecords:",
+        ),
+        (
+            "Cannot commit\n\nGit failed:\r\n\t\u{1b}[31mdenied\u{7}\u{7f}\u{202e}\n",
+            "Stopped (operation_failed): Cannot commit\n  \n  Git failed:\\u{d}\n  \\u{9}\\u{1b}[31mdenied\\u{7}\\u{7f}\\u{202e}\n  \nRecords:",
+        ),
+    ] {
+        let record = serde_json::json!({
+            "schema": 1,
+            "id": id,
+            "state": "stopped",
+            "workflow": {"name": "default", "version": 4, "source": "builtin"},
+            "currentStep": null,
+            "stepsStarted": 2,
+            "loops": {},
+            "workspace": {"id": null, "name": "topic", "path": "/unused", "branch": "topic"},
+            "pr": null,
+            "stopReason": {"kind": "operation_failed", "message": message},
+            "startedAt": "2026-10-25T00:00:00Z",
+            "finishedAt": "2026-10-25T00:01:00Z"
+        });
+        let original = serde_json::to_vec_pretty(&record).unwrap();
+        let path = directory.join("run.json");
+        fs::write(&path, &original).unwrap();
+
+        let shown = repo.rabi(&["run", "show", &id]);
+        assert!(shown.status.success(), "{}", text(&shown.stderr));
+        assert!(text(&shown.stdout).contains(expected), "{}", text(&shown.stdout));
+
+        let shown = repo.rabi(&["run", "show", &id, "--json"]);
+        assert!(shown.status.success(), "{}", text(&shown.stderr));
+        let document = assert_envelope(&shown, "run show");
+        assert_eq!(document["data"]["run"]["stopReason"], record["stopReason"]);
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+}
+
+#[test]
+fn run_start_refuses_untrusted_and_invalid_inputs_before_workspace_creation() {
+    let repo = Repo::new();
+    fs::write(repo.repo.join("task.md"), "# Task").unwrap();
+    let args = [
+        "run", "start", "task.md", "--name", "topic", "--base", "main", "--check", "true", "--json",
+    ];
+    let output = repo
+        .command(env!("CARGO_BIN_EXE_rabi"), &args)
+        .env_remove("RABI_TRUST_ALL")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(4));
+    assert_eq!(
+        assert_envelope(&output, "run start")["error"]["code"],
+        "untrusted"
+    );
+    for (option, value) in [
+        ("--workspace", "topic"),
+        ("--provider", "cursor"),
+        ("--provider", "claude"),
+    ] {
+        let mut args = args.to_vec();
+        args.extend([option, value]);
+        let output = repo.rabi(&args);
+        assert_eq!(output.status.code(), Some(2), "{}", text(&output.stdout));
+        if option == "--provider" {
+            assert!(text(&output.stdout).contains("read-only"));
+        }
+    }
+    let no_checks = repo.rabi(&[
+        "run", "start", "task.md", "--name", "topic", "--base", "main", "--json",
+    ]);
+    assert_eq!(no_checks.status.code(), Some(2));
+    assert!(!repo.repo.join(".git/rabi/runs").exists());
+    let worktrees = repo
+        .command("git", &["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert_eq!(text(&worktrees.stdout).matches("worktree ").count(), 1);
+    let unknown = format!("run_{}", uuid::Uuid::new_v4());
+    assert_eq!(
+        repo.rabi(&["run", "show", &unknown, "--json"])
+            .status
+            .code(),
+        Some(3)
+    );
+    assert_eq!(
+        repo.rabi(&["run", "show", "../outside", "--json"])
+            .status
+            .code(),
+        Some(2)
+    );
+}
+
+#[test]
+fn documented_security_review_workflow_passes_public_check() {
+    let repo = Repo::new();
+    workflow_file(
+        &repo,
+        "security-review",
+        include_str!("../docs/workflows/security-review.yaml"),
+    );
+    let output = repo.rabi(&["workflow", "check", "security-review", "--json"]);
+    assert!(output.status.success(), "{}", text(&output.stdout));
+    let shown = repo.rabi(&["workflow", "show", "security-review", "--json"]);
+    let workflow = assert_envelope(&shown, "workflow show");
+    assert_eq!(
+        workflow["data"]["workflow"]["definition"]["limits"]["max_steps"],
+        18
+    );
+    assert_eq!(
+        workflow["data"]["workflow"]["agents"]["security-review"]["provider"],
+        "codex"
+    );
 }
