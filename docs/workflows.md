@@ -35,7 +35,7 @@ Step types:
 - `check`: `commands: cli` or a list of command strings. CLI command binding is deferred to execution.
 - `system`: `action: prepare|push|draft-pr`.
 
-Every step accepts `allow_dirty: true|false`, default false. Show includes it in `definition.steps[ID].allow_dirty`, a `steps[ID].allowDirty` summary, and the text step summary. A future runner will treat a step ending with uncommitted non-ignored Git changes as an error unless allow_dirty is true; this PR only parses and displays the field.
+Every step accepts `allow_dirty: true|false`, default false. Show includes it in `definition.steps[ID].allow_dirty`, a `steps[ID].allowDirty` summary, and the text step summary. The internal executor stops after a step ending with uncommitted non-ignored Git changes unless allow_dirty is true.
 
 Every step has an `on` map. Its keys are `ok` for ordinary agent/system steps, `pass`/`revise` for review-v1, or `pass`/`fail` for checks. Each value names a step or the terminal `succeeded`/`stopped`, or is `{to: STEP, loop: NAME}`. Unspecified results are not inferred as success.
 
@@ -45,4 +45,10 @@ Validation checks YAML syntax/types, schema version, an existing start step, exi
 
 `rabi trust add` displays repository workflow names and paths together with hooks. Workflow agent steps and check commands, including built-in workflows, use that same Git common-directory trust. No per-workflow approval or new trust store is added. Trust records do not validate definitions or enable execution through these inspection commands.
 
-Internal run storage is shared through the Git common directory. A new run saves its manifest and copies of task.md/workflow.yaml, then stores attempts in distinct `steps/NNN-<step>/result.json` directories. Numbers are run-wide and monotonically increase; revisiting a step allocates a new number. Step IDs with path separators are encoded for directory names without restricting YAML names. Progress updates use the shared atomic writer; HEAD values are observations supplied by the future runner. Worklogs, PR body files, process logs, and execution are deferred.
+Internal run storage is shared through the Git common directory. A new run saves its manifest and copies of task.md/workflow.yaml, then stores attempts in distinct `steps/NNN-<step>/result.json` directories. Numbers are run-wide and monotonically increase; revisiting a step allocates a new number. Step IDs with path separators are encoded for directory names without restricting YAML names. Progress updates use the shared atomic writer; HEAD values are observations taken after execution. Existing schema-1 records remain readable. Before prepare, the workspace object describes the requested destination with a null ID; allocation fills in observed workspace metadata.
+
+## Execution semantics (not yet exposed)
+
+The internal executor requires repository trust, validates command bindings and provider support before workspace creation, and runs from `start`. Only Codex is implemented. Prepare uses the existing allocation and setup hooks; push and draft-pr stop as unavailable. Checks run through `sh -c` in order and stop at the first nonzero exit. Agent steps use their exit status, while review-v1 reads the final non-empty verdict line. Missing transitions, invalid verdicts and process failures stop execution without retries or automatic resume.
+
+The step counter is saved before execution. A step beyond max_steps never starts; loop edges consume their named budget before proceeding. Each attempt stores stdout/stderr, command exit codes, observed HEAD and agent prompt/answer/session details. Run progress and results use atomic writes, and worklog.md gets one line per completed step. Fresh agents start a session; continue uses the latest successful session of its named step. Review receives task, diff from the base merge-base and latest checks; continued steps also receive the latest review answer. After every step with a workspace, Git status checks tracked changes and non-ignored untracked paths, including submodule changes.

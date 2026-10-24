@@ -1,5 +1,5 @@
 //! Internal workflow progress and attempt records shared by linked checkouts.
-// The future runner will consume the persistence APIs; no run CLI is public yet.
+// No run CLI is public yet.
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
@@ -57,6 +57,9 @@ pub(crate) struct Record {
     pub steps_started: u64,
     pub loops: BTreeMap<String, Loop>,
     pub workspace: Workspace,
+    /// Commit resolved from allocation's normalized base; older runs omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
     pub pr: Option<crate::metadata::WorktreeLink>,
     pub stop_reason: Option<StopReason>,
     pub started_at: String,
@@ -75,6 +78,13 @@ pub(crate) struct Agent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct Check {
+    pub command: String,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct Attempt {
     pub step: String,
     pub attempt: u64,
@@ -84,6 +94,8 @@ pub(crate) struct Attempt {
     pub exit_code: Option<i32>,
     pub head: Option<String>,
     pub agent: Option<Agent>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<Check>,
 }
 
 impl Record {
@@ -92,7 +104,14 @@ impl Record {
         entry: &workflow::Entry,
         definition: &workflow::Definition,
     ) -> Self {
-        let tree = &allocation.workspace;
+        Self::new(entry, definition, Workspace::from_allocation(allocation))
+    }
+
+    pub fn new(
+        entry: &workflow::Entry,
+        definition: &workflow::Definition,
+        workspace: Workspace,
+    ) -> Self {
         Self {
             schema: 1,
             id: format!("run_{}", uuid::Uuid::new_v4()),
@@ -109,12 +128,8 @@ impl Record {
                 .iter()
                 .map(|(name, max)| (name.clone(), Loop { used: 0, max: *max }))
                 .collect(),
-            workspace: Workspace {
-                id: tree.metadata.id.clone(),
-                name: tree.name.clone(),
-                path: tree.path.clone(),
-                branch: (!tree.detached).then(|| tree.branch.clone()),
-            },
+            workspace,
+            base: None,
             pr: None,
             stop_reason: None,
             started_at: crate::metadata::iso_now(),
@@ -131,6 +146,18 @@ impl Record {
         self.stop_reason = stop_reason;
         self.current_step = None;
         self.finished_at = Some(crate::metadata::iso_now());
+    }
+}
+
+impl Workspace {
+    pub fn from_allocation(allocation: &Allocation) -> Self {
+        let tree = &allocation.workspace;
+        Self {
+            id: tree.metadata.id.clone(),
+            name: tree.name.clone(),
+            path: tree.path.clone(),
+            branch: (!tree.detached).then(|| tree.branch.clone()),
+        }
     }
 }
 
@@ -202,7 +229,12 @@ pub(crate) fn save(git_root: &Path, record: &Record) -> Result<()> {
     write_json(&directory(git_root, &record.id)?.join("run.json"), record)
 }
 
-fn attempt_directory(git_root: &Path, id: &str, step: &str, number: u64) -> Result<PathBuf> {
+pub(crate) fn attempt_directory(
+    git_root: &Path,
+    id: &str,
+    step: &str,
+    number: u64,
+) -> Result<PathBuf> {
     // Step IDs are not restricted by workflow validation. Encode path separators
     // for storage, without imposing a naming policy on workflow definitions.
     let component = step
@@ -238,6 +270,7 @@ pub(crate) fn begin_attempt(
         exit_code: None,
         head: None,
         agent,
+        checks: Vec::new(),
     };
     let dir = attempt_directory(git_root, &record.id, &attempt.step, attempt.attempt)?;
     let parent = dir
@@ -347,6 +380,7 @@ mod tests {
                 path: "/workspaces/topic".into(),
                 branch: Some("topic".into()),
             },
+            base: None,
             pr: None,
             stop_reason: None,
             started_at: crate::metadata::iso_now(),
