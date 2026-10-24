@@ -11,12 +11,14 @@ Give each task an isolated Git workspace (a linked worktree), so coding agents a
 
 ## Install
 
-Pin the installer and binary to the same release. This verifies SHA-256 and GitHub artifact attestations; attestation verification requires `gh`. The installer also needs `curl` and `tar`.
+Pin the installer and binary to the same release. The installer always verifies SHA-256 and needs `curl` and `tar`.
 
 ```sh
 curl -fsSL https://github.com/yoiailabs/rabi/releases/download/v7.0.0-alpha.10/install.sh \
-  | RABI_VERSION=v7.0.0-alpha.10 sh -s -- --prerelease --verify-attestation
+  | RABI_VERSION=v7.0.0-alpha.10 sh -s -- --prerelease
 ```
+
+For v7.0.0-alpha.10, omit `--verify-attestation`: its installer fails attestation verification after the repository transfer. To verify its attestation manually, download the archive and run `gh attestation verify <archive> --owner phantompane` (requires `gh`).
 
 Supports Linux and macOS on x64/arm64; use Linux binaries in WSL. Installs to `~/.local/bin` without sudo or shell-profile changes. `--prerelease` allows prereleases for unpinned installs; a version pin already permits them.
 
@@ -28,7 +30,7 @@ cargo install --git https://github.com/yoiailabs/rabi --tag <TAG> --locked rabi
 
 npm `@phantompane/cli` and Homebrew `phantom` are the older TypeScript v6.
 
-For v7.0.0-alpha.10, v7.0.0-alpha.9 or v7.0.0-alpha.8, use that release's own installer (for example `https://github.com/yoiailabs/rabi/releases/download/v7.0.0-alpha.9/install.sh`); v7.0.0-alpha.7 and older have no installer. Attestation verification for v7.0.0-alpha.10 and earlier fails after the repository transfer; see [installation](docs/installation.md) for manual verification, options, and updates.
+For v7.0.0-alpha.9 or v7.0.0-alpha.8, use that release's own installer (for example `https://github.com/yoiailabs/rabi/releases/download/v7.0.0-alpha.9/install.sh`); v7.0.0-alpha.7 and older have no installer. See [installation](docs/installation.md) for manual verification, options, and updates.
 
 ## Quick start
 
