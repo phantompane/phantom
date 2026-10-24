@@ -23,6 +23,37 @@ pub(crate) struct Request<'a> {
     pub no_setup: bool,
 }
 
+/// Allocation completes even when preparation fails. Rendering and CLI exit
+/// policy belong to the caller, so internal callers can retain the workspace.
+pub(crate) struct Allocation {
+    pub workspace: worktree::WorktreeInfo,
+    pub source: Value,
+    pub setup: crate::setup::Report,
+    pub metadata_error: Option<String>,
+    pub retry_command: Option<String>,
+}
+
+impl Allocation {
+    fn new(
+        context: &Context,
+        workspace: worktree::WorktreeInfo,
+        source: Value,
+        setup: crate::setup::Report,
+        metadata_error: Option<String>,
+        copy_files: &[String],
+    ) -> Self {
+        let retry_command = (metadata_error.is_some() || setup.failed())
+            .then(|| setup_retry_command(context, &workspace, copy_files));
+        Self {
+            workspace,
+            source,
+            setup,
+            metadata_error,
+            retry_command,
+        }
+    }
+}
+
 fn is_live_checkout(tree: &worktree::WorktreeInfo) -> Result<bool> {
     if tree.orphaned {
         return Ok(false);
@@ -68,7 +99,7 @@ pub(crate) fn create(
     context: &Context,
     mut request: Request<'_>,
     logger: &worktree::Logger,
-) -> Result<i32> {
+) -> Result<Allocation> {
     if [
         request.base.is_some(),
         request.branch.is_some(),
@@ -275,15 +306,14 @@ pub(crate) fn create(
             tree
         };
         source["reused"] = json!(true);
-        return report(
+        return Ok(Allocation::new(
             context,
-            &tree,
+            tree,
             source,
+            crate::setup::Report::skipped(),
             None,
-            &crate::setup::Report::skipped(),
             request.copy_files,
-            logger,
-        );
+        ));
     }
     let path = paths::worktree_path(&context.worktrees_directory, &name);
     paths::validate_worktree_destination(&context.worktrees_directory, &path)?;
@@ -406,55 +436,14 @@ pub(crate) fn create(
         metadata_error = setup.metadata_error.clone();
     }
     source["reused"] = json!(false);
-    report(
+    Ok(Allocation::new(
         context,
-        &worktree::worktree_at_path(context, &path)?,
+        worktree::worktree_at_path(context, &path)?,
         source,
-        metadata_error.as_deref(),
-        &setup,
+        setup,
+        metadata_error,
         request.copy_files,
-        logger,
-    )
-}
-
-fn report(
-    context: &Context,
-    tree: &worktree::WorktreeInfo,
-    source: Value,
-    metadata_error: Option<&str>,
-    setup: &crate::setup::Report,
-    copy_files: &[String],
-    logger: &worktree::Logger,
-) -> Result<i32> {
-    logger.log(&format!(
-        "{} workspace '{}' at {}",
-        if source["reused"] == true {
-            "Reused"
-        } else {
-            "Created"
-        },
-        visible_text(&tree.name),
-        visible_text(&tree.path)
-    ));
-    if let Some(error) = metadata_error {
-        logger.warn(
-            "metadata_save",
-            &format!("Warning: {}", visible_text(error)),
-        );
-    }
-    crate::output::data(
-        &json!({"workspace":tree.to_json(None), "source":source, "setup":setup.outcome(), "copy":setup.copy(), "metadata":worktree::metadata_save_outcome(metadata_error)}),
-    )?;
-    if metadata_error.is_some() || setup.failed() {
-        return Err(Error::status(
-            crate::error::PARTIAL,
-            format!(
-                "Workspace created but setup did not complete. Retry with `{}`.",
-                setup_retry_command(context, tree, copy_files)
-            ),
-        ));
-    }
-    Ok(0)
+    ))
 }
 
 pub(crate) fn shell_quote(value: impl AsRef<std::ffi::OsStr>) -> String {

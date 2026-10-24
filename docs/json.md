@@ -102,6 +102,9 @@ These are the keys inside envelope `data`; nested workspace objects use the cont
 
 | Command | Data |
 |---|---|
+| `workflow list` | `workflows: [{name, source, path}]` |
+| `workflow show` | `workflow: {name, version, schemaVersion, source, path, definition, agents, steps}` |
+| `workflow check` | `items: [{name, source, path, valid, diagnostics}]` |
 | `create` | `workspace`, `source`, `setup`, `copy`, `metadata` |
 | `show`, `set`, `adopt` | `workspace` |
 | `path` | `path` |
@@ -183,3 +186,11 @@ A failed clone uses the common error envelope. A destination that is not the exp
 `rabi help [COMMAND...]` prints the same text as `--help`. `rabi help --json` puts the full contents of `help-data.json` in `data`, including `commands`, `helps`, `globalOptions`, `exitCodes`, `errorCodes`, `warningCodes`, and `schemaVersion: 2`. `rabi help repo show --json` adds `data.selected` for that command. This is separate from the envelope’s `schema`.
 
 `--version` and `-v` show the application version. `rabi --version --json` uses `command: "--version"`; `data.version` contains the application version and `data.display` contains the text version line.
+
+## Workflow inspection
+
+`workflow list/show/check` use the unchanged schema 2 envelope. Source is `builtin` or `repository`; the built-in path is null. Repository paths identify the selected checkout's YAML files. `show` includes the parsed definition and an `agents` object mapping each agent step ID to resolved `{provider,model,effort}`. Unknown model or effort values are null. YAML definition keys retain their snake_case spelling; show metadata uses `schemaVersion`. Every step includes `allow_dirty` (default false) in definition.steps, and steps maps all step IDs to `{allowDirty: boolean}` summaries. Read-only provider capability is validated after agent overrides; Codex passes, while Cursor and unverified Claude are rejected.
+
+`check` diagnostics are `{step,line,column,message}`. Step paths are supplied when available; line and column are nullable and use one-based YAML parser locations when available. An invalid definition returns `ok:false`, exit 2, error code `usage`, and keeps all checked items in data. Invalid `show` returns diagnostics in `error.details.diagnostics`. An unknown NAME exits 3 (`not_found`). Listing does not parse definitions. No inspection command runs workflow steps or requires trust.
+
+Internal run records use schema 1 at `<git-common-dir>/rabi/runs/run_<uuid>/run.json`; reading rejects missing or unsupported schema. The manifest stores id, state (`running|succeeded|stopped`), workflow `{name,version,source}`, currentStep, stepsStarted, loops `{name:{used,max}}`, workspace `{id,name,path,branch}`, nullable pr and stopReason `{kind,message}`, startedAt, and finishedAt. Task and workflow YAML copies are written at creation. Attempt results live under `steps/NNN-<step>/result.json`: step, attempt (run-wide sequence number), result, startedAt, finishedAt, nullable exitCode/head, and nullable agent `{provider,model,effort,sessionId,continuedFrom}`. HEAD is an observation only. Storage uses the shared atomic writer. Run APIs are internal; workspace record schema 2 is unchanged.

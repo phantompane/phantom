@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- Inspect and validate built-in and repository YAML workflow definitions with `rabi workflow list/show/check`. `rabi trust add` lists repository workflows alongside hooks under the same execution trust.
 
 ## v7.0.0 (2026-10-24)
 

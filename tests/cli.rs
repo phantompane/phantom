@@ -21081,3 +21081,506 @@ fn unsupported_layouts_require_a_current_record_to_be_managed() {
         assert!(!path.exists());
     }
 }
+
+#[test]
+fn create_success_and_setup_failure_keep_the_complete_json_envelope() {
+    for failed in [false, true] {
+        let repo = Repo::new();
+        if failed {
+            fs::write(
+                repo.repo.join(".rabi.toml"),
+                "[hooks]\nsetup = [\"exit 42\"]\n",
+            )
+            .unwrap();
+        }
+        let out = repo.rabi(&[
+            "create",
+            "envelope-topic",
+            "--base",
+            "main",
+            "--purpose",
+            "contract test",
+            "--json",
+        ]);
+        assert_eq!(out.status.code(), Some(if failed { 6 } else { 0 }));
+        let mut doc = assert_envelope(&out, "create");
+        // Normalize only generated IDs/timestamps and the initial commit.
+        for field in ["id", "createdAt", "updatedAt", "head", "createdFrom"] {
+            assert!(doc["data"]["workspace"][field].is_string(), "{field}");
+            doc["data"]["workspace"][field] = serde_json::json!(format!("<{field}>"));
+        }
+        for at in ["/data/workspace/setup/at", "/data/setup/at"] {
+            assert!(doc.pointer(at).unwrap().is_string());
+            *doc.pointer_mut(at).unwrap() = serde_json::json!("<time>");
+        }
+        let path = managed(&repo, "envelope-topic");
+        let setup_error = failed.then_some("Setup command 'exit 42' failed with exit code 42");
+        let setup_state = if failed { "failed" } else { "ok" };
+        let warning = format!(
+            "Warning: Setup command failed with exit code 42: exit 42\nWorkspace path: {}",
+            path.display()
+        );
+        let retry = format!(
+            "cd '{}' && rabi setup 'envelope-topic'",
+            repo.repo.display()
+        );
+        let expected = serde_json::json!({
+            "schema":2, "command":"create", "ok":!failed,
+            "data":{
+                "workspace":{
+                    "id":"<id>", "name":"envelope-topic", "path":path,
+                    "kind":"workspace", "current":false, "repo":{"root":repo.repo,"name":"repo"},
+                    "managed":true, "upstream":null, "branch":"envelope-topic", "head":"<head>",
+                    "base":"refs/heads/main", "dirty":false, "detached":false, "orphaned":false,
+                    "purpose":"contract test", "createdAt":"<createdAt>", "updatedAt":"<updatedAt>",
+                    "createdFrom":"<createdFrom>", "links":{"pr":null,"issue":null},
+                    "setup":{"state":setup_state, "at":"<time>", "error":setup_error}
+                },
+                "source":{"kind":"new","base":"refs/heads/main","reused":false},
+                "setup":{"state":setup_state,"at":"<time>","error":setup_error,"ran":failed,"ok":!failed,
+                         "command":failed.then_some("exit 42"),"exitCode":failed.then_some(42),"signal":null},
+                "copy":{"copied":[],"error":null},"metadata":{"ok":true,"error":null}
+            },
+            "warnings":if failed {vec![serde_json::json!({"code":"setup","message":warning})]} else {vec![]},
+            "error":if failed {serde_json::json!({"code":"partial","message":format!("Workspace created but setup did not complete. Retry with `{retry}`.")})} else {serde_json::Value::Null}
+        });
+        assert_eq!(doc, expected);
+        assert!(
+            !repo.repo.join(".git/rabi/runs").exists(),
+            "create itself must not create run history"
+        );
+        if failed {
+            assert_eq!(setup_retry_hint(&out, true), retry);
+        }
+    }
+}
+
+fn workflow_file(repo: &Repo, name: &str, yaml: &str) -> PathBuf {
+    let path = repo
+        .repo
+        .join(".rabi/workflows")
+        .join(format!("{name}.yaml"));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, yaml).unwrap();
+    path
+}
+
+const DEFAULT_WORKFLOW: &str = include_str!("../src/workflow/default.yaml");
+
+#[test]
+fn workflow_inspection_lists_sources_and_shows_the_complete_json_contract_without_trust() {
+    let repo = Repo::new();
+    let path = workflow_file(
+        &repo,
+        "custom",
+        &DEFAULT_WORKFLOW.replace("name: default", "name: embedded-name"),
+    );
+    fs::write(
+        repo.repo.join(".rabi.toml"),
+        "[hooks]\nsetup = [\"touch hook-ran\"]\n",
+    )
+    .unwrap();
+    let list = repo
+        .command(env!("CARGO_BIN_EXE_rabi"), &["workflow", "list", "--json"])
+        .env_remove("RABI_TRUST_ALL")
+        .output()
+        .unwrap();
+    assert_eq!(list.status.code(), Some(0));
+    assert_eq!(
+        assert_envelope(&list, "workflow list"),
+        serde_json::json!({
+            "schema":2,"command":"workflow list","ok":true,"data":{"workflows":[
+                {"name":"default","source":"builtin","path":null},
+                {"name":"custom","source":"repository","path":path}
+            ]},"warnings":[],"error":null
+        })
+    );
+    for (name, source, path_value) in [
+        ("default", "builtin", serde_json::Value::Null),
+        ("custom", "repository", serde_json::json!(path)),
+    ] {
+        let shown = repo
+            .command(
+                env!("CARGO_BIN_EXE_rabi"),
+                &["workflow", "show", name, "--output", "json"],
+            )
+            .env_remove("RABI_TRUST_ALL")
+            .output()
+            .unwrap();
+        assert!(shown.status.success(), "{}", text(&shown.stdout));
+        let doc = assert_envelope(&shown, "workflow show");
+        assert_eq!(
+            doc["data"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["workflow"]
+        );
+        let workflow = &doc["data"]["workflow"];
+        assert_eq!(
+            workflow
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "agents",
+                "definition",
+                "name",
+                "path",
+                "schemaVersion",
+                "source",
+                "steps",
+                "version"
+            ]
+        );
+        assert_eq!(workflow["name"], name);
+        assert_eq!(workflow["source"], source);
+        assert_eq!(workflow["path"], path_value);
+        assert_eq!(workflow["schemaVersion"], 1);
+        assert_eq!(workflow["version"], 3);
+        assert_eq!(workflow["definition"]["start"], "prepare");
+        for name in ["implement", "fix", "review"] {
+            assert_eq!(
+                workflow["agents"][name],
+                serde_json::json!({"provider":"codex","model":"gpt-6.1-sol","effort":"high"})
+            );
+        }
+        assert_eq!(workflow["agents"].as_object().unwrap().len(), 3);
+        let checked = repo
+            .command(env!("CARGO_BIN_EXE_rabi"), &["workflow", "check", name])
+            .env("RABI_OUTPUT", "json")
+            .env_remove("RABI_TRUST_ALL")
+            .output()
+            .unwrap();
+        let checked = assert_envelope(&checked, "workflow check");
+        assert_eq!(checked["ok"], true);
+        assert_eq!(
+            checked["data"]["items"][0]["diagnostics"],
+            serde_json::json!([])
+        );
+    }
+    let shown = repo.rabi(&["workflow", "show", "custom"]);
+    let shown = text(&shown.stdout);
+    assert!(shown.contains("Workflow: custom (repository), version 3"));
+    assert!(shown.contains("name: embedded-name"));
+    assert!(shown.contains("Agent implement:"));
+    assert!(!repo.repo.join("hook-ran").exists());
+    assert!(!repo.root.join("state/rabi/trust.toml").exists());
+    assert!(!repo.repo.join(".git/rabi/runs").exists());
+}
+
+#[test]
+fn workflow_check_reports_invalid_definitions_and_keeps_every_item() {
+    let repo = Repo::new();
+    let cases: Vec<(&str,String,&str)> = vec![
+        ("broken-target",DEFAULT_WORKFLOW.replacen("on: {ok: implement}","on: {ok: missing}",1),"Transition target"),
+        ("unbounded-cycle",DEFAULT_WORKFLOW.replacen("on: {ok: check}","on: {ok: implement}",1),"Cycle without a loop edge"),
+        ("bounded-cycle",DEFAULT_WORKFLOW.replacen("on: {ok: check}","on: {ok: {to: implement, loop: repair}}",1),""),
+        ("undefined-loop",DEFAULT_WORKFLOW.replace("loop: repair","loop: undefined"),"Undefined loop"),
+        ("zero-step-limit",DEFAULT_WORKFLOW.replace("max_steps: 15","max_steps: 0"),"positive"),
+        ("negative-step-limit",DEFAULT_WORKFLOW.replace("max_steps: 15","max_steps: -1"),"positive"),
+        ("missing-step-limit",DEFAULT_WORKFLOW.replace("limits: {max_steps: 15}\n",""),"missing field"),
+        ("zero-loop-limit",DEFAULT_WORKFLOW.replace("repair: 2","repair: 0"),"positive"),
+        ("review-continue",DEFAULT_WORKFLOW.replace("  review:\n    type: agent\n    mode: read-only\n    output: review-v1\n    context: fresh", "  review:\n    type: agent\n    mode: read-only\n    output: review-v1\n    context: {continue: implement}"),"context fresh"),
+        ("different-provider",DEFAULT_WORKFLOW.replace("  fix:\n    type: agent", "  fix:\n    type: agent\n    agent: {provider: cursor}"),"same provider"),
+        ("missing-continue",DEFAULT_WORKFLOW.replace("continue: implement","continue: missing"),"must exist and be an agent"),
+        ("non-agent-continue",DEFAULT_WORKFLOW.replace("continue: implement","continue: check"),"must exist and be an agent"),
+        ("invalid-result",DEFAULT_WORKFLOW.replacen("on: {ok: implement}","on: {pass: implement}",1),"Invalid result"),
+        ("missing-start",DEFAULT_WORKFLOW.replace("start: prepare","start: missing"),"Start step"),
+        ("invalid-yaml","schema_version: [".into(),"Invalid workflow YAML"),
+    ];
+    for (name, yaml, message) in &cases {
+        let path = workflow_file(&repo, name, yaml);
+        let bytes = fs::read(&path).unwrap();
+        let checked = repo.rabi(&["workflow", "check", name, "--json"]);
+        let valid = message.is_empty();
+        assert_eq!(
+            checked.status.code(),
+            Some(if valid { 0 } else { 2 }),
+            "{name}: {}",
+            text(&checked.stdout)
+        );
+        let doc = assert_envelope(&checked, "workflow check");
+        assert_eq!(doc["data"]["items"].as_array().unwrap().len(), 1);
+        let item = &doc["data"]["items"][0];
+        assert_eq!(item["valid"], valid, "{name}: {doc}");
+        if !valid {
+            assert_eq!(doc["error"]["code"], "usage");
+            assert!(
+                item["diagnostics"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|d| d["message"].as_str().unwrap().contains(message)),
+                "{name}: {doc}"
+            );
+            for diagnostic in item["diagnostics"].as_array().unwrap() {
+                assert_eq!(
+                    diagnostic
+                        .as_object()
+                        .unwrap()
+                        .keys()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>(),
+                    ["column", "line", "message", "step"]
+                );
+            }
+            if *name == "invalid-yaml" {
+                assert!(item["diagnostics"][0]["line"].is_number());
+            }
+            let shown = repo.rabi(&["workflow", "show", name, "--json"]);
+            assert_eq!(shown.status.code(), Some(2));
+            assert!(json_value(&shown)["error"]["details"]["diagnostics"].is_array());
+        }
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+    workflow_file(&repo, "default", DEFAULT_WORKFLOW);
+    let checked = repo.rabi(&["workflow", "check", "--json"]);
+    assert_eq!(checked.status.code(), Some(2));
+    let doc = assert_envelope(&checked, "workflow check");
+    let items = doc["data"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), cases.len() + 2);
+    assert_eq!(items[0]["source"], "builtin");
+    assert_eq!(items[0]["valid"], true);
+    let reserved = items
+        .iter()
+        .find(|item| item["name"] == "default" && item["source"] == "repository")
+        .unwrap();
+    assert_eq!(reserved["valid"], false);
+    assert!(reserved["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("reserved"));
+    assert!(
+        repo.rabi(&["workflow", "show", "default"]).status.success(),
+        "reserved file cannot shadow builtin"
+    );
+}
+
+#[test]
+fn workflow_selection_follows_invoking_checkout_and_selected_primary_and_trust_lists_the_source() {
+    let repo = Repo::new();
+    let primary = workflow_file(&repo, "primary", DEFAULT_WORKFLOW);
+    assert!(repo
+        .rabi(&["create", "workflow-source", "--no-setup"])
+        .status
+        .success());
+    let linked = managed(&repo, "workflow-source");
+    fs::create_dir_all(linked.join(".rabi/workflows")).unwrap();
+    let linked_definition = linked.join(".rabi/workflows/linked.yaml");
+    fs::write(&linked_definition, DEFAULT_WORKFLOW).unwrap();
+    for (args, expected) in [
+        (vec!["workflow", "list", "--json"], "linked"),
+        (
+            vec![
+                "-R",
+                repo.repo.to_str().unwrap(),
+                "workflow",
+                "list",
+                "--json",
+            ],
+            "primary",
+        ),
+    ] {
+        let out = repo
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
+            .current_dir(&linked)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let doc = assert_envelope(&out, "workflow list");
+        assert_eq!(doc["data"]["workflows"].as_array().unwrap().len(), 2);
+        assert_eq!(doc["data"]["workflows"][1]["name"], expected);
+    }
+    let trusted = repo
+        .command(env!("CARGO_BIN_EXE_rabi"), &["trust", "add", "--json"])
+        .current_dir(&linked)
+        .output()
+        .unwrap();
+    assert!(trusted.status.success());
+    let stderr = text(&trusted.stderr);
+    assert!(stderr.contains("workflows:"));
+    assert!(stderr.contains("linked"));
+    assert!(stderr.contains(linked_definition.to_str().unwrap()));
+    assert!(!stderr.contains(primary.to_str().unwrap()));
+    assert!(stderr.contains("Workflow agent steps and check commands"));
+    let data = assert_envelope(&trusted, "trust add")["data"].clone();
+    assert_eq!(
+        data.as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["path", "trustedAt"]
+    );
+}
+
+#[test]
+fn workflow_help_completion_unknown_names_and_retired_run_commands_use_existing_contracts() {
+    let repo = Repo::new();
+    for command in ["show", "check"] {
+        let out = repo.rabi(&["workflow", command, "missing", "--json"]);
+        assert_eq!(out.status.code(), Some(3));
+        assert_eq!(json_value(&out)["error"]["code"], "not_found");
+    }
+    for args in [
+        vec!["run"],
+        vec!["run", "show", "some-id"],
+        vec!["run", "start"],
+        vec!["workflow", "show"],
+        vec!["workflow", "list", "extra"],
+        vec!["workflow", "check", "a", "b"],
+    ] {
+        let mut json_args = args.clone();
+        json_args.push("--json");
+        let out = repo.rabi(&json_args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert_eq!(json_value(&out)["error"]["code"], "usage");
+        if args[0] == "run" {
+            assert!(json_value(&out)["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Unknown command"));
+        }
+    }
+    let help = repo.rabi(&["help", "workflow", "show", "--json"]);
+    assert_eq!(
+        assert_envelope(&help, "help")["data"]["selected"]["name"],
+        "workflow show"
+    );
+    let doc = json_value(&help);
+    assert!(doc["data"]["helps"].get("run").is_none());
+    assert!(doc["data"]["helps"].get("run show").is_none());
+    for shell in ["bash", "zsh", "fish"] {
+        let out = repo.rabi(&["completions", shell]);
+        assert!(out.status.success());
+        let script = text(&out.stdout);
+        assert!(script.contains("workflow show"));
+        assert!(script.contains("workflow check"));
+        assert!(!script.contains("run show"));
+        assert!(!script.contains("run start"));
+    }
+}
+
+#[test]
+fn workflow_allow_dirty_is_typed_defaulted_and_included_for_every_step_type() {
+    let repo = Repo::new();
+    let yaml = DEFAULT_WORKFLOW
+        .replace(
+            "    type: system",
+            "    type: system\n    allow_dirty: true",
+        )
+        .replace("    type: agent", "    type: agent\n    allow_dirty: true")
+        .replace("    type: check", "    type: check\n    allow_dirty: true");
+    workflow_file(&repo, "dirty-policy", &yaml);
+    let shown = repo.rabi(&["workflow", "show", "dirty-policy", "--json"]);
+    assert!(shown.status.success(), "{}", text(&shown.stdout));
+    let doc = assert_envelope(&shown, "workflow show");
+    for name in ["prepare", "implement", "check"] {
+        assert_eq!(
+            doc["data"]["workflow"]["definition"]["steps"][name]["allow_dirty"],
+            true
+        );
+        assert_eq!(doc["data"]["workflow"]["steps"][name]["allowDirty"], true);
+    }
+    let text_output = repo.rabi(&["workflow", "show", "dirty-policy"]);
+    assert!(text(&text_output.stdout).contains("Step check: allow_dirty=true"));
+    let default = repo.rabi(&["workflow", "show", "default", "--json"]);
+    let default = json_value(&default);
+    assert_eq!(
+        default["data"]["workflow"]["definition"]["steps"]["prepare"]["allow_dirty"],
+        false
+    );
+    assert_eq!(
+        default["data"]["workflow"]["steps"]["prepare"]["allowDirty"],
+        false
+    );
+    workflow_file(
+        &repo,
+        "invalid-dirty-policy",
+        &yaml.replace("allow_dirty: true", "allow_dirty: definitely"),
+    );
+    for command in ["show", "check"] {
+        let out = repo.rabi(&["workflow", command, "invalid-dirty-policy", "--json"]);
+        assert_eq!(out.status.code(), Some(2), "{}", text(&out.stdout));
+        let doc = json_value(&out);
+        let diagnostics = if command == "show" {
+            &doc["error"]["details"]["diagnostics"]
+        } else {
+            &doc["data"]["items"][0]["diagnostics"]
+        };
+        assert!(
+            diagnostics
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["message"].as_str().unwrap().contains("boolean")),
+            "{doc}"
+        );
+    }
+}
+
+#[test]
+fn workflow_read_only_requires_a_capable_resolved_provider_and_honors_step_overrides() {
+    let repo = Repo::new();
+    for provider in ["codex", "cursor", "claude"] {
+        let yaml = DEFAULT_WORKFLOW.replace("provider: codex", &format!("provider: {provider}"));
+        workflow_file(&repo, provider, &yaml);
+        for command in ["check", "show"] {
+            let out = repo.rabi(&["workflow", command, provider, "--json"]);
+            assert_eq!(
+                out.status.code(),
+                Some(if provider == "codex" { 0 } else { 2 }),
+                "{}",
+                text(&out.stdout)
+            );
+            if provider != "codex" {
+                let doc = json_value(&out);
+                let diagnostics = if command == "show" {
+                    &doc["error"]["details"]["diagnostics"]
+                } else {
+                    &doc["data"]["items"][0]["diagnostics"]
+                };
+                assert!(diagnostics.as_array().unwrap().iter().any(|d| d["step"]
+                    == "steps.review.mode"
+                    && d["message"]
+                        .as_str()
+                        .unwrap()
+                        .contains("cannot enforce read-only")));
+            }
+        }
+    }
+    let overridden = DEFAULT_WORKFLOW
+        .replace("provider: codex", "provider: cursor")
+        .replace(
+            "  review:\n    type: agent",
+            "  review:\n    type: agent\n    agent: {provider: codex}",
+        );
+    workflow_file(&repo, "override", &overridden);
+    let checked = repo.rabi(&["workflow", "check", "override", "--json"]);
+    assert!(checked.status.success(), "{}", text(&checked.stdout));
+    let shown = repo.rabi(&["workflow", "show", "override", "--json"]);
+    assert!(shown.status.success());
+    let doc = json_value(&shown);
+    assert_eq!(
+        doc["data"]["workflow"]["agents"]["review"]["provider"],
+        "codex"
+    );
+    assert_eq!(
+        doc["data"]["workflow"]["agents"]["implement"]["provider"],
+        "cursor"
+    );
+    // The capability check applies to read-only report steps as well as reviews.
+    let report = overridden.replace("    mode: edit", "    mode: read-only");
+    workflow_file(&repo, "read-only-report", &report);
+    assert_eq!(
+        repo.rabi(&["workflow", "check", "read-only-report", "--json"])
+            .status
+            .code(),
+        Some(2)
+    );
+}

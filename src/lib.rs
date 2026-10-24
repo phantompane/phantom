@@ -30,6 +30,7 @@ pub mod preferences;
 pub mod process;
 pub mod projects;
 pub mod repository;
+mod run;
 mod runtime;
 mod selectors;
 pub mod setup;
@@ -37,6 +38,7 @@ mod shell;
 pub mod sync;
 mod tracking;
 pub mod trust;
+mod workflow;
 pub mod worktree;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -277,7 +277,7 @@ pub(crate) fn finish(mut exit: i32) -> Result<i32> {
 fn is_outer_command(command: &str) -> bool {
     matches!(
         command.split_whitespace().next(),
-        Some("repo" | "trust" | "config" | "help" | "--version")
+        Some("repo" | "trust" | "config" | "help" | "--version" | "workflow")
     )
 }
 
