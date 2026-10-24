@@ -44,6 +44,7 @@
 - Use conventional commits as in history: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`.
 - Do not bump `Cargo.toml` or `Cargo.lock` in a feature pull request. Change the version by hand in a dedicated pull request against `main`. See Releases.
 - PRs should include a summary, verification steps, and CLI output for UX-facing changes.
+- For this repository, follow [Review process](CONTRIBUTING.md#review-process), [REVIEW.md](REVIEW.md), and [risk-tiers.md](risk-tiers.md): fresh read-only review before a draft PR, at most three rounds, responses to every finding, and no unresolved Important. Record risk in the PR; trust/hooks/delete/remove/sync changes also require a separate security review.
 - Ensure `cargo fmt`, `cargo clippy --locked`, and `cargo test --locked` pass. Note known gaps in the PR body.
 
 ## Security & Configuration Tips
