@@ -24,7 +24,7 @@ USAGE
 
 fail() { printf 'rabi installer: %s\n' "$*" >&2; exit 1; }
 failRelease() {
-    fail "$* This installer supports only rabi- archives. Install v7.0.0-alpha.10, v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer: https://github.com/$repo/releases/download/<TAG>/install.sh (replace <TAG> with the release tag); v7.0.0-alpha.7 and older have no installer."
+    fail "$* This installer supports only rabi- archives. Install v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer: https://github.com/$repo/releases/download/<TAG>/install.sh (replace <TAG> with the release tag); v7.0.0-alpha.7 and older have no installer."
 }
 usageError() { printf 'rabi installer: %s\n' "$*" >&2; exit 2; }
 progress() { printf '%s\n' "$*" >&2; }

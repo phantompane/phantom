@@ -163,7 +163,7 @@ assertVersion 7.0.0-alpha.10 "$HOME/.local/bin"
 cp "$HOME/.local/bin/rabi" "$root/before"
 for legacyTag in 7.0.0-alpha.9 7.0.0-alpha.8; do
     runFail 1 "Missing, duplicate, or invalid SHA256SUMS line for rabi-v$legacyTag-linux-x64.tar.gz." --version "$legacyTag"
-    contains "$root/stderr" "Install v7.0.0-alpha.10, v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer:"
+    contains "$root/stderr" "Install v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer:"
     contains "$root/stderr" 'https://github.com/yoiailabs/rabi/releases/download/<TAG>/install.sh'
     contains "$root/stderr" 'v7.0.0-alpha.7 and older have no installer.'
     unchanged
@@ -213,7 +213,7 @@ cp "$HOME/.local/bin/rabi" "$root/before"
 for option in '' --prerelease; do
     if [ -n "$option" ]; then runFail 1 'No matching rabi release.' "$option"
     else runFail 1 'No matching rabi release.'; fi
-    contains "$root/stderr" "Install v7.0.0-alpha.10, v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer:"
+    contains "$root/stderr" "Install v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer:"
     contains "$root/stderr" 'https://github.com/yoiailabs/rabi/releases/download/<TAG>/install.sh'
     unchanged
 done
@@ -597,7 +597,7 @@ export RABI_RELEASE_BASE_URL=https://mirror.invalid/download RABI_API_URL=https:
 cp "$HOME/.local/bin/rabi" "$root/before"
 for legacyTag in 7.0.0-alpha.9 7.0.0-alpha.8; do
     : > "$root/http-log"
-    runFail 1 "Install v7.0.0-alpha.10, v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer:" --version "$legacyTag"
+    runFail 1 "Install v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer:" --version "$legacyTag"
     contains "$root/stderr" 'https://github.com/yoiailabs/rabi/releases/download/<TAG>/install.sh'
     unchanged
     [ "$(cat "$root/http-log")" = 'curl asset auth=no SHA256SUMS' ] || fail 'Downloaded a legacy archive'
