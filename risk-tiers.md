@@ -7,8 +7,8 @@ Classify the change, never the author. Read the full PR diff and relevant caller
 | Tier | Changed behavior | Merge rule |
 |---|---|---|
 | low | Demonstrably preserves existing behavior and security boundaries, such as accurate documentation or isolated tests; no high-risk condition below. | The development bot may merge after required CI is green, Codex review passes, every finding has a response, and no Important remains open. |
-| medium | Broader internal work or an isolated addition that demonstrably preserves existing behavior and security boundaries; no high-risk condition below. | Same gates as low; the development bot may merge. |
-| high | Changes or breaks existing behavior (CLI output, exit codes, JSON schema, config, selectors, shell integration); security-sensitive changes (trust, hooks, delete/remove, sync, installer, CI/release config); release/tag/publish; possible data loss, lost commits, or published-history rewrite. | Shuhei must approve the specific HEAD SHA. No bot merge. Required CI and Codex review must pass, every finding must have a response, and no Important may remain open. |
+| medium | Broader internal work, an isolated addition, or a backward-compatible change to existing behavior (for example a bug fix or added output that keeps existing contracts); security boundaries preserved; no high-risk condition below. | Same gates as low; the development bot may merge. |
+| high | Breaks existing behavior: an incompatible change to CLI output, exit codes, JSON schema, config, selectors, or shell integration that existing users or scripts rely on; security-sensitive changes (trust, hooks, delete/remove, sync, installer, CI/release config); release/tag/publish; possible data loss, lost commits, or published-history rewrite. | Shuhei must approve the specific HEAD SHA. No bot merge. Required CI and Codex review must pass, every finding must have a response, and no Important may remain open. |
 
 The following paths are high unless the diff demonstrably does not touch the sensitive behavior. Record evidence for any exception; paths are prompts to inspect behavior, not a complete classifier:
 
