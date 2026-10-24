@@ -4,6 +4,14 @@
 
 Nothing yet.
 
+## v7.0.0 (2026-10-24)
+
+### Changed
+
+- v7.0.0 is the first v7 release published as a stable (non-prerelease) GitHub release and becomes Latest. The unpinned installer now installs v7.0.0 without `--prerelease`.
+- v7 is in beta: rabi is under active development. During the v7 beta, minor releases (7.x) may contain breaking changes, like semver 0.x; patch releases contain fixes only. Breaking changes are listed in this changelog.
+- No functional changes since v7.0.0-alpha.11. v7 is a Rust rewrite and is not compatible with v6. The npm package `@phantompane/cli` and Homebrew `phantom` remain on v6.
+
 ## v7.0.0-alpha.11 (2026-10-24)
 
 ### Changed
