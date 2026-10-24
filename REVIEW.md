@@ -30,4 +30,4 @@ Use a fresh read-only Codex session each round. Round 1 reviews the full diff fr
 
 Stop after at most three rounds. If round 3 fails, reconsider the approach or split the change instead of starting round 4. If history/base changes invalidate comparison, stop and explicitly reset to a full-diff review; keep the round count. See [the process](CONTRIBUTING.md#review-process) and [risk tiers](risk-tiers.md) for security review and merge gates.
 
-End with exactly one final verdict line: `Verdict: revise` if any Important remains unresolved or evidence is insufficient to judge; otherwise `Verdict: pass`. Nit and Pre-existing findings alone do not require revision.
+End with exactly one final verdict line in the form the caller requests. rabi's `review-v1` output (and this repository's review prompts) use `判定: 要修正` (revise) if any Important remains unresolved or evidence is insufficient to judge, otherwise `判定: 問題なし` (pass). Nit and Pre-existing findings alone do not require revision.
