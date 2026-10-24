@@ -3,7 +3,7 @@
 rabi（ラビ、rabbit から） — コーディングエージェントの並列作業用の独立した Git ワークスペース。
 
 > [!WARNING]
-> rabi は開発中です（v7 アルファ版）。7.0.0 までは、コマンド・出力・設定・保存形式が後方互換なしに変わることがあります。まだ本番環境での利用はおすすめしません。
+> rabi は活発に開発を進めている v7 ベータ版です。v7 のベータ期間中は、SemVer の 0.x と同じルールで、マイナーリリース（7.x）に破壊的変更が含まれることがあります。パッチリリース（7.x.y）は不具合修正のみです。破壊的変更は [CHANGELOG](CHANGELOG.md) に記載しています。
 
 タスクごとに独立した Git ワークスペース（リンクされた worktree）を用意し、複数のエージェントと人間が同じリポジトリで並行して作業できます。rabi はチェックアウトの目的を記録し、機械可読の出力を提供し、削除前に履歴の保全を確認します。未保全のコミットや未コミットの変更を破棄するには、明示的な許可が必要です。
 
@@ -11,26 +11,25 @@ rabi（ラビ、rabbit から） — コーディングエージェントの並�
 
 ## インストール
 
-インストーラーとバイナリを同じリリースに固定します。インストーラーは常に SHA-256 を検証し、`curl` と `tar` を必要とします。
+最新の v7 リリースをインストールします。インストーラーは常に SHA-256 を検証し、`curl` と `tar` を必要とします。
 
 ```sh
-curl -fsSL https://github.com/yoiailabs/rabi/releases/download/v7.0.0-alpha.10/install.sh \
-  | RABI_VERSION=v7.0.0-alpha.10 sh -s -- --prerelease
+curl -fsSL https://github.com/yoiailabs/rabi/releases/latest/download/install.sh | sh
 ```
 
-v7.0.0-alpha.10 では `--verify-attestation` を付けないでください。この版のインストーラーによるアテステーション検証は、リポジトリ移管後に失敗します。手動で検証するには、アーカイブをダウンロードし、`gh attestation verify <archive> --owner phantompane` を実行してください（`gh` が必要です）。
+`sh -s -- --verify-attestation` を使うと、配布物の来歴も検証できます（`gh` が必要です）。
 
-Linux・macOS の x64/arm64 に対応しています。WSL では Linux バイナリを使ってください。sudo やシェル設定の変更なしで `~/.local/bin` にインストールします。`--prerelease` はバージョン未固定時のプレリリース選択を許可します。バージョン固定時は指定したプレリリースをそのまま使えます。
+Linux・macOS の x64/arm64 に対応しています。WSL では Linux バイナリを使ってください。sudo やシェル設定の変更なしで `~/.local/bin` にインストールします。
 
-ソースからのビルドには Rust 1.89 以降が必要です。`<TAG>` を `v7.0.0-alpha.10` などのリリースタグに置き換えてください。
+ソースからのビルドには Rust 1.89 以降が必要です。
 
 ```sh
-cargo install --git https://github.com/yoiailabs/rabi --tag <TAG> --locked rabi
+cargo install --git https://github.com/yoiailabs/rabi --tag v7.0.0 --locked rabi
 ```
 
 npm の `@phantompane/cli` と Homebrew の `phantom` は旧 TypeScript 版 v6 です。
 
-v7.0.0-alpha.9、v7.0.0-alpha.8 は、そのリリース自身のインストーラー（例: `https://github.com/yoiailabs/rabi/releases/download/v7.0.0-alpha.9/install.sh`）を使ってください。v7.0.0-alpha.7 以前にはインストーラーがありません。手動検証、オプション、更新方法は[インストールの詳細](docs/installation.md)を参照してください。
+エージェントや CI では、`RABI_VERSION=<TAG>` と同じタグのインストーラー URL でバージョンを固定できます。バージョン固定、旧リリース、手動検証、オプション、更新方法は[インストールの詳細](docs/installation.md)を参照してください。
 
 ## クイックスタート
 
@@ -129,7 +128,7 @@ rabi remove task/auth
 
 ## ステータス
 
-アルファ版です（上の注意を参照）。破壊的変更は [CHANGELOG](CHANGELOG.md) に記載しています。
+ベータ版です（上のバージョニング方針を参照）。破壊的変更は [CHANGELOG](CHANGELOG.md) に記載しています。
 
 ## コントリビューション
 
