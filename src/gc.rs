@@ -827,7 +827,7 @@ pub(crate) fn still_at_creation_point(
     }
     entries.iter().all(|entry| {
         entry.split_once('\t').is_some_and(|(_, subject)| {
-            subject.starts_with("mabo sync: fast-forward to ")
+            subject.starts_with("rabi sync: fast-forward to ")
                 && subject.ends_with(": Fast-forward")
         })
     }) && is_ancestor(git_root, &spec, base)
@@ -902,12 +902,12 @@ fn hold_detail(context: &Context, hold: Hold, subject: &Subject) -> String {
     });
     let command = if let Some(selector) = selector {
         let selector = crate::allocation::shell_quote(std::ffi::OsStr::new(&selector));
-        format!("mabo -R {root} remove {permission} -- {selector}")
+        format!("rabi -R {root} remove {permission} -- {selector}")
     } else if subject.path.is_dir() {
         let path = crate::allocation::shell_quote(subject.path.as_os_str());
-        format!("(cd {path} && mabo -R {root} remove . {permission})")
+        format!("(cd {path} && rabi -R {root} remove . {permission})")
     } else {
-        // There is nowhere to cd and no unambiguous mabo selector. Git accepts
+        // There is nowhere to cd and no unambiguous rabi selector. Git accepts
         // the exact missing path and removes only this registration. A remaining
         // metadata record can be cleaned by a subsequent orphan gc.
         let path = crate::allocation::shell_quote(subject.path.as_os_str());

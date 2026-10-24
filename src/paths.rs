@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::{Error, Result};
 
-pub const PROJECT_MARKER: &str = ".mabo-common-dir";
+pub const PROJECT_MARKER: &str = ".rabi-common-dir";
 
 pub fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -78,8 +78,8 @@ pub fn configured_worktrees_directory(git_root: &Path, configured: &str) -> Work
     }
 }
 
-/// `$XDG_DATA_HOME/mabo/workspaces/<checkout>-<hash>`, or
-/// `~/.local/share/mabo/workspaces/...` when the caller already applied the fallback.
+/// `$XDG_DATA_HOME/rabi/workspaces/<checkout>-<hash>`, or
+/// `~/.local/share/rabi/workspaces/...` when the caller already applied the fallback.
 pub fn default_worktrees_directory(
     git_root: &Path,
     common_dir_key: &Path,
@@ -87,7 +87,7 @@ pub fn default_worktrees_directory(
 ) -> WorktreesLocation {
     let name = project_directory_name(&checkout_component(git_root), common_dir_key);
     WorktreesLocation {
-        path: normalize(&data_home.join("mabo").join("workspaces").join(name)),
+        path: normalize(&data_home.join("rabi").join("workspaces").join(name)),
         project_common_dir: Some(common_dir_key.to_path_buf()),
     }
 }
@@ -112,7 +112,7 @@ pub fn is_project_directory(name: &std::ffi::OsStr, common_dir: &Path) -> bool {
     !prefix.is_empty() && suffix == digest
 }
 
-/// Absolute path for `mabo list`. Paths under `HOME` use a `~` prefix.
+/// Absolute path for `rabi list`. Paths under `HOME` use a `~` prefix.
 pub fn list_path(path: &Path) -> String {
     let absolute = canonical_location(path);
     if let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) {
@@ -319,7 +319,7 @@ fn read_marker(directory: &Path) -> Result<Option<String>> {
 }
 
 fn write_marker(parent: &Path, directory: &Path, identity: &str) -> Result<()> {
-    let temp = parent.join(format!(".mabo-common-dir-{}.tmp", uuid::Uuid::new_v4()));
+    let temp = parent.join(format!(".rabi-common-dir-{}.tmp", uuid::Uuid::new_v4()));
     let target = directory.join(PROJECT_MARKER);
     let written = write_marker_file(&temp, &target, directory, identity);
     if written.is_err() {
@@ -414,22 +414,22 @@ pub(crate) fn validate_worktree_destination(directory: &Path, path: &Path) -> Re
     Ok(())
 }
 
-/// `$XDG_CONFIG_HOME/mabo/config.toml`, or `~/.config/mabo/config.toml` when
+/// `$XDG_CONFIG_HOME/rabi/config.toml`, or `~/.config/rabi/config.toml` when
 /// `XDG_CONFIG_HOME` is unset, empty, or relative.
 pub fn user_config_file(home: &Path, xdg_config_home: Option<&Path>) -> PathBuf {
     let config_home = match xdg_config_home {
         Some(path) if path.is_absolute() => path.to_path_buf(),
         _ => home.join(".config"),
     };
-    mabo_config_file(&config_home)
+    rabi_config_file(&config_home)
 }
 
 pub fn config_dir() -> Result<PathBuf> {
-    Ok(xdg_base("XDG_CONFIG_HOME", ".config")?.join("mabo"))
+    Ok(xdg_base("XDG_CONFIG_HOME", ".config")?.join("rabi"))
 }
 
 pub fn state_dir() -> Result<PathBuf> {
-    Ok(xdg_base("XDG_STATE_HOME", ".local/state")?.join("mabo"))
+    Ok(xdg_base("XDG_STATE_HOME", ".local/state")?.join("rabi"))
 }
 
 fn xdg_base(variable: &str, fallback: &str) -> Result<PathBuf> {
@@ -449,8 +449,8 @@ pub fn user_config_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("config.toml"))
 }
 
-fn mabo_config_file(config_home: &Path) -> PathBuf {
-    config_home.join("mabo").join("config.toml")
+fn rabi_config_file(config_home: &Path) -> PathBuf {
+    config_home.join("rabi").join("config.toml")
 }
 
 pub fn is_strictly_inside(path: &Path, directory: &Path) -> bool {
@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn symlink_inside_the_worktrees_directory_is_inside() {
         let root = std::env::temp_dir().join(format!(
-            "mabo-inside-{}-{}",
+            "rabi-inside-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -489,10 +489,10 @@ mod tests {
 
     #[test]
     fn unsupported_marker_cannot_claim_a_nonempty_directory() {
-        let temp = std::env::temp_dir().join(format!("mabo-marker-{}", uuid::Uuid::new_v4()));
-        let directory = temp.join("maboroshi/workspaces/project");
+        let temp = std::env::temp_dir().join(format!("rabi-marker-{}", uuid::Uuid::new_v4()));
+        let directory = temp.join("mabo/workspaces/project");
         fs::create_dir_all(directory.join("checkout")).unwrap();
-        let marker = directory.join(".maboroshi-common-dir");
+        let marker = directory.join(".mabo-common-dir");
         fs::write(&marker, "/repo/.git\n").unwrap();
         let error =
             ensure_worktrees_directory(&directory, Some(Path::new("/repo/.git"))).unwrap_err();
@@ -509,9 +509,9 @@ mod tests {
         assert_eq!(
             relative(
                 Path::new("/repo"),
-                Path::new("/repo/.git/mabo/workspaces/listed")
+                Path::new("/repo/.git/rabi/workspaces/listed")
             ),
-            ".git/mabo/workspaces/listed"
+            ".git/rabi/workspaces/listed"
         );
         assert_eq!(relative(Path::new("/repo/a"), Path::new("/repo/b")), "../b");
     }
@@ -525,13 +525,13 @@ mod tests {
         let location = default_worktrees_directory(root, git_dir, data);
         assert_eq!(
             location.path,
-            PathBuf::from("/home/u/.local/share/mabo/workspaces/repo-6b4ca2db")
+            PathBuf::from("/home/u/.local/share/rabi/workspaces/repo-6b4ca2db")
         );
         assert_eq!(location.project_common_dir.as_deref(), Some(git_dir));
         let separate_location = default_worktrees_directory(root, separate, data);
         assert_eq!(
             separate_location.path,
-            PathBuf::from("/home/u/.local/share/mabo/workspaces/repo-0d78ac9a")
+            PathBuf::from("/home/u/.local/share/rabi/workspaces/repo-0d78ac9a")
         );
         assert_ne!(location.path, separate_location.path);
         assert_eq!(
@@ -556,7 +556,7 @@ mod tests {
     #[test]
     fn symlink_checkout_uses_the_canonical_directory_name() {
         let root = std::env::temp_dir().join(format!(
-            "mabo-spell-{}-{}",
+            "rabi-spell-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -580,7 +580,7 @@ mod tests {
         assert_eq!(from_real.path, from_indirect.path);
         assert_eq!(
             from_real.path,
-            PathBuf::from("/home/u/.local/share/mabo/workspaces/real-name-0d78ac9a")
+            PathBuf::from("/home/u/.local/share/rabi/workspaces/real-name-0d78ac9a")
         );
         let _ = fs::remove_dir_all(&root);
     }
@@ -625,14 +625,14 @@ mod tests {
     #[test]
     fn project_directory_claim_rejects_a_different_repository() {
         let root = std::env::temp_dir().join(format!(
-            "mabo-claim-{}-{}",
+            "rabi-claim-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos()
         ));
-        let directory = root.join("mabo/workspaces/repo-abcdef12");
+        let directory = root.join("rabi/workspaces/repo-abcdef12");
         let first = Path::new("/repos/one/.git");
         let second = Path::new("/repos/two/.git");
         ensure_worktrees_directory(&directory, Some(first)).expect("claim");
@@ -655,14 +655,14 @@ mod tests {
     #[test]
     fn empty_unmarked_project_directory_is_claimed() {
         let root = std::env::temp_dir().join(format!(
-            "mabo-reclaim-{}-{}",
+            "rabi-reclaim-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos()
         ));
-        let directory = root.join("mabo/workspaces/repo-abcdef12");
+        let directory = root.join("rabi/workspaces/repo-abcdef12");
         fs::create_dir_all(&directory).expect("empty");
         let common = Path::new("/repos/one/.git");
         ensure_worktrees_directory(&directory, Some(common)).expect("reclaim");
@@ -678,7 +678,7 @@ mod tests {
     #[test]
     fn claim_accepts_a_marker_for_the_same_canonical_directory() {
         let root = std::env::temp_dir().join(format!(
-            "mabo-marker-link-{}-{}",
+            "rabi-marker-link-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -689,7 +689,7 @@ mod tests {
         fs::create_dir_all(&real).expect("real");
         let link = root.join("link.git");
         std::os::unix::fs::symlink(&real, &link).expect("symlink");
-        let directory = root.join("mabo/workspaces/repo");
+        let directory = root.join("rabi/workspaces/repo");
         fs::create_dir_all(&directory).expect("project");
         fs::write(
             directory.join(PROJECT_MARKER),
@@ -703,7 +703,7 @@ mod tests {
     #[test]
     fn failed_marker_publication_removes_the_temp_file() {
         let root = std::env::temp_dir().join(format!(
-            "mabo-marker-tmp-{}-{}",
+            "rabi-marker-tmp-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -723,14 +723,14 @@ mod tests {
     #[test]
     fn concurrent_claims_for_the_same_repository_succeed() {
         let root = std::env::temp_dir().join(format!(
-            "mabo-race-{}-{}",
+            "rabi-race-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos()
         ));
-        let directory = root.join("mabo/workspaces/repo-abcdef12");
+        let directory = root.join("rabi/workspaces/repo-abcdef12");
         let common = Path::new("/repos/one/.git");
         std::thread::scope(|scope| {
             for _ in 0..8 {
@@ -756,19 +756,19 @@ mod tests {
         let xdg = Path::new("/tmp/xdg");
         assert_eq!(
             user_config_file(home, Some(xdg)),
-            PathBuf::from("/tmp/xdg/mabo/config.toml")
+            PathBuf::from("/tmp/xdg/rabi/config.toml")
         );
         assert_eq!(
             user_config_file(home, None),
-            PathBuf::from("/home/phantom/.config/mabo/config.toml")
+            PathBuf::from("/home/phantom/.config/rabi/config.toml")
         );
         assert_eq!(
             user_config_file(home, Some(Path::new("relative"))),
-            PathBuf::from("/home/phantom/.config/mabo/config.toml")
+            PathBuf::from("/home/phantom/.config/rabi/config.toml")
         );
         assert_eq!(
             user_config_file(home, Some(Path::new(""))),
-            PathBuf::from("/home/phantom/.config/mabo/config.toml")
+            PathBuf::from("/home/phantom/.config/rabi/config.toml")
         );
     }
 }

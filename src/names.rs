@@ -52,7 +52,7 @@ pub fn generate_unique_name(
     ))
 }
 
-/// `MABO_NAME_CANDIDATES` is a comma-separated list. Tests use it so the first
+/// `RABI_NAME_CANDIDATES` is a comma-separated list. Tests use it so the first
 /// candidate can collide with a branch or workspace name and the next one is free.
 #[cfg(debug_assertions)]
 static CANDIDATE_INDEX: AtomicUsize = AtomicUsize::new(0);
@@ -60,7 +60,7 @@ static CANDIDATE_INDEX: AtomicUsize = AtomicUsize::new(0);
 fn next_candidate() -> String {
     // Deterministic candidates support debug integration tests, never release builds.
     #[cfg(debug_assertions)]
-    if let Ok(raw) = std::env::var("MABO_NAME_CANDIDATES") {
+    if let Ok(raw) = std::env::var("RABI_NAME_CANDIDATES") {
         let names: Vec<&str> = raw
             .split(',')
             .map(str::trim)

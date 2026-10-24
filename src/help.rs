@@ -80,7 +80,7 @@ pub fn main_help() -> Result<String> {
     let file = data()?;
     let mut lines = Vec::new();
     lines.push(bold(
-        "mabo - Isolated Git workspaces for parallel coding agents",
+        "rabi - Isolated Git workspaces for parallel coding agents",
     ));
     lines.push(String::new());
     lines.push(dim(
@@ -88,7 +88,7 @@ pub fn main_help() -> Result<String> {
     ));
     lines.push(String::new());
     lines.push(bold("USAGE"));
-    lines.push("  mabo <command> [options]".to_string());
+    lines.push("  rabi <command> [options]".to_string());
     lines.push(String::new());
     lines.push(bold("COMMANDS"));
     let max_name = file
@@ -115,7 +115,7 @@ pub fn main_help() -> Result<String> {
     }
     lines.push(String::new());
     lines.push(dim(
-        "Run 'mabo <command> --help' for more information on a command.",
+        "Run 'rabi <command> --help' for more information on a command.",
     ));
     Ok(lines.join("\n"))
 }
@@ -127,7 +127,7 @@ pub fn command_help(key: &str) -> Result<Option<String>> {
         return Ok(None);
     };
     let mut lines = Vec::new();
-    lines.push(bold(&format!("mabo {}", help.name)));
+    lines.push(bold(&format!("rabi {}", help.name)));
     lines.push(dim(&help.description));
     lines.push(String::new());
     lines.push(bold("USAGE"));
@@ -288,7 +288,7 @@ mod tests {
         let exec = command_help("exec").expect("help").expect("exec");
         assert!(exec.contains("--repo <value>"));
         assert!(exec.contains("put this before SEL"));
-        assert!(exec.contains("mabo exec -- git status"));
+        assert!(exec.contains("rabi exec -- git status"));
         let where_help = command_help("path").expect("help").expect("path");
         assert!(!where_help.contains("Put this before the workspace name"));
         assert!(where_help.contains("may appear with the other options"));
@@ -297,11 +297,11 @@ mod tests {
     }
 
     #[test]
-    fn rendered_help_names_the_mabo_command() {
+    fn rendered_help_names_the_rabi_command() {
         let main = main_help().expect("main help");
-        assert!(main.contains("mabo - Isolated Git workspaces for parallel coding agents"));
-        assert!(main.contains("mabo <command> [options]"));
-        assert!(main.contains("Run 'mabo <command> --help'"));
+        assert!(main.contains("rabi - Isolated Git workspaces for parallel coding agents"));
+        assert!(main.contains("rabi <command> [options]"));
+        assert!(main.contains("Run 'rabi <command> --help'"));
         assert!(!main.contains("Phantom"), "{main}");
         assert!(!main.contains("ptm"), "{main}");
         assert!(!main.contains("PTM"), "{main}");
@@ -311,8 +311,8 @@ mod tests {
         for key in file.helps.keys() {
             let help = command_help(key).expect("render").expect(key);
             assert!(
-                help.contains("mabo "),
-                "{key} help does not name mabo:\n{help}"
+                help.contains("rabi "),
+                "{key} help does not name rabi:\n{help}"
             );
             assert!(
                 !help.contains("Phantom"),
@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn help_names_workspaces_and_mabo_env() {
+    fn help_names_workspaces_and_rabi_env() {
         let main = main_help().expect("main help");
         assert!(main.contains("Create a workspace"));
         assert!(main.contains("List all workspaces"));
@@ -337,11 +337,11 @@ mod tests {
         for key in ["create", "remove", "exec"] {
             let help = command_help(key).expect("render").expect(key);
             for variable in [
-                "MABO=1",
-                "MABO_WORKSPACE",
-                "MABO_WORKSPACE_ID",
-                "MABO_WORKSPACE_PATH",
-                "MABO_REPO_PATH",
+                "RABI=1",
+                "RABI_WORKSPACE",
+                "RABI_WORKSPACE_ID",
+                "RABI_WORKSPACE_PATH",
+                "RABI_REPO_PATH",
             ] {
                 assert!(help.contains(variable), "{key}: {variable}: {help}");
             }

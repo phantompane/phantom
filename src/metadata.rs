@@ -159,7 +159,7 @@ pub fn load_strict(git_root: &Path) -> Result<BTreeMap<String, WorktreeMetadata>
 }
 
 /// Replace any record at `path`. Creation and adoption use this
-/// so a workspace removed outside mabo does not keep its previous intent.
+/// so a workspace removed outside rabi does not keep its previous intent.
 pub fn replace(
     git_root: &Path,
     path: &Path,
@@ -451,16 +451,16 @@ fn apply_input(metadata: &mut WorktreeMetadata, input: &MetadataInput) {
     }
 }
 
-/// `mabo/` inside the Git common directory. A custom `workspace-root` does
+/// `rabi/` inside the Git common directory. A custom `workspace-root` does
 /// not move this directory, and a checkout whose `.git` is a file still shares it.
 fn metadata_dir(git_root: &Path) -> Result<PathBuf> {
-    Ok(crate::git::git_common_dir(git_root)?.join("mabo"))
+    Ok(crate::git::git_common_dir(git_root)?.join("rabi"))
 }
 
 fn save_injected() -> bool {
     #[cfg(debug_assertions)]
     {
-        std::env::var("MABO_TEST_FAIL_METADATA_SAVE")
+        std::env::var("RABI_TEST_FAIL_METADATA_SAVE")
             .ok()
             .as_deref()
             == Some("1")
@@ -473,7 +473,7 @@ fn save_injected() -> bool {
 
 pub fn records_dir(git_root: &Path) -> Result<PathBuf> {
     Ok(crate::git::git_common_dir(git_root)?
-        .join("mabo")
+        .join("rabi")
         .join(RECORDS_DIR))
 }
 
@@ -648,7 +648,7 @@ mod tests {
 
     fn root() -> PathBuf {
         let path = std::env::temp_dir().join(format!(
-            "mabo-metadata-{}-{}",
+            "rabi-metadata-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));

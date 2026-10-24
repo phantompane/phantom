@@ -1,8 +1,8 @@
 #!/bin/sh
-# Official mabo installer. Re-run to update; pin with MABO_VERSION for reproducibility.
-# MABO_RELEASE_BASE_URL and MABO_API_URL are overrides for testing/mirrors;
+# Official rabi installer. Re-run to update; pin with RABI_VERSION for reproducibility.
+# RABI_RELEASE_BASE_URL and RABI_API_URL are overrides for testing/mirrors;
 # they accept https:// URLs and local file:// URLs (copied without HTTP).
-# MABO_ATTESTATION_TIMEOUT is a test-only positive integer deadline in seconds
+# RABI_ATTESTATION_TIMEOUT is a test-only positive integer deadline in seconds
 # (default 120); invalid values are usage errors.
 # Requires curl (Alpine: apk add curl).
 set -eu
@@ -10,21 +10,21 @@ set -eu
 usage() {
     cat <<'USAGE'
 Usage: sh install.sh [options]
-  --version TAG          Exact release tag, with or without v (MABO_VERSION)
-  --prerelease           Allow prereleases (MABO_PRERELEASE=1)
-  --install-dir DIR      Destination (MABO_INSTALL_DIR; default $HOME/.local/bin)
-  --verify-attestation   Require gh attestation verification (MABO_VERIFY_ATTESTATION=1)
+  --version TAG          Exact release tag, with or without v (RABI_VERSION)
+  --prerelease           Allow prereleases (RABI_PRERELEASE=1)
+  --install-dir DIR      Destination (RABI_INSTALL_DIR; default $HOME/.local/bin)
+  --verify-attestation   Require gh attestation verification (RABI_VERIFY_ATTESTATION=1)
   -h, --help             Show this help
 Re-run to update. Never prompts, uses sudo, or changes shell profiles.
 Requires curl (Alpine: apk add curl).
 USAGE
 }
 
-fail() { printf 'mabo installer: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'rabi installer: %s\n' "$*" >&2; exit 1; }
 failRelease() {
-    fail "$* This installer supports only mabo- archives. Install v7.0.0-alpha.8 with its own installer: https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.8/install.sh; v7.0.0-alpha.7 and older have no installer."
+    fail "$* This installer supports only rabi- archives. Install v7.0.0-alpha.9 or v7.0.0-alpha.8 with that release's own installer: https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh (replace <TAG> with the release tag); v7.0.0-alpha.7 and older have no installer."
 }
-usageError() { printf 'mabo installer: %s\n' "$*" >&2; exit 2; }
+usageError() { printf 'rabi installer: %s\n' "$*" >&2; exit 2; }
 progress() { printf '%s\n' "$*" >&2; }
 
 cleanup() {
@@ -187,7 +187,7 @@ resolveRelease() {
                 parse(child)
                 if(path=="" && draft=="false" && (pre=="true" || pre=="false")) {
                     ver=tag; sub(/^v/,"",ver)
-                    name="mabo-v" ver "-" platform ".tar.gz"
+                    name="rabi-v" ver "-" platform ".tar.gz"
                     if(name in assets) {
                         if(pre=="true" && firstPre=="") firstPre=tag
                         if(chosen=="" && (pre=="false" || allow==1)) chosen=tag
@@ -217,10 +217,10 @@ resolveRelease() {
 }
 
 main() {
-    version=${MABO_VERSION-}
-    prerelease=${MABO_PRERELEASE-0}
-    verify=${MABO_VERIFY_ATTESTATION-0}
-    installDir=${MABO_INSTALL_DIR-}
+    version=${RABI_VERSION-}
+    prerelease=${RABI_PRERELEASE-0}
+    verify=${RABI_VERIFY_ATTESTATION-0}
+    installDir=${RABI_INSTALL_DIR-}
     while [ "$#" -gt 0 ]; do
         case $1 in
             --version|--install-dir)
@@ -235,19 +235,19 @@ main() {
             *) usageError "Unknown option: $1" ;;
         esac
     done
-    attestationTimeout=${MABO_ATTESTATION_TIMEOUT-120}
+    attestationTimeout=${RABI_ATTESTATION_TIMEOUT-120}
     case $attestationTimeout in
-        ''|*[!0-9]*) usageError 'MABO_ATTESTATION_TIMEOUT must be a positive integer in seconds.' ;;
+        ''|*[!0-9]*) usageError 'RABI_ATTESTATION_TIMEOUT must be a positive integer in seconds.' ;;
     esac
     [ "$attestationTimeout" -gt 0 ] 2>/dev/null ||
-        usageError 'MABO_ATTESTATION_TIMEOUT must be a positive integer in seconds.'
+        usageError 'RABI_ATTESTATION_TIMEOUT must be a positive integer in seconds.'
     if [ -z "$installDir" ]; then
         [ -n "${HOME-}" ] || fail 'HOME is unset; pass --install-dir.'
         installDir=$HOME/.local/bin
     fi
     # Absolute paths also prevent option-like destinations being treated as flags.
     case $installDir in /*) ;; *) installDir=$PWD/$installDir ;; esac
-    target=$installDir/mabo
+    target=$installDir/rabi
     refuseManagedTarget
     tmp='' stageDir='' ghPid='' watchdogPid=''
     trap cleanup 0
@@ -255,7 +255,7 @@ main() {
     case $(uname -s) in Linux) os=linux ;; Darwin) os=darwin ;; *) os=unsupported ;; esac
     case $(uname -m) in x86_64|amd64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; *) arch=unsupported ;; esac
     if [ "$os" = unsupported ] || [ "$arch" = unsupported ]; then
-        fail "Unsupported platform. See https://github.com/phantompane/phantom/releases or use: cargo install --git https://github.com/phantompane/phantom --tag ${version:-<tag>} --locked mabo"
+        fail "Unsupported platform. See https://github.com/phantompane/phantom/releases or use: cargo install --git https://github.com/phantompane/phantom --tag ${version:-<tag>} --locked rabi"
     fi
     command -v curl >/dev/null 2>&1 ||
         fail 'curl is required. Install it with your package manager (Alpine: apk add curl).'
@@ -265,30 +265,30 @@ main() {
     if [ "$verify" = 1 ]; then
         command -v gh >/dev/null 2>&1 || fail '--verify-attestation requires gh on PATH.'
     fi
-    tmp=$(mktemp -d "${TMPDIR:-/tmp}/mabo-install.XXXXXXXX") || fail 'Cannot create temporary directory.'
-    base=${MABO_RELEASE_BASE_URL:-https://github.com/phantompane/phantom/releases/download}
-    api=${MABO_API_URL:-https://api.github.com/repos/phantompane/phantom}
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/rabi-install.XXXXXXXX") || fail 'Cannot create temporary directory.'
+    base=${RABI_RELEASE_BASE_URL:-https://github.com/phantompane/phantom/releases/download}
+    api=${RABI_API_URL:-https://api.github.com/repos/phantompane/phantom}
     if [ -z "$version" ]; then
-        progress 'Resolving mabo release...'
+        progress 'Resolving rabi release...'
         download "${api%/}/releases?per_page=100" "$tmp/releases.json" api 2>/dev/null ||
-            fail 'GitHub API request failed. Pin MABO_VERSION or set GITHUB_TOKEN for API access.'
-        version=$(resolveRelease) || fail 'Invalid GitHub API response. Pin MABO_VERSION or set GITHUB_TOKEN.'
+            fail 'GitHub API request failed. Pin RABI_VERSION or set GITHUB_TOKEN for API access.'
+        version=$(resolveRelease) || fail 'Invalid GitHub API response. Pin RABI_VERSION or set GITHUB_TOKEN.'
         case $version in
             prerelease:*)
                 version=${version#prerelease:}
-                fail "No stable mabo release; newest prerelease is $version. Set MABO_VERSION=$version or pass --prerelease." ;;
-            '') failRelease 'No matching mabo release. Pin MABO_VERSION or use --prerelease.' ;;
+                fail "No stable rabi release; newest prerelease is $version. Set RABI_VERSION=$version or pass --prerelease." ;;
+            '') failRelease 'No matching rabi release. Pin RABI_VERSION or use --prerelease.' ;;
         esac
     fi
     ver=${version#v}
     # Tags must be safe URL/path components; do not interpret arbitrary API text.
     case $ver in ''|*[!A-Za-z0-9.+-]*) fail "Invalid release tag: $version" ;; esac
     tag=v$ver
-    progress "Downloading mabo $tag..."
+    progress "Downloading rabi $tag..."
     download "${base%/}/$tag/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null ||
         failRelease "Missing or unavailable SHA256SUMS for $tag; refusing an unverified release."
     # Compare the complete filename, accept only one well-formed standard entry.
-    archive=mabo-$tag-$os-$arch.tar.gz
+    archive=rabi-$tag-$os-$arch.tar.gz
     expected=$(awk -v name="$archive" '
         substr($0,67)==name && substr($0,65,2)=="  " {
             hash=substr($0,1,64)
@@ -309,34 +309,34 @@ main() {
     fi
     # Extract only the expected root member, not arbitrary paths from the archive.
     mkdir "$tmp/extracted"
-    tar -xzf "$tmp/$archive" -C "$tmp/extracted" mabo 2>/dev/null || fail 'Archive is missing a regular mabo executable or cannot be extracted.'
-    binary=$tmp/extracted/mabo
+    tar -xzf "$tmp/$archive" -C "$tmp/extracted" rabi 2>/dev/null || fail 'Archive is missing a regular rabi executable or cannot be extracted.'
+    binary=$tmp/extracted/rabi
     if [ ! -f "$binary" ] || [ -L "$binary" ]; then
-        fail 'Archive must contain a regular mabo executable.'
+        fail 'Archive must contain a regular rabi executable.'
     fi
     chmod 755 "$binary"
-    reported=$("$binary" --version 2>/dev/null) || fail 'Downloaded mabo --version failed.'
+    reported=$("$binary" --version 2>/dev/null) || fail 'Downloaded rabi --version failed.'
     case $reported in
-        "mabo v$ver"|"mabo v$ver+"*|"mabo v$ver "*) ;;
-        *) fail "Downloaded mabo version does not match $tag." ;;
+        "rabi v$ver"|"rabi v$ver+"*|"rabi v$ver "*) ;;
+        *) fail "Downloaded rabi version does not match $tag." ;;
     esac
     refuseManagedTarget
     mkdir -p "$installDir" || fail "Cannot create install directory: $installDir"
     # A private staging directory avoids following pre-existing staging symlinks.
-    stageDir=$(mktemp -d "$installDir/.mabo.install.XXXXXXXX") || fail 'Cannot stage mabo in install directory.'
-    cp "$binary" "$stageDir/mabo"
-    chmod 755 "$stageDir/mabo"
+    stageDir=$(mktemp -d "$installDir/.rabi.install.XXXXXXXX") || fail 'Cannot stage rabi in install directory.'
+    cp "$binary" "$stageDir/rabi"
+    chmod 755 "$stageDir/rabi"
     refuseManagedTarget
-    mv -f "$stageDir/mabo" "$target" || fail "Cannot replace $target."
-    printf 'Installed mabo v%s to %s\n' "$ver" "$target"
+    mv -f "$stageDir/rabi" "$target" || fail "Cannot replace $target."
+    printf 'Installed rabi v%s to %s\n' "$ver" "$target"
     case :${PATH-}: in
         *:"$installDir":*) ;;
         *) quotedDir=$(printf '%s' "$installDir" | sed "s/'/'\\\\''/g")
            progress "Add to PATH: export PATH='$quotedDir':\"\$PATH\"" ;;
     esac
-    resolved=$(command -v mabo || :)
+    resolved=$(command -v rabi || :)
     if [ -n "$resolved" ] && [ "$resolved" != "$target" ]; then
-        progress "Warning: another mabo at $resolved shadows $target."
+        progress "Warning: another rabi at $resolved shadows $target."
     fi
 }
 

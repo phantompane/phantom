@@ -55,7 +55,7 @@ pub fn parse(args: &[String], options: &[Opt], allow_positionals: bool) -> Resul
     parse_with(args, options, allow_positionals, None)
 }
 
-/// Parse arguments, optionally stopping mabo's own options after `passthrough_after`
+/// Parse arguments, optionally stopping rabi's own options after `passthrough_after`
 /// positionals. Everything after that boundary is a positional, including
 /// values that start with `-`. A `--` at the boundary is an optional separator
 /// and is not included; a later `--` is preserved.

@@ -309,8 +309,8 @@ pub(crate) fn outside_record_name(
 
 /// Name recorded under the current workspace directory layout.
 ///
-/// The default directory is `mabo/workspaces/<checkout>-<hash>/<name>`.
-/// A configured `mabo/workspaces/<name>` directory has no hash segment.
+/// The default directory is `rabi/workspaces/<checkout>-<hash>/<name>`.
+/// A configured `rabi/workspaces/<name>` directory has no hash segment.
 fn name_from_recorded_path(path: &Path, common_dir: &Path) -> String {
     workspace_layout_name(path, common_dir, false).unwrap_or_else(|| basename_of(path))
 }
@@ -323,7 +323,7 @@ fn workspace_layout_name(path: &Path, common_dir: &Path, project_only: bool) -> 
         .collect::<Vec<_>>();
     let index = components
         .windows(2)
-        .rposition(|pair| pair[0] == "mabo" && pair[1] == "workspaces")?;
+        .rposition(|pair| pair[0] == "rabi" && pair[1] == "workspaces")?;
     let rest = &components[index + 2..];
     let (project, name) = rest.split_first()?;
     if !name.is_empty() && paths::is_project_directory(project, common_dir) {
@@ -541,7 +541,7 @@ pub fn find_worktree(
 pub(crate) fn require_live(found: WorktreeInfo, name: &str) -> Result<WorktreeInfo> {
     if found.orphaned {
         return Err(Error::msg(format!(
-            "Workspace '{name}' is orphaned: its directory is gone. Use mabo remove to remove the stale record."
+            "Workspace '{name}' is orphaned: its directory is gone. Use rabi remove to remove the stale record."
         )));
     }
     Ok(found)
@@ -765,7 +765,7 @@ fn preflight_remove_selected(
     if !inside && !recorded {
         return Err(RemoveError::kept(
             Error::msg(format!(
-                "Workspace '{label}' was not created by mabo (for example, it was made by plain git or an older tool). Remove it with `git worktree remove {}`.",
+                "Workspace '{label}' was not created by rabi (for example, it was made by plain git or an older tool). Remove it with `git worktree remove {}`.",
                 path.display()
             )),
             &worktree,
@@ -1115,22 +1115,22 @@ fn exec_in_resolved_worktree(
 fn workspace_env(context: &Context, name: &str, path: &Path) -> Vec<(String, String)> {
     let stored = metadata::load(&context.git_root).unwrap_or_default();
     let id = metadata::find_in(&stored, path).and_then(|(_, record)| record.id.as_deref());
-    mabo_env(name, path, id, &context.git_root)
+    rabi_env(name, path, id, &context.git_root)
 }
 
-pub fn mabo_env(name: &str, path: &Path, id: Option<&str>, repo: &Path) -> Vec<(String, String)> {
+pub fn rabi_env(name: &str, path: &Path, id: Option<&str>, repo: &Path) -> Vec<(String, String)> {
     vec![
-        ("MABO".to_string(), "1".to_string()),
-        ("MABO_WORKSPACE".to_string(), name.to_string()),
+        ("RABI".to_string(), "1".to_string()),
+        ("RABI_WORKSPACE".to_string(), name.to_string()),
         (
-            "MABO_WORKSPACE_ID".to_string(),
+            "RABI_WORKSPACE_ID".to_string(),
             id.unwrap_or_default().to_string(),
         ),
         (
-            "MABO_WORKSPACE_PATH".to_string(),
+            "RABI_WORKSPACE_PATH".to_string(),
             path.display().to_string(),
         ),
-        ("MABO_REPO_PATH".to_string(), repo.display().to_string()),
+        ("RABI_REPO_PATH".to_string(), repo.display().to_string()),
     ]
 }
 
@@ -1679,20 +1679,20 @@ mod tests {
     fn recorded_path_keeps_slash_names_and_skips_the_project_directory() {
         let common = Path::new("/repo/.git");
         assert_eq!(
-            name_from_recorded_path(Path::new("/repo/.git/mabo/workspaces/next"), common),
+            name_from_recorded_path(Path::new("/repo/.git/rabi/workspaces/next"), common),
             "next"
         );
         assert_eq!(
             name_from_recorded_path(
-                Path::new("/repo/.git/mabo/workspaces/feature/topic"),
+                Path::new("/repo/.git/rabi/workspaces/feature/topic"),
                 common
             ),
             "feature/topic"
         );
         let project = paths::project_directory_name("repo", common);
-        let nested = PathBuf::from(format!("/data/mabo/workspaces/{project}/feature/topic"));
+        let nested = PathBuf::from(format!("/data/rabi/workspaces/{project}/feature/topic"));
         assert_eq!(name_from_recorded_path(&nested, common), "feature/topic");
-        let single = PathBuf::from(format!("/data/mabo/workspaces/{project}/inside"));
+        let single = PathBuf::from(format!("/data/rabi/workspaces/{project}/inside"));
         assert_eq!(name_from_recorded_path(&single, common), "inside");
         assert_eq!(
             name_from_recorded_path(Path::new("/tmp/custom-wt/alias"), common),
@@ -1703,7 +1703,7 @@ mod tests {
             resolve_worktree_name(
                 Path::new("/data/wt/next"),
                 directory,
-                Some(Path::new("/repo/.git/mabo/workspaces/other")),
+                Some(Path::new("/repo/.git/rabi/workspaces/other")),
                 None,
                 common,
                 None,
@@ -1818,9 +1818,9 @@ mod tests {
     }
 
     #[test]
-    fn mabo_env_exports_mabo_variables() {
+    fn rabi_env_exports_rabi_variables() {
         for id in [Some("ws_test"), None] {
-            let env = mabo_env(
+            let env = rabi_env(
                 "feature/env",
                 Path::new("/workspaces/feature/env"),
                 id,
@@ -1829,17 +1829,17 @@ mod tests {
             assert_eq!(
                 env,
                 vec![
-                    ("MABO".to_string(), "1".to_string()),
-                    ("MABO_WORKSPACE".to_string(), "feature/env".to_string()),
+                    ("RABI".to_string(), "1".to_string()),
+                    ("RABI_WORKSPACE".to_string(), "feature/env".to_string()),
                     (
-                        "MABO_WORKSPACE_ID".to_string(),
+                        "RABI_WORKSPACE_ID".to_string(),
                         id.unwrap_or_default().to_string()
                     ),
                     (
-                        "MABO_WORKSPACE_PATH".to_string(),
+                        "RABI_WORKSPACE_PATH".to_string(),
                         "/workspaces/feature/env".to_string()
                     ),
-                    ("MABO_REPO_PATH".to_string(), "/repo".to_string()),
+                    ("RABI_REPO_PATH".to_string(), "/repo".to_string()),
                 ]
             );
         }

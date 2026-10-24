@@ -13,7 +13,7 @@ pub(crate) fn non_interactive() -> bool {
     NO_INPUT.get()
         || crate::output::json()
         || std::env::var_os("CI").is_some_and(|value| !value.is_empty())
-        || std::env::var_os("MABO_NO_INPUT").is_some_and(|value| !value.is_empty() && value != "0")
+        || std::env::var_os("RABI_NO_INPUT").is_some_and(|value| !value.is_empty() && value != "0")
         || !std::io::stdin().is_terminal()
         || !std::io::stderr().is_terminal()
 }
@@ -158,12 +158,12 @@ pub(crate) fn prepare(
         error.get_or_insert_with(|| Error::validation("This command does not support JSON output"));
     }
     let env_json = if supports_json && (!help || error.is_some()) {
-        match std::env::var("MABO_OUTPUT").ok().as_deref() {
+        match std::env::var("RABI_OUTPUT").ok().as_deref() {
             None | Some("") | Some("text") => false,
             Some("json") => true,
             _ => {
                 error.get_or_insert_with(|| {
-                    Error::validation("Invalid MABO_OUTPUT; use text or json")
+                    Error::validation("Invalid RABI_OUTPUT; use text or json")
                 });
                 false
             }

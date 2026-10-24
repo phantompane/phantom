@@ -295,7 +295,7 @@ pub(crate) fn create(
             return Err(Error::Status {
                 code: "exists_remote",
                 message: format!(
-                    "Branch '{}' already exists. Use `mabo create --branch {}`.",
+                    "Branch '{}' already exists. Use `rabi create --branch {}`.",
                     visible_text(&name),
                     visible_text(&name)
                 ),
@@ -485,7 +485,7 @@ fn setup_retry_command(
     tree: &worktree::WorktreeInfo,
     copy_files: &[String],
 ) -> String {
-    let command = format!("cd {} && mabo setup", shell_quote(&context.source_checkout));
+    let command = format!("cd {} && rabi setup", shell_quote(&context.source_checkout));
     let copy_options: String = copy_files
         .iter()
         .map(|pattern| format!(" --copy-file {}", shell_quote(pattern)))
@@ -515,7 +515,7 @@ fn setup_retry_command(
     // not saved or match several workspaces. Keep the original hook source even
     // though dot requires changing into the target checkout.
     format!(
-        "(cd {} && mabo setup . --source-checkout {}{copy_options})",
+        "(cd {} && rabi setup . --source-checkout {}{copy_options})",
         shell_quote(&tree.path),
         shell_quote(&context.source_checkout)
     )
@@ -637,7 +637,7 @@ mod adopt_tests {
 
     impl Fixture {
         fn new() -> Self {
-            let root = std::env::temp_dir().join(format!("mabo-adopt-{}", uuid::Uuid::new_v4()));
+            let root = std::env::temp_dir().join(format!("rabi-adopt-{}", uuid::Uuid::new_v4()));
             let repo = root.join("repo");
             fs::create_dir_all(&repo).unwrap();
             git::run(&["init", "--template=", "-b", "main"], Some(&repo)).unwrap();

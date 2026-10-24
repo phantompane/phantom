@@ -11,7 +11,7 @@ struct TempTree {
 impl TempTree {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "mabo-pull-head-{}-{}",
+            "rabi-pull-head-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -34,10 +34,10 @@ fn git(cwd: &Path, args: &[&str]) -> std::process::Output {
         .args(args)
         .current_dir(cwd)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "Mabo")
-        .env("GIT_AUTHOR_EMAIL", "mabo@example.com")
-        .env("GIT_COMMITTER_NAME", "Mabo")
-        .env("GIT_COMMITTER_EMAIL", "mabo@example.com")
+        .env("GIT_AUTHOR_NAME", "Rabi")
+        .env("GIT_AUTHOR_EMAIL", "rabi@example.com")
+        .env("GIT_COMMITTER_NAME", "Rabi")
+        .env("GIT_COMMITTER_EMAIL", "rabi@example.com")
         .output()
         .expect("git");
     assert!(
@@ -196,7 +196,7 @@ fn gh_checkout_uses_pull_head_when_the_branch_is_deleted() {
     let config = tree.path.join("config");
     let home = tree.path.join("home");
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
-    let output = test_git::command(env!("CARGO_BIN_EXE_mabo"))
+    let output = test_git::command(env!("CARGO_BIN_EXE_rabi"))
         .args(["create", "--pr", "843", "--reuse", "--no-setup", "--json"])
         .current_dir(&clone)
         .env("PATH", path)
@@ -205,12 +205,12 @@ fn gh_checkout_uses_pull_head_when_the_branch_is_deleted() {
         .env("XDG_CONFIG_HOME", &config)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
-        .expect("mabo");
+        .expect("rabi");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "mabo gh checkout 843 failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        "rabi gh checkout 843 failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
         !stderr.to_ascii_lowercase().contains("warning"),
@@ -246,7 +246,7 @@ fn gh_checkout_names_a_deleted_head_branch() {
     let (clone, _) = deleted_pr_remote(&tree.path);
     let bin = tree.path.join("bin");
     fake_gh(&bin);
-    let output = mabo(&clone, &bin, &["create", "--pr", "843", "--no-setup"]);
+    let output = rabi(&clone, &bin, &["create", "--pr", "843", "--no-setup"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stdout}\n{stderr}");
@@ -277,7 +277,7 @@ fn stale_remote_ref_does_not_become_upstream() {
     );
     let bin = tree.path.join("bin");
     fake_gh(&bin);
-    let output = mabo(
+    let output = rabi(
         &clone,
         &bin,
         &["create", "--pr", "843", "--reuse", "--no-setup", "--json"],
@@ -304,7 +304,7 @@ fn unfetched_branch_gets_an_upstream() {
     );
     let bin = tree.path.join("bin");
     install_gh(&bin, &same_repo_pull("754", "live-feature"));
-    let output = mabo(
+    let output = rabi(
         &clone,
         &bin,
         &["create", "--pr", "754", "--no-setup", "--json"],
@@ -346,7 +346,7 @@ fn narrow_fetch_refspec_checkout_sets_tracking_and_creates_worktree() {
     );
     let bin = tree.path.join("bin");
     install_gh(&bin, &same_repo_pull("754", "live-feature"));
-    let output = mabo(
+    let output = rabi(
         &clone,
         &bin,
         &["create", "--pr", "754", "--no-setup", "--json"],
@@ -400,7 +400,7 @@ fn same_named_tag_cannot_hide_unique_local_branch_commits() {
         git(&clone, &["tag", "deleted-feature", "refs/heads/main"]);
         let bin = tree.path.join("bin");
         fake_gh(&bin);
-        let output = mabo(&clone, &bin, &["create", "--pr", "843", "--no-setup"]);
+        let output = rabi(&clone, &bin, &["create", "--pr", "843", "--no-setup"]);
         assert_eq!(
             git_text(&clone, &["rev-parse", "refs/heads/deleted-feature"]),
             unique,
@@ -435,7 +435,7 @@ fn failed_worktree_attachment_only_removes_a_new_branch() {
         );
         let bin = tree.path.join("bin");
         install_gh(&bin, &same_repo_pull("754", "live-feature"));
-        let preference = mabo(
+        let preference = rabi(
             &clone,
             &bin,
             &["config", "set", "workspace-root", "../spaces"],
@@ -473,7 +473,7 @@ exec "$REAL_GIT" "$@"
         fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).expect("chmod");
         let state = tree.path.join("checkout-state");
         let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
-        let output = test_git::command(env!("CARGO_BIN_EXE_mabo"))
+        let output = test_git::command(env!("CARGO_BIN_EXE_rabi"))
             .args(["create", "--pr", "754", "--no-setup"])
             .current_dir(&clone)
             .env("PATH", path)
@@ -484,7 +484,7 @@ exec "$REAL_GIT" "$@"
             .env("REAL_GIT", real_git)
             .env("CHECKOUT_STATE", &state)
             .output()
-            .expect("mabo");
+            .expect("rabi");
         assert_eq!(output.status.code(), Some(1));
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -534,7 +534,7 @@ exec "$REAL_GIT" "$@"
         let destination = tree.path.join("spaces/live-feature");
         assert!(!destination.exists());
         fs::remove_file(&shim).expect("remove failing shim");
-        let retry = mabo(&clone, &bin, &["create", "--pr", "754", "--no-setup"]);
+        let retry = rabi(&clone, &bin, &["create", "--pr", "754", "--no-setup"]);
         assert!(
             retry.status.success(),
             "{}",
@@ -551,7 +551,7 @@ fn already_fetched_branch_keeps_its_remote_tip() {
     let before = git_text(&clone, &["rev-parse", "refs/remotes/origin/live-feature"]);
     let bin = tree.path.join("bin");
     install_gh(&bin, &same_repo_pull("754", "live-feature"));
-    let output = mabo(
+    let output = rabi(
         &clone,
         &bin,
         &["create", "--pr", "754", "--no-setup", "--json"],
@@ -601,7 +601,7 @@ echo "unexpected gh invocation: $*" >&2
 exit 1
 "#,
     );
-    let output = mabo(&clone, &bin, &["create", "--pr", "9", "--no-setup"]);
+    let output = rabi(&clone, &bin, &["create", "--pr", "9", "--no-setup"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stdout}\n{stderr}");
@@ -620,7 +620,7 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
     let (clone, _) = deleted_pr_remote(&tree.path);
     let bin = tree.path.join("bin");
     install_gh(&bin, &merged_pull_gh());
-    let checked_out = mabo(
+    let checked_out = rabi(
         &clone,
         &bin,
         &["create", "--pr", "843", "--reuse", "--no-setup", "--json"],
@@ -637,7 +637,7 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
     let (extra_clone, _) = deleted_pr_remote(&extra.path);
     let extra_bin = extra.path.join("bin");
     install_gh(&extra_bin, &merged_pull_gh());
-    let extra_out = mabo(
+    let extra_out = rabi(
         &extra_clone,
         &extra_bin,
         &["create", "--pr", "843", "--reuse", "--no-setup", "--json"],
@@ -651,7 +651,7 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
     fs::write(Path::new(extra_worktree).join("local.txt"), "local\n").expect("local");
     git(Path::new(extra_worktree), &["add", "local.txt"]);
     git(Path::new(extra_worktree), &["commit", "-m", "local"]);
-    let skipped = mabo(&extra_clone, &extra_bin, &["gc", "--closed-pr", "--json"]);
+    let skipped = rabi(&extra_clone, &extra_bin, &["gc", "--closed-pr", "--json"]);
     let skipped_stdout = String::from_utf8_lossy(&skipped.stdout);
     let skipped_stderr = String::from_utf8_lossy(&skipped.stderr);
     assert!(
@@ -672,7 +672,7 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
         &["merge", "--ff-only", "refs/heads/deleted-feature"],
     );
     git(&clone, &["push", "origin", "main"]);
-    let collected = mabo(&clone, &bin, &["gc", "--closed-pr", "--apply", "--json"]);
+    let collected = rabi(&clone, &bin, &["gc", "--closed-pr", "--apply", "--json"]);
     let collected_stdout = String::from_utf8_lossy(&collected.stdout);
     let collected_stderr = String::from_utf8_lossy(&collected.stderr);
     assert!(
@@ -688,10 +688,10 @@ fn gc_pr_collects_a_merged_pull_head_and_keeps_local_commits() {
     assert!(!Path::new(&worktree).exists());
 }
 
-fn mabo(clone: &Path, bin: &Path, args: &[&str]) -> std::process::Output {
+fn rabi(clone: &Path, bin: &Path, args: &[&str]) -> std::process::Output {
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH"));
     let tree = clone.parent().expect("parent");
-    test_git::command(env!("CARGO_BIN_EXE_mabo"))
+    test_git::command(env!("CARGO_BIN_EXE_rabi"))
         .args(args)
         .current_dir(clone)
         .env("PATH", path)
@@ -700,7 +700,7 @@ fn mabo(clone: &Path, bin: &Path, args: &[&str]) -> std::process::Output {
         .env("XDG_CONFIG_HOME", tree.join("config"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
-        .expect("mabo")
+        .expect("rabi")
 }
 
 fn install_gh(bin: &Path, script: &str) {
@@ -902,7 +902,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
         let script = same_repo_pull("843", "deleted-feature")
             .replace("\"base\":{", "\"base\":{\"ref\":\"next\",");
         install_gh(&bin, &script);
-        let out = mabo(
+        let out = rabi(
             &clone,
             &bin,
             &["create", "--pr", "843", "--reuse", "--no-setup", "--json"],
@@ -917,13 +917,13 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
         } else {
             &fallback
         };
-        let list = mabo(&clone, &bin, &["list", "--json"]);
+        let list = rabi(&clone, &bin, &["list", "--json"]);
         let doc: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
         assert!(doc.to_string().contains(expected), "{doc}");
 
-        let out = mabo(&clone, &bin, &["set", "deleted-feature", "--base", "HEAD"]);
+        let out = rabi(&clone, &bin, &["set", "deleted-feature", "--base", "HEAD"]);
         assert!(out.status.success());
-        let out = mabo(
+        let out = rabi(
             &clone,
             &bin,
             &["create", "--pr", "843", "--reuse", "--no-setup", "--json"],
@@ -948,7 +948,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
             if explicit {
                 args.extend(["--base", "HEAD"]);
             }
-            let out = mabo(&clone, &bin, &args);
+            let out = rabi(&clone, &bin, &args);
             assert!(
                 out.status.success(),
                 "{}",
@@ -956,7 +956,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
             );
             let store: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
             let worktree = store["data"]["workspace"]["path"].as_str().unwrap();
-            let listed = mabo(
+            let listed = rabi(
                 &clone,
                 &bin,
                 &["show", &format!("issues/{number}"), "--json"],
@@ -973,7 +973,7 @@ fn checkout_records_issue_pr_sync_bases_but_attach_leaves_base_null() {
             );
         }
         git(&clone, &["branch", "attached", "HEAD"]);
-        let out = mabo(
+        let out = rabi(
             &clone,
             &bin,
             &["create", "--branch", "attached", "--no-setup", "--json"],

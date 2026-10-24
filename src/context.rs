@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::config::{self, MaboConfig};
+use crate::config::{self, RabiConfig};
 use crate::error::{Error, Result};
 use crate::git;
 use crate::paths;
@@ -10,13 +10,13 @@ use crate::preferences::{self, Preferences};
 pub struct Context {
     pub(crate) retirement_queries: std::cell::RefCell<crate::github::RetirementQueries>,
     pub git_root: PathBuf,
-    /// Checkout the command is running in. `.mabo.toml` is loaded from here.
+    /// Checkout the command is running in. `.rabi.toml` is loaded from here.
     pub source_checkout: PathBuf,
     pub worktrees_directory: PathBuf,
     /// Canonical git common dir when `worktrees_directory` is the default
     /// project directory. Unset when `workspace-root` overrides it.
     pub project_common_dir: Option<PathBuf>,
-    pub config: Option<MaboConfig>,
+    pub config: Option<RabiConfig>,
     pub preferences: Preferences,
 }
 

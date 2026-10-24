@@ -28,7 +28,7 @@ pub enum Error {
     ProjectNotFound(String),
     #[error("Path '{0}' does not exist")]
     PathNotFound(String),
-    #[error("Not a git repository. Run mabo from inside a Git repository.")]
+    #[error("Not a git repository. Run rabi from inside a Git repository.")]
     NotARepository,
     #[error(
         "Workspace '{name}' has uncommitted changes ({files} files). Use --discard-changes to remove anyway."

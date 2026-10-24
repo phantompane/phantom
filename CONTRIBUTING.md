@@ -1,6 +1,6 @@
-# 🤝 Contributing to mabo
+# 🤝 Contributing to rabi
 
-Thank you for your interest in contributing to mabo! This guide will help you get started with development.
+Thank you for your interest in contributing to rabi! This guide will help you get started with development.
 
 ## 📋 Table of Contents
 
@@ -32,7 +32,7 @@ cd phantom
 cargo run --locked -- --help
 ```
 
-The built binary is `mabo` (`mabo --help`, `mabo create`). The Cargo package name is `mabo`. Retired interfaces have no compatibility shims before v7 stable; unknown commands, flags, config keys, and hook fields use normal validation.
+The built binary is `rabi` (`rabi --help`, `rabi create`). The Cargo package name is `rabi`. Retired interfaces have no compatibility shims before v7 stable; unknown commands, flags, config keys, and hook fields use normal validation.
 
 ### Development Workflow
 
@@ -121,15 +121,15 @@ When contributing documentation:
 
 ## 🚀 Release Process
 
-To release a new version of mabo:
+To release a new version of rabi:
 
 1. **Open a version pull request against `main`**
 
-   Change the version by hand in a dedicated pull request. Do not bump it in a feature pull request. Edit `version` in `Cargo.toml` and the `mabo` package entry in `Cargo.lock` so they match.
+   Change the version by hand in a dedicated pull request. Do not bump it in a feature pull request. Edit `version` in `Cargo.toml` and the `rabi` package entry in `Cargo.lock` so they match.
 
    ```bash
-   # After editing Cargo.toml, refresh only the mabo entry in Cargo.lock:
-   cargo update -p mabo --precise <version>
+   # After editing Cargo.toml, refresh only the rabi entry in Cargo.lock:
+   cargo update -p rabi --precise <version>
    ```
 
    Title the pull request `chore(version): vX.Y.Z`, for example `chore(version): v7.0.0-alpha.9`. `.github/workflows/tag-on-merge.yml` creates that git tag when the pull request merges into `main`. `ci.yml` and `release-compile.yml` do not bump the version.
@@ -144,18 +144,18 @@ To release a new version of mabo:
    ```bash
    # Create a release with automatically generated notes
    gh release create v<version> \
-     --title "mabo v<version>" \
+     --title "rabi v<version>" \
      --generate-notes \
      --target main
 
    # Example for v1.3.0:
    gh release create v1.3.0 \
-     --title "mabo v1.3.0" \
+     --title "rabi v1.3.0" \
      --generate-notes \
      --target main
    ```
 
-   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `mabo-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains only the `mabo` binary. `install.sh` supports only `mabo-v<version>-<os>-<arch>.tar.gz` archives. v7.0.0-alpha.8 must be installed with its own `install.sh` at `https://github.com/phantompane/phantom/releases/download/v7.0.0-alpha.8/install.sh`; v7.0.0-alpha.7 and older have no installer and must be installed manually. npm is not published. Monitor the workflow run in GitHub Actions.
+   `.github/workflows/release-compile.yml` builds linux/darwin x64/arm64 binaries and uploads `rabi-v<version>-<os>-<arch>.tar.gz` to the release. Each archive contains only the `rabi` binary. `install.sh` supports only `rabi-v<version>-<os>-<arch>.tar.gz` archives. v7.0.0-alpha.9 and v7.0.0-alpha.8 must each be installed with that release's own `install.sh` at `https://github.com/phantompane/phantom/releases/download/<TAG>/install.sh` (replace `<TAG>` with the release tag); v7.0.0-alpha.7 and older have no installer and must be installed manually. npm is not published. Monitor the workflow run in GitHub Actions.
 
 4. **Update release notes for clarity**
    - Review the auto-generated release notes using `gh release view v<version>`
@@ -209,7 +209,7 @@ To release a new version of mabo:
 
 ## 🙏 Thank You!
 
-Your contributions make mabo better for everyone. If you have questions, feel free to:
+Your contributions make rabi better for everyone. If you have questions, feel free to:
 
 - Open an issue for bugs or feature requests
 - Start a discussion for general questions

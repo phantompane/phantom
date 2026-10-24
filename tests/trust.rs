@@ -13,7 +13,7 @@ struct Repo {
 impl Repo {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
-            "mabo-trust-{}-{}",
+            "rabi-trust-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -55,11 +55,11 @@ impl Repo {
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_DATA_HOME", self.root.join("xdg"))
-            .env_remove("MABO_TRUST_ALL")
+            .env_remove("RABI_TRUST_ALL")
             .env_remove("CI")
             .env_remove("GHQ_ROOT")
-            .env_remove("MABO_OUTPUT")
-            .env_remove("MABO_NO_INPUT")
+            .env_remove("RABI_OUTPUT")
+            .env_remove("RABI_NO_INPUT")
             .env_remove("GIT_CONFIG_GLOBAL")
             .env_remove("GIT_CONFIG_SYSTEM");
         if program.ends_with("git") && args.first() == Some(&"init") {
@@ -70,10 +70,10 @@ impl Repo {
         command
     }
 
-    fn mabo(&self, args: &[&str]) -> std::process::Output {
-        self.command(env!("CARGO_BIN_EXE_mabo"), args)
+    fn rabi(&self, args: &[&str]) -> std::process::Output {
+        self.command(env!("CARGO_BIN_EXE_rabi"), args)
             .output()
-            .expect("mabo")
+            .expect("rabi")
     }
 }
 
@@ -89,21 +89,21 @@ fn text(bytes: &[u8]) -> String {
 
 fn hooks(repo: &Repo, post: &str, pre: &str) {
     fs::write(
-        repo.repo.join(".mabo.toml"),
+        repo.repo.join(".rabi.toml"),
         format!("[hooks]\nsetup = [{post}]\npre-remove = [{pre}]\n"),
     )
     .expect("hooks");
 }
 
 fn worktree(repo: &Repo, name: &str) -> PathBuf {
-    let common = mabo::git::canonical_common_dir(&repo.repo).expect("common dir");
-    mabo::paths::default_worktrees_directory(&repo.repo, &common, &repo.root.join("xdg"))
+    let common = rabi::git::canonical_common_dir(&repo.repo).expect("common dir");
+    rabi::paths::default_worktrees_directory(&repo.repo, &common, &repo.root.join("xdg"))
         .path
         .join(name)
 }
 
 fn trust_file(repo: &Repo) -> PathBuf {
-    repo.root.join("state/mabo/trust.toml")
+    repo.root.join("state/rabi/trust.toml")
 }
 
 fn common_dir(repo: &Repo) -> String {
@@ -127,7 +127,7 @@ fn included_files_copy_without_trust() {
     fs::write(repo.repo.join("secret.env"), "secret\n").expect("secret");
     repo.git(&["add", ".gitignore", ".worktreeinclude"]);
     repo.git(&["commit", "-m", "include"]);
-    let created = repo.mabo(&["create", "copied"]);
+    let created = repo.rabi(&["create", "copied"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert_eq!(
         fs::read_to_string(worktree(&repo, "copied").join("secret.env")).expect("copied"),
@@ -139,7 +139,7 @@ fn included_files_copy_without_trust() {
 #[test]
 fn a_repository_with_no_hooks_never_prompts() {
     let repo = Repo::new();
-    let created = repo.mabo(&["create", "plain"]);
+    let created = repo.rabi(&["create", "plain"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(
         !text(&created.stderr).contains("Trust this project"),
@@ -154,10 +154,10 @@ fn a_repository_with_no_hooks_never_prompts() {
 fn non_tty_refusal_creates_nothing() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"touch pre-remove.txt\"");
-    let created = repo.mabo(&["create", "topic"]);
+    let created = repo.rabi(&["create", "topic"]);
     assert_eq!(created.status.code(), Some(4));
     let stderr = text(&created.stderr);
-    assert!(stderr.contains("mabo trust"), "{stderr}");
+    assert!(stderr.contains("rabi trust"), "{stderr}");
     assert!(stderr.contains("--no-hooks"), "{stderr}");
     assert!(stderr.contains("touch hook-ran.txt"), "{stderr}");
     assert!(
@@ -186,7 +186,7 @@ fn non_tty_refusal_creates_nothing() {
 fn json_refusal_keeps_stdout_to_one_document() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
-    let created = repo.mabo(&["create", "topic", "--json"]);
+    let created = repo.rabi(&["create", "topic", "--json"]);
     assert_eq!(created.status.code(), Some(4));
     assert!(
         text(&created.stderr).is_empty(),
@@ -198,7 +198,7 @@ fn json_refusal_keeps_stdout_to_one_document() {
     assert_eq!(document["error"]["code"], "untrusted");
     assert!(document["error"].get("exitCode").is_none());
     let message = document["error"]["message"].as_str().expect("message");
-    assert!(message.contains("mabo trust"), "{message}");
+    assert!(message.contains("rabi trust"), "{message}");
     assert!(message.contains("--no-hooks"), "{message}");
     assert!(!worktree(&repo, "topic").exists());
 }
@@ -207,7 +207,7 @@ fn json_refusal_keeps_stdout_to_one_document() {
 fn no_hooks_creates_the_worktree_and_does_not_trust_it() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
-    let created = repo.mabo(&["create", "topic", "--no-setup"]);
+    let created = repo.rabi(&["create", "topic", "--no-setup"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(worktree(&repo, "topic").is_dir());
     assert!(!worktree(&repo, "topic").join("hook-ran.txt").exists());
@@ -218,11 +218,11 @@ fn no_hooks_creates_the_worktree_and_does_not_trust_it() {
 fn trust_untrust_and_list_round_trip() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
-    let refused = repo.mabo(&["trust", "--yes"]);
+    let refused = repo.rabi(&["trust", "--yes"]);
     assert_eq!(refused.status.code(), Some(2), "{}", text(&refused.stderr));
     assert!(!trust_file(&repo).exists());
 
-    let trusted = repo.mabo(&["trust", "add"]);
+    let trusted = repo.rabi(&["trust", "add"]);
     assert!(trusted.status.success(), "{}", text(&trusted.stderr));
     let key = common_dir(&repo);
     assert!(
@@ -234,7 +234,7 @@ fn trust_untrust_and_list_round_trip() {
     assert!(stored.contains(&key), "{stored}");
     assert!(stored.contains("trustedAt"), "{stored}");
 
-    let listed = repo.mabo(&["trust", "list"]);
+    let listed = repo.rabi(&["trust", "list"]);
     assert!(listed.status.success(), "{}", text(&listed.stderr));
     assert!(
         text(&listed.stdout).contains(&key),
@@ -242,17 +242,17 @@ fn trust_untrust_and_list_round_trip() {
         text(&listed.stdout)
     );
 
-    let json = repo.mabo(&["trust", "list", "--json"]);
+    let json = repo.rabi(&["trust", "list", "--json"]);
     assert!(json.status.success(), "{}", text(&json.stderr));
     let document: serde_json::Value = serde_json::from_slice(&json.stdout).expect("json");
     assert_eq!(document["data"]["repos"][0]["path"], key);
 
-    let created = repo.mabo(&["create", "topic"]);
+    let created = repo.rabi(&["create", "topic"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(worktree(&repo, "topic").join("hook-ran.txt").is_file());
 
     hooks(&repo, "\"touch changed-hook.txt\"", "\"true\"");
-    let again = repo.mabo(&["create", "other"]);
+    let again = repo.rabi(&["create", "other"]);
     assert!(again.status.success(), "{}", text(&again.stderr));
     assert!(
         !text(&again.stderr).contains("Trust this project and run its hooks?"),
@@ -261,16 +261,16 @@ fn trust_untrust_and_list_round_trip() {
     );
     assert!(worktree(&repo, "other").join("changed-hook.txt").is_file());
 
-    let removed = repo.mabo(&["trust", "remove"]);
+    let removed = repo.rabi(&["trust", "remove"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
     assert!(
         text(&removed.stdout).contains("Removed trust"),
         "{}",
         text(&removed.stdout)
     );
-    let empty = repo.mabo(&["trust", "list"]);
+    let empty = repo.rabi(&["trust", "list"]);
     assert_eq!(text(&empty.stdout), "No trusted repos");
-    let missing = repo.mabo(&["trust", "remove"]);
+    let missing = repo.rabi(&["trust", "remove"]);
     assert!(missing.status.success(), "{}", text(&missing.stderr));
     assert!(
         text(&missing.stdout).contains("Not trusted"),
@@ -278,7 +278,7 @@ fn trust_untrust_and_list_round_trip() {
         text(&missing.stdout)
     );
 
-    let blocked = repo.mabo(&["create", "third"]);
+    let blocked = repo.rabi(&["create", "third"]);
     assert_eq!(blocked.status.code(), Some(4));
     assert!(!worktree(&repo, "third").exists());
 }
@@ -288,10 +288,10 @@ fn trust_all_runs_hooks_without_writing_trust() {
     let repo = Repo::new();
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
     let created = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "topic"])
-        .env("MABO_TRUST_ALL", "1")
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "topic"])
+        .env("RABI_TRUST_ALL", "1")
         .output()
-        .expect("mabo");
+        .expect("rabi");
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(worktree(&repo, "topic").join("hook-ran.txt").is_file());
     assert!(!trust_file(&repo).exists());
@@ -300,9 +300,9 @@ fn trust_all_runs_hooks_without_writing_trust() {
 #[test]
 fn delete_without_a_terminal_keeps_the_worktree() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "topic"]).status.success());
+    assert!(repo.rabi(&["create", "topic"]).status.success());
     hooks(&repo, "\"true\"", "\"touch pre-remove.txt\"");
-    let deleted = repo.mabo(&["remove", "topic"]);
+    let deleted = repo.rabi(&["remove", "topic"]);
     assert_eq!(deleted.status.code(), Some(4));
     assert!(
         text(&deleted.stderr).contains("--no-hooks"),
@@ -311,7 +311,7 @@ fn delete_without_a_terminal_keeps_the_worktree() {
     );
     assert!(worktree(&repo, "topic").is_dir());
     assert!(!repo.repo.join("pre-remove.txt").exists());
-    let skipped = repo.mabo(&["remove", "topic", "--no-hooks"]);
+    let skipped = repo.rabi(&["remove", "topic", "--no-hooks"]);
     assert!(skipped.status.success(), "{}", text(&skipped.stderr));
     assert!(!worktree(&repo, "topic").exists());
     assert!(!repo.repo.join("pre-remove.txt").exists());
@@ -320,7 +320,7 @@ fn delete_without_a_terminal_keeps_the_worktree() {
 #[test]
 fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "feature"]).status.success());
+    assert!(repo.rabi(&["create", "feature"]).status.success());
     let dir = worktree(&repo, "feature");
     fs::write(dir.join("feature.txt"), "feature\n").expect("note");
     for args in [vec!["add", "feature.txt"], vec!["commit", "-m", "feature"]] {
@@ -334,7 +334,7 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
     repo.git(&["merge", "--ff-only", "feature"]);
     hooks(&repo, "\"true\"", "\"touch pre-remove.txt\"");
 
-    let plan = repo.mabo(&["gc", "--json"]);
+    let plan = repo.rabi(&["gc", "--json"]);
     assert!(plan.status.success(), "{}", text(&plan.stderr));
     let document: serde_json::Value = serde_json::from_slice(&plan.stdout).expect("json");
     assert_eq!(document["data"]["items"][0]["action"], "skipped");
@@ -350,7 +350,7 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
         text(&plan.stderr)
     );
 
-    let applied = repo.mabo(&["gc", "--apply", "--json"]);
+    let applied = repo.rabi(&["gc", "--apply", "--json"]);
     assert!(applied.status.success(), "{}", text(&applied.stderr));
     let applied_doc: serde_json::Value = serde_json::from_slice(&applied.stdout).expect("json");
     assert_eq!(applied_doc["data"]["items"][0]["action"], "skipped");
@@ -359,7 +359,7 @@ fn gc_skips_an_untrusted_candidate_and_does_not_ask() {
     assert!(!repo.repo.join("pre-remove.txt").exists());
     assert!(!dir.join("pre-remove.txt").exists());
 
-    let removed = repo.mabo(&["gc", "--apply", "--no-hooks"]);
+    let removed = repo.rabi(&["gc", "--apply", "--no-hooks"]);
     assert!(removed.status.success(), "{}", text(&removed.stderr));
     assert!(
         text(&removed.stdout).contains("removed feature"),
@@ -414,22 +414,22 @@ fn ci_still_honors_no_hooks_and_trust_all() {
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
     let skipped = repo
         .command(
-            env!("CARGO_BIN_EXE_mabo"),
+            env!("CARGO_BIN_EXE_rabi"),
             &["create", "skipped", "--no-setup"],
         )
         .env("CI", "1")
         .output()
-        .expect("mabo");
+        .expect("rabi");
     assert!(skipped.status.success(), "{}", text(&skipped.stderr));
     assert!(worktree(&repo, "skipped").is_dir());
     assert!(!worktree(&repo, "skipped").join("hook-ran.txt").exists());
 
     let trusted = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "all"])
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "all"])
         .env("CI", "1")
-        .env("MABO_TRUST_ALL", "1")
+        .env("RABI_TRUST_ALL", "1")
         .output()
-        .expect("mabo");
+        .expect("rabi");
     assert!(trusted.status.success(), "{}", text(&trusted.stderr));
     assert!(worktree(&repo, "all").join("hook-ran.txt").is_file());
     assert!(!trust_file(&repo).exists());
@@ -491,7 +491,7 @@ fn a_terminal_no_creates_nothing() {
 #[test]
 fn gc_on_a_terminal_does_not_ask() {
     let repo = Repo::new();
-    assert!(repo.mabo(&["create", "feature"]).status.success());
+    assert!(repo.rabi(&["create", "feature"]).status.success());
     let dir = worktree(&repo, "feature");
     fs::write(dir.join("feature.txt"), "feature\n").expect("note");
     for args in [vec!["add", "feature.txt"], vec!["commit", "-m", "feature"]] {
@@ -520,26 +520,26 @@ fn gc_on_a_terminal_does_not_ask() {
 #[test]
 fn a_broken_trust_file_still_allows_skip_paths() {
     let repo = Repo::new();
-    fs::create_dir_all(repo.root.join("state/mabo")).expect("state");
+    fs::create_dir_all(repo.root.join("state/rabi")).expect("state");
     fs::write(trust_file(&repo), "[[project]]\npath = 1\n").expect("broken");
 
-    let plain = repo.mabo(&["create", "plain"]);
+    let plain = repo.rabi(&["create", "plain"]);
     assert!(plain.status.success(), "{}", text(&plain.stderr));
 
     hooks(&repo, "\"touch hook-ran.txt\"", "\"true\"");
-    let skipped = repo.mabo(&["create", "skipped", "--no-setup"]);
+    let skipped = repo.rabi(&["create", "skipped", "--no-setup"]);
     assert!(skipped.status.success(), "{}", text(&skipped.stderr));
     assert!(!worktree(&repo, "skipped").join("hook-ran.txt").exists());
 
     let trusted = repo
-        .command(env!("CARGO_BIN_EXE_mabo"), &["create", "ci"])
-        .env("MABO_TRUST_ALL", "1")
+        .command(env!("CARGO_BIN_EXE_rabi"), &["create", "ci"])
+        .env("RABI_TRUST_ALL", "1")
         .output()
-        .expect("mabo");
+        .expect("rabi");
     assert!(trusted.status.success(), "{}", text(&trusted.stderr));
     assert!(worktree(&repo, "ci").join("hook-ran.txt").is_file());
 
-    let blocked = repo.mabo(&["create", "needs-trust"]);
+    let blocked = repo.rabi(&["create", "needs-trust"]);
     assert_eq!(blocked.status.code(), Some(1));
     assert!(
         text(&blocked.stderr).contains("trust.toml"),
@@ -565,7 +565,7 @@ argv = sys.argv[1:]
 master, slave = pty.openpty()
 proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
 os.close(slave)
-answer = os.environ.get("MABO_TEST_ANSWER", "").encode()
+answer = os.environ.get("RABI_TEST_ANSWER", "").encode()
 buf = b""
 sent = False
 deadline = time.time() + 15
@@ -599,12 +599,12 @@ raise SystemExit(code if code is not None else 1)
 "#;
     let mut command = repo.command("python3", &[]);
     command.arg("-c").arg(script);
-    command.arg(env!("CARGO_BIN_EXE_mabo"));
+    command.arg(env!("CARGO_BIN_EXE_rabi"));
     command.args(args);
     if let Some(answer) = answer {
-        command.env("MABO_TEST_ANSWER", answer);
+        command.env("RABI_TEST_ANSWER", answer);
     } else {
-        command.env_remove("MABO_TEST_ANSWER");
+        command.env_remove("RABI_TEST_ANSWER");
     }
     for (key, value) in env {
         command.env(key, value);
@@ -614,8 +614,8 @@ raise SystemExit(code if code is not None else 1)
 
 #[test]
 fn explicit_no_input_and_environment_no_input_refuse_at_a_tty() {
-    an_agent_environment_does_not_prompt_on_a_terminal("MABO_NO_INPUT", "1", false);
-    an_agent_environment_does_not_prompt_on_a_terminal("MABO_NO_INPUT", "yes", false);
+    an_agent_environment_does_not_prompt_on_a_terminal("RABI_NO_INPUT", "1", false);
+    an_agent_environment_does_not_prompt_on_a_terminal("RABI_NO_INPUT", "yes", false);
     let repo = Repo::new();
     hooks(&repo, "\"true\"", "\"true\"");
     let out = pty(&repo, &["create", "topic", "--no-input"], Some("y\n"));
@@ -626,7 +626,7 @@ fn explicit_no_input_and_environment_no_input_refuse_at_a_tty() {
         &repo,
         &["create", "topic"],
         Some("y\n"),
-        &[("MABO_NO_INPUT", "0")],
+        &[("RABI_NO_INPUT", "0")],
     );
     assert!(out.status.success(), "{}", text(&out.stdout));
     assert!(text(&out.stdout).contains("Trust this project and run its hooks?"));
@@ -642,13 +642,13 @@ fn branch_and_detached_sources_preserve_trust_and_reuse_skips_authorization() {
         repo.git(&["branch", "existing"]);
         hooks(&repo, "\"touch setup-ran\"", "");
         let args = [vec!["create"], source, vec!["--json"]].concat();
-        let refused = repo.mabo(&args);
+        let refused = repo.rabi(&args);
         assert_eq!(refused.status.code(), Some(4));
         let doc: serde_json::Value = serde_json::from_slice(&refused.stdout).unwrap();
         assert_eq!(doc["error"]["code"], "untrusted");
         let created = repo
-            .command(env!("CARGO_BIN_EXE_mabo"), &args)
-            .env("MABO_TRUST_ALL", "1")
+            .command(env!("CARGO_BIN_EXE_rabi"), &args)
+            .env("RABI_TRUST_ALL", "1")
             .output()
             .unwrap();
         assert!(created.status.success(), "{}", text(&created.stdout));
@@ -657,7 +657,7 @@ fn branch_and_detached_sources_preserve_trust_and_reuse_skips_authorization() {
         assert!(path.join("setup-ran").exists());
         fs::remove_file(path.join("setup-ran")).unwrap();
         let reuse = [args, vec!["--reuse"]].concat();
-        let reused = repo.mabo(&reuse);
+        let reused = repo.rabi(&reuse);
         assert!(reused.status.success(), "{name}: {}", text(&reused.stdout));
         assert!(!path.join("setup-ran").exists());
     }
