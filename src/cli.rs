@@ -832,11 +832,15 @@ fn render_run(root: &Path, record: &crate::run::Record) -> Result<()> {
             );
         }
         if let Some(reason) = &record.stop_reason {
+            let mut lines = reason.message.split('\n');
             outln!(
                 "Stopped ({}): {}",
                 visible_text(&reason.kind),
-                visible_text(&reason.message)
+                visible_text(lines.next().unwrap_or_default())
             );
+            for line in lines {
+                outln!("  {}", visible_text(line));
+            }
         }
         outln!("Records: {}", visible_text(&directory.to_string_lossy()));
     }

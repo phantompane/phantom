@@ -8,6 +8,14 @@
 
 - Inspect and validate built-in and repository YAML workflow definitions with `rabi workflow list/show/check`. `rabi trust add` lists repository workflows alongside hooks under the same execution trust.
 
+### Changed
+
+- Codex workflow edit steps, including continued sessions, run in auto mode (`--approve-for-me`) so agents can commit in linked workspaces. Read-only steps keep `--sandbox read-only`.
+
+### Fixed
+
+- Display multiline run stop reasons with indented continuation lines, preserving control-character escaping and the original JSON message.
+
 ## v7.0.0 (2026-10-24)
 
 ### Changed

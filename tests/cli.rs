@@ -21843,6 +21843,53 @@ fn run_stops_after_ambiguous_or_failed_gh_once_and_show_succeeds() {
 }
 
 #[test]
+fn run_show_formats_multiline_stop_reasons_and_escapes_other_controls() {
+    let repo = Repo::new();
+    let id = format!("run_{}", uuid::Uuid::new_v4());
+    let directory = repo.repo.join(".git/rabi/runs").join(&id);
+    fs::create_dir_all(&directory).unwrap();
+    for (message, expected) in [
+        ("", "Stopped (operation_failed): \nRecords:"),
+        (
+            "Cannot commit",
+            "Stopped (operation_failed): Cannot commit\nRecords:",
+        ),
+        (
+            "Cannot commit\n\nGit failed:\r\n\t\u{1b}[31mdenied\u{7}\u{7f}\u{202e}\n",
+            "Stopped (operation_failed): Cannot commit\n  \n  Git failed:\\u{d}\n  \\u{9}\\u{1b}[31mdenied\\u{7}\\u{7f}\\u{202e}\n  \nRecords:",
+        ),
+    ] {
+        let record = serde_json::json!({
+            "schema": 1,
+            "id": id,
+            "state": "stopped",
+            "workflow": {"name": "default", "version": 4, "source": "builtin"},
+            "currentStep": null,
+            "stepsStarted": 2,
+            "loops": {},
+            "workspace": {"id": null, "name": "topic", "path": "/unused", "branch": "topic"},
+            "pr": null,
+            "stopReason": {"kind": "operation_failed", "message": message},
+            "startedAt": "2026-10-25T00:00:00Z",
+            "finishedAt": "2026-10-25T00:01:00Z"
+        });
+        let original = serde_json::to_vec_pretty(&record).unwrap();
+        let path = directory.join("run.json");
+        fs::write(&path, &original).unwrap();
+
+        let shown = repo.rabi(&["run", "show", &id]);
+        assert!(shown.status.success(), "{}", text(&shown.stderr));
+        assert!(text(&shown.stdout).contains(expected), "{}", text(&shown.stdout));
+
+        let shown = repo.rabi(&["run", "show", &id, "--json"]);
+        assert!(shown.status.success(), "{}", text(&shown.stderr));
+        let document = assert_envelope(&shown, "run show");
+        assert_eq!(document["data"]["run"]["stopReason"], record["stopReason"]);
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+}
+
+#[test]
 fn run_start_refuses_untrusted_and_invalid_inputs_before_workspace_creation() {
     let repo = Repo::new();
     fs::write(repo.repo.join("task.md"), "# Task").unwrap();

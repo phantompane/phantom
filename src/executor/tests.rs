@@ -822,12 +822,12 @@ fi
             let review_args = fs::read_to_string(root.join("call-2.args")).unwrap();
             assert!(!review_args.lines().any(|arg| arg == "resume"));
             assert!(review_args.contains("--sandbox\nread-only\n"));
+            assert!(!review_args.lines().any(|arg| arg == "--approve-for-me"));
             let args = fs::read_to_string(root.join("call-1.args")).unwrap();
-            assert!(args.contains("--sandbox\nworkspace-write\n"));
+            assert!(args.lines().any(|arg| arg == "--approve-for-me"));
+            assert!(!args.lines().any(|arg| arg == "--sandbox"));
+            assert!(!args.lines().any(|arg| arg == "--add-dir"));
             assert!(!review_args.lines().any(|arg| arg == "--add-dir"));
-            let common =
-                crate::git::git_common_dir(std::path::Path::new(&record.workspace.path)).unwrap();
-            assert!(args.contains(&format!("--add-dir\n{}\n", common.display())));
             assert!(args.contains("-m\ngpt-6.1-sol\n-c\nmodel_reasoning_effort=\"high\"\n"));
             assert!(!args.contains("service_tier"));
             let start: Record =
@@ -857,7 +857,10 @@ fi
             let call = if case == "repair" { 2 } else { 3 };
             let args = fs::read_to_string(root.join(format!("call-{call}.args"))).unwrap();
             assert!(args.contains("resume\nthread-1\n-\n"));
-            assert!(args.find("--sandbox").unwrap() < args.find("resume").unwrap());
+            assert!(args.starts_with("exec\n"));
+            assert!(args.find("--approve-for-me").unwrap() < args.find("resume").unwrap());
+            assert!(!args.lines().any(|arg| arg == "--sandbox"));
+            assert!(!args.lines().any(|arg| arg == "--add-dir"));
             let prompt = fs::read_to_string(root.join(format!("call-{call}.prompt"))).unwrap();
             assert!(prompt.contains("Latest checks"));
             if case == "review_repair" {
